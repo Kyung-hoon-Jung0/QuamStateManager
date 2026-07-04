@@ -413,14 +413,35 @@ resonator's readout emits. `run_build.py` writes it to the channel's
 (Out1+In1, Out2+Out3, Out4+Out5, Out6+Out7, Out8+In2), and an LO can
 up/down-convert RF only within ±0.4 GHz of itself — a 0.8 GHz IF window.
 As `RF_freq` values are entered, the wizard's `recomputeLOs()` (`generate.js`)
-sets each LO to the midpoint of the RF values on its port pair and writes it
-into every element's `LO_frequency`. Example: drives at 6.5 GHz and 6.2 GHz
-sharing an LO → LO 6.35 GHz. It warns when the RF spread on a pair exceeds
-0.8 GHz (no single LO can cover them), when an RF lands outside every Nyquist
-band, or when a feedline's output- and input-side LOs diverge. Each warning
-carries the elements involved, so `recomputeLOs()` also **rings the offending
-ports amber** in the step-6 wiring diagram (`.iw-port-conflict`) — amber to
-match the conflict panel and stay distinct from the red dashed structural
+solves each port pair's LO with `solveLoWindow()` and writes it into every
+element's `LO_frequency`. The solver (which replaced a plain RF-midpoint)
+finds the LO minimizing max |IF| subject to three constraints, in order:
+
+1. every member's |RF − LO| ≤ 400 MHz (the IF window);
+2. the LO sits where `bandOf(LO)` — mirroring `run_build.py`'s `_band_for`
+   precedence (band 1 → 2 → 3) — lands in a band that covers **every**
+   member RF (e.g. a 5.4 + 5.6 GHz group forces LO ≥ 5.5 GHz so band 2 is
+   actually selected);
+3. every **resonator**'s |RF − LO| > 5 MHz (+1 MHz solve margin) — the
+   MW-FEM cannot demodulate |IF| ≤ 5 MHz and a readout tone that close to
+   the LO rides the LO-leakage dip. xy drives are never demodulated, so
+   they may sit at IF = 0. The legacy midpoint put a **lone resonator's LO
+   exactly on its RF** (IF = 0 — silently unreadable); the solver shifts it
+   off the hole. Mirrors `spec_constraints.IF_FLOOR_MW_HZ`.
+
+Ties resolve to the higher LO (negative IFs — matching the QM convention of
+placing the LO above the qubit drive), and the result is rounded to 1 MHz
+when that stays feasible. On infeasibility the solver falls back to the
+legacy midpoint and emits a **named warning**: `span` (RF spread > 0.8 GHz),
+`no_band` (no single band covers every RF), `band_window` (a band *does*
+cover every RF but its effective LO range — under `bandOf`'s band-1-first
+precedence — misses the ±0.4 GHz window, so the fix is to shift the RFs, not
+rewire), or `hole` (every feasible LO lands within 5 MHz of a resonator). It
+still warns when an RF lands outside every Nyquist band or when a feedline's
+output- and input-side LOs diverge. Each warning carries
+the elements involved, so `recomputeLOs()` also **rings the offending ports
+amber** in the step-6 wiring diagram (`.iw-port-conflict`) — amber to match
+the conflict panel and stay distinct from the red dashed structural
 `.iw-port-invalid` rings; hovering a conflict line emphasises just that
 warning's ports. The `LO_frequency` cells stay editable — a hand-typed LO is
 kept until the next `RF_freq` edit re-derives it.
@@ -465,6 +486,46 @@ depends on it. The choice persists in `localStorage` under
 `quam_populate_units`. Formulas verified against
 `quam_builder/tools/power_tools.py` (`set_output_power_mw_channel` /
 `get_output_power_mw_channel` / `calculate_voltage_scaling_factor`).
+
+**Absolute power mode (auto FSP).** Next to the unit selectors sits a
+**Power input** toggle: *FSP + amplitude* (manual, today's flow) or
+*absolute dBm (auto FSP)* — persisted in `localStorage`
+(`quam_gen_power_mode`). In absolute mode the user types each pulse's
+**absolute output power in dBm** (the amp unit selector locks to dBm) and
+the wizard allocates the port's `full_scale_power_dbm` itself; the FSP
+cells become read-only, showing the derived value. The stored
+representation is **identical in both modes** — `fsp` + dimensionless
+amplitudes, related by `P = FSP + 20·log10(amp)` — so the dBm target is
+losslessly recoverable, old drafts/specs load unchanged, and `run_build.py`
+needs no changes. Allocation policy (lab-confirmed): the port's **strongest
+pulse picks the FSP** — the lowest integer FSP ≥ 0 keeping its amp ≤ 0.5
+(`ceil(P + 6.02)`, preferred window [0, 10] dBm, hardware max 18); weaker
+pulses derive their amplitude under that FSP (reference example:
+saturation −20 dBm → FSP 0, amp 0.1). A too-quiet pulse never drags the
+FSP below 0 — it gets a small amplitude plus a DAC-resolution warning; a
+target beyond 18 dBm clamps amp at 1 with an "exceeds the port's reach"
+warning showing the achieved dBm. **Readout is a bank edit**: the feedline's
+resonators share one physical port, so one typed dBm applies to every tone —
+one FSP is chosen under the worst-case coherent-sum budget (`n·amp ≤ 0.5`
+preferred; past `Σ = 1` the DAC clips → strong warning, value kept — range
+policy stays advisory, matching the app's trust-researcher philosophy).
+For xy, `x180` + `saturation` are the two inputs (x90 etc. derive from x180
+downstream); editing one re-solves the port FSP while **preserving the other
+pulse's absolute power** (its target is recovered from the stored
+`(fsp, amp)` pair before the re-solve). Power warnings are **derived fresh
+from the spec on every render** (`recomputeAllPowerFindings`, called from
+`recomputeLOs`), exactly like the LO warnings — so they never go stale: they
+self-clear when Power input flips back to manual, prune with a deleted or
+renumbered qubit, key readout banks by the **physical port** (fixing one
+resonator clears the whole bank's finding), and reappear after a draft
+restore. They render in the same conflict panel (heading gains "/ power" when
+present) and ring the affected ports. The unreachable case (target > 18 dBm)
+clamps amp at 1 and surfaces an "at the port's maximum output" note; a
+resonator edited before Auto-allocate is solved single-tone with a "not
+allocated yet" note, and step-6 entry reconciles any pre-allocation bank
+whose members carry divergent FSPs. `fspForAmp` coerces a corrupt/string FSP
+to the port default so a bad draft can't NaN-corrupt a bank. Pinned by
+`tests/generate_power_selfcheck.cjs` (driven by `test_generate_power.py`).
 
 **Set all.** Each per-row populate table has a tinted "Set all →" row as its
 first body row. Typing a value into a column's "Set all" cell and committing

@@ -37,6 +37,10 @@
     outputPath: "",       // step-7 destination folder (DOM-mirrored)
     // step-6 populate display units; overlaid from localStorage on entry
     populateUnits: { freq: "GHz", time: "ns", volt: "V", amp: "0-1" },
+    // step-6 power input mode — "manual" (FSP + amplitude, today's flow) or
+    // "absolute" (pulse powers typed in dBm; the port FSP is auto-allocated
+    // and amplitudes derived). Overlaid from localStorage on entry.
+    powerMode: "manual",
     // Line-type toggles (step 4); derived from hardware + user choice.
     qubitFlux: true,      // qubit z flux lines (requires LF-FEM)
     couplerFlux: true,    // DERIVED mirror: true when pairGate==="cz_tunable" and
@@ -2058,6 +2062,24 @@
     } catch (e) { /* localStorage unavailable — units just won't persist */ }
   }
 
+  function loadPowerMode() {
+    try {
+      var v = localStorage.getItem("quam_gen_power_mode");
+      if (v === "absolute" || v === "manual") state.powerMode = v;
+    } catch (e) { /* localStorage unavailable */ }
+  }
+  function savePowerMode() {
+    try { localStorage.setItem("quam_gen_power_mode", state.powerMode); }
+    catch (e) { /* localStorage unavailable */ }
+  }
+
+  // The effective amp display/entry mode. Absolute power mode forces dBm —
+  // an amp cell there IS the pulse's absolute output power, and committing
+  // it re-allocates the port FSP (see recomputeXyPower / recomputeReadoutPower).
+  function ampMode() {
+    return state.powerMode === "absolute" ? "dBm" : state.populateUnits.amp;
+  }
+
   // Scale factor from the active unit of `dim` to SI base (1 if no dimension
   // or if the dim isn't a simple multiplicative unit — e.g. amp).
   function unitFactor(dim) {
@@ -2092,7 +2114,11 @@
     var pop = state.spec.populate || {};
     var src = POP_AMP_FIELDS_SOURCE[group] || "qubit";
     var fsp = ((pop[src] || {})[rid] || {}).full_scale_power_dbm;
-    return (fsp == null) ? POP_FSP_DEFAULT : fsp;
+    // Coerce to a finite number: a string/NaN FSP (from a corrupt or
+    // hand-edited sessionStorage draft) would otherwise string-concatenate in
+    // the absolute-mode target recovery and write NaN across a whole bank.
+    var n = Number(fsp);
+    return (fsp == null || !isFinite(n)) ? POP_FSP_DEFAULT : n;
   }
   // Per-group FSP source: pulses rows are per-qubit, FSP comes from the
   // qubit table. Resonator rows have their own FSP column.
@@ -2138,8 +2164,18 @@
   // static display-only unit string (e.g. "0-1" for MW amplitudes) when the
   // column carries no `dim` but a fixed `unit` label.
   function colHeader(col) {
+    if (col.dim === "amp") {
+      // Absolute mode: the cell IS the pulse's output power and committing it
+      // re-allocates the port FSP — distinguish it from the manual+dBm display
+      // unit, which converts against a FIXED hand-set FSP.
+      if (state.powerMode === "absolute") return col.label + " (dBm · sets FSP)";
+      return col.label + " (" + ampMode() + ")";
+    }
     if (col.dim) return col.label + " (" + state.populateUnits[col.dim] + ")";
     if (col.unit) return col.label + " (" + col.unit + ")";
+    if (col.field === "full_scale_power_dbm" && state.powerMode === "absolute") {
+      return col.label.replace("(dBm)", "(dBm · auto)");
+    }
     return col.label;
   }
 
@@ -2285,7 +2321,7 @@
     } else if (col.kind === "text" || col.kind === "select") {
       bucket[col.field] = raw;
     } else if (col.dim === "amp") {
-      var n = ampToBase(raw, state.populateUnits.amp, fspForAmp(group, rid));
+      var n = ampToBase(raw, ampMode(), fspForAmp(group, rid));
       if (!isNaN(n)) bucket[col.field] = n;
     } else {
       var n = col.dim ? toBaseValue(raw, col.dim) : parseFloat(window.NumberInput.strip(raw));
@@ -2310,12 +2346,30 @@
       input.type = col.kind === "text" ? "text" : "number";
       if (current != null) {
         if (col.dim === "amp") {
-          input.value = ampToDisplay(current, state.populateUnits.amp,
+          input.value = ampToDisplay(current, ampMode(),
                                      fspForAmp(group, rid));
         } else {
           input.value = col.dim ? toDisplayValue(current, col.dim) : current;
         }
       }
+    }
+    // Absolute power mode: FSP is allocated from the pulse powers, never
+    // hand-typed — the cell shows the derived value read-only.
+    if (col.field === "full_scale_power_dbm" &&
+        state.powerMode === "absolute") {
+      input.disabled = true;
+      input.title = "Auto-allocated from the pulse powers " +
+        "(absolute power mode — switch Power input back to FSP + amplitude " +
+        "to edit directly)";
+    }
+    // Absolute power mode: an amp cell holds the pulse's ABSOLUTE output power
+    // in dBm; committing it re-allocates the port FSP (readout: the whole
+    // multiplexed bank shares one FSP + equal per-tone amplitudes).
+    if (col.dim === "amp" && state.powerMode === "absolute") {
+      input.title = "Absolute output power in dBm — committing re-allocates " +
+        "this port's full-scale power" + (group === "resonator"
+          ? " and rewrites the whole readout bank (shared FSP, equal per-tone "
+            + "amplitudes)" : "");
     }
     input.className = "gen-pop-in";
     // data-* identity so applyLoAssignments() can find the LO cells.
@@ -2347,6 +2401,11 @@
       window.NumberInput.attach(input);
     }
     input.addEventListener("change", function () {
+      // Clear the dirty flag FIRST: this cell is now committed, so any refresh
+      // triggered below (refreshAmpCells etc.) may repaint its own display to
+      // the achieved value — while still SKIPPING sibling cells that are also
+      // dirty (a multi-cell blur-race flush), preserving their typed input.
+      input.dataset.dirty = "";
       var pop = state.spec.populate;
       pop[group] = pop[group] || {};
       pop[group][rid] = pop[group][rid] || {};
@@ -2363,7 +2422,16 @@
       // FSP edits change every amp cell's dBm/V_pk display for the affected
       // qubit, since amp conversion uses FSP. Cheap to refresh them all.
       if (col.field === "full_scale_power_dbm") refreshAmpCells();
-      input.dataset.dirty = "";   // committed — no longer needs a nav flush
+      // Absolute power mode: committing a pulse power (dBm) re-allocates the
+      // port FSP and rewrites every amplitude on that port so each pulse's
+      // absolute power is preserved (readout: the whole multiplexed bank).
+      if (state.powerMode === "absolute" && col.dim === "amp") {
+        if (group === "resonator" && col.field === "readout_amplitude") {
+          recomputeReadoutPower(rid);
+        } else if (group === "pulses") {
+          recomputeXyPower(rid);
+        }
+      }
     });
     return input;
   }
@@ -2373,11 +2441,17 @@
   // never collides with the LO-cell selectors in applyLoAssignments() /
   // decorateLoCells(). `noBulk` columns get a muted, inert "—" instead.
   function buildBulkCell(group, rowIds, col) {
-    if (col.noBulk) {
+    var noBulk = col.noBulk;
+    // Absolute power mode: FSP is derived, so bulk-setting it is meaningless.
+    if (col.field === "full_scale_power_dbm" &&
+        state.powerMode === "absolute") {
+      noBulk = "Auto-allocated from the pulse powers (absolute power mode)";
+    }
+    if (noBulk) {
       var na = document.createElement("span");
       na.className = "gen-pop-setall-na";
       na.textContent = "—";
-      if (typeof col.noBulk === "string") na.title = col.noBulk;
+      if (typeof noBulk === "string") na.title = noBulk;
       return na;
     }
     var input;
@@ -2422,6 +2496,15 @@
         }
         refreshAmpCells();
       }
+      // Absolute power mode: a bulk pulse-power fill re-allocates every
+      // affected port's FSP. Idempotent per port, so the per-row loop is safe.
+      if (state.powerMode === "absolute" && col.dim === "amp") {
+        if (group === "resonator" && col.field === "readout_amplitude") {
+          rowIds.forEach(function (rid) { recomputeReadoutPower(rid); });
+        } else if (group === "pulses") {
+          rowIds.forEach(function (rid) { recomputeXyPower(rid); });
+        }
+      }
     });
     return input;
   }
@@ -2431,12 +2514,13 @@
   function refreshColumnCells(group, col) {
     document.querySelectorAll('.gen-pop-in[data-group="' + group +
       '"][data-rid][data-field="' + col.field + '"]').forEach(function (input) {
+      if (input.dataset.dirty === "1") return;   // don't clobber an uncommitted edit
       var rid = input.dataset.rid;
       var v = (((state.spec.populate[group] || {})[rid]) || {})[col.field];
       if (v == null) input.value = "";
       else if (col.kind === "select") input.value = String(v);
       else if (col.dim === "amp") {
-        input.value = ampToDisplay(v, state.populateUnits.amp,
+        input.value = ampToDisplay(v, ampMode(),
                                    fspForAmp(group, rid));
       }
       else input.value = col.dim ? toDisplayValue(v, col.dim) : v;
@@ -2451,11 +2535,12 @@
     var pop = state.spec.populate || {};
     document.querySelectorAll('.gen-pop-in[data-dim="amp"]').forEach(
       function (input) {
+        if (input.dataset.dirty === "1") return;   // preserve an uncommitted typed value
         var group = input.dataset.group;
         var rid = input.dataset.rid;
         var field = input.dataset.field;
         var v = ((pop[group] || {})[rid] || {})[field];
-        input.value = ampToDisplay(v, state.populateUnits.amp,
+        input.value = ampToDisplay(v, ampMode(),
                                    fspForAmp(group, rid));
         window.NumberInput.format(input);   // regroup commas + re-fit width
       });
@@ -2570,7 +2655,15 @@
         o.textContent = u;
         sel.appendChild(o);
       });
-      sel.value = state.populateUnits[dim];
+      // Absolute power mode pins the amp unit to dBm — the amp cells ARE
+      // absolute powers there, so the selector is shown locked.
+      if (dim === "amp" && state.powerMode === "absolute") {
+        sel.value = "dBm";
+        sel.disabled = true;
+        sel.title = "Absolute power mode: pulse powers are entered in dBm";
+      } else {
+        sel.value = state.populateUnits[dim];
+      }
       sel.addEventListener("change", function () {
         // Commit any in-progress cell BEFORE renderPopulateTables() rebuilds every
         // cell from state — else a value typed but not yet blurred is lost on the
@@ -2585,6 +2678,40 @@
       wrap.appendChild(sel);
       host.appendChild(wrap);
     });
+
+    // Power-input mode: "manual" = today's FSP + amplitude cells; "absolute" =
+    // pulse powers typed in dBm, port FSP auto-allocated (lab policy: FSP
+    // int [0..10] dBm preferred, amp 0.01–0.5, strongest pulse picks FSP).
+    // Stored representation is IDENTICAL in both modes (fsp + amplitudes) —
+    // the toggle only changes entry semantics, so specs/drafts stay portable.
+    var pWrap = document.createElement("label");
+    pWrap.className = "gen-pop-unit gen-pop-powermode";
+    var pSpan = document.createElement("span");
+    pSpan.textContent = "Power input";
+    var pSel = document.createElement("select");
+    [["manual", "FSP + amplitude"], ["absolute", "absolute dBm (auto FSP)"]]
+      .forEach(function (opt) {
+        var o = document.createElement("option");
+        o.value = opt[0];
+        o.textContent = opt[1];
+        pSel.appendChild(o);
+      });
+    pSel.value = state.powerMode;
+    pSel.title = "How pulse power is entered. Absolute: type each pulse's " +
+      "output power in dBm; the port full-scale power is allocated " +
+      "automatically (readout banks share one FSP with a multiplexing " +
+      "amplitude budget).";
+    pSel.addEventListener("change", function () {
+      captureDomFields();   // same blur-race guard as the unit selectors
+      state.powerMode = pSel.value === "absolute" ? "absolute" : "manual";
+      savePowerMode();
+      renderUnitToggles();      // re-render to lock/unlock the amp selector
+      renderPopulateTables();
+      recomputeLOs();
+    });
+    pWrap.appendChild(pSpan);
+    pWrap.appendChild(pSel);
+    host.appendChild(pWrap);
   }
 
   // -- step 6: MW-FEM LO auto-assignment -------------------------------
@@ -2611,6 +2738,111 @@
   ];
 
   var LO_IF_HALF_WINDOW = 0.4e9;   // an LO covers RF within ±0.4 GHz
+
+  // Readout demod floor: the MW-FEM cannot demodulate |IF| ≤ 5 MHz, and a
+  // resonator that close to the LO responds to the LO-leakage dip itself.
+  // The LO solver keeps every RESONATOR's |RF − LO| above the floor plus a
+  // 1 MHz safety margin. xy drives are never demodulated, so they may sit at
+  // IF = 0 (no hole). Mirrors spec_constraints.IF_FLOOR_MW_HZ.
+  var LO_IF_HOLE_HZ = 5e6;
+  var LO_IF_HOLE_MARGIN_HZ = 1e6;
+
+  // RF coverage of each MW-FEM Nyquist band (mirrors bandOf's boundaries) and
+  // the LO range that makes bandOf(lo) — and run_build's _band_for — actually
+  // pick that band (bandOf checks band 1 → 2 → 3, so e.g. an LO below 5.5 GHz
+  // always lands in band 1 even where band 2 overlaps).
+  var BAND_RF_RANGES = { 1: [50e6, 5.5e9], 2: [4.5e9, 7.5e9], 3: [6.5e9, 10.5e9] };
+  var BAND_LO_EFFECTIVE = { 1: [50e6, 5.5e9 - 1], 2: [5.5e9, 7.5e9 - 1], 3: [7.5e9, 10.5e9] };
+
+  function rfInBand(rf, band) {
+    if (band === 1) return rf >= 50e6 && rf < 5.5e9;
+    if (band === 2) return rf >= 4.5e9 && rf < 7.5e9;
+    if (band === 3) return rf >= 6.5e9 && rf <= 10.5e9;
+    return false;
+  }
+
+  // Choose one LO for a port pair's elements. entries = [{rf, needHole}] —
+  // needHole marks readout resonators (their |RF − LO| must clear the demod
+  // floor). Feasibility, in constraint order:
+  //   1. every |RF_i − LO| ≤ LO_IF_HALF_WINDOW      (±0.4 GHz IF window)
+  //   2. LO sits where bandOf(LO) is a band that covers EVERY RF
+  //   3. every resonator |RF_i − LO| > 5 MHz         (demod-floor hole)
+  // Among feasible LOs, picks the one minimizing max|IF| (closest to the RF
+  // midpoint; ties resolve to the HIGHER LO — negative IFs, the convention
+  // the docs recommend and real CR chips use). Rounds to 1 MHz when the
+  // rounded value stays feasible. On infeasibility returns the legacy
+  // midpoint plus a `code` naming the first constraint that failed:
+  //   "span"     RF spread exceeds the 0.8 GHz window
+  //   "no_band"  no single Nyquist band covers every RF
+  //   "band_window"  a band covers every RF but its LO range misses the window
+  //   "hole"     every window position collides with a resonator's demod floor
+  function solveLoWindow(entries) {
+    var rfs = entries.map(function (e) { return e.rf; });
+    var hi = Math.max.apply(null, rfs);
+    var lo = Math.min.apply(null, rfs);
+    var mid = (hi + lo) / 2;
+    var out = { lo: mid, ok: false, code: null, span: hi - lo };
+    if (hi - lo > 2 * LO_IF_HALF_WINDOW) { out.code = "span"; return out; }
+
+    // Window interval intersected with each all-covering band's LO range.
+    // Track the two failure causes separately: no band covers every RF
+    // ("no_band"), vs. a covering band exists but its effective LO range
+    // (bandOf's band-1-first precedence) misses the ±window ("band_window",
+    // fixable by shifting the RFs, not by rewiring).
+    var wLo = hi - LO_IF_HALF_WINDOW, wHi = lo + LO_IF_HALF_WINDOW;
+    var intervals = [];
+    var coveringBand = null;
+    [1, 2, 3].forEach(function (b) {
+      var covers = rfs.every(function (rf) { return rfInBand(rf, b); });
+      if (!covers) return;
+      if (coveringBand == null) coveringBand = b;
+      var a = Math.max(wLo, BAND_LO_EFFECTIVE[b][0]);
+      var z = Math.min(wHi, BAND_LO_EFFECTIVE[b][1]);
+      if (a <= z) intervals.push([a, z]);
+    });
+    if (!intervals.length) {
+      out.code = coveringBand == null ? "no_band" : "band_window";
+      out.band = coveringBand;
+      out.window = [wLo, wHi];
+      return out;
+    }
+
+    // Subtract each resonator's demod-floor hole (radius 6 MHz = 5 MHz floor
+    // + 1 MHz margin) from the allowed intervals. Standard interval minus
+    // open hole: keep the piece left of the hole and the piece right of it
+    // (a missed hole reconstructs the interval via whichever piece applies).
+    var r = LO_IF_HOLE_HZ + LO_IF_HOLE_MARGIN_HZ;
+    entries.forEach(function (e) {
+      if (!e.needHole) return;
+      var next = [];
+      intervals.forEach(function (iv) {
+        var a = iv[0], z = iv[1];
+        if (e.rf - r >= a) next.push([a, Math.min(z, e.rf - r)]);
+        if (e.rf + r <= z) next.push([Math.max(a, e.rf + r), z]);
+      });
+      intervals = next;
+    });
+    if (!intervals.length) { out.code = "hole"; return out; }
+
+    // Feasible point closest to the midpoint = minimal max|IF|.
+    var best = null;
+    intervals.forEach(function (iv) {
+      var c = Math.min(Math.max(mid, iv[0]), iv[1]);
+      var d = Math.abs(c - mid);
+      if (!best || d < best.d - 0.5 ||
+          (Math.abs(d - best.d) <= 0.5 && c > best.c)) {
+        best = { c: c, d: d };
+      }
+    });
+    // Round to 1 MHz for readability when the rounded LO stays feasible.
+    var snapped = Math.round(best.c / 1e6) * 1e6;
+    var snapOk = intervals.some(function (iv) {
+      return snapped >= iv[0] && snapped <= iv[1];
+    });
+    out.lo = snapOk ? snapped : best.c;
+    out.ok = true;
+    return out;
+  }
 
   // Up to 12 distinct hues for LO-group colour-coding (see --lo-c* in CSS).
   // All are dark enough that white pill text reads on either theme.
@@ -2696,10 +2928,17 @@
             if (rf != null) withRf.push({ m: m, rf: rf });
           });
           if (!withRf.length) return;
+          // Hole-aware LO solve: resonators must clear the 5 MHz demod floor
+          // (an IF that close to the LO is unreadable — the legacy midpoint
+          // put a lone resonator's LO exactly ON its RF), xy drives may sit
+          // anywhere in the window.
+          var solved = solveLoWindow(withRf.map(function (x) {
+            return { rf: x.rf, needHole: x.m.group === "resonator" };
+          }));
           var rfs = withRf.map(function (x) { return x.rf; });
           var hi = Math.max.apply(null, rfs);
           var lo = Math.min.apply(null, rfs);
-          var loFreq = (hi + lo) / 2;
+          var loFreq = solved.lo;
           var groupId = ctrl.con + "/" + fem.slot + "/" + idx;
           var loName = femName + " LO" + (idx + 1) +
             " (" + portPairDesc(pair) + ")";
@@ -2720,11 +2959,36 @@
           });
           // Each conflict carries the members involved, so recomputeLOs() can
           // ring the offending ports in the wiring diagram.
-          if (hi - lo > 2 * LO_IF_HALF_WINDOW) {
+          if (solved.code === "span") {
             result.warnings.push({
               message: loName + ": RF values span " + fmtFreq(hi - lo) +
                 " — wider than the 0.8 GHz IF window, so one LO cannot cover " +
                 "them. Move an element to another port pair.",
+              members: groupMembers
+            });
+          } else if (solved.code === "no_band") {
+            result.warnings.push({
+              message: loName + ": no single MW-FEM band covers RF " +
+                fmtFreq(lo) + "–" + fmtFreq(hi) +
+                " (band 1: 0.05–5.5, band 2: 4.5–7.5, band 3: 6.5–10.5 GHz). " +
+                "Move an element to another port pair.",
+              members: groupMembers
+            });
+          } else if (solved.code === "band_window") {
+            result.warnings.push({
+              message: loName + ": band " + solved.band + " covers RF " +
+                fmtFreq(lo) + "–" + fmtFreq(hi) + " but its LO range misses " +
+                "the ±0.4 GHz IF window (" + fmtFreq(solved.window[0]) + "–" +
+                fmtFreq(solved.window[1]) + ") — shift the RF values so the " +
+                "window reaches band " + solved.band + "'s LO range, or move " +
+                "an element to another port pair.",
+              members: groupMembers
+            });
+          } else if (solved.code === "hole") {
+            result.warnings.push({
+              message: loName + ": every feasible LO lands within 5 MHz of " +
+                "a resonator (unreadable — the MW-FEM cannot demodulate " +
+                "|IF| ≤ 5 MHz). Adjust the resonator RF values.",
               members: groupMembers
             });
           }
@@ -2887,7 +3151,7 @@
   // Render the LO/band-conflict panel and ring the offending ports amber in
   // the step-6 wiring diagram. Hovering a warning line emphasises just that
   // warning's ports; an empty list clears every ring (idempotent).
-  function renderConflicts(warnings) {
+  function renderConflicts(warnings, hasPower) {
     var host = document.getElementById("gen-band-warnings");
     if (!host) return;
     host.innerHTML = "";
@@ -2896,7 +3160,8 @@
       var panel = document.createElement("div");
       panel.className = "gen-band-warn";
       var head = document.createElement("strong");
-      head.textContent = "⚠ LO / band conflicts";
+      head.textContent = hasPower
+        ? "⚠ LO / band / power conflicts" : "⚠ LO / band conflicts";
       panel.appendChild(head);
       warnings.forEach(function (w) {
         var members = w.members || [];
@@ -2927,7 +3192,9 @@
     decorateLoCells(calc);
     decorateReadoutFSPCells(calc);
     renderLoMap(calc);
-    renderConflicts(calc.warnings);
+    _lastLoWarnings = calc.warnings;
+    recomputeAllPowerFindings();   // derive power warnings fresh from spec
+    renderAllConflicts();
     // Bands changed → refresh the per-qubit LF-FEM delay summary.
     renderFluxDelaySummary((state.spec && state.spec.qubits) || []);
   }
@@ -2938,19 +3205,34 @@
   // share one `full_scale_power_dbm` (last write wins on the physical port).
   // When the user edits one qubit's FSP cell, propagate the value to every
   // other resonator on the same port and refresh those cells.
-  function recomputeReadoutFSP(editedRid) {
-    var alloc = (state.allocation || {})[editedRid];
-    if (!alloc || !alloc.rr) return;
+  // The physical readout OUTPUT port key ("con/slot/port/output") a resonator
+  // is allocated on, or null when the allocation doesn't cover it. This key
+  // IS the multiplexed-bank identity — every resonator sharing it shares one
+  // FSP, one summed-amplitude budget, one LO.
+  function readoutPortKey(rid) {
+    var alloc = (state.allocation || {})[rid];
+    if (!alloc || !alloc.rr) return null;
     var outPort = alloc.rr.find(function (p) {
       return (p.io_type || "output") === "output";
     });
-    if (!outPort || outPort.con == null) return;
-    var portKey = outPort.con + "/" + outPort.slot + "/" + outPort.port +
-                  "/output";
+    if (!outPort || outPort.con == null) return null;
+    return outPort.con + "/" + outPort.slot + "/" + outPort.port + "/output";
+  }
+
+  // The resonators multiplexed on `rid`'s readout output port (including
+  // `rid` itself), or null when the allocation doesn't cover it.
+  function readoutBankMembers(rid) {
+    var portKey = readoutPortKey(rid);
+    if (portKey == null) return null;
     var members = (collectPortElements()[portKey] || []).filter(function (m) {
       return m.group === "resonator";
     });
-    if (members.length <= 1) return;
+    return members.length ? members : null;
+  }
+
+  function recomputeReadoutFSP(editedRid) {
+    var members = readoutBankMembers(editedRid);
+    if (!members || members.length <= 1) return;
 
     var pop = state.spec.populate;
     var src = ((pop.resonator || {})[editedRid] || {}).full_scale_power_dbm;
@@ -2970,15 +3252,296 @@
     refreshFSPCells();
   }
 
-  // Refresh all resonator FSP <input>s in place from the current spec.
-  function refreshFSPCells() {
+  // Refresh all FSP <input>s of one populate group ("resonator" default) in
+  // place from the current spec.
+  function refreshFSPCells(group) {
+    group = group || "resonator";
     var pop = state.spec.populate || {};
     document.querySelectorAll(
       '.gen-pop-in[data-field="full_scale_power_dbm"]' +
-      '[data-group="resonator"]').forEach(function (input) {
-      var bucket = (pop.resonator || {})[input.dataset.rid] || {};
+      '[data-group="' + group + '"]').forEach(function (input) {
+      if (input.dataset.dirty === "1") return;   // preserve an uncommitted typed value
+      var bucket = (pop[group] || {})[input.dataset.rid] || {};
       input.value = (bucket.full_scale_power_dbm == null)
         ? "" : bucket.full_scale_power_dbm;
+    });
+  }
+
+  // -- step 6: absolute power (dBm) allocation --------------------------
+  //
+  // Splits an absolute output power P (dBm at the MW-FEM port into 50 Ω)
+  // into the port's full_scale_power_dbm (FSP) + a pulse amplitude via
+  //   P = FSP + 20·log10(amp).
+  // Lab policy (the port's strongest pulse picks the FSP; the amplitude is
+  // the fine knob):
+  //   • amp is happiest in [0.01, 0.5] — large enough to use the DAC range,
+  //     small enough to leave headroom;
+  //   • FSP is happiest as an integer in [0, 10] dBm — pick the LOWEST that
+  //     keeps the strongest amp ≤ 0.5 (i.e. ceil(P + 6.02), floored at 0);
+  //   • a very quiet pulse never drags the FSP below 0 — accept amp < 0.01
+  //     and warn (DAC resolution suffers);
+  //   • a very loud pulse pushes the FSP past 10 up to the hardware max 18;
+  //     beyond that amp rises toward 1 (amp > 1 is unreachable → warn).
+  // A multiplexed readout bank of n tones uses the same rule with the
+  // worst-case coherent sum in place of the single amp: n·amp ≤ 0.5
+  // preferred (the tones sum at the DAC in real time; past full scale the
+  // output clips). Stored representation is unchanged — fsp + amplitudes —
+  // so the dBm target is losslessly recoverable as fsp + 20·log10(amp).
+  var PWR = {
+    FSP_MIN: -11, FSP_MAX: 18, FSP_PREF_MIN: 0, FSP_PREF_MAX: 10,
+    AMP_MIN: 0.01, AMP_PREF_MAX: 0.5, SUM_PREF: 0.5, SUM_MAX: 1.0
+  };
+
+  // The FSP (integer dBm) for a port whose strongest pulse targets
+  // `strongestDbm`, with `nTones` simultaneous tones (1 for an xy drive).
+  function solvePortFsp(strongestDbm, nTones) {
+    if (!isFinite(strongestDbm)) return PWR.FSP_PREF_MIN;   // no NaN through the clamps
+    var n = Math.max(1, nTones || 1);
+    // amp (or n·amp) ≤ 0.5  ⇔  fsp ≥ P + 20·log10(2n). The 1e-9 keeps an
+    // exactly-integer boundary from ceiling one dB too high.
+    var fsp = Math.ceil(strongestDbm + 20 * Math.log10(2 * n) - 1e-9);
+    if (fsp < PWR.FSP_PREF_MIN) fsp = PWR.FSP_PREF_MIN;
+    if (fsp > PWR.FSP_MAX) fsp = PWR.FSP_MAX;
+    return fsp;
+  }
+
+  // The amplitude that realizes `dbm` under a chosen FSP.
+  function ampForTarget(dbm, fsp) {
+    return Math.pow(10, (dbm - fsp) / 20);
+  }
+
+  // Absolute-mode power warnings, DERIVED FRESH from the spec on every render
+  // (recomputeAllPowerFindings), exactly like the LO warnings — so they are
+  // never stale: they self-clear on a mode flip to manual, prune with a
+  // deleted/renumbered qubit, key by physical port (not the edited row), and
+  // reappear after a draft restore. `_lastLoWarnings` is the sibling LO cache.
+  var _powerWarnings = {};        // portKey -> [warning]
+  var _lastLoWarnings = [];
+
+  function powerWarningList() {
+    var all = [];
+    Object.keys(_powerWarnings).forEach(function (k) {
+      _powerWarnings[k].forEach(function (w) { all.push(w); });
+    });
+    return all;
+  }
+
+  function renderAllConflicts() {
+    var power = powerWarningList();
+    renderConflicts(_lastLoWarnings.concat(power), power.length > 0);
+  }
+
+  // Amp-side findings for one port, derived from the STORED (fsp, amp) values.
+  // `tones` = [{rid, group, field, amp}] — amp is the stored, DAC-clamped
+  // (≤1) value; the dBm shown is fsp + 20·log10(amp). `sumBudget` is true for
+  // a multiplexed readout bank (its tones sum coherently at the DAC).
+  function powerFindings(portDesc, fsp, tones, sumBudget) {
+    var warns = [];
+    var members = [];
+    var seen = {};
+    tones.forEach(function (t) {
+      if (!seen[t.rid + "/" + t.group]) {
+        seen[t.rid + "/" + t.group] = 1;
+        members.push({ group: t.group, rid: t.rid });
+      }
+    });
+    function pulseName(t) { return t.rid + " " + t.field.replace("_amplitude", ""); }
+    tones.forEach(function (t) {
+      if (t.amp >= 1 - 1e-6 && fsp >= PWR.FSP_MAX) {
+        // At the hardware ceiling: amp is pinned at full scale AND the FSP is
+        // already at its maximum, so any higher target was unreachable and
+        // got clamped here.
+        warns.push({
+          message: portDesc + ": " + pulseName(t) +
+            " is at the port's maximum output (FSP " + PWR.FSP_MAX +
+            " dBm, amp 1 = +" + PWR.FSP_MAX + " dBm) — a higher target is " +
+            "unreachable on this port.",
+          members: members
+        });
+      } else if (t.amp < PWR.AMP_MIN) {
+        var why = fsp > PWR.FSP_PREF_MIN
+          ? "(the port's strongest pulse pins FSP at " + fsp + " dBm — this " +
+            "pulse sits " + Math.round(fsp - (fsp + 20 * Math.log10(t.amp))) +
+            " dB below it)"
+          : "(FSP already floored at " + PWR.FSP_PREF_MIN +
+            " dBm by the port's strongest pulse)";
+        warns.push({
+          message: portDesc + ": " + pulseName(t) + " amplitude " +
+            t.amp.toPrecision(3) + " < 0.01 — the DAC uses a sliver of its " +
+            "range " + why + ".",
+          members: members
+        });
+      }
+    });
+    if (sumBudget) {
+      var sum = tones.reduce(function (s, t) { return s + Math.abs(t.amp); }, 0);
+      if (sum > PWR.SUM_MAX) {
+        warns.push({
+          message: portDesc + ": multiplexed amplitudes sum to " +
+            sum.toFixed(2) + " > 1 — simultaneous tones will CLIP at the " +
+            "DAC even at FSP " + fsp + " dBm. Lower the per-tone power.",
+          members: members
+        });
+      } else if (sum > PWR.SUM_PREF) {
+        warns.push({
+          message: portDesc + ": multiplexed amplitudes sum to " +
+            sum.toFixed(2) + " (> 0.5 headroom budget) — worst-case " +
+            "coherent sum leaves little margin.",
+          members: members
+        });
+      }
+    }
+    return warns;
+  }
+
+  // Rebuild _powerWarnings from scratch off the current spec + allocation.
+  // Called from recomputeLOs (every step-6 entry / RF edit / mode flip), so
+  // the panel always reflects live state. No spec mutation — pure derivation.
+  function recomputeAllPowerFindings() {
+    _powerWarnings = {};
+    if (state.powerMode !== "absolute") return;
+    var pop = state.spec.populate || {};
+    var qubits = state.spec.qubits || [];
+
+    // xy drive ports — one per qubit; both pulses share the qubit FSP.
+    qubits.forEach(function (rid) {
+      var pl = (pop.pulses || {})[rid] || {};
+      var fsp = fspForAmp("pulses", rid);
+      var tones = [];
+      ["x180_amplitude", "saturation_amplitude"].forEach(function (f) {
+        var a = Math.abs(parseFloat(pl[f]));
+        if (isFinite(a) && a > 0) {
+          tones.push({ rid: rid, group: "qubit", field: f, amp: a });
+        }
+      });
+      if (!tones.length) return;
+      var w = powerFindings("Drive port (" + rid + ")", fsp, tones, false);
+      if (w.length) _powerWarnings["xy/" + rid] = w;
+    });
+
+    // Readout banks — group resonators by their PHYSICAL output port so a
+    // bank's findings live under one key (fixing the edited-row keying).
+    var banks = {};   // portKey -> [rid]
+    qubits.forEach(function (rid) {
+      var r = (pop.resonator || {})[rid] || {};
+      if (!(isFinite(parseFloat(r.readout_amplitude)) &&
+            parseFloat(r.readout_amplitude) > 0)) return;
+      var key = readoutPortKey(rid);
+      if (key == null) {
+        // Not allocated yet — solved single-tone, so the multiplex budget is
+        // unchecked. Surface it rather than silently under-warning.
+        _powerWarnings["rr/unalloc/" + rid] = [{
+          message: "Readout port for " + rid + " not allocated yet — power " +
+            "solved single-tone; run Auto-allocate (step 5) to solve the " +
+            "multiplexed bank.",
+          members: [{ group: "resonator", rid: rid }]
+        }];
+        return;
+      }
+      (banks[key] || (banks[key] = [])).push(rid);
+    });
+    Object.keys(banks).forEach(function (key) {
+      var rids = banks[key];
+      var fsp = fspForAmp("resonator", rids[0]);   // synced across the bank
+      var tones = rids.map(function (rid) {
+        return { rid: rid, group: "resonator", field: "readout_amplitude",
+                 amp: Math.abs(parseFloat(pop.resonator[rid].readout_amplitude)) };
+      });
+      var w = powerFindings("Readout bank (" + rids.join(", ") + ")",
+                            fsp, tones, true);
+      if (w.length) _powerWarnings["rr/" + key] = w;
+    });
+  }
+
+  // Absolute power mode: a readout power edit is a BANK edit — every resonator
+  // on the feedline gets the edited per-tone dBm, one FSP is chosen under the
+  // multiplexed sum budget, and every member's amplitude follows. The target
+  // is read back from the edited row's stored (fsp, amp) pair (written by the
+  // change handler). Pure spec mutation; warnings render via recomputeLOs.
+  function recomputeReadoutPower(editedRid) {
+    var pop = state.spec.populate;
+    var bucket = ((pop.resonator || {})[editedRid]) || {};
+    var amp = Math.abs(parseFloat(bucket.readout_amplitude));
+    if (!isFinite(amp) || amp <= 0) { recomputeLOs(); return; }
+    var target = fspForAmp("resonator", editedRid) + 20 * Math.log10(amp);
+    var members = readoutBankMembers(editedRid) ||
+      [{ group: "resonator", rid: editedRid }];
+    var fsp = solvePortFsp(target, members.length);
+    var clamped = Math.min(ampForTarget(target, fsp), 1);
+    pop.resonator = pop.resonator || {};
+    members.forEach(function (m) {
+      pop.resonator[m.rid] = pop.resonator[m.rid] || {};
+      pop.resonator[m.rid].full_scale_power_dbm = fsp;
+      pop.resonator[m.rid].readout_amplitude = clamped;
+    });
+    refreshFSPCells("resonator");
+    refreshAmpCells();
+    recomputeLOs();   // re-decorate FSP cells + derive+render power findings
+  }
+
+  // Absolute power mode: an xy pulse-power edit re-solves the qubit's drive
+  // port FSP from BOTH pulse targets (x180 + saturation; x90 derives from
+  // x180 downstream), then rewrites both amplitudes so each pulse's absolute
+  // dBm is preserved under the new FSP. Targets recovered from the stored
+  // (oldFsp, |amp|) pairs — sign is preserved on write-back. Pure mutation.
+  function recomputeXyPower(rid) {
+    var pop = state.spec.populate;
+    var pl = ((pop.pulses || {})[rid]) || {};
+    var oldFsp = fspForAmp("pulses", rid);
+    var targets = [];
+    ["x180_amplitude", "saturation_amplitude"].forEach(function (f) {
+      var raw = parseFloat(pl[f]);
+      var a = Math.abs(raw);
+      if (isFinite(a) && a > 0) {
+        targets.push({ field: f, sign: raw < 0 ? -1 : 1,
+                       dbm: oldFsp + 20 * Math.log10(a) });
+      }
+    });
+    if (!targets.length) { recomputeLOs(); return; }
+    var strongest = Math.max.apply(null, targets.map(function (t) {
+      return t.dbm;
+    }));
+    var fsp = solvePortFsp(strongest, 1);
+    pop.qubit = pop.qubit || {};
+    pop.qubit[rid] = pop.qubit[rid] || {};
+    pop.qubit[rid].full_scale_power_dbm = fsp;
+    targets.forEach(function (t) {
+      pl[t.field] = t.sign * Math.min(ampForTarget(t.dbm, fsp), 1);
+    });
+    refreshFSPCells("qubit");
+    refreshAmpCells();
+    recomputeLOs();
+  }
+
+  // On step-6 entry, converge any readout bank whose members carry DIVERGENT
+  // FSPs — the tell-tale of pre-allocation single-tone solves (edits made
+  // while state.allocation was null). Collapse each to its strongest member's
+  // target, exactly as an edit of that row would (bank shares one dBm). Runs
+  // only in absolute mode with an allocation present; bounded to one recompute
+  // per divergent bank.
+  function reconcileReadoutBanks() {
+    if (state.powerMode !== "absolute" || !state.allocation) return;
+    var pop = state.spec.populate || {};
+    var banks = {};
+    (state.spec.qubits || []).forEach(function (rid) {
+      var r = (pop.resonator || {})[rid] || {};
+      if (!isFinite(parseFloat(r.readout_amplitude))) return;
+      var key = readoutPortKey(rid);
+      if (key != null) (banks[key] || (banks[key] = [])).push(rid);
+    });
+    Object.keys(banks).forEach(function (key) {
+      var rids = banks[key];
+      if (rids.length <= 1) return;
+      var fsps = {};
+      rids.forEach(function (rid) { fsps[fspForAmp("resonator", rid)] = 1; });
+      if (Object.keys(fsps).length <= 1) return;   // already coherent
+      var strongest = rids[0], best = -Infinity;
+      rids.forEach(function (rid) {
+        var t = fspForAmp("resonator", rid) +
+          20 * Math.log10(Math.abs(parseFloat(pop.resonator[rid].readout_amplitude)));
+        if (t > best) { best = t; strongest = rid; }
+      });
+      recomputeReadoutPower(strongest);
     });
   }
 
@@ -3328,6 +3891,7 @@
     // Clear any stale live-preview panel from a previous visit to this step.
     if (window.GenPreview && window.GenPreview.reset) window.GenPreview.reset();
     loadPopulateUnits();
+    loadPowerMode();
     renderUnitToggles();
     renderPopulateTables();
     var loMap = document.getElementById("gen-lo-map");
@@ -3352,6 +3916,7 @@
     }
     renderPopTopo();     // read-only chip-board mirror (toggleable)
     renderPopWiring();   // build the diagram first…
+    reconcileReadoutBanks();   // converge any pre-allocation divergent-FSP banks
     recomputeLOs();      // …so renderConflicts() can ring its ports
   }
 
@@ -4328,6 +4893,17 @@
     init: init,
     reloadEnvs: loadEnvs,
     useCustomEnv: useCustomEnv,
-    hydrateFromSpec: hydrateFromSpec
+    hydrateFromSpec: hydrateFromSpec,
+    // Pure allocation internals, exposed for the node selfcheck harness only
+    // (tests/generate_power_selfcheck.cjs) — not a public API.
+    _test: {
+      solveLoWindow: solveLoWindow,
+      solvePortFsp: solvePortFsp,
+      ampForTarget: ampForTarget,
+      computeLoAssignments: computeLoAssignments,
+      recomputeReadoutPower: recomputeReadoutPower,
+      recomputeXyPower: recomputeXyPower,
+      PWR: PWR
+    }
   };
 })();
