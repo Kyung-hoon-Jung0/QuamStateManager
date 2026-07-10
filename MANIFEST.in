@@ -1,0 +1,5 @@
+# Ship the Jinja templates + JS/CSS/bundled-libs as package data in the wheel.
+# Without this a regular `pip install` (wheel) installs only .py files and the
+# web UI dies with TemplateNotFound: base.html. Editable installs are unaffected.
+recursive-include quam_state_manager/web/templates *
+recursive-include quam_state_manager/web/static *

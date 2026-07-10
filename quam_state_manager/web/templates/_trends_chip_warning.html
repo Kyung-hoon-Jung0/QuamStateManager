@@ -1,0 +1,16 @@
+{# Shown when the user selects multiple Trends folders that are DIFFERENT chips.
+   Combining them on one trend axis is physically meaningless (chip A's T1 vs
+   chip B's), so we offer to fall back to a single folder instead. #}
+<div class="trend-chip-warning">
+    <p class="trend-chip-warning-title">⚠ Different chips — they can't be shown on one trend.</p>
+    <p class="muted">Different chips can't share a trend axis (e.g. ChipA's T₁ next to
+        ChipB's is meaningless). Selected folders:</p>
+    <ul class="trend-chip-warning-list">
+        {% for f in folders %}
+        <li><code title="{{ f.path }}">{{ f.label }}</code></li>
+        {% endfor %}
+    </ul>
+    <button class="btn-sm" onclick="trendUseSingleFolder()">
+        Trend the most recent folder only
+    </button>
+</div>

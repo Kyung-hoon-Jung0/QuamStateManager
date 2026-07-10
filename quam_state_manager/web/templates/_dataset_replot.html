@@ -1,0 +1,50 @@
+{# Strategy-B reproduced-figure menu. Tiles carry data-endpoint="replot/plot" so
+   the shared _fetchInteractiveFig machinery (observer/prune/render/clickable)
+   loads them from the cached re-run instead of the recipe layer. #}
+{% if not available %}
+<div class="ds-replot-status muted" style="padding:.6rem 1rem">
+    <strong>Reproduce unavailable.</strong> {{ reason }}
+</div>
+{% else %}
+<div class="ds-replot-head">
+    <span class="ds-replot-title">Reproduced from <code>calibration_utils.{{ util }}</code></span>
+    <button type="button" class="btn-sm secondary"
+            onclick="loadDatasetReplot('{{ uid }}', this.closest('.dataset-tab-content'), true)"
+            title="Re-run the plotting code (picks up edits to analysis.py / plotting.py)">
+        ↻ Regenerate
+    </button>
+    <div class="ds-interactive-colbtns" role="group" aria-label="Figures per row">
+        <button type="button" class="ds-col-btn" data-cols="1" onclick="setInteractiveCols(1, this)">1</button>
+        <button type="button" class="ds-col-btn" data-cols="2" onclick="setInteractiveCols(2, this)">2</button>
+        <button type="button" class="ds-col-btn" data-cols="3" onclick="setInteractiveCols(3, this)">3</button>
+    </div>
+</div>
+{% if errors %}
+<details class="ds-replot-errors">
+    <summary>{{ errors|length }} figure(s) could not be reproduced</summary>
+    <ul>
+    {% for e in errors %}
+        <li><code>{{ e.stage }}</code>: {{ e.trace.strip().split('\n')[-1] }}</li>
+    {% endfor %}
+    </ul>
+</details>
+{% endif %}
+{% if figures %}
+<div class="ds-interactive-list" style="--ds-cols:2">
+    {% for fig in figures %}
+    <div class="ds-interactive-fig" data-fig="{{ fig.key }}" data-kind="replot">
+        <div class="ds-interactive-fig-title">{{ fig.title }}</div>
+        <div class="ds-interactive-plot"
+             id="ds-replot-{{ run_id }}-{{ loop.index }}"
+             data-run-id="{{ uid }}" data-fig="{{ fig.key }}"
+             data-endpoint="replot/plot"
+             style="min-height:340px"></div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<p class="muted" style="padding:1rem;text-align:center">
+    The experiment code ran but produced no reproducible figures.
+</p>
+{% endif %}
+{% endif %}

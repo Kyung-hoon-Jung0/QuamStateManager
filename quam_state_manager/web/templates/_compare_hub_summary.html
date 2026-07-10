@@ -1,0 +1,39 @@
+{# Summary table — shared by the inline slice (first _HUB_SUMMARY_INLINE
+   entities, A5 budget) and the /compare-hub/summary full fragment.
+   Expects: entities, srcs, ref_idx, show_more (bool), hub_qs. #}
+<div class="cmp-summary-scroll">
+<table class="cmp-summary">
+  <thead>
+    <tr>
+      <th>Parameter</th>
+      {% for s in srcs %}
+      <th class="{% if loop.index0 == ref_idx %}cmp-col-ref{% endif %}" title="{{ s.label }}">
+        {% if loop.index0 == ref_idx %}★ {% endif %}{{ s.label | truncate(34) }}
+      </th>
+      {% endfor %}
+    </tr>
+  </thead>
+  {% for ent in entities %}
+  <tbody>
+    <tr class="cmp-sum-entity"><td colspan="{{ (srcs | length) + 1 }}">{{ ent.header }}</td></tr>
+    {% for r in ent.rows %}
+    <tr class="{% if r.flag %}cmp-sum-flagged{% endif %}"{% if r.flag %} title="f_01 and RF_frequency diverge beyond 1 kHz — real chips do this intentionally; flagged, never an error"{% endif %}>
+      <td class="cmp-sum-key">{{ r.label }}{% if r.unit %} <span class="muted">({{ r.unit }})</span>{% endif %}</td>
+      {% for i in range(srcs | length) %}
+      <td class="cmp-sum-val{% if r.beyond[i] %} cmp-beyond{% endif %}{% if i == ref_idx %} cmp-col-ref{% endif %}">
+        {{ r.display[i] }}
+        {% if r.delta_disp[i] %}<span class="cmp-delta">{{ r.delta_disp[i] }}</span>{% endif %}
+      </td>
+      {% endfor %}
+    </tr>
+    {% endfor %}
+  </tbody>
+  {% endfor %}
+</table>
+</div>
+{% if show_more %}
+<button type="button" class="btn-sm outline cmp-summary-more"
+        hx-get="/compare-hub/summary?{{ hub_qs }}"
+        hx-target="closest .cmp-tabpane" hx-swap="innerHTML">
+  Show all entities (first {{ entities | length }} shown)</button>
+{% endif %}

@@ -1,0 +1,41 @@
+{# Interactive-figures menu for one run. Rendered into #ds-interactive-container;
+   each .ds-interactive-plot lazy-loads its Plotly JSON via /interactive/plot. #}
+{% if figures %}
+<div class="ds-interactive-toolbar">
+    <span class="ds-interactive-toolbar-label">Columns</span>
+    <div class="ds-interactive-colbtns" role="group" aria-label="Figures per row">
+        <button type="button" class="ds-col-btn" data-cols="1"
+                onclick="setInteractiveCols(1, this)">1</button>
+        <button type="button" class="ds-col-btn" data-cols="2"
+                onclick="setInteractiveCols(2, this)">2</button>
+        <button type="button" class="ds-col-btn" data-cols="3"
+                onclick="setInteractiveCols(3, this)">3</button>
+    </div>
+</div>
+<div class="ds-interactive-list" style="--ds-cols:2">
+    {% for fig in figures %}
+    <div class="ds-interactive-fig" data-fig="{{ fig.key }}" data-kind="{{ fig.kind }}">
+        <div class="ds-interactive-fig-title">
+            {{ fig.title }}
+            {% if fig.static %}<small class="muted" title="Saved figure — not reconstructable from this run's HDF5">(static)</small>
+            {% elif not fig.available %}<small class="muted">({{ fig.reason }})</small>{% endif %}
+        </div>
+        {% if fig.static %}
+        <img src="/dataset/{{ uid }}/fig/{{ fig.key }}" alt="{{ fig.title }}"
+             loading="lazy" onclick="toggleFigureZoom(this)"
+             style="width:100%;height:auto;cursor:zoom-in" title="Static figure — click to zoom">
+        {% elif fig.available %}
+        <div class="ds-interactive-plot"
+             id="ds-iplot-{{ run_id }}-{{ loop.index }}"
+             data-run-id="{{ uid }}" data-fig="{{ fig.key }}"
+             style="min-height:340px"></div>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<p class="muted" style="padding:1rem;text-align:center">
+    No interactive reproduction available for this experiment type — use the
+    <strong>Raw Data</strong> tab to explore the HDF5 arrays.
+</p>
+{% endif %}

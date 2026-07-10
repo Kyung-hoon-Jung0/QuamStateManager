@@ -1,0 +1,12 @@
+{# Full-pane empty state for sidebar menus opened with no chip loaded. Replaces
+   the tiny fading "No state loaded" toast that read as a dead click (a menu that
+   swaps in a small chip looks like nothing happened). Centered + persistent. #}
+<div class="pane-empty" role="status">
+    <div class="pane-empty-icon" aria-hidden="true">📂</div>
+    <h3 class="pane-empty-title">{{ title or "No chip loaded" }}</h3>
+    <p class="pane-empty-hint">
+        {% if page %}Load a chip to view {{ page }}.{% else %}Load a chip to get started.{% endif %}
+        <br>Pick a state folder from the <strong>Workspace</strong> panel on the left,
+        or use <strong>Generate Config</strong> to build a new one.
+    </p>
+</div>

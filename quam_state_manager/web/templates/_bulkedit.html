@@ -1,0 +1,300 @@
+<div class="bulk-panel" id="bulk-panel">
+    {# Title row: just the title + the help (ⓘ) toggle beside it. #}
+    <div class="bulk-toolbar bulk-toolbar-title">
+        <h2 style="white-space:nowrap;margin:0">Live State Edit</h2>
+        {# aria-pressed toggle buttons (audit P2): the full WAI-ARIA tab contract
+           (aria-selected + tabpanel + arrow roving) wasn't implemented, so a broken-
+           contract role=tablist/tab is worse than honest pressed-toggle buttons; switchPane
+           keeps aria-pressed in sync. #}
+        <div class="bulk-segmented" role="group" aria-label="Live State Edit view">
+            <button type="button" class="bulk-seg active" data-pane="grid" aria-pressed="true"
+                    title="The curated Qubits + Pairs grids — fast cross-qubit retune">Live grid</button>
+            <button type="button" class="bulk-seg" data-pane="allvalues" aria-pressed="false"
+                    title="Edit ANY value in the chip — every leaf of state + wiring, searchable">All values</button>
+        </div>
+        <button type="button" class="btn-sm outline bulk-hint-toggle" id="bulk-hint-toggle"
+                onclick="BulkEdit.toggleHint()" aria-pressed="true" title="Show/hide the help text">&#9432;</button>
+    </div>
+    {# ── Pane 1: the existing curated Qubits + Pairs grids (UNCHANGED) ───────── #}
+    <div class="bulk-pane" data-bulk-pane="grid">
+    {# Controls row (below the title): Properties · Search · Apply all · Reset · Aa. #}
+    <div class="bulk-toolbar bulk-toolbar-controls">
+        <details class="bulk-colvis">
+            <summary class="btn-sm outline" title="Choose which property columns to show">&#9776; Properties</summary>
+            <div class="bulk-colvis-menu" id="bulk-colvis-menu" role="menu"></div>
+        </details>
+        <span class="bulk-search-wrap">
+            <input type="search" id="bulk-search" class="bulk-search"
+                   placeholder="Search columns, qubits, numbers…" autocomplete="off"
+                   aria-label="Filter by column name, qubit id, or value">
+            <span class="bulk-search-count muted" id="bulk-search-count" aria-live="polite"></span>
+        </span>
+        <span class="bulk-band-warn" id="bulk-band-warn" aria-live="polite" hidden></span>
+        <span class="bulk-dirty-count" id="bulk-dirty-count" aria-live="polite"></span>
+        <button type="button" class="btn-sm" id="bulk-apply-all" onclick="BulkEdit.applyAll()" disabled
+                title="Apply these edits to the working state (the live chip stays untouched — review in the tray, then apply to live).">Apply all</button>
+        {% if chip_origin != 'dataset_archive' %}
+        <button type="button" class="btn-sm btn-apply-live" id="bulk-apply-sync" onclick="BulkEdit.applyAll(true)" disabled
+                title="One click — apply these edits to the live chip now (writes state.json / wiring.json), skipping the review step."><span aria-hidden="true">&#9889;</span> Apply to live now</button>
+        {% endif %}
+        <button type="button" class="btn-sm outline" id="bulk-reset" onclick="BulkEdit.resetDirty()" disabled
+                title="Discard the unsaved (not-yet-applied) edits in this table">Reset</button>
+        <label class="bulk-freqsync-ctl"
+               title="When on, editing a qubit/readout frequency mirrors its f₀₁↔RF twin — but only when the two are currently equal. RF_frequency is what the hardware actually plays (the config's IF is inferred from it); f_01 is bookkeeping the calibration keeps equal to it. An already-detuned pair is left untouched. Turn off to detune one deliberately.">
+            <input type="checkbox" id="bulk-freq-sync" checked onchange="BulkEdit.setFreqSync(this.checked)">
+            &#128279;&nbsp;Sync f&#8320;&#8321;&#8596;RF</label>
+        <span class="bulk-font-ctl" title="Cell readability — size · weight · letter spacing">
+            <span class="bulk-font-label">Aa</span>
+            <button type="button" class="btn-xs outline bulk-font-preset" data-fs="0.85" onclick="BulkEdit.setFont(0.85)">S</button>
+            <button type="button" class="btn-xs outline bulk-font-preset" data-fs="1" onclick="BulkEdit.setFont(1)">M</button>
+            <button type="button" class="btn-xs outline bulk-font-preset" data-fs="1.25" onclick="BulkEdit.setFont(1.25)">L</button>
+            <input type="range" id="bulk-font-slider" min="0.75" max="1.7" step="0.05" value="1"
+                   oninput="BulkEdit.setFont(this.value)" aria-label="Cell font size" title="Font size">
+            <button type="button" class="btn-xs outline bulk-bold-toggle" id="bulk-bold"
+                    onclick="BulkEdit.toggleBold()" aria-pressed="false" title="Bold values">B</button>
+            <span class="bulk-font-label bulk-ls-label" title="Letter spacing">&#8596;</span>
+            <input type="range" id="bulk-ls-slider" min="0" max="0.12" step="0.02" value="0"
+                   oninput="BulkEdit.setLetterSpacing(this.value)" aria-label="Cell letter spacing" title="Letter spacing (digit gap)">
+        </span>
+    </div>
+    <p class="bulk-hint muted"><button type="button" class="bulk-hint-x" onclick="BulkEdit.toggleHint()"
+        title="Hide this help (re-show with the ⓘ button)" aria-label="Hide help">&#10005;</button>Edit a cell, then <b>Apply</b> its row or <b>Apply&nbsp;all</b>. Edits go to a
+        safe <b>working state</b> (your live chip is untouched) — review them in the tray, then
+        <b>apply&nbsp;to&nbsp;live</b>. A changed cell keeps a red box; hover it for <i>before&nbsp;→&nbsp;after</i>.
+        Click a column header to sort, drag its right edge to resize. <span class="bulk-shared-legend">&#9888; = LO-coupled port (must share a band with its peer)</span>.</p>
+
+    <div class="bulk-scroll-top" id="bulk-scroll-top" aria-hidden="true"><div id="bulk-scroll-top-inner"></div></div>
+    <div class="bulk-table-wrap">
+        <table class="bulk-table" id="bulk-table">
+            <thead>
+                <tr class="bulk-group-row">
+                    <th class="bulk-corner" rowspan="2" scope="col" data-col-key="__id__"
+                        title="Click to sort by qubit name">qubit
+                        <span class="bulk-sort-caret" aria-hidden="true"></span></th>
+                    {% for g in column_groups %}
+                    <th class="bulk-group-head{% if g.group_start %} bulk-col-group-start{% endif %}{% if g.visible == 0 %} bulk-col-hidden{% endif %}"
+                        data-group="{{ g.section }}" colspan="{{ g.visible if g.visible else 1 }}"
+                        scope="colgroup">{{ g.label }}</th>
+                    {% endfor %}
+                    <th class="bulk-apply-col" rowspan="2" scope="col"></th>
+                </tr>
+                <tr class="bulk-head-row">
+                    {% for c in columns %}
+                    <th scope="col" class="bulk-col-head{% if not c.default_on %} bulk-col-hidden{% endif %}{% if c.group_start %} bulk-col-group-start{% endif %}"
+                        data-col-key="{{ c.key }}" data-section="{{ c.section }}"
+                        title="{{ c.section }} · click to sort · drag the right edge to resize">
+                        <span class="bulk-col-label">{{ c.label }}</span>{% if c.unit %} <span class="bulk-col-unit unit">({{ c.unit }})</span>{% endif %}<span class="bulk-sort-caret" aria-hidden="true"></span>
+                        <span class="bulk-col-stats muted" data-col-stats="{{ c.key }}"></span>
+                        <span class="bulk-resize-handle" data-col-key="{{ c.key }}" title="Drag to resize · double-click to auto-fit" aria-hidden="true"></span>
+                    </th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                <tr data-qubit="{{ row.id }}">
+                    <th class="bulk-rowhead" scope="row" data-col-key="__id__">{{ row.id }}</th>
+                    {% for cell in row.cells %}
+                    {% set col = columns[loop.index0] %}
+                    <td class="bulk-td{% if not col.default_on %} bulk-col-hidden{% endif %}{% if col.group_start %} bulk-col-group-start{% endif %}{% if cell.is_pointer %} bulk-td-pointer{% endif %}{% if cell.lo and cell.lo.peer_qubit %} bulk-td-lo{% endif %}"
+                        data-col-key="{{ col.key }}">
+                        <input type="text"
+                               class="bulk-cell{% if cell.modified %} bulk-cell-modified{% endif %}"
+                               value="{{ cell.display }}"
+                               size="{{ col.maxlen }}"
+                               data-dot-path="{{ cell.dot_path }}"
+                               data-resolved="{{ cell.resolved_path }}"
+                               {% if cell.linkable %}data-linkable="1"{% endif %}
+                               {% if cell.is_pointer %}data-is-pointer="1"{% endif %}
+                               data-orig="{{ cell.display }}"
+                               {% if cell.modified %}data-baseline="{{ cell.old_display }}"{% endif %}
+                               {% if cell.lo %}data-lo-field="{{ cell.lo.field }}"{% if cell.lo.band is not none %} data-band="{{ cell.lo.band }}"{% endif %}{% if cell.lo.freq is not none %} data-freq="{{ cell.lo.freq }}"{% endif %}{% if cell.lo.peer_band is not none %} data-peer-band="{{ cell.lo.peer_band }}"{% endif %}{% if cell.lo.peer_qubit %} data-peer="{{ cell.lo.peer_qubit }}"{% endif %}{% endif %}
+                               {% if cell.missing %}placeholder="not set"{% endif %}
+                               title="{{ cell.dot_path }}{% if cell.lo and cell.lo.peer_qubit %} — shares the LO with {{ cell.lo.peer_qubit }} (band {{ cell.lo.peer_band }}); coupled ports must use the same band{% elif cell.is_pointer %} — pointer alias (edits the resolved target){% endif %}">
+                        {% if cell.lo and cell.lo.peer_qubit %}<span class="bulk-shared" title="Shares the LO with {{ cell.lo.peer_qubit }} (band {{ cell.lo.peer_band }}) — LO-coupled ports must use the same band (bands 1 & 3 compatible; band 2 only with band 2)">&#9888;</span>{% elif cell.is_pointer %}<span class="bulk-ptr" title="JSON pointer — editing writes the resolved target">&#8599;</span>{% endif %}
+                        <span class="bulk-band-msg" hidden></span>
+                        <span class="bulk-ba" aria-hidden="true"><span class="bulk-ba-old">{{ cell.old_display }}</span> &rarr; <span class="bulk-ba-new"></span></span>
+                    </td>
+                    {% endfor %}
+                    <td class="bulk-apply-col">
+                        <button type="button" class="btn-xs bulk-row-apply" onclick="BulkEdit.applyRow(this)" disabled>Apply</button>
+                        <span class="bulk-row-error" hidden></span>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {# ── Qubit Pairs grid (stacked below the qubit table) ──────────────────────
+       Columns are SERVER-DERIVED from the chip's real pair leaves (gate macros,
+       flux/coupler pulses, CR/ZZ, coupler, confusion) — lab-flexible, nothing
+       hardcoded. Same .bulk-* markup + commit path as the qubit table; driven by
+       the isolated pair-edit.js. Read-only cells: runtime self-refs (⟳), list/
+       confusion badges (↗ to inspector), and blanks for columns a pair lacks. #}
+    {% if pair_rows %}
+    <div class="bulk-pair-divider" id="bulk-pair-divider">
+        <span class="bulk-pair-divider-label">⇩ Qubit&nbsp;Pairs
+            <small class="muted">— gate macros, flux &amp; coupler pulses (columns derived from this chip)</small></span>
+        <span class="bulk-pair-tools">
+            <details class="bulk-colvis bulk-pair-colvis">
+                <summary class="btn-sm outline" title="Choose which pair property columns to show">&#9776; Pair properties</summary>
+                <div class="bulk-colvis-menu" id="bulk-pair-colvis-menu" role="menu"></div>
+            </details>
+            <span class="bulk-search-count muted" id="bulk-pair-search-count" aria-live="polite"></span>
+            <span class="bulk-dirty-count" id="bulk-pair-dirty-count" aria-live="polite"></span>
+            <button type="button" class="btn-sm" id="bulk-pair-apply-all" onclick="BulkPairEdit.applyAll()" disabled
+                    title="Apply these pair edits to the working state (the live chip stays untouched).">Apply all (pairs)</button>
+            {% if chip_origin != 'dataset_archive' %}
+            <button type="button" class="btn-sm btn-apply-live" id="bulk-pair-apply-sync" onclick="BulkPairEdit.applyAll(true)" disabled
+                    title="One click — apply these pair edits to the live chip now (writes state.json / wiring.json), skipping the review step."><span aria-hidden="true">&#9889;</span> Apply to live now</button>
+            {% endif %}
+            <button type="button" class="btn-sm outline" id="bulk-pair-reset" onclick="BulkPairEdit.resetDirty()" disabled
+                    title="Discard the unsaved (not-yet-applied) pair edits">Reset</button>
+        </span>
+    </div>
+    <div class="bulk-table-wrap bulk-pair-table-wrap">
+        <table class="bulk-table bulk-pair-table" id="bulk-pair-table">
+            <thead>
+                <tr class="bulk-group-row">
+                    <th class="bulk-corner" rowspan="2" scope="col" data-col-key="__id__"
+                        title="Click to sort by pair name">pair
+                        <span class="bulk-sort-caret" aria-hidden="true"></span></th>
+                    {% for g in pair_groups %}
+                    <th class="bulk-group-head{% if g.group_start %} bulk-col-group-start{% endif %}{% if g.visible == 0 %} bulk-col-hidden{% endif %}"
+                        data-group="{{ g.section }}" colspan="{{ g.visible if g.visible else 1 }}"
+                        scope="colgroup">{{ g.label }}</th>
+                    {% endfor %}
+                    <th class="bulk-apply-col" rowspan="2" scope="col"></th>
+                </tr>
+                <tr class="bulk-head-row">
+                    {% for c in pair_columns %}
+                    <th scope="col" class="bulk-col-head{% if not c.default_on %} bulk-col-hidden{% endif %}{% if c.group_start %} bulk-col-group-start{% endif %}"
+                        data-col-key="{{ c.key }}" data-section="{{ c.section }}"
+                        title="{{ c.section }} · click to sort · drag the right edge to resize">
+                        <span class="bulk-col-label">{{ c.label }}</span>{% if c.unit %} <span class="bulk-col-unit unit">({{ c.unit }})</span>{% endif %}<span class="bulk-sort-caret" aria-hidden="true"></span>
+                        <span class="bulk-col-stats muted" data-col-stats="{{ c.key }}"></span>
+                        <span class="bulk-resize-handle" data-col-key="{{ c.key }}" title="Drag to resize · double-click to auto-fit" aria-hidden="true"></span>
+                    </th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in pair_rows %}
+                <tr data-qubit="{{ row.id }}" data-pair="{{ row.id }}">
+                    <th class="bulk-rowhead" scope="row" data-col-key="__id__">{{ row.id }}</th>
+                    {% for cell in row.cells %}
+                    {% set col = pair_columns[loop.index0] %}
+                    <td class="bulk-td{% if not col.default_on %} bulk-col-hidden{% endif %}{% if col.group_start %} bulk-col-group-start{% endif %}{% if cell.kind in ('runtime','list','missing') %} bulk-td-ro{% endif %}{% if cell.is_pointer and cell.kind == 'scalar' %} bulk-td-pointer{% endif %}{% if cell.lo and cell.lo.peer_qubit %} bulk-td-lo{% endif %}"
+                        data-col-key="{{ col.key }}">
+                        {% if cell.kind == 'list' %}
+                        <input type="text" class="bulk-cell bulk-cell-ro" value="{{ cell.display }}"
+                               size="{{ col.maxlen }}" readonly tabindex="-1"
+                               data-dot-path="{{ cell.dot_path }}" data-resolved="{{ cell.resolved_path }}" data-orig="{{ cell.display }}"
+                               title="{{ cell.dot_path }} — list value; open the pair inspector to edit"
+                               aria-label="{{ cell.dot_path }} (list — open inspector to edit)">
+                        <a class="bulk-ro-link" href="#" tabindex="-1"
+                           onclick="return BulkPairEdit.openPair('{{ row.id }}')"
+                           title="Open {{ row.id }} in the inspector to edit this list">&#8599;</a>
+                        {% elif cell.kind in ('runtime', 'missing') %}
+                        <input type="text" class="bulk-cell bulk-cell-ro{% if cell.kind == 'runtime' %} bulk-cell-runtime{% endif %}"
+                               value="{{ cell.display }}" size="{{ col.maxlen }}" readonly tabindex="-1"
+                               data-dot-path="{{ cell.dot_path }}" data-resolved="{{ cell.resolved_path }}" data-orig="{{ cell.display }}"
+                               {% if cell.missing and cell.kind == 'missing' %}placeholder="—"{% endif %}
+                               title="{{ cell.dot_path }}{% if cell.kind == 'runtime' %} — computed at runtime (read-only){% endif %}">
+                        {% else %}
+                        <input type="text"
+                               class="bulk-cell{% if cell.modified %} bulk-cell-modified{% endif %}"
+                               value="{{ cell.display }}" size="{{ col.maxlen }}"
+                               data-dot-path="{{ cell.dot_path }}" data-resolved="{{ cell.resolved_path }}"
+                               {% if cell.linkable %}data-linkable="1"{% endif %}
+                               {% if cell.is_pointer %}data-is-pointer="1"{% endif %}
+                               data-orig="{{ cell.display }}"
+                               {% if cell.modified %}data-baseline="{{ cell.old_display }}"{% endif %}
+                               {% if cell.lo %}data-lo-field="{{ cell.lo.field }}"{% if cell.lo.band is not none %} data-band="{{ cell.lo.band }}"{% endif %}{% if cell.lo.freq is not none %} data-freq="{{ cell.lo.freq }}"{% endif %}{% if cell.lo.peer_band is not none %} data-peer-band="{{ cell.lo.peer_band }}"{% endif %}{% if cell.lo.peer_qubit %} data-peer="{{ cell.lo.peer_qubit }}"{% endif %}{% endif %}
+                               {% if cell.missing %}placeholder="not set"{% endif %}
+                               title="{{ cell.dot_path }}{% if cell.is_pointer %} — pointer alias (edits the resolved target){% endif %}">
+                        {% if cell.is_pointer %}<span class="bulk-ptr" title="JSON pointer — editing writes the resolved target">&#8599;</span>{% endif %}
+                        <span class="bulk-ba" aria-hidden="true"><span class="bulk-ba-old">{{ cell.old_display }}</span> &rarr; <span class="bulk-ba-new"></span></span>
+                        {% endif %}
+                    </td>
+                    {% endfor %}
+                    <td class="bulk-apply-col">
+                        <button type="button" class="btn-xs bulk-row-apply" onclick="BulkPairEdit.applyRow(this)" disabled>Apply</button>
+                        <span class="bulk-row-error" hidden></span>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+    </div>{# /pane: grid #}
+
+    {# ── Pane 2: All values — every leaf of state+wiring, virtual-scrolled ─────
+       Lazy: the heavy 15k-row payload is fetched from GET /bulk/all-values only on
+       first activation of this tab (all-values.js), never on the daily grid load. #}
+    <div class="bulk-pane allvals-page" data-bulk-pane="allvalues" hidden>
+        {# A4: a shrinkable LEFT cluster (search + counters ellipsize) + a fixed nowrap
+           RIGHT cluster (controls never wrap to a 2nd line). #}
+        <div class="av-toolbar">
+            <div class="av-toolbar-left">
+                <input type="search" id="av-search" class="av-search" autocomplete="off"
+                       placeholder="Search any value — path, number, kind:xref, is:editable…"
+                       aria-label="Search all values">
+                <span class="av-coverage muted" id="av-coverage" aria-live="polite"></span>
+                <span class="av-showing muted" id="av-showing" aria-live="polite"></span>
+            </div>
+            <div class="av-toolbar-right">
+                {# A1: All-values readability controls (size · bold · spacing), like Live Grid #}
+                <span class="av-font-ctl" title="Readability — size · weight · spacing">
+                    <span class="av-font-label">Aa</span>
+                    <button type="button" class="btn-xs outline av-font-preset" data-fs="0.85" onclick="AllValues.setFont(0.85)" title="Small">S</button>
+                    <button type="button" class="btn-xs outline av-font-preset" data-fs="1" onclick="AllValues.setFont(1)" title="Medium">M</button>
+                    <button type="button" class="btn-xs outline av-font-preset" data-fs="1.2" onclick="AllValues.setFont(1.2)" title="Large">L</button>
+                    <input type="range" id="av-font-slider" min="0.85" max="1.3" step="0.05" value="1" oninput="AllValues.setFont(this.value)" aria-label="Font size" title="Font size">
+                    <button type="button" class="btn-xs outline av-bold-toggle" id="av-bold" onclick="AllValues.toggleBold()" aria-pressed="false" title="Bold values">B</button>
+                    <span class="av-font-label" title="Letter spacing">↔</span>
+                    <input type="range" id="av-ls-slider" min="0" max="0.12" step="0.02" value="0" oninput="AllValues.setLetterSpacing(this.value)" aria-label="Letter spacing" title="Letter spacing">
+                </span>
+                <button type="button" class="btn-xs outline" id="av-expand-all" title="Expand every group">Expand all</button>
+                <button type="button" class="btn-xs outline" id="av-collapse-all" title="Collapse every group">Collapse all</button>
+                <span class="bulk-dirty-count" id="av-dirty-count" aria-live="polite"></span>
+                <button type="button" class="btn-sm" id="av-apply" disabled
+                        title="Apply these edits to the working state (the live chip stays untouched).">Apply all</button>
+                {% if chip_origin != 'dataset_archive' %}
+                <button type="button" class="btn-sm btn-apply-live" id="av-apply-sync" disabled
+                        title="One click — apply these edits to the live chip now (writes state.json / wiring.json), skipping the review step."><span aria-hidden="true">&#9889;</span> Apply to live now</button>
+                {% endif %}
+                <button type="button" class="btn-sm outline" id="av-reset" disabled
+                        title="Discard the unsaved (not-yet-applied) edits in this list">Reset</button>
+            </div>
+        </div>
+        <div class="av-chips" id="av-chips">
+            <button type="button" class="av-chip active" data-kind="">All</button>
+            <button type="button" class="av-chip" data-kind="is:editable">Editable</button>
+            <button type="button" class="av-chip" data-kind="kind:xref">Pointers</button>
+            <button type="button" class="av-chip" data-kind="kind:list">Lists</button>
+            <button type="button" class="av-chip" data-kind="kind:membership">Membership</button>
+            <button type="button" class="av-chip" data-kind="is:modified">Modified</button>
+        </div>
+        <p class="bulk-hint muted av-help">Every leaf of <b>state + wiring</b> is here. Editable scalars take input
+            (Apply goes to the safe <b>working state</b>); pointer links (↗), list/matrix (▦), self-refs (⟳) and
+            chip-membership (⚠) arrays are <b>read-only</b> by design. Click a group to expand; search to jump anywhere.</p>
+        <div class="av-scroll" id="av-scroll">
+            <table class="av-table-virtual" id="av-table">
+                <colgroup><col style="width:100%"></colgroup>
+                <thead><tr><th><span class="av-gutter"></span><span class="av-cell-path">Path</span><span class="av-cell-val">Value</span></th></tr></thead>
+                <tbody id="av-tbody"><tr><td class="av-loading">Loading values…</td></tr></tbody>
+            </table>
+        </div>
+    </div>{# /pane: allvalues #}
+</div>
+
+<script>
+    if (window.BulkEdit && BulkEdit.mount) BulkEdit.mount({{ columns | script_json }}, {{ band_meta | script_json }});
+    {% if pair_rows %}
+    if (window.BulkPairEdit && BulkPairEdit.mount) BulkPairEdit.mount({{ pair_columns | script_json }});
+    {% endif %}
+    if (window.AllValues && AllValues.setup) AllValues.setup();
+</script>

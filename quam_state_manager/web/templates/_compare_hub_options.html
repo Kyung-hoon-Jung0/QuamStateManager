@@ -1,0 +1,20 @@
+{# "which state?" popover — one chip's addable states (docs/49 zone A).
+   Live first (the default), then Working, history snapshots, archived runs.
+   Fixes the old picker's silent-oldest-run trap by showing what each row IS. #}
+<div class="cmp-options" role="listbox" aria-label="Which state of {{ name }}?">
+  <div class="cmp-options-head">
+    <span>{{ name }} — which state?</span>
+    <button type="button" class="cmp-options-x" title="Close"
+            onclick="this.closest('#cmp-options-pop').innerHTML = ''">&times;</button>
+  </div>
+  {% if not options %}
+  <p class="muted cmp-options-empty">Nothing addable found for this chip.</p>
+  {% endif %}
+  {% for o in options %}
+  <button type="button" class="cmp-option" data-ref="{{ o.ref }}"
+          onclick="cmpHubAddOption(this)" {% if o.hint %}title="{{ o.hint }}"{% endif %}>
+    <span class="cmp-src-badge cmp-badge-{{ o.badge | lower }}">{{ o.badge }}</span>
+    <span class="cmp-option-label">{{ o.label }}</span>
+  </button>
+  {% endfor %}
+</div>

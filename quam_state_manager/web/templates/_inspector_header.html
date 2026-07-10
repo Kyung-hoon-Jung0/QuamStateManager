@@ -1,0 +1,54 @@
+<div class="inspector-header inspector-header-{{ inspector_type }}">
+    <div class="inspector-title">
+        {% if inspector_runid is defined and inspector_runid is not none %}
+        {# Datasets: no leading badge at all (removed per user request — the run-id
+           "#NN" pill was wasted space; the run id still lives in the Overview tab
+           and the #ds-detail-root data-run-id attr). The else-branch badge is kept
+           for qubit/pair inspectors, which DON'T set inspector_runid. #}
+        {% else %}
+        <span class="inspector-badge inspector-badge-{{ inspector_type }}">{{ inspector_type | capitalize }}</span>
+        {% endif %}
+        <strong>{{ inspector_label }}</strong>
+        {% if inspector_qubits is defined and inspector_qubits %}<span class="inspector-qubit-list" title="{{ inspector_qubits }}">{{ inspector_qubits }}</span>{% endif %}
+        {% if inspector_sub %}<small class="muted">{{ inspector_sub }}</small>{% endif %}
+    </div>
+    <div class="inspector-actions">
+        {% if inspector_type == "dataset" %}
+        {# Prev/next run navigation — walks the sidebar tree's run entries
+           (same order the user sees). Keyboard: [ and ] do the same. #}
+        <button class="inspector-nav-btn" onclick="dsNavRun(-1)"
+                title="Previous run  [" aria-label="Previous run">&#8593;</button>
+        <button class="inspector-nav-btn" onclick="dsNavRun(1)"
+                title="Next run  ]" aria-label="Next run">&#8595;</button>
+        <button class="inspector-vsprev" onclick="dsComparePrev(this)"
+                title="Compare with the previous run of this experiment"
+                aria-label="Compare with the previous run of the same experiment">vs prev</button>
+        <button class="inspector-expand" onclick="dsOpenFullPage(this)"
+                title="Open as a full page (wide figures)"
+                aria-label="Open this run as a full page">&#x26F6;</button>
+        <button class="inspector-pin" id="inspector-pin-btn"
+                onclick="togglePinDataset()" title="Pin for comparison"
+                aria-label="Pin this dataset for side-by-side comparison">&#128204;</button>
+        {% endif %}
+        <button class="inspector-close" onclick="closeInspector()"
+                title="Close inspector" aria-label="Close inspector">&times;</button>
+    </div>
+</div>
+{# ── In-panel search bar (qubit / pair detail only) ──────────────────
+   Filters rows of the parent <article>'s .prop-table sections. Sticky
+   at the top of the inspector pane so it stays visible while the user
+   scrolls the long property lists. Empty by default; clicking a new
+   qubit/pair re-renders this partial and naturally resets the search. #}
+{% if inspector_type in ('qubit', 'pair') %}
+<div class="detail-search">
+    <input type="search" class="detail-search-input"
+           placeholder="Search keys, values, or sections…"
+           aria-label="Filter properties"
+           oninput="filterDetailPanel(this)">
+    <small class="detail-search-count muted"></small>
+    <button type="button" class="detail-search-clear" tabindex="-1"
+            aria-label="Clear search"
+            onclick="window.clearDetailPanelSearch && window.clearDetailPanelSearch(this)"
+            hidden>&times;</button>
+</div>
+{% endif %}

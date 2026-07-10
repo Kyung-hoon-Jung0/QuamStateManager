@@ -1,0 +1,42 @@
+<div class="preview-banner" id="preview-banner">
+  <span class="preview-banner-label">
+    &#128065; Previewing dropped config: <strong>{{ label }}</strong>
+    <span class="muted">(read-only)</span>
+  </span>
+  <span class="preview-banner-actions">
+    {% if diag_summary.total > 0 %}
+      <button type="button"
+              class="btn-sm outline diag-badge {% if diag_summary.error %}diag-error{% elif diag_summary.warning %}diag-warning{% else %}diag-info{% endif %}"
+              onclick="togglePreviewIssues()">&#9888; {{ diag_summary.total }} issue{{ 's' if diag_summary.total != 1 }}</button>
+    {% else %}
+      <span class="diag-badge diag-ok-badge">&#10003; no broken references</span>
+    {% endif %}
+    <button type="button" class="btn-sm preview-clear"
+            hx-get="/config" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">Clear</button>
+  </span>
+</div>
+
+<div id="preview-issues" class="preview-issues hidden">
+  {% include '_diagnostics_list.html' %}
+</div>
+
+{% if config %}
+<article class="config-browser">
+  {% for key in top_level_keys %}
+  <details class="detail-section">
+    <summary class="section-header">
+      <code>{{ key }}</code>
+      {% set kv = config.get(key) %}
+      {% if kv is mapping %}
+      <small class="muted">({{ kv | length }} entries)</small>
+      {% elif kv is iterable and kv is not string %}
+      <small class="muted">({{ kv | length }} items)</small>
+      {% endif %}
+    </summary>
+    <pre class="config-json">{{ config.get(key) | tojson(indent=2) }}</pre>
+  </details>
+  {% endfor %}
+</article>
+{% else %}
+<div class="config-empty"><p class="muted">The dropped file has no config content.</p></div>
+{% endif %}

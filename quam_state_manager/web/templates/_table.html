@@ -1,0 +1,120 @@
+<div class="table-header-row">
+    <h2>Comparison Table</h2>
+    <div class="table-filter">
+        <input type="search" placeholder="Filter rows..." autocomplete="off"
+               oninput="filterTable(this, 'comparison-table')">
+        <small id="comparison-table-filter-count" class="muted"></small>
+    </div>
+</div>
+
+<form id="table-form" hx-get="/table" hx-target="#table-pane" class="table-controls">
+    <input type="hidden" name="per_page" value="{{ per_page }}">
+    <div class="prop-selector">
+        <div class="prop-select-all">
+            <a href="#" onclick="toggleAllProps(true); return false;">Select All</a>
+            <a href="#" onclick="toggleAllProps(false); return false;">Deselect All</a>
+        </div>
+        {% for group in prop_groups %}
+        <div class="prop-group" data-group="{{ group.name }}">
+            <input type="checkbox" class="prop-group-toggle"
+                   onchange="toggleGroup(this.closest('.prop-group'), this.checked)"
+                   {% set ns = namespace(all=true, none=true) %}
+                   {% for p in group.props %}
+                       {% if p in selected_props %}{% set ns.none = false %}{% else %}{% set ns.all = false %}{% endif %}
+                   {% endfor %}
+                   {% if ns.all %}checked{% endif %}>
+            <span class="prop-group-label">{{ group.name }}</span>
+            <div class="prop-group-items">
+                {% for prop in group.props %}
+                <label class="prop-check">
+                    <input type="checkbox" name="props" value="{{ prop }}"
+                           onchange="syncGroupCheckbox(this.closest('.prop-group'))"
+                           {% if prop in selected_props %}checked{% endif %}>
+                    <small>{{ prop }}</small>
+                </label>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    <div class="table-actions">
+        {% if chains is defined and chains %}
+        <select name="chain" onchange="this.form.requestSubmit()">
+            <option value="">All Chains</option>
+            {% for ch in chains %}
+            <option value="{{ ch }}" {% if active_chain == ch %}selected{% endif %}>Chain {{ ch }}</option>
+            {% endfor %}
+        </select>
+        {% endif %}
+        <button type="submit" class="outline btn-sm">Update</button>
+        <a href="/export?{{ 'props=' + selected_props | join('&props=') }}" class="outline btn-sm" role="button">Export CSV</a>
+    </div>
+</form>
+
+<script>
+function toggleAllProps(checked) {
+    var form = document.getElementById('table-form');
+    form.querySelectorAll('input[name="props"]').forEach(function(cb) { cb.checked = checked; });
+    form.querySelectorAll('.prop-group-toggle').forEach(function(cb) { cb.checked = checked; cb.indeterminate = false; });
+}
+function toggleGroup(groupEl, checked) {
+    groupEl.querySelectorAll('input[name="props"]').forEach(function(cb) { cb.checked = checked; });
+    var toggle = groupEl.querySelector('.prop-group-toggle');
+    toggle.checked = checked;
+    toggle.indeterminate = false;
+}
+function syncGroupCheckbox(groupEl) {
+    var boxes = groupEl.querySelectorAll('input[name="props"]');
+    var total = boxes.length, checked = 0;
+    boxes.forEach(function(cb) { if (cb.checked) checked++; });
+    var toggle = groupEl.querySelector('.prop-group-toggle');
+    toggle.checked = (checked === total);
+    toggle.indeterminate = (checked > 0 && checked < total);
+}
+</script>
+
+{% set ns = namespace(qs="") %}
+{% for p in selected_props %}{% set ns.qs = ns.qs ~ "&props=" ~ p %}{% endfor %}
+{% if active_chain %}{% set ns.qs = ns.qs ~ "&chain=" ~ active_chain %}{% endif %}
+{% if sort_by %}{% set ns.qs = ns.qs ~ "&sort=" ~ sort_by ~ "&dir=" ~ sort_dir %}{% endif %}
+{% set base_url = "/table" %}
+{% set extra_qs = ns.qs %}
+{% set storage_key = "quam_table_per_page" %}
+{% include "_pagination.html" %}
+
+<div class="table-scroll">
+<table id="comparison-table" class="data-table comparison-table" role="grid">
+    <thead>
+        <tr>
+            <th>ID</th>
+            {% for prop in selected_props %}
+            <th>
+                <a hx-get="/table?{% for p in selected_props %}props={{ p }}&{% endfor %}sort={{ prop }}&dir={% if sort_by == prop and sort_dir == 'asc' %}desc{% else %}asc{% endif %}{% if active_chain %}&chain={{ active_chain }}{% endif %}&per_page={{ per_page }}"
+                   hx-target="#table-pane" class="sort-header">
+                    {{ prop }}
+                    {% if sort_by == prop %}
+                    <span class="sort-arrow">{% if sort_dir == 'asc' %}&#9650;{% else %}&#9660;{% endif %}</span>
+                    {% endif %}
+                </a>
+            </th>
+            {% endfor %}
+        </tr>
+    </thead>
+    <tbody>
+    {% for row in rows %}
+        <tr class="clickable-row" hx-get="/qubit/{{ row.id }}" hx-target="#inspector-pane" hx-swap="innerHTML">
+            <td><strong>{{ row.id }}</strong></td>
+            {% for prop in selected_props %}
+            {% set val = row.get(prop) %}
+            <td class="{% if val is none %}cell-null{% elif col_stats is defined and col_stats.get(prop) and val == col_stats[prop].max %}cell-best{% elif col_stats is defined and col_stats.get(prop) and val == col_stats[prop].min %}cell-worst{% endif %}">
+                {% if val is none %}<span class="muted">-</span>
+                {% elif val is float and (val|abs >= 1e6 or (0 < val|abs < 1e-3)) %}{{ "%.4e" | format(val) }}
+                {% elif val is float %}{{ "%.6f" | format(val) }}
+                {% else %}{{ val }}{% endif %}
+            </td>
+            {% endfor %}
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>

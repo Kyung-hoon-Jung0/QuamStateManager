@@ -1,0 +1,68 @@
+{% if summary.error is defined %}
+<p style="padding:1rem;color:var(--pico-del-color)">{{ summary.error }}</p>
+{% else %}
+
+{% if summary.dimensions %}
+<div class="h5-summary">
+    <div class="h5-dims">
+        <strong>Dimensions:</strong>
+        {% for dim, size in summary.dimensions.items() %}
+        <code>{{ dim }}</code> ({{ size }}){% if not loop.last %} &times; {% endif %}
+        {% endfor %}
+    </div>
+
+    {% if summary.coordinates %}
+    <details class="h5-coords" open>
+        <summary><strong>Coordinates</strong></summary>
+        <table class="prop-table" role="grid">
+            <tbody>
+            {% for cname, cvals in summary.coordinates.items() %}
+            <tr>
+                <td class="col-prop"><code>{{ cname }}</code></td>
+                <td class="col-val">
+                    {% if cvals | length <= 10 %}
+                        {{ cvals | join(', ') }}
+                    {% else %}
+                        {{ cvals[:3] | join(', ') }} ... {{ cvals[-2:] | join(', ') }} <small class="muted">({{ cvals | length }} items)</small>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </details>
+    {% endif %}
+
+    {% if summary.data_vars %}
+    <script>window._h5CoordsById = window._h5CoordsById || {}; window._h5CoordsById['{{ uid }}'] = {{ summary.coordinates | tojson }};</script>
+    <table class="prop-table h5-vars-table" role="grid">
+        <thead>
+            <tr>
+                <th>Variable</th>
+                <th>Shape</th>
+                <th>dtype</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for vname, vinfo in summary.data_vars.items() %}
+        <tr>
+            <td><code>{{ vname }}</code></td>
+            <td><small>{{ vinfo.shape }}</small></td>
+            <td><small class="muted">{{ vinfo.dtype }}</small></td>
+            <td>
+                <button class="btn-sm outline"
+                        onclick='plotOrSelectQubit(this, "{{ uid }}", "{{ which }}", "{{ vname }}", {{ vinfo.dimensions | tojson }})'
+                        title="Plot {{ vname }}">Plot</button>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>
+{% else %}
+<p class="muted" style="padding:1rem">No data variables found in this dataset.</p>
+{% endif %}
+
+{% endif %}

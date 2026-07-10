@@ -1,0 +1,116 @@
+{% set trend_data = trend | tojson %}
+{% set num_runs = trend.runs | length %}
+
+{% if num_runs == 0 %}
+<p class="muted section-placeholder">No runs found for this experiment.</p>
+{% else %}
+
+{# ── Metric Trend Charts ── #}
+{% if trend.series %}
+<div class="trends-section">
+    <h3>Metric Trends <small class="muted">({{ num_runs }} runs)</small></h3>
+    {% for s in trend.series %}
+    <div class="trend-chart-box">
+        <div class="trend-chart-label"><code>{{ s.qubit }}</code> &mdash; {{ s.metric }}</div>
+        <div id="trend-chart-{{ loop.index0 }}" class="trend-mini-chart"></div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<p class="muted section-placeholder">No numeric fit-result metrics found.</p>
+{% endif %}
+
+{# ── Figure Timeline ── #}
+{% if trend.figure_keys %}
+<div class="trends-section">
+    <h3>Figure Timeline</h3>
+    {% for fig_key in trend.figure_keys %}
+    <details class="trend-figure-strip-section">
+        <summary><code>{{ fig_key }}</code> <small class="muted">({{ num_runs }} runs)</small></summary>
+        <div class="figure-strip">
+            {% for run in trend.runs %}
+            <div class="figure-strip-item">
+                <div class="figure-strip-label">#{{ run.run_id }}</div>
+                <img src="/dataset/{{ run.uid }}/fig/{{ fig_key }}"
+                     alt="{{ fig_key }}" loading="lazy"
+                     onclick="toggleFigureZoom(this)">
+            </div>
+            {% endfor %}
+        </div>
+    </details>
+    {% endfor %}
+</div>
+{% endif %}
+
+{# ── Parameter Differences ── #}
+{% if param_diff_rows %}
+<div class="trends-section">
+    <h3>Parameter Differences</h3>
+    <div class="table-scroll">
+    <table class="data-table" role="grid">
+        <thead><tr>
+            <th>Parameter</th>
+            {% for label in labels %}
+            <th title="{{ label }}">{{ label | truncate(14) }}</th>
+            {% endfor %}
+        </tr></thead>
+        <tbody>
+        {% for row in param_diff_rows %}
+        <tr>
+            <td><code>{{ row.key }}</code></td>
+            {% set ref_val = row["values"][0].value %}
+            {% for v in row["values"] %}
+            {% set is_diff = (loop.index0 != 0) and (v.value != ref_val) %}
+            <td{% if is_diff %} class="cell-diff"{% endif %}>
+                {% if v.value is none %}<span class="muted">-</span>
+                {% elif v.value is number %}{{ "%.4g" | format(v.value) }}
+                {% elif v.value is iterable and v.value is not string %}<small class="muted">[{{ v.value | length }} items]</small>
+                {% else %}{{ v.value }}{% endif %}
+            </td>
+            {% endfor %}
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endif %}
+
+{# ── Plotly chart rendering script ── #}
+<script>
+(function() {
+    var trend = {{ trend_data }};
+    var runs = trend.runs;
+    var xLabels = runs.map(function(r) { return '#' + r.run_id; });
+
+    trend.series.forEach(function(s, idx) {
+        var el = document.getElementById('trend-chart-' + idx);
+        if (!el) return;
+
+        var trace = {
+            x: xLabels,
+            y: s.values,
+            mode: 'lines+markers',
+            name: s.qubit + ' / ' + s.metric,
+            connectgaps: false,
+            marker: { size: 6 },
+            line: { width: 2 }
+        };
+
+        var mini = UI_CONFIG.plotly.trendsMini;
+        var layout = {
+            margin: mini.margin,
+            xaxis: { title: '', tickangle: mini.xTickAngle, tickfont: mini.xTickFont },
+            yaxis: { title: s.metric, tickfont: mini.yTickFont },
+            height: mini.height,
+            colorway: UI_CONFIG.plotly.colorway,
+            showlegend: false,
+            hovermode: 'x unified'
+        };
+
+        _plotlyRender(el, [trace], layout, { responsive: true, displayModeBar: false });
+    });
+})();
+</script>
+
+{% endif %}

@@ -1,0 +1,39 @@
+<div class="changes-list">
+{% if changes %}
+    <table class="changes-table" role="grid">
+        <thead>
+            <tr>
+                <th>Path</th>
+                <th>Old</th>
+                <th>New</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for c in changes %}
+        <tr>
+            <td><code class="dot-path">{{ c.dot_path }}</code></td>
+            {% if c.created %}
+            <td class="change-old muted">&mdash;</td>
+            <td class="change-new">+ added{% if c.new_value is mapping %} ({{ c.new_value | length }} field{{ 's' if c.new_value | length != 1 }}){% endif %}</td>
+            {% elif c.deleted %}
+            <td class="change-old">&minus; deleted{% if c.old_value is mapping %} ({{ c.old_value | length }} field{{ 's' if c.old_value | length != 1 }}){% endif %}</td>
+            <td class="change-new muted">&mdash;</td>
+            {% else %}
+            <td class="change-old">{{ c.old_value if c.old_value is not none else 'null' }}</td>
+            <td class="change-new">{{ c.new_value if c.new_value is not none else 'null' }}</td>
+            {% endif %}
+            <td>
+                <button class="outline btn-sm btn-discard"
+                        hx-post="/discard" hx-target="#changes-panel"
+                        hx-vals='{"index": "{{ loop.index0 }}"}'>Discard</button>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    <small class="muted">{{ changes | length }} unsaved change(s)</small>
+{% else %}
+    <p class="muted"><em>No unsaved changes.</em></p>
+{% endif %}
+</div>

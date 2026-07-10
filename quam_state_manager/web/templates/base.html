@@ -1,0 +1,1217 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QUAM State Manager</title>
+    <link rel="icon" type="image/svg+xml"
+          href="{{ url_for('static', filename='favicon.svg') }}">
+    {# Apply theme as early as possible to prevent FOUC. Dark is the default; #}
+    {# users who explicitly chose 'light' have it persisted in localStorage. #}
+    <script>
+      (function() {
+        var saved = null;
+        try { saved = localStorage.getItem('quam_theme'); } catch(e) {}
+        // ?theme=light|dark forces the theme for this view (deep-link / support /
+        // screenshots) without persisting — overrides the saved preference.
+        var qp = null;
+        try { qp = new URLSearchParams(location.search).get('theme'); } catch(e) {}
+        var theme = (qp === 'light' || qp === 'dark') ? qp : (saved || 'dark');
+        document.documentElement.setAttribute('data-theme', theme);
+      })();
+    </script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='pico.min.css') }}">
+    {# Stylesheet up top so CSS downloads in parallel with the scripts. #}
+    <link rel="stylesheet" href="{{ asset_url('style.css') }}">
+    {# Scripts load eagerly (NOT deferred): UI_CONFIG (app.js) and DatasetVirtual
+       (dataset-virtual.js) are read by parse-time inline scripts in full-page
+       template renders (e.g. /topology, /trends, /datasets on direct load or
+       refresh), so they must be defined before the <body> parses. Deferring them
+       silently broke those pages on full-page load. The app is served locally,
+       so eager JS costs ~nothing. Plotly is the one exception — it's lazy-loaded
+       on demand via window.requirePlotly() (see app.js), never eagerly. #}
+    <script src="{{ url_for('static', filename='htmx.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='split.min.js') }}"></script>
+    <script src="{{ asset_url('app.js') }}"></script>
+    <script src="{{ asset_url('dataset-virtual.js') }}"></script>
+    <script src="{{ asset_url('generate.js') }}"></script>
+    <script src="{{ asset_url('generate_preview.js') }}"></script>
+    <script src="{{ asset_url('topo-graph.js') }}"></script>
+    <script src="{{ asset_url('wiring-grid.js') }}"></script>
+    <script src="{{ asset_url('chip-status.js') }}"></script>
+    <script src="{{ asset_url('bulk-edit.js') }}"></script>
+    <script src="{{ asset_url('pair-edit.js') }}"></script>
+    <script src="{{ asset_url('all-values.js') }}"></script>
+    <script src="{{ asset_url('pulses.js') }}"></script>
+    <script src="{{ asset_url('plot-theme.js') }}"></script>
+    <script src="{{ asset_url('ndview.js') }}"></script>
+    <script src="{{ asset_url('scheduler.js') }}"></script>
+    <script src="{{ asset_url('calc.js') }}"></script>
+    <script src="{{ asset_url('compare-hub.js') }}"></script>
+    {# C2: ts-local spans are hidden until JS localizes them (no UTC→local flash); with JS
+       off, reveal them so the UTC fallback text still shows. #}
+    <noscript><style>.ts-local{visibility:visible}</style></noscript>
+</head>
+<body data-plotly-src="{{ url_for('static', filename='plotly.min.js') }}">
+    <header class="topbar">
+        <nav>
+            <ul>
+                <li><button class="sidebar-toggle" onclick="toggleSidebar()" title="Toggle sidebar">☰</button></li>
+                <li><strong class="app-title">QUAM State Manager</strong></li>
+                {# Workbench: a standalone co-display shell that puts Qualibrate
+                   (iframe) beside this app. Full-page route, so a plain link
+                   (not hx-get); opens in a new tab. #}
+                <li><a href="/workbench" target="_blank" rel="noopener"
+                       class="wb-link" title="Open Qualibrate side-by-side with the State Manager">⌗ Sync-Qualibrate</a></li>
+                <li id="topbar-tray-slot">{% include '_pending_tray.html' %}</li>
+                {# State Archive / Bookmark (feedback #3) — snapshot the current
+                   state into the history store with a tag + note, PINNED (prune-
+                   exempt). Native <details> popover (no JS); HTMX posts the form. #}
+                <li class="archive-wrap">
+                    <details class="archive-details" id="archive-details">
+                        <summary class="archive-btn" title="Bookmark / archive this state (tag + note)" aria-label="Bookmark this state"><span class="archive-ico" aria-hidden="true">&#128278;</span><span class="archive-label">bookmark</span></summary>
+                        <div class="archive-pop" role="dialog" aria-label="Bookmark this state">
+                            <strong class="archive-title">Bookmark this state</strong>
+                            {# C1: keep the popover OPEN on success (closing it hid the
+                               confirmation — "no response"); reset the fields + FLASH the
+                               status so each save is unmistakable. The status now carries
+                               the snapshot time, so a 2nd save with the same tag still
+                               differs in content (HTMX re-renders) and re-flashes. #}
+                            <form hx-post="/state/archive" hx-target="#archive-status" hx-swap="innerHTML"
+                                  hx-on::after-request="if(event.detail.xhr.responseText.indexOf('archive-ok')>=0){this.reset();var s=document.getElementById('archive-status');if(s){s.classList.remove('archive-flash');void s.offsetWidth;s.classList.add('archive-flash');if(window.applyLocalTimes)applyLocalTimes(s);}}">
+                                <input type="text" name="tag" class="archive-in" maxlength="120"
+                                       placeholder="Tag (e.g. before CZ retune)" autocomplete="off">
+                                <textarea name="note" class="archive-note" rows="2" maxlength="2000"
+                                          placeholder="Note (optional)"></textarea>
+                                <div class="archive-actions">
+                                    <button type="submit" class="btn-sm">Save bookmark</button>
+                                    <a href="/state-history" hx-get="/state-history" hx-target="#table-pane"
+                                       hx-push-url="true" class="archive-link"
+                                       onclick="this.closest('details').open=false">View archive →</a>
+                                </div>
+                                <span id="archive-status" class="archive-status-slot" aria-live="polite"></span>
+                            </form>
+                        </div>
+                    </details>
+                </li>
+                {# Always-on diagnostics health badge for the active chip. Lazily
+                   loaded (load + diagnostics-changed); shows "✓ healthy" or
+                   "⚠ N issues" and opens /diagnostics. Empty when no chip. #}
+                <li id="diag-tray-slot" class="diag-tray-slot"
+                    hx-get="/diagnostics/summary"
+                    hx-trigger="load, diagnostics-changed from:body"
+                    hx-swap="innerHTML"></li>
+                {# Global "import in progress" pill. Hidden by default; revealed
+                   when /param-history/backfill/status reports running, regardless
+                   of which page the user is on. Click jumps to Param History. #}
+                <li id="topbar-import-pill" class="topbar-import-pill" hidden>
+                    <a href="/param-history" hx-get="/param-history"
+                       hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                       class="import-pill-link">
+                        <span class="import-pill-spinner" aria-hidden="true"></span>
+                        <span class="import-pill-label">Importing…</span>
+                        <span class="import-pill-count"></span>
+                    </a>
+                </li>
+                {# Scheduler-running badge. Hidden unless a queue is running/paused
+                   (set by the global poll below). Editing is locked server-side
+                   while running; this is the visible signal. #}
+                <li id="scheduler-badge" class="scheduler-badge" hidden aria-live="polite">
+                    <a href="/scheduler" hx-get="/scheduler" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                       class="scheduler-badge-link" title="Scheduler — click to view">
+                        <span class="scheduler-badge-dot" aria-hidden="true"></span>
+                        <span class="scheduler-badge-label">Scheduler</span>
+                        <span class="scheduler-badge-count"></span>
+                    </a>
+                </li>
+            </ul>
+            <ul class="topbar-right">
+                <li class="search-box">
+                    <input type="search" id="global-search" name="q"
+                           placeholder="Search: qA1, T1, amplitude, readout..."
+                           hx-get="/search" hx-trigger="keyup changed delay:150ms"
+                           hx-target="#inspector-pane" hx-sync="#inspector-pane:replace"
+                           hx-indicator="#search-spinner"
+                           autocomplete="off">
+                    <span id="search-spinner" class="htmx-indicator spinner"></span>
+                </li>
+                {# Converter & calculator (feedback #2) — chip-independent client-side
+                   tool: power-dB↔amplitude, MW-FEM amp↔dBm (full_scale_power_dbm),
+                   dBm↔Volt @R, and a safe free expression box. #}
+                <li class="calc-wrap">
+                    <button class="calc-btn" id="calc-btn" type="button" onclick="toggleCalc()"
+                            title="Calculator (dBm · volt · amplitude · expression)"
+                            aria-haspopup="dialog" aria-expanded="false" aria-controls="calc-popover">&#8757;<span class="visually-hidden">Open calculator</span></button>
+                    <div id="calc-popover" class="calc-popover calc-hidden" role="dialog" aria-modal="false" aria-label="Calculator">
+                        <div class="calc-header" id="calc-header">
+                            <strong class="calc-title">Calculator</strong>
+                            <span class="calc-header-tools">
+                                <button type="button" class="calc-pin" id="calc-pin" onclick="calcTogglePin()" aria-pressed="false" title="Pin open (ignore outside clicks)">&#128204;</button>
+                                <button type="button" class="calc-close" onclick="toggleCalc()" title="Close" aria-label="Close">&times;</button>
+                            </span>
+                        </div>
+                        <div class="calc-body">
+                            <details class="calc-sec" open>
+                                <summary class="calc-sec-label">Power change → amplitude</summary>
+                                <div class="calc-row"><label class="calc-field">Power change Δ<input type="text" id="calc-s1-dp" class="calc-in" value="-25" inputmode="decimal"><span class="calc-unit">dB</span></label></div>
+                                <div class="calc-row"><label class="calc-field">Current amplitude<input type="text" id="calc-s1-amp" class="calc-in" value="0.5" inputmode="decimal"></label></div>
+                                <div class="calc-row calc-or">or <input type="text" id="calc-s1-from" class="calc-in calc-in-sm" value="10"> dBm → <input type="text" id="calc-s1-to" class="calc-in calc-in-sm" value="-15"> dBm</div>
+                                <div class="calc-result"><span class="calc-rlabel">Factor 10^(Δ/20)</span><span class="calc-rval" id="calc-s1-k">—</span></div>
+                                <div class="calc-result"><span class="calc-rlabel">New amplitude</span><span class="calc-rval" id="calc-s1-anew" data-raw="">—</span><button class="calc-copy" type="button" data-copy="calc-s1-anew" title="Copy">&#128203;</button><a href="#" class="calc-chain" id="calc-s1-use" title="Use as amplitude in the dBm bridge below">↳ use</a></div>
+                                <p class="calc-help">Power ∝ amp². Δ dB uses 20·log₁₀ (voltage), not 10·log₁₀.</p>
+                            </details>
+                            <details class="calc-sec">
+                                <summary class="calc-sec-label">MW-FEM amplitude ↔ dBm</summary>
+                                <div class="calc-row"><label class="calc-field">full_scale_power_dbm<input type="text" id="calc-s2-fsp" class="calc-in" value="-11"><span class="calc-unit">dBm</span></label></div>
+                                <div class="calc-row"><label class="calc-field">amplitude a<input type="text" id="calc-s2-amp" class="calc-in" value="1.0"></label></div>
+                                <div class="calc-result"><span class="calc-rlabel">Power = FSP + 20·log₁₀|a|</span><span class="calc-rval" id="calc-s2-dbm" data-raw="">—</span><button class="calc-copy" type="button" data-copy="calc-s2-dbm" title="Copy">&#128203;</button></div>
+                                <div class="calc-row"><label class="calc-field">target power<input type="text" id="calc-s2-target" class="calc-in" value="-15"><span class="calc-unit">dBm</span></label></div>
+                                <div class="calc-result"><span class="calc-rlabel">amplitude = 10^((tgt−FSP)/20)</span><span class="calc-rval" id="calc-s2-anew" data-raw="">—</span><button class="calc-copy" type="button" data-copy="calc-s2-anew" title="Copy">&#128203;</button></div>
+                            </details>
+                            <details class="calc-sec">
+                                <summary class="calc-sec-label">dBm ↔ Volt (50 Ω RF)</summary>
+                                <div class="calc-row"><label class="calc-field">Power<input type="text" id="calc-s3-dbm" class="calc-in" value="0"><span class="calc-unit">dBm</span></label><label class="calc-field calc-field-sm">R<input type="text" id="calc-s3-r" class="calc-in calc-in-sm" value="50"><span class="calc-unit">Ω</span></label></div>
+                                <div class="calc-result"><span class="calc-rlabel">P</span><span class="calc-rval" id="calc-s3-pmw">—</span><span class="calc-unit">mW</span></div>
+                                <div class="calc-row"><label class="calc-field">V_rms<input type="text" id="calc-s3-vrms" class="calc-in" inputmode="decimal"><span class="calc-unit">V</span></label><button class="calc-copy" type="button" data-copy="calc-s3-vrms" title="Copy">&#128203;</button></div>
+                                <div class="calc-row"><label class="calc-field">V_peak<input type="text" id="calc-s3-vpk" class="calc-in" inputmode="decimal"><span class="calc-unit">V</span></label><button class="calc-copy" type="button" data-copy="calc-s3-vpk" title="Copy">&#128203;</button></div>
+                                <div class="calc-row"><label class="calc-field">V_pp<input type="text" id="calc-s3-vpp" class="calc-in" inputmode="decimal"><span class="calc-unit">V</span></label><button class="calc-copy" type="button" data-copy="calc-s3-vpp" title="Copy">&#128203;</button></div>
+                                <p class="calc-help">V_peak is the amplitude-relevant one. Edit any V to back-convert to dBm.</p>
+                            </details>
+                            <details class="calc-sec">
+                                <summary class="calc-sec-label">Quick reference</summary>
+                                <p class="calc-help">0 dBm → 0.2236 V_rms / 0.3162 V_pk / 0.6325 V_pp (50 Ω)<br>−6 dB ≈ ×0.501 amp · −20 dB = ×0.1 amp<br>×0.5 amp = −6.02 dB power<br>−25 dB power = ÷17.78 in amplitude (10^(25/20)), not ÷316</p>
+                            </details>
+                        </div>
+                        <div class="calc-foot">
+                            <div class="calc-expr-row">
+                                <input type="text" id="calc-expr" class="calc-expr" value="0.5*10^(-25/20)" spellcheck="false" autocomplete="off" placeholder="= e.g. 0.5*10^(-25/20)">
+                                <span class="calc-expr-eq">=</span><span class="calc-rval" id="calc-expr-res" data-raw="">—</span><button class="calc-copy" type="button" data-copy="calc-expr-res" title="Copy (or Enter)">&#128203;</button>
+                            </div>
+                            <p class="calc-help">^ power · log10 log ln sqrt exp abs sin cos tan · pi e</p>
+                        </div>
+                    </div>
+                </li>
+                <li class="settings-wrap">
+                    <button class="settings-btn" onclick="toggleSettings()" title="Settings">&#9881;</button>
+                    <div id="settings-dropdown" class="settings-dropdown settings-hidden">
+                        <div class="settings-group">
+                            <small class="settings-label">Font size</small>
+                            <div class="settings-options">
+                                <button onclick="setFontSize('small')"  class="settings-opt" data-size="small">S <span class="muted">13px</span></button>
+                                <button onclick="setFontSize('')"       class="settings-opt" data-size="">M <span class="muted">14px</span></button>
+                                <button onclick="setFontSize('large')"  class="settings-opt" data-size="large">L <span class="muted">16px</span></button>
+                            </div>
+                        </div>
+                        <div class="settings-group">
+                            <small class="settings-label">Theme</small>
+                            <div class="settings-options">
+                                <button onclick="toggleTheme()" class="settings-opt" id="theme-toggle">Dark mode</button>
+                            </div>
+                        </div>
+                        <div class="settings-group">
+                            <small class="settings-label">Accessibility</small>
+                            <div class="settings-options">
+                                <button onclick="toggleColorblindMode()" class="settings-opt" id="colorblind-toggle">Colorblind mode</button>
+                            </div>
+                        </div>
+                        <div class="settings-group">
+                            <small class="settings-label">Layout</small>
+                            <div class="settings-options">
+                                <button onclick="toggleTopbar()" class="settings-opt" id="topbar-toggle">Hide top bar</button>
+                            </div>
+                        </div>
+                    </div>
+                </li>
+            </ul>
+        </nav>
+    </header>
+    {# Reveal handle: the "Hide top bar" toggle lives INSIDE the top bar (which is
+       gone once hidden), so this always-reachable little tab brings it back. Shown
+       only when <html> carries .topbar-hidden (see style.css). #}
+    <button type="button" class="topbar-reveal" onclick="toggleTopbar()"
+            title="Show top bar" aria-label="Show top bar">&#9662;</button>
+    {# Out-of-band live-change banner. ONE base-level slot on every full page,
+       OUTSIDE #table-pane so HTMX pane navigation never drops an active
+       warning. The /explorer partial (what a chip load swaps in) carries an
+       hx-swap-oob copy of this slot, so loading a chip via HTMX updates the
+       banner here instead of rendering a duplicate inside the pane. #}
+    <div id="live-diverged-slot">{% include '_live_diverged_banner.html' %}</div>
+    {# Accumulating live-drift banner — filled by the global /state/drift poll in
+       app.js (no server render, so it costs nothing per page). Shows "N params
+       changed on the live chip since <time>" with View / Reset / dismiss, and
+       keeps accumulating across qualibrate fits even when the working copy
+       auto-syncs. Persistent base-level slot, like the diverged banner. #}
+    <div id="live-drift-slot"></div>
+    {% include '_wc_gc_banner.html' %}
+    {# Auto-popped diagnostics error banner (only when the active chip has a
+       crash-class error). Lazily fetched on every full page load — so it pops on
+       chip load / switch — and on the diagnostics-changed event after edits. #}
+    <div id="diagnostics-banner-slot"
+         hx-get="/diagnostics/banner"
+         hx-trigger="load, diagnostics-changed from:body"
+         hx-swap="innerHTML"></div>
+    <div class="app-layout">
+        <aside id="sidebar">
+            <nav class="sidebar-nav">
+                <ul>
+                    {# Creation feature — kept at the very top, set apart by a
+                       divider, since it builds a new chip rather than viewing one.
+                       The rarely-used Config Viewer nests under it, collapsed by
+                       default, so it no longer occupies permanent sidebar space. #}
+                    <li class="nav-with-sub">
+                        <div class="nav-sub-row">
+                            <a href="/generate" hx-get="/generate" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                               {% if page == 'generate' %}class="active"{% endif %}>Generate Config</a>
+                            <button type="button" class="nav-sub-toggle"
+                                    aria-expanded="{{ 'true' if page in ('config_browser', 'regenerate') else 'false' }}"
+                                    aria-controls="config-subnav" aria-label="Toggle Config tools"
+                                    onclick="toggleNavSub(this, 'config-subnav', 'quam_config_nav_collapsed')">&#9662;</button>
+                        </div>
+                        <ul class="nav-subitems{% if page not in ('config_browser', 'regenerate') %} nav-subitems-collapsed{% endif %}"
+                            id="config-subnav">
+                            <li><a href="/config" hx-get="/config" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page == 'config_browser' %}class="active"{% endif %}>Config Viewer</a></li>
+                            <li><a href="/regenerate" hx-get="/regenerate" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page == 'regenerate' %}class="active"{% endif %}>Re-generate config</a></li>
+                        </ul>
+                    </li>
+                </ul>
+            </nav>
+            <hr class="sidebar-section-divider">
+            <nav class="sidebar-nav">
+                <ul>
+                    <li class="nav-with-sub">
+                        <div class="nav-sub-row">
+                            <a href="/topology" hx-get="/topology" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                               {% if page == 'topology' %}class="active"{% endif %}>Chip Status</a>
+                            <button type="button" class="nav-sub-toggle" aria-expanded="true"
+                                    aria-controls="chip-status-subnav" aria-label="Toggle Chip Status sections"
+                                    onclick="toggleChipStatusSub(this)">&#9662;</button>
+                        </div>
+                        {# Chip Status sections — one scrolling dashboard; these mirror the
+                           in-page scroll-spy jump bar (kept in sync by setChipStatusView). #}
+                        <ul class="nav-subitems" id="chip-status-subnav">
+                            <li><a href="/topology?view=topology" data-view="topology"
+                                   onclick="return chipNavView('topology', event)">Topology</a></li>
+                            <li><a href="/topology?view=overview" data-view="overview"
+                                   onclick="return chipNavView('overview', event)">Overview</a></li>
+                            <li><a href="/topology?view=distributions" data-view="distributions"
+                                   onclick="return chipNavView('distributions', event)">Distributions</a></li>
+                            <li><a href="/topology?view=gate" data-view="gate"
+                                   onclick="return chipNavView('gate', event)">Gate (2Q)</a></li>
+                            <li><a href="/topology?view=fidelity" data-view="fidelity"
+                                   onclick="return chipNavView('fidelity', event)">Fidelity</a></li>
+                            <li><a href="/topology?view=coherence" data-view="coherence"
+                                   onclick="return chipNavView('coherence', event)">Coherence</a></li>
+                            <li><a href="/topology?view=frequencies" data-view="frequencies"
+                                   onclick="return chipNavView('frequencies', event)">Frequencies</a></li>
+                            <li><a href="/topology?view=calibration" data-view="calibration"
+                                   onclick="return chipNavView('calibration', event)">Calibration</a></li>
+                        </ul>
+                    </li>
+                    {# Compare hub — replaced /diff + /compare + /chip-compare
+                       (docs/49 P4: sidebar 3→1; the legacy URLs redirect here). #}
+                    <li><a href="/compare-hub" hx-get="/compare-hub" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           {% if page == 'compare_hub' %}class="active"{% endif %}>Compare</a></li>
+                    <li><a href="/explorer" hx-get="/explorer" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           {% if page == 'explorer' %}class="active"{% endif %}>Explorer</a></li>
+                    <li><a href="/qubits" hx-get="/qubits" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           {% if page == 'qubits' or page == 'qubit_detail' %}class="active"{% endif %}>Qubits</a></li>
+                    <li><a href="/pairs" hx-get="/pairs" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           {% if page == 'pairs' or page == 'pair_detail' %}class="active"{% endif %}>Pairs</a></li>
+                    <li class="nav-with-sub">
+                        <div class="nav-sub-row">
+                            <a href="/pulses" hx-get="/pulses" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                               {% if page == 'pulses' %}class="active"{% endif %}>Pulses</a>
+                            <button type="button" class="nav-sub-toggle" aria-expanded="false"
+                                    aria-controls="pulses-subnav" aria-label="Toggle Pulses tools"
+                                    onclick="toggleNavSub(this, 'pulses-subnav', 'quam_pulses_nav_collapsed')">&#9662;</button>
+                        </div>
+                        {# Add pulse — opens the full-catalog create form (with live preview)
+                           in the inspector. The Pulses page's "+ New pulse" button is the
+                           other entry; this surfaces it as a first-class nav item. #}
+                        <ul class="nav-subitems nav-subitems-collapsed" id="pulses-subnav">
+                            {# Push the clean /pulses URL (not ?create=1) so a refresh / Back
+                               doesn't re-fire the auto-open trigger over the user's inspector. #}
+                            <li><a href="/pulses?create=1" hx-get="/pulses?create=1" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="/pulses">Add pulse</a></li>
+                        </ul>
+                    </li>
+                    <li><a href="/bulk" hx-get="/bulk" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           {% if page == 'bulk' or page == 'table' %}class="active"{% endif %}>Live State Edit</a></li>
+                    <li><a href="/state-history" hx-get="/state-history" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           {% if page == 'state_history' %}class="active"{% endif %}>State History</a></li>
+                    <li><a href="/instrument" hx-get="/instrument" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           {% if page == 'instrument' %}class="active"{% endif %}>Instrument Wiring</a></li>
+                    <li><a href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           {% if page == 'diagnostics' %}class="active"{% endif %}>Diagnostics</a></li>
+                    <li><a href="/param-history" hx-get="/param-history" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           {% if page == 'param_history' %}class="active"{% endif %}>Param History</a></li>
+                    <li><a href="/fit-audit" hx-get="/fit-audit" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           {% if page == 'fit-audit' %}class="active"{% endif %}>Fit Audit</a></li>
+                    <li><a href="/scheduler" hx-get="/scheduler" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           {% if page == 'scheduler' %}class="active"{% endif %}>Scheduler</a></li>
+                </ul>
+            </nav>
+            <div class="sidebar-load">
+                <form id="load-form" hx-post="/load" hx-target="#table-pane">
+                    <div class="path-input-group">
+                        <input type="text" name="folder" id="load-path-input"
+                               placeholder="quam_state folder path..." autocomplete="off">
+                        <button type="button" class="outline btn-sm btn-browse"
+                                onclick="openFolderBrowser('load-path-input')" title="Browse folders">&#128193;</button>
+                        <button type="button" class="outline btn-sm btn-recents"
+                                onclick="toggleRecentPaths(this)" title="Recent paths"
+                                aria-haspopup="true" aria-expanded="false">&#9662;</button>
+                    </div>
+                    <div id="recents-dropdown" class="recents-dropdown" hidden></div>
+                    <button type="submit" class="btn-sm">State Load</button>
+                </form>
+            </div>
+            <hr class="sidebar-section-divider">
+            <nav class="sidebar-nav">
+                <ul>
+                    <li><a href="/datasets" hx-get="/datasets" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           {% if page == 'datasets' or page == 'dataset_detail' %}class="active"{% endif %}>Datasets</a></li>
+                    <li><a href="/collections" hx-get="/collections" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           {% if page == 'collections' %}class="active"{% endif %}>Collections</a></li>
+                    <li><a href="/trends" hx-get="/trends" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           {% if page == 'trends' %}class="active"{% endif %}>Trends</a></li>
+                </ul>
+            </nav>
+            <hr>
+            <div class="sidebar-workspace">
+                {# Add-folder first (right under the Trends nav), then the compare
+                   actions, then the filter + tree. The old <details> "Workspace"
+                   header (bold label + non-persistent ▼ collapse) was removed; the
+                   ↻ refresh moved into the tree toolbar below. #}
+                <form hx-post="/workspace/add" hx-target="#sidebar-tree" class="sidebar-add-form">
+                    <div class="path-input-group">
+                        <input type="text" name="folder" id="workspace-path-input"
+                               placeholder="Add folder path..." size="18" autocomplete="off">
+                        <button type="button" class="outline btn-sm btn-browse"
+                                onclick="openFolderBrowser('workspace-path-input')" title="Browse folders">&#128193;</button>
+                    </div>
+                    <button type="submit" class="btn-sm">Dataset Load</button>
+                </form>
+                <form id="compare-form" class="compare-form compare-buttons">
+                    <button type="submit" class="outline btn-sm btn-compare"
+                            hx-post="/compare" hx-target="#table-pane">Compare Selected</button>
+                    <button type="submit" class="outline btn-sm btn-trend"
+                            hx-post="/trend" hx-target="#table-pane">Trend Tracker</button>
+                </form>
+                <div class="sidebar-filter">
+                    <div class="ds-search-wrap">
+                        {# Auto-grow textarea (not an <input>): starts one line, wraps to
+                           2–3 lines as the query overflows. Enter is suppressed in JS
+                           (width-wrap only). All id/name/class/data-/hx-* attrs are kept
+                           so the HTMX filter, poll re-fetch, pill chips, and ?-help all
+                           keep working. Placeholder kept short so the resting box is one
+                           line; full scoped syntax lives in the ? panel. #}
+                        <textarea rows="1" placeholder="Filter experiments…"
+                                  id="sidebar-filter-input" aria-label="Filter experiments"
+                                  class="search-help-input" data-search-help="sidebar-search-help"
+                                  hx-get="/workspace/tree" hx-trigger="keyup changed delay:200ms"
+                                  hx-target="#sidebar-tree" name="name" autocomplete="off"
+                                  oninput="renderFilterTags(this, document.getElementById('filter-tags')); autoGrowNote(this);"></textarea>
+                        <button type="button" class="ds-search-help-btn search-help-toggle"
+                                data-search-help="sidebar-search-help"
+                                aria-label="Show search syntax help" title="Show search syntax help">?</button>
+                    </div>
+                    {# Help panel is a SIBLING of .ds-search-wrap (not a child): the ?
+                       button is position:absolute; top:50% of .ds-search-wrap, so if the
+                       inline panel lived inside the wrap it would make the wrap tall and
+                       the button would float into the middle of the open panel. As a
+                       sibling, the wrap stays input-height and the button centers on the
+                       input. The help IIFE finds the panel by id, so DOM position is free. #}
+                    <div id="sidebar-search-help" class="ds-search-help-panel" hidden>
+                        <div class="ds-search-help-header">
+                            <strong>Search syntax</strong>
+                            <button type="button" class="ds-search-help-close search-help-close"
+                                    data-search-help="sidebar-search-help"
+                                    aria-label="Close search help">&times;</button>
+                        </div>
+                        <p class="muted" style="margin:.25rem 0 .5rem">
+                            Mix free-text with <code>key:value</code> scopes. Click an example to paste it.
+                        </p>
+                        <table class="ds-search-help-grid">
+                            <tbody>
+                                <tr><td><button class="ds-help-example search-help-example" data-search-help-input="sidebar-filter-input" data-example="name:iq_blob">name:iq_blob</button></td>
+                                    <td>Name contains <code>iq_blob</code> (<code>exp:</code>, <code>e:</code>)</td></tr>
+                                <tr><td><button class="ds-help-example search-help-example" data-search-help-input="sidebar-filter-input" data-example="date:2026-03">date:2026-03</button></td>
+                                    <td>Date contains it (<code>d:</code>)</td></tr>
+                                <tr><td><button class="ds-help-example search-help-example" data-search-help-input="sidebar-filter-input" data-example="status:running">status:running</button></td>
+                                    <td>Status contains it (<code>st:</code>)</td></tr>
+                                <tr><td><button class="ds-help-example search-help-example" data-search-help-input="sidebar-filter-input" data-example="id:108">id:108</button></td>
+                                    <td>Run id contains it (<code>run:</code>)</td></tr>
+                                <tr><td><button class="ds-help-example search-help-example" data-search-help-input="sidebar-filter-input" data-example="-status:error">-status:error</button></td>
+                                    <td>Prefix <code>-</code> to exclude a scope</td></tr>
+                                <tr><td><button class="ds-help-example search-help-example" data-search-help-input="sidebar-filter-input" data-example='name:"power rabi"'>name:"power rabi"</button></td>
+                                    <td>Quote values with spaces</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="filter-tags" id="filter-tags"></div>
+                </div>
+                <div class="sidebar-tree-toolbar" role="group" aria-label="Experiment list controls">
+                    <span class="toolbar-label">rows</span>
+                    <button type="button" class="tree-density-btn" id="exp-density-full"
+                            onclick="setExpListCompact(false)" aria-pressed="true"
+                            title="Full names — wrap to multiple lines">&#9636;</button>
+                    <button type="button" class="tree-density-btn" id="exp-density-compact"
+                            onclick="setExpListCompact(true)" aria-pressed="false"
+                            title="Compact — one truncated line per entry">&#9638;</button>
+                    <button class="btn-workspace-refresh" type="button"
+                            hx-post="/workspace/refresh" hx-target="#sidebar-tree"
+                            title="Refresh folder list" aria-label="Refresh folder list">&#8635;</button>
+                </div>
+                <div id="sidebar-tree"
+                     hx-get="/workspace/tree" hx-trigger="load"
+                     hx-include="#sidebar-filter-input"
+                     hx-swap="innerHTML">
+                    {% include '_sidebar_tree.html' ignore missing %}
+                </div>
+                <script>
+                /* Sidebar tree refresh — version-gated (Phase 3.1). The element
+                   keeps hx-trigger="load" for the initial render; instead of an
+                   unconditional `every Ns` full swap, poll the cheap
+                   /workspace/tree/poll endpoint and re-fetch the tree only when
+                   the workspace version actually changed. Avoids rebuilding the
+                   sidebar DOM (+ sticky-state restore + reflow) every 60 s when
+                   nothing changed. */
+                document.addEventListener('DOMContentLoaded', function() {
+                    var el = document.getElementById('sidebar-tree');
+                    if (!el) return;
+                    if (window.htmx) htmx.process(el);
+                    // Size the filter textarea to its (possibly prefilled) value on load.
+                    var fi = document.getElementById('sidebar-filter-input');
+                    if (fi && window.autoGrowNote) autoGrowNote(fi);
+                    var secs = Math.max(5, (window.UI_CONFIG && UI_CONFIG.autoRefreshInterval) || 60);
+                    var lastV = null;
+                    var _treePolling = false;
+                    function poll() {
+                        // In-flight guard + visibility gating (audit B24).
+                        if (_treePolling || document.hidden) return;
+                        _treePolling = true;
+                        fetch('/workspace/tree/poll').then(function(r){ return r.json(); }).then(function(d){
+                            if (!d || typeof d.v === 'undefined') return;
+                            if (lastV !== null && d.v !== lastV && window.htmx) {
+                                var f = document.getElementById('sidebar-filter-input');
+                                htmx.ajax('GET', '/workspace/tree', {
+                                    target: '#sidebar-tree', swap: 'innerHTML',
+                                    values: { name: (f && f.value) || '' }
+                                });
+                            }
+                            lastV = d.v;  // baseline on first poll; updates after each refresh
+                        }).catch(function(){}).then(function(){ _treePolling = false; });
+                    }
+                    poll();                       // establish baseline after the load render
+                    setInterval(poll, secs * 1000);
+                });
+                </script>
+                {# Scroll-past-end spacer: lets the last experiment folders be
+                   scrolled up toward the top of the viewport (height:60vh in CSS).
+                   Sibling of #sidebar-tree, so HTMX tree swaps don't remove it. #}
+                <div class="sidebar-scroll-spacer" aria-hidden="true"></div>
+            </div>
+        </aside>
+
+        {# Drag handle to resize the sidebar (item 9) — long experiment names
+           need more room on demand. Sets --sidebar-width on :root + persists to
+           localStorage; not a Split.js instance (would clash with the
+           table/inspector gutter). #}
+        <div id="sidebar-resizer" class="sidebar-resizer" role="separator"
+             aria-orientation="vertical" aria-label="Resize sidebar"
+             title="Drag to resize the experiment list"></div>
+
+        <main id="main">
+            <div id="content-area">
+                {# Per-page header collapse (Item 4): persistent toggle, OUTSIDE
+                   #table-pane so it survives HTMX swaps and stays reachable when the
+                   heading is collapsed. Hides each page's .table-header-row heading
+                   (+ the Chip Status toolbar title). Datasets' Sort/Experiments
+                   banners already self-collapse independently. #}
+                <button type="button" id="pageheader-toggle" class="pageheader-toggle"
+                        onclick="togglePageHeader()" aria-expanded="true"
+                        title="Hide / show the page heading" aria-label="Toggle page heading">&#9650;</button>
+                <div id="table-pane">
+                    {% block table_content %}
+                    {% if page == 'home' %}
+                    <div class="welcome">
+                        <h2>Welcome to QUAM State Manager</h2>
+                        <p class="welcome-lead">Inspect, edit, generate, and track your QUAM chip state — a working copy always sits between you and the live instrument, so nothing reaches the hardware by accident.</p>
+                        <p class="welcome-sub">Get started from the left panel: <b>State Load</b> opens a chip's <code>quam_state</code>, <b>Dataset Load</b> adds an experiment folder.</p>
+
+                        {# Core mental model — kept always-visible; everything else keys off these three. #}
+                        <div class="welcome-glossary">
+                            <div><b>Live chip</b> — the <code>state.json</code> / <code>wiring.json</code> your instrument &amp; Qualibrate actually read.</div>
+                            <div><b>Working state</b> — your private editable copy; edits here never touch the instrument until you <b>Apply to live</b>.</div>
+                            <div><b>Snapshot</b> — an immutable, timestamped archive (in State History) you can roll back to.</div>
+                        </div>
+
+                        {# Feature tour — collapsible so the page stays compact by default but
+                           each area carries a real description. Left chevron rotates on open;
+                           Pico's right-floated summary::after is suppressed in .welcome CSS. #}
+                        <div class="welcome-features">
+                            <p class="welcome-features-title">What you can do <span class="muted">— click a topic to expand</span></p>
+
+                            <details class="wc-feat" open>
+                                <summary><span aria-hidden="true">🔎</span> Explore &amp; edit the state</summary>
+                                <div class="wc-feat-body">
+                                    <p class="wc-gist">Find any value and change it safely.</p>
+                                    <ul class="wc-steps">
+                                        <li>Browse in <b>Explorer</b>, or a <b>Qubit</b> / <b>Pair</b> inspector</li>
+                                        <li>Search any property — results in &lt;1&nbsp;ms</li>
+                                        <li>Edit inline → the change lands in the <b>working state</b></li>
+                                        <li>Many fields at once? <b>Live State Edit</b> gives a grid</li>
+                                    </ul>
+                                </div>
+                            </details>
+
+                            <details class="wc-feat">
+                                <summary><span aria-hidden="true">〰️</span> Pulses &amp; waveforms</summary>
+                                <div class="wc-feat-body">
+                                    <p class="wc-gist">Manage pulses with a live preview.</p>
+                                    <ul class="wc-steps">
+                                        <li>Open <b>Pulses</b> — every pulse in one table</li>
+                                        <li>Edit a field → the <b>waveform preview</b> redraws live</li>
+                                        <li>Create / rename / duplicate / delete (with “used-by” safety)</li>
+                                        <li><b>Config Viewer</b> → the waveforms after <code>generate_config()</code></li>
+                                    </ul>
+                                </div>
+                            </details>
+
+                            <details class="wc-feat">
+                                <summary><span aria-hidden="true">🛠️</span> Generate a fresh config</summary>
+                                <div class="wc-feat-body">
+                                    <p class="wc-gist">Build a new chip config from scratch.</p>
+                                    <ul class="wc-steps">
+                                        <li>Run the <b>Generate Config</b> wizard</li>
+                                        <li>Enter instruments, LO plan, qubit specs</li>
+                                        <li>Check the topology + wiring previews</li>
+                                        <li>Preview <code>generate_config()</code> → save <code>state.json</code> + <code>wiring.json</code></li>
+                                    </ul>
+                                </div>
+                            </details>
+
+                            <details class="wc-feat">
+                                <summary><span aria-hidden="true">📊</span> Chip Status dashboards</summary>
+                                <div class="wc-feat-body">
+                                    <p class="wc-gist">The whole chip’s health at a glance.</p>
+                                    <ul class="wc-steps">
+                                        <li><b>Topology · Overview · Distributions</b> — layout &amp; summaries</li>
+                                        <li><b>Coherence · Fidelity · Frequencies</b> — heatmap views</li>
+                                        <li><b>Gate (2Q) · Calibration</b> — per-pair readouts</li>
+                                    </ul>
+                                </div>
+                            </details>
+
+                            <details class="wc-feat">
+                                <summary><span aria-hidden="true">⇄</span> Compare across time &amp; devices</summary>
+                                <div class="wc-feat-body">
+                                    <p class="wc-gist">Spot exactly what changed.</p>
+                                    <ul class="wc-steps">
+                                        <li>Same chip, two times → drift over time</li>
+                                        <li>Two devices → side-by-side (auto grid-map)</li>
+                                        <li>Set a tolerance → hide noise, show real diffs</li>
+                                    </ul>
+                                </div>
+                            </details>
+
+                            <details class="wc-feat">
+                                <summary><span aria-hidden="true">🕘</span> History, snapshots &amp; rollback</summary>
+                                <div class="wc-feat-body">
+                                    <p class="wc-gist">Nothing is lost — roll back anytime.</p>
+                                    <ul class="wc-steps">
+                                        <li><b>🔖 bookmark</b> → pin a tagged archive before risky edits</li>
+                                        <li><b>Param History</b> → per-parameter trends</li>
+                                        <li><b>State History</b> → stage or restore any snapshot</li>
+                                    </ul>
+                                </div>
+                            </details>
+
+                            <details class="wc-feat">
+                                <summary><span aria-hidden="true">📁</span> Datasets &amp; interactive plots</summary>
+                                <div class="wc-feat-body">
+                                    <p class="wc-gist">From measurement to calibrated value.</p>
+                                    <ul class="wc-steps">
+                                        <li>Pick an experiment run in the sidebar</li>
+                                        <li>Open its data in the <b>interactive viewer</b></li>
+                                        <li>Click a fit point → stage the value (confirm popup, never silent)</li>
+                                    </ul>
+                                </div>
+                            </details>
+
+                            <details class="wc-feat">
+                                <summary><span aria-hidden="true">🔗</span> Sync-Qualibrate &amp; operations</summary>
+                                <div class="wc-feat-body">
+                                    <p class="wc-gist">Run alongside Qualibrate and keep watch.</p>
+                                    <ul class="wc-steps">
+                                        <li><b>Sync-Qualibrate</b> → Qualibrate side-by-side</li>
+                                        <li><b>Diagnostics</b> badge → always-on health</li>
+                                        <li><b>Scheduler</b> → drive the run queue</li>
+                                        <li><b>Fit Audit</b> → triage calibration fits</li>
+                                    </ul>
+                                </div>
+                            </details>
+                        </div>
+                    </div>
+                    {% endif %}
+                    {% endblock %}
+                </div>
+                <div id="inspector-pane" hx-sync="this:replace">
+                    {% block inspector_content %}{% endblock %}
+                </div>
+            </div>
+            <div id="status-bar"></div>
+        </main>
+    </div>
+
+    <dialog id="folder-browser" class="folder-browser-dialog">
+        <div class="browser-header">
+            <strong>Browse Folders</strong>
+            <button class="btn-close" onclick="document.getElementById('folder-browser').close()">&times;</button>
+        </div>
+        <div class="browser-toolbar">
+            <input type="text" id="browser-selected-path" readonly placeholder="Select a folder...">
+            <button class="btn-sm outline" id="browser-newfolder-btn" type="button"
+                    onclick="toggleNewFolder()" title="Create a new folder inside the current one">+ New folder</button>
+            <button class="btn-sm" id="browser-select-btn" onclick="selectBrowserFolder()">Select</button>
+        </div>
+        <div class="browser-newfolder" id="browser-newfolder-row" hidden>
+            <input type="text" id="browser-newfolder-name" placeholder="New folder name"
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();createBrowserFolder();}else if(event.key==='Escape'){toggleNewFolder();}">
+            <button class="btn-sm" type="button" onclick="createBrowserFolder()">Create</button>
+            <span class="browser-newfolder-err" id="browser-newfolder-err" aria-live="polite"></span>
+        </div>
+        <details class="browser-recent" id="browser-recent" open>
+            <summary>Recent Folders</summary>
+            <div id="browser-recent-list" class="browser-recent-list"></div>
+        </details>
+        <div class="browser-breadcrumbs" id="browser-breadcrumbs"></div>
+        <div class="browser-list" id="browser-list"></div>
+    </dialog>
+
+    <!-- Live-state review overlay (working copy vs. live chip) -->
+    <div id="state-review-overlay" class="state-review-overlay" style="display:none">
+        <div class="state-review-backdrop" onclick="closeReview()"></div>
+        <div id="state-review-host" class="state-review-host"></div>
+    </div>
+
+    <!-- Live-drift overlay (accumulating baseline vs. live chip) -->
+    <div id="live-drift-overlay" class="state-review-overlay" style="display:none">
+        <div class="state-review-backdrop" onclick="closeDrift()"></div>
+        <div id="live-drift-host" class="state-review-host"></div>
+    </div>
+
+    <!-- Command palette (Ctrl/Cmd+K) -->
+    <div id="cmd-palette" class="cmd-palette" hidden role="dialog" aria-modal="true" aria-labelledby="cmd-palette-input">
+        <div class="cmd-palette-backdrop" onclick="window.closeCmdPalette()"></div>
+        <div class="cmd-palette-box">
+            <input id="cmd-palette-input" class="cmd-palette-input" type="text"
+                   autocomplete="off" placeholder="Jump to qubit, pair, or page..." aria-label="Command palette search">
+            <ul id="cmd-palette-results" class="cmd-palette-results" role="listbox"
+                aria-live="polite" aria-label="Search results"></ul>
+            <div class="cmd-palette-hint">
+                <kbd>&uarr;</kbd><kbd>&darr;</kbd> navigate &middot;
+                <kbd>Enter</kbd> open &middot;
+                <kbd>Esc</kbd> close
+            </div>
+        </div>
+    </div>
+    <script id="cmd-palette-data" type="application/json">
+        {
+            "qubits": {{ qubit_names | tojson }},
+            "pairs":  {{ pair_names  | tojson }},
+            "pages": [
+                {"label": "Generate Config",   "url": "/generate"},
+                {"label": "Chip Status",       "url": "/topology"},
+                                {"label": "Explorer",          "url": "/explorer"},
+                {"label": "Qubits",            "url": "/qubits"},
+                {"label": "Qubit Pairs",       "url": "/pairs"},
+                {"label": "Pulses",            "url": "/pulses"},
+                {"label": "Live State Edit",   "url": "/bulk"},
+                {"label": "State History",     "url": "/state-history"},
+                {"label": "Instrument Wiring", "url": "/instrument"},
+                {"label": "Config Viewer",     "url": "/config"},
+                {"label": "Param History",     "url": "/param-history"},
+                {"label": "Scheduler",         "url": "/scheduler"},
+                {"label": "Datasets",          "url": "/datasets"},
+                {"label": "Collections",       "url": "/collections"},
+                {"label": "Compare",           "url": "/compare-hub"},
+                {"label": "Trends",            "url": "/trends"}
+            ]
+        }
+    </script>
+
+    <!-- Global new-run detection popup -->
+    <div id="new-run-popup" class="new-run-popup" style="display:none">
+        <div class="new-run-popup-backdrop" onclick="dismissNewRunPopup()"></div>
+        <div class="new-run-popup-card">
+            <div class="new-run-popup-title">New Experiment Run</div>
+            <div class="new-run-popup-info">
+                <div class="new-run-popup-id" id="new-run-popup-id"></div>
+                <div class="new-run-popup-exp" id="new-run-popup-exp"></div>
+                <div class="new-run-popup-qubits" id="new-run-popup-qubits"></div>
+                <div class="new-run-popup-time" id="new-run-popup-time"></div>
+            </div>
+            <button class="new-run-popup-btn" onclick="showNewRun()">Show Now</button>
+            <button class="new-run-popup-dismiss" onclick="dismissNewRunPopup()">Dismiss</button>
+        </div>
+    </div>
+
+    <!-- Plotly click → confirm popup. Rows injected by JS each time a
+         plot point is clicked; replaces the old auto-apply behavior. -->
+    <div id="plot-apply-popup" class="plot-apply-popup" style="display:none"
+         role="dialog" aria-modal="true" aria-labelledby="plot-apply-title">
+        <div class="plot-apply-backdrop" onclick="closePlotApplyPopup()"></div>
+        <div class="plot-apply-card">
+            <header class="plot-apply-header">
+                <strong id="plot-apply-title">Apply update from plot click</strong>
+                <button type="button" class="plot-apply-close"
+                        onclick="closePlotApplyPopup()" aria-label="Close">&times;</button>
+            </header>
+            <div class="plot-apply-context" id="plot-apply-context"></div>
+            <div id="plot-apply-extra" class="plot-apply-extra" hidden></div>
+            {# async fit-audit verdict badge (does the current gate still accept this fit?) — advisory,
+               never blocks Apply; sits just above the rows (the write point). aria-live announces the
+               ~48s-cold async result; tabindex lets the Check-button hand focus here on activation. #}
+            <div id="plot-apply-verdict" hidden role="status" aria-live="polite" tabindex="-1"></div>
+            <div id="plot-apply-rows" class="plot-apply-rows"></div>
+            <footer class="plot-apply-footer">
+                <button type="button" id="plot-apply-all" class="primary"
+                        onclick="applyAllPlotRows()">Apply All</button>
+                <button type="button" class="outline"
+                        onclick="closePlotApplyPopup()">Cancel</button>
+            </footer>
+        </div>
+    </div>
+
+    <script>
+    document.addEventListener("DOMContentLoaded", function() {
+        // Helper: persist an input value to localStorage on form submit (HTMX-safe)
+        function persistInput(inputId, storageKey) {
+            var el = document.getElementById(inputId);
+            if (!el) return;
+            initPathAutocomplete(el);
+            try {
+                var saved = localStorage.getItem(storageKey);
+                if (saved && !el.value.trim()) el.value = saved;
+            } catch(e) {}
+            var form = el.closest("form");
+            if (form) {
+                form.addEventListener("submit", function() {
+                    try { if (el.value.trim()) localStorage.setItem(storageKey, el.value.trim()); } catch(e) {}
+                });
+                form.addEventListener("htmx:beforeRequest", function() {
+                    try { if (el.value.trim()) localStorage.setItem(storageKey, el.value.trim()); } catch(e) {}
+                });
+            }
+        }
+        persistInput("workspace-path-input", "quam_workspace_path");
+        persistInput("load-path-input", "quam_load_path");
+    });
+    </script>
+
+    <script>
+    (function() {
+        var splitInstance = null;
+        var STORAGE_KEY = "quam_split_sizes";
+
+        function loadSizes() {
+            try {
+                var raw = localStorage.getItem(STORAGE_KEY);
+                if (raw) return JSON.parse(raw);
+            } catch(e) {}
+            return null;
+        }
+
+        function saveSizes(sizes) {
+            try { localStorage.setItem(STORAGE_KEY, JSON.stringify(sizes)); } catch(e) {}
+        }
+
+        // Expand / collapse targets are user-configurable: the gutter ⤒ / ⤓
+        // "set" icons capture the current divider position into these
+        // localStorage keys, so each user decides how high ▲ expands and how
+        // low ▼ collapses. Fall back to the UI_CONFIG defaults when unset.
+        var PRESET_EXPANDED_KEY = "quam_split_expanded";
+        var PRESET_COLLAPSED_KEY = "quam_split_collapsed";
+
+        function validSizes(s) {
+            if (!Array.isArray(s) || s.length !== 2) return false;
+            var a = Number(s[0]), b = Number(s[1]);
+            // Allow 0 so a full-cover preset ([0,100]) saved via the ⤒ icon persists.
+            return isFinite(a) && isFinite(b) && a >= 0 && b >= 0 && Math.abs(a + b - 100) <= 1;
+        }
+        function loadPreset(key, fallback) {
+            try {
+                var raw = localStorage.getItem(key);
+                if (raw) { var p = JSON.parse(raw); if (validSizes(p)) return p; }
+            } catch (e) {}
+            return fallback;
+        }
+        function saveSizesTo(key, sizes) {
+            try { localStorage.setItem(key, JSON.stringify(sizes)); } catch (e) {}
+        }
+        function expandedSizes() { return loadPreset(PRESET_EXPANDED_KEY, UI_CONFIG.split.expandedSizes); }
+        function collapsedSizes() { return loadPreset(PRESET_COLLAPSED_KEY, UI_CONFIG.split.collapsedSizes); }
+
+        var inspectorExpanded = true;
+
+        function inspectorHasContent() {
+            var el = document.getElementById("inspector-pane");
+            return el && el.innerHTML.trim().length > 0;
+        }
+
+        function updateToggleArrow() {
+            var btn = document.querySelector(".inspector-toggle-btn");
+            if (btn) btn.innerHTML = inspectorExpanded ? "\u25BC" : "\u25B2";
+        }
+
+        function flashBtn(btn) {
+            if (!btn) return;
+            btn.classList.add("split-set-done");
+            setTimeout(function() { btn.classList.remove("split-set-done"); }, 600);
+        }
+
+        function ensureGutterToggle() {
+            var gutter = document.querySelector(".gutter.gutter-vertical");
+            if (!gutter) return;
+            if (gutter.querySelector(".gutter-controls")) { updateToggleArrow(); return; }
+
+            var wrap = document.createElement("div");
+            wrap.className = "gutter-controls";
+            // A button press on the gutter must not start a Split.js drag.
+            wrap.addEventListener("mousedown", function(e) { e.stopPropagation(); });
+
+            var setHigh = document.createElement("button");
+            setHigh.className = "split-set-btn split-set-high-btn";
+            setHigh.innerHTML = "⤒";  // ⤒ — set the expanded (▲) target to the current divider position
+            setHigh.title = "Set expanded height: drag the divider where you want it, then click";
+            setHigh.setAttribute("aria-label", "Set expanded inspector height to the current divider position");
+            setHigh.addEventListener("click", function(e) {
+                e.stopPropagation();
+                if (splitInstance) { saveSizesTo(PRESET_EXPANDED_KEY, splitInstance.getSizes()); flashBtn(setHigh); }
+            });
+
+            var toggle = document.createElement("button");
+            toggle.className = "inspector-toggle-btn";
+            toggle.title = "Expand / Collapse inspector";
+            toggle.setAttribute("aria-label", "Expand or collapse the inspector panel");
+            toggle.addEventListener("click", function(e) { e.stopPropagation(); toggleInspectorExpand(); });
+
+            var setLow = document.createElement("button");
+            setLow.className = "split-set-btn split-set-low-btn";
+            setLow.innerHTML = "⤓";  // ⤓ — set the collapsed (▼) target to the current divider position
+            setLow.title = "Set collapsed height: drag the divider where you want it, then click";
+            setLow.setAttribute("aria-label", "Set collapsed inspector height to the current divider position");
+            setLow.addEventListener("click", function(e) {
+                e.stopPropagation();
+                if (splitInstance) { saveSizesTo(PRESET_COLLAPSED_KEY, splitInstance.getSizes()); flashBtn(setLow); }
+            });
+
+            wrap.appendChild(setHigh);
+            wrap.appendChild(toggle);
+            wrap.appendChild(setLow);
+            gutter.appendChild(wrap);
+            updateToggleArrow();
+        }
+
+        function initSplit(sizes) {
+            if (splitInstance) { splitInstance.destroy(); splitInstance = null; }
+
+            var tablePane = document.getElementById("table-pane");
+            var inspectorPane = document.getElementById("inspector-pane");
+            if (!tablePane || !inspectorPane) return;
+
+            if (!inspectorHasContent()) {
+                tablePane.style.height = "";
+                inspectorPane.style.height = "";
+                inspectorPane.classList.add("split-hidden");
+                return;
+            }
+
+            inspectorPane.classList.remove("split-hidden");
+
+            if (!sizes) {
+                var saved = loadSizes();
+                sizes = saved || UI_CONFIG.split.defaultSizes;
+            }
+
+            splitInstance = Split(["#table-pane", "#inspector-pane"], {
+                direction: "vertical",
+                sizes: sizes,
+                minSize: UI_CONFIG.split.minSizes,
+                gutterSize: UI_CONFIG.split.gutterSize,
+                snapOffset: 0,
+                onDragEnd: function(s) {
+                    saveSizes(s); inspectorExpanded = s[1] > 30; updateToggleArrow();
+                    /* Split.js resizing the panes does not fire a window
+                       resize, so any Plotly chart in the inspector keeps its
+                       pre-drag dimensions (axes/legend drift). Re-layout them. */
+                    if (typeof Plotly !== 'undefined') {
+                        document.querySelectorAll('#inspector-pane .js-plotly-plot, #table-pane .js-plotly-plot').forEach(function(el) {
+                            try { Plotly.Plots.resize(el); } catch (e) {}
+                        });
+                    }
+                }
+            });
+
+            inspectorExpanded = sizes[1] > 30;
+            ensureGutterToggle();
+        }
+
+        // Auto-expand inspector when content is swapped in (qubit click, search, etc.)
+        document.body.addEventListener("htmx:afterSwap", function(evt) {
+            var tid = evt.detail.target.id;
+
+            if (tid === "status-bar") {
+                var el = evt.detail.target.firstElementChild;
+                if (el) {
+                    setTimeout(function() { el.style.opacity = "0"; }, 3000);
+                    setTimeout(function() { el.remove(); }, 3500);
+                }
+                return;
+            }
+
+            if (tid === "inspector-pane") {
+                inspectorExpanded = true;
+                // Persist the expanded sizes so a *concurrent* table-pane swap's
+                // initSplit() (which re-applies the saved quam_split_sizes) can't
+                // re-collapse the panel. A data-item click fires both an
+                // inspector-pane swap (dataset detail) and a table-pane swap
+                // (/workspace/select) at once; whichever lands last must still
+                // leave the inspector expanded.
+                var sizes = expandedSizes();
+                saveSizes(sizes);
+                initSplit(sizes);
+            } else if (tid === "table-pane") {
+                initSplit();
+            }
+        });
+
+        document.body.addEventListener("inspector-closed", function() {
+            initSplit();
+        });
+
+        window.toggleInspectorExpand = function() {
+            inspectorExpanded = !inspectorExpanded;
+            var sizes = inspectorExpanded ? expandedSizes() : collapsedSizes();
+            saveSizes(sizes);
+            initSplit(sizes);
+        };
+
+        // Apply a saved split preset programmatically (e.g. "Go to state" collapses the
+        // bottom dataset pane so the Explorer on top is prominent). Reuses the user's
+        // ⤒/⤓-configured presets — no hardcoded ratio. Persisting via saveSizes() keeps a
+        // concurrent table-pane initSplit() from re-applying stale sizes (same trick the
+        // inspector-pane afterSwap handler uses above).
+        window._applySplitPreset = function(which) {
+            var sizes = which === "expanded" ? expandedSizes() : collapsedSizes();
+            inspectorExpanded = sizes[1] > 30;
+            saveSizes(sizes);
+            initSplit(sizes);
+            updateToggleArrow();
+        };
+
+        document.body.addEventListener("htmx:afterSettle", function() {
+            window._restoreTrayState && window._restoreTrayState();
+        });
+
+        function restorePrefs() {
+            try {
+                if (localStorage.getItem("quam_sidebar_collapsed") === "1") {
+                    var layout = document.querySelector(".app-layout");
+                    if (layout) layout.classList.add("sidebar-collapsed");
+                }
+                // Global top-bar hidden state (Item 3) — class on <html>, survives
+                // HTMX partial swaps; the matching CSS also zeroes --topbar-height.
+                if (localStorage.getItem("quam_topbar_hidden") === "1") {
+                    document.documentElement.classList.add("topbar-hidden");
+                }
+                // Per-page header collapsed state (Item 4) — class on <body>.
+                if (localStorage.getItem("quam_pageheader_collapsed") === "1") {
+                    document.body.classList.add("pageheader-collapsed");
+                }
+                // Restore a user-dragged sidebar width (item 9).
+                var sw = parseInt(localStorage.getItem("quam_sidebar_width"), 10);
+                if (sw && sw >= 160 && sw <= 640) {
+                    var r = document.documentElement;
+                    r.style.setProperty("--sidebar-width", sw + "px");
+                    r.style.setProperty("--sidebar-min-width", sw + "px");
+                    r.style.setProperty("--sidebar-max-width", sw + "px");
+                }
+                var fs = localStorage.getItem("quam_font_size") || "";
+                if (fs) document.documentElement.setAttribute("data-font-size", fs);
+                var opts = document.querySelectorAll(".settings-opt");
+                for (var i = 0; i < opts.length; i++) {
+                    opts[i].classList.toggle(
+                        "settings-opt-active",
+                        (opts[i].getAttribute("data-size") || "") === fs
+                    );
+                }
+            } catch(e) {}
+        }
+
+        // Sidebar resize handle (item 9): drag to set --sidebar-width on :root,
+        // persisted to localStorage. Double-click resets to the default width.
+        function initSidebarResizer() {
+            var handle = document.getElementById("sidebar-resizer");
+            var sidebar = document.getElementById("sidebar");
+            if (!handle || !sidebar) return;
+            var startX = 0, startW = 0, dragging = false;
+            function applyWidth(w) {
+                var r = document.documentElement;
+                r.style.setProperty("--sidebar-width", w + "px");
+                r.style.setProperty("--sidebar-min-width", w + "px");
+                r.style.setProperty("--sidebar-max-width", w + "px");
+            }
+            function onMove(e) {
+                if (!dragging) return;
+                applyWidth(Math.max(160, Math.min(640, startW + (e.clientX - startX))));
+            }
+            function onUp() {
+                if (!dragging) return;
+                dragging = false;
+                document.body.classList.remove("sidebar-resizing");
+                document.removeEventListener("pointermove", onMove);
+                document.removeEventListener("pointerup", onUp);
+                try {
+                    var cur = parseInt(getComputedStyle(sidebar).width, 10);
+                    if (cur) localStorage.setItem("quam_sidebar_width", String(cur));
+                } catch(e) {}
+            }
+            handle.addEventListener("pointerdown", function(e) {
+                if (document.querySelector(".app-layout.sidebar-collapsed")) return;
+                dragging = true;
+                startX = e.clientX;
+                startW = parseInt(getComputedStyle(sidebar).width, 10) || 260;
+                document.body.classList.add("sidebar-resizing");
+                document.addEventListener("pointermove", onMove);
+                document.addEventListener("pointerup", onUp);
+                e.preventDefault();
+            });
+            handle.addEventListener("dblclick", function() {
+                var r = document.documentElement;
+                r.style.removeProperty("--sidebar-width");
+                r.style.removeProperty("--sidebar-min-width");
+                r.style.removeProperty("--sidebar-max-width");
+                try { localStorage.removeItem("quam_sidebar_width"); } catch(e) {}
+            });
+        }
+
+        if (document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", function() { restorePrefs(); initSplit(); initSidebarResizer(); });
+        } else {
+            restorePrefs();
+            initSplit();
+            initSidebarResizer();
+        }
+    })();
+    </script>
+
+    {# ───────────────────────────────────────────────────────────────────── #}
+    {# Scheduler global poll: every page polls /scheduler/status so the badge, #}
+    {# the editing lock (body.scheduler-active), and the browser-alive heartbeat #}
+    {# work no matter where the user is. On each node boundary it pulls the live #}
+    {# chip + rescans datasets so Chip Status / Datasets stay live during a run.  #}
+    {# ───────────────────────────────────────────────────────────────────── #}
+    <script>
+    (function () {
+        var chipRev = null;   // per-tab baseline of the broadcast "chip changed" rev
+        var CHIP_PAGES = ["/topology", "/explorer", "/qubits", "/pairs", "/instrument"];
+        function onChipPage() {
+            var p = location.pathname;
+            return CHIP_PAGES.some(function (c) { return p === c || p.indexOf(c + "/") === 0; });
+        }
+        function apply(state) {
+            var run = (state && state.run) || {};
+            var active = run.status === "running";
+            var paused = run.status === "paused";
+            document.body.classList.toggle("scheduler-active", active);
+            var badge = document.getElementById("scheduler-badge");
+            if (badge) {
+                badge.hidden = !(active || paused);
+                badge.classList.toggle("scheduler-badge-paused", paused);
+                var label = badge.querySelector(".scheduler-badge-label");
+                var count = badge.querySelector(".scheduler-badge-count");
+                if (label) {
+                    var cur = active && run.current_id
+                        ? (state.queue || []).filter(function (i) { return i.id === run.current_id; })[0]
+                        : null;
+                    label.textContent = active
+                        ? (cur && cur.name ? "Running: " + cur.name : "Scheduler running")
+                        : "Scheduler paused";
+                }
+                if (count) {
+                    var q = state.queue || [];
+                    var isTerminal = function (i) {
+                        return ["done", "failed", "cancelled", "skipped"].indexOf(i.status) >= 0;
+                    };
+                    // Denominator = items actually part of the run (enabled, or already
+                    // terminal) — excluding purely-disabled rows, so it reaches N/N.
+                    var inRun = q.filter(function (i) { return i.enabled || isTerminal(i); });
+                    var done = inRun.filter(isTerminal).length;
+                    count.textContent = inRun.length ? (done + "/" + inRun.length) : "";
+                }
+            }
+            // The WORKER (server-side) reconciles the chip + rescans datasets after
+            // each node and bumps run.chip_rev. Every tab just re-renders its own
+            // chip page once when chip_rev advances — no client-side fan-out (so no
+            // N-tab stampede) and it works even with no tab open (the worker did it).
+            var rev = run.chip_rev || 0;
+            if (chipRev === null) {
+                chipRev = rev;                       // baseline — no spurious render on load
+            } else if (rev > chipRev && window.htmx && onChipPage()) {
+                htmx.ajax("GET", location.pathname + location.search,
+                    { target: "#table-pane", swap: "innerHTML" });
+            }
+            chipRev = rev;
+        }
+        var _schedPolling = false;
+        function poll() {
+            // In-flight guard + visibility gating (audit B24): don't pile up
+            // overlapping requests if one is slow, and don't hammer the server
+            // while the desktop window is hidden/backgrounded.
+            if (_schedPolling || document.hidden) return;
+            _schedPolling = true;
+            fetch("/scheduler/status").then(function (r) { return r.json(); })
+                .then(apply).catch(function () {})
+                .then(function () { _schedPolling = false; });
+        }
+        document.addEventListener("DOMContentLoaded", function () {
+            poll();
+            setInterval(poll, 2500);
+            // Catch up promptly when the window is re-focused after being hidden.
+            document.addEventListener("visibilitychange", function () {
+                if (!document.hidden) poll();
+            });
+        });
+        // Brief notice when a mutating action is refused during a run.
+        document.body.addEventListener("schedulerLocked", function () {
+            var bar = document.getElementById("status-bar");
+            if (bar) {
+                bar.innerHTML = '<div class="status-msg status-warning">' +
+                    "Editing is locked while the Scheduler is running.</div>";
+            }
+        });
+    })();
+    </script>
+
+    {# ───────────────────────────────────────────────────────────────────── #}
+    {# Slow-route loader: a tiny "QUAM STATE MANAGER" callout that fills in #}
+    {# letter-by-letter while a long request is in flight. Pure CSS animation,#}
+    {# delay-gated by JS (200 ms) so fast requests stay invisible.            #}
+    {# Each <span> is one character so the staggered gradient sweep animation #}
+    {# can target each letter individually. Spaces are non-breaking so they  #}
+    {# preserve layout.                                                       #}
+    {# ───────────────────────────────────────────────────────────────────── #}
+    <div id="quam-loader" class="quam-loader" aria-hidden="true">
+      <div class="quam-loader-text">
+        <span>Q</span><span>U</span><span>A</span><span>M</span><span>&nbsp;</span><span>S</span><span>T</span><span>A</span><span>T</span><span>E</span><span>&nbsp;</span><span>M</span><span>A</span><span>N</span><span>A</span><span>G</span><span>E</span><span>R</span>
+      </div>
+      {# Optional progress line — populated by JS during workspace backfill #}
+      {# (Param History import). Hidden by default via CSS :empty rule.    #}
+      <div id="quam-loader-progress" class="quam-loader-progress"></div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,26 @@
+{# Working-copy garbage-collection prompt — working copies accumulate one
+   per loaded folder (chips, run snapshots, history loads) and are never
+   auto-deleted (an evicted copy may hold unapplied edits). Past the
+   threshold, offer a one-click cleanup of the provably-clean ones. #}
+{% if wc_gc_count and wc_gc_count > wc_gc_threshold %}
+<div class="topo-change-banner wc-gc-banner" id="wc-gc-banner">
+    <span class="topo-change-banner-text">
+        &#129529; <b>{{ wc_gc_count }}</b> working states have accumulated under
+        <code>instance/working_state/</code> &mdash; clean up the ones with no unapplied edits?
+    </span>
+    <button type="button" class="topo-change-banner-btn" onclick="wcGcCleanup(this)">Clean up</button>
+    <button type="button" class="topo-change-banner-dismiss" aria-label="Dismiss"
+            onclick="wcGcDismiss()">&#10005;</button>
+</div>
+<script>
+    // Per-tab-session dismiss — re-shown next session if still over threshold.
+    // Storage access guarded like every other touch in the codebase (throws
+    // SecurityError when the browser blocks site data).
+    try {
+        if (sessionStorage.getItem("quam_wc_gc_dismissed") === "1") {
+            var _gcb = document.getElementById("wc-gc-banner");
+            if (_gcb) _gcb.hidden = true;
+        }
+    } catch (e) {}
+</script>
+{% endif %}

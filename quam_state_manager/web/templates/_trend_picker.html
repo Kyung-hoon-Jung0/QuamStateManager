@@ -1,0 +1,77 @@
+<h2>Trend Tracker</h2>
+<p class="muted">Select properties and qubits to track across <strong>{{ labels | length }}</strong> experiments, then click <strong>Show Chart</strong>.</p>
+
+{% set default_props = ["f_01", "T1", "T2ramsey", "gate_fidelity_avg"] %}
+
+<form id="trend-form" hx-post="/trend/chart" hx-target="#trend-chart-area" hx-swap="innerHTML" class="compare-controls">
+    {% for p in paths_raw %}
+    <input type="hidden" name="paths" value="{{ p }}">
+    {% endfor %}
+
+    <div class="prop-selector">
+        <div class="prop-select-all">
+            <a href="#" onclick="trendToggleAll(true); return false;">Select All</a>
+            <a href="#" onclick="trendToggleAll(false); return false;">Deselect All</a>
+        </div>
+        {% for group in prop_groups %}
+        <div class="prop-group" data-group="{{ group.name }}">
+            <input type="checkbox" class="prop-group-toggle"
+                   onchange="trendToggleGroup(this.closest('.prop-group'), this.checked)"
+                   {% set ns = namespace(all=true, none=true) %}
+                   {% for p in group.props %}
+                       {% if p in default_props %}{% set ns.none = false %}{% else %}{% set ns.all = false %}{% endif %}
+                   {% endfor %}
+                   {% if ns.all %}checked{% endif %}>
+            <span class="prop-group-label">{{ group.name }}</span>
+            <div class="prop-group-items">
+                {% for prop in group.props %}
+                <label class="prop-check">
+                    <input type="checkbox" name="props" value="{{ prop }}"
+                           onchange="trendSyncGroup(this.closest('.prop-group'))"
+                           {% if prop in default_props %}checked{% endif %}>
+                    <small>{{ prop }}</small>
+                </label>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <fieldset class="compare-fieldset" style="margin-top: 0.75rem;">
+        <legend>Qubits</legend>
+        <div class="prop-checkboxes">
+        {% for qn in all_qubit_names %}
+            <label class="prop-check">
+                <input type="checkbox" name="qubits" value="{{ qn }}">
+                <small>{{ qn }}</small>
+            </label>
+        {% endfor %}
+        </div>
+    </fieldset>
+
+    <button type="submit" class="outline btn-sm" style="margin-top: 0.75rem;">Show Chart</button>
+</form>
+
+<div id="trend-chart-area"></div>
+
+<script>
+function trendToggleAll(checked) {
+    var form = document.getElementById('trend-form');
+    form.querySelectorAll('input[name="props"]').forEach(function(cb) { cb.checked = checked; });
+    form.querySelectorAll('.prop-group-toggle').forEach(function(cb) { cb.checked = checked; cb.indeterminate = false; });
+}
+function trendToggleGroup(groupEl, checked) {
+    groupEl.querySelectorAll('input[name="props"]').forEach(function(cb) { cb.checked = checked; });
+    var toggle = groupEl.querySelector('.prop-group-toggle');
+    toggle.checked = checked;
+    toggle.indeterminate = false;
+}
+function trendSyncGroup(groupEl) {
+    var boxes = groupEl.querySelectorAll('input[name="props"]');
+    var total = boxes.length, checked = 0;
+    boxes.forEach(function(cb) { if (cb.checked) checked++; });
+    var toggle = groupEl.querySelector('.prop-group-toggle');
+    toggle.checked = (checked === total);
+    toggle.indeterminate = (checked > 0 && checked < total);
+}
+</script>

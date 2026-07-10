@@ -1,0 +1,101 @@
+<div class="config-status-banner{% if error %} config-status-error{% endif %}">
+    {# VSCode-clean redesign (docs/43): the banner is a hairline-capped region, not
+       a boxed card; Regenerate is the one FILLED CTA (.btn-sync.primary); stale /
+       error are gutter-glyph + muted note (color-only), never a filled pill/box;
+       meta is mono+tabular. Every hx-* hook + .config-status-host targeting +
+       hx-indicator/hx-disabled-elt preserved verbatim. #}
+    <div class="config-status-actions">
+        <button type="button"
+                class="btn-sync primary config-regen-btn"
+                hx-post="/config/regenerate"
+                hx-target="closest .config-status-host"
+                hx-swap="innerHTML"
+                hx-indicator="closest .config-status-host"
+                hx-disabled-elt="this"
+                title="Run machine.generate_config() on the currently loaded chip">
+            {% if meta %}&#x21bb; Regenerate from loaded chip{% else %}&#x21bb; Generate config from loaded chip{% endif %}
+        </button>
+        <span class="htmx-indicator config-status-spinner">
+            <span class="config-status-spin" aria-hidden="true"></span>running <code>generate_config()</code>&hellip;
+        </span>
+    </div>
+
+    {# Export the generated config for bare QUA (no QUAM needed). Plain <a download>
+       links — no hx-* so HTMX won't swap; the browser downloads in place. Shown
+       only when a config is cached (meta is set alongside generated_config). #}
+    {% if meta %}
+    <div class="config-export-row">
+        <span class="config-export-lead">For bare QUA:</span>
+        <a class="btn-sync outline config-export-btn" href="/config/export?format=json" download
+           title="Download the raw QM config dict as config.json (json.load &rarr; qmm.open_qm)">&#x2193; config.json</a>
+        <a class="btn-sync outline config-export-btn" href="/config/export?format=py" download
+           title="Download a standalone config.py (import config &rarr; qmm.open_qm); no QUAM needed">&#x2193; config.py</a>
+        <small class="config-export-hint muted">feed straight to <code>qmm.open_qm()</code>{% if config_stale is defined and config_stale %} &middot; exports the last generated config &mdash; Regenerate for recent edits{% endif %}</small>
+    </div>
+    {% endif %}
+
+    {% if config_stale is defined and config_stale %}
+    <div class="config-stale-note">
+        <span class="config-note-glyph config-note-glyph-warn" aria-hidden="true">&#9888;</span>
+        <span class="config-note-body">
+            <span class="config-note-lead">Config may be stale.</span>
+            <small class="config-note-text">
+                {% if meta and meta.unsaved_at_generate %}
+                This preview predates the unsaved edits you had at generate time &mdash; Regenerate to include them.
+                {% else %}
+                The state changed after this config was generated &mdash; Regenerate to refresh.
+                {% endif %}
+            </small>
+        </span>
+    </div>
+    {% endif %}
+
+    {% if error %}
+    <div class="config-status-error-msg">
+        <div class="config-error-head">
+            <span class="config-note-glyph config-note-glyph-err" aria-hidden="true">&#9679;</span>
+            <strong class="config-error-lead">Couldn't generate config</strong>
+        </div>
+        <pre class="config-error-pre">{{ error }}</pre>
+        {% if traceback %}
+        <details class="config-disclosure">
+            <summary>Traceback</summary>
+            <pre class="config-trace">{{ traceback }}</pre>
+        </details>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% if meta %}
+    <div class="config-status-meta">
+        <span class="config-meta-line">
+            <span class="config-meta-item">Last&nbsp;good <b class="config-meta-strong">{{ meta.at }}</b></span>
+            {% if meta.versions %}
+            <span class="config-meta-sep" aria-hidden="true">&middot;</span>
+            <span class="config-meta-item">quam&nbsp;{{ meta.versions.quam or '?' }}</span>
+            <span class="config-meta-sep" aria-hidden="true">&middot;</span>
+            <span class="config-meta-item">quam_builder&nbsp;{{ meta.versions.quam_builder or '?' }}</span>
+            <span class="config-meta-sep" aria-hidden="true">&middot;</span>
+            <span class="config-meta-item">qm&nbsp;{{ meta.versions.qm or '?' }}</span>
+            {% endif %}
+            {% if meta.qubits %}
+            <span class="config-meta-sep" aria-hidden="true">&middot;</span>
+            <span class="config-meta-item">{{ meta.qubits | length }}&nbsp;qubits, {{ meta.qubit_pairs | length }}&nbsp;pairs</span>
+            {% endif %}
+        </span>
+        {% if meta.warnings %}
+        <details class="config-disclosure config-warnings">
+            <summary>
+                <span class="config-note-glyph config-note-glyph-warn" aria-hidden="true">&#9888;</span>
+                {{ meta.warnings | length }} warning{{ 's' if (meta.warnings | length) != 1 }}
+            </summary>
+            <ul>
+                {% for w in meta.warnings %}
+                <li>{{ w }}</li>
+                {% endfor %}
+            </ul>
+        </details>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>

@@ -1,0 +1,212 @@
+{# Pulse detail — inspector pane. Waveform plot (synthesized preview) on top,
+   instant-commit parameter editor below. Rendered by GET /pulse/detail and
+   re-rendered by every pulse mutation response. #}
+<div id="pulse-detail-root" data-pulse-path="{{ path }}"
+     data-actual-path="{{ actual_path }}">
+{% set inspector_type = "pulse" %}
+{% set inspector_label = owner ~ " · " ~ channel ~ " · " ~ op_name %}
+{% set inspector_sub = class_short %}
+{% include '_inspector_header.html' %}
+
+{% if status_msg %}
+<div class="pulse-status-toast pulse-status-{{ status_level }}">{{ status_msg }}</div>
+{% endif %}
+
+{% if alias_chain %}
+<div class="pulse-alias-banner">
+    Opened via alias <code>{{ op_name }}</code> &rarr;
+    <code>{{ actual_path.rsplit('.', 1)[-1] }}</code> &mdash;
+    edits apply to the target and affect every alias.
+</div>
+{% endif %}
+
+{% if not known and not alias_chain %}
+<div class="pulse-unknown-banner">
+    Unrecognized pulse class <code>{{ qclass or '(none)' }}</code> &mdash;
+    fields are shown raw; the synthesized preview is unavailable.
+</div>
+{% endif %}
+
+<div class="pulse-actions">
+    {% if can_rename %}
+    <button type="button" class="btn-sm outline"
+            onclick="PulsesPage.startRename(this)">Rename</button>
+    {% endif %}
+    {% if can_rename or alias_chain %}
+    <button type="button" class="btn-sm outline"
+            onclick="PulsesPage.startDuplicate(this)">Duplicate</button>
+    {% endif %}
+    <button type="button" class="btn-sm outline pulse-verify-btn"
+            title="Overlay the real machine.generate_config() waveform (ground truth) on the synthesized preview"
+            onclick="PulsesPage.verifyPulse(this)">Verify vs config</button>
+    <button type="button" class="btn-sm outline pulse-delete-btn"
+            onclick="PulsesPage.askDelete(this)">Delete</button>
+</div>
+
+{% if can_rename %}
+<div class="pulse-rename-form" hidden>
+    <form hx-post="/api/pulse/rename" hx-target="#inspector-pane" hx-swap="innerHTML">
+        <input type="hidden" name="path" value="{{ path }}">
+        <input type="text" name="new_name" required
+               pattern="[a-zA-Z][a-zA-Z0-9_]{0,63}" value="{{ op_name }}"
+               aria-label="New operation name">
+        <label class="pulse-retarget-label" title="Rewrite inbound pointers to follow the new name">
+            <input type="checkbox" name="retarget" value="1" checked> re-point
+            {{ used_by | length }} reference(s)
+        </label>
+        <button class="btn-sm" type="submit">Rename</button>
+        <button class="btn-sm outline" type="button"
+                onclick="PulsesPage.cancelRename(this)">Cancel</button>
+    </form>
+</div>
+{% endif %}
+
+{% if can_rename or alias_chain %}
+<div class="pulse-duplicate-form" hidden>
+    <form hx-post="/api/pulse/duplicate" hx-target="#inspector-pane" hx-swap="innerHTML">
+        <input type="hidden" name="path" value="{{ path }}">
+        <input type="text" name="new_name" required
+               pattern="[a-zA-Z][a-zA-Z0-9_]{0,63}" value="{{ op_name }}_copy"
+               aria-label="Duplicate name">
+        <button class="btn-sm" type="submit">Duplicate</button>
+        <button class="btn-sm outline" type="button"
+                onclick="PulsesPage.cancelDuplicate(this)">Cancel</button>
+    </form>
+</div>
+{% endif %}
+
+<div class="pulse-delete-confirm" hidden>
+    {% if alias_chain %}
+    <p>This deletes the alias <code>{{ op_name }}</code> only — the target
+        <code>{{ actual_path.rsplit('.', 1)[-1] }}</code> stays.</p>
+    {% endif %}
+    {% if delete_used_by %}
+    <p><strong>Warning:</strong> referenced by
+        {% for ref in delete_used_by %}<code>{{ ref }}</code>{{ ", " if not loop.last }}{% endfor %}
+        &mdash; deleting leaves dangling pointers (and
+        <code>generate_config()</code> will fail on them).</p>
+    {% else %}
+    <p>No other operation references this {{ 'alias' if alias_chain else 'pulse' }}.</p>
+    {% endif %}
+    <form hx-post="/api/pulse/delete" hx-target="#inspector-pane" hx-swap="innerHTML">
+        <input type="hidden" name="path" value="{{ path }}">
+        <input type="hidden" name="force" value="1">
+        <button class="btn-sm pulse-confirm-delete" type="submit">Delete {{ op_name }}</button>
+        <button class="btn-sm outline" type="button"
+                onclick="PulsesPage.cancelDelete(this)">Cancel</button>
+    </form>
+</div>
+
+<div class="pulse-plot-bar">
+    <span class="pulse-plot-label muted">preview (synthesized)</span>
+    <span class="pulse-decimated-note muted" hidden>(decimated for display)</span>
+    <span class="pulse-dirty-pill" hidden>previewing uncommitted edits &mdash; Enter commits &middot; Esc reverts</span>
+    <span class="pulse-verify-note" hidden></span>
+    <span class="pulse-synth-err" {% if not synth_error %}hidden{% endif %}>{{ synth_error or '' }}</span>
+</div>
+<div id="pulse-detail-plot" class="pulse-detail-plot"></div>
+
+<details open class="detail-section">
+    <summary class="section-header">Parameters
+        <small class="muted">({{ params | length }})</small></summary>
+    <table class="prop-table">
+        <thead><tr><th class="col-prop">Property</th><th class="col-val">Value</th></tr></thead>
+        <tbody>
+        {% for p in params %}
+        <tr class="{% if p.is_pointer %}row-pointer{% endif %}">
+            <td class="col-prop">
+                {# clipboard via data attribute + delegated listener — op/field
+                   names come from researcher-shared state.json (untrusted);
+                   never embed them inside inline JS strings #}
+                <code class="dot-path col-key pulse-copy-path"
+                      title="{{ p.dot_path }} — click to copy"
+                      data-copy="{{ p.dot_path }}">{{ p.key }}</code>
+                {% if not p.synth %}<span class="pulse-nosynth-tag muted"
+                    title="Does not affect the waveform shape">readout-only</span>{% endif %}
+            </td>
+            <td class="col-val">
+                {% if p.is_runtime %}
+                <em class="selfref-value">{{ p.raw }} <span class="tag-runtime">(runtime)</span></em>
+                {% elif p.is_list %}
+                <code class="pulse-list-value">{{ p.value | tojson | truncate(80) }}</code>
+                {% if p.is_pointer %}
+                <span class="ptr-inline pointer-badge"
+                      title="Resolves to {{ p.target_path }} (container value — edit at the target)">{{ p.raw }}</span>
+                {% endif %}
+                {% else %}
+                <form class="inline-edit pulse-edit-form" hx-post="/pulse/edit"
+                      hx-target="#inspector-pane" hx-swap="innerHTML">
+                    <input type="hidden" name="path" value="{{ path }}">
+                    <input type="hidden" name="dot_path" value="{{ p.dot_path }}">
+                    <input type="hidden" name="mode" value="value">
+                    <input type="text" name="value" class="edit-input"
+                           data-param="{{ p.key }}" data-kind="{{ p.kind }}"
+                           data-unit="{{ p.unit }}"
+                           data-synth="{{ 1 if p.synth else 0 }}"
+                           data-committed="{{ p.value if p.value is not none else '' }}"
+                           value="{{ p.value if p.value is not none else '' }}"
+                           aria-label="{{ p.key }}">
+                </form>
+                {% if p.unit %}<span class="unit-preview muted">{{ p.unit }}</span>{% endif %}
+                {% if p.kind in ('float', 'int') and not p.is_pointer %}
+                <button type="button" class="pulse-tune-btn" title="Tune with a slider"
+                        onclick="PulsesPage.toggleParamSlider(this)">&asymp;</button>
+                {% endif %}
+                {% if p.prev_link and not p.is_pointer %}
+                {# This field was a pointer earlier this session; unlinking
+                   replaced it with a literal. Show what it was linked to and
+                   offer a one-click restore (mode=pointer rewrites the ref). #}
+                <span class="ptr-prev-link muted" title="Previously linked to {{ p.prev_link }}">was &rarr; <code>{{ p.prev_link }}</code></span>
+                <button type="button" class="ptr-act btn-sm outline ptr-relink-prev"
+                        title="Restore the previous link"
+                        hx-post="/pulse/edit"
+                        hx-vals='{"path": {{ path | tojson }}, "dot_path": {{ p.dot_path | tojson }}, "mode": "pointer", "value": {{ p.prev_link | tojson }}}'
+                        hx-target="#inspector-pane" hx-swap="innerHTML">re-link</button>
+                {% endif %}
+                {% if p.is_pointer %}
+                <span class="ptr-inline pointer-badge"
+                      title="{% if p.resolved %}Resolves to {{ p.target_path }}{% else %}Unresolvable pointer{% endif %}">{{ p.raw }}</span>
+                <span class="ptr-actions">
+                    {% if p.resolved %}
+                    <button type="button" class="ptr-act btn-sm outline"
+                            title="Break the link — replace the pointer with the literal value {{ p.value }}"
+                            hx-post="/pulse/edit"
+                            hx-vals='{"path": {{ path | tojson }}, "dot_path": {{ p.dot_path | tojson }}, "mode": "literal", "value": {{ p.value | tojson }}}'
+                            hx-confirm="Replace the pointer with the literal value {{ p.value }}? {{ p.key }} will stop tracking {{ p.target_path }}."
+                            hx-target="#inspector-pane" hx-swap="innerHTML">unlink</button>
+                    {% endif %}
+                    <button type="button" class="ptr-act btn-sm outline"
+                            title="Point this field somewhere else"
+                            onclick="PulsesPage.startLinkEdit(this, {{ p.dot_path | tojson | forceescape }}, {{ p.raw | tojson | forceescape }})">re-link</button>
+                </span>
+                {% endif %}
+                {% endif %}
+            </td>
+        </tr>
+        {% if p.is_pointer and p.shared_by %}
+        <tr class="ptr-impact-row"><td colspan="2">
+            <span class="ptr-impact">edits follow the pointer &mdash; write at
+                <code>{{ p.target_path }}</code>; also used by
+                <strong>{{ p.shared_by | join(', ') }}</strong></span>
+        </td></tr>
+        {% endif %}
+        {% endfor %}
+        </tbody>
+    </table>
+</details>
+
+{% if used_by %}
+<details open class="detail-section">
+    <summary class="section-header">Used by
+        <small class="muted">({{ used_by | length }})</small></summary>
+    <ul class="pulse-usedby-list">
+        {% for ref in used_by %}
+        <li><code class="dot-path">{{ ref }}</code></li>
+        {% endfor %}
+    </ul>
+</details>
+{% endif %}
+
+<script id="pulse-detail-data" type="application/json">{{ detail_json | script_json }}</script>
+<script>if (window.PulsesPage) window.PulsesPage.initDetail();</script>
+</div>

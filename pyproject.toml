@@ -1,0 +1,80 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quam-state-manager"
+version = "0.4.0"
+description = "Desktop + web tool for inspecting and editing quantum machine (QUAM) state files"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Kyung-hoon Jung"},
+]
+
+dependencies = [
+    "Flask>=3.0",
+    "Typer>=0.9",
+    "h5py>=3.0",
+    "pywebview>=5.0",
+    # Pulses-page waveform synthesis: scipy's gaussian/blackman windows and
+    # gaussian_filter1d are the exact functions quam/qualang_tools call, so
+    # the in-process preview matches the QM stack bit-for-bit.
+    "scipy>=1.11",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pyinstaller>=6.0",
+    "pre-commit>=3.5",
+    "ruff>=0.8",
+]
+
+[project.scripts]
+quam-manager = "quam_state_manager.cli:app"
+qsm = "quam_state_manager.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["quam_state_manager*"]
+
+# Non-Python runtime data — WITHOUT this, a regular `pip install` (wheel) ships
+# only .py files and the Jinja templates + JS/CSS are missing (TemplateNotFound:
+# base.html). Editable installs (`pip install -e`) don't hit this because they
+# point at the source tree. Glob both top-level files and any nested dirs.
+# Ship non-Python runtime data (templates + JS/CSS) in the wheel. Belt-and-suspenders:
+# MANIFEST.in lists the files + include-package-data pulls them in (the most reliable
+# setuptools path), AND an explicit package-data key as backup. Without this a regular
+# `pip install` ships only .py → TemplateNotFound: base.html.
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.package-data]
+"quam_state_manager.web" = ["templates/*", "static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+exclude = [
+    "build",
+    "dist",
+    "generated",
+    "instance",
+    "instance.bak.*",
+]
+
+[tool.ruff.lint]
+# Conservative: catch real bugs, ignore opinionated style nags.
+select = ["E", "F", "W", "I", "B", "UP", "RUF"]
+ignore = [
+    "E501",   # line too long — covered by formatter
+    "B008",   # function call in default — typer's pattern needs it
+    "UP007",  # X | Y vs Optional[X] — both are fine
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B", "RUF"]

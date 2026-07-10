@@ -1,0 +1,304 @@
+{# Shared by the Datasets page and the Collections page (view_mode). Collections
+   ships only tagged runs + a tag-filter chip row; everything else is identical. #}
+{% set view_mode = view_mode | default('datasets') %}
+{% set is_collections = view_mode == 'collections' %}
+{% set page_title = 'Collections' if is_collections else 'Datasets' %}
+{% if no_workspace %}
+<div class="welcome" style="max-width:600px;margin:2rem auto">
+    <h2>{{ page_title }}</h2>
+    <p>Add a data folder in the <strong>Workspace</strong> panel (left sidebar) to browse experiment runs.</p>
+    <p class="muted">The data folder should contain date-formatted subfolders (e.g. 2026-03-03/) with experiment run folders inside.</p>
+</div>
+{% else %}
+
+{# Flex column that fills #table-pane so the virtual-scroll list grows to the
+   available height instead of a hardcoded max-height estimate (no dead space). #}
+<div class="datasets-page">
+{# At-a-glance digest of the latest day (PI/skim persona): counts + failure
+   chips that click-to-filter via the scoped search (.ds-help-example reuses the
+   existing paste-into-search handler). Only shown when something is notable. #}
+{% if digest and digest.total %}
+<div class="ds-digest-band">
+    <span class="ds-digest-date">{{ digest.date }}</span>
+    <span class="ds-digest-item">{{ digest.total }} run{{ 's' if digest.total != 1 }}</span>
+    {% if digest.failed %}
+    <button class="ds-help-example ds-digest-bad" data-example="is:failed"
+            title="Show only failed runs">{{ digest.failed }} failed</button>
+    {% else %}
+    <span class="ds-digest-ok">all OK</span>
+    {% endif %}
+    {% for q, n in digest.qubit_fail %}
+    <button class="ds-help-example ds-digest-qchip" data-example="qubit:{{ q }} outcome:fail"
+            title="Runs where {{ q }}'s outcome failed">{{ q }}&nbsp;×{{ n }}</button>
+    {% endfor %}
+</div>
+{% endif %}
+<div class="table-header-row">
+    <h2 style="white-space:nowrap">{{ page_title }} <small class="muted">({{ total }} runs{% if stats %}, {{ stats.experiment_types }} types, {{ stats.unique_qubits | length }} qubits{% endif %})</small></h2>
+    <div style="display:flex;gap:.5rem;align-items:center;flex:1;min-width:0">
+        <div class="table-filter ds-search-wrap" style="flex:1;position:relative">
+            <input type="search" id="dataset-search"
+                   placeholder="Search: q2, q5, time · rabi · tag:flagged · is:bookmarked"
+                   autocomplete="off" style="width:100%">
+            <button type="button" id="ds-search-help-toggle" class="ds-search-help-btn"
+                    aria-label="Show search syntax help"
+                    title="Show search syntax help">?</button>
+            <small id="dataset-filter-count" class="muted"></small>
+
+            {# Persistent help panel — opens on first focus per browser session AND via the ? icon. #}
+            {# Closes only on explicit X click; survives typing, sorting, filter chips, HTMX swaps. #}
+            <div id="ds-search-help" class="ds-search-help-panel" hidden>
+                <div class="ds-search-help-header">
+                    <strong>Search syntax</strong>
+                    <button type="button" id="ds-search-help-close"
+                            class="ds-search-help-close"
+                            aria-label="Close search help">×</button>
+                </div>
+                <p class="muted" style="margin:.25rem 0 .5rem">
+                    Mix free-text with <code>key:value</code> scopes.
+                    Click an example to paste it.
+                </p>
+                <table class="ds-search-help-grid">
+                    <tbody>
+                        <tr><td><button class="ds-help-example" data-example="q2, q5, time">q2, q5, time</button></td>
+                            <td><b>Comma = AND.</b> A bare qubit name (<code>q2</code>) → runs on that qubit; other words match the name. Here: runs on <code>q2</code> AND <code>q5</code> whose name has <code>time</code></td></tr>
+                        <tr><td><button class="ds-help-example" data-example="qubit:q0">qubit:q0</button></td>
+                            <td>Runs that touch qubit <code>q0</code> (aliases: <code>q:</code>). 2Q runs count via their pair members.</td></tr>
+                        <tr><td><button class="ds-help-example" data-example="pair:qA2-qA1">pair:qA2-qA1</button></td>
+                            <td>2-qubit runs on the <b>pair</b> <code>qA2-qA1</code> (alias: <code>qp:</code>). Or pick from the <b>Pairs</b> filter in Sort.</td></tr>
+                        <tr><td><button class="ds-help-example" data-example="exp:rabi">exp:rabi</button></td>
+                            <td>Experiments whose name contains <code>rabi</code> (alias: <code>e:</code>)</td></tr>
+                        <tr><td><button class="ds-help-example" data-example="tag:flagged">tag:flagged</button></td>
+                            <td>Runs tagged <code>flagged</code> (alias: <code>t:</code>)</td></tr>
+                        <tr><td><button class="ds-help-example" data-example="outcome:successful">outcome:successful</button></td>
+                            <td>Outcome contains <code>successful</code> on any qubit (alias: <code>oc:</code>)</td></tr>
+                        <tr><td><button class="ds-help-example" data-example="date:2026-05">date:2026-05</button></td>
+                            <td>Runs whose date matches <code>2026-05</code> (alias: <code>d:</code>)</td></tr>
+                        <tr><td><button class="ds-help-example" data-example="id:108">id:108</button></td>
+                            <td>Run id contains <code>108</code></td></tr>
+                        <tr><td><button class="ds-help-example" data-example="metric:1.5">metric:1.5</button></td>
+                            <td>Key metric contains <code>1.5</code> (alias: <code>m:</code>)</td></tr>
+                        <tr><td><button class="ds-help-example" data-example="note:todo">note:todo</button></td>
+                            <td>Runs whose note contains <code>todo</code> (alias: <code>n:</code>)</td></tr>
+                        <tr><td><button class="ds-help-example" data-example="reset_type=active">reset_type=active</button></td>
+                            <td>Runs whose <b>parameter</b> <code>reset_type</code> = <code>active</code> (also <code>param:</code>/<code>p:</code>). Combine with qubits/fit — all AND. Or pick from the <b>Parameters</b> facets in Sort.</td></tr>
+                        <tr><td><button class="ds-help-example" data-example="is:bookmarked">is:bookmarked</button></td>
+                            <td>Only bookmarked (starred) runs</td></tr>
+                        <tr><td><button class="ds-help-example" data-example="-tag:wip">-tag:wip</button></td>
+                            <td>Prefix with <code>-</code> to negate any scope</td></tr>
+                        <tr><td><button class="ds-help-example" data-example='tag:"in progress"'>tag:"in progress"</button></td>
+                            <td>Quote values that contain spaces</td></tr>
+                        <tr><td><button class="ds-help-example" data-example="qubit:q0 rabi">qubit:q0 rabi</button></td>
+                            <td>Combine scopes with free-text — all conditions must match (AND)</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <details class="bulk-colvis ds-colvis">
+            <summary class="btn-sm outline" title="Choose which columns to show">&#9776; Properties</summary>
+            <div class="bulk-colvis-menu" id="ds-colvis-menu" role="menu"></div>
+        </details>
+        <button class="btn-sm outline" hx-post="/datasets/rescan" hx-target="#table-pane" title="Rescan for new runs">Rescan</button>
+    </div>
+</div>
+
+{# Track active date — read by the JS delta poller in dataset-virtual.js #}
+<input type="hidden" id="ds-active-date" name="date" value="{{ active_date or '' }}">
+
+{# Folder multi-select filter (multi-folder workspaces only) — mirrors the
+   Experiments chip row. Empty selection = all folders. Chips show the leaf
+   folder name (truncated to 6 + …); the full registered path is the hover title. #}
+{% if folders and folders | length > 1 %}
+<div class="folder-filter-sections" id="folder-filter-grid">
+    <div class="folder-filter-topbar">
+        <span class="folder-filter-label">Folders</span>
+        <span class="folder-chip active" data-folder-key="" onclick="toggleFolderFilter('', this)"
+              title="Show runs from all folders">All</span>
+        {% for f in folders %}
+        <span class="folder-chip" data-folder-key="{{ f.key }}"
+              onclick="toggleFolderFilter('{{ f.key }}', this)"
+              title="{{ f.full_path }}">{{ f.label[:6] }}{% if f.label | length > 6 %}…{% endif %}</span>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+{# Experiment multi-select filter — grouped by category sections #}
+<div class="exp-filter-sections" id="exp-filter-grid">
+    <div class="exp-filter-topbar">
+        <button type="button" class="exp-filter-toggle" id="exp-filter-toggle"
+                onclick="toggleExpFilterCollapsed()" aria-expanded="true" aria-controls="exp-filter-grid"
+                title="Show or hide the experiment filter">
+            <span class="exp-filter-toggle-caret" aria-hidden="true">&#9662;</span> Experiments
+        </button>
+        <span class="exp-chip active" data-exp="" onclick="toggleExpFilter('', this)">All</span>
+        <span class="exp-filter-summary">{{ experiments | length }} experiment type{{ '' if experiments | length == 1 else 's' }} — click to filter</span>
+    </div>
+    {% if exp_categories is defined and exp_categories %}
+    {% for cat in exp_categories %}
+    <div class="exp-filter-section" data-category="{{ cat.label }}">
+        <span class="exp-section-label" onclick="toggleExpCategory('{{ cat.label }}', this)"
+              title="Click to select/deselect all {{ cat.label }}">{{ cat.label }}
+            <small class="exp-section-count">{{ cat.experiments | length }}</small>
+        </span>
+        <div class="exp-section-chips">
+        {% for exp in cat.experiments %}
+            <span class="exp-chip" data-exp="{{ exp }}" onclick="toggleExpFilter('{{ exp }}', this)">{{ exp }}</span>
+        {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="exp-filter-section">
+        <div class="exp-section-chips">
+        {% for exp in experiments %}
+            <span class="exp-chip" data-exp="{{ exp }}" onclick="toggleExpFilter('{{ exp }}', this)">{{ exp }}</span>
+        {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+{% if is_collections %}
+{# Tag-filter chips — multi-select (clicking a 2nd keeps the 1st), OR filter with
+   match-count ranking (rows matching the most selected tags float to the top),
+   handled in dataset-virtual.js. The reserved "favorite" tag is pinned first
+   and shown as ★ (it's also what the row star toggles). #}
+<div class="tag-filter-sections" id="tag-filter-grid">
+    <div class="tag-filter-topbar">
+        <span class="tag-chip active" data-tag="" onclick="toggleTagFilter('', this)"
+              title="Show all tagged runs">All</span>
+        {% for t in collection_tags %}
+        <span class="tag-chip{% if t == 'favorite' %} tag-chip-fav{% endif %}"
+              data-tag="{{ t }}" onclick="toggleTagFilter({{ t | tojson }}, this)">
+            {% if t == 'favorite' %}&#9733; favorite{% else %}{{ t }}{% endif %}
+        </span>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+{# Sort banner — collapsible, mirrors the Experiments filter banner. One active
+   badge at a time; click the active badge to flip asc/desc. "Columns" badges drive
+   the same client sortKeys as the column headers; "Fit metrics" badges (built by JS
+   from each row's `sm` map) sort the run list by fit-result values. Badge contents
+   are populated by dataset-virtual.js. #}
+<div class="sort-filter-sections" id="sort-filter-grid">
+    <div class="sort-filter-topbar">
+        <button type="button" class="exp-filter-toggle" id="sort-banner-toggle"
+                onclick="toggleSortBannerCollapsed()" aria-expanded="true" aria-controls="sort-filter-grid"
+                title="Show or hide sort options">
+            <span class="exp-filter-toggle-caret" aria-hidden="true">&#9662;</span> Sort
+        </button>
+        <span class="sort-banner-summary" id="sort-banner-summary" aria-live="polite"></span>
+        {# Date filter tabs — relocated into the Sort band (item 1) so they stay
+           visible even when the sort badges are collapsed, and the title→table
+           gap stays tight. Plain <a> pills (not a nested <ul>) so they sit in
+           the flex topbar cleanly. #}
+        {% if dates | length > 1 %}
+        <div class="ds-date-tabs" role="tablist" aria-label="Filter by date">
+            <a class="ds-date-tab{% if not active_date %} active{% endif %}"
+               hx-get="/datasets" hx-target="#table-pane"
+               onclick="var e=document.getElementById('ds-active-date');if(e)e.value=''">All dates</a>
+            {% for d in dates %}
+            <a class="ds-date-tab{% if active_date == d %} active{% endif %}"
+               hx-get="/datasets?date={{ d }}" hx-target="#table-pane"
+               onclick="var e=document.getElementById('ds-active-date');if(e)e.value='{{ d }}'">{{ d[5:] }}</a>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+    <div class="sort-filter-section" data-sort-group="columns">
+        <span class="exp-section-label">Columns</span>
+        {# Qubit filter: pick qubits to show only runs containing ALL of them (AND) —
+           the click-UI twin of typing `q2, q5`. Placed FIRST, left of the When badge. #}
+        <details class="bulk-colvis ds-qubit-picker" id="sort-qubit-picker">
+            <summary class="exp-chip sort-badge" id="sort-qubit-summary"
+                     title="Filter to runs containing the checked qubits">Qubits ▾</summary>
+            <div class="bulk-colvis-menu" id="sort-qubit-menu" role="menu"></div>
+        </details>
+        {# Qubit-pairs picker (2Q runs) — JS-built from each row's `p`, AND-filter. #}
+        <details class="bulk-colvis ds-qubit-picker" id="sort-pair-picker">
+            <summary class="exp-chip sort-badge" id="sort-pair-summary"
+                     title="Filter to runs containing the checked qubit pairs">Pairs ▾</summary>
+            <div class="bulk-colvis-menu" id="sort-pair-menu" role="menu"></div>
+        </details>
+        <span class="sort-chips" id="sort-col-badges"></span>
+    </div>
+    <div class="sort-filter-section" data-sort-group="fit">
+        <span class="exp-section-label sort-section-toggle" data-sort-section="fit"
+              title="Collapse / expand this section">Fit metrics <span class="sec-caret" aria-hidden="true">▾</span></span>
+        <input type="search" id="sort-key-filter" class="sort-key-filter"
+               placeholder="filter keys…" autocomplete="off" aria-label="Filter fit-metric sort keys">
+        <span class="sort-chips" id="sort-fit-badges"></span>
+    </div>
+    {# Parameters FILTER (not sort): grouped by key (collapsed by default). Expand a
+       key for value facets (categorical) or a min/max range (numeric). Built by JS
+       from each row's `pm` map. AND across keys + AND with every other filter. #}
+    <div class="sort-filter-section" data-sort-group="params">
+        <span class="exp-section-label sort-section-toggle" data-sort-section="params"
+              title="Collapse / expand this section">Parameters <span class="sec-caret" aria-hidden="true">▾</span></span>
+        <input type="search" id="sort-param-filter" class="sort-key-filter"
+               placeholder="filter keys…" autocomplete="off" aria-label="Filter parameter keys">
+        <span class="sort-chips" id="sort-param-badges"></span>
+    </div>
+</div>
+
+<div id="datasets-scroll" class="datasets-scroll">
+    <table id="datasets-table" class="data-table datasets-table-virtual" role="grid">
+        {# colgroup + header are built by dataset-virtual.js from the column
+           registry (single width source for header + body → no drift). User-
+           chosen visibility + drag-resized widths persist in localStorage. #}
+        <colgroup id="datasets-colgroup"></colgroup>
+        <thead id="datasets-thead"></thead>
+        <tbody id="datasets-tbody"></tbody>
+    </table>
+    <p id="datasets-empty" class="muted" style="display:none;text-align:center;padding:2rem">
+        No runs found matching the current filters.<br>
+        <button type="button" class="btn-sm outline" style="margin-top:.6rem"
+                onclick="clearDatasetFilters()">Clear all filters</button>
+    </p>
+</div>
+</div>{# /.datasets-page #}
+
+{# Compact JSON payload — parsed by web/static/dataset-virtual.js. #}
+{# Using <script type="application/json"> avoids HTML-escaping the JSON. #}
+<script type="application/json" id="ds-rows-data"
+        data-now="{{ initial_poll_ts | default(0) }}"
+        data-view="{{ view_mode | default('datasets') }}"
+        data-folder="{{ active_folder | default('') | e }}">{{ rows_json | script_json }}</script>
+{# Curated fit-key order (FIT_TARGET_MAP) — the Sort banner floats these first. #}
+<script type="application/json" id="ds-curated-keys">{{ curated_keys_json | default('[]') | script_json }}</script>
+{# Active data folders [{key,label,full_path}] — dataset-virtual.js builds the
+   folder_key → label map (Folder column + per-row chip) from this. #}
+<script type="application/json" id="ds-folders-data">{{ folders_json | default('[]') | script_json }}</script>
+
+{# Floating compare panel (item 3): stays hidden until the first row checkbox is
+   ticked (data-state leaves "empty" — see CSS), replacing the old always-on Tip
+   bar. Same Compare / Clear actions; the data-state machine + selection set live
+   in dataset-virtual.js / app.js, untouched. #}
+<div id="ds-compare-bar" class="ds-compare-bar" data-state="empty"
+     aria-live="polite">
+    <span class="ds-compare-hint">
+        <span class="ds-compare-msg-one">Pick 1 more to compare.</span>
+        <span class="ds-compare-msg-ready"><strong id="ds-compare-count">0</strong> selected</span>
+        <span class="ds-compare-msg-over">Up to 5 runs.</span>
+    </span>
+    <button id="ds-compare-btn" class="btn-sm"
+            onclick="compareSelectedDatasets()" disabled
+            aria-label="Compare the selected runs">Compare</button>
+    <button class="btn-sm outline"
+            onclick="clearDatasetCheckboxes()"
+            aria-label="Clear the compare selection">Clear</button>
+</div>
+
+<script>
+(function() {
+    /* Hand off to the virtual scroller. Idempotent — safe to call after each swap. */
+    if (window.DatasetVirtual && typeof window.DatasetVirtual.init === 'function') {
+        window.DatasetVirtual.init();
+    }
+})();
+</script>
+
+{% endif %}

@@ -1,0 +1,125 @@
+{% set modified_map = modified_map | default({}) %}
+{% set focus_path = focus_path | default("") %}
+{% set inspector_type = "qubit" %}
+{% set inspector_label = qubit_name %}
+{% set inspector_sub = "Grid: " ~ qubit.grid_location if qubit.grid_location else "" %}
+{% include '_inspector_header.html' %}
+<article class="qubit-detail">
+
+    {% for section in sections %}
+    <details open class="detail-section">
+        <summary class="section-header">{{ section.name }}</summary>
+        <table class="prop-table" role="grid">
+            <thead>
+                <tr>
+                    <th class="col-prop">Property</th>
+                    <th class="col-val">Value</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for p in section.props %}
+            {% set is_modified = p.dot_path and p.dot_path in modified_map %}
+            <tr class="{% if p.is_pointer %}row-pointer{% elif p.is_self_ref %}row-selfref{% endif %}">
+                <td class="col-prop">
+                    {% if p.dot_path %}
+                    <code class="dot-path col-key" title="{{ p.dot_path }} — click to copy"
+                          onclick="navigator.clipboard.writeText('{{ p.dot_path }}')">{{ p.key }}</code>
+                    {% else %}
+                    <code>{{ p.key }}</code>
+                    {% endif %}
+                </td>
+                <td class="col-val{% if is_modified %} cell-modified{% endif %}"
+                    {% if is_modified %}title="Previous: {{ modified_map[p.dot_path] }}"{% endif %}>
+                    {% if p.is_self_ref %}
+                        <em class="selfref-value">{{ p.raw }} <span class="tag-runtime">(runtime)</span></em>
+                    {% elif p.editable %}
+                        {% set _stored = p.key | unit_hint %}
+                        <form class="inline-edit" hx-post="/qubit/{{ qubit_name }}/edit" hx-target="#inspector-pane" hx-swap="innerHTML"
+                              hx-vals='js:{freq_sync: window.freqSyncFlag ? window.freqSyncFlag() : "1"}'>
+                            <input type="hidden" name="dot_path" value="{{ p.dot_path }}">
+                            <input type="text" name="value" class="edit-input{% if is_modified %} edit-input-modified{% endif %}"
+                                   value="{{ p.value | groupdigits }}"
+                                   placeholder="{% if p.value is none %}not set{% endif %}"
+                                   title="{% if is_modified %}Modified — was: {{ modified_map[p.dot_path] }}{% else %}Press Enter to save. Current: {{ p.value }}{% if _stored %} (raw {{ _stored }}){% endif %}{% endif %}">
+                        </form>
+                        {% set _human = p.value | qty(p.key, 'full') %}
+                        {% if _human %}<span class="unit-preview muted"{% if _stored %} title="stored raw in {{ _stored }}"{% endif %}>{{ _human }}</span>{% endif %}
+                        {% if p.is_pointer %}
+                        <span class="ptr-inline pointer-badge" title="Resolves to: {{ p.value }}">{{ p.raw }}</span>
+                        {% endif %}
+                    {% elif p.value is none %}
+                        <em class="null-value">not set</em>
+                    {% elif p.value is iterable and p.value is not string %}
+                        <small class="muted">[{{ p.value | length }} items]</small>
+                    {% elif p.value is number and p.value is float and (p.value|abs >= 1e6 or (0 < p.value|abs < 1e-3)) %}
+                        {{ "%.6e" | format(p.value) }}
+                        {% set _human = p.value | qty(p.key, 'full') %}
+                        {% if _human %}<span class="unit-preview muted">{{ _human }}</span>{% endif %}
+                        {% if p.is_pointer %}<span class="ptr-inline pointer-badge" title="{{ p.raw }}">{{ p.raw }}</span>{% endif %}
+                    {% else %}
+                        {{ p.value }}
+                        {% if p.is_pointer %}<span class="ptr-inline pointer-badge" title="{{ p.raw }}">{{ p.raw }}</span>{% endif %}
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </details>
+    {% endfor %}
+
+    {# Add-pulse is the Pulses page's job now (one create surface, no
+       duplicate form to maintain — feedback #10). Link opens the unified
+       create flow pre-targeted at this qubit's xy channel. #}
+    <div class="qubit-add-pulse-link">
+        <button type="button" class="btn-sm outline"
+                hx-get="/pulse/new?qubit={{ qubit_name }}&channel=xy"
+                hx-target="#inspector-pane" hx-swap="innerHTML">+ Add pulse…</button>
+        <a class="muted" href="/pulses?q={{ qubit_name }}" hx-get="/pulses?q={{ qubit_name }}"
+           hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">view all {{ qubit_name }} pulses →</a>
+    </div>
+
+    <details class="detail-section">
+        <summary class="section-header">
+            Generated Config
+            <small class="muted">— offline preview of <code>generate_config()</code></small>
+        </summary>
+        <div hx-get="/qubit/{{ qubit_name }}/config"
+             hx-trigger="toggle once from:closest details, configRegenerated from:body"
+             hx-swap="innerHTML">
+            <p class="muted">loading…</p>
+        </div>
+    </details>
+
+    {% if port_info %}
+    <details open class="detail-section">
+        <summary class="section-header">Wiring Ports</summary>
+        <div class="port-channels">
+        {% for ch, info in port_info.items() %}
+            <div class="port-channel">
+                <div class="port-channel-label"><code>{{ ch }}</code></div>
+                {% if info is mapping %}
+                <table class="port-sub-table">
+                    <tbody>
+                    {% for k, v in info.items() %}
+                    <tr>
+                        <td class="port-k">{{ k }}</td>
+                        <td class="port-v">{{ v }}</td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                {% elif info %}
+                    <span class="port-v">{{ info }}</span>
+                {% else %}
+                    <span class="muted">—</span>
+                {% endif %}
+            </div>
+        {% endfor %}
+        </div>
+    </details>
+    {% endif %}
+</article>
+{% if focus_path %}
+<script>window.focusEditInput({{ focus_path | tojson }});</script>
+{% endif %}

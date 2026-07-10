@@ -1,0 +1,40 @@
+{# N-D data viewer shell (the Data tab). Variable cards render server-side
+   (cheap probe); clicking a card fetches its JSON cube via /ndview/data and
+   ndview.js builds the themed Plotly view. Every *.h5 in the run folder is
+   browsable (the old ds_raw/ds_fit whitelist hid ds_proc/ds_survey files). #}
+<div class="ndv-root" id="ndv-root" data-uid="{{ uid }}" data-which="{{ which or '' }}">
+  {% if not files %}
+  <p class="muted" style="padding:1rem;text-align:center">No HDF5 data files in this run.</p>
+  {% else %}
+  <div class="ndv-files" role="tablist">
+    {% for f in files %}
+    <button type="button" class="ndv-file-tab{% if f == which %} active{% endif %}"
+            role="tab" data-file="{{ f }}"
+            hx-get="/dataset/{{ uid }}/ndview?which={{ f | urlencode }}"
+            hx-target="#ndv-root" hx-swap="outerHTML">{{ f | replace('.h5','') }}</button>
+    {% endfor %}
+  </div>
+
+  {% if probe and not probe.ok %}
+  <p class="muted" style="padding:0.8rem">{{ probe.error }}</p>
+  {% elif probe %}
+  <div class="ndv-vars">
+    {% for v in probe.vars %}
+    <button type="button" class="ndv-var-card{% if v.is_coord_var %} ndv-var-fit{% endif %}"
+            data-var="{{ v.name }}"
+            title="{{ v.dims | join(' × ') }}  ·  {{ v.dtype }}{% if v.units %}  ·  {{ v.units }}{% endif %}">
+      <span class="ndv-var-name">{{ v.name }}</span>
+      <span class="ndv-var-shape">{{ v.shape | join('×') if v.shape else 'scalar' }}</span>
+      {% if v.units %}<span class="ndv-var-units">{{ v.units }}</span>{% endif %}
+    </button>
+    {% endfor %}
+  </div>
+  <div id="ndv-controls" class="ndv-controls" hidden></div>
+  <div id="ndv-plot" class="ndv-plot"></div>
+  <div id="ndv-fallback" class="ndv-fallback" hidden></div>
+  {% endif %}
+  {% endif %}
+</div>
+<script>
+  if (window.NdView) window.NdView.mount();
+</script>

@@ -1,0 +1,51 @@
+{# Prev-state diff: this run's quam_state vs an earlier run's. Lazy-loaded into
+   the Prev State tab (full) and the Full View summary (compact=1). Reuses the
+   existing diff-badge / diff-row-* classes from the compare surfaces. #}
+{% if error %}
+<p class="muted" style="padding:.6rem">{{ error }}</p>
+{% elif prev_run_id is none %}
+<p class="muted" style="padding:.6rem">No earlier run with a saved state to compare against.</p>
+{% else %}
+<div class="prevdiff">
+    <div class="prevdiff-bar">
+        <div class="prevdiff-stepper">
+            <button type="button" class="btn-sm outline"{% if older is none %} disabled{% endif %}
+                    onclick="loadPrevDiff(this, '{{ uid }}', {{ older if older is not none else 'null' }}, {{ 1 if compact else 0 }})"
+                    title="Compare against an earlier run">&lsaquo; older</button>
+            <span class="prevdiff-vs">#{{ run_id }} <span class="muted">vs</span>
+                <strong class="inspector-runid">#{{ prev_run_id }}</strong></span>
+            <button type="button" class="btn-sm outline"{% if newer is none %} disabled{% endif %}
+                    onclick="loadPrevDiff(this, '{{ uid }}', {{ newer if newer is not none else 'null' }}, {{ 1 if compact else 0 }})"
+                    title="Compare against a more recent run">newer &rsaquo;</button>
+        </div>
+        <div class="prevdiff-badges">
+            {% if summary.added %}<span class="diff-badge diff-added">+{{ summary.added }}</span>{% endif %}
+            {% if summary.removed %}<span class="diff-badge diff-removed">&minus;{{ summary.removed }}</span>{% endif %}
+            {% if summary.modified %}<span class="diff-badge diff-modified">~{{ summary.modified }}</span>{% endif %}
+            {% if not summary.total %}<span class="muted">No differences</span>{% endif %}
+        </div>
+    </div>
+
+    {% if entries %}
+    <table class="prop-table prevdiff-table" role="grid">
+        <thead><tr>
+            <th class="col-prop">Path</th>
+            <th class="col-val">#{{ prev_run_id }}</th>
+            <th class="col-val">#{{ run_id }}</th>
+        </tr></thead>
+        <tbody>
+        {% for e in entries[:limit] %}
+        <tr class="diff-row-{{ e.change_type }}">
+            <td class="col-prop"><code>{{ e.dot_path }}</code></td>
+            <td class="col-val">{% if e.old_value is none %}<em class="null-value">—</em>{% else %}<code>{{ e.old_value }}</code>{% endif %}</td>
+            <td class="col-val">{% if e.new_value is none %}<em class="null-value">—</em>{% else %}<code>{{ e.new_value }}</code>{% endif %}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% if entries | length > limit %}
+    <p class="muted prevdiff-more">… {{ entries | length - limit }} more change{{ 's' if (entries | length - limit) != 1 }}{% if compact %} — open the <strong>Prev State</strong> tab for the full diff{% endif %}.</p>
+    {% endif %}
+    {% endif %}
+</div>
+{% endif %}

@@ -1,0 +1,125 @@
+<div class="table-header-row">
+    <h2>Qubit Pairs <small class="muted">({{ total }})</small></h2>
+    <div class="table-filter">
+        <input type="search" placeholder="Filter pairs..." autocomplete="off"
+               oninput="filterTable(this, 'pairs-table')">
+        <small id="pairs-table-filter-count" class="muted"></small>
+    </div>
+</div>
+
+<table id="pairs-table" class="data-table" role="grid">
+    <thead>
+        <tr>
+            <th class="sortable" data-col="0" data-type="str">Pair</th>
+            <th class="sortable" data-col="1" data-type="str">Control</th>
+            <th class="sortable" data-col="2" data-type="str">Target</th>
+            <th class="sortable" data-col="3" data-type="str">Moving</th>
+            <th class="sortable" data-col="4" data-type="num">CZ Flattop Amp</th>
+            <th class="sortable" data-col="5" data-type="num">Bell Fidelity</th>
+            <th class="sortable" data-col="6" data-type="num">Detuning <span class="unit">(MHz)</span></th>
+        </tr>
+    </thead>
+    <tbody>
+    {% if pairs %}
+    {% for p in pairs %}
+    <tr class="clickable-row" data-pair-id="{{ p.id }}" hx-get="/pair/{{ p.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
+        <td><strong>{{ p.id }}</strong></td>
+        <td>{{ p.qubit_control or '-' }}</td>
+        <td>{{ p.qubit_target or '-' }}</td>
+        <td>{{ p.moving_qubit or '-' }}</td>
+        <td>{{ "%.6f" | format(p.cz_flattop_amplitude) if p.get('cz_flattop_amplitude') is not none else '-' }}</td>
+        <td>
+            {% if p.get('cz_flattop_bell_fidelity') is not none %}
+            {% if p.cz_flattop_bell_fidelity >= 0.95 %}
+            <span class="cell-good" aria-label="Good"><span class="cell-glyph" aria-hidden="true">&#10003;</span>{{ "%.4f" | format(p.cz_flattop_bell_fidelity) }}</span>
+            {% elif p.cz_flattop_bell_fidelity >= 0.85 %}
+            <span class="cell-ok" aria-label="OK"><span class="cell-glyph" aria-hidden="true">&#9888;</span>{{ "%.4f" | format(p.cz_flattop_bell_fidelity) }}</span>
+            {% else %}
+            <span class="cell-bad" aria-label="Bad"><span class="cell-glyph" aria-hidden="true">&#10007;</span>{{ "%.4f" | format(p.cz_flattop_bell_fidelity) }}</span>
+            {% endif %}
+            {% else %}-{% endif %}
+        </td>
+        <td>{{ p.detuning | qty('detuning') }}</td>
+    </tr>
+    {% endfor %}
+    {% else %}
+        <tr><td colspan="7" class="muted" style="text-align:center;padding:2rem">No qubit pairs found in this state file.</td></tr>
+    {% endif %}
+    </tbody>
+</table>
+
+{% set base_url = "/pairs" %}
+{% set extra_qs = "" %}
+{% set storage_key = "quam_pairs_per_page" %}
+{% include "_pagination.html" %}
+
+<!-- JSON drill-down panel for double-click wiring info -->
+<div id="json-panel" class="json-panel hidden" role="dialog" aria-labelledby="json-panel-title" aria-modal="false">
+    <div class="json-panel-header">
+        <span id="json-panel-title">Wiring JSON <small class="muted">(double-click a row to drill in, Esc to close)</small></span>
+        <button onclick="closeJsonPanel()" aria-label="Close wiring JSON panel">&#10005;</button>
+    </div>
+    <div id="json-panel-tree" class="json-tree"></div>
+</div>
+
+<script>
+(function() {
+    var rawWiring = {{ wiring_json | script_json }};
+    var wiring = (rawWiring || {}).wiring || {};
+    var pairsWiring = wiring.qubit_pairs || {};
+    var qubitsWiring = wiring.qubits || {};
+
+    // Double-click a pair row → show wiring JSON panel
+    var _lastClick = {id: null, time: 0};
+    document.getElementById('pairs-table').addEventListener('click', function(e) {
+        var row = e.target.closest('tr[data-pair-id]');
+        if (!row) return;
+        var id = row.getAttribute('data-pair-id');
+        var now = Date.now();
+        if (_lastClick.id === id && now - _lastClick.time < 400) {
+            // Double-click detected — cancel htmx single-click and show JSON panel
+            e.preventDefault();
+            e.stopPropagation();
+            _lastClick = {id: null, time: 0};
+            showPairWiringPanel(id);
+        } else {
+            _lastClick = {id: id, time: now};
+        }
+    });
+
+    function showPairWiringPanel(name) {
+        var panel = document.getElementById('json-panel');
+        var treeEl = document.getElementById('json-panel-tree');
+        if (!panel || !treeEl) return;
+
+        // Build a combined wiring view: pair coupler wiring + both qubit wirings
+        var subtree = {};
+        if (pairsWiring[name]) {
+            subtree.coupler = pairsWiring[name];
+        }
+
+        document.getElementById('json-panel-title').textContent = 'Wiring JSON \u2014 ' + name;
+        treeEl.innerHTML = '';
+        if (Object.keys(subtree).length > 0) {
+            renderJsonTree('json-panel-tree', subtree, {defaultDepth: 2});
+        } else {
+            treeEl.innerHTML = '<p class="muted" style="padding:1rem">No wiring data found for ' + name + '</p>';
+        }
+        panel.classList.remove('hidden');
+    }
+
+    window.closeJsonPanel = function() {
+        var p = document.getElementById('json-panel');
+        if (p) p.classList.add('hidden');
+    };
+
+    document.addEventListener('keydown', function(e) {
+        if (e.key !== 'Escape') return;
+        var p = document.getElementById('json-panel');
+        if (p && !p.classList.contains('hidden')) {
+            window.closeJsonPanel();
+            e.preventDefault();
+        }
+    });
+})();
+</script>

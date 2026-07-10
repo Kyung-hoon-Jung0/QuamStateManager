@@ -1,0 +1,107 @@
+<div id="pending-tray"
+     class="pending-tray{% if not active_name and change_count == 0 and not working_dirty %} tray-empty{% endif %}"
+     data-change-count="{{ change_count }}"
+     data-working-dirty="{{ '1' if working_dirty else '0' }}"
+     {% if oob is defined and oob %}hx-swap-oob="outerHTML:#pending-tray"{% endif %}>
+{# Persistent status badge — amber when the working copy has edits not yet on
+   the live chip, neutral "Synced" otherwise. Always clickable to review the
+   working-copy ↔ live diff (the review surface used to be reachable only when
+   the tray was non-empty). #}
+{% set _archive = (chip_origin is defined and chip_origin == 'dataset_archive') %}
+{% if active_name or change_count > 0 or working_dirty %}
+{% set _dirty = change_count > 0 or working_dirty %}
+<button type="button"
+        class="state-status-badge {{ 'state-status-archive' if _archive else 'state-status-dirty' if _dirty else 'state-status-synced' }}"
+        onclick="openReview()"
+        title="{% if _archive %}Opened from a dataset run archive (read-only) — load the live folder to edit/apply{% elif _dirty %}Local edits live in the working state — click to review and apply to the live chip{% else %}Working state matches the live chip — click to review{% endif %}">
+    <span class="state-status-dot" aria-hidden="true">&#9679;</span>
+    {% if _archive %}Archive (read-only)
+    {% elif change_count > 0 %}Working state · {{ change_count }} unsaved
+    {% elif working_dirty %}Working state · not applied
+    {% else %}Synced{% endif %}
+    {% if active_name %}<span class="state-status-name">{{ active_name }}</span>{% endif %}
+</button>
+{% endif %}
+{% if change_count > 0 or working_dirty %}
+  <div class="tray-bar">
+    {% if change_count > 0 %}
+    <span class="tray-indicator">&#9679; {{ change_count }} unsaved change{{ 's' if change_count != 1 }}</span>
+    {% else %}
+    <span class="tray-indicator tray-indicator-applied">&#9679; Saved to the working state &mdash; not on the live chip yet</span>
+    {% endif %}
+    <div class="tray-actions">
+      {% if change_count > 0 %}
+      <button class="tray-review-btn" onclick="togglePendingTray()">
+        <span id="tray-toggle-label">&#9660; Review</span>
+      </button>
+      <button class="btn-sm btn-save"
+              hx-post="/save"
+              hx-target="#pending-tray"
+              hx-swap="outerHTML"
+              hx-disabled-elt="this"
+              title="Save these edits to the working state (the live chip stays untouched).">Save to working state</button>
+      {% endif %}
+      {% if _archive %}
+      {# Read-only archive: applying to live is blocked server-side (409), and
+         htmx drops the 4xx body, so the button would be a silent no-op that
+         contradicts the "Archive (read-only)" badge. Show a hint instead. #}
+      <span class="muted tray-archive-hint"
+            title="This chip was opened from a dataset run archive — load it from its live folder to apply.">
+        Read-only archive — load the live folder to apply</span>
+      {% elif change_count > 0 and not working_dirty %}
+      {# One-click apply (no saved-but-unapplied edits to protect): pull the live chip,
+         re-apply the pending edits on top, and write them straight to the live chip —
+         no review-modal round-trip. Safe: it MERGES (qualibrate's other changes
+         survive). The review-before-apply path stays available via the status badge. #}
+      <button type="button" class="btn-sm btn-apply-live"
+              onclick="doStateSync('apply')"
+              title="One click — apply your edits to the live chip now. Pulls the live chip, re-applies your edits on top, and writes them straight to state.json / wiring.json (no review step). To review every field before applying, click the status badge above.">
+        <span aria-hidden="true">&#9889;</span> Apply to live now</button>
+      {% else %}
+      {# Saved-but-unapplied edits exist (working_dirty) — a pull-based one-click merge
+         would overwrite them, so push the whole snapshot to live directly instead (it
+         preserves the saved edits and surfaces a staleness conflict only if the live
+         chip diverged — the right moment to choose). #}
+      <button class="btn-sm btn-apply-live"
+              hx-post="/state/apply-to-live"
+              hx-target="#pending-tray"
+              hx-swap="outerHTML"
+              hx-disabled-elt="this"
+              hx-confirm="Apply the working state to the live chip's state.json / wiring.json now?"
+              title="Push the working state (your saved, not-yet-applied edits) to the live chip.">
+        <span aria-hidden="true">&#8593;</span> Apply to live chip</button>
+      {% endif %}
+    </div>
+  </div>
+  {% if change_count > 0 %}
+  <div id="tray-drawer" class="tray-drawer">
+    <div class="tray-change-list">
+      {% for c in changes %}
+      <div class="tray-change-item">
+        <code class="tray-change-path" title="{{ c.dot_path }}">{{ c.dot_path }}</code>
+        <div class="tray-change-vals">
+          {% if c.created %}
+          <span class="change-new tray-op-pill" title="New key created by this change">+ added{% if c.new_value is mapping %} ({{ c.new_value | length }} field{{ 's' if c.new_value | length != 1 }}){% endif %}</span>
+          {% elif c.deleted %}
+          <span class="change-old tray-op-pill" title="Key deleted by this change — discard restores it">&minus; deleted{% if c.old_value is mapping %} ({{ c.old_value | length }} field{{ 's' if c.old_value | length != 1 }}){% endif %}</span>
+          {% else %}
+          <span class="change-old">{{ c.old_value | groupdigits if c.old_value is not none else 'null' }}</span>
+          <span class="tray-arrow">&#8594;</span>
+          <span class="change-new">{{ c.new_value | groupdigits if c.new_value is not none else 'null' }}</span>
+          {% endif %}
+          <button class="outline btn-sm btn-discard"
+                  hx-post="/discard"
+                  hx-target="#pending-tray"
+                  hx-swap="outerHTML"
+                  hx-vals='{"index": "{{ loop.index0 }}"}'
+                  hx-confirm="Discard change to {{ c.dot_path }}?"
+                  aria-label="Discard pending change to {{ c.dot_path }}"
+                  title="Discard this change">&#10005;</button>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+{% endif %}
+</div>

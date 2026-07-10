@@ -1,0 +1,13 @@
+{# Lazy-loaded issue-count badge for the Wiring / Config headers. Replaces its
+   placeholder via hx-swap="outerHTML". #}
+{% if diag_summary and diag_summary.total > 0 %}
+<a class="diag-header-badge {% if diag_summary.error %}diag-error{% elif diag_summary.warning %}diag-warning{% else %}diag-info{% endif %}"
+   href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+   title="Open Diagnostics — {{ diag_summary.error }} error(s), {{ diag_summary.warning }} warning(s){% if diag_summary.advisory %}, {{ diag_summary.advisory }} recommendation(s){% endif %}, {{ diag_summary.info }} suggestion(s)">
+  &#9888; {{ diag_summary.total }} issue{{ 's' if diag_summary.total != 1 }}
+</a>
+{% else %}
+<a class="diag-header-badge diag-ok-badge"
+   href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+   title="No structural issues found">&#10003; healthy</a>
+{% endif %}

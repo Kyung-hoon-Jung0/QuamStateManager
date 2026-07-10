@@ -1,0 +1,15 @@
+{# DEAD CODE — no route or template references this partial (grep-verified
+   2026-06-12); safe to delete. Kept only because the cleanup commit could
+   not remove files. The JS lives in app.js (window.showWaveformPlot). #}
+<div class="waveform-plot-standalone"
+     data-target-prefix="{{ target_prefix }}"
+     data-op-name="{{ op_name }}">
+    <button type="button"
+            class="add-gate-btn"
+            data-target-prefix="{{ target_prefix }}"
+            data-op-name="{{ op_name }}"
+            onclick="window.showWaveformPlot(this)">
+        view waveform
+    </button>
+    <div class="waveform-plot-area"></div>
+</div>

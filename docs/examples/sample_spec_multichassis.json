@@ -1,0 +1,72 @@
+{
+  "network": {
+    "host": "127.0.0.1",
+    "cluster_name": "my_cluster",
+    "port": null
+  },
+  "instruments": {
+    "controllers": [
+      {
+        "con": 1,
+        "fems": [
+          {"slot": 1, "fem": "mw"},
+          {"slot": 5, "fem": "lf"}
+        ]
+      },
+      {
+        "con": 2,
+        "fems": [
+          {"slot": 1, "fem": "mw"},
+          {"slot": 5, "fem": "lf"}
+        ]
+      }
+    ],
+    "opx_plus": [],
+    "octaves": []
+  },
+  "qubits": ["q1", "q2", "q3"],
+  "qubit_pairs": [["q1", "q2"], ["q2", "q3"]],
+  "twpas": [],
+  "lines": [
+    {"element": "q1", "line": "resonator", "group": "feedline1", "channel": {"kind": "mw_fem", "con": 1, "slot": 1, "in_port": 1, "out_port": 1}},
+    {"element": "q2", "line": "resonator", "group": "feedline2", "channel": {"kind": "mw_fem", "con": 2, "slot": 1, "in_port": 1, "out_port": 1}},
+    {"element": "q3", "line": "resonator", "group": "feedline2", "channel": {"kind": "mw_fem", "con": 2, "slot": 1, "in_port": 1, "out_port": 1}},
+
+    {"element": "q1", "line": "drive", "channel": {"kind": "mw_fem", "con": 1, "slot": 1}},
+    {"element": "q2", "line": "drive", "channel": {"kind": "mw_fem", "con": 2, "slot": 1}},
+    {"element": "q3", "line": "drive", "channel": {"kind": "mw_fem", "con": 2, "slot": 1}},
+
+    {"element": "q1", "line": "flux", "channel": {"kind": "lf_fem", "con": 1}},
+    {"element": "q2", "line": "flux", "channel": {"kind": "lf_fem", "con": 2}},
+    {"element": "q3", "line": "flux", "channel": {"kind": "lf_fem", "con": 2}},
+
+    {"element": "q1-q2", "line": "coupler", "channel": {"kind": "lf_fem", "con": 1}},
+    {"element": "q2-q3", "line": "coupler", "channel": {"kind": "lf_fem", "con": 2}}
+  ],
+  "populate": {
+    "resonator": {
+      "q1": {"RF_freq": 4.395e9, "LO_frequency": 4.75e9, "depletion_time": 2500, "time_of_flight": 28, "readout_length": 2500, "readout_amplitude": 0.1, "full_scale_power_dbm": -5},
+      "q2": {"RF_freq": 4.412e9, "LO_frequency": 4.75e9, "full_scale_power_dbm": -5},
+      "q3": {"RF_freq": 4.521e9, "LO_frequency": 4.75e9, "full_scale_power_dbm": -5}
+    },
+    "qubit": {
+      "q1": {"RF_freq": 6.012e9, "anharmonicity": -200e6, "LO_frequency": 6.0e9, "grid_location": "0,0", "full_scale_power_dbm": 1},
+      "q2": {"RF_freq": 6.421e9, "anharmonicity": -200e6, "LO_frequency": 6.1e9, "grid_location": "1,0"},
+      "q3": {"RF_freq": 6.785e9, "anharmonicity": -200e6, "LO_frequency": 6.5e9, "grid_location": "2,0"}
+    },
+    "flux": {
+      "q1": {"joint_offset": 0.0, "independent_offset": 0.05, "min_offset": -0.1, "flux_point": "joint", "output_mode": "amplified", "upsampling_mode": "pulse", "settle_time": 100},
+      "q2": {"flux_point": "joint", "output_mode": "amplified", "upsampling_mode": "pulse"},
+      "q3": {"flux_point": "joint", "output_mode": "amplified", "upsampling_mode": "pulse"}
+    },
+    "pulses": {
+      "q1": {"x180_length": 40, "x180_amplitude": 0.12, "drag_alpha": -0.15, "drag_detuning": 0, "saturation_length": 20000, "saturation_amplitude": 0.1},
+      "q2": {"x180_length": 40, "x180_amplitude": 0.10, "drag_alpha": 0.0, "drag_detuning": 0, "saturation_length": 20000, "saturation_amplitude": 0.1},
+      "q3": {"x180_length": 48, "x180_amplitude": 0.18, "drag_alpha": -1.08, "drag_detuning": 0, "saturation_length": 20000, "saturation_amplitude": 0.1}
+    },
+    "pairs": {
+      "q1-q2": {"cz_interaction_duration": 100, "cz_amplitude": 0.1, "moving_qubit": "control", "coupler_interaction_offset": 0.08, "coupler_flux_point": "off"},
+      "q2-q3": {"cz_interaction_duration": 120, "cz_amplitude": 0.09, "moving_qubit": "target"}
+    }
+  }
+}

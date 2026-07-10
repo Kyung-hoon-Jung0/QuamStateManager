@@ -1,0 +1,75 @@
+<form id="chip-compare-form" hx-post="/chip-compare" hx-target="#table-pane"
+      class="chip-compare-picker" hx-push-url="true">
+    <div class="chip-compare-picker-row">
+        <label class="chip-compare-picker-label">Selected chips</label>
+        <div id="chip-compare-tags" class="chip-compare-tags" role="list">
+            {% for sel in selected %}
+            <span class="chip-compare-tag" role="listitem" data-path="{{ sel.path }}">
+                <span class="chip-compare-tag-label">{{ sel.label | truncate(28) }}</span>
+                <button type="button" class="chip-compare-tag-x"
+                        onclick="removeChipFromCompare(this)" title="Remove">&times;</button>
+                <input type="hidden" name="paths" value="{{ sel.path }}">
+            </span>
+            {% endfor %}
+            {% if not selected %}
+            <span class="muted chip-compare-tags-empty">No chips selected — add 2 or more below.</span>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="chip-compare-picker-row">
+        <label class="chip-compare-picker-label" for="chip-compare-workspace-select">From workspace</label>
+        <select id="chip-compare-workspace-select"
+                onchange="addChipFromSelect(this, 'workspace')">
+            <option value="">— pick a chip —</option>
+            {% for chip in workspace_chips %}
+            {# snapshot_ts is set only when the chip has no live quam_state and
+               the path resolves to its newest archived run — show what the
+               user actually gets. #}
+            <option value="{{ chip.path }}"
+                    data-label="{{ chip.name }}{% if chip.snapshot_ts %} (run {{ chip.snapshot_ts }}){% endif %}">{{ chip.name }}{% if chip.snapshot_ts %} — run {{ chip.snapshot_ts }}{% endif %}</option>
+            {% endfor %}
+        </select>
+
+        <label class="chip-compare-picker-label" for="chip-compare-recent-select">Recent</label>
+        <select id="chip-compare-recent-select"
+                onchange="addChipFromSelect(this, 'recent')">
+            <option value="">— pick a recent path —</option>
+            {# populated client-side from localStorage.recentFolders #}
+        </select>
+
+        <button type="button" class="outline btn-sm"
+                onclick="openFolderBrowser('chip-compare-browse-target')"
+                title="Browse for a quam_state folder">&#128193; Browse</button>
+        {# Browse target lives outside the form so selectBrowserFolder's
+           closest('form').requestSubmit() is a no-op; we handle the change
+           ourselves via addChipFromInput. #}
+
+        <button type="submit" class="btn-sm chip-compare-go" id="chip-compare-go-btn"
+                {% if not selected or selected | length < 2 %}disabled{% endif %}>
+            Compare {{ selected | length if selected else 0 }} chip{{ 's' if not selected or selected | length != 1 else '' }}
+        </button>
+    </div>
+</form>
+
+<input type="hidden" id="chip-compare-browse-target"
+       onchange="window.addChipFromInput && window.addChipFromInput(this)">
+
+<script>
+(function() {
+    // Populate the recents dropdown from localStorage.recentFolders.
+    var sel = document.getElementById("chip-compare-recent-select");
+    if (!sel) return;
+    var folders = [];
+    try {
+        var raw = localStorage.getItem("recentFolders");
+        if (raw) folders = JSON.parse(raw) || [];
+    } catch (e) {}
+    folders.forEach(function(p) {
+        var opt = document.createElement("option");
+        opt.value = p;
+        opt.textContent = p.length > 50 ? "…" + p.slice(-49) : p;
+        sel.appendChild(opt);
+    });
+})();
+</script>

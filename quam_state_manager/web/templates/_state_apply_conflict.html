@@ -1,0 +1,32 @@
+{# Replaces #pending-tray when apply-to-live hits a staleness conflict. #}
+<div id="pending-tray" class="pending-tray pending-tray-conflict">
+  <div class="tray-bar">
+    <span class="tray-indicator tray-indicator-warn">
+      &#9888; The live chip changed since you loaded it
+    </span>
+    <div class="tray-actions">
+      <button class="btn-sm" onclick="openReview()">Review changes</button>
+    </div>
+  </div>
+  <p class="tray-conflict-note">
+    An experiment program updated the live state after you loaded it. Pull the
+    latest live state &mdash; choose what happens to the edits you made:
+  </p>
+  <div class="tray-actions tray-conflict-choices">
+    <button class="btn-sm primary" onclick="doStateSync('apply')"
+            title="Pull the latest live state, re-apply your edits on top, and write the merged result straight to the live chip — all in one step.">
+      &#8595; Pull &amp; apply my edits</button>
+    <button class="btn-sm" onclick="doStateSync('reapply')"
+            title="Pull the latest live state, then re-apply your edits on top as pending changes so you can review them before pushing to the live chip.">
+      &#8595; Pull &amp; re-apply, review first</button>
+    <button class="btn-sm outline" onclick="doStateSync('discard')"
+            title="Pull the latest live state and drop your edits.">
+      &#8595; Pull &amp; discard</button>
+    <button class="btn-sm outline tray-force-btn"
+            hx-post="/state/apply-to-live?force=1"
+            hx-target="#pending-tray"
+            hx-swap="outerHTML"
+            hx-confirm="Overwrite the live chip with your version? Changes written by an experiment program will be lost.">
+      Overwrite live (force)</button>
+  </div>
+</div>

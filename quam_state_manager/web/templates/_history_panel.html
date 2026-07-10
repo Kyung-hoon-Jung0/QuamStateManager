@@ -1,0 +1,75 @@
+<div id="history-list">
+{% if snapshots | length > 0 %}
+<div class="history-toolbar">
+    <button id="history-compare-btn" class="outline btn-sm" disabled
+            onclick="compareSelectedSnapshots()">Compare Selected</button>
+    <button class="outline btn-sm"
+            hx-post="/api/history/snapshot"
+            hx-target="#history-content"
+            hx-swap="innerHTML">Take Snapshot</button>
+    {% if total > snapshots | length %}
+    <small class="muted">Showing {{ snapshots | length }} of {{ total }}</small>
+    {% endif %}
+</div>
+
+<div class="history-timeline">
+{% for s in snapshots %}
+<div class="history-entry" data-ts="{{ s.timestamp }}">
+    <div class="history-entry-header">
+        <input type="checkbox" class="history-compare-cb" value="{{ s.timestamp }}"
+               onchange="selectHistoryEntry(this)">
+        <span class="history-entry-time">{{ s.timestamp | ts_local }}</span>
+        <span class="history-trigger-badge history-trigger-{{ s.trigger }}">{{ s.trigger }}</span>
+        {% if s.diff_summary.total > 0 %}
+        <span class="diff-badge diff-added" title="Added">+{{ s.diff_summary.added }}</span>
+        <span class="diff-badge diff-removed" title="Removed">-{{ s.diff_summary.removed }}</span>
+        <span class="diff-badge diff-modified" title="Modified">~{{ s.diff_summary.modified }}</span>
+        {% else %}
+        <span class="muted">(baseline)</span>
+        {% endif %}
+    </div>
+    {% if s.new_experiments | length > 0 %}
+    <div class="history-experiments">
+        New: {{ s.new_experiments | join(', ') }}
+    </div>
+    {% endif %}
+    <div class="history-entry-actions">
+        <button class="outline btn-sm"
+                hx-get="/api/history/{{ s.timestamp }}/diff"
+                hx-target="#history-detail-area"
+                hx-swap="innerHTML">View Changes</button>
+        {# ADDITIVE Compare-hub deep link (docs/49 U1a — Compare Selected
+           above stays verbatim). #}
+        {% if hist_chip_key %}
+        <button class="outline btn-sm"
+                hx-get="/compare-hub?src=hist:{{ hist_chip_key | urlencode }}/{{ s.timestamp | urlencode }}&src=working:{{ active_path | urlencode }}&hint=1"
+                hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                title="Open in the Compare hub (this snapshot vs the current working state)">&#8644; Compare&#8230;</button>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}
+</div>
+
+{% if total_pages > 1 %}
+<div class="history-pagination">
+    {% if page > 1 %}
+    <button class="outline btn-sm"
+            hx-get="/api/history?page={{ page - 1 }}&per_page={{ per_page }}"
+            hx-target="#history-content" hx-swap="innerHTML">&laquo; Prev</button>
+    {% endif %}
+    <span class="muted">Page {{ page }} / {{ total_pages }}</span>
+    {% if page < total_pages %}
+    <button class="outline btn-sm"
+            hx-get="/api/history?page={{ page + 1 }}&per_page={{ per_page }}"
+            hx-target="#history-content" hx-swap="innerHTML">Next &raquo;</button>
+    {% endif %}
+</div>
+{% endif %}
+
+{% else %}
+<p class="muted" style="padding: 0.5rem;">No snapshots yet. Changes will be recorded automatically.</p>
+{% endif %}
+
+<div id="history-detail-area"></div>
+</div>

@@ -1,0 +1,135 @@
+{# Experiment Scheduler — setup · pre-flight · queue · runner. See docs/40_scheduler.md.
+   All interactions live in scheduler.js (idempotent init, HTMX-swap-safe). #}
+<div id="sched-root" class="sched-root"
+     data-open-chip="{{ open_chip_folder or '' }}">
+
+  <script id="scheduler-bootstrap" type="application/json">
+    {{ scheduler_settings | tojson }}
+  </script>
+
+  <div class="table-header-row">
+    <h2 style="margin:0">Scheduler</h2>
+    <span class="muted">Queue qualibrate experiments and run them in sequence —
+      configure the env, chip &amp; folder, verify, then build the queue and run.</span>
+  </div>
+
+  <details class="sched-card" open>
+    <summary><strong>1 · Environment</strong>
+      <span class="muted">— the conda/venv interpreter that runs the experiments
+        (e.g. <code>LabC</code>).</span></summary>
+    <div id="sched-env-list" class="sched-env-list"><span class="muted">Loading environments…</span></div>
+    <div id="sched-env-empty" class="muted" hidden>No conda envs found. Paste an interpreter path below.</div>
+    <div class="path-input-group" style="margin-top:.5rem">
+      <input type="text" id="sched-env-path" placeholder="…or paste a python.exe / bin/python path"
+             value="{{ scheduler_settings.env_python or '' }}" autocomplete="off"
+             aria-label="Python interpreter path">
+      <button type="button" class="btn-sm outline" id="sched-env-probe-btn">Probe</button>
+    </div>
+    <div id="sched-env-probe-out" class="sched-probe-out muted"></div>
+  </details>
+
+  <article class="sched-card">
+    <header><strong>2 · Calibrations folder</strong>
+      <span class="muted">— where the experiment <code>.py</code> files live
+        (e.g. <code>…\1Q_2Q_calibrations</code>).</span></header>
+    <div class="path-input-group">
+      <input type="text" id="sched-cal-folder" placeholder="path to the calibrations folder…"
+             value="{{ scheduler_settings.calibrations_folder or '' }}" autocomplete="off"
+             aria-label="Calibrations folder path">
+      <button type="button" class="outline btn-sm btn-browse"
+              onclick="openFolderBrowser('sched-cal-folder')" title="Browse folders">&#128193;</button>
+    </div>
+  </article>
+
+  <article class="sched-card">
+    <header><strong>3 · Chip (quam_state)</strong>
+      <span class="muted">— the chip the experiments run against.
+        <strong>Strict:</strong> must match the chip open in the State Manager.</span></header>
+    {% if open_chip_folder %}
+      <p class="muted" style="margin:.25rem 0">Open chip: <code>{{ open_chip_folder }}</code></p>
+    {% else %}
+      <p class="sched-warn" style="margin:.25rem 0">⚠ No chip is open — load a quam_state folder in the sidebar first.</p>
+    {% endif %}
+    <div class="path-input-group">
+      <input type="text" id="sched-quam-state" placeholder="quam_state folder…"
+             value="{{ scheduler_settings.quam_state_path or '' }}" autocomplete="off"
+             aria-label="quam_state folder path (the chip)">
+      <button type="button" class="outline btn-sm btn-browse"
+              onclick="openFolderBrowser('sched-quam-state')" title="Browse folders">&#128193;</button>
+      {% if open_chip_folder %}
+      <button type="button" class="btn-sm outline" id="sched-quam-use-open"
+              title="Use the currently open chip">Use open chip</button>
+      {% endif %}
+    </div>
+  </article>
+
+  <article class="sched-card">
+    <header><strong>4 · Run options</strong></header>
+    <div class="sched-options">
+      <label><input type="checkbox" id="sched-simulate"
+                    {{ 'checked' if scheduler_settings.global_simulate else '' }}>
+        Dry run (<code>simulate=True</code>) — no hardware</label>
+      <label>On failure
+        <select id="sched-failure">
+          <option value="stop"     {{ 'selected' if scheduler_settings.failure_policy == 'stop' else '' }}>stop the queue</option>
+          <option value="continue" {{ 'selected' if scheduler_settings.failure_policy == 'continue' else '' }}>continue</option>
+        </select></label>
+      <label>Per-node timeout (s)
+        <input type="number" id="sched-timeout" min="0" step="60" style="width:7rem"
+               value="{{ scheduler_settings.default_timeout_s }}"></label>
+      <label><input type="checkbox" id="sched-continue-ui"
+                    {{ 'checked' if scheduler_settings.continue_without_ui else '' }}>
+        Keep running if the browser closes (tmux mode)</label>
+    </div>
+  </article>
+
+  <details class="sched-card" open>
+    <summary><strong>5 · Verify</strong>
+      <span class="muted">— read the env's qualibrate config and run the pre-flight checks.</span></summary>
+    <div class="sched-actions">
+      <button type="button" class="btn-sm" id="sched-read-config">Read effective config</button>
+      <button type="button" class="btn-sm primary" id="sched-preflight-btn">Run pre-flight</button>
+      <span id="sched-busy" class="spinner" hidden></span>
+    </div>
+    <div id="sched-config-out" class="sched-config-out"></div>
+    <div id="sched-preflight-out" class="sched-preflight-out"></div>
+  </details>
+
+  <article class="sched-card">
+    <header><strong>6 · Experiments</strong>
+      <span class="muted">— scan the calibrations folder, then add experiments to the queue.</span></header>
+    <div class="sched-actions">
+      <button type="button" class="btn-sm" id="sched-scan-btn">Scan folder</button>
+      <button type="button" class="btn-sm outline" id="sched-loadparams-btn"
+              title="Load full parameter schemas (runs an inspection scan in the env)">Load parameter forms</button>
+      <span id="sched-scan-info" class="muted"></span>
+    </div>
+    <input type="text" id="sched-lib-filter" class="sched-lib-filter"
+           placeholder="filter experiments by name…" autocomplete="off"
+           aria-label="Filter experiments by name">
+    <div id="sched-library" class="sched-library"></div>
+  </article>
+
+  <article class="sched-card">
+    <header>
+      <strong>7 · Queue</strong>
+      <span id="sched-run-state" class="sched-run-state muted" aria-live="polite"></span>
+    </header>
+    <div class="sched-actions">
+      <button type="button" class="btn-sm primary" id="sched-start">▶ Start</button>
+      <button type="button" class="btn-sm" id="sched-pause">⏸ Pause</button>
+      <button type="button" class="btn-sm outline" id="sched-cancel">⏹ Cancel</button>
+      <button type="button" class="btn-sm outline" id="sched-clear">Clear finished</button>
+      <span class="sched-presets" title="Reusable sequences — snapshot the queue or load a saved one">
+        <select id="sched-preset-select" aria-label="Sequence presets"><option value="">presets…</option></select>
+        <button type="button" class="btn-sm outline" id="sched-preset-load" title="Append the preset's steps to the queue">Load</button>
+        <button type="button" class="btn-sm outline" id="sched-preset-replace" title="Replace the queue (running step kept)">Replace</button>
+        <button type="button" class="btn-sm outline" id="sched-preset-save" title="Save the current queue as a preset">Save…</button>
+        <button type="button" class="btn-sm outline" id="sched-preset-delete" aria-label="Delete selected preset">🗑</button>
+      </span>
+      <span class="muted" id="sched-dry-note"></span>
+    </div>
+    <div id="sched-queue" class="sched-queue"></div>
+    <pre id="sched-log" class="sched-log" hidden></pre>
+  </article>
+</div>

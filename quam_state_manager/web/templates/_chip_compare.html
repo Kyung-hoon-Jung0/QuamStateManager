@@ -1,0 +1,52 @@
+<h2 style="margin-top:0">Chip Compare</h2>
+<p class="muted" style="margin-top:-0.4rem">
+    Compare Chip Status across two or more <code>quam_state</code> folders side-by-side,
+    with a unified diff of state, parameters, and fit results.
+</p>
+
+{% include '_chip_compare_picker.html' %}
+
+{% if selected and selected | length >= 2 %}
+
+{% set qs_paths %}{% for p in paths_raw %}&paths={{ p | urlencode }}{% endfor %}{% endset %}
+
+<div class="chip-compare-tabs" role="tablist">
+    <button class="chip-compare-tab active" data-tab="topology"
+            onclick="switchChipCompareTab(this)"
+            hx-get="/chip-compare/topology?ref={{ ref_idx }}{{ qs_paths }}"
+            hx-target="#chip-compare-content" hx-swap="innerHTML">Topology</button>
+    <button class="chip-compare-tab" data-tab="diff" id="chip-compare-diff-tab"
+            onclick="switchChipCompareTab(this)"
+            hx-get="/chip-compare/diff?ref={{ ref_idx }}{{ qs_paths }}"
+            hx-include="#chip-compare-tolerance"
+            hx-target="#chip-compare-content" hx-swap="innerHTML">Differences</button>
+    {# Relative tolerance for the Differences tab — same field style as /diff.
+       Different chips store 40 vs 40.0 / sub-ppb float noise; exact != would
+       flag every such cell. Changing it re-opens the Differences tab. #}
+    <span class="diff-field diff-field-sm chip-compare-tol-field"
+          style="display:inline-flex;align-items:center;gap:0.35rem;margin-left:auto;">
+        <label for="chip-compare-tolerance" class="muted"
+               style="margin:0;font-size:0.8em;"
+               title="Relative tolerance for the Differences tab — numeric values closer than this (relative) count as equal; 0 = exact.">Tolerance</label>
+        <input type="number" name="tolerance" id="chip-compare-tolerance" step="any"
+               min="0" value="1e-9" style="width:6.5rem;margin:0;"
+               onchange="var t=document.getElementById('chip-compare-diff-tab'); if(t) t.click();">
+    </span>
+</div>
+
+<div id="chip-compare-content"
+     hx-get="/chip-compare/topology?ref={{ ref_idx }}{{ qs_paths }}"
+     hx-trigger="load"
+     hx-swap="innerHTML">
+    <p class="muted" style="padding:1rem">Loading topology…</p>
+</div>
+
+<script>
+window.switchChipCompareTab = function(btn) {
+    var tabs = btn.parentElement.querySelectorAll(".chip-compare-tab");
+    for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove("active");
+    btn.classList.add("active");
+};
+</script>
+
+{% endif %}

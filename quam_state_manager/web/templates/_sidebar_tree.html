@@ -1,0 +1,46 @@
+{% if tree %}
+{% for root_path, date_groups in tree.items() %}
+<details class="tree-root" open>
+    <summary class="tree-root-label">
+        <span title="{{ root_path }}">{{ root_path | truncate(35) }}</span>
+    </summary>
+    {# Button kept out of <summary> (not a valid summary descendant) — CSS
+       pins it to the summary row. #}
+    <button type="button" hx-post="/workspace/remove" hx-target="#sidebar-tree"
+            hx-vals='{"folder": {{ root_path | string | tojson }}}' class="btn-remove" title="Remove">&times;</button>
+    {% for dg in date_groups %}
+    {# Cap each date group to the first N entries so a 3,000-run workspace
+       doesn't build tens of thousands of <li> nodes (rebuilt on every 60s
+       auto-refresh). The full list loads on demand via "Show all N". #}
+    {% set _cap = 50 %}
+    {% set _total = dg.entries | length %}
+    <details class="tree-date">
+        <summary class="tree-date-label">{{ dg.date_str }} <small class="muted">({{ _total }})</small></summary>
+        <ul class="tree-entries">
+        {% set entries = dg.entries[:_cap] %}
+        {% include '_sidebar_tree_entries.html' %}
+        {% if _total > _cap %}
+            <li class="tree-entry tree-show-more">
+                <button type="button" class="tree-show-more-btn"
+                        hx-get="/workspace/tree/group"
+                        hx-vals='{"root": {{ root_path | string | tojson }}, "date": {{ dg.date_str | string | tojson }}, "name": {{ (name_filter or "") | string | tojson }}}'
+                        hx-target="closest ul" hx-swap="innerHTML"
+                        title="Load the remaining {{ _total - _cap }} entries in this date group">
+                    Show all {{ _total }}
+                </button>
+            </li>
+        {% endif %}
+        </ul>
+        <button class="tree-collapse-btn" type="button"
+                onclick="this.closest('details').open=false"
+                title="Collapse this date group">&#8593; collapse</button>
+    </details>
+    {% endfor %}
+</details>
+{% endfor %}
+{% elif message is defined %}
+<p class="muted"><small>{{ message }}</small></p>
+{% else %}
+<p class="muted"><small>No workspace roots added yet.</small></p>
+{% endif %}
+

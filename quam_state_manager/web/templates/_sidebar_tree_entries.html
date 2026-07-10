@@ -1,0 +1,33 @@
+{# Entry rows for one date group. Rendered both inline (capped slice) by
+   _sidebar_tree.html and standalone (full list) by /workspace/tree/group when
+   the user clicks "Show all N". Expects `entries` in context. #}
+{% for entry in entries %}
+<li class="tree-entry">
+    {# NOT a <label>: wrapping the checkbox + clickable name in a <label> made
+       clicking the name (to view the entry) also toggle the compare checkbox.
+       Selecting for compare must be a deliberate click on the checkbox itself,
+       so the row is a plain <div> and the checkbox stands alone. #}
+    <div class="tree-entry-label">
+        <input type="checkbox" name="paths" value="{{ entry.quam_state_path }}"
+               form="compare-form"
+               aria-label="Select {{ entry.experiment_name }} for compare">
+        {# A RUN entry only VIEWS its dataset detail (loaded into the inspector
+           via JS on data-uid) — it must NOT activate the run's frozen quam_state
+           as the active context. Users want the live chip they loaded to stay
+           sticky + editable; switching them into a read-only archive just by
+           clicking a dataset is the #1 complaint. So run entries carry no
+           hx-post; only a real CHIP-FOLDER entry (run_id is none) loads itself
+           as the active live chip via /workspace/select. The run's frozen state
+           stays opt-in via the detail's "Load State" button. #}
+        <span class="tree-entry-click"
+              {% if entry.run_id is none %}hx-post="/workspace/select" hx-target="#table-pane"
+              hx-vals='{"path": {{ entry.quam_state_path | string | tojson }}}'{% endif %}
+              data-folder-path="{{ entry.folder_path | string }}"
+              {% if entry.run_id is not none %}data-run-id="{{ entry.run_id }}" data-uid="{{ ds_entry_uid(entry) }}"
+              tabindex="0" role="button"{% endif %}>
+            {% if entry.run_id is not none %}<span class="run-id">#{{ entry.run_id }}</span>{% endif %}
+            <span class="entry-name" title="{{ entry.experiment_name }}">{{ entry.experiment_name }}</span>
+        </span>
+    </div>
+</li>
+{% endfor %}

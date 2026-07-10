@@ -1,0 +1,57 @@
+<div class="preview-banner" id="compare-banner">
+  <span class="preview-banner-label">
+    &#9707; Comparing {{ n }} chips
+    <span class="muted">&mdash; drop another quam_state folder to add (max 3); differing ports are ringed</span>
+  </span>
+  <span class="preview-banner-actions">
+    <button type="button" class="btn-sm preview-clear"
+            hx-get="/instrument" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+            onclick="window._clearWiringCompare && window._clearWiringCompare()">Exit compare</button>
+  </span>
+</div>
+
+<div class="wiring-compare-grid" style="grid-template-columns: repeat({{ n }}, minmax(320px, 1fr));">
+  {% for c in chips %}
+  <div class="wiring-compare-card">
+    <div class="wiring-compare-head">
+      <strong>{{ c.label }}</strong>
+      {% if c.diag.total > 0 %}
+        <span class="diag-badge {% if c.diag.error %}diag-error{% elif c.diag.warning %}diag-warning{% else %}diag-info{% endif %}">&#9888; {{ c.diag.total }}</span>
+      {% else %}
+        <span class="diag-badge diag-ok-badge">&#10003;</span>
+      {% endif %}
+    </div>
+    <div id="cmp-diagram-{{ loop.index0 }}" class="wiring-compare-diagram"></div>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- Shared port hover popup -->
+<div id="port-popup" class="port-popup hidden">
+  <div class="port-popup-header">
+    <span id="popup-label" class="popup-label"></span>
+    <span id="popup-role-badge" class="role-badge"></span>
+  </div>
+  <div id="popup-body" class="port-popup-body"></div>
+</div>
+
+<script>
+(function() {
+  var chips = [
+    {% for c in chips %}
+    {id: 'cmp-diagram-{{ loop.index0 }}',
+     data: {{ c.instrument_json | script_json }},
+     wiring: {{ c.wiring_json | script_json }},
+     diff: {{ c.diff_json | script_json }}},
+    {% endfor %}
+  ];
+  chips.forEach(function(ch) {
+    try {
+      renderInstrumentWiring(ch.id, ch.data, ch.wiring);
+      if (window._highlightInstrumentPorts) {
+        window._highlightInstrumentPorts(ch.id, ch.diff, 'iw-port-diff');
+      }
+    } catch (e) { console.error('[WiringCompare]', e); }
+  });
+})();
+</script>

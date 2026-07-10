@@ -1,0 +1,201 @@
+{% macro render_delta(val, ref, fmt) -%}
+{% set d = val - ref -%}
+<span class="diff-delta {{ 'delta-pos' if d > 0 else ('delta-neg' if d < 0 else 'delta-zero') }}">{{ fmt | format(d) }}</span>
+{%- endmacro %}
+
+{% set ri = ref_idx | default(0) %}
+{% set diff_count = diff_rows | length if diff_rows else 0 %}
+{% set param_count = param_diff_rows | length if param_diff_rows is defined else 0 %}
+{% set fit_count = fit_diff_rows | length if fit_diff_rows is defined else 0 %}
+{% set total_diffs = diff_count + param_count + fit_count %}
+
+<div class="diff-summary">
+    <span class="diff-badge diff-modified">{{ total_diffs }} difference{{ 's' if total_diffs != 1 else '' }}</span>
+    <span class="muted">({{ param_count }} params, {{ fit_count }} fit results, {{ diff_count }} state props)</span>
+</div>
+
+{% set has_any = total_diffs > 0 or (metadata_list is defined and metadata_list) %}
+
+{% if has_any %}
+<div class="ref-selector">
+    <label class="muted">Reference state:</label>
+    <select onchange="changeRef(this)">
+        {% for label in labels %}
+        <option value="{{ loop.index0 }}" {% if loop.index0 == ri %}selected{% endif %}>{{ label | truncate(30) }}</option>
+        {% endfor %}
+    </select>
+</div>
+
+{# ── Section 1: Metadata ── #}
+{% if metadata_list is defined and metadata_list | length > 0 %}
+<details class="compare-section" open>
+    <summary>Metadata <small class="muted">({{ labels | length }} experiments)</small></summary>
+    <div class="table-scroll">
+    <table class="data-table" role="grid">
+        <thead>
+            <tr>
+                <th>Field</th>
+                {% for label in labels %}
+                <th title="{{ label }}">{{ label | truncate(18) }}{% if loop.index0 == ri %} (ref){% endif %}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+        {% for field in ["name", "status", "run_start", "run_end"] %}
+        <tr>
+            <td><code>{{ field }}</code></td>
+            {% for meta in metadata_list %}
+            <td>{{ meta.get(field, "-") or "-" }}</td>
+            {% endfor %}
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</details>
+{% endif %}
+
+{# ── Section 2: Parameter Differences ── #}
+{% if param_diff_rows is defined and param_diff_rows | length > 0 %}
+<details class="compare-section" open>
+    <summary>Parameter Differences <small class="muted">({{ param_count }})</small></summary>
+    <div class="table-scroll">
+    <table class="data-table" role="grid">
+        <thead>
+            <tr>
+                <th>Parameter</th>
+                {% for label in labels %}
+                <th title="{{ label }}">{{ label | truncate(18) }}{% if loop.index0 == ri %} (ref){% endif %}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+        {% for row in param_diff_rows %}
+        <tr>
+            <td><code>{{ row.key }}</code></td>
+            {% set ref_val = row["values"][ri].value %}
+            {% for v in row["values"] %}
+            {% set is_diff = (loop.index0 != ri) and (v.value != ref_val) %}
+            <td{% if is_diff %} class="cell-diff"{% endif %}>
+                {% if v.value is none %}<span class="muted">-</span>
+                {% elif v.value is number and (v.value | abs >= 1e6 or (0 < v.value | abs < 1e-3)) %}{{ "%.4e" | format(v.value) }}{% if is_diff and ref_val is number %}{{ render_delta(v.value, ref_val, "%+.3e") }}{% endif %}
+                {% elif v.value is number %}{{ "%.6f" | format(v.value) }}{% if is_diff and ref_val is number %}{{ render_delta(v.value, ref_val, "%+.6f") }}{% endif %}
+                {% elif v.value is sameas true %}true
+                {% elif v.value is sameas false %}false
+                {% elif v.value is iterable and v.value is not string %}{{ v.value | join(", ") }}
+                {% else %}{{ v.value }}{% endif %}
+            </td>
+            {% endfor %}
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</details>
+{% endif %}
+
+{# ── Section 3: Fit Result Differences ── #}
+{% if fit_diff_rows is defined and fit_diff_rows | length > 0 %}
+<details class="compare-section" open>
+    <summary>Fit Result Differences <small class="muted">({{ fit_count }})</small></summary>
+    <div class="table-scroll">
+    <table class="data-table" role="grid">
+        <thead>
+            <tr>
+                <th>Qubit</th>
+                <th>Property</th>
+                {% for label in labels %}
+                <th title="{{ label }}">{{ label | truncate(18) }}{% if loop.index0 == ri %} (ref){% endif %}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+        {% for row in fit_diff_rows %}
+        <tr>
+            <td><strong>{{ row.qubit }}</strong></td>
+            <td><code>{{ row.property }}</code></td>
+            {% set ref_val = row["values"][ri].value %}
+            {% for v in row["values"] %}
+            {% set is_diff = (loop.index0 != ri) and (v.value != ref_val) %}
+            <td{% if is_diff %} class="cell-diff"{% endif %}>
+                {% if v.value is none %}<span class="muted">-</span>
+                {% elif v.value is sameas true %}true
+                {% elif v.value is sameas false %}false
+                {% elif v.value is number and (v.value | abs >= 1e6 or (0 < v.value | abs < 1e-3)) %}{{ "%.4e" | format(v.value) }}{% if is_diff and ref_val is number %}{{ render_delta(v.value, ref_val, "%+.3e") }}{% endif %}
+                {% elif v.value is number %}{{ "%.6f" | format(v.value) }}{% if is_diff and ref_val is number %}{{ render_delta(v.value, ref_val, "%+.6f") }}{% endif %}
+                {% else %}{{ v.value }}{% endif %}
+            </td>
+            {% endfor %}
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</details>
+{% endif %}
+
+{# ── Section 4: State Property Differences ── #}
+{% if diff_rows %}
+<details class="compare-section" open>
+    <summary>State Property Differences <small class="muted">({{ diff_count }})</small></summary>
+    <div class="table-filter">
+        <input type="search" oninput="filterTable(this, 'diff-table')" placeholder="Filter differences...">
+        <small id="diff-table-filter-count" class="muted"></small>
+    </div>
+    <div class="table-scroll">
+    <table class="data-table" id="diff-table" role="grid">
+        <thead>
+            <tr>
+                <th>Qubit</th>
+                <th>Property</th>
+                {% for label in labels %}
+                <th title="{{ label }}">{{ label | truncate(18) }}{% if loop.index0 == ri %} (ref){% endif %}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+        {% for row in diff_rows %}
+        <tr>
+            <td><strong>{{ row.qubit }}</strong></td>
+            <td><code>{{ row.property }}</code></td>
+            {% set ref_val = row["values"][ri].value %}
+            {% for v in row["values"] %}
+            {% set is_diff = (loop.index0 != ri) and (v.value != ref_val) %}
+            <td{% if is_diff %} class="cell-diff"{% endif %}>
+                {% if v.value is none %}<span class="muted">-</span>
+                {% elif v.value is number and (v.value | abs >= 1e6 or (0 < v.value | abs < 1e-3)) %}{{ "%.4e" | format(v.value) }}{% if is_diff and ref_val is number %}{{ render_delta(v.value, ref_val, "%+.3e") }}{% endif %}
+                {% elif v.value is number %}{{ "%.6f" | format(v.value) }}{% if is_diff and ref_val is number %}{{ render_delta(v.value, ref_val, "%+.6f") }}{% endif %}
+                {% else %}{{ v.value }}{% endif %}
+            </td>
+            {% endfor %}
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</details>
+{% endif %}
+
+<script>
+window.changeRef = function(sel) {
+    var form = document.querySelector('#compare-form') || document.querySelector('.compare-form');
+    var paths = [];
+    if (form) {
+        var checks = form.querySelectorAll('input[name="paths"]:checked');
+        checks.forEach(function(c) { paths.push(c.value); });
+    }
+    {% if paths_raw is defined %}
+    if (paths.length === 0) {
+        paths = {{ paths_raw | tojson }};
+    }
+    {% endif %}
+    var qs = paths.map(function(p) { return 'paths=' + encodeURIComponent(p); }).join('&');
+    qs += '&ref=' + sel.value;
+    htmx.ajax('GET', '/compare/diff?' + qs, {target: '#compare-content', swap: 'innerHTML'});
+};
+</script>
+{% else %}
+<div class="compare-empty">
+    <p>No differences found between the selected experiments.</p>
+</div>
+{% endif %}

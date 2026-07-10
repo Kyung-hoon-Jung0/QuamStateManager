@@ -1,0 +1,27 @@
+{# Bucket-② qubit mapping editor (P3, docs/49 — dropdown is the primary
+   editing gesture; drag-to-swap is deferred). Expects `ed` =
+   result.map_editor {ref_names, other_names, pairs}. Apply validates
+   duplicates client-side, persists via /compare-hub/map/save (A1 — drop
+   origins stay session-only), then reloads with map= in the URL. #}
+<div class="cmp-map-editor" data-cmp-map-editor>
+  <div class="cmp-map-grid">
+    {% for a in ed.ref_names %}
+    <label class="cmp-map-row">
+      <span class="cmp-map-a">{{ a }}</span>
+      <span class="cmp-map-arrow">&harr;</span>
+      <select data-map-a="{{ a }}" aria-label="Counterpart of {{ a }}">
+        <option value="">&mdash;</option>
+        {% for b in ed.other_names %}
+        <option value="{{ b }}"{% if ed.pairs.get(a) == b %} selected{% endif %}>{{ b }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    {% endfor %}
+  </div>
+  <div class="cmp-map-editor-actions">
+    <button type="button" class="btn-sync primary" onclick="cmpHubMapApply(this)">Apply mapping</button>
+    <span class="muted cmp-map-editor-note">Unmapped qubits are listed dim and
+      excluded — never zero-filled. Applying overwrites the saved mapping for
+      this pair.</span>
+  </div>
+</div>

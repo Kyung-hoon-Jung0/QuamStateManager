@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sync-Qualibrate · QUAM State Manager + Qualibrate</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}" />
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+
+    #wb-bar {
+      flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+      padding: 6px 10px; background: #11141a; color: #e6e6e6; font-size: 13px;
+      border-bottom: 1px solid #2b2f36;
+    }
+    #wb-bar .title { font-weight: 600; white-space: nowrap; }
+    #wb-bar .tag { color: #6fe39a; font-size: 11px; border: 1px solid #2b5; border-radius: 4px; padding: 1px 6px; }
+    #wb-bar .spacer { flex: 1 1 auto; }
+    #wb-bar label { color: #9aa4b2; font-size: 12px; }
+    #wb-bar input {
+      width: 200px; padding: 4px 8px; border-radius: 5px; border: 1px solid #333;
+      background: #1a1d23; color: #e6e6e6; font-size: 12px;
+    }
+    #wb-bar button {
+      padding: 4px 10px; border-radius: 5px; border: 0; background: #2d6cdf;
+      color: #fff; font-size: 12px; cursor: pointer;
+    }
+    #wb-bar button.ghost { background: transparent; color: #9aa4b2; border: 1px solid #333; }
+    #wb-bar a { color: #7fb2ff; font-size: 12px; }
+
+    /* ── tri-state segmented control [ Qualibrate | Split | State Manager ] ── */
+    #wb-seg { display: inline-flex; border: 1px solid #333; border-radius: 6px; overflow: hidden; }
+    #wb-seg button {
+      padding: 4px 11px; border: 0; border-radius: 0; background: #1a1d23; color: #9aa4b2;
+      font-size: 12px; border-left: 1px solid #2b2f36; cursor: pointer; white-space: nowrap;
+    }
+    #wb-seg button:first-child { border-left: 0; }
+    #wb-seg button[aria-pressed="true"] { background: #2d6cdf; color: #fff; }
+
+    .wb-nudge {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: #3a2f10; color: #f0c660; border: 1px solid #5e4a13;
+      border-radius: 6px; padding: 2px 6px 2px 10px; font-size: 12px; white-space: nowrap;
+    }
+    .wb-nudge[hidden] { display: none; }
+    .wb-nudge .dot { width: 8px; height: 8px; border-radius: 50%; background: #f0c660; animation: wb-pulse 1.4s infinite; }
+    @keyframes wb-pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+    .wb-nudge button { padding: 2px 8px; font-size: 11px; border-radius: 4px; border: 0; background: #d99a1e; color: #1a1d23; cursor: pointer; }
+    .wb-nudge button.x { background: transparent; color: #f0c660; padding: 2px 4px; }
+    .wb-watch { color: #5a6472; font-size: 11px; white-space: nowrap; }
+
+    /* second bar: does SM view the same chip Qualibrate is writing? */
+    #wb-link {
+      flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+      padding: 4px 10px; background: #0e1116; color: #9aa4b2; font-size: 12px;
+      border-bottom: 1px solid #2b2f36;
+    }
+    #wb-link .wb-link-pair, #wb-link .wb-link-app { color: #8a93a3; }
+    #wb-link .wb-link-chip { background: #1a1d23; color: #cfd6e0; padding: 1px 6px; border-radius: 4px; font-size: 11px; }
+    #wb-link .wb-link-sep { color: #5a6472; margin: 0 2px; }
+    .wb-link-badge { padding: 1px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+    .wb-link-badge.ok { color: #6fe39a; border: 1px solid #2b5; }
+    .wb-link-badge.bad { color: #ff8a8a; border: 1px solid #a33; background: #2a1414; }
+    .wb-link-badge.warn { color: #f0c660; border: 1px solid #5e4a13; }
+    #wb-link-load { padding: 2px 9px; border-radius: 4px; border: 0; background: #c0392b; color: #fff; font-size: 11px; cursor: pointer; white-space: nowrap; }
+    #wb-link-load[hidden] { display: none; }
+    #wb-link .wb-link-msg { color: #6a7585; font-size: 11px; }
+
+    #panes { flex: 1 1 auto; display: flex; flex-direction: row; min-height: 0; position: relative; }
+    #wb-left, #wb-right { height: 100%; min-width: 0; overflow: hidden; position: relative; }
+    #wb-left iframe, #wb-right iframe { width: 100%; height: 100%; border: 0; display: block; }
+    /* animate ONLY when toggling states (not while dragging) */
+    #panes.wb-animating #wb-left, #panes.wb-animating #wb-right { transition: width .18s ease, flex-basis .18s ease; }
+
+    .gutter { background: #2b2f36; position: relative; z-index: 10; }
+    .gutter.gutter-horizontal { cursor: col-resize; }
+    .gutter.gutter-horizontal:hover { background: #3a4150; }
+    /* collapse chevrons mounted on the gutter (VS Code-style) */
+    .gutter-chevrons {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      display: flex; flex-direction: column; gap: 4px; z-index: 11;
+    }
+    .gutter-chevrons button {
+      width: 22px; height: 24px; padding: 0; line-height: 1; font-size: 15px; font-weight: 700;
+      border: 1px solid #44506a; border-radius: 5px; background: #232a37; color: #e6e6e6; cursor: pointer;
+      box-shadow: 0 1px 4px #0007;
+    }
+    .gutter-chevrons button:hover { background: #2d6cdf; color: #fff; border-color: #2d6cdf; }
+
+    /* live width readout while dragging the gutter */
+    #wb-readout {
+      position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 7;
+      background: #11141aee; color: #e6e6e6; border: 1px solid #2b2f36; border-radius: 6px;
+      padding: 3px 9px; font-size: 12px; white-space: nowrap; pointer-events: none; display: none;
+    }
+    #wb-readout.show { display: block; }
+    #wb-readout .warn { color: #f0a35e; }
+    #wb-readout .ok { color: #6fe39a; }
+
+    /* transparent capture layer so a gutter drag survives crossing into an iframe */
+    #wb-drag-capture { position: fixed; inset: 0; z-index: 9999; cursor: col-resize; display: none; }
+    #wb-drag-capture.show { display: block; }
+
+    /* fallback shown if Qualibrate refuses to be framed (future X-Frame-Options) */
+    #wb-fallback {
+      position: absolute; inset: 0; display: none; flex-direction: column;
+      align-items: center; justify-content: center; gap: 12px; text-align: center;
+      padding: 24px; background: #0f1115; color: #e6e6e6;
+    }
+    #wb-fallback.show { display: flex; }
+    #wb-fallback p { color: #9aa4b2; max-width: 360px; font-size: 13px; line-height: 1.5; }
+    #wb-fallback a.btn { background: #2d6cdf; color: #fff; padding: 8px 14px; border-radius: 6px; text-decoration: none; font-size: 13px; }
+  </style>
+  <script>
+    // Default Qualibrate URL from the server (query ?qb=, env QUALIBRATE_URL, else 8001);
+    // a user override is persisted in localStorage and wins.
+    const QB_DEFAULT = {{ qb_url_default | tojson }};
+  </script>
+</head>
+<body>
+  <div id="wb-bar">
+    <span class="title">⌗ Sync-Qualibrate</span>
+    <div id="wb-seg" role="group" aria-label="View">
+      <button type="button" data-view="qb"    title="Qualibrate only — full width (Alt+1)">Qualibrate</button>
+      <button type="button" data-view="split" title="Split — both side by side (Alt+2)">Split</button>
+      <button type="button" data-view="sm"    title="State Manager only — full width (Alt+3)">State Manager</button>
+    </div>
+    <span id="wb-nudge" class="wb-nudge" hidden>
+      <span class="dot"></span>
+      Qualibrate changed <b id="wb-nudge-count">0</b>&nbsp;field(s)
+      <button id="wb-nudge-show" type="button"
+              title="Show the before/after of Qualibrate's change in the State Manager (nothing is written yet)">Show changes</button>
+      <button id="wb-nudge-x" type="button" class="x" title="Dismiss">✕</button>
+    </span>
+    <span id="wb-watch" class="wb-watch" title="Watching Qualibrate's live state files"></span>
+    <span class="spacer"></span>
+    <label for="wb-url">Qualibrate&nbsp;URL</label>
+    <input id="wb-url" type="text" spellcheck="false" />
+    <button id="wb-go" title="Reload the left pane with this URL">Reload</button>
+    <a id="wb-newtab" href="#" target="_blank" rel="noopener">open ↗</a>
+    <button id="wb-detach" class="ghost" title="Open Qualibrate in its own window (great on a second monitor)">⧉ detach</button>
+    <button id="wb-help" class="ghost" title="Alt+1/2/3 = views · Alt+[ / ] = nudge divider · Esc = back to split">?</button>
+  </div>
+
+  <div id="wb-link" title="Is SM viewing the same chip Qualibrate is writing?">
+    <span class="wb-link-badge warn" id="wb-link-badge">◍ checking…</span>
+    <span class="wb-link-pair">
+      <span class="wb-link-app">Qualibrate</span> <code class="wb-link-chip" id="wb-link-qb" title="">—</code>
+      <span class="wb-link-sep">↔</span>
+      <span class="wb-link-app">State&nbsp;Manager</span> <code class="wb-link-chip" id="wb-link-sm" title="">—</code>
+    </span>
+    <button id="wb-link-load" hidden>⤵ Load <span id="wb-link-load-name"></span> in SM</button>
+    <span class="wb-link-msg" id="wb-link-msg"></span>
+  </div>
+
+  <div id="panes">
+    <div id="wb-left">
+      <iframe id="wb-qb" title="Qualibrate"></iframe>
+      <div id="wb-fallback">
+        <strong>Qualibrate didn't load in the frame.</strong>
+        <p>It may not be running at this URL, or a future version added a framing
+           header (<code>X-Frame-Options</code> / <code>frame-ancestors</code>).
+           Check the URL above, or open it directly.</p>
+        <a class="btn" id="wb-fallback-link" href="#" target="_blank" rel="noopener">Open Qualibrate in a new tab</a>
+      </div>
+    </div>
+    <div id="wb-right">
+      <iframe id="wb-sm" title="QUAM State Manager" src="/"></iframe>
+    </div>
+    <div id="wb-readout"></div>
+  </div>
+  <div id="wb-drag-capture"></div>
+
+  <script src="{{ url_for('static', filename='split.min.js') }}"></script>
+  <script>
+    (function () {
+      var URL_KEY = "quam_workbench_qb_url";
+      var SIZ_KEY = "quam_workbench_sizes";
+      var VIEW_KEY = "quam_workbench_view";
+      var FLOOR_KEY = "quam_workbench_qb_minwidth";
+      var QB_FLOOR_DEFAULT = 960;
+      var SM_MIN = 260;
+
+      var panes = document.getElementById("panes");
+      var left = document.getElementById("wb-left");
+      var right = document.getElementById("wb-right");
+      var qb = document.getElementById("wb-qb");
+      var sm = document.getElementById("wb-sm");
+      var input = document.getElementById("wb-url");
+      var fb = document.getElementById("wb-fallback");
+      var fbLink = document.getElementById("wb-fallback-link");
+      var newtab = document.getElementById("wb-newtab");
+      var readout = document.getElementById("wb-readout");
+      var dragCapture = document.getElementById("wb-drag-capture");
+
+      var splitInstance = null, gutterEl = null;
+      var view = "split";
+      var prevSizes = [55, 45];
+
+      // ── helpers ──
+      function ls(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+      function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+      function qbFloor() {
+        var n = parseInt(ls(FLOOR_KEY), 10);
+        return (n && n >= 200) ? n : QB_FLOOR_DEFAULT;
+      }
+      function readSizes() {
+        try { var s = JSON.parse(ls(SIZ_KEY)); if (Array.isArray(s) && s.length === 2) return s; } catch (e) {}
+        return [55, 45];
+      }
+      // ── Qualibrate URL / load (preserved) ──
+      function currentUrl() { return ls(URL_KEY) || QB_DEFAULT; }
+      var loadTimer = null;
+      function loadQb(url) {
+        input.value = url; newtab.href = url; fbLink.href = url;
+        fb.classList.remove("show");
+        clearTimeout(loadTimer);
+        loadTimer = setTimeout(function () { fb.classList.add("show"); }, 9000);
+        qb.src = url;
+      }
+      qb.addEventListener("load", function () { clearTimeout(loadTimer); });
+      function setUrl(url) { url = (url || "").trim(); if (!url) return; lsSet(URL_KEY, url); loadQb(url); }
+      document.getElementById("wb-go").addEventListener("click", function () { setUrl(input.value); });
+      input.addEventListener("keydown", function (e) { if (e.key === "Enter") setUrl(input.value); });
+
+      // ── Split init (minSize 0 = free edge-to-edge drag; the readout warns when
+      //    Qualibrate clips, but never blocks; chevrons/toolbar snap to a clean single app) ──
+      function buildSplit(sizes) {
+        if (splitInstance) { try { splitInstance.destroy(); } catch (e) {} splitInstance = null; }
+        splitInstance = Split(["#wb-left", "#wb-right"], {
+          sizes: sizes,
+          minSize: 0,          // free full-range drag, edge to edge (user manages clip)
+          gutterSize: 10,
+          snapOffset: 0,
+          onDrag: function (s) { showReadout(s); },
+          onDragEnd: function (s) { prevSizes = s; lsSet(SIZ_KEY, JSON.stringify(s)); hideReadout(); },
+        });
+        gutterEl = panes.querySelector(".gutter");
+        addGutterChevrons();
+        wireDragCapture();
+      }
+      function addGutterChevrons() {
+        if (!gutterEl || gutterEl.querySelector(".gutter-chevrons")) return;
+        var wrap = document.createElement("div");
+        wrap.className = "gutter-chevrons";
+        // ›  = give the LEFT pane (Qualibrate) the whole width
+        // ‹  = give the RIGHT pane (State Manager) the whole width
+        wrap.innerHTML = '<button type="button" data-view="qb" title="Qualibrate full width">›</button>' +
+                         '<button type="button" data-view="sm" title="State Manager full width">‹</button>';
+        wrap.addEventListener("mousedown", function (e) { e.stopPropagation(); }); // don't start a drag
+        wrap.addEventListener("click", function (e) {
+          var b = e.target.closest("button"); if (b) setView(b.getAttribute("data-view"));
+        });
+        gutterEl.appendChild(wrap);
+      }
+
+      // transparent capture layer: an iframe swallows mousemove, killing the drag the
+      // moment the cursor crosses it — cover the window during a gutter drag.
+      function wireDragCapture() {
+        if (!gutterEl) return;
+        gutterEl.addEventListener("mousedown", function (e) {
+          if (e.target.closest(".gutter-chevrons")) return;
+          dragCapture.classList.add("show");
+        });
+      }
+      window.addEventListener("mouseup", function () { dragCapture.classList.remove("show"); });
+
+      function showReadout(sizes) {
+        var w = Math.round(window.innerWidth * (sizes[0] / 100));
+        var clip = w < qbFloor();
+        readout.innerHTML = "Qualibrate " + w + "px " +
+          (clip ? '<span class="warn">⚠ would clip</span>' : '<span class="ok">✓ fully visible</span>');
+        readout.classList.add("show");
+      }
+      function hideReadout() { readout.classList.remove("show"); }
+
+      // ── tri-state view ──
+      function setView(v, opts) {
+        opts = opts || {};
+        // capture the live split ratio before leaving split
+        if (view === "split" && splitInstance) {
+          try { prevSizes = splitInstance.getSizes(); lsSet(SIZ_KEY, JSON.stringify(prevSizes)); } catch (e) {}
+        }
+        view = v;
+        lsSet(VIEW_KEY, v);
+        panes.classList.add("wb-animating");
+
+        if (v === "split") {
+          left.style.cssText = ""; right.style.cssText = "";
+          if (gutterEl) gutterEl.style.display = "";
+          if (splitInstance) { try { splitInstance.setSizes(prevSizes); } catch (e) {} }
+        } else {
+          var qbFull = (v === "qb");                 // qb=left full → collapse right (SM)
+          var full = qbFull ? left : right;
+          var hid = qbFull ? right : left;
+          full.style.cssText = "flex: 0 0 100%; width: 100%; visibility: visible;";
+          hid.style.cssText = "flex: 0 0 0%; width: 0; min-width: 0; visibility: hidden; pointer-events: none; overflow: hidden;";
+          if (gutterEl) gutterEl.style.display = "none";
+        }
+        updateSegmented();
+        // after a width change, nudge the (now wider) app so its height media query re-evaluates;
+        // collapse is purely visual — no iframe reload, no React remount.
+        setTimeout(function () {
+          panes.classList.remove("wb-animating");
+          try { window.dispatchEvent(new Event("resize")); } catch (e) {}
+        }, 220);
+      }
+      function updateSegmented() {
+        var btns = document.querySelectorAll("#wb-seg button");
+        for (var i = 0; i < btns.length; i++) {
+          btns[i].setAttribute("aria-pressed", btns[i].getAttribute("data-view") === view ? "true" : "false");
+        }
+      }
+      document.getElementById("wb-seg").addEventListener("click", function (e) {
+        var b = e.target.closest("button"); if (b) setView(b.getAttribute("data-view"));
+      });
+      // double-click the gutter = quick peek/unpeek between split and last single-app
+      var lastSingle = "qb";
+      panes.addEventListener("dblclick", function (e) {
+        if (!gutterEl || !e.target.closest(".gutter")) return;
+        if (view === "split") setView(lastSingle); else { lastSingle = view; setView("split"); }
+      });
+
+      // ── detach Qualibrate to its own window (dual-monitor); SM takes over here ──
+      document.getElementById("wb-detach").addEventListener("click", function () {
+        window.open(currentUrl(), "qualibrate_detached", "noopener");
+        setView("sm");
+      });
+      document.getElementById("wb-help").addEventListener("click", function () {
+        alert("Sync-Qualibrate shortcuts\n\nAlt+1  Qualibrate only\nAlt+2  Split\nAlt+3  State Manager only\nAlt+[ / Alt+]  nudge the divider\nEsc  back to split\nDouble-click the divider  peek/unpeek");
+      });
+
+      // ── keyboard (Alt/Option; read e.code; ignore when typing) ──
+      window.addEventListener("keydown", function (e) {
+        var t = e.target;
+        if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+        if (e.key === "Escape" && view !== "split") { setView("split"); return; }
+        if (!e.altKey || e.ctrlKey || e.metaKey) return;
+        var nudge = 0;
+        switch (e.code) {
+          case "Digit1": setView("qb"); break;
+          case "Digit2": setView("split"); break;
+          case "Digit3": setView("sm"); break;
+          case "BracketLeft": nudge = -4; break;
+          case "BracketRight": nudge = 4; break;
+          default: return;
+        }
+        e.preventDefault();
+        if (nudge && view === "split" && splitInstance) {
+          var s = splitInstance.getSizes();
+          var a = Math.min(95, Math.max(5, s[0] + nudge));
+          splitInstance.setSizes([a, 100 - a]);
+          prevSizes = [a, 100 - a]; lsSet(SIZ_KEY, JSON.stringify(prevSizes));
+        }
+      });
+
+      // ── watch Qualibrate's live state → nudge the SM pane (preserved) ──
+      var nudgeEl = document.getElementById("wb-nudge");
+      var watchEl = document.getElementById("wb-watch");
+      // Watch state machine (robust across many chips):
+      //  · lastPath   — the dir Qualibrate is writing; a change = project/chip switch
+      //  · lastMtime  — the committed baseline we compare against (≠, not >, so a
+      //                 reverted/clock-skewed write still registers)
+      //  · pendingMtime — settle-debounce: a change must hold steady for one poll
+      //                 before we read content (past Qualibrate's non-atomic
+      //                 state.json+wiring.json write burst → no torn/half diff)
+      var lastPath = null;
+      var lastMtime = null;
+      var pendingMtime = null;
+      var watchFails = 0;
+      var liveDiffInFlight = false;
+      var matchLinked = false;   // set by pollMatch(); gates the nudge (kills the silent no-op)
+      function pollWatch() {
+        if (pollWatch._inFlight) return;   // don't overlap on a slow server
+        pollWatch._inFlight = true;
+        fetch("/workbench/watch", { cache: "no-store" })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            watchFails = 0;
+            if (!d || !d.ok || d.mtime == null) { watchEl.textContent = "⦿ watch: state path not found"; return; }
+            var name = (d.path || "").replace(/[\\/]+$/, "").split(/[\\/]/).pop();
+            watchEl.textContent = "⦿ watching " + (name || "state");
+            // Qualibrate switched projects/chips → rebase the baseline silently
+            // (don't nudge the switch itself; pollMatch re-evaluates the link).
+            if (d.path !== lastPath) { lastPath = d.path; lastMtime = d.mtime; pendingMtime = null; return; }
+            if (lastMtime === null) { lastMtime = d.mtime; return; }
+            if (d.mtime !== lastMtime) {
+              // settle-debounce: require one stable poll before reading content.
+              if (d.mtime !== pendingMtime) { pendingMtime = d.mtime; return; }
+              lastMtime = d.mtime; pendingMtime = null;
+              // only react when SM is viewing the chip Qualibrate writes — else it's a silent no-op
+              if (matchLinked) onLiveChanged();
+            } else {
+              pendingMtime = null;   // settled back to the baseline
+            }
+          })
+          .catch(function () {
+            if (++watchFails >= 3) watchEl.textContent = "⚠ watch lost — is the State Manager still running?";
+          })
+          .then(function () { pollWatch._inFlight = false; });   // finally
+      }
+      function reloadSmPane() { try { sm.contentWindow.location.reload(); } catch (e) { sm.src = sm.src; } }
+      var nudgeCount = document.getElementById("wb-nudge-count");
+      // content-aware: Qualibrate touched the live files — does the CONTENT actually differ?
+      function onLiveChanged() {
+        if (liveDiffInFlight) return;   // don't stack reads if one is slow
+        liveDiffInFlight = true;
+        fetch("/state/live-diff", { cache: "no-store" })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (!d || !d.ok) {
+              // folder vanished / unreadable — surface it instead of silently no-op'ing
+              if (d && d.error) watchEl.textContent = "⚠ " + d.error;
+              return;
+            }
+            if (d.total > 0) {
+              nudgeCount.textContent = d.total;
+              // smart show: if SM is on screen (Split/SM) open the before/after now; if
+              // Qualibrate is full-screen, just show the banner so you're not yanked away.
+              if (view === "qb") nudgeEl.hidden = false; else showLiveDiff();
+            } else {
+              watchEl.textContent = "⦿ Qualibrate touched the state — no value change";
+            }
+          })
+          .catch(function () {})
+          .then(function () { liveDiffInFlight = false; });
+      }
+      // show the before/after of Qualibrate's change in the SM pane. Prefer the
+      // inline Explorer diff (VS Code compare style, per-field accept); the SM
+      // helper falls back to the flat review overlay on any non-Explorer page.
+      // Nothing is written yet; accept/sync happens in there.
+      function showLiveDiff() {
+        nudgeEl.hidden = true;
+        if (view === "qb") setView("split");
+        try {
+          if (sm.contentWindow.showLiveDiffInline) sm.contentWindow.showLiveDiffInline();
+          else if (sm.contentWindow.openReview) sm.contentWindow.openReview();
+        } catch (e) {}
+      }
+      document.getElementById("wb-nudge-show").addEventListener("click", showLiveDiff);
+      document.getElementById("wb-nudge-x").addEventListener("click", function () { nudgeEl.hidden = true; });
+
+      // ── path match: is SM viewing the same chip Qualibrate is writing? ──
+      var matchBadge = document.getElementById("wb-link-badge");
+      var matchQb = document.getElementById("wb-link-qb");
+      var matchSm = document.getElementById("wb-link-sm");
+      var matchLoad = document.getElementById("wb-link-load");
+      var matchLoadName = document.getElementById("wb-link-load-name");
+      var matchMsg = document.getElementById("wb-link-msg");
+      var matchLoadPath = null;
+      var MATCH_BADGE = {
+        "linked": { cls: "ok", text: "✓ linked" },
+        "linked-different-folder": { cls: "ok", text: "✓ same chip" },
+        "mismatch": { cls: "bad", text: "⚠ mismatch" },
+        "qb-unresolved": { cls: "warn", text: "◍ Qualibrate path?" },
+        "sm-empty": { cls: "warn", text: "◍ no chip in SM" },
+        "indeterminate": { cls: "warn", text: "◍ can't tell" }
+      };
+      function pollMatch() {
+        if (pollMatch._inFlight) return;   // don't overlap on a slow server
+        pollMatch._inFlight = true;
+        fetch("/workbench/match", { cache: "no-store" })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (!d) return;
+            var st = d.state;
+            matchLinked = (st === "linked" || st === "linked-different-folder");
+            var b = MATCH_BADGE[st] || { cls: "warn", text: st };
+            matchBadge.className = "wb-link-badge " + b.cls;
+            matchBadge.textContent = b.text;
+            matchQb.textContent = d.qb_name || "—"; matchQb.title = d.qb_path || "";
+            matchSm.textContent = d.sm_name || "—"; matchSm.title = d.sm_path || "";
+            var showLoad = (st === "mismatch") && d.loadable && d.load_path;
+            matchLoad.hidden = !showLoad;
+            if (showLoad) { matchLoadName.textContent = d.qb_name || "the chip"; matchLoadPath = d.load_path; }
+            matchMsg.textContent =
+              st === "linked-different-folder" ? "same chip, different folder — sync works; Apply targets SM's folder"
+              : st === "qb-unresolved" ? (d.reason || "")
+              : st === "sm-empty" ? "load a chip in SM to link"
+              : "";
+            if (!matchLinked) nudgeEl.hidden = true;   // clear any stale nudge when not linked
+          })
+          .catch(function () {})
+          .then(function () { pollMatch._inFlight = false; });   // finally
+      }
+      matchLoad.addEventListener("click", function () {
+        if (!matchLoadPath) return;
+        var btn = this, orig = btn.textContent; btn.disabled = true; btn.textContent = "Loading…";
+        // a context switch, NOT a clobber — pending edits on the old chip survive (per-folder working copy)
+        fetch("/load", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true" },
+          body: "folder=" + encodeURIComponent(matchLoadPath),
+          redirect: "manual"
+        })
+          .then(function () { if (view === "qb") setView("split"); reloadSmPane(); pollMatch(); })
+          .catch(function () {})
+          .then(function () { btn.disabled = false; btn.textContent = orig; });
+      });
+
+      pollWatch(); pollMatch();
+      // Gate the pollers on tab visibility — no watch/fingerprint work while the
+      // workbench tab is hidden; resume immediately (don't wait 3s) on refocus.
+      setInterval(function () { if (document.hidden) return; pollWatch(); pollMatch(); }, 3000);
+      document.addEventListener("visibilitychange", function () {
+        if (!document.hidden) { pollWatch(); pollMatch(); }
+      });
+
+      // ── boot ──
+      buildSplit(readSizes());
+      var startView = ls(VIEW_KEY) || "split";
+      if (startView !== "split" && startView !== "qb" && startView !== "sm") startView = "split";
+      setView(startView);
+      loadQb(currentUrl());
+    })();
+  </script>
+</body>
+</html>

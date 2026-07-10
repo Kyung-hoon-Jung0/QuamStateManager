@@ -1,0 +1,278 @@
+{# Results zone [C] — bucket-adaptive (docs/49). Expects `result` = the
+   decorated _hub_result_view dict. #}
+{% set srcs = result.sources %}
+
+{# ── structure strip (P2) — bucket-adaptive TopoGraph minis. ① renders only
+   when wiring/topology actually changed (amber banner); ② tints mapped
+   differing stones; ③ is shape-at-a-glance, never tinted. Rendered
+   client-side by compare-hub.js via TopoGraph.renderStatic. #}
+{% set strips = result.strips or {} %}
+{% if strips.cards and strips.mode in ('tint', 'plain', 'wiring-changed') %}
+{% if strips.mode == 'wiring-changed' %}
+<div class="cmp-strip-banner">&#9888; Wiring / topology changed between these
+  snapshots — structure shown below.</div>
+{% endif %}
+<div class="cmp-strips">
+  {% for card in strips.cards %}
+  <div class="cmp-strip-card{% if card.ref %} cmp-strip-ref{% endif %}">
+    <div class="cmp-strip-label muted">{% if card.ref %}&#9733; {% endif %}{{ srcs[loop.index0].label | truncate(34) }}</div>
+    <div class="cmp-strip-mount" data-strip-idx="{{ loop.index0 }}"></div>
+  </div>
+  {% endfor %}
+</div>
+<script type="application/json" id="cmp-strips-json">{{ strips.cards | tojson }}</script>
+{% endif %}
+
+{# U7 — wrong-② guard with teeth: a mostly-unmatched mapping means these
+   probably aren't the same design. One click to ③, basket untouched. #}
+{# suppressed on needs_confirm — that panel already carries its own ③
+   button; stacking both amber surfaces doubled the same action. #}
+{% if result.map_guard and not result.needs_confirm %}
+<div class="cmp-strip-banner cmp-map-guard">&#9888; These devices don't look like
+  the same design —
+  {%- if result.map_guard.reason == 'wide' %} {{ result.map_guard.beyond }}/{{ result.map_guard.rows }}
+  summary values differ beyond even the Wide tolerance
+  {%- else %} {{ result.map_guard.matched }}/{{ result.map_guard.total }} qubits matched
+  {%- endif %}.
+  <button type="button" class="btn-xs outline" data-bucket="3"
+          onclick="cmpHub.setBucket(this)">Compare as ③ instead</button>
+</div>
+{% endif %}
+
+{% if result.identical %}
+{# U6 — backup verification is binary: make identical a hero, not a zero. #}
+<div class="cmp-hero-identical">
+  <span class="cmp-hero-check">&#10003;</span>
+  Identical — {{ result.leaf_count | groupdigits }} leaves equal
+</div>
+{% elif result.needs_confirm %}
+{# Bucket ② without a confirmed qubit mapping — the engine returns the
+   suggestion only; comparison waits for the user's explicit confirm (A2). #}
+{% set m = result.mapping or {} %}
+<div class="cmp-confirm-panel">
+  <h4>Qubit mapping needed</h4>
+  <p class="muted">These two devices need a confirmed qubit mapping before their
+    parameters can be compared side by side.
+    {% if m.method == 'grid' %}Suggested from grid positions{% elif m.method == 'name' %}Suggested from matching names{% else %}No automatic suggestion was possible{% endif %}{% if m.pairs %} — review it below{% endif %}.</p>
+  {% if m.pairs %}
+  <div class="cmp-map-preview">
+    {% for a, b in m.pairs.items() %}
+    <span class="cmp-map-pair">{{ a }} ↔ {{ b }}</span>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if m.unmatched_a or m.unmatched_b %}
+  {# unmatched_a/b are REF-relative: the engine suggests snaps[ref]→snaps[other],
+     so with ref=1 srcs[0]/srcs[1] would swap the attributions (review P1). #}
+  <p class="muted cmp-map-unmatched">Unmatched
+    {%- if m.unmatched_a %} · {{ srcs[ref_idx].label }}: {{ m.unmatched_a | join(', ') }}{% endif %}
+    {%- if m.unmatched_b %} · {{ srcs[1 - ref_idx].label }}: {{ m.unmatched_b | join(', ') }}{% endif %}
+    — listed dim, excluded from the comparison (never zero-filled).</p>
+  {% endif %}
+  <div class="cmp-confirm-actions">
+    {% if m.pairs %}
+    <button type="button" class="btn-sync primary"
+            data-map="{% for a, b in m.pairs.items() %}{{ a }}:{{ b }}{% if not loop.last %},{% endif %}{% endfor %}"
+            onclick="cmpHub.useMap(this)">Use this mapping ({{ m.pairs | length }} qubits)</button>
+    {% endif %}
+    <button type="button" class="btn-sync" data-bucket="3" onclick="cmpHub.setBucket(this)"
+            title="No qubit-to-qubit correspondence — compare shapes and distributions instead">
+      Compare as ③ instead</button>
+  </div>
+  <details class="cmp-map-edit-toggle"{% if not m.pairs %} open{% endif %}>
+    <summary>Edit mapping</summary>
+    {% with ed = result.map_editor %}
+    {% if ed %}{% include '_compare_hub_map_editor.html' %}{% endif %}
+    {% endwith %}
+  </details>
+</div>
+{% elif result.bucket == 3 %}
+{# ③ — no leaf pairing at all: side-by-side chip cards. #}
+<div class="cmp-cards">
+  {% for card in result.chip_cards %}
+  {% set s = card.structure %}
+  <div class="cmp-card">
+    <div class="cmp-card-head" title="{{ srcs[loop.index0].label }}">
+      {% if loop.index0 == ref_idx %}<span class="cmp-card-ref" title="reference">★</span>{% endif %}
+      {{ srcs[loop.index0].label }}
+    </div>
+    <div class="cmp-card-struct muted">
+      {{ s.n_qubits }} qubits · {{ s.n_pairs }} pairs · {{ s.chip_type | replace('_', ' ') }}
+      {%- if s.gates %} · gates: {{ s.gates | join(', ') }}{% endif %}
+    </div>
+    <table class="cmp-card-metrics">
+      <tbody>
+      {% for key, m in card.metrics.items() %}
+      <tr>
+        <td class="cmp-cm-label">{{ m.label }}{% if m.unit %} <span class="muted">({{ m.unit }})</span>{% endif %}</td>
+        <td class="cmp-cm-range">
+          {% if m.count %}{{ m.min | groupdigits }}{% if m.count > 1 %} – {{ m.max | groupdigits }}{% endif %}{% else %}—{% endif %}
+        </td>
+        <td class="cmp-cm-count muted">{{ m.count }}/{{ s.n_qubits }} measured</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endfor %}
+</div>
+<p class="muted cmp-hint">③ compares shapes, inventories and ranges only — there is
+  no qubit-to-qubit correspondence. For per-qubit deltas use ② with a mapping.</p>
+{% else %}
+
+{# ── headline (U5 — lead with what moved) ── #}
+<div class="cmp-headline">
+  <span class="cmp-h-changed">{{ result.headline.changed | groupdigits }} changed</span>
+  <span class="cmp-h-sep">·</span>
+  <span class="cmp-h-within">{{ result.headline.within_tolerance | groupdigits }} within tolerance</span>
+  <span class="cmp-h-sep">·</span>
+  <span class="cmp-h-equal">{{ result.headline.equal | groupdigits }} equal</span>
+  {% set added = result.headline.by_class.get('added', 0) %}
+  {% set removed = result.headline.by_class.get('removed', 0) %}
+  {% if result.bucket == 1 and (added or removed) %}
+  <span class="cmp-h-sep">·</span>
+  <span class="cmp-h-added">+{{ added }} added</span>
+  <span class="cmp-h-sep">·</span>
+  <span class="cmp-h-removed">&minus;{{ removed }} removed</span>
+  {% elif result.headline.one_sided %}
+  <span class="cmp-h-sep">·</span>
+  <span class="cmp-h-onesided">{{ result.headline.one_sided }} one-sided</span>
+  {% endif %}
+  {% if result.headline.meta %}
+  <label class="cmp-meta-toggle" title="same value, reference rewired · type changes (40 vs 40.0) · schema (__class__) — never counted as physics drift">
+    <input type="checkbox" onchange="cmpHubToggleMeta(this)">
+    +{{ result.headline.meta }} link/schema
+  </label>
+  {% endif %}
+  {% if result.headline.derived %}
+  <span class="cmp-h-derived muted" title="#./ runtime self-references — the difference (if any) surfaces at the source leaves">{{ result.headline.derived }} derived</span>
+  {% endif %}
+  {% if result.headline.attention %}
+  <span class="cmp-h-attn">&#9888; {{ result.headline.attention }} attention</span>
+  {% endif %}
+</div>
+
+{# ── bucket-② mapping bar (read-only in this build; editor = P3) ── #}
+{% if result.bucket == 2 and result.mapping %}
+{% set m = result.mapping %}
+<div class="cmp-mapping-bar">
+  <span class="cmp-map-method">Qubit mapping — by {{ m.method }}{% if m.status %} ({{ m.status }}){% endif %}:</span>
+  {% for a, b in m.pairs.items() %}
+  <span class="cmp-map-pair">{{ a }}&harr;{{ b }}</span>
+  {% endfor %}
+  <span class="muted">{{ m.pairs | length }} mapped{% if m.unmatched_a or m.unmatched_b %} · unmatched: {{ (m.unmatched_a + m.unmatched_b) | join(', ') }}{% endif %}</span>
+  {% if map_source == 'saved' %}
+  <span class="cmp-map-saved" title="A mapping confirmed earlier for this source pair reloaded automatically (per network + source anchors){% if map_stale %} — stale entries whose names vanished: {% for a, b in map_stale.items() %}{{ a }}↔{{ b }} {% endfor %}{% endif %}">saved mapping</span>
+  {% endif %}
+</div>
+<details class="cmp-map-edit-toggle cmp-map-edit-inline">
+  <summary>Edit mapping</summary>
+  {% with ed = result.map_editor %}
+  {% if ed %}{% include '_compare_hub_map_editor.html' %}{% endif %}
+  {% endwith %}
+</details>
+{% endif %}
+
+{# ── attention (amber, never red — dangling pointers are normal) ── #}
+{% set attn = result.attention or {} %}
+{% if attn.unresolved_groups or attn.orphan_pairs or attn.flip_excluded %}
+<details class="cmp-attention">
+  <summary>&#9888; Attention — {{ (attn.unresolved_groups | length) + (attn.orphan_pairs | length) }} item(s)</summary>
+  {% if attn.unresolved_groups %}
+  <div class="cmp-attn-block">
+    {% for g in attn.unresolved_groups %}
+    <div class="cmp-attn-row">
+      <code class="dot-path">…{{ g.leaf }}</code> — {{ g.count }} dangling
+      <code class="cmp-attn-ptr">{{ g.pointer }}</code>
+      {# g['keys'], never g.keys — Jinja attribute lookup returns dict.keys
+         (the method) and 500s; hit on the variantb family's bulk danglings. #}
+      <span class="muted">({{ g['keys'] | join(', ') | truncate(120) }}{% if g.count > (g['keys'] | length) %}, …{% endif %})</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if attn.orphan_pairs %}
+  <div class="cmp-attn-block">
+    {% for pair, ptrs in attn.orphan_pairs.items() %}
+    <div class="cmp-attn-row">Pair <code>{{ pair }}</code> has dangling endpoints:
+      <span class="muted">{{ ptrs | join(', ') | truncate(120) }}</span></div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if attn.flip_excluded %}
+  <div class="cmp-attn-block muted">
+    Excluded from the flipped-pair comparison (sign/name conventions unknowable):
+    {% for cat, n in attn.flip_excluded.items() %}<span class="cmp-attn-chip">{{ cat }}: {{ n }}</span>{% endfor %}
+  </div>
+  {% endif %}
+</details>
+{% endif %}
+
+{# ── tabs: Changes / Summary (client-side toggle — both are computed) ── #}
+<div class="cmp-tabs" role="group" aria-label="Result view">
+  <button type="button" class="cmp-tab active" data-cmp-tab="changes"
+          aria-pressed="true" onclick="cmpHubTab(this)">Changes</button>
+  <button type="button" class="cmp-tab" data-cmp-tab="summary"
+          aria-pressed="false" onclick="cmpHubTab(this)">Summary</button>
+</div>
+
+<div class="cmp-tabpane" data-cmp-pane="changes">
+  {% if not result.sections %}
+  <p class="muted cmp-hint">No differences at this strictness — try Exact, or open
+    the Summary tab.</p>
+  {% endif %}
+  {% for sec in result.sections %}
+  <div class="cmp-section">
+    <div class="cmp-section-head">{{ sec.name }}</div>
+    {% for g in sec.groups %}
+    <details class="cmp-group"
+             {% if not g.lazy and g.n_rows %}open{% endif %}
+             {% if g.lazy %}data-lazy="1"
+             data-url="/compare-hub/group?{{ hub_qs }}&amp;section={{ sec.name | urlencode }}&amp;entity={{ g.entity | urlencode }}"{% endif %}>
+      <summary class="cmp-group-summary">
+        <span class="cmp-group-entity">{{ g.entity }}{% if g.mapped_to %} <span class="cmp-group-mapped">&harr; {{ g.mapped_to }} · mapped by {{ result.mapping.method }}</span>{% endif %}</span>
+        <span class="cmp-group-counts">
+          {% set c = g.counts %}
+          {% if c.get('modified') %}<span class="cmp-cnt cmp-cnt-changed">{{ c['modified'] }} changed</span>{% endif %}
+          {% if c.get('added') %}<span class="cmp-cnt cmp-cnt-added">+{{ c['added'] }}</span>{% endif %}
+          {% if c.get('removed') %}<span class="cmp-cnt cmp-cnt-removed">&minus;{{ c['removed'] }}</span>{% endif %}
+          {% if c.get('only_in') or c.get('not_in_source') %}<span class="cmp-cnt">{{ c.get('only_in', 0) + c.get('not_in_source', 0) }} one-sided</span>{% endif %}
+          {% if c.get('within_tolerance') %}<span class="cmp-cnt cmp-cnt-dim">{{ c['within_tolerance'] }} within tol</span>{% endif %}
+          {% if c.get('unresolved') or c.get('derived') %}<span class="cmp-cnt cmp-cnt-attn">{{ c.get('unresolved', 0) + c.get('derived', 0) }} attn</span>{% endif %}
+          {% if c.get('equal') %}<span class="cmp-cnt cmp-cnt-dim">{{ c['equal'] }} equal</span>{% endif %}
+        </span>
+      </summary>
+      <div class="cmp-group-body">
+        {% if g.lazy %}
+        <p class="muted cmp-group-loading">Loading {{ g.n_rows }} rows…</p>
+        {% elif g.n_rows %}
+        {% with rows = g.view_rows, group = g, show_eq = False %}
+        {% include '_compare_hub_rows.html' %}
+        {% endwith %}
+        {% else %}
+        {% with rows = [], group = g, show_eq = False %}
+        {% include '_compare_hub_rows.html' %}
+        {% endwith %}
+        {% endif %}
+      </div>
+    </details>
+    {% endfor %}
+  </div>
+  {% endfor %}
+</div>
+
+<div class="cmp-tabpane" data-cmp-pane="summary" hidden>
+  {% if not result.summary_entities %}
+  <p class="muted cmp-hint">No summary metrics found on these sources.</p>
+  {% else %}
+  {# A5 budget applies here too — fleet pairs produce ~1,200 summary rows.
+     Ship the first N entities; the rest load through /compare-hub/summary. #}
+  {% with entities = result.summary_entities[:summary_inline], srcs = srcs,
+          ref_idx = ref_idx,
+          show_more = (result.summary_entities | length) > summary_inline,
+          hub_qs = hub_qs %}
+  {% include '_compare_hub_summary.html' %}
+  {% endwith %}
+  {% endif %}
+</div>
+{% endif %}

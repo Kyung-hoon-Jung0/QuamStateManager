@@ -1,0 +1,71 @@
+{# The pulses table + pagination — re-fetched on `pulses-changed`. #}
+<div class="pulse-compare-bar" id="pulse-compare-bar" hidden>
+    <span id="pulse-compare-count">0</span> selected
+    <button type="button" class="btn-sm primary" onclick="window.openPulseCompare()">Compare waveforms</button>
+    <button type="button" class="btn-sm outline" onclick="window.clearPulseSelection()">Clear</button>
+</div>
+<table id="pulses-table" class="data-table" role="grid">
+    <thead>
+        <tr>
+            <th class="pulse-sel-col"></th>
+            <th class="sortable" data-col="1" data-type="str">Owner</th>
+            <th class="sortable" data-col="1" data-type="str">Channel</th>
+            <th class="sortable" data-col="2" data-type="str">Operation</th>
+            <th class="sortable" data-col="3" data-type="str">Class</th>
+            <th>Waveform</th>
+            <th class="sortable" data-col="5" data-type="num">Length <span class="unit">(ns)</span></th>
+            <th class="sortable" data-col="6" data-type="num">Amp</th>
+            <th class="sortable" data-col="7" data-type="num">Used by</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% if rows %}
+    {% for r in rows %}
+        <tr class="clickable-row" data-pulse-path="{{ r.path }}"
+            hx-get="/pulse/detail?path={{ r.path | urlencode }}"
+            hx-target="#inspector-pane" hx-swap="innerHTML"
+            hx-indicator="#inspector-pane"
+            title="{{ r.summary }}">
+            <td class="pulse-sel-col" onclick="event.stopPropagation()">
+                {%- if not r.is_alias and r.known -%}
+                <input type="checkbox" class="pulse-sel-chk" data-path="{{ r.path }}"
+                       onchange="window.pulseSelChanged()">
+                {%- endif -%}
+            </td>
+            <td><strong>{{ r.owner }}</strong></td>
+            <td><span class="pulse-chan-chip pulse-chan-{{ r.channel }}">{{
+                {'xy':'xy','z':'z','resonator':'res','flux_pulse_qubit':'flux','coupler_flux_pulse':'coupler'}.get(r.channel, r.channel)
+            }}</span></td>
+            <td>{{ r.op_name }}
+                {%- if r.is_alias %} <span class="pointer-badge" title="Alias — resolves to {{ r.alias_target }}">alias</span>{% endif %}
+                {%- if r.iq %} <span class="pulse-flag-iq" title="I and Q components">IQ</span>{% endif %}
+                {%- if r.readout %} <span class="pulse-flag-readout" title="Readout pulse">RO</span>{% endif %}</td>
+            <td><span class="pulse-class-chip{% if not r.known and not r.is_alias %} pulse-class-unknown{% endif %}">{{
+                '→' if r.is_alias else r.class_short }}</span></td>
+            <td class="pulse-spark-cell">
+                {%- if r.is_alias -%}
+                <span class="muted pulse-alias-target">&rarr; {{ r.alias_target.rsplit('.', 1)[-1] if r.alias_target else '?' }}</span>
+                {%- elif r.spark_svg -%}
+                {{ r.spark_svg | safe }}
+                {%- else -%}
+                <span class="muted">&mdash;</span>
+                {%- endif -%}
+            </td>
+            <td>{{ r.length if r.length is not none else '-' }}</td>
+            <td>{{ "%.4g" | format(r.amplitude) if r.amplitude is not none else '-' }}</td>
+            <td>{% if r.used_by %}<span class="pulse-usedby" title="{{ r.used_by | join(', ') }}">{{ r.used_by | length }}</span>{% endif %}</td>
+        </tr>
+    {% endfor %}
+    {% else %}
+        <tr><td colspan="9" class="muted" style="text-align:center;padding:2rem">
+            No pulses found{% if active_channel %} on this channel{% endif %}.
+        </td></tr>
+    {% endif %}
+    </tbody>
+</table>
+
+{% set base_url = "/pulses" %}
+{% set extra_qs = (("&channel=" ~ active_channel) if active_channel else "")
+                  ~ (("&q=" ~ (active_query | urlencode)) if active_query else "") %}
+{% set storage_key = "quam_pulses_per_page" %}
+{% include "_pagination.html" %}

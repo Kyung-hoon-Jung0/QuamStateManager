@@ -1,0 +1,56 @@
+<div class="table-header-row">
+    <h2>Config Viewer <small class="muted">offline preview of <code>machine.generate_config()</code> for the loaded chip</small></h2>
+    <span class="diag-header-slot" hx-get="/diagnostics/summary" hx-trigger="load" hx-swap="outerHTML"></span>
+</div>
+{# Re-fetch the whole page in place when a regenerate completes (the
+   Regenerate button only swaps the status host) — so the config list updates
+   without the user having to navigate away and back (feedback Config #2). #}
+<span hidden hx-get="/config" hx-trigger="configRegenerated from:body"
+      hx-target="#table-pane" hx-swap="innerHTML"></span>
+
+<div id="config-status" class="config-status-host">
+    {% include '_config_status.html' %}
+</div>
+
+{% if config %}
+<article class="config-browser">
+    {% for key in top_level_keys %}
+    <details class="detail-section">
+        <summary class="section-header">
+            <code>{{ key }}</code>
+            {% set kv = config.get(key) %}
+            {% if kv is mapping %}
+            <small class="muted">({{ kv | length }} entries)</small>
+            {% elif kv is iterable and kv is not string %}
+            <small class="muted">({{ kv | length }} items)</small>
+            {% endif %}
+        </summary>
+        {# Lazy-load this section's JSON only when the user expands it. Dumping
+           every section eagerly froze the browser on a 21-qubit chip (multi-MB
+           waveforms/integration_weights serialized into one swap). The `toggle`
+           event fires on the <details> when opened; `once` loads it a single time. #}
+        <div class="config-json-host"
+             hx-get="/config/section/{{ key | urlencode }}"
+             hx-trigger="toggle once from:closest details"
+             hx-target="this" hx-swap="innerHTML">
+            <pre class="config-json muted">Loading…</pre>
+        </div>
+    </details>
+    {% endfor %}
+</article>
+{% else %}
+<div class="config-empty">
+    <p class="muted">No config generated for the loaded chip yet — this is the exact
+        QM config <code>machine.generate_config()</code> produces from
+        {% if active_name %}<strong>{{ active_name }}</strong>{% else %}the loaded state{% endif %},
+        i.e. what the experiment actually runs.</p>
+    {# The Generate CTA lives in the status banner above (one filled CTA, VSCode-clean
+       canon) — don't duplicate it here. When no env is picked yet the banner's CTA
+       can't run, so steer the user to the wizard's Environment step instead. #}
+    {% if not env_selected %}
+    <p class="muted">First pick the Python environment with the QM stack (a conda env
+        or a venv) in the Generate Config wizard's Environment step, then come back.</p>
+    <p><a class="btn-sync outline" href="/generate" hx-get="/generate" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">Choose environment &rarr;</a></p>
+    {% endif %}
+</div>
+{% endif %}

@@ -1,0 +1,41 @@
+{# Auto-popped diagnostics error banner. Lazily fetched into #diagnostics-banner-slot
+   on every full page load (so it pops on chip load / switch) and on the
+   `diagnostics-changed` event. The route only returns this markup when the active
+   chip has >=1 error-severity finding — a value the QUA compiler /
+   machine.generate_config() provably rejects (waveform sample out of DAC range,
+   missing/colliding port, NaN), i.e. a value that would crash the next node run.
+   Load is never blocked; this is a non-modal, dismissible alert. #}
+<div class="topo-change-banner diag-error-banner" id="diagnostics-banner" role="alert"
+     data-diag-sig="{{ diag_summary.error }}:{{ active_name or 'this chip' }}">
+    <span class="topo-change-banner-text">
+        &#9888;&#65039; <b>{{ diag_summary.error }}</b>
+        value{{ 's' if diag_summary.error != 1 }} on <b>{{ active_name or "this chip" }}</b>
+        would crash a node run (e.g. a waveform sample outside the DAC range).
+        Fix before running an experiment.
+    </span>
+    <button type="button" class="topo-change-banner-btn"
+            hx-get="/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+            onclick="document.querySelectorAll('.diag-error-banner').forEach(function(b){b.hidden=true})">
+        Review diagnostics</button>
+    <button type="button" class="topo-change-banner-dismiss" aria-label="Dismiss"
+            onclick="window._dismissDiagBanner && window._dismissDiagBanner()">&#10005;</button>
+</div>
+{# A13: the slot re-fetches on every `diagnostics-changed` (i.e. every edit), so a
+   plain hidden=true would re-pop the banner on the next edit while the user is
+   fixing the chip. Persist the dismissed error SET signature (count:chip) in
+   sessionStorage and stay hidden until that signature changes — re-pop only when
+   the error set actually changes. Same idea the wc-gc banner uses. #}
+<script>
+(function () {
+    var b = document.getElementById('diagnostics-banner');
+    if (!b) return;
+    var KEY = 'quam_diag_banner_dismissed';
+    window._dismissDiagBanner = function () {
+        try { sessionStorage.setItem(KEY, b.dataset.diagSig || ''); } catch (e) {}
+        document.querySelectorAll('.diag-error-banner').forEach(function (x) { x.hidden = true; });
+    };
+    try {
+        if (sessionStorage.getItem(KEY) === (b.dataset.diagSig || '')) b.hidden = true;
+    } catch (e) {}
+})();
+</script>

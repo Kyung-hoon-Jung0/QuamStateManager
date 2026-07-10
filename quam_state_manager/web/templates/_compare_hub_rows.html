@@ -1,0 +1,63 @@
+{# One group's hairline rows — shared by the inline render (results template)
+   and the lazy /compare-hub/group fragment. Expects: rows (decorated
+   view-rows), group (engine group dict + n_rows), show_eq (bool), hub_qs. #}
+<div class="cmp-rows">
+  {% for row in rows %}
+  <div class="cmp-row cmp-fam-{{ row.family }} cmp-cls-{{ row.cls }}"{% if row.family == 'meta' %} data-meta="1"{% endif %}>
+    <span class="cmp-gutter" title="{{ row.cls | replace('_', ' ') }}">{{ row.glyph }}</span>
+    <code class="dot-path" title="{{ row.key }}">
+      {%- if row.dp_dirs %}<span class="dp-dirs">{{ row.dp_dirs }}</span>{% endif -%}
+      <span class="dp-leaf">{{ row.dp_leaf }}</span>
+    </code>
+    {% if row.cls == 'derived' %}
+    <span class="cmp-row-note" title="{{ row.derived_src | select | join(' · ') }}">#./ derived</span>
+    {% elif row.note %}
+    <span class="cmp-row-note">{{ row.note }}</span>
+    {% endif %}
+    {% if row.real_paths %}
+    <span class="cmp-row-note muted" title="real path on the mapped device: {{ row.real_paths | select | join(' · ') }}">mapped</span>
+    {% endif %}
+    <span class="cmp-cells">
+      {% for c in row.view_cells %}
+      <span class="cmp-cell{% if loop.index0 == ref_idx %} cmp-cell-ref{% endif %} cmp-cell-{{ c.cls or 'none' }}"
+            title="{{ c.title }}">{{ c.text }}{% if c.delta %}<span class="cmp-delta">{{ c.delta }}</span>{% endif %}</span>
+      {% endfor %}
+    </span>
+  </div>
+  {% endfor %}
+
+  {# One-sided subtrees coalesce to their highest absent ancestor (A5/A6). #}
+  {% for cg in group.collapsed or [] %}
+  <div class="cmp-row cmp-row-collapsed cmp-fam-onesided">
+    <span class="cmp-gutter" title="{{ cg.cls | replace('_', ' ') }}">±</span>
+    <code class="dot-path"><span class="dp-leaf">{{ cg.root }}</span></code>
+    <span class="cmp-collapsed-note">{{ cg.count }} leaves — {{ cg.cls | replace('_', ' ') }}
+      {%- if cg.sub %} · {% for child, n in cg.sub.items() %}<span class="cmp-attn-chip">{{ child }}: {{ n }}</span>{% endfor %}{% endif %}</span>
+  </div>
+  {% endfor %}
+
+  {# Equal subtrees coalesce too — hidden while the expanded equal rows are
+     shown (eq=1 materialises those same leaves; showing both double-counts). #}
+  {% if group.equal_collapsed and not show_eq %}
+  <div class="cmp-row cmp-row-eqnote cmp-fam-dim">
+    <span class="cmp-gutter">·</span>
+    <span class="cmp-eq-note muted">identical:
+      {% for eg in group.equal_collapsed[:8] %}<code>{{ eg.root }}</code> ({{ eg.count }}){% if not loop.last %}, {% endif %}{% endfor %}
+      {%- if group.equal_collapsed | length > 8 %} +{{ (group.equal_collapsed | length) - 8 }} more{% endif %}
+    </span>
+  </div>
+  {% endif %}
+
+  {% if not rows and not group.collapsed and not group.equal_collapsed %}
+  <p class="muted cmp-group-empty">Everything in this group is equal at this strictness.</p>
+  {% endif %}
+</div>
+
+{# "never truncated" = everything reachable by expansion — inline groups get
+   the equal-rows toggle too, not just the lazy fragment (review finding). #}
+{% if group.counts.get('equal') and not show_eq and hub_qs %}
+<button type="button" class="btn-xs outline cmp-show-eq"
+        hx-get="/compare-hub/group?{{ hub_qs }}&amp;section={{ group.section | urlencode }}&amp;entity={{ group.entity | urlencode }}&amp;eq=1"
+        hx-target="closest .cmp-group-body" hx-swap="innerHTML">
+  Show {{ group.counts['equal'] }} equal rows</button>
+{% endif %}

@@ -1,0 +1,74 @@
+<div class="preview-banner" id="preview-banner">
+  <span class="preview-banner-label">
+    &#128065; Previewing dropped chip: <strong>{{ label }}</strong>
+    <span class="muted">(read-only)</span>
+  </span>
+  <span class="preview-banner-actions">
+    {% if diag_summary.total > 0 %}
+      <button type="button"
+              class="btn-sm outline diag-badge {% if diag_summary.error %}diag-error{% elif diag_summary.warning %}diag-warning{% else %}diag-info{% endif %}"
+              onclick="togglePreviewIssues()">&#9888; {{ diag_summary.total }} issue{{ 's' if diag_summary.total != 1 }}</button>
+    {% else %}
+      <span class="diag-badge diag-ok-badge">&#10003; healthy</span>
+    {% endif %}
+    <button type="button" class="btn-sm outline" onclick="addPreviewToCompare()"
+            title="Compare this with another chip — then drop more folders">Compare&hellip;</button>
+    <button type="button" class="btn-sm preview-clear"
+            hx-get="/instrument" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+            onclick="window._clearWiringCompare && window._clearWiringCompare()">Clear</button>
+  </span>
+</div>
+
+<div id="preview-issues" class="preview-issues hidden">
+  {% include '_diagnostics_list.html' %}
+</div>
+
+<div id="instrument-diagram">
+  <p style="padding:1rem;color:var(--pico-muted-color)">Initializing diagram&hellip;</p>
+</div>
+
+<!-- Port hover popup (hidden by default) -->
+<div id="port-popup" class="port-popup hidden">
+  <div class="port-popup-header">
+    <span id="popup-label" class="popup-label"></span>
+    <span id="popup-role-badge" class="role-badge"></span>
+  </div>
+  <div id="popup-body" class="port-popup-body"></div>
+</div>
+
+<!-- JSON drill-down panel -->
+<div id="json-panel" class="json-panel hidden">
+  <div class="json-panel-header">
+    <span id="json-panel-title">Wiring JSON</span>
+    <button onclick="closeJsonPanel()">&#10005;</button>
+  </div>
+  <div id="json-panel-tree" class="json-tree"></div>
+</div>
+
+<script>
+(function() {
+  var container = document.getElementById('instrument-diagram');
+  try {
+    var instrumentData = {{ instrument_json | script_json }};
+    var rawWiring = {{ wiring_json | script_json }};
+    var problems = {{ problems_json | script_json }};
+    window._rawWiring = rawWiring;
+    renderInstrumentWiring('instrument-diagram', instrumentData, rawWiring);
+    if (window._highlightInstrumentPorts) {
+      window._highlightInstrumentPorts('instrument-diagram', problems, 'iw-port-problem');
+    }
+  } catch (err) {
+    console.error('[InstrumentPreview] Error:', err);
+    if (container) container.innerHTML = '<p style="padding:1rem;color:#c0392b">' +
+      '<b>Error rendering dropped chip:</b> ' + err.message + '</p>';
+  }
+})();
+window.closeJsonPanel = function() {
+  var p = document.getElementById('json-panel');
+  if (p) p.classList.add('hidden');
+};
+window.togglePreviewIssues = function() {
+  var p = document.getElementById('preview-issues');
+  if (p) p.classList.toggle('hidden');
+};
+</script>

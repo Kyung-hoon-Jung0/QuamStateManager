@@ -1,0 +1,47 @@
+{% if query %}
+{% set inspector_type = "search" %}
+{% set inspector_label = query %}
+{% set inspector_sub = (results | length) ~ " result(s)" if results else "No results" %}
+{% include '_inspector_header.html' %}
+<div class="search-panel">
+    <nav class="category-tabs">
+        <ul>
+            {% set cats = ["all", "qubit", "pair", "port", "wiring", "config"] %}
+            {% for cat in cats %}
+            <li>
+                <a hx-get="/search?q={{ query }}&category={% if cat != 'all' %}{{ cat }}{% endif %}"
+                   hx-target="#inspector-pane"
+                   class="{% if (active_category == cat) or (cat == 'all' and not active_category) %}active{% endif %}">
+                    {{ cat | capitalize }}
+                </a>
+            </li>
+            {% endfor %}
+        </ul>
+    </nav>
+
+    {% if results %}
+    <table class="data-table search-table" role="grid">
+        <thead><tr><th>Entity</th><th>Key</th><th>Value</th><th>Path</th><th class="col-score">Score</th></tr></thead>
+        <tbody>
+        {% for r in results %}
+        <tr class="clickable-row" hx-get="/qubit/{{ r.parent_id }}" hx-target="#inspector-pane" hx-swap="innerHTML">
+            <td><strong>{{ r.parent_id }}</strong> <small class="cat-badge cat-{{ r.category }}">{{ r.category }}</small></td>
+            <td><code>{{ r.leaf_key }}</code></td>
+            <td class="search-value">
+                {% if r.raw_value is none %}N/A
+                {% elif r.raw_value is number and r.raw_value is float and (r.raw_value|abs >= 1e6 or (0 < r.raw_value|abs < 1e-3)) %}
+                    {{ "%.4e" | format(r.raw_value) }}
+                {% else %}{{ r.raw_value }}{% endif %}
+            </td>
+            <td><code class="dot-path">{{ r.dot_path }}</code></td>
+            <td class="col-score"><small>{{ "%.0f" | format(r.score) }}</small></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    <small class="muted">{{ results | length }} result(s) for "{{ query }}"</small>
+    {% else %}
+    <p class="muted"><em>No results for "{{ query }}"</em></p>
+    {% endif %}
+</div>
+{% endif %}

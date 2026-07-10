@@ -1,0 +1,43 @@
+{# Reusable pagination bar with page-size selector.
+   Required variables:
+     base_url     – route path (e.g. "/qubits")
+     extra_qs     – additional query string params (e.g. "&chain=A&sort=f_01")
+     current_page – 1-based page number
+     total_pages  – total pages (0 when showing all)
+     total        – total item count
+     per_page     – current items per page (0 = all)
+     storage_key  – localStorage key for persisting page-size preference
+#}
+<nav class="pagination">
+    <ul>
+        {% if per_page > 0 and current_page > 1 %}
+        <li><a hx-get="{{ base_url }}?page={{ current_page - 1 }}&per_page={{ per_page }}{{ extra_qs }}"
+               hx-target="#table-pane">&laquo; Prev</a></li>
+        {% endif %}
+
+        <li>
+            <span class="page-info">
+                {% if per_page > 0 %}
+                Page {{ current_page }} of {{ total_pages }}
+                {% endif %}
+                ({{ total }} total)
+            </span>
+        </li>
+
+        {% if per_page > 0 and current_page < total_pages %}
+        <li><a hx-get="{{ base_url }}?page={{ current_page + 1 }}&per_page={{ per_page }}{{ extra_qs }}"
+               hx-target="#table-pane">Next &raquo;</a></li>
+        {% endif %}
+
+        <li class="page-size-picker">
+            <label>Show
+            <select onchange="setPageSize(this, '{{ base_url }}', '{{ extra_qs }}', '{{ storage_key }}')">
+                {% for opt in [25, 50, 100] %}
+                <option value="{{ opt }}" {% if per_page == opt %}selected{% endif %}>{{ opt }}</option>
+                {% endfor %}
+                <option value="0" {% if per_page == 0 %}selected{% endif %}>All</option>
+            </select>
+            </label>
+        </li>
+    </ul>
+</nav>

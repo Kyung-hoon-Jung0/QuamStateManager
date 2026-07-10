@@ -1,0 +1,81 @@
+<div class="qubit-config-pane">
+    <header class="qubit-config-header">
+        <h3>Generated config — <code>{{ pair_name }}</code></h3>
+        {% if config_stale %}
+        <span class="waveform-warn-chip"
+              title="The state changed after this config was generated — Regenerate to refresh.">config may be stale</span>
+        {% endif %}
+    </header>
+
+    {% if slice is none %}
+    <div class="config-inline-empty config-status-host">
+        <p class="muted">No generated config cached yet.</p>
+        <button type="button"
+                class="btn-sync primary"
+                hx-post="/config/regenerate"
+                hx-target="closest .config-status-host"
+                hx-swap="innerHTML"
+                hx-indicator="closest .config-status-host"
+                hx-disabled-elt="this">
+            &#x21bb; Regenerate config
+        </button>
+        <span class="htmx-indicator config-status-spinner">
+            <span class="config-status-spin" aria-hidden="true"></span>running previewer&hellip;</span>
+    </div>
+    {% elif slice.operation_count == 0 %}
+    <p class="muted config-inline-empty">
+        No 2-qubit-gate operations for <code>{{ pair_name }}</code> in the
+        generated config. CZ / CR / ZZ pulses appear here once the pair carries a
+        gate macro &mdash; add one on the pair, then Regenerate.
+    </p>
+    {% else %}
+
+    {% if operations %}
+    {# VSCode-clean ops table (scoped under .gen-config-ops); .add-gate-btn + its
+       JS hooks preserved; cells carry title= for ellipsis-on-overflow. #}
+    <details open class="detail-section gen-config-ops">
+        <summary class="section-header">Operations <small class="muted">({{ operations | length }})</small></summary>
+        <table class="prop-table ops-table">
+            <thead>
+                <tr><th>Op</th><th>Element</th><th>Pulse</th><th class="ops-wf-col">Waveform</th></tr>
+            </thead>
+            <tbody>
+            {% for op in operations %}
+            <tr>
+                <td class="ops-val" title="{{ op.op_name }}">{{ op.op_name }}</td>
+                <td class="ops-val" title="{{ op.element }}">{{ op.element }}</td>
+                <td class="ops-val ops-val-dim" title="{{ op.pulse or '' }}">{{ op.pulse or '—' }}</td>
+                <td class="ops-wf-col">
+                    <button type="button"
+                            class="add-gate-btn wf-view-btn"
+                            data-target-prefix="{{ target_prefix }}"
+                            data-op-name="{{ op.op_name }}"
+                            data-element="{{ op.element }}"
+                            onclick="window.showWaveformPlot(this)">
+                        <span class="wf-view-glyph" aria-hidden="true">&#9656;</span>
+                        <span class="wf-view-label">view waveform</span>
+                    </button>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        <div id="waveform-plot-area" class="waveform-plot-area"></div>
+    </details>
+    {% endif %}
+
+    <details class="detail-section">
+        <summary class="section-header">Elements <small class="muted">({{ slice.elements | length }})</small></summary>
+        <pre class="config-json">{{ slice.elements | tojson(indent=2) }}</pre>
+    </details>
+    <details class="detail-section">
+        <summary class="section-header">Pulses <small class="muted">({{ slice.pulses | length }})</small></summary>
+        <pre class="config-json">{{ slice.pulses | tojson(indent=2) }}</pre>
+    </details>
+    <details class="detail-section">
+        <summary class="section-header">Waveforms <small class="muted">({{ slice.waveforms | length }})</small></summary>
+        <pre class="config-json">{{ slice.waveforms | tojson(indent=2) }}</pre>
+    </details>
+
+    {% endif %}
+</div>

@@ -1,0 +1,28 @@
+{# Live-files-replaced banner — shown when the active chip's live
+   state.json/wiring.json changed out-of-band (content hash differs) while
+   the working copy holds, or might hold, unapplied edits. Without this the
+   app would silently keep showing the old chip (the stale working copy).
+   Clean working copies never get here — they are auto-synced on load. #}
+{% if live_diverged %}
+<div class="topo-change-banner live-diverged-banner" id="live-diverged-banner" role="alert">
+    <span class="topo-change-banner-text">
+        &#9888;&#65039; The live state files for <b>{{ active_name or "this chip" }}</b> changed on disk
+        &mdash; you are viewing the working state, which may show an <b>older chip</b>.
+    </span>
+    {# This banner only renders when the working copy MAY hold unapplied
+       edits (clean copies are auto-synced silently) — so the discard path
+       always confirms. Review & sync is the safe primary action. #}
+    <button type="button" class="topo-change-banner-btn" onclick="openReview()">Review &amp; sync</button>
+    <button type="button" class="btn-sm outline"
+            onclick="if (confirm('Replace the working state with the live files?\n\nAny unapplied edits in the working state will be discarded.')) doStateSync('discard')"
+            title="Replace the working state with the live files (any unapplied edits in the working state are discarded)">
+        Pull live state</button>
+    <button type="button" class="topo-change-banner-dismiss" aria-label="Dismiss"
+            onclick="document.querySelectorAll('.live-diverged-banner').forEach(function(b){b.hidden=true})">&#10005;</button>
+</div>
+{# PERSISTENT until acknowledged (feedback #5): this warns the user they may be
+   viewing an OLDER chip while holding unapplied edits — a stale-data hazard that
+   must NOT auto-hide before they look (the old 10s timer was the "SM was supposed
+   to prompt me but it vanished" complaint). It clears only via × / Review & sync /
+   Pull live state; the divergence also persists in the chip-identity tray. #}
+{% endif %}

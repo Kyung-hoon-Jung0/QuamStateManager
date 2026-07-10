@@ -1,0 +1,44 @@
+{# State History — full-chip snapshots over time, framed by the experiment
+   that produced each. Review / diff / compare / restore. Backed by the same
+   HistoryManager store that powers Param History (no new capture). #}
+<div class="table-header-row">
+    <h2>State History
+        <small class="muted">full state.json + wiring.json snapshots — review, compare, roll back</small>
+    </h2>
+    <button class="btn-sm outline" hx-post="/state-history/snapshot"
+            hx-target="#table-pane" hx-swap="innerHTML"
+            title="Capture the current state now">Take snapshot</button>
+</div>
+
+{% if chip_origin != 'live' %}
+<p class="config-stale-note">&#9888; This chip was opened from a dataset run
+   archive (read-only) — you can review and diff history, but restoring to live
+   is disabled. Load the chip from its live folder to roll back.</p>
+{% endif %}
+
+{# Accumulating "Live changes since baseline" — the dedicated home for the
+   live-drift comparison (the persistent banner's overlay shows the same data).
+   Lives OUTSIDE #state-history-body so the timeline auto-refresh never drops it;
+   refreshes on first load, when the baseline is reset/applied (liveDriftChanged),
+   and after a stage/restore (stateRestored). #}
+<div id="live-drift-panel"
+     hx-get="/state/drift/view?embed=1"
+     hx-trigger="load, liveDriftChanged from:body, stateRestored from:body"
+     hx-swap="innerHTML"></div>
+
+<div id="state-history-body">
+{% include "_state_history_body.html" %}
+</div>
+
+{# Auto-refresh the timeline when a restore/stage adds snapshots (stateRestored) OR a
+   routine apply-to-live captures one (stateHistoryChanged — a dedicated signal that does
+   NOT close the inspector the way stateRestored does). Re-fetches only the body so the
+   result/diff in #state-history-detail beside it is preserved. Lives outside
+   #state-history-body so the swap can't remove this listener. #}
+<span hidden hx-get="/state-history?body=1"
+      hx-trigger="stateRestored from:body, stateHistoryChanged from:body"
+      hx-target="#state-history-body" hx-swap="innerHTML"></span>
+
+<div id="state-history-detail" class="sh-detail"></div>
+
+<script>if (window.StateHistory) window.StateHistory.init();</script>

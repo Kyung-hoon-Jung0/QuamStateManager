@@ -1,0 +1,89 @@
+{# Inner of #state-history-body — the timeline (toolbar + entries + pagination).
+   Rendered standalone via /state-history?body=1 for the stateRestored
+   auto-refresh, and included by _state_history.html for the full page. #}
+{% if snapshots %}
+<div class="sh-toolbar">
+    <button id="sh-compare-btn" class="outline btn-sm" disabled
+            onclick="StateHistory.compareSelected()">Compare 2 selected</button>
+    <small class="muted">{{ total }} snapshot{{ 's' if total != 1 }}</small>
+</div>
+
+<div class="sh-timeline">
+{% for s in snapshots %}
+<div class="sh-entry{% if s.pinned %} sh-pinned{% endif %}" data-ts="{{ s.timestamp }}">
+    <div class="sh-entry-main">
+        <input type="checkbox" class="sh-cb" value="{{ s.timestamp }}"
+               onchange="StateHistory.toggleSelect(this)" aria-label="Select for compare">
+        <span class="sh-time">{{ s.timestamp | ts_local }}</span>
+        <span class="history-trigger-badge history-trigger-{{ s.trigger }}">{{ s.trigger }}</span>
+        {% if s.pinned %}<span class="sh-pin-badge" title="Pinned (kept regardless of retention)">&#128204;</span>{% endif %}
+        {% if s.diff_summary.total > 0 %}
+        <span class="diff-badge diff-added">+{{ s.diff_summary.added }}</span>
+        <span class="diff-badge diff-removed">&minus;{{ s.diff_summary.removed }}</span>
+        <span class="diff-badge diff-modified">~{{ s.diff_summary.modified }}</span>
+        {% else %}<span class="muted">(baseline)</span>{% endif %}
+    </div>
+
+    {# Experiment attribution — the headline framing: which run produced this. #}
+    {% if s.experiment_name or s.new_experiments %}
+    <div class="sh-attribution">
+        {% if s.experiment_name %}after <strong>{{ s.experiment_name }}</strong>{% if s.run_id is not none %} <span class="muted">run #{{ s.run_id }}</span>{% endif %}{% endif %}
+        {% if s.new_experiments %}<span class="muted">· new: {{ s.new_experiments | join(', ') }}</span>{% endif %}
+    </div>
+    {% endif %}
+    {% if s.label %}<div class="sh-label">&#9998; {{ s.label }}</div>{% endif %}
+    {% if s.note %}<div class="sh-note" title="Bookmark note">&#128221; {{ s.note }}</div>{% endif %}
+
+    <div class="sh-entry-actions">
+        <button class="outline btn-sm" hx-get="/api/history/{{ s.timestamp }}/diff"
+                hx-target="#state-history-detail" hx-swap="innerHTML">View changes vs current</button>
+        {% if chip_origin == 'live' %}
+        <button class="outline btn-sm"
+                hx-post="/state-history/{{ s.timestamp }}/stage"
+                hx-target="#state-history-detail" hx-swap="innerHTML"
+                hx-confirm="Load snapshot {{ s.timestamp | format_ts }} as the working state? You can then review the diff and Apply to live."
+                title="Mode 1 (safe): load as the working state, review, then apply">Load as working state</button>
+        <button class="outline btn-sm sh-restore-live"
+                hx-post="/state-history/{{ s.timestamp }}/restore-live"
+                hx-target="#state-history-detail" hx-swap="innerHTML"
+                hx-confirm="Restore the LIVE chip to snapshot {{ s.timestamp | format_ts }} now? The current state is snapshotted first (reversible)."
+                title="Mode 2: replace the live chip directly (the current state is snapshotted first)">Restore to live</button>
+        {% endif %}
+        {# Pin re-renders only the TIMELINE (body=1 → #state-history-body), not the whole
+           page, so an open compare/diff in the sibling #state-history-detail survives. #}
+        <button class="outline btn-sm"
+                hx-post="/state-history/{{ s.timestamp }}/label?pinned={{ 0 if s.pinned else 1 }}&label={{ s.label | default('', true) | urlencode }}&body=1"
+                hx-target="#state-history-body" hx-swap="innerHTML"
+                title="{{ 'Unpin' if s.pinned else 'Pin (exempt from pruning)' }}">{{ 'Unpin' if s.pinned else 'Pin' }}</button>
+        {# ADDITIVE deep link into the Compare hub (docs/49 U1a — the in-row
+           diff above stays verbatim). Pre-fills the basket: this snapshot vs
+           the current working state; hint=1 = fingerprint-proven origin, so
+           the hub may show the ① suggestion as a focused CTA (U1b). #}
+        {% if hist_chip_key %}
+        <button class="outline btn-sm"
+                hx-get="/compare-hub?src=hist:{{ hist_chip_key | urlencode }}/{{ s.timestamp | urlencode }}&src=working:{{ active_path | urlencode }}&hint=1"
+                hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                title="Open in the Compare hub (this snapshot vs the current working state)">&#8644; Compare&#8230;</button>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}
+</div>
+
+{% if total_pages > 1 %}
+<nav class="history-pagination">
+    {% if current_page > 1 %}
+    <button class="outline btn-sm" hx-get="/state-history?page={{ current_page - 1 }}&per_page={{ per_page }}"
+            hx-target="#table-pane" hx-swap="innerHTML">&laquo; Prev</button>
+    {% endif %}
+    <span class="muted">Page {{ current_page }} / {{ total_pages }}</span>
+    {% if current_page < total_pages %}
+    <button class="outline btn-sm" hx-get="/state-history?page={{ current_page + 1 }}&per_page={{ per_page }}"
+            hx-target="#table-pane" hx-swap="innerHTML">Next &raquo;</button>
+    {% endif %}
+</nav>
+{% endif %}
+{% else %}
+<p class="muted" style="padding:1rem">No snapshots yet. They are captured automatically
+   on save / apply / sync and when experiments rewrite the live state.</p>
+{% endif %}

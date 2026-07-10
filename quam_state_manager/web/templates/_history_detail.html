@@ -1,0 +1,51 @@
+<div class="history-detail">
+<h4>Changes at {{ timestamp | ts_local }} vs Current</h4>
+
+<div class="diff-summary">
+    <span class="diff-badge diff-added">Added: {{ summary.added }}</span>
+    <span class="diff-badge diff-removed">Removed: {{ summary.removed }}</span>
+    <span class="diff-badge diff-modified">Modified: {{ summary.modified }}</span>
+    <span class="diff-badge diff-total">Total: {{ summary.total }}</span>
+    {% if total > entries | length %}
+    <small class="muted">(showing {{ entries | length }} of {{ total }})</small>
+    {% endif %}
+</div>
+
+{% macro render_delta(old, new) -%}
+{% if old is number and new is number and old is not none and new is not none -%}
+{% set d = new - old -%}
+<span class="diff-delta {{ 'delta-pos' if d > 0 else ('delta-neg' if d < 0 else 'delta-zero') }}">{{ "%+.3e" | format(d) }}</span>
+{%- else -%}
+<span class="muted">&ndash;</span>
+{%- endif %}
+{%- endmacro %}
+
+{% if entries | length > 0 %}
+<div class="table-scroll">
+<table class="data-table diff-table" role="grid">
+    <thead><tr><th>Type</th><th>Path</th><th>Snapshot</th><th>Current</th><th>Delta</th></tr></thead>
+    <tbody>
+    {% for e in entries %}
+    <tr class="diff-row-{{ e.change_type }}">
+        <td><span class="diff-type-badge diff-type-{{ e.change_type }}">{{ e.change_type }}</span></td>
+        <td><code class="dot-path">{{ e.dot_path }}</code></td>
+        <td class="diff-val">
+            {% if e.old_value is none %}<span class="muted">-</span>
+            {% elif e.old_value is float %}{{ "%.6e" | format(e.old_value) }}
+            {% else %}{{ e.old_value }}{% endif %}
+        </td>
+        <td class="diff-val">
+            {% if e.new_value is none %}<span class="muted">-</span>
+            {% elif e.new_value is float %}{{ "%.6e" | format(e.new_value) }}
+            {% else %}{{ e.new_value }}{% endif %}
+        </td>
+        <td class="diff-val">{{ render_delta(e.old_value, e.new_value) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p class="muted">No differences — snapshot matches current state.</p>
+{% endif %}
+</div>

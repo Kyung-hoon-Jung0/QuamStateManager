@@ -1,0 +1,29 @@
+<div class="table-header-row diag-header-row">
+  <h2>Diagnostics
+    <small class="muted">structural checks on state &amp; wiring{% if has_config %} &amp; config{% endif %}</small>
+  </h2>
+  {% if diag_catalog %}
+  <button type="button" class="diag-whatis-badge"
+          onclick="document.getElementById('diag-checks-dialog').showModal()"
+          title="See everything this page checks">
+    <span class="diag-whatis-icon" aria-hidden="true">&#9432;</span> What is checked?
+  </button>
+  {% endif %}
+</div>
+
+{% if diag_catalog %}{% include '_diagnostics_checks.html' %}{% endif %}
+
+{% if not has_config %}
+<p class="muted diag-hint">
+  Config reference checks run once you generate a config in the
+  <a href="/config" hx-get="/config" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">Config Viewer</a>.
+</p>
+{% elif config_stale %}
+<p class="diag-hint config-stale-note">
+  &#9888; The config checks below ran against a generated config that predates
+  your latest edits. <a href="/config" hx-get="/config" hx-target="#table-pane"
+     hx-push-url="true">Regenerate in the Config Viewer</a> for current results.
+</p>
+{% endif %}
+
+{% include '_diagnostics_list.html' %}

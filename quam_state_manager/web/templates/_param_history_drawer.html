@@ -1,0 +1,27 @@
+{# Drawer detail — full-resolution Plotly chart for one (qubit, property). #}
+<div class="param-history-drawer-inner" data-qubit="{{ qubit }}" data-prop="{{ prop }}">
+  <div class="phd-header">
+    <div>
+      <h3 style="margin:0">{{ qubit }} · {{ prop }}</h3>
+      {% if row.raw_pointer %}
+        <small class="muted">↪ resolved from <code>{{ row.raw_pointer }}</code></small>
+      {% endif %}
+      {% if current_value is not none %}
+        <small class="muted">&nbsp;·&nbsp;current: <strong>{{ '%.6g' % current_value if current_value is number else current_value }}</strong></small>
+      {% endif %}
+    </div>
+    <button type="button" class="outline btn-sm"
+            onclick="paramHistoryCloseDrawer()">Close</button>
+  </div>
+
+  <div id="phd-chart" style="width:100%;height:340px"></div>
+
+  <script id="phd-data" type="application/json">{{ row_json|safe }}</script>
+  <script>
+    (function() {
+      var data = JSON.parse(document.getElementById('phd-data').textContent);
+      var current = {{ current_value if current_value is number else 'null' }};
+      paramHistoryRenderDrawerChart(data, current);
+    })();
+  </script>
+</div>

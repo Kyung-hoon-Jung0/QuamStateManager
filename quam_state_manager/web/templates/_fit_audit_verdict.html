@@ -1,0 +1,21 @@
+{# Async fit-audit verdict badge on the plot-apply popup (docs/50). Advisory,
+   never blocks Apply. Colors from semantic tokens; a glyph carries meaning; the
+   message reads WITHOUT the /fit-audit legend (this popup has none).
+   NOTE: a "both reject" fit codifies to `agrees` (the gates concur it's bad) —
+   it must NOT read as a green ✓ "matches", so it's surfaced as a reject. #}
+{% set g = {'reject': '✕', 'drift': '↔', 'recover': '↑', 'agrees': '✓', 'unverifiable': '?'} %}
+{% set v = row.verdict %}
+{% set both_reject = (v == 'agrees' and not row.fresh_success) %}
+{% set cls = 'reject' if both_reject else v %}
+<div class="pp-verdict pp-verdict-{{ cls }}">
+  <span class="pp-verdict-chip">{{ '✕' if both_reject else (g[v] or '?') }} {{ 'reject' if both_reject else v }}</span>
+  <span class="pp-verdict-msg">
+    {%- if both_reject -%}the current gate rejects this fit (the original node did too)
+    {%- elif v == 'agrees' -%}this fit matches the current gate
+    {%- elif v == 'recover' -%}the current gate now accepts this fit (the node had discarded it)
+    {%- elif v == 'drift' -%}the current gate still accepts this, but {{ row.detail }}
+    {%- elif v == 'unverifiable' -%}the current gate couldn't verify this fit
+    {%- else -%}{{ row.detail }}{%- endif -%}
+  </span>
+  {% if gate_hash %}<span class="pp-verdict-gate" title="gate {{ gate_hash }}">· gate {{ gate_hash[:8] }}</span>{% endif %}
+</div>

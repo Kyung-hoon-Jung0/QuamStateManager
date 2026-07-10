@@ -1,0 +1,84 @@
+{% if trend_data %}
+<details class="compare-section" open>
+    <summary>Experiment Legend</summary>
+    <div class="table-scroll">
+    <table class="data-table trend-legend" role="grid">
+        <thead><tr><th>Symbol</th><th>Experiment</th><th>Run ID</th></tr></thead>
+        <tbody>
+        {% for item in legend %}
+        <tr>
+            <td><strong>{{ item.symbol }}</strong></td>
+            <td><code>{{ item.label }}</code></td>
+            <td>{{ item.run_id if item.run_id is not none else "-" }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</details>
+
+{% set unique_props = trend_data | map(attribute='property') | unique | list %}
+<div class="trend-chart-container">
+    {% for prop in unique_props %}
+    <div id="trend-chart-{{ loop.index0 }}" class="trend-mini-chart"></div>
+    {% endfor %}
+</div>
+
+{# Plotly is lazy-loaded on demand by _plotlyRender (window.requirePlotly);
+   no eager <script src=plotly> here — it would double-load the 4.5 MB lib. #}
+<script>
+(function() {
+    var data = {{ trend_json | script_json }};
+    if (!data || data.length === 0) return;
+
+    var symbolMap = {{ symbol_map | tojson }};
+
+    var propMap = {};
+    data.forEach(function(item) {
+        if (!propMap[item.property]) propMap[item.property] = [];
+        propMap[item.property].push(item);
+    });
+
+    var propKeys = Object.keys(propMap);
+    propKeys.forEach(function(prop, idx) {
+        var items = propMap[prop];
+        var traces = [];
+        items.forEach(function(item) {
+            var xLabels = item.values.map(function(v) { return symbolMap[v.label] || v.label; });
+            var vals = item.values.map(function(v) { return v.value; });
+            var hoverTexts = item.values.map(function(v) {
+                return v.label + '<br>' + prop + ': ' + (v.value !== null ? v.value : 'N/A');
+            });
+            traces.push({
+                x: xLabels, y: vals,
+                mode: 'lines+markers',
+                name: item.qubit,
+                type: 'scatter',
+                connectgaps: false,
+                marker: { size: 8 },
+                hovertemplate: hoverTexts.map(function(t) { return t + '<extra></extra>'; })
+            });
+        });
+
+        var cfg = UI_CONFIG.plotly.trendChart;
+        var divId = 'trend-chart-' + idx;
+        _plotlyRender(divId, traces, {
+            title: { text: prop, font: cfg.titleFont },
+            hovermode: 'closest',
+            xaxis: { tickangle: 0, tickfont: cfg.xTickFont, type: 'category', showspikes: false },
+            yaxis: { title: '', tickfont: cfg.yTickFont, showspikes: false },
+            margin: cfg.margin,
+            legend: { orientation: 'h', y: cfg.legendY, font: cfg.legendFont },
+            colorway: UI_CONFIG.plotly.colorway,
+            plot_bgcolor: 'transparent',
+            paper_bgcolor: 'transparent',
+            height: cfg.height
+        }, { displayModeBar: false, responsive: true });
+    });
+})();
+</script>
+{% else %}
+<div class="compare-empty">
+    <p>No trend data to display. Select at least one property and click <strong>Show Chart</strong>.</p>
+</div>
+{% endif %}

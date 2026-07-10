@@ -1,0 +1,82 @@
+{# Side-by-side Chip Status — one card per selected chip. Qubits that
+   differ from the reference chip get a ``topo-diff`` class. #}
+
+{% set ri = ref_idx | default(0) %}
+
+<div class="chip-compare-grid"
+     style="grid-template-columns: repeat({{ chips | length }}, minmax(260px, 1fr));">
+{% for chip in chips %}
+{% set ci = loop.index0 %}
+{% set diff_set = per_chip_diff[ci] %}
+<div class="chip-compare-card {% if ci == ri %}chip-compare-card-ref{% endif %}">
+    <div class="chip-compare-card-header">
+        <strong>{{ chip.label | truncate(30) }}</strong>
+        {% if ci == ri %}<span class="chip-compare-ref-badge">REF</span>{% endif %}
+    </div>
+
+    {% set n_qubits = chip.topology.nodes | length %}
+    {% set n_pairs = chip.topology.edges | length %}
+    {% set fids = chip.topology.nodes | map(attribute='gate_fidelity_avg') | select | list %}
+    {% set t1s = chip.topology.nodes | map(attribute='T1') | select | list %}
+
+    <div class="chip-compare-card-summary">
+        <div><span class="muted">Qubits</span><strong>{{ n_qubits }}</strong></div>
+        <div><span class="muted">Pairs</span><strong>{{ n_pairs }}</strong></div>
+        {% if fids %}
+        <div>
+            <span class="muted">Avg F</span>
+            <strong>{{ "%.2f" | format((fids | sum) / (fids | length) * 100) }}%</strong>
+        </div>
+        {% endif %}
+        {% if t1s %}
+        <div>
+            <span class="muted">Avg T1</span>
+            <strong>{{ "%.1f" | format((t1s | sum) / (t1s | length) * 1e6) }}μs</strong>
+        </div>
+        {% endif %}
+    </div>
+
+    {% if n_qubits > 0 %}
+    <div class="chip-compare-card-qubits">
+        {% for node in chip.topology.nodes %}
+        {% set diff_props = (diff_set or {}).get(node.id) %}
+        {% set has_diff = diff_props and (diff_props | length > 0) %}
+        {% set fid = node.gate_fidelity_avg %}
+        {% set t1 = node.T1 %}
+        <div class="chip-compare-qubit {% if has_diff %}chip-compare-qubit-diff{% endif %}"
+             title="{{ node.id }}{% if has_diff %} — differs from ref in: {{ diff_props | join(', ') }}{% endif %}">
+            <div class="chip-compare-qubit-id">{{ node.id }}</div>
+            <div class="chip-compare-qubit-metrics">
+                {% if fid is not none %}<span>F {{ "%.1f" | format(fid * 100) }}%</span>{% endif %}
+                {% if t1 is not none %}<span>T1 {{ "%.1f" | format(t1 * 1e6) }}μs</span>{% endif %}
+            </div>
+            {% if has_diff %}<div class="chip-compare-qubit-diff-dot" aria-hidden="true"></div>{% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted" style="padding:0.5rem">No qubits in this chip.</p>
+    {% endif %}
+</div>
+{% endfor %}
+</div>
+
+<div class="chip-compare-ref-selector">
+    <label class="muted">Reference chip:</label>
+    <select onchange="changeChipCompareRef(this)">
+        {% for label in labels %}
+        <option value="{{ loop.index0 }}" {% if loop.index0 == ri %}selected{% endif %}>{{ label | truncate(30) }}{% if loop.index0 == ri %} (ref){% endif %}</option>
+        {% endfor %}
+    </select>
+    <small class="muted">Highlighted qubits differ from the reference in one of: {{ ", ".join(["f_01","T1","T2","gate_fidelity_avg","readout_*"]) }}.</small>
+</div>
+
+<script>
+window.changeChipCompareRef = function(sel) {
+    var paths = {{ paths_raw | tojson }};
+    var qs = paths.map(function(p) { return "paths=" + encodeURIComponent(p); }).join("&");
+    qs += "&ref=" + sel.value;
+    htmx.ajax("GET", "/chip-compare/topology?" + qs,
+              {target: "#chip-compare-content", swap: "innerHTML"});
+};
+</script>

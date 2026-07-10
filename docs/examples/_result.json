@@ -1,0 +1,175 @@
+{
+  "status": "ok",
+  "mode": "build",
+  "versions": {
+    "qualang_tools": "0.22.0",
+    "quam_builder": "0.3.0",
+    "quam": "0.5.0a3",
+    "qm": "1.2.6"
+  },
+  "warnings": [
+    "TWPA lines skipped (twpaA): the installed quam_builder has no TWPA support in its wiring registry (WiringLineType.TWPA_PUMP collides with PLUNGER_GATE). Upgrade quam_builder in the selected env to enable TWPA."
+  ],
+  "error": null,
+  "traceback": null,
+  "files": {
+    "state": "/tmp/tmp.dROyS6V6Kx/build/state.json",
+    "wiring": "/tmp/tmp.dROyS6V6Kx/build/wiring.json"
+  },
+  "quam_class": "FluxTunableQuam",
+  "qubits": [
+    "q1",
+    "q2",
+    "q3"
+  ],
+  "qubit_pairs": [
+    "q1-2",
+    "q2-3"
+  ],
+  "allocation": {
+    "q1": {
+      "rr": [
+        {
+          "instrument_id": "mw-fem",
+          "con": 1,
+          "slot": 1,
+          "port": 1,
+          "io_type": "input",
+          "signal_type": "analog"
+        },
+        {
+          "instrument_id": "mw-fem",
+          "con": 1,
+          "slot": 1,
+          "port": 1,
+          "io_type": "output",
+          "signal_type": "analog"
+        }
+      ],
+      "xy": [
+        {
+          "instrument_id": "mw-fem",
+          "con": 1,
+          "slot": 1,
+          "port": 2,
+          "io_type": "output",
+          "signal_type": "analog"
+        }
+      ],
+      "z": [
+        {
+          "instrument_id": "lf-fem",
+          "con": 1,
+          "slot": 5,
+          "port": 1,
+          "io_type": "output",
+          "signal_type": "analog"
+        }
+      ]
+    },
+    "q2": {
+      "rr": [
+        {
+          "instrument_id": "mw-fem",
+          "con": 1,
+          "slot": 1,
+          "port": 1,
+          "io_type": "input",
+          "signal_type": "analog"
+        },
+        {
+          "instrument_id": "mw-fem",
+          "con": 1,
+          "slot": 1,
+          "port": 1,
+          "io_type": "output",
+          "signal_type": "analog"
+        }
+      ],
+      "xy": [
+        {
+          "instrument_id": "mw-fem",
+          "con": 1,
+          "slot": 1,
+          "port": 3,
+          "io_type": "output",
+          "signal_type": "analog"
+        }
+      ],
+      "z": [
+        {
+          "instrument_id": "lf-fem",
+          "con": 1,
+          "slot": 5,
+          "port": 2,
+          "io_type": "output",
+          "signal_type": "analog"
+        }
+      ]
+    },
+    "q3": {
+      "rr": [
+        {
+          "instrument_id": "mw-fem",
+          "con": 1,
+          "slot": 1,
+          "port": 1,
+          "io_type": "input",
+          "signal_type": "analog"
+        },
+        {
+          "instrument_id": "mw-fem",
+          "con": 1,
+          "slot": 1,
+          "port": 1,
+          "io_type": "output",
+          "signal_type": "analog"
+        }
+      ],
+      "xy": [
+        {
+          "instrument_id": "mw-fem",
+          "con": 1,
+          "slot": 1,
+          "port": 4,
+          "io_type": "output",
+          "signal_type": "analog"
+        }
+      ],
+      "z": [
+        {
+          "instrument_id": "lf-fem",
+          "con": 1,
+          "slot": 5,
+          "port": 3,
+          "io_type": "output",
+          "signal_type": "analog"
+        }
+      ]
+    },
+    "q1-2": {
+      "c": [
+        {
+          "instrument_id": "lf-fem",
+          "con": 1,
+          "slot": 5,
+          "port": 4,
+          "io_type": "output",
+          "signal_type": "analog"
+        }
+      ]
+    },
+    "q2-3": {
+      "c": [
+        {
+          "instrument_id": "lf-fem",
+          "con": 1,
+          "slot": 5,
+          "port": 5,
+          "io_type": "output",
+          "signal_type": "analog"
+        }
+      ]
+    }
+  }
+}

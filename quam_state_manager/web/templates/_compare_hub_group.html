@@ -1,0 +1,6 @@
+{# Lazy per-group fragment (/compare-hub/group). Renders the same hairline
+   rows partial as the inline path — the equal-rows toggle lives inside
+   _compare_hub_rows.html so inline groups get it too. #}
+{% with rows = group.view_rows, group = group, show_eq = show_eq, hub_qs = hub_qs %}
+{% include '_compare_hub_rows.html' %}
+{% endwith %}

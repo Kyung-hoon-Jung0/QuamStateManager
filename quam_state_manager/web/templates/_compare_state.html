@@ -1,0 +1,162 @@
+{% macro render_delta(val, ref, fmt) -%}
+{% set d = val - ref -%}
+<span class="diff-delta {{ 'delta-pos' if d > 0 else ('delta-neg' if d < 0 else 'delta-zero') }}">{{ fmt | format(d) }}</span>
+{%- endmacro %}
+
+<h3>State: {{ label }}</h3>
+
+{# ── Section 1: Metadata ── #}
+{% if exp_ctx is defined and exp_ctx.has_data %}
+<details class="compare-section" open>
+    <summary>Metadata</summary>
+    <div class="table-scroll">
+    <table class="data-table" role="grid">
+        <tbody>
+        <tr><td><code>name</code></td><td>{{ exp_ctx.metadata.get("name", "-") }}</td></tr>
+        <tr><td><code>status</code></td><td>{{ exp_ctx.metadata.get("status", "-") }}</td></tr>
+        <tr><td><code>run_start</code></td><td>{{ exp_ctx.metadata.get("run_start", "-") }}</td></tr>
+        <tr><td><code>run_end</code></td><td>{{ exp_ctx.metadata.get("run_end", "-") }}</td></tr>
+        {% if exp_ctx.metadata.get("description") %}
+        <tr><td><code>description</code></td><td><small>{{ exp_ctx.metadata["description"] | truncate(200) }}</small></td></tr>
+        {% endif %}
+        </tbody>
+    </table>
+    </div>
+</details>
+{% endif %}
+
+{# ── Section 2: Parameters ── #}
+{% if exp_ctx is defined and exp_ctx.parameters %}
+<details class="compare-section">
+    <summary>Parameters <small class="muted">({{ exp_ctx.parameters | length }})</small></summary>
+    <div class="table-scroll">
+    <table class="data-table" role="grid">
+        <thead>
+            <tr><th>Parameter</th><th>Value</th></tr>
+        </thead>
+        <tbody>
+        {% for key in exp_ctx.parameters | sort %}
+        {% set val = exp_ctx.parameters[key] %}
+        {% set ref_val = ref_ctx.parameters.get(key) if ref_ctx is defined and ref_ctx.parameters else none %}
+        {% set is_diff = ref_ctx is defined and (val != ref_val) %}
+        <tr>
+            <td><code>{{ key }}</code></td>
+            <td{% if is_diff %} class="cell-diff"{% endif %}>
+                {% if val is none %}<span class="muted">-</span>
+                {% elif val is sameas true %}true
+                {% elif val is sameas false %}false
+                {% elif val is number and (val | abs >= 1e6 or (0 < val | abs < 1e-3)) %}{{ "%.4e" | format(val) }}{% if is_diff and ref_val is number %}{{ render_delta(val, ref_val, "%+.3e") }}{% endif %}
+                {% elif val is number %}{{ "%.6f" | format(val) }}{% if is_diff and ref_val is number %}{{ render_delta(val, ref_val, "%+.6f") }}{% endif %}
+                {% elif val is iterable and val is not string %}{{ val | join(", ") }}
+                {% else %}{{ val }}{% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</details>
+{% endif %}
+
+{# ── Section 3: Fit Results ── #}
+{% if exp_ctx is defined and exp_ctx.fit_results %}
+<details class="compare-section">
+    <summary>Fit Results <small class="muted">({{ exp_ctx.fit_results | length }} qubits)</small></summary>
+    {% for qname in exp_ctx.fit_results | sort %}
+    {% set qvals = exp_ctx.fit_results[qname] %}
+    {% set ref_qvals = ref_ctx.fit_results.get(qname, {}) if ref_ctx is defined else {} %}
+    <h4 class="compare-qubit-heading">{{ qname }}
+        {% if exp_ctx.outcomes.get(qname) %}
+        <small class="muted">({{ exp_ctx.outcomes[qname] }})</small>
+        {% endif %}
+    </h4>
+    <div class="table-scroll">
+    <table class="data-table" role="grid">
+        <thead><tr><th>Property</th><th>Value</th></tr></thead>
+        <tbody>
+        {% for key in qvals | sort %}
+        {% set val = qvals[key] %}
+        {% set rval = ref_qvals.get(key) if ref_qvals else none %}
+        {% set is_diff = ref_ctx is defined and (val != rval) %}
+        <tr>
+            <td><code>{{ key }}</code></td>
+            <td{% if is_diff %} class="cell-diff"{% endif %}>
+                {% if val is none %}<span class="muted">-</span>
+                {% elif val is sameas true %}true
+                {% elif val is sameas false %}false
+                {% elif val is number and (val | abs >= 1e6 or (0 < val | abs < 1e-3)) %}{{ "%.4e" | format(val) }}{% if is_diff and rval is number %}{{ render_delta(val, rval, "%+.3e") }}{% endif %}
+                {% elif val is number %}{{ "%.6f" | format(val) }}{% if is_diff and rval is number %}{{ render_delta(val, rval, "%+.6f") }}{% endif %}
+                {% else %}{{ val }}{% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% endfor %}
+</details>
+{% endif %}
+
+{# ── Section 4: Full State / Wiring Tree ── #}
+{% if state_json is defined and state_json %}
+<details class="compare-section" open>
+    <summary>Full State &amp; Wiring</summary>
+    <div class="tree-file-tabs" id="cmp-tree-tabs-{{ label | replace(' ', '_') }}">
+        <span class="tree-file-tab active"
+              onclick="switchCmpTreeTab(this, 'state')">state.json</span>
+        <span class="tree-file-tab"
+              onclick="switchCmpTreeTab(this, 'wiring')">wiring.json</span>
+    </div>
+    <div class="tree-toolbar">
+        <span class="tree-search-icon">&#128269;</span>
+        <input type="text" class="tree-search" placeholder="Search keys or values..."
+               oninput="jsonTreeSearch(_cmpActiveTree(this), this.value)" autocomplete="off">
+        <div class="tree-depth-group">
+            <span class="tree-depth-label">Depth:</span>
+            <button class="btn-sm outline" onclick="jsonTreeCollapseAll(_cmpActiveTree(this))">0</button>
+            <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_cmpActiveTree(this), 1)">1</button>
+            <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_cmpActiveTree(this), 2)">2</button>
+            <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_cmpActiveTree(this), 3)">3</button>
+            <button class="btn-sm outline" onclick="jsonTreeExpandAll(_cmpActiveTree(this))">All</button>
+        </div>
+    </div>
+    <div id="cmp-state-tree" class="cmp-tree-state"></div>
+    <div id="cmp-wiring-tree" class="cmp-tree-wiring" style="display:none"></div>
+</details>
+<script>
+(function() {
+    var sd = {{ state_json | script_json }};
+    var wd = {{ wiring_json | script_json }};
+    var refSd = {{ ref_state_json | default("null") | script_json }};
+    var refWd = {{ ref_wiring_json | default("null") | script_json }};
+    var sId = "cmp-state-tree";
+    var wId = "cmp-wiring-tree";
+    renderJsonTree(sId, sd, { defaultDepth: 1, refData: refSd });
+    renderJsonTree(wId, wd, { defaultDepth: 1, refData: refWd });
+
+    window.switchCmpTreeTab = function(btn, which) {
+        var sec = btn.closest(".compare-section");
+        if (!sec) return;
+        var s = sec.querySelector(".cmp-tree-state");
+        var w = sec.querySelector(".cmp-tree-wiring");
+        if (s) s.style.display = (which === "state") ? "" : "none";
+        if (w) w.style.display = (which === "wiring") ? "" : "none";
+        var tabs = btn.parentElement.querySelectorAll(".tree-file-tab");
+        for (var i = 0; i < tabs.length; i++) {
+            tabs[i].classList.toggle("active", tabs[i].textContent.indexOf(which) >= 0);
+        }
+    };
+
+    window._cmpActiveTree = function(el) {
+        var sec = el.closest(".compare-section");
+        if (!sec) return "";
+        var s = sec.querySelector(".cmp-tree-state");
+        return (s && s.style.display !== "none") ? s.id : sec.querySelector(".cmp-tree-wiring").id;
+    };
+})();
+</script>
+{% else %}
+<div class="compare-empty">
+    <p>No state data available.</p>
+</div>
+{% endif %}

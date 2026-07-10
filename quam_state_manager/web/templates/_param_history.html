@@ -1,0 +1,389 @@
+{# Param History dashboard — sparkline grid of trended state.json fields. #}
+{% set TRIGGER_LABELS = {'save':'Save','manual':'Manual','auto':'Auto','experiment':'Experiment'} %}
+
+<div id="param-history-root" class="param-history"
+     data-since="{{ since }}"
+     data-loaded-chip-key="{{ loaded_chip_key }}"
+     data-is-loaded-chip="{{ '1' if is_loaded_chip else '0' }}"
+     data-snapshot-total="{{ summary.total }}"
+     {# experiment-only count for the auto-backfill heuristic. Comparing
+        ``importable`` (workspace experiments aligned with this chip)
+        against the full ``total`` was an apples-to-oranges check — manual
+        saves and live-poll captures inflated ``total`` and silently
+        suppressed auto-fire for users with active hand-editing. #}
+     data-experiment-snapshot-count="{{ summary.by_trigger.get('experiment', 0) }}"
+     data-importable-count="{{ importable_count }}"
+     data-pending-import-count="{{ pending_import_count }}">
+  <div class="param-history-header">
+    <h2 style="margin:0">Param History</h2>
+    <p class="muted" style="margin:0">
+      How each tracked field in <code>state.json</code> drifts across every modification —
+      saves, manual edits, and experiment runs.
+    </p>
+  </div>
+
+  {% if index_error %}
+  <div class="toast toast-warning" style="margin:0.5rem 0">
+    <p style="margin:0">{{ index_error }}
+      <a href="/param-history" hx-get="/param-history" hx-target="#param-history-root"
+         hx-swap="outerHTML" hx-sync="#param-history-root:replace">Reload</a></p>
+  </div>
+  {% endif %}
+
+  {# ── Chip selector — workspace + currently-loaded chips only ───── #}
+  {% if active_chips %}
+  <div class="phf-row chip-selector-row">
+    <label class="phf-label">Chip</label>
+    <div class="phf-chips">
+      {% for chip in active_chips %}
+        {% set is_active = chip.key == active_chip_key %}
+        {% set is_loaded = chip.key == loaded_chip_key %}
+        <a href="/param-history?chip_key={{ chip.key }}"
+           hx-get="/param-history?chip_key={{ chip.key }}"
+           hx-target="#param-history-root" hx-swap="outerHTML" hx-push-url="true"
+           class="phf-chip phf-chip-chip{% if is_active %} active{% endif %}{% if is_loaded %} chip-loaded{% endif %}"
+           title="{% if chip.workspace_only %}Workspace folder, no history yet{% else %}{{ chip.snapshot_count }} snapshots · latest {{ chip.latest_timestamp }}{% endif %}"
+           style="text-decoration:none">
+          {% if is_loaded %}<span class="chip-loaded-dot" title="Currently loaded">●</span>{% endif %}
+          {{ chip.key }}
+          {% if chip.snapshot_count %}<span class="phf-chip-count">{{ chip.snapshot_count }}</span>{% endif %}
+        </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── Pending chip-ambiguity decisions ───────────────────────────── #}
+  {% if pending_decisions %}
+    {% for pd in pending_decisions %}
+    <div class="alignment-banner alignment-orange chip-decision-banner"
+         data-chip-key="{{ pd.chip_key }}"
+         data-data-folder="{{ pd.data_folder }}">
+      ❓ <strong>Workspace folder <code>{{ pd.data_folder }}</code> has {{ pd.count }} experiment{{ 's' if pd.count != 1 }}.</strong>
+      The wiring matches the current chip <code>{{ pd.chip_key }}</code> but the folder name differs.
+      Same chip, or a different chip from the same setup?
+      <button type="button" class="alignment-action outline btn-sm"
+              onclick="paramHistoryDecide(this, 'same')">Same chip — merge</button>
+      <button type="button" class="alignment-action outline btn-sm"
+              onclick="paramHistoryDecide(this, 'different')">Different chip — separate</button>
+    </div>
+    {% endfor %}
+  {% endif %}
+
+  {# ── Chip-swap detection banner ─────────────────────────────────── #}
+  {% if last_chip_swap %}
+  <div class="alignment-banner alignment-orange chip-swap-banner">
+    ⚠️ <strong>Chip change detected.</strong>
+    {% if last_chip_swap.type == "swap_to_existing" %}
+      Snapshots were routed to the existing chip <code>{{ last_chip_swap.to_key }}</code>
+      (the loaded path is <code>{{ last_chip_swap.from_key }}</code> but its wiring/qubits match <code>{{ last_chip_swap.to_key }}</code>).
+      <a href="/param-history?chip_key={{ last_chip_swap.to_key }}"
+         hx-get="/param-history?chip_key={{ last_chip_swap.to_key }}"
+         hx-target="#param-history-root" hx-swap="outerHTML" hx-push-url="true"
+         class="alignment-switch-link">View {{ last_chip_swap.to_key }} →</a>
+    {% else %}
+      A new chip directory <code>{{ last_chip_swap.to_key }}</code> was created
+      (the loaded path is <code>{{ last_chip_swap.from_key }}</code> but the fingerprint differs).
+      <a href="/param-history?chip_key={{ last_chip_swap.to_key }}"
+         hx-get="/param-history?chip_key={{ last_chip_swap.to_key }}"
+         hx-target="#param-history-root" hx-swap="outerHTML" hx-push-url="true"
+         class="alignment-switch-link">View {{ last_chip_swap.to_key }} →</a>
+    {% endif %}
+    <button type="button" class="outline btn-sm alignment-action"
+            onclick="dismissChipSwap(this)">Dismiss</button>
+  </div>
+  {% endif %}
+
+  {# ── Failed-import banner ───────────────────────────────────────── #}
+  {# Surfaces per-entry skip reasons from the most recent completed     #}
+  {# backfill. Without it the workspace-vs-index gap could re-trigger   #}
+  {# the auto-backfill forever (the loop bug). The banner gives the     #}
+  {# user a concrete list of what failed and a Retry button.            #}
+  {% if last_backfill_failures %}
+  <div class="alignment-banner alignment-orange backfill-failures-banner">
+    ⚠️ <strong>{{ last_backfill_attempted - (last_backfill_failures | length) }} of {{ last_backfill_attempted }}</strong>
+    experiments imported &mdash; <strong>{{ last_backfill_failures | length }}</strong> skipped.
+    <details style="margin-top:0.35rem">
+      <summary>Show skipped experiments</summary>
+      <ul class="backfill-failures-list">
+        {% for f in last_backfill_failures %}
+        <li>
+          <code>{{ f.timestamp | ts_local }}</code>{% if f.run_id %} ({{ f.run_id }}){% endif %}{% if f.experiment_name %} &mdash; <em>{{ f.experiment_name }}</em>{% endif %}
+          <div class="backfill-failure-reason">{{ f.reason }}</div>
+        </li>
+        {% endfor %}
+      </ul>
+    </details>
+    <button type="button" class="outline btn-sm alignment-action"
+            onclick="paramHistoryRetryBackfill()">Retry import</button>
+  </div>
+  {% endif %}
+
+  {# ── Archived chips — disk-only, collapsed by default ──────────── #}
+  {% if archived_chips %}
+  <details class="archive-row">
+    <summary>
+      Other chip histories on disk ({{ archived_chips|length }})
+      <span class="muted">— not in your workspace</span>
+    </summary>
+    <div class="archive-list">
+      {% for chip in archived_chips %}
+        <div class="archive-item">
+          <code class="archive-key">{{ chip.key }}</code>
+          <span class="archive-meta">
+            {{ chip.snapshot_count }} snapshots
+            {% if chip.latest_timestamp %}
+              · latest <code>{{ chip.latest_timestamp | ts_local }}</code>
+            {% endif %}
+            {% if chip.qubits %}
+              · {{ chip.qubits|length }} qubits
+            {% endif %}
+          </span>
+          <a href="/param-history?chip_key={{ chip.key }}"
+             hx-get="/param-history?chip_key={{ chip.key }}"
+             hx-target="#param-history-root" hx-swap="outerHTML" hx-push-url="true"
+             class="outline btn-sm archive-view">View history</a>
+        </div>
+      {% endfor %}
+    </div>
+  </details>
+  {% endif %}
+
+  {# ── Alignment banner ──────────────────────────────────────────── #}
+  {% if is_loaded_chip and alignment %}
+    {% set c = alignment.counts %}
+    {% if c.total == 0 %}
+      {# no workspace experiments yet — no banner #}
+    {% elif c.aligned == c.total %}
+      <div class="alignment-banner alignment-green">
+        ✓ All {{ c.total }} workspace experiments are for chip <code>{{ loaded_chip_key }}</code>.
+      </div>
+    {% elif c.aligned == 0 and c.different_chip > 0 %}
+      <div class="alignment-banner alignment-red">
+        ✗ <strong>No experiments in this workspace match chip <code>{{ loaded_chip_key }}</code>.</strong>
+        Workspace contains:
+        {% for other_chip, entries in alignment.different_chip.items() %}
+          <a href="/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
+             hx-get="/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
+             hx-target="#param-history-root" hx-swap="outerHTML" hx-push-url="true"
+             class="alignment-switch-link">{{ other_chip }} ({{ entries|length }})</a>{% if not loop.last %}, {% endif %}
+        {% endfor %}
+      </div>
+    {% else %}
+      {% if c.renamed > 0 %}
+        <div class="alignment-banner alignment-orange">
+          ⚠ <strong>{{ c.renamed }} experiments use the same hardware but qubits are renamed.</strong>
+          They aren't merged by default.
+          <button type="button" class="alignment-action outline btn-sm"
+                  onclick="paramHistoryBackfill(true)">Merge them anyway</button>
+        </div>
+      {% endif %}
+      {% if c.different_chip > 0 %}
+        <div class="alignment-banner alignment-yellow">
+          {{ c.aligned }} of {{ c.total }} experiments are for <code>{{ loaded_chip_key }}</code>.
+          {{ c.different_chip }} are for other chips:
+          {% for other_chip, entries in alignment.different_chip.items() %}
+            <a href="/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
+               hx-get="/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
+               hx-target="#param-history-root" hx-swap="outerHTML" hx-push-url="true"
+               class="alignment-switch-link">{{ other_chip }} ({{ entries|length }})</a>{% if not loop.last %}, {% endif %}
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endif %}
+  {% elif not is_loaded_chip %}
+    <div class="alignment-banner alignment-info">
+      Viewing history for chip <code>{{ active_chip_key }}</code>
+      &nbsp;·&nbsp; current load is <code>{{ loaded_chip_key }}</code>
+      &nbsp;·&nbsp;
+      <a href="/param-history" hx-get="/param-history"
+         hx-target="#param-history-root" hx-swap="outerHTML" hx-push-url="true"
+         class="alignment-switch-link">Switch to current load</a>
+    </div>
+  {% endif %}
+
+  {# Form fires on any input change (radio, checkbox, select, etc).
+     hx-trigger="change" catches all bubbling change events from any descendant. #}
+  <form id="param-history-filters" class="param-history-filters"
+        hx-get="/param-history" hx-target="#param-history-root" hx-swap="outerHTML"
+        hx-push-url="true" hx-trigger="change">
+
+    <div class="phf-row">
+      <label class="phf-label">Date</label>
+      <div class="phf-chips" role="radiogroup">
+        {% for key, lbl in [('now-24h','24h'),('now-7d','Week'),('now-30d','Month'),('all','All')] %}
+          <label class="phf-chip{% if since == key %} active{% endif %}">
+            <input type="radio" name="since" value="{{ key }}"
+                   {% if since == key %}checked{% endif %}>{{ lbl }}
+          </label>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="phf-row">
+      <label class="phf-label">Source</label>
+      <div class="phf-chips">
+        {% for tk in ['save','manual','auto','experiment'] %}
+          {# Default (no filter) shows all four as active.
+             A non-empty triggers_filter list overrides — only those listed are active. #}
+          {% set is_active = (tk in triggers_filter) or (not triggers_filter) %}
+          <label class="phf-chip phf-chip-trigger phf-trig-{{ tk }}{% if is_active %} active{% endif %}">
+            <input type="checkbox" name="triggers" value="{{ tk }}"
+                   {% if is_active %}checked{% endif %}>
+            <span class="trigger-dot trigger-dot-{{ tk }}"></span>{{ TRIGGER_LABELS[tk] }}
+          </label>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="phf-row">
+      <label class="phf-label">Properties</label>
+      <div class="phf-chips phf-chip-grid">
+        {% for p in all_properties %}
+          {% set is_active = (p in properties) or (properties == all_properties) %}
+          <label class="phf-chip phf-chip-prop{% if is_active %} active{% endif %}">
+            <input type="checkbox" name="props" value="{{ p }}" {% if is_active %}checked{% endif %}>
+            {{ p }}
+          </label>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="phf-row">
+      <label class="phf-label">Qubits</label>
+      <div class="phf-chips phf-chip-grid">
+        {% for q in all_qubits %}
+          {% set is_active = (q in qubits_selected) or (not qubits_selected) %}
+          <label class="phf-chip phf-chip-qubit{% if is_active %} active{% endif %}">
+            <input type="checkbox" name="qubits" value="{{ q }}" {% if is_active %}checked{% endif %}>
+            {{ q }}
+          </label>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="phf-row">
+      <label class="phf-chip{% if only_changed %} active{% endif %}">
+        <input type="checkbox" name="only_changed" value="1" {% if only_changed %}checked{% endif %}>
+        Only show fields that changed
+      </label>
+      <a href="/param-history" hx-get="/param-history" hx-target="#param-history-root"
+         hx-swap="outerHTML" hx-push-url="true"
+         class="phf-chip" role="button" style="text-decoration:none">Reset filters</a>
+      <button type="button" class="phf-backfill outline btn-sm"
+              onclick="paramHistoryBackfill()">Import from workspace &#8635;</button>
+      <span id="ph-backfill-status" class="muted" style="font-size:0.85em"></span>
+    </div>
+  </form>
+
+  <div class="param-history-summary">
+    <strong>{{ summary.window_count }}</strong> snapshots match
+    {% if summary.total %}<span class="muted">({{ summary.total }} total in index)</span>{% endif %}
+    {% if summary.by_trigger %}
+      &nbsp;|&nbsp;
+      {% for tk in ['save','manual','auto','experiment'] %}
+        {% if tk in summary.by_trigger %}
+          <span class="trigger-pill trigger-pill-{{ tk }}">
+            {{ TRIGGER_LABELS[tk] }}: {{ summary.by_trigger[tk] }}
+          </span>
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+    {% if summary.latest %}
+      &nbsp;|&nbsp;Latest: <code>{{ summary.latest.timestamp | ts_local }}</code>
+      {% if summary.latest.experiment %}
+        <span class="muted">(after #{{ summary.latest.run_id }} {{ summary.latest.experiment }})</span>
+      {% endif %}
+    {% endif %}
+  </div>
+
+  {% if not cells %}
+    {% if summary.total == 0 and is_loaded_chip and importable_count > 0 %}
+      {# First-visit CTA: there's nothing in the index yet, but the         #}
+      {# alignment scan found N workspace experiments that match this chip.#}
+      {# Big primary action card so the user knows there's one click       #}
+      {# between them and a populated dashboard.                            #}
+      <div class="param-history-cta" data-chip-key="{{ loaded_chip_key }}"
+           data-importable="{{ importable_count }}">
+        <div class="phc-title">No history imported yet for this chip.</div>
+        <div class="phc-subtitle">
+          <strong>{{ importable_count }}</strong>
+          experiment{{ '' if importable_count == 1 else 's' }}
+          in workspace match this chip and are ready to ingest.
+        </div>
+        <button type="button" class="phc-primary"
+                onclick="paramHistoryImportFromCta(this)">
+          Import {{ importable_count }} experiment{{ '' if importable_count == 1 else 's' }}
+        </button>
+        <div class="phc-hint muted">
+          One-time setup. After this, new experiments will be picked up
+          automatically.
+        </div>
+      </div>
+    {% else %}
+      <div class="param-history-empty">
+        {% if summary.total %}
+          <p><strong>No data matches your filters.</strong></p>
+          <p class="muted">
+            The index has {{ summary.total }} snapshot{{ '' if summary.total == 1 else 's' }} for this state folder,
+            but none match the current Date / Source / Property / Qubit selection.
+            Try clicking <em>Reset filters</em> above, or expanding the date range to <em>All</em>.
+          </p>
+        {% else %}
+          <p><strong>No history yet for this state folder.</strong></p>
+          <p class="muted">
+            Snapshots accumulate when you save, when an experiment overwrites
+            <code>state.json</code>, or when an external editor changes the file.
+            Click <em>Import from workspace</em> above to ingest pre-existing
+            per-experiment snapshots in one go.
+          </p>
+        {% endif %}
+      </div>
+    {% endif %}
+  {% else %}
+    <div class="param-history-grid-wrap">
+      <table class="param-history-grid">
+        <thead>
+          <tr>
+            <th class="phg-corner">Qubit</th>
+            {% for p in properties %}<th>{{ p }}</th>{% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for q in qubits %}
+            <tr>
+              <th class="phg-qubit">{{ q }}</th>
+              {% for p in properties %}
+                {% set cell = cells.get((q, p)) %}
+                {% set cur = current_values.get((q, p)) %}
+                <td class="history-cell"
+                    data-qubit="{{ q }}" data-prop="{{ p }}"
+                    onclick="paramHistoryOpenDrawer('{{ q }}', '{{ p }}')">
+                  <div class="history-cell-head">
+                    {% if cell and cell.raw_pointer %}
+                      <span class="history-cell-ptr-badge"
+                            title="{{ cell.raw_pointer }}">↪</span>
+                    {% endif %}
+                    <span class="history-cell-value">
+                      {% if cur is not none %}{{ '%.4g' % cur if cur is number else cur }}{% else %}—{% endif %}
+                    </span>
+                  </div>
+                  <svg class="history-cell-spark" viewBox="0 0 100 30" preserveAspectRatio="none">{% if cell and cell.svg_inner %}{{ cell.svg_inner|safe }}{% endif %}</svg>
+                </td>
+              {% endfor %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+
+  <div id="param-history-drawer" class="param-history-drawer" style="display:none"
+       hx-target="this" hx-swap="innerHTML"></div>
+</div>
+
+<script>
+  if (typeof renderParamHistorySparklines === 'function') {
+    renderParamHistorySparklines();
+  }
+</script>

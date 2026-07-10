@@ -1,0 +1,92 @@
+{# Accumulating "Live changes since baseline" — every param the live chip has
+   changed since the tracking baseline, regardless of whether SM auto-adopted
+   the new state into its working copy. Decoupled from the working-copy sync
+   point (core.history baseline sidecar), so repeated qualibrate fits keep
+   accumulating here. Rendered two ways:
+     • embed=1 → inline panel at the top of the State History page
+     • default → inside the floating #live-drift-overlay (gets a header + close)
+   See the live-drift-tracking memory + docs. #}
+{% macro drift_delta(old, new) -%}
+{% if old is number and new is number and old is not none and new is not none -%}
+{% set d = new - old -%}
+<span class="diff-delta {{ 'delta-pos' if d > 0 else ('delta-neg' if d < 0 else 'delta-zero') }}">{{ "%+.3e" | format(d) }}</span>
+{%- else -%}
+<span class="muted">&ndash;</span>
+{%- endif %}
+{%- endmacro %}
+
+<div class="live-drift{% if embed %} live-drift-embed{% endif %}">
+{% if not embed %}
+  <div class="state-review-head">
+    <h3>Live changes since baseline</h3>
+    <button class="state-review-close" type="button" onclick="closeDrift()" aria-label="Close">&#10005;</button>
+  </div>
+{% endif %}
+
+{% if not tracked %}
+  <p class="muted live-drift-note">
+    {% if archive %}
+      This chip was opened from a dataset run archive (read-only) — there is no
+      evolving live chip to compare against.
+    {% else %}
+      Live-change tracking isn't active for this view. Load a chip from its live
+      folder to watch what the live chip changes over time.
+    {% endif %}
+  </p>
+{% elif error %}
+  <p class="muted live-drift-note">&#9888;&#65039; Could not read the live chip: {{ error }}</p>
+{% else %}
+  <div class="live-drift-bar">
+    <div class="live-drift-summary">
+      {% if total > 0 %}
+      <span class="live-drift-count">{{ total }}</span>
+      <span>parameter{{ '' if total == 1 else 's' }} changed on the live chip</span>
+      {% else %}
+      <span class="live-drift-insync">&#10003; In sync — no changes since the baseline.</span>
+      {% endif %}
+      {% if baseline_utc %}
+      <small class="muted">baseline: {{ baseline_utc | ts_local }}</small>
+      {% endif %}
+    </div>
+    <button class="btn-sm outline" type="button" onclick="resetBaseline()"
+            title="Acknowledge all current changes — set the baseline to the live chip now and start accumulating fresh">
+      Reset baseline</button>
+  </div>
+
+  {% if total > 0 %}
+  <div class="diff-summary">
+    <span class="diff-badge diff-added">Added: {{ summary.added }}</span>
+    <span class="diff-badge diff-removed">Removed: {{ summary.removed }}</span>
+    <span class="diff-badge diff-modified">Modified: {{ summary.modified }}</span>
+    <span class="diff-badge diff-total">Total: {{ summary.total }}</span>
+    {% if total > entries | length %}
+    <small class="muted">(showing {{ entries | length }} of {{ total }})</small>
+    {% endif %}
+  </div>
+  <div class="table-scroll live-drift-table">
+  <table class="data-table diff-table" role="grid">
+      <thead><tr><th>Type</th><th>Path</th><th>Baseline</th><th>Live chip</th><th>Delta</th></tr></thead>
+      <tbody>
+      {% for e in entries %}
+      <tr class="diff-row-{{ e.change_type }}">
+          <td><span class="diff-type-badge diff-type-{{ e.change_type }}">{{ e.change_type }}</span></td>
+          <td class="diff-path-cell"><code class="dot-path" title="{{ e.dot_path }}">{{ e.dot_path }}</code></td>
+          <td class="diff-val">
+              {% if e.old_value is none %}<span class="muted">-</span>
+              {% elif e.old_value is float %}{{ "%.6e" | format(e.old_value) }}
+              {% else %}{{ e.old_value }}{% endif %}
+          </td>
+          <td class="diff-val">
+              {% if e.new_value is none %}<span class="muted">-</span>
+              {% elif e.new_value is float %}{{ "%.6e" | format(e.new_value) }}
+              {% else %}{{ e.new_value }}{% endif %}
+          </td>
+          <td class="diff-val">{{ drift_delta(e.old_value, e.new_value) }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+  </table>
+  </div>
+  {% endif %}
+{% endif %}
+</div>

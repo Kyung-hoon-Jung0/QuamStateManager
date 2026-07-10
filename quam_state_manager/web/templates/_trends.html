@@ -1,0 +1,44 @@
+{% if no_workspace %}
+<div class="welcome">
+    <h2>Trends</h2>
+    <p>Add a data folder in the <strong>Workspace</strong> panel (left sidebar) to view metric trends across experiment runs.</p>
+</div>
+{% else %}
+<div class="table-header-row">
+    <h2>Trend Dashboard</h2>
+</div>
+{# Folder selector (multi-folder workspaces) — single by default; combining is
+   only allowed for the SAME chip (server-checked). Leaf name shown, full path on
+   hover. A cross-chip selection returns a warning instead of a meaningless merge. #}
+{% if folders and folders | length > 1 %}
+<div class="trends-folder-row" id="trend-folder-grid">
+    <span class="folder-filter-label">Folder:</span>
+    {% for f in folders %}
+    <span class="folder-chip{% if loop.first %} active{% endif %}" data-folder-key="{{ f.key }}"
+          onclick="toggleTrendFolder('{{ f.key }}', this)"
+          title="{{ f.full_path }}">{{ f.label[:6] }}{% if f.label | length > 6 %}…{% endif %}</span>
+    {% endfor %}
+</div>
+{% endif %}
+<div class="trends-filters">
+    <label>Experiment:
+        <select id="trend-exp-select" onchange="loadTrendData()">
+            <option value="">-- Select experiment --</option>
+            {% for exp in experiments %}
+            <option value="{{ exp }}">{{ exp }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>Qubit:
+        <select id="trend-qubit-select" onchange="loadTrendData()">
+            <option value="">All qubits</option>
+            {% for q in qubits %}
+            <option value="{{ q }}">{{ q }}</option>
+            {% endfor %}
+        </select>
+    </label>
+</div>
+<div id="trends-content">
+    <p class="muted section-placeholder">Select an experiment type to view trends.</p>
+</div>
+{% endif %}

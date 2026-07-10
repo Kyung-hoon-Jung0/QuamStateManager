@@ -1,0 +1,153 @@
+<div class="add-gate-form-wrap">
+    <form class="add-gate-form"
+          hx-post="/pair/{{ pair_name }}/gate"
+          hx-target="#inspector-pane"
+          hx-swap="innerHTML">
+        <header class="add-gate-form-header">
+            <strong>Add gate to {{ pair_name }}</strong>
+            <button type="button"
+                    class="add-gate-cancel"
+                    hx-get="/pair/{{ pair_name }}/gate/new/cancel"
+                    hx-target="#pair-add-gate-area"
+                    hx-swap="outerHTML"
+                    title="Cancel">×</button>
+        </header>
+
+        <div class="add-gate-row">
+            <label for="add-gate-name">Gate name</label>
+            <input type="text"
+                   id="add-gate-name"
+                   name="gate_name"
+                   placeholder="e.g. cz_v3"
+                   pattern="[a-zA-Z][a-zA-Z0-9_]{0,63}"
+                   required
+                   autofocus
+                   data-existing="{{ existing_gates | tojson }}">
+        </div>
+
+        <div class="add-gate-row">
+            <label for="add-gate-type">Gate type</label>
+            <select id="add-gate-type" name="gate_type">
+                {% for type_id, type_def in gate_types.items() %}
+                <option value="{{ type_id }}">{{ type_def.label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        {% for type_id, type_def in gate_types.items() %}
+        <fieldset class="add-gate-fields" data-gate-type="{{ type_id }}"
+                  {% if not loop.first %}hidden{% endif %}>
+            <legend>{{ type_def.label }} parameters</legend>
+            <div class="add-gate-grid">
+                {% for fname, flabel, fdefault, fkind in type_def.fields %}
+                <label class="add-gate-field">
+                    <span class="add-gate-field-label">{{ flabel }}</span>
+                    <input type="number"
+                           name="{{ fname }}"
+                           value="{{ fdefault }}"
+                           step="{% if fkind == 'int' %}1{% else %}any{% endif %}"
+                           {% if fkind == 'int' %}inputmode="numeric"{% endif %}>
+                </label>
+                {% endfor %}
+            </div>
+        </fieldset>
+        {% endfor %}
+
+        <details class="add-gate-preview-wrap">
+            <summary>Preview JSON</summary>
+            <pre class="add-gate-preview" id="add-gate-preview"></pre>
+        </details>
+
+        <div class="add-gate-actions">
+            <button type="submit" class="add-gate-submit">Create gate</button>
+            <span class="add-gate-warning" title="Live state.json may be overwritten by running calibration scripts">
+                ⚠ Live file may be overwritten by experiments — review the JSON above before committing.
+            </span>
+        </div>
+    </form>
+</div>
+
+<script>
+(function() {
+    const form = document.currentScript.previousElementSibling.querySelector(".add-gate-form");
+    if (!form) return;
+    const typeSel = form.querySelector("select[name='gate_type']");
+    const nameInput = form.querySelector("input[name='gate_name']");
+    const existing = JSON.parse(nameInput.dataset.existing || "[]");
+    const preview = form.querySelector("#add-gate-preview");
+    const fieldsets = form.querySelectorAll("fieldset.add-gate-fields");
+
+    function showActiveFields() {
+        const t = typeSel.value;
+        fieldsets.forEach(fs => {
+            fs.hidden = (fs.dataset.gateType !== t);
+        });
+    }
+
+    function buildTemplate(type, vals) {
+        if (type === "cz_unipolar") {
+            return {
+                fidelity: {},
+                flux_pulse_qubit: { amplitude: vals.amplitude, length: vals.length },
+                coupler_flux_pulse: { amplitude: vals.coupler_amplitude, length: vals.coupler_length },
+                phase_shift_control: vals.phase_shift_control,
+                phase_shift_target: vals.phase_shift_target,
+            };
+        }
+        if (type === "cz_flattop") {
+            return {
+                fidelity: {},
+                flux_pulse_qubit: {
+                    amplitude: vals.amplitude,
+                    flat_length: vals.flat_length,
+                    smoothing_length: vals.smoothing_length,
+                    length: "#./inferred_total_length",
+                },
+                coupler_flux_pulse: { amplitude: vals.coupler_amplitude },
+                phase_shift_control: vals.phase_shift_control,
+                phase_shift_target: vals.phase_shift_target,
+            };
+        }
+        if (type === "cz_parametric") {
+            return {
+                __class__: "quam_builder.architecture.superconducting.custom_gates.flux_tunable_transmon_pair.two_qubit_gates.ParametricCZGate",
+                fidelity: {},
+                flux_pulse_qubit: { amplitude: vals.amplitude, length: vals.length },
+                modulation_frequency: vals.modulation_frequency,
+                coupler_flux_pulse: { amplitude: vals.coupler_amplitude },
+                phase_shift_control: vals.phase_shift_control,
+                phase_shift_target: vals.phase_shift_target,
+            };
+        }
+        return {};
+    }
+
+    function refreshPreview() {
+        const t = typeSel.value;
+        const active = form.querySelector(`fieldset[data-gate-type="${t}"]`);
+        const vals = {};
+        active.querySelectorAll("input").forEach(i => {
+            const raw = i.value;
+            const n = Number(raw);
+            vals[i.name] = Number.isFinite(n) ? n : raw;
+        });
+        const name = nameInput.value || "<gate_name>";
+        const out = { [name]: buildTemplate(t, vals) };
+        preview.textContent = JSON.stringify(out, null, 2);
+    }
+
+    function validateName() {
+        const v = nameInput.value.trim();
+        if (existing.includes(v)) {
+            nameInput.setCustomValidity(`A gate called "${v}" already exists on this pair.`);
+        } else {
+            nameInput.setCustomValidity("");
+        }
+    }
+
+    typeSel.addEventListener("change", () => { showActiveFields(); refreshPreview(); });
+    form.addEventListener("input", () => { validateName(); refreshPreview(); });
+    showActiveFields();
+    refreshPreview();
+})();
+</script>

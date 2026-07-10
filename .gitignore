@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+
+# PyInstaller build artifacts
+dist/
+build/
+# ...but the hand-written PyInstaller spec is source, not an artifact
+!build/
+build/*
+!build/quam-manager.spec
+
+# Screenshots / reference images
+*.png
+
+# Claude Code
+.claude/
+# Local-only decoder for the customer-data scrub (real names/paths) — never publish
+CLAUDE.local.md
+
+# IDE
+.vscode/
+.idea/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local scratch — config-generator verification scripts + their build outputs
+generated/
+.tmp_jsdom/
+.tmp_cr_build/
+# Session-local scratch: repro/probe/audit dirs + files, build logs (never source)
+.tmp*
+.cr_audit/
+tmp_cr_audit/
+_cr_audit_probe*.py
+build_stderr.txt
+
+# Node — only for the headless JS tests (jsdom). Install once with
+# `npm install jsdom`; tests/test_generate_nav.py skips when jsdom is absent.
+node_modules/
+package-lock.json
+
+# Flask runtime data (per-deployment user state, history snapshots, SQLite indexes)
+instance/
+instance.bak.*/
+
+# OS
+.DS_Store
+Thumbs.db

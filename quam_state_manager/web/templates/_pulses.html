@@ -1,0 +1,69 @@
+{# Pulses library — table pane. The rows live in #pulses-rows-wrap so that
+   mutation responses (HX-Trigger: pulses-changed) and the server-side search
+   refresh just the table without clobbering the filter input or channel tabs.
+
+   Search is SERVER-side (q=) over the WHOLE library — the old client filter
+   only saw the 50 rendered rows, so qubits on later pages were unfindable
+   (feedback #1). The channel chips, pagination links, and the post-mutation
+   refresh all thread the active query + channel so neither is lost. #}
+{% if open_create %}
+{# Sidebar "Add pulse" entry: auto-open the create form in the inspector pane
+   once the Pulses table has loaded (same form as the "+ New pulse" button). #}
+<div hx-get="/pulse/new" hx-target="#inspector-pane" hx-swap="innerHTML"
+     hx-trigger="load" style="display:none"></div>
+{% endif %}
+<div class="table-header-row">
+    <h2>Pulses <small class="muted">({{ total }})</small></h2>
+    <div class="table-filter">
+        <input type="search" name="q" value="{{ active_query or '' }}"
+               placeholder="Search all pulses…" autocomplete="off"
+               hx-get="/pulses?rows=1&channel={{ active_channel }}&per_page={{ per_page }}"
+               hx-trigger="keyup changed delay:200ms, search"
+               hx-target="#pulses-rows-wrap" hx-swap="innerHTML"
+               hx-indicator="#pulses-search-spin">
+        <span id="pulses-search-spin" class="htmx-indicator spinner"></span>
+    </div>
+    <button class="btn-sm pulse-new-btn" hx-get="/pulse/new"
+            hx-target="#inspector-pane" hx-swap="innerHTML"
+            hx-indicator="#inspector-pane">+ New pulse</button>
+</div>
+
+<nav class="chain-tabs pulse-channel-tabs" id="pulse-channel-tabs">
+    <ul>
+        {# Channel badges swap only the rows so the search input DOM is never
+           clobbered. hx-include sends the live input value so a typed-but-
+           unsubmitted search survives badge clicks. The onclick updates the
+           active class immediately (rows swap is async). #}
+        {% set _q = ('&q=' ~ (active_query | urlencode)) if active_query else '' %}
+        <li><a href="/pulses" hx-get="/pulses?rows=1&per_page={{ per_page }}"
+               hx-target="#pulses-rows-wrap" hx-include="[name='q']"
+               onclick="pulseTabActive(this)"
+               class="{% if not active_channel %}active{% endif %}">All</a></li>
+        <li><a href="/pulses?channel=xy{{ _q }}" hx-get="/pulses?rows=1&channel=xy&per_page={{ per_page }}"
+               hx-target="#pulses-rows-wrap" hx-include="[name='q']"
+               onclick="pulseTabActive(this)"
+               class="{% if active_channel == 'xy' %}active{% endif %}">XY</a></li>
+        <li><a href="/pulses?channel=z{{ _q }}" hx-get="/pulses?rows=1&channel=z&per_page={{ per_page }}"
+               hx-target="#pulses-rows-wrap" hx-include="[name='q']"
+               onclick="pulseTabActive(this)"
+               class="{% if active_channel == 'z' %}active{% endif %}">Z</a></li>
+        <li><a href="/pulses?channel=resonator{{ _q }}" hx-get="/pulses?rows=1&channel=resonator&per_page={{ per_page }}"
+               hx-target="#pulses-rows-wrap" hx-include="[name='q']"
+               onclick="pulseTabActive(this)"
+               class="{% if active_channel == 'resonator' %}active{% endif %}">Resonator</a></li>
+        <li><a href="/pulses?channel=flux{{ _q }}" hx-get="/pulses?rows=1&channel=flux&per_page={{ per_page }}"
+               hx-target="#pulses-rows-wrap" hx-include="[name='q']"
+               onclick="pulseTabActive(this)"
+               class="{% if active_channel == 'flux' %}active{% endif %}">Pair flux</a></li>
+    </ul>
+</nav>
+
+{# On pulses-changed, JS rebuilds the hx-get URL from live DOM state
+   (search input + active channel badge) so a mutation refresh never stales
+   the search/filter context — see pulsesRefreshUrl() in app.js. #}
+<div id="pulses-rows-wrap"
+     hx-get="/pulses?rows=1&channel={{ active_channel }}&per_page={{ per_page }}{{ ('&q=' ~ (active_query | urlencode)) if active_query else '' }}"
+     hx-trigger="pulses-changed from:body"
+     hx-swap="innerHTML">
+{% include '_pulse_rows.html' %}
+</div>

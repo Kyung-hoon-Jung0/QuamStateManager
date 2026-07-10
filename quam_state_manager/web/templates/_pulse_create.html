@@ -1,0 +1,89 @@
+{# Create-pulse form — inspector pane. Full QUAM catalog with a live preview
+   that redraws (debounced) as the type or any parameter changes. #}
+<div id="pulse-create-root">
+{% set inspector_type = "pulse" %}
+{% set inspector_label = "New pulse" %}
+{% set inspector_sub = "" %}
+{% include '_inspector_header.html' %}
+
+<form class="pulse-create-form" hx-post="/api/pulse/create"
+      hx-target="#inspector-pane" hx-swap="innerHTML">
+
+    <fieldset class="pulse-target-row">
+        <legend>Target</legend>
+        <label><input type="radio" name="target_kind" value="qubit" checked
+                      onchange="PulsesPage.createTargetKind(this)"> Qubit channel</label>
+        <label><input type="radio" name="target_kind" value="pair"
+                      onchange="PulsesPage.createTargetKind(this)"
+                      {% if not pairs_map %}disabled title="No pair gates on this chip"{% endif %}> Pair gate flux</label>
+        <span data-target-kind="qubit" class="pulse-target-fields">
+            <select name="qubit" aria-label="Qubit"
+                    onchange="PulsesPage.createValidateName()">
+                {% for q in qubit_names %}<option {% if q == sel_qubit %}selected{% endif %}>{{ q }}</option>{% endfor %}
+            </select>
+            <select name="channel" aria-label="Channel"
+                    onchange="PulsesPage.createValidateName()">
+                <option {% if sel_channel == 'xy' %}selected{% endif %}>xy</option>
+                <option {% if sel_channel == 'z' %}selected{% endif %}>z</option>
+                <option {% if sel_channel == 'resonator' %}selected{% endif %}>resonator</option>
+            </select>
+        </span>
+        <span data-target-kind="pair" class="pulse-target-fields" hidden>
+            <select name="pair" aria-label="Pair" onchange="PulsesPage.createPairGates(this)">
+                {% for p in pairs_map %}<option>{{ p }}</option>{% endfor %}
+            </select>
+            <select name="gate" aria-label="Gate">
+                {% for g in pairs_map.values() | first | default([]) %}<option>{{ g }}</option>{% endfor %}
+            </select>
+            <select name="slot" aria-label="Slot">
+                <option value="flux_pulse_qubit">flux_pulse_qubit</option>
+                <option value="coupler_flux_pulse">coupler_flux_pulse</option>
+            </select>
+        </span>
+    </fieldset>
+
+    <div class="pulse-create-row">
+        <label for="pulse-create-type">Pulse type</label>
+        <select name="pulse_type" id="pulse-create-type"
+                onchange="PulsesPage.createTypeChanged(this)">
+            {% for group, specs in groups.items() %}
+            <optgroup label="{{ group }}">
+                {% for s in specs %}
+                <option value="{{ s.key }}">{{ s.label }}</option>
+                {% endfor %}
+            </optgroup>
+            {% endfor %}
+        </select>
+        <p class="pulse-type-hint muted" id="pulse-create-hint"></p>
+    </div>
+
+    <div class="pulse-create-row" data-target-kind="qubit">
+        <label for="pulse-create-name">Operation name</label>
+        <input type="text" name="op_name" id="pulse-create-name" required
+               pattern="[a-zA-Z][a-zA-Z0-9_]{0,63}" autocomplete="off"
+               placeholder="e.g. x180_v2"
+               oninput="PulsesPage.createValidateName()">
+    </div>
+
+    <div id="pulse-create-fields" class="pulse-create-fields">
+        {# per-type parameter fieldsets are rendered by JS from the catalog
+           JSON (defaults pre-filled); pointer strings are accepted verbatim #}
+    </div>
+
+    <div class="pulse-plot-bar">
+        <span class="pulse-plot-label muted">preview (synthesized)</span>
+        <span class="pulse-synth-err" hidden></span>
+    </div>
+    <div id="pulse-create-plot" class="pulse-create-plot"></div>
+
+    <div class="pulse-create-actions">
+        <button type="submit" class="btn-sm">Create pulse</button>
+        <button type="button" class="btn-sm outline" onclick="closeInspector()">Cancel</button>
+    </div>
+</form>
+
+<script id="pulse-catalog-data" type="application/json">{{ catalog_json | script_json }}</script>
+<script id="pulse-existing-data" type="application/json">{{ existing_json | script_json }}</script>
+<script id="pulse-pairs-data" type="application/json">{{ pairs_map | tojson }}</script>
+<script>if (window.PulsesPage) window.PulsesPage.initCreate();</script>
+</div>

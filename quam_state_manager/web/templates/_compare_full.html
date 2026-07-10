@@ -1,0 +1,118 @@
+{# Legend: map badge letters to experiment labels #}
+<div class="compare-legend">
+    {% for label in labels %}
+    <span class="compare-legend-item">
+        <span class="tree-state-badge" data-idx="{{ loop.index0 }}">{{ "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[loop.index0] }}</span>
+        <span class="compare-legend-path" title="{{ paths_raw[loop.index0] }}">{{ label }}</span>
+    </span>
+    {% endfor %}
+</div>
+
+{# File tabs #}
+<div class="tree-file-tabs" id="full-cmp-tabs">
+    <span class="tree-file-tab active" onclick="switchFullCmpTab('state')">state.json</span>
+    <span class="tree-file-tab" onclick="switchFullCmpTab('wiring')">wiring.json</span>
+</div>
+
+{# Toolbar #}
+<div class="tree-toolbar">
+    <span class="tree-search-icon">&#128269;</span>
+    <input type="text" class="tree-search" id="full-cmp-search"
+           placeholder="Search keys or values..."
+           oninput="jsonTreeSearch(_fullCmpActiveTree(), this.value)" autocomplete="off">
+    <div class="tree-depth-group">
+        <span class="tree-depth-label">Depth:</span>
+        <button class="btn-sm outline" onclick="jsonTreeCollapseAll(_fullCmpActiveTree())">0</button>
+        <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_fullCmpActiveTree(), 1)">1</button>
+        <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_fullCmpActiveTree(), 2)">2</button>
+        <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_fullCmpActiveTree(), 3)">3</button>
+        <button class="btn-sm outline" onclick="jsonTreeExpandAll(_fullCmpActiveTree())">All</button>
+    </div>
+    <button class="btn-sm outline btn-diff-only" id="full-cmp-diff-only"
+            onclick="toggleUnifiedDiffOnly(_fullCmpActiveTree())">Diff Only</button>
+    <div class="ref-dropdown-wrap">
+        <button class="btn-sm outline btn-ref-data" id="full-cmp-ref-btn"
+                onclick="toggleRefDropdown()">Ref Data</button>
+        <div class="ref-dropdown" id="full-cmp-ref-dropdown" style="display:none">
+            <div class="ref-dropdown-item ref-dropdown-clear" onclick="setUnifiedRef(-1)">
+                Clear reference
+            </div>
+            {% for label in labels %}
+            <div class="ref-dropdown-item" onclick="setUnifiedRef({{ loop.index0 }})" title="{{ paths_raw[loop.index0] }}">
+                <span class="tree-state-badge" data-idx="{{ loop.index0 }}">{{ "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[loop.index0] }}</span>
+                {{ paths_raw[loop.index0] }}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+{# Tree containers #}
+<div id="full-cmp-state-tree"></div>
+<div id="full-cmp-wiring-tree" style="display:none"></div>
+
+<script>
+(function() {
+    var datasets = {{ datasets_json | script_json }};
+
+    renderUnifiedTree("full-cmp-state-tree", datasets.map(function(d) { return { label: d.label, data: d.state }; }), { defaultDepth: 1 });
+    renderUnifiedTree("full-cmp-wiring-tree", datasets.map(function(d) { return { label: d.label, data: d.wiring }; }), { defaultDepth: 1 });
+
+    window._fullCmpActiveTree = function() {
+        var s = document.getElementById("full-cmp-state-tree");
+        return (s && s.style.display !== "none") ? "full-cmp-state-tree" : "full-cmp-wiring-tree";
+    };
+
+    window.switchFullCmpTab = function(which) {
+        var s = document.getElementById("full-cmp-state-tree");
+        var w = document.getElementById("full-cmp-wiring-tree");
+        if (s) s.style.display = (which === "state") ? "" : "none";
+        if (w) w.style.display = (which === "wiring") ? "" : "none";
+        var tabs = document.querySelectorAll("#full-cmp-tabs .tree-file-tab");
+        for (var i = 0; i < tabs.length; i++) {
+            tabs[i].classList.toggle("active", tabs[i].textContent.indexOf(which) >= 0);
+        }
+        var search = document.getElementById("full-cmp-search");
+        if (search && search.value) {
+            jsonTreeSearch(_fullCmpActiveTree(), search.value);
+        }
+    };
+
+    window.toggleRefDropdown = function() {
+        var dd = document.getElementById("full-cmp-ref-dropdown");
+        if (!dd) return;
+        dd.style.display = dd.style.display === "none" ? "block" : "none";
+    };
+
+    window.setUnifiedRef = function(refIdx) {
+        var dd = document.getElementById("full-cmp-ref-dropdown");
+        if (dd) dd.style.display = "none";
+
+        var btn = document.getElementById("full-cmp-ref-btn");
+        if (btn) {
+            btn.textContent = (refIdx >= 0)
+                ? "Ref: " + "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[refIdx]
+                : "Ref Data";
+            btn.classList.toggle("active", refIdx >= 0);
+        }
+
+        var sDs = datasets.map(function(d) { return { label: d.label, data: d.state }; });
+        var wDs = datasets.map(function(d) { return { label: d.label, data: d.wiring }; });
+        renderUnifiedTree("full-cmp-state-tree", sDs, { defaultDepth: 1, refIndex: refIdx });
+        renderUnifiedTree("full-cmp-wiring-tree", wDs, { defaultDepth: 1, refIndex: refIdx });
+
+        var search = document.getElementById("full-cmp-search");
+        if (search && search.value) {
+            jsonTreeSearch(_fullCmpActiveTree(), search.value);
+        }
+    };
+
+    document.addEventListener("click", function(e) {
+        var wrap = document.querySelector(".ref-dropdown-wrap");
+        if (wrap && !wrap.contains(e.target)) {
+            var dd = document.getElementById("full-cmp-ref-dropdown");
+            if (dd) dd.style.display = "none";
+        }
+    });
+})();
+</script>

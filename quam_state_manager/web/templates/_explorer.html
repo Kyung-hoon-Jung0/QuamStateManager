@@ -1,0 +1,74 @@
+{# When served as an HTMX partial (chip load → redirect → /explorer →
+   #table-pane swap), update the base-level banner slot out-of-band so the
+   live-diverged warning appears/clears without a full page render. On a
+   full-page render explorer.html sets full_page — base.html already owns
+   the slot, so emitting it again here would duplicate the id. #}
+{% if not full_page %}
+<div id="live-diverged-slot" hx-swap-oob="outerHTML">{% include '_live_diverged_banner.html' %}</div>
+{% endif %}
+<div class="tree-file-tabs" id="explorer-tabs">
+    <span class="tree-file-tab active" onclick="switchExplorerTab('state')">state.json</span>
+    <span class="tree-file-tab" onclick="switchExplorerTab('wiring')">wiring.json</span>
+</div>
+
+<div class="tree-toolbar">
+    <span class="tree-search-icon">&#128269;</span>
+    <input type="text" class="tree-search" id="explorer-search" placeholder="Search keys or values..."
+           oninput="jsonTreeSearch(_activeTreeId(), this.value)" autocomplete="off">
+    <div class="tree-depth-group">
+        <span class="tree-depth-label">Depth:</span>
+        <button class="btn-sm outline" onclick="jsonTreeCollapseAll(_activeTreeId())">0</button>
+        <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_activeTreeId(), 1)">1</button>
+        <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_activeTreeId(), 2)">2</button>
+        <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_activeTreeId(), 3)">3</button>
+        <button class="btn-sm outline" onclick="jsonTreeExpandAll(_activeTreeId())">All</button>
+    </div>
+    <button class="btn-sm outline" id="explorer-livediff-toggle" type="button"
+            onclick="explorerLiveDiff()"
+            title="Compare the working state against Qualibrate's live state — show what changed (before &rarr; after) and accept per field">
+        &#8644; Live diff</button>
+</div>
+
+<div id="explorer-livediff-bar" class="livediff-bar" hidden>
+    <span>Qualibrate changed <b id="livediff-bar-count">0</b> field(s) &mdash; review before&rarr;after, then accept.</span>
+    <button class="btn-sm" type="button" onclick="explorerAcceptAll()">Accept all</button>
+    <button class="btn-sm outline" type="button" onclick="explorerLiveDiff(false)">Exit diff</button>
+</div>
+
+<div id="explorer-tree-state"></div>
+<div id="explorer-tree-wiring" style="display:none"></div>
+
+<script>
+(function() {
+    var stateData = {{ state_json | script_json }};
+    var wiringData = {{ wiring_json | script_json }};
+
+    renderJsonTree("explorer-tree-state", stateData, { defaultDepth: 1 });
+    renderJsonTree("explorer-tree-wiring", wiringData, { defaultDepth: 1 });
+
+    window._activeTreeId = function() {
+        var stateEl = document.getElementById("explorer-tree-state");
+        return (stateEl && stateEl.style.display !== "none")
+            ? "explorer-tree-state" : "explorer-tree-wiring";
+    };
+
+    window.switchExplorerTab = function(which) {
+        var stateEl = document.getElementById("explorer-tree-state");
+        var wiringEl = document.getElementById("explorer-tree-wiring");
+        if (!stateEl || !wiringEl) return;
+
+        stateEl.style.display = (which === "state") ? "" : "none";
+        wiringEl.style.display = (which === "wiring") ? "" : "none";
+
+        var tabs = document.querySelectorAll("#explorer-tabs .tree-file-tab");
+        for (var i = 0; i < tabs.length; i++) {
+            tabs[i].classList.toggle("active", tabs[i].textContent.indexOf(which) >= 0);
+        }
+
+        var search = document.getElementById("explorer-search");
+        if (search && search.value) {
+            jsonTreeSearch(_activeTreeId(), search.value);
+        }
+    };
+})();
+</script>

@@ -1,0 +1,12 @@
+{# State History gate: a warning the server returns with 409 when a stage /
+   restore-live would discard unsaved edits or overwrite mismatched wiring.
+   Carries an explicit force button so the gated action stays completable
+   (the bare 409 toast would otherwise be a dead end). Surfaced because
+   app.js lets error responses swap into #state-history-detail. #}
+<div class="toast toast-warning sh-confirm" style="transition: opacity 0.5s;">
+    <p>{{ message }}</p>
+    <button type="button" class="contrast btn-sm"
+            hx-post="{{ action_url }}"
+            hx-target="#state-history-detail" hx-swap="innerHTML"
+            hx-confirm="{{ confirm }}">{{ action_label }}</button>
+</div>

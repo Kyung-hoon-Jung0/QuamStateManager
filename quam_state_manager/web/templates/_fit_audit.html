@@ -1,0 +1,97 @@
+{# Fit-Auditor surface — gate-migration triage (docs/50). All styling lives in
+   static/style.css under `#fit-audit`; this partial ships classes only. #}
+<div id="fit-audit">
+  <div class="table-header-row">
+    <h2>Fit Audit <small class="muted">read-only · replays saved fits, never changes chip values</small></h2>
+  </div>
+
+  {# always-visible verdict legend (glyph + token color, colorblind-safe) #}
+  <div class="fa-legend">
+    <span class="muted">Verdicts:</span>
+    <span class="fa-v fa-v-reject">✕ reject</span>
+    <span class="fa-v fa-v-recover">↑ recover</span>
+    <span class="fa-v fa-v-drift">↔ drift</span>
+    <span class="fa-v fa-v-agrees">✓ agrees</span>
+    <span class="fa-v fa-v-unverifiable">? unverifiable</span>
+  </div>
+
+  <details class="fa-explain">
+    <summary>What each verdict means</summary>
+    <p><strong>reject</strong> — the current gate would reject a fit that was accepted (a suspect
+       value already in state). <strong>recover</strong> — it now accepts a fit that was discarded
+       (re-apply candidate). <strong>drift</strong> — both accept but the fitted number moved past
+       tolerance. <strong>unverifiable</strong> — the replay couldn't decide. Every verdict is
+       anchored to a specific gate (its sha256), so it reads as <em>"disagrees with gate&nbsp;X"</em>,
+       never "this fit is bad".</p>
+  </details>
+
+  {# polite live region for screen readers (updated OOB from the digest) #}
+  <span id="fa-live" role="status" aria-live="polite" class="visually-hidden"></span>
+
+  {# setup collapses once a sweep exists so results sit at the top #}
+  <details class="fa-setup" {% if not snap %}open{% endif %}>
+    <summary>Setup
+      <span class="muted">{{ 'env set' if env else 'no env' }}{% if source_root %} · gate source set{% endif %} · {{ n_targets }} run{{ 's' if n_targets != 1 }}</span>
+    </summary>
+    <div class="fa-config">
+      {% if env %}
+        <div>Environment: <code>{{ env }}</code></div>
+      {% else %}
+        <div class="toast toast-warning" role="alert">
+          <p>No QM environment selected —
+            <a href="/generate" hx-get="/generate" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">set one in Generate&nbsp;Config</a>
+            to run the audit.</p>
+        </div>
+      {% endif %}
+      <form class="fa-srcform" hx-post="/fit-audit/source-root" hx-target="#fit-audit" hx-swap="outerHTML">
+        <label style="margin:0">Analysis source&nbsp;root</label>
+        <div class="path-input-group">
+          <input type="text" id="fa-source-root" name="source_root" value="{{ source_root or '' }}"
+                 placeholder="…/qualibration_graphs/superconducting" autocomplete="off">
+          <button type="button" class="outline btn-sm btn-browse"
+                  onclick="openFolderBrowser('fa-source-root')" title="Browse folders">&#128193;</button>
+        </div>
+        <button type="submit" class="btn-sm">Save</button>
+        {% if source_root_error %}
+          <small class="fa-warn">⚠ {{ source_root_error }}</small>
+        {% elif source_root_ok %}
+          <small class="fa-ok">✓ {{ source_root_ok }}</small>
+        {% else %}
+          <small>The hardened <code>calibration_utils/</code> tree to audit against
+            (blank = rely on the env install). Its sha256 is stamped on every verdict.</small>
+        {% endif %}
+      </form>
+    </div>
+  </details>
+
+  {# the single filled CTA — kept OUTSIDE #fit-audit-digest so its OOB re-enable lands #}
+  {% if n_targets %}
+    <div class="fa-run-row">
+      {% if snap and snap.status == 'running' %}
+        <button id="fa-run-btn" class="btn-sync primary" disabled aria-busy="true">Auditing…</button>
+      {% elif not env %}
+        <button id="fa-run-btn" class="btn-sync primary" disabled title="Select a QM environment first">Run backlog audit</button>
+      {% else %}
+        <button id="fa-run-btn" class="btn-sync primary" hx-post="/fit-audit/run"
+                hx-target="#fit-audit-digest" hx-swap="innerHTML">Run backlog audit</button>
+      {% endif %}
+      <span class="muted">{{ n_targets }} auditable run{{ 's' if n_targets != 1 }} · runs in the background, come back anytime</span>
+    </div>
+
+    {% if digest_stale %}
+      <div class="toast toast-warning" role="alert">
+        <p>Results below predate the current source root — re-run the audit.</p>
+      </div>
+    {% endif %}
+
+    <div id="fit-audit-digest">
+      {% if snap %}{% include "_fit_audit_digest.html" %}{% endif %}
+    </div>
+  {% else %}
+    <p class="muted" style="margin:.75rem 0">No auditable runs in the workspace yet — open a data folder in
+      <a href="/datasets" hx-get="/datasets" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">Datasets</a>.
+      Phase-1 families:
+      {% for f in families.values() %}<span class="fa-v fa-v-unverifiable">{{ f.label }}</span> {% endfor %}
+    </p>
+  {% endif %}
+</div>

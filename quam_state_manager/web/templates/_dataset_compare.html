@@ -1,0 +1,120 @@
+{% set inspector_type = "dataset" %}
+{% set inspector_label = "Comparing " ~ runs|length ~ " runs" %}
+{% set inspector_sub = labels | join(" vs ") %}
+{% include '_inspector_header.html' %}
+
+<nav class="dataset-tabs">
+    <ul>
+        <li><a class="active" onclick="switchCompareDatasetTab('figures', this)">Figures</a></li>
+        <li><a onclick="switchCompareDatasetTab('fit-results', this)">Fit Results
+            {% if fit_diff_rows %}<small class="muted">({{ fit_diff_rows|length }})</small>{% endif %}
+        </a></li>
+        <li><a onclick="switchCompareDatasetTab('parameters', this)">Parameters
+            {% if param_diff_rows %}<small class="muted">({{ param_diff_rows|length }})</small>{% endif %}
+        </a></li>
+    </ul>
+</nav>
+
+<article class="dataset-detail" id="ds-compare-root">
+
+{# ── Tab: Figures ── #}
+<div class="dataset-tab-content" id="ds-cmp-tab-figures">
+    {% if all_fig_keys %}
+    {% for fig_key in all_fig_keys %}
+    <div class="compare-figure-row">
+        <div class="compare-figure-label"><code>{{ fig_key }}</code></div>
+        <div class="compare-figure-grid" style="grid-template-columns: repeat({{ runs|length }}, 1fr)">
+            {% for run in runs %}
+            <div class="compare-figure-cell">
+                <div class="compare-figure-run-label">#{{ run.run_id }}</div>
+                {% if fig_key in run.figure_names %}
+                <img src="/dataset/{{ run.uid }}/fig/{{ fig_key }}"
+                     alt="{{ fig_key }}" loading="lazy"
+                     onclick="toggleFigureZoom(this)">
+                {% else %}
+                <div class="compare-figure-na">N/A</div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <p class="muted" style="text-align:center;padding:1rem">No figures in selected runs.</p>
+    {% endif %}
+</div>
+
+{# ── Tab: Fit Results ── #}
+<div class="dataset-tab-content hidden" id="ds-cmp-tab-fit-results">
+    {% if fit_diff_rows %}
+    <div class="table-scroll">
+    <table class="data-table" role="grid">
+        <thead><tr>
+            <th>Qubit</th><th>Property</th>
+            {% for label in labels %}
+            <th title="{{ label }}">{{ label | truncate(18) }}{% if loop.index0 == ref_idx %} <small class="muted">(ref)</small>{% endif %}</th>
+            {% endfor %}
+        </tr></thead>
+        <tbody>
+        {% for row in fit_diff_rows %}
+        <tr>
+            <td><strong>{{ row.qubit }}</strong></td>
+            <td><code>{{ row.property }}</code></td>
+            {% set ref_val = row["values"][ref_idx].value %}
+            {% for v in row["values"] %}
+            {% set is_diff = (loop.index0 != ref_idx) and (v.value != ref_val) %}
+            <td{% if is_diff %} class="cell-diff"{% endif %}>
+                {% if v.value is none %}<span class="muted">-</span>
+                {% elif v.value is number and (v.value | abs >= 1e6 or (0 < v.value | abs < 1e-3)) %}{{ "%.6e" | format(v.value) }}
+                {% elif v.value is number %}{{ "%.6f" | format(v.value) }}
+                {% elif v.value == true %}<span class="outcome-badge outcome-ok">true</span>
+                {% elif v.value == false %}<span class="outcome-badge outcome-fail">false</span>
+                {% else %}{{ v.value }}{% endif %}
+            </td>
+            {% endfor %}
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="muted" style="text-align:center;padding:1rem">No fit result differences found.</p>
+    {% endif %}
+</div>
+
+{# ── Tab: Parameters ── #}
+<div class="dataset-tab-content hidden" id="ds-cmp-tab-parameters">
+    {% if param_diff_rows %}
+    <div class="table-scroll">
+    <table class="data-table" role="grid">
+        <thead><tr>
+            <th>Parameter</th>
+            {% for label in labels %}
+            <th title="{{ label }}">{{ label | truncate(18) }}{% if loop.index0 == ref_idx %} <small class="muted">(ref)</small>{% endif %}</th>
+            {% endfor %}
+        </tr></thead>
+        <tbody>
+        {% for row in param_diff_rows %}
+        <tr>
+            <td><code>{{ row.key }}</code></td>
+            {% set ref_val = row["values"][ref_idx].value %}
+            {% for v in row["values"] %}
+            {% set is_diff = (loop.index0 != ref_idx) and (v.value != ref_val) %}
+            <td{% if is_diff %} class="cell-diff"{% endif %}>
+                {% if v.value is none %}<span class="muted">-</span>
+                {% elif v.value is number %}{{ "%.4g" | format(v.value) }}
+                {% elif v.value is iterable and v.value is not string %}<small class="muted">[{{ v.value | length }} items]</small>
+                {% else %}{{ v.value }}{% endif %}
+            </td>
+            {% endfor %}
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="muted" style="text-align:center;padding:1rem">All parameters are identical across selected runs.</p>
+    {% endif %}
+</div>
+
+</article>

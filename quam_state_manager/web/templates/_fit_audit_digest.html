@@ -1,0 +1,81 @@
+{# Digest partial — progress + per-family confusion + flagged rows. Self-polls
+   /fit-audit/status while running; OOB-swaps the Run button + the aria-live region. #}
+
+{% if snap.status == 'running' %}
+<button id="fa-run-btn" class="btn-sync primary" hx-swap-oob="true" disabled aria-busy="true">Auditing…</button>
+{% else %}
+<button id="fa-run-btn" class="btn-sync primary" hx-swap-oob="true" hx-post="/fit-audit/run"
+        hx-target="#fit-audit-digest" hx-swap="innerHTML">Run backlog audit</button>
+{% endif %}
+<span id="fa-live" hx-swap-oob="true" role="status" aria-live="polite"
+      class="visually-hidden">{{ snap.done }} of {{ snap.total }} audited — {{ snap.status }}</span>
+
+<div class="fa-digest"
+     {% if snap.status == 'running' %}hx-get="/fit-audit/status" hx-trigger="load delay:1200ms"
+       hx-target="#fit-audit-digest" hx-swap="innerHTML"{% endif %}>
+
+  {% if snap.status == 'error' %}
+    <div class="toast toast-error" role="alert"><p>Audit failed: {{ snap.error }}</p></div>
+  {% endif %}
+
+  {% set flagged_n = snap.digest.flagged | length %}
+  <div class="fa-progress">
+    <strong>{{ snap.done }}/{{ snap.total }}</strong> run{{ 's' if snap.total != 1 }} audited
+    {% if snap.status == 'running' %}
+      <span class="muted">— auditing…</span>
+      <button class="btn-sm outline" hx-post="/fit-audit/cancel"
+              hx-target="#fit-audit-digest" hx-swap="innerHTML">Cancel</button>
+    {% elif snap.status == 'error' %}
+      <span class="fa-warn">— stopped</span>
+    {% elif snap.status == 'cancelled' %}
+      <span class="muted">— cancelled ({{ snap.done }} of {{ snap.total }} done)</span>
+    {% else %}
+      {% if flagged_n %}<span class="fa-warn">— {{ flagged_n }} need review</span>
+      {% else %}<span class="fa-ok">— ✓ all agree</span>{% endif %}
+    {% endif %}
+  </div>
+
+  {% set dg = snap.digest %}
+  {% for fam, f in dg.families.items() %}
+    <div class="fa-fam">
+      <span class="fa-fam-label">{{ f.label }}</span>
+      <span class="fa-fam-meta">{{ f.runs }} run{{ 's' if f.runs != 1 }}{% if f.gate_hashes %} · gate {{ f.gate_hashes | join(', ') }}{% endif %}</span>
+      {% for v, g in [('reject','✕'), ('drift','↔'), ('recover','↑'), ('agrees','✓'), ('unverifiable','?')] %}
+        {% if f.counts[v] %}<span class="fa-v fa-v-{{ v }}">{{ g }} {{ v }} {{ f.counts[v] }}</span>{% endif %}
+      {% endfor %}
+    </div>
+  {% endfor %}
+
+  {% if dg.flagged %}
+    <table class="diag-table">
+      <thead>
+        <tr><th scope="col">Verdict</th><th scope="col">Family</th><th scope="col">Run</th>
+            <th scope="col">Qubit</th><th scope="col">Stored→Fresh</th><th scope="col">Detail</th></tr>
+      </thead>
+      <tbody>
+        {% for r in dg.flagged %}
+          {% set glyph = {'reject': '✕', 'drift': '↔', 'recover': '↑'}[r.verdict] or '?' %}
+          <tr class="fa-row-{{ r.verdict }}">
+            <td><span class="fa-v fa-v-{{ r.verdict }}">{{ glyph }} {{ r.verdict }}</span></td>
+            <td>{{ r.family }}</td>
+            <td class="fa-run">
+              {% if r.uid %}
+                <a href="/dataset/{{ r.uid }}" hx-get="/dataset/{{ r.uid }}"
+                   hx-target="#inspector-pane" hx-swap="innerHTML" hx-sync="#inspector-pane:replace">{{ r.run }}</a>
+              {% else %}{{ r.run }}{% endif %}
+            </td>
+            <td>{{ r.qubit }}</td>
+            <td>
+              {% if r.stored_success %}<span class="fa-glyph-ok">✓</span>{% elif r.stored_success is not none %}<span class="fa-glyph-no">✗</span>{% else %}<span class="fa-glyph-un">?</span>{% endif %}
+              →
+              {% if r.fresh_success %}<span class="fa-glyph-ok">✓</span>{% elif r.fresh_success is not none %}<span class="fa-glyph-no">✗</span>{% else %}<span class="fa-glyph-un">?</span>{% endif %}
+            </td>
+            <td class="fa-detail">{{ r.detail }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% elif snap.status == 'done' %}
+    <div class="toast toast-success"><p>No disagreements — every audited fit agrees with the current gate.</p></div>
+  {% endif %}
+</div>

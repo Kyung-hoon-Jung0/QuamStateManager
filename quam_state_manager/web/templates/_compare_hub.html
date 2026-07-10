@@ -1,0 +1,171 @@
+{# Compare hub (docs/49) — sources basket [A] + context [B] + results [C].
+   Stateless: the basket IS the URL (`src=` ref tokens); every control goes
+   through window.cmpHub (compare-hub.js), which rewrites the query string,
+   pushes it, and re-GETs this partial into #table-pane.
+   U4 (BINDING): the ①②③ context switcher and strictness control live
+   OUTSIDE the collapsible sources panel — wrong-bucket recovery stays one
+   click even after the basket collapses to its toolbar line. #}
+<div id="cmp-hub-root" class="cmp-hub"
+     data-bucket="{{ bucket }}" data-preset="{{ preset }}"
+     data-ref="{{ ref_idx }}" data-sources="{{ sources_count }}">
+
+  <div class="cmp-hub-header">
+    <h2>Compare</h2>
+    {% if result and not compare_error %}
+    <span class="cmp-hub-headline-mini muted">
+      {% if result.identical %}✓ identical{% elif result.needs_confirm %}mapping needed{% else %}{{ result.headline.changed | groupdigits }} changed{% endif %}
+      · {{ preset_labels[preset] }}
+    </span>
+    {% endif %}
+  </div>
+
+  {# ── [A] SOURCES — collapses to a one-line toolbar once results exist ── #}
+  <details class="cmp-setup" {% if not result %}open{% endif %}>
+    <summary class="cmp-setup-summary">
+      <span class="cmp-setup-line">
+        {{ sources_count }} source{{ '' if sources_count == 1 else 's' }}
+        {%- for row in basket if not row.error %}{% if loop.index <= 3 %} · {{ row.label | truncate(26) }}{% elif loop.index == 4 %} · …{% endif %}{% endfor %}
+      </span>
+      <span class="cmp-setup-edit muted">Edit sources</span>
+    </summary>
+
+    <section class="cmp-sources" aria-label="Comparison sources">
+      <div class="cmp-basket">
+        {% for row in basket %}
+        <div class="cmp-src-row{% if row.error %} cmp-src-error{% endif %}"
+             data-src-idx="{{ row.src_idx }}" data-ref="{{ row.ref }}"
+             {% if row.valid_idx is not none %}data-valid-idx="{{ row.valid_idx }}"{% endif %}>
+          {% if row.error %}
+          <span class="cmp-src-gutter" title="unreadable — excluded from the comparison">✕</span>
+          <span class="cmp-src-label cmp-src-errlabel" title="{{ row.ref }}">{{ row.ref | truncate(48) }}</span>
+          <span class="cmp-src-errmsg">{{ row.error }}</span>
+          {% if row.transient %}
+          <button type="button" class="btn-xs outline" onclick="cmpHub.reload()"
+                  title="The read hit a transient lock/torn-pair — retry">Retry</button>
+          {% endif %}
+          {% else %}
+          <button type="button"
+                  class="cmp-src-star{% if row.valid_idx == ref_idx %} active{% endif %}"
+                  title="Use as the reference (Δ and added/removed are vs this source)"
+                  onclick="cmpHub.setRef({{ row.valid_idx }})">★</button>
+          <span class="cmp-src-ord">{{ row.valid_idx + 1 }}</span>
+          <span class="cmp-src-label" title="{{ row.path }}">{{ row.label }}</span>
+          <span class="cmp-src-badge cmp-badge-{{ row.badge | lower }}">{{ row.badge }}</span>
+          {% if row.wiring_missing %}
+          <span class="cmp-src-badge cmp-badge-warn"
+                title="wiring.json missing — wiring-backed values classify as not-in-source, never as differences">no wiring</span>
+          {% endif %}
+          {% endif %}
+          <button type="button" class="cmp-src-x" title="Remove"
+                  onclick="cmpHub.removeAt(this)">&times;</button>
+        </div>
+        {% endfor %}
+        {% if not basket %}
+        <p class="muted cmp-basket-empty">No sources yet — add two or more below.
+          The same chip can be added several times at different points in time.</p>
+        {% endif %}
+      </div>
+
+      <div class="cmp-pickers">
+        {% if hub_active and hub_active.path %}
+        <span class="cmp-pick-current">
+          <button type="button" class="btn-sm outline" data-ref="working:{{ hub_active.path }}"
+                  onclick="cmpHub.addFrom(this)"
+                  title="Add {{ hub_active.name }}'s working state (your unsaved edits included)">
+            + Current chip</button>
+          <button type="button" class="btn-sm outline cmp-pick-live-btn" data-ref="ws:{{ hub_active.path }}"
+                  onclick="cmpHub.addFrom(this)"
+                  title="Add {{ hub_active.name }}'s live files instead (what's on disk now)">live</button>
+        </span>
+        {% endif %}
+        <select id="cmp-workspace-select" aria-label="Add a workspace chip"
+                onchange="cmpHubPickWorkspace(this)">
+          <option value="">Workspace…</option>
+          {% for chip in workspace_chips %}
+          <option value="{{ chip.path }}" data-name="{{ chip.name }}">{{ chip.name }}{% if chip.snapshot_ts %} — run {{ chip.snapshot_ts }}{% endif %}</option>
+          {% endfor %}
+        </select>
+        <select id="cmp-history-select" aria-label="Add from Param/State History"
+                onchange="cmpHubPickHistory(this)">
+          <option value="">History…</option>
+          {% for chip in history_chips %}
+          <option value="{{ chip.key }}" data-name="{{ chip.key }}">{{ chip.key }} ({{ chip.snapshot_count }} snapshots)</option>
+          {% endfor %}
+        </select>
+        <select id="cmp-recent-select" aria-label="Add a recent folder"
+                onchange="cmpHubPickRecent(this)">
+          <option value="">Recent…</option>
+          {# populated client-side from localStorage.recentFolders #}
+        </select>
+        <button type="button" class="btn-sm outline"
+                onclick="openFolderBrowser('cmp-hub-browse-target')"
+                title="Browse for a quam_state folder">&#128193; Browse</button>
+      </div>
+      {# "which state?" popover lands here (Live / Working / snapshots / runs) #}
+      <div id="cmp-options-pop"></div>
+    </section>
+  </details>
+
+  {# ── [B] CONTEXT — always visible (U4); user-declared, never auto (axiom 2) ── #}
+  {% if suggestion %}
+  {# fingerprint-proven suggestion — ghost by default; focused primary CTA
+     only for hinted deep links (U1b). Never pre-selected. #}
+  <div class="cmp-suggest{% if suggestion.primary %} cmp-suggest-primary{% endif %}">
+    <span class="cmp-suggest-text">These sources fingerprint as the same chip.</span>
+    <button type="button"
+            class="{% if suggestion.primary %}btn-sync primary{% else %}btn-xs outline cmp-suggest-ghost{% endif %}"
+            data-bucket="1" onclick="cmpHub.setBucket(this)"
+            {% if suggestion.primary %}autofocus{% endif %}>
+      Compare as ① Same chip, over time{% if suggestion.primary %} &#9166;{% endif %}</button>
+  </div>
+  {% endif %}
+  <section class="cmp-context" role="group" aria-label="Comparison context">
+    <span class="cmp-context-label">Context</span>
+    {% for b, title, sub in hub_buckets %}
+    <button type="button" class="cmp-bucket-btn{% if bucket == b %} active{% endif %}"
+            aria-pressed="{{ 'true' if bucket == b else 'false' }}"
+            data-bucket="{{ b }}" onclick="cmpHub.setBucket(this)">
+      <span class="cmp-bucket-title">{{ title }}</span>
+      <span class="cmp-bucket-sub">{{ sub }}</span>
+    </button>
+    {% endfor %}
+    <span class="cmp-strictness" role="group" aria-label="Strictness">
+      {% for pid, plabel in preset_labels.items() %}
+      <button type="button" class="cmp-strict-btn{% if preset == pid %} active{% endif %}"
+              aria-pressed="{{ 'true' if preset == pid else 'false' }}"
+              data-preset="{{ pid }}" title="{{ preset_tips[pid] }}"
+              onclick="cmpHub.setPreset(this)">{{ plabel }}</button>
+      {% endfor %}
+    </span>
+  </section>
+
+  {# ── [C] RESULTS ── #}
+  <section id="cmp-results">
+    {% if legacy_from %}
+    <p class="muted cmp-hint">{{ {'diff': 'Diff', 'compare': 'Compare', 'chip-compare': 'Chip Compare'}[legacy_from] }}
+      moved here — the Compare hub covers 2-way diffs, N-way comparisons and
+      cross-device mapping in one place.</p>
+    {% endif %}
+    {% if trunc_total %}
+    <div class="toast toast-warning"><p>Showing the first {{ sources_count }} of
+      {{ trunc_total }} selections — the basket holds at most 8 sources.</p></div>
+    {% endif %}
+    {% if map_warning %}
+    <div class="toast toast-warning"><p>{{ map_warning }}</p></div>
+    {% endif %}
+    {% if compare_error %}
+    <div class="toast toast-warning"><p>{{ compare_error }}</p></div>
+    {% elif result %}
+    {% include '_compare_hub_results.html' %}
+    {% elif sources_count >= 2 %}
+    <p class="muted cmp-hint">Pick the comparison context above — ① same chip over
+      time, ② same design on different devices, or ③ different devices.
+      Choosing it runs the comparison.</p>
+    {% elif sources_count == 1 %}
+    <p class="muted cmp-hint">Add at least one more source.</p>
+    {% endif %}
+  </section>
+</div>
+
+<input type="hidden" id="cmp-hub-browse-target" onchange="cmpHubBrowsePicked(this)">
+<script>window.cmpHub && window.cmpHub._rescan && window.cmpHub._rescan();</script>

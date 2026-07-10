@@ -1,0 +1,196 @@
+<div class="topo-dashboard">
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     Section 1: Summary Stat Cards
+     ═══════════════════════════════════════════════════════════════════ -->
+<!-- The old always-on summary strip was folded into the richer Overview section
+     below (Section 3, data-topo-section="overview"). -->
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     Section 1.5: Chip Health Summary — at a glance: broken? stale? in spec?
+     (built client-side from topo.summary + thresholds + recency + diagnostics)
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="topo-section topo-health-section" data-topo-section="health">
+    <div class="topo-verdict-banner" id="topo-verdict-banner" hidden></div>
+    <div class="topo-health-head">
+        <h3 class="topo-section-title">Health</h3>
+        <button type="button" class="btn-sm outline topo-thresh-btn" onclick="toggleThresholdEditor()"
+                title="Edit the pass / warn / fail spec thresholds (saved to this browser)">&#9881; Thresholds</button>
+        <details class="topo-report-export">
+            <summary class="btn-sm outline" title="Download a dated chip report card">&#11015; Report</summary>
+            <div class="topo-report-menu">
+                <a class="btn-sm" href="/topology/report?format=md" download onclick="return ChipStatus.reportHref(this,'md')">Markdown</a>
+                <a class="btn-sm" href="/topology/report?format=csv" download onclick="return ChipStatus.reportHref(this,'csv')">CSV</a>
+                <a class="btn-sm" href="/topology/report?format=html" download onclick="return ChipStatus.reportHref(this,'html')">HTML</a>
+            </div>
+        </details>
+        <label class="topo-toggle topo-colormode-toggle" title="Colour the diagram + heatmaps by absolute spec verdict instead of the per-metric min/max range">
+            <input type="checkbox" id="topo-spec-color" onchange="setSpecColorMode(this.checked)"> Spec colours
+        </label>
+        <span class="topo-density-ctl" title="Tile size — shrink the boxes (the numbers stay the same size)">
+            <span class="density-label">Tiles</span>
+            <button type="button" class="btn-sm outline density-preset" data-density="0.7">S</button>
+            <button type="button" class="btn-sm outline density-preset" data-density="0.85">M</button>
+            <button type="button" class="btn-sm outline density-preset" data-density="1">L</button>
+            <input type="range" id="topo-density-slider" min="0.55" max="1.15" step="0.05" value="1" aria-label="Tile size">
+        </span>
+        <span class="topo-health-asof muted" id="topo-health-asof"></span>
+    </div>
+    <div class="topo-thresh-editor" id="topo-thresh-editor" hidden></div>
+    <div class="topo-health-tiles" id="topo-health-tiles"></div>
+    <div class="topo-health-worst" id="topo-health-worst"></div>
+</div>
+
+{# Phase C — one scrolling dashboard. Sticky SCROLL-SPY jump bar: click
+   smooth-scrolls to the section; scrolling highlights the matching tab. Lives
+   at top level so it stays pinned across every section. #}
+<div class="topo-subnav" role="tablist" aria-label="Chip Status sections">
+    <button type="button" class="topo-subnav-btn" role="tab" data-view="topology"
+            onclick="setChipStatusView('topology', this, true)" title="Jump to the chip topology diagram">Topology</button>
+    <button type="button" class="topo-subnav-btn" role="tab" data-view="overview"
+            onclick="setChipStatusView('overview', this, true)" title="Jump to the per-metric overview">Overview</button>
+    <button type="button" class="topo-subnav-btn" role="tab" data-view="distributions"
+            onclick="setChipStatusView('distributions', this, true)" title="Jump to the distribution histograms">Distributions</button>
+    <button type="button" class="topo-subnav-btn" role="tab" data-view="gate"
+            onclick="setChipStatusView('gate', this, true)" title="Jump to the 2Q gate fidelity (RB)">Gate (2Q)</button>
+    <button type="button" class="topo-subnav-btn" role="tab" data-view="fidelity"
+            onclick="setChipStatusView('fidelity', this, true)" title="Jump to the fidelity panels">Fidelity</button>
+    <button type="button" class="topo-subnav-btn" role="tab" data-view="coherence"
+            onclick="setChipStatusView('coherence', this, true)" title="Jump to the coherence panels">Coherence</button>
+    <button type="button" class="topo-subnav-btn" role="tab" data-view="frequencies"
+            onclick="setChipStatusView('frequencies', this, true)" title="Jump to the frequency panels">Frequencies</button>
+    <button type="button" class="topo-subnav-btn" role="tab" data-view="calibration"
+            onclick="setChipStatusView('calibration', this, true)" title="Jump to the calibration panels">Calibration</button>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     Section 2: Topology — HTML/SVG with always-visible property cards
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="topo-section" id="sec-topology">
+    <div class="topology-toolbar">
+        <h2 style="white-space:nowrap">Chip Status</h2>
+        {% if diag_summary is defined and diag_summary %}
+          {% if diag_summary.error %}
+          <a class="topo-health-badge bad" href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+             title="Open the diagnostics report">&#9940; {{ diag_summary.error }} error{{ 's' if diag_summary.error != 1 }}</a>
+          {% elif diag_summary.warning %}
+          <a class="topo-health-badge warn" href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+             title="Open the diagnostics report">&#9888; {{ diag_summary.warning }} warning{{ 's' if diag_summary.warning != 1 }}</a>
+          {% elif diag_summary.info %}
+          <a class="topo-health-badge info" href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+             title="Open the diagnostics report">&#9432; {{ diag_summary.info }} note{{ 's' if diag_summary.info != 1 }}</a>
+          {% else %}
+          <span class="topo-health-badge ok" title="No structural problems found">&#10003; healthy</span>
+          {% endif %}
+        {% endif %}
+        <button class="outline btn-sm history-toggle-btn" onclick="toggleHistoryPanel()">
+            History (<span id="history-count">{{ history_count | default(0) }}</span>)
+        </button>
+        <label class="topo-toggle">
+            <input type="checkbox" id="topo-labels-toggle" checked onchange="toggleEdgeLabels(this.checked)">
+            Edge labels
+        </label>
+    </div>
+    <div id="topology-legend" class="topology-legend"></div>
+    <p class="topo-hint"><small class="muted">Tip: click a qubit to inspect it &middot; double-click for its wiring JSON &middot; <kbd>Tab</kbd> into the grid, <kbd>&larr;&uarr;&darr;&rarr;</kbd> to move, <kbd>Enter</kbd> to inspect, <kbd>Esc</kbd> to close</small></p>
+    <div class="topo-html-wrap" id="topo-html-wrap"></div>
+    <div class="topo-colorscale-note">
+        <small>Heatmap: <span id="cs-low" class="cs-swatch">&#9632;</span> low <span id="cs-mid" class="cs-swatch">&#9632;</span> mid <span id="cs-high" class="cs-swatch">&#9632;</span> high</small>
+        <select id="palette-selector" class="palette-selector" onchange="switchPalette(this.value)"></select>
+    </div>
+    <div class="topo-colorscale-note">
+        <small>Bar chart: <span id="cs-bar-low" class="cs-swatch">&#9632;</span> low <span id="cs-bar-mid" class="cs-swatch">&#9632;</span> mid <span id="cs-bar-high" class="cs-swatch">&#9632;</span> high</small>
+        <select id="bar-palette-selector" class="palette-selector" onchange="switchBarPalette(this.value)"></select>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     Section 3: Qubit Heatmap Grid
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="topo-section" data-topo-section="overview">
+    <h3 class="topo-section-title">Overview</h3>
+    <div class="topo-summary-cards" id="topo-overview-tiles"></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     Section 4: Distribution Histograms
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="topo-section" data-topo-section="distributions">
+    <h3 class="topo-section-title">Distributions</h3>
+    <div class="topo-histograms" id="topo-histograms">
+        <div class="topo-hist-box" id="hist-box-gate-fidelity">
+            <div class="topo-hist-title">Gate Fidelity</div>
+            <div class="topo-hist-chart" id="hist-gate-fidelity"></div>
+        </div>
+        <div class="topo-hist-box" id="hist-box-t1">
+            <div class="topo-hist-title">T1</div>
+            <div class="topo-hist-chart" id="hist-t1"></div>
+        </div>
+        <div class="topo-hist-box" id="hist-box-cz-fidelity">
+            <div class="topo-hist-title">CZ Fidelity</div>
+            <div class="topo-hist-chart" id="hist-cz-fidelity"></div>
+        </div>
+        <div class="topo-hist-box" id="hist-box-f01">
+            <div class="topo-hist-title">f_01 Frequency</div>
+            <div class="topo-hist-chart" id="hist-f01"></div>
+        </div>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     Section 5: Gate Fidelity — 2Q RB (pair-based: grid + bar chart)
+     ═══════════════════════════════════════════════════════════════════ -->
+<div id="topo-2q-rb-panels" data-topo-section="2qrb"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     Section 6: Per-Metric Detail Panels (grid + bar chart each)
+     ═══════════════════════════════════════════════════════════════════ -->
+<div id="topo-metric-panels" data-topo-section="metrics"></div>
+
+<!-- JSON drill-down panel (hidden by default) -->
+<div id="json-panel" class="json-panel hidden">
+    <div class="json-panel-header">
+        <span id="json-panel-title">Wiring JSON</span>
+        <button onclick="closeJsonPanel()">&#10005;</button>
+    </div>
+    <div id="json-panel-tree" class="json-tree"></div>
+</div>
+
+</div><!-- .topo-dashboard -->
+
+<script>
+ChipStatus.mount({
+    topo: {{ topology_json | script_json }},
+    rawWiring: {{ wiring_json | script_json }},
+    defaultThresholds: {{ (default_thresholds | default({})) | script_json }},
+    metricMeta: {{ (metric_meta | default({})) | script_json }},
+    diagFindings: {{ (diag_findings | default([])) | script_json }},
+    chipView: {{ (chip_view or '') | tojson }},
+    historyCount: {{ history_count | default(0) }}
+});
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     History Panel (toggleable drawer)
+     ═══════════════════════════════════════════════════════════════════ -->
+<div id="history-panel" class="history-panel">
+    <div class="history-panel-header">
+        <span>State History</span>
+        <button class="outline btn-sm" onclick="toggleHistoryPanel()">&#10005;</button>
+    </div>
+    <div id="history-content"
+         hx-get="/api/history"
+         hx-trigger="intersect once"
+         hx-swap="innerHTML">
+        <p class="muted" style="padding: 0.5rem;">Loading history...</p>
+    </div>
+</div>
+
+<script>
+if (typeof _restoreHistoryPanelState === 'function') _restoreHistoryPanelState();
+</script>
+
+<!-- Live-state change detection: poll mtime (os.stat only), show banner -->
+<script>
+ChipStatus.liveDetection();
+</script>

@@ -1,0 +1,72 @@
+{# Re-generate Config — reuses the Generate wizard, PRE-FILLED from an existing
+   chip (core.regen_spec) and building into a NEW folder with the source chip's
+   calibrated values merged back on (core.regenerate). Default source = the
+   loaded chip; "Load different…" swaps another folder. Compact / VSCode-tight. #}
+<div class="regen" id="regen-surface" data-source-path="{{ active_path or '' }}">
+  <div class="regen-bar">
+    <span class="regen-k">Source</span>
+    <span class="regen-chip" id="regen-chip">{{ active_name or '— no chip loaded —' }}</span>
+    <span class="regen-meta muted" id="regen-meta"></span>
+    <span class="regen-spacer"></span>
+    <input type="text" id="regen-src-input" class="visually-hidden" tabindex="-1" aria-hidden="true">
+    <button type="button" class="btn-sm outline" id="regen-load-btn"
+            onclick="openFolderBrowser('regen-src-input')"
+            title="Load a different state/wiring folder to re-generate from">Load different…</button>
+  </div>
+  <div id="regen-status" class="regen-status" hidden></div>
+
+  {# The Generate wizard, pre-filled. Its title is re-labelled to "Re-generate
+     config" by the bootstrap; its step nav + panels are reused as-is. #}
+  <div class="regen-wizard" id="regen-body">
+    {% include '_generate.html' %}
+  </div>
+</div>
+
+<script>
+(function () {
+  function boot() {
+    function say(msg, cls) {
+      var s = document.getElementById("regen-status");
+      if (!s) return;
+      s.hidden = false; s.className = "regen-status " + (cls || "");
+      s.textContent = msg;
+    }
+    function hydrate(folder) {
+      say("Reading chip & reconstructing spec…");
+      fetch("/regenerate/reconstruct", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folder: folder || null })
+      }).then(function (r) { return r.json(); }).then(function (res) {
+        if (!res.ok) { say("✗ " + (res.error || "Could not reconstruct spec."), "regen-status-err"); return; }
+        if (!window.QuamGen || !QuamGen.hydrateFromSpec) { say("Wizard not ready — reload the page.", "regen-status-err"); return; }
+        if (QuamGen.init) QuamGen.init();      // ensure mounted (idempotent)
+        QuamGen.hydrateFromSpec(res.spec, {
+          mode: "regenerate", buildEndpoint: "/regenerate/build",
+          sourcePath: res.source_folder
+        });
+        var chip = document.getElementById("regen-chip");
+        if (chip && res.source_name) chip.textContent = res.source_name;
+        var meta = document.getElementById("regen-meta");
+        if (meta) meta.textContent =
+          (res.spec.qubits || []).length + " qubits · " +
+          (res.spec.qubit_pairs || []).length + " pairs" +
+          (res.mixed_gates ? " · mixed gates" : "");
+        var t = document.querySelector("#regen-body .gen-title");
+        if (t) t.textContent = "Re-generate config";
+        var notes = res.notes || [];
+        say(notes.length
+              ? "⚠ " + notes.join("  ")
+              : "Pre-filled from the source chip — edit ports · bands · qubits/pairs, then pick a NEW output folder (step 7) and Generate. Calibrated values are carried over.",
+            notes.length ? "regen-status-warn" : "");
+      }).catch(function (e) { say("✗ " + e, "regen-status-err"); });
+    }
+    hydrate(null);   // the currently loaded chip
+    var src = document.getElementById("regen-src-input");
+    if (src) src.addEventListener("change", function () {
+      if (src.value.trim()) hydrate(src.value.trim());
+    });
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
+  else boot();
+})();
+</script>

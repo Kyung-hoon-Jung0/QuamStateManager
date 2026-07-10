@@ -1,0 +1,104 @@
+{# Shared diagnostics findings list — grouped into collapsible domain sections,
+   with clickable severity/advisory filter pills. Expects: findings (list of
+   Finding objects), diag_summary (dict), allow_jump (bool). Self-contained: the
+   bucket counts and domain grouping are computed here, so every include site
+   (the /diagnostics page + the drag-drop config/wiring previews) groups
+   identically without extra route context.
+
+   A finding's "bucket" (drives the filter pills + the left-rail tint):
+     error · warning (non-advisory) · advisory (an Optional recommendation, e.g.
+     a band-edge headroom nudge — surfaced as a distinct "Recommendation" tier
+     WITHOUT lowering its warning severity) · info (a "suggestion"). #}
+
+{%- set ns = namespace(e=0, w=0, a=0, i=0) -%}
+{%- set groups = {} -%}
+{%- for f in findings -%}
+  {%- set bucket = 'error' if f.severity == 'error' else ('info' if f.severity == 'info' else ('advisory' if f.advisory else 'warning')) -%}
+  {%- if bucket == 'error' -%}{%- set ns.e = ns.e + 1 -%}
+  {%- elif bucket == 'warning' -%}{%- set ns.w = ns.w + 1 -%}
+  {%- elif bucket == 'advisory' -%}{%- set ns.a = ns.a + 1 -%}
+  {%- else -%}{%- set ns.i = ns.i + 1 -%}{%- endif -%}
+  {%- set d = f.category | diag_domain -%}
+  {%- if groups.update({d: groups.get(d, []) + [f]}) -%}{%- endif -%}
+{%- endfor -%}
+
+<div class="diag-summary" id="diag-filter-bar">
+  {% if diag_summary.total == 0 %}
+    <span class="diag-ok">&#10003; No structural issues found</span>
+  {% else %}
+    {% if ns.e %}<button type="button" class="diag-pill diag-error" data-bucket="error" aria-pressed="true" title="Show/hide errors (would crash a node run)">{{ ns.e }} error{{ 's' if ns.e != 1 }}</button>{% endif %}
+    {% if ns.w %}<button type="button" class="diag-pill diag-warning" data-bucket="warning" aria-pressed="true" title="Show/hide warnings">{{ ns.w }} warning{{ 's' if ns.w != 1 }}</button>{% endif %}
+    {% if ns.a %}<button type="button" class="diag-pill diag-advisory" data-bucket="advisory" aria-pressed="true" title="Show/hide optional recommendations">{{ ns.a }} recommendation{{ 's' if ns.a != 1 }}</button>{% endif %}
+    {% if ns.i %}<button type="button" class="diag-pill diag-info" data-bucket="info" aria-pressed="true" title="Show/hide suggestions">{{ ns.i }} suggestion{{ 's' if ns.i != 1 }}</button>{% endif %}
+    <span class="diag-shown-count muted"></span>
+  {% endif %}
+</div>
+
+{% if findings %}
+<div class="diag-results">
+{% for dkey, dlabel in diag_domains %}
+  {% set rows = groups.get(dkey, []) %}
+  {% if rows %}
+    {% set se = rows | selectattr('severity', 'equalto', 'error') | list | length %}
+    {% set sa = rows | selectattr('advisory') | selectattr('severity', 'equalto', 'warning') | list | length %}
+    {% set sw = (rows | selectattr('severity', 'equalto', 'warning') | list | length) - sa %}
+    {% set si = rows | selectattr('severity', 'equalto', 'info') | list | length %}
+    {# Open by default any domain with a crash-class error or a real (non-
+       advisory) warning; advisory-only / info-only domains start collapsed so
+       by-design recommendations don't shout on load. #}
+    <details class="detail-section diag-domain" data-domain="{{ dkey }}"{{ ' open' if (se or sw) else '' }}>
+      <summary class="section-header diag-domain-summary">
+        <span class="diag-domain-title">{{ dlabel }}</span>
+        <span class="diag-domain-badges">
+          {% if se %}<span class="diag-mini diag-error" title="{{ se }} error(s)">{{ se }}</span>{% endif %}
+          {% if sw %}<span class="diag-mini diag-warning" title="{{ sw }} warning(s)">{{ sw }}</span>{% endif %}
+          {% if sa %}<span class="diag-mini diag-advisory" title="{{ sa }} recommendation(s)">{{ sa }}</span>{% endif %}
+          {% if si %}<span class="diag-mini diag-info" title="{{ si }} suggestion(s)">{{ si }}</span>{% endif %}
+        </span>
+      </summary>
+      <table class="diag-table">
+        <thead>
+          <tr><th>Severity</th><th>Location</th><th>Issue</th>{% if allow_jump %}<th></th>{% endif %}</tr>
+        </thead>
+        <tbody>
+        {% for f in rows %}
+          {% set bucket = 'error' if f.severity == 'error' else ('info' if f.severity == 'info' else ('advisory' if f.advisory else 'warning')) %}
+          <tr class="diag-row diag-row-{{ f.severity }}{% if f.advisory %} diag-row-advisory{% endif %}" data-bucket="{{ bucket }}">
+            <td>
+              {% if f.advisory %}
+                <span class="diag-badge diag-advisory">Recommendation</span>
+              {% else %}
+                <span class="diag-badge diag-{{ f.severity }}">{{ 'suggestion' if f.severity == 'info' else f.severity }}</span>
+              {% endif %}
+            </td>
+            <td><code class="diag-loc">{{ f.location }}</code></td>
+            <td>
+              <div class="diag-msg">{{ f.message }}</div>
+              {% if f.detail %}<div class="diag-detail muted"><code>{{ f.detail }}</code></div>{% endif %}
+            </td>
+            {% if allow_jump %}
+            <td class="diag-action">
+              {% if f.jump_path %}
+              <button type="button" class="btn-sm outline diag-goto"
+                      data-jump-path="{{ f.jump_path }}" onclick="goToDiagField(this)">Go to field</button>
+              {% endif %}
+              {% if f.fix and f.fix.action == 'set_pointer' %}
+              <button type="button" class="btn-sm diag-fix"
+                      data-action="{{ f.fix.action }}"
+                      data-dot-path="{{ f.fix.dot_path }}"
+                      data-pointer="{{ f.fix.pointer }}"
+                      {% if f.severity == 'warning' %}data-confirm="1" data-old="{{ f.detail }}"{% endif %}
+                      title="Set this field to a JSON pointer: {{ f.fix.pointer }}"
+                      onclick="applyDiagFix(this)">{{ f.fix.label or 'Convert to pointer' }}</button>
+              {% endif %}
+            </td>
+            {% endif %}
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </details>
+  {% endif %}
+{% endfor %}
+</div>
+{% endif %}

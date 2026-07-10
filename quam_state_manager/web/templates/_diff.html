@@ -1,0 +1,106 @@
+<h2>2-Way Diff</h2>
+
+<form hx-post="/diff" hx-target="#table-pane" class="diff-form">
+    <div class="diff-inputs">
+        <div class="diff-field">
+            <label>State A</label>
+            <div class="path-input-group">
+                <input type="text" name="path_a" id="diff-path-a" placeholder="quam_state folder path A..."
+                       value="{{ path_a | default('', true) }}" autocomplete="off">
+                <button type="button" class="outline btn-sm btn-browse"
+                        onclick="openFolderBrowser('diff-path-a')" title="Browse folders">&#128193;</button>
+            </div>
+        </div>
+        <div class="diff-field">
+            <label>State B</label>
+            <div class="path-input-group">
+                <input type="text" name="path_b" id="diff-path-b" placeholder="quam_state folder path B..."
+                       value="{{ path_b | default('', true) }}" autocomplete="off">
+                <button type="button" class="outline btn-sm btn-browse"
+                        onclick="openFolderBrowser('diff-path-b')" title="Browse folders">&#128193;</button>
+            </div>
+        </div>
+        <div class="diff-field diff-field-sm">
+            <label>Tolerance</label>
+            <input type="number" name="tolerance" step="any"
+                   value="{{ tolerance | default(1e-12, true) }}">
+        </div>
+        <div class="diff-field diff-field-sm">
+            <label>Filter</label>
+            <select name="filter_type">
+                <option value="all" {% if not filter_type or filter_type == 'all' %}selected{% endif %}>All</option>
+                <option value="modified" {% if filter_type == 'modified' %}selected{% endif %}>Modified</option>
+                <option value="added" {% if filter_type == 'added' %}selected{% endif %}>Added</option>
+                <option value="removed" {% if filter_type == 'removed' %}selected{% endif %}>Removed</option>
+            </select>
+        </div>
+        <div class="diff-field diff-field-sm" style="align-self:flex-end;">
+            <button type="submit" class="btn-sm">Compare</button>
+        </div>
+    </div>
+</form>
+
+{% if entries is not none %}
+
+{% if path_a and path_b %}
+<div class="diff-path-legend">
+    <div><strong>State A:</strong> <code>{{ path_a }}</code></div>
+    <div><strong>State B:</strong> <code>{{ path_b }}</code></div>
+</div>
+{% endif %}
+
+{% if summary is defined %}
+<div class="diff-summary">
+    <span class="diff-badge diff-added">Added: {{ summary.added }}</span>
+    <span class="diff-badge diff-removed">Removed: {{ summary.removed }}</span>
+    <span class="diff-badge diff-modified">Modified: {{ summary.modified }}</span>
+    <span class="diff-badge diff-total">Total: {{ summary.total }}</span>
+    {% if total_entries is defined and total_entries > entries|length %}
+    <small class="muted">(showing {{ entries|length }} of {{ total_entries }})</small>
+    {% endif %}
+</div>
+{% endif %}
+
+{% macro render_delta(old, new) -%}
+{% if old is number and new is number and old is not none and new is not none -%}
+{% set d = new - old -%}
+<span class="diff-delta {{ 'delta-pos' if d > 0 else ('delta-neg' if d < 0 else 'delta-zero') }}">{{ "%+.3e" | format(d) }}</span>
+{%- else -%}
+<span class="muted">&ndash;</span>
+{%- endif %}
+{%- endmacro %}
+
+{% if entries | length > 0 %}
+<div class="table-scroll">
+<table class="data-table diff-table" role="grid">
+    <thead><tr><th>Type</th><th>Path</th><th>State A</th><th>State B</th><th>Delta</th></tr></thead>
+    <tbody>
+    {% for e in entries %}
+    <tr class="diff-row-{{ e.change_type }}">
+        <td><span class="diff-type-badge diff-type-{{ e.change_type }}">{{ e.change_type }}</span></td>
+        <td><code class="dot-path">{{ e.dot_path }}</code></td>
+        <td class="diff-val">
+            {% if e.old_value is none %}<span class="muted">-</span>
+            {% else %}{{ e.old_value | groupdigits }}{% endif %}
+        </td>
+        <td class="diff-val">
+            {% if e.new_value is none %}<span class="muted">-</span>
+            {% else %}{{ e.new_value | groupdigits }}{% endif %}
+        </td>
+        <td class="diff-val">{{ render_delta(e.old_value, e.new_value) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p class="muted">No differences found.</p>
+{% endif %}
+{% endif %}
+
+<script>
+if (typeof initPathAutocomplete === "function") {
+    initPathAutocomplete(document.getElementById("diff-path-a"));
+    initPathAutocomplete(document.getElementById("diff-path-b"));
+}
+</script>

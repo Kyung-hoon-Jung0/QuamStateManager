@@ -1,0 +1,143 @@
+{# Live-chip vs working-copy diff, shown in the #state-review-overlay. #}
+{# Layout (customer feedback): the Close + Sync actions live in the PINNED header
+   so they're reachable instantly — no Tab-past-every-value-box, no scrolling to
+   the bottom. The change-list scrolls inside .state-review-body (explicit vh cap
+   + overflow-y, so it scrolls on every webview engine, not only ones that honour
+   the flex min-height:0 trick). #}
+<div class="state-review">
+  <div class="state-review-head">
+    <h3>Live chip vs. working state</h3>
+    {# Actions moved up here. Keeps id="state-review-actions" + the
+       .review-sync-clean / .review-sync-edits spans so reviewAccept()'s
+       _reviewRevealEditSync() still flips clean⇄edits in place. #}
+    <div class="state-review-head-actions" id="state-review-actions">
+      {% set _archive = (chip_origin is defined and chip_origin == 'dataset_archive') %}
+      {% if total > 0 %}
+      {# Edit-preserving sync options — visible from the server when the change log
+         already holds unsaved edits; otherwise rendered hidden so reviewAccept()
+         can reveal them the instant the user accepts a Live value on the fly.
+         'apply' writes the live chip, so it's never offered on a read-only dataset
+         archive (the server 409s it anyway). #}
+      <span class="review-sync-edits"{% if unsaved == 0 %} hidden{% endif %}>
+        {% if not _archive %}
+        <button class="btn-sync primary" onclick="doStateSync('apply')"
+                title="Pull the live state, re-apply your edits on top, and write the merged result straight to the live chip — all in one step.">
+          Pull &amp; apply</button>
+        {% endif %}
+        <button class="btn-sync" onclick="doStateSync('reapply')"
+                title="Pull the live state, then re-apply your edits on top as pending changes so you can review them before pushing to the live chip.">
+          Re-apply</button>
+        <button class="btn-sync outline" onclick="doStateSync('discard')"
+                title="Pull the live state and drop your edits.">
+          Discard</button>
+      </span>
+      {# Saved-but-unapplied edits (working_dirty, change log empty): a pull would
+         OVERWRITE them, and there's nothing in the change log to re-apply — so the
+         plain discard "Sync" below would SILENTLY drop them. Offer the safe direct
+         snapshot push instead, and gate the destructive discard behind a confirm.
+         Mirrors the pending-tray working_dirty branch. #}
+      <span class="review-sync-saved"{% if unsaved > 0 or not working_dirty %} hidden{% endif %}>
+        {% if not _archive %}
+        {# Close the modal only AFTER a sent request (hx-on::after-request) — NOT an
+           eager onclick, which would also close it when the user cancels the hx-confirm. #}
+        <button class="btn-sync primary" type="button"
+                hx-post="/state/apply-to-live" hx-target="#pending-tray" hx-swap="outerHTML"
+                hx-confirm="Apply the working state to the live chip's state.json / wiring.json now?"
+                hx-on::after-request="closeReview()"
+                title="Push the working state (your saved, not-yet-applied edits) straight to the live chip.">
+          <span aria-hidden="true">&#8593;</span> Apply to live chip</button>
+        {% endif %}
+        <button class="btn-sync outline" type="button"
+                onclick="if (window.confirm('Discard your saved edits and replace the working state with the live chip? This cannot be undone.')) doStateSync('discard')"
+                title="Discard your saved edits and pull the live chip into the working state.">
+          Discard &amp; pull live</button>
+      </span>
+      {# Plain pull — shown only when there's genuinely nothing to preserve (no pending
+         edits AND no saved-but-unapplied edits; e.g. the live chip drifted while the
+         snapshot stayed clean). #}
+      <span class="review-sync-clean"{% if unsaved > 0 or working_dirty %} hidden{% endif %}>
+        <button class="btn-sync primary" onclick="doStateSync('discard')"
+                title="Sync — pull the live chip state into the working state.">
+          Sync</button>
+      </span>
+      {% endif %}
+      <button class="btn-sync outline state-review-close-btn" type="button"
+              onclick="closeReview()" aria-label="Close" title="Close">Close</button>
+    </div>
+  </div>
+
+  <div class="state-review-body">
+  {% if total == 0 %}
+  <p class="muted state-review-empty">No differences &mdash; the working state matches the live chip.</p>
+  {% else %}
+  <div class="diff-summary">
+    <span class="diff-badge diff-added">Added: {{ summary.added }}</span>
+    <span class="diff-badge diff-removed">Removed: {{ summary.removed }}</span>
+    <span class="diff-badge diff-modified">Modified: {{ summary.modified }}</span>
+    <span class="diff-badge diff-total">Total: {{ summary.total }}</span>
+    {% if total > entries | length %}
+    <small class="muted">(showing {{ entries | length }} of {{ total }})</small>
+    {% endif %}
+  </div>
+  {% if unsaved > 0 %}
+  <p class="state-review-note muted">
+    Includes {{ unsaved }} of your own unsaved edit{{ 's' if unsaved != 1 }} &mdash; when you
+    pull, choose whether to apply them to the live chip, re-apply them as pending changes to
+    review first, or discard them.
+  </p>
+  {% elif working_dirty %}
+  <p class="state-review-note muted">
+    &#9888; You have edits saved to the working state. Pulling the live state will
+    overwrite them.
+  </p>
+  {% endif %}
+
+  <p class="state-review-note muted">Tip: tweak a <b>Live chip</b> value and hit <b>&#10003;</b> to pull
+     just that field (as edited) into the working state on the fly — no full pull needed.</p>
+  {# Surfaced by reviewAccept() the moment the user accepts an edited live value,
+     so a clean-working-copy review (which opens with only "Pull & discard") can't
+     mislead them into discarding the edit they just accepted. Also rendered visible
+     server-side whenever the working copy already holds unsaved edits, so the steer
+     survives a close-and-reopen of the review (the JS reveal is in-session only). #}
+  <p class="state-review-note muted review-accept-note"{% if unsaved == 0 %} hidden{% endif %}>
+    &#9888; You accepted edited value(s) into the working state. Use
+    <b>Pull &amp; apply</b> to keep them — <b>Discard</b> would drop them.
+  </p>
+  {# Borderless hairline list (VSCode Source-Control style): a long dot-path never
+     fits a column, so each change is a row with the PATH on its own full-width line
+     (dim parent dirs + emphasized soft-blue leaf) above the value transition (your
+     copy → live chip, editable). The change kind is a restrained gutter letter
+     M/A/D + a 2px left accent — not a loud filled pill. See docs/42. #}
+  <div class="state-review-cards">
+    {% for e in entries %}
+    {% set _mine = edited_paths is defined and e.dot_path in edited_paths %}
+    {% set _glyph = {'modified': 'M', 'added': 'A', 'removed': 'D'}.get(e.change_type, '?') %}
+    {% set _parts = e.dot_path.rsplit('.', 1) %}
+    <div class="review-row diff-row-{{ e.change_type }}{% if _mine %} diff-row-yours{% endif %}">
+      <div class="review-row-path">
+        <span class="diff-type-badge diff-type-{{ e.change_type }}" aria-label="{{ e.change_type }}" title="{{ e.change_type }}">{{ _glyph }}</span>
+        <code class="dot-path" title="{{ e.dot_path }}">{%- if _parts | length == 2 -%}<span class="dp-dirs">{{ _parts[0] }}.</span><span class="dp-leaf">{{ _parts[1] }}</span>{%- else -%}<span class="dp-leaf">{{ e.dot_path }}</span>{%- endif -%}</code>
+        {% if _mine %}<span class="diff-yours-tag" title="The working state already holds your own edited value here. Accepting (✓) would REPLACE it with the live value.">your edit</span>{% endif %}
+      </div>
+      <div class="review-row-vals">
+        {% if e.old_value is none %}<span class="muted review-old">-</span>
+        {% else %}<span class="review-old" title="working state: {{ e.old_value | groupdigits }}">{{ e.old_value | groupdigits }}</span>{% endif %}
+        <span class="review-arrow" aria-hidden="true">&rarr;</span>
+        {% if e.new_value is none %}<span class="muted">-</span>
+        {% else %}
+        <span class="review-live-edit" title="live chip value (editable) — &#10003; pulls it into the working state">
+          <input type="text" class="review-live-input" value="{{ e.new_value | groupdigits }}"
+                 data-dot-path="{{ e.dot_path }}"{% if _mine %} data-yours="1"{% endif %}
+                 size="{{ [((e.new_value | groupdigits) | length) + 1, 8] | max }}"
+                 aria-label="Live value for {{ e.dot_path }} (editable)">
+          <button type="button" class="btn-xs review-accept" onclick="reviewAccept(this)"
+                  title="{% if _mine %}The working state already holds your edit — accepting REPLACES it with the live value{% else %}Write this (editable) live value into the working state{% endif %}">&#10003;</button>
+        </span>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  </div>
+</div>

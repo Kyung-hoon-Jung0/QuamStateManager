@@ -1,0 +1,492 @@
+<div id="ds-detail-root" data-experiment="{{ run.experiment_name }}"
+     data-qubits="{{ run.qubits | join(',') }}" data-run-id="{{ run.run_id }}"
+     data-uid="{{ uid }}" data-folder-key="{{ folder_key }}"
+     data-chip-token="{{ run_chip_token | default('') }}" data-chip-name="{{ run_chip_name | default('') }}"
+     data-folder-label="{{ folder_label }}" data-date="{{ run.date }}">
+{% set inspector_type = "dataset" %}
+{% set inspector_runid = run.run_id %}
+{% set inspector_label = run.experiment_name %}
+{# Qubits / qubit-pairs the run executed on — its own header element so it can
+   truncate with "…" and reveal the full list on hover. Prefer pairs for 2Q
+   runs; fall back to single qubits otherwise. #}
+{% set inspector_qubits = (run.qubit_pairs if run.qubit_pairs else run.qubits) | join(', ') %}
+{% set inspector_sub = run.date ~ " " ~ run.time ~ ((" | " ~ "%.1f" | format(run.duration_s) ~ "s") if run.duration_s else "") %}
+{% include '_inspector_header.html' %}
+
+{# Which registered data folder this run belongs to (P2) — leaf name shown,
+   full registered path on hover. Disambiguates same run-id across folders. #}
+{% if folder_label %}
+<div class="ds-folder-line" title="{{ folder_path }}">
+    <span class="ds-folder-line-icon" aria-hidden="true">&#128193;</span>
+    <span class="ds-folder-line-label">{{ folder_label }}</span>
+</div>
+{% endif %}
+
+{# Note (collapsible) — a small "Note" badge sits above Tags; clicking it reveals
+   a tight, auto-growing editor (one line, grows only on real wraps/newlines).
+   Always starts collapsed; the badge wears .has-note (filled dot + the note as a
+   hover title) when a note exists. Persistence unchanged: saveDatasetNote on blur.
+   Always-collapsed means the textarea is only sized on click (toggleNoteEditor),
+   so there's no hidden->scrollHeight=0 or pinned-mode load-sizing problem. #}
+{% set _has_note = (run.note or '') | trim | length > 0 %}
+<div class="ds-note-block">
+    <button type="button" class="ds-note-toggle{% if _has_note %} has-note{% endif %}"
+            aria-expanded="false" onclick="toggleNoteEditor(this)"
+            {% if _has_note %}title="{{ run.note }}"{% endif %}>
+        <span class="ds-note-toggle-icon" aria-hidden="true">&#9998;</span>
+        <span>Note</span>
+        <span class="ds-note-dot" aria-hidden="true"></span>
+    </button>
+    <textarea class="ds-note-input ds-note-textarea" rows="1" placeholder="Add a note…"
+              hidden oninput="autoGrowNote(this)"
+              onblur="saveDatasetNote('{{ uid }}', this.value, this)">{{ run.note or '' }}</textarea>
+</div>
+
+{# Tag this dataset — the primary tagging entry point. The inner .col-tags div
+   is the tag-picker anchor + what _rebuildTagCell rebuilds (badges + "+"); the
+   "Tags" label sits outside it so it survives rebuilds. The reserved 'favorite'
+   tag is hidden here (it's the ⭐ star, set elsewhere). #}
+<div class="ds-tags-row">
+    <span class="ds-tags-label">Tags</span>
+    {# Badge removal is handled by a delegated click handler in app.js (reads
+       data-tag + the container's data-run-id) — no inline onclick with the tag
+       inlined, which would break on tags containing quotes. #}
+    <div class="col-tags ds-detail-tags" id="ds-detail-tags" data-run-id="{{ uid }}">
+        {% for t in run.tags if t != 'favorite' %}
+        <span class="tag-badge" data-tag="{{ t }}" title="Click to remove">{{ t }}</span>
+        {% endfor %}
+        <button class="tag-add-btn" onclick="openTagPicker('{{ uid }}', this)"
+                title="Add a tag">+</button>
+    </div>
+</div>
+
+<nav class="dataset-tabs">
+    <ul role="tablist">
+        <li><a class="active" role="tab" tabindex="0" onclick="switchDatasetTab('full', this)">Full View</a></li>
+        <li><a role="tab" tabindex="0" onclick="switchDatasetTab('overview', this)">Overview</a></li>
+        <li><a role="tab" tabindex="0" onclick="switchDatasetTab('results', this)">Results</a></li>
+        <li><a role="tab" tabindex="0" onclick="switchDatasetTab('figures', this)">Figures{% if run.figure_names %} <small class="muted">({{ run.figure_names | length }})</small>{% endif %}</a></li>
+        {% if run.has_quam_state and run.prev_run_id %}
+        <li><a role="tab" tabindex="0" onclick="switchDatasetTab('prev', this)" title="Diff this run's state against the previous run">Prev State</a></li>
+        {% endif %}
+        {% if run.has_ds_raw or run.has_ds_fit %}
+        <li><a role="tab" tabindex="0" onclick="switchDatasetTab('interactive', this)">Interactive</a></li>
+        {% endif %}
+        <li><a role="tab" tabindex="0" onclick="switchDatasetTab('data', this)">Raw Data</a></li>
+        <li>
+            {% if run.has_quam_state %}
+            <a role="tab" tabindex="0" onclick="switchDatasetTab('state', this)">State</a>
+            {% else %}
+            <a class="disabled" role="tab" aria-disabled="true" title="No quam_state in this run">State <small class="muted">(N/A)</small></a>
+            {% endif %}
+        </li>
+    </ul>
+</nav>
+
+<article class="dataset-detail">
+
+{# ── Combined container ──
+   Full View shows all three sections at once; the Overview / Results / Figures
+   tabs each show a single [data-fvsec] section (toggled in switchDatasetTab).
+   One canonical copy → figures/JSON-trees render once, no duplicate ids. The
+   data-view attr drives the Full-View-only section labels + hides the Figures
+   tab's duplicate fit/params context block. #}
+<div class="dataset-tab-content" id="ds-tab-combined" data-view="full">
+
+{# Full-View-only summary of what changed since the previous run (lazy-loaded on
+   expand). The full diff + stepper lives in the Prev State tab. #}
+{% if run.has_quam_state and run.prev_run_id %}
+<details class="ds-prevdiff-fv" id="ds-prevdiff-fv"
+         ontoggle="if(this.open)loadPrevDiffInto('ds-prevdiff-fv-body', '{{ uid }}', 1)">
+    <summary class="section-header">Changes from previous run
+        <span class="inspector-runid">#{{ run.prev_run_id }}</span></summary>
+    <div id="ds-prevdiff-fv-body" data-run-id="{{ uid }}" data-loaded="0">
+        <p class="muted" style="padding:.5rem">Expand to load the diff…</p>
+    </div>
+</details>
+{% endif %}
+
+{# ── Section: Overview ── #}
+<section class="ds-fv-section" data-fvsec="overview">
+    <details open class="detail-section">
+        <summary class="section-header">Experiment Info<button type="button" class="btn-sm outline section-copy-btn" title="Copy this table as tab-separated rows (paste into Excel/Sheets)" onclick="event.stopPropagation(); copyPropTable(this, 'tsv')">Copy</button></summary>
+        <table class="prop-table" role="grid">
+            <thead><tr><th class="col-prop">Property</th><th class="col-val">Value</th></tr></thead>
+            <tbody>
+                <tr><td class="col-prop"><code>experiment</code></td><td class="col-val">{{ run.experiment_name }}</td></tr>
+                <tr><td class="col-prop"><code>run_id</code></td><td class="col-val">#{{ run.run_id }}</td></tr>
+                <tr><td class="col-prop"><code>status</code></td>
+                    <td class="col-val">
+                        <span class="outcome-badge {% if run.status == 'finished' %}outcome-ok{% else %}outcome-fail{% endif %}">{{ run.status }}</span>
+                    </td></tr>
+                <tr><td class="col-prop"><code>qubits</code></td><td class="col-val">{{ (run.qubit_pairs if run.qubit_pairs else run.qubits) | join(', ') if (run.qubit_pairs or run.qubits) else 'N/A' }}</td></tr>
+                <tr><td class="col-prop"><code>date</code></td><td class="col-val">{{ run.date }} {{ run.time }}</td></tr>
+                {% if run.duration_s %}
+                <tr><td class="col-prop"><code>duration</code></td><td class="col-val">{{ "%.1f" | format(run.duration_s) }}s</td></tr>
+                {% endif %}
+                {% if run.parent_id %}
+                <tr><td class="col-prop"><code>parent</code></td>
+                    <td class="col-val"><a href="#" hx-get="/dataset/{{ folder_key }}:{{ run.parent_id }}" hx-target="#inspector-pane" hx-swap="innerHTML">#{{ run.parent_id }}</a></td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </details>
+
+    {% if run.description %}
+    <details class="detail-section">
+        <summary class="section-header">Description</summary>
+        <div class="ds-description">{{ run.description[:1000] }}</div>
+    </details>
+    {% endif %}
+
+    {% if run.outcomes %}
+    <details open class="detail-section">
+        <summary class="section-header">Outcomes</summary>
+        <div class="ds-outcomes">
+            {% for qname, outcome in run.outcomes.items() %}
+            <span class="outcome-badge-lg {% if outcome == 'successful' %}outcome-ok{% else %}outcome-fail{% endif %}">
+                {{ qname }}: {{ outcome }}
+            </span>
+            {% endfor %}
+        </div>
+    </details>
+    {% endif %}
+
+    {% if run.parameters %}
+    <details open class="detail-section">
+        <summary class="section-header">Parameters<button type="button" class="btn-sm outline section-copy-btn" title="Copy these parameters as JSON" data-json='{{ run.parameters | tojson }}' onclick="event.stopPropagation(); window.copyWithFeedback(this.getAttribute('data-json'), this, 'Copied parameters as JSON.')">Copy JSON</button></summary>
+        <div id="ds-params-tree" style="padding:.5rem 1rem"></div>
+        <script>
+            (function() {
+                if (document.getElementById('ds-params-tree') && typeof renderJsonTree === 'function') {
+                    renderJsonTree('ds-params-tree', {{ run.parameters | tojson }}, {defaultDepth: 2, valueClick: 'copy'});
+                }
+            })();
+        </script>
+    </details>
+    {% endif %}
+
+</section>
+
+{# ── Section: Results ── #}
+<section class="ds-fv-section" data-fvsec="results">
+    {% if run.fit_results %}
+        {% for qname, qresults in run.fit_results.items() %}
+        {% set qtargets = (fit_targets or {}).get(qname, {}) %}
+        <details open class="detail-section">
+            <summary class="section-header">{{ qname }}{% if qtargets %}<button type="button" class="btn-sm outline section-apply-btn" title="Apply all mapped fitted values to the loaded state" onclick="event.stopPropagation(); applyAllFitValues(this)">Apply all &rarr;</button>{% endif %}<button type="button" class="btn-sm outline section-copy-btn" title="Copy this table as tab-separated rows (paste into Excel/Sheets)" onclick="event.stopPropagation(); copyPropTable(this, 'tsv')">Copy</button></summary>
+            <table class="prop-table" role="grid">
+                <thead><tr><th class="col-prop">Property</th><th class="col-val">Value</th></tr></thead>
+                <tbody>
+                {% if qresults is mapping %}
+                {% for key, val in qresults.items() %}
+                <tr>
+                    <td class="col-prop"><code>{{ key }}</code></td>
+                    <td class="col-val"{% if val is number and val is float %} data-copy="{{ val }}"{% endif %}>
+                        {% if val is none %}
+                            <em class="null-value">not set</em>
+                        {% elif val is sameas true %}
+                            <span class="outcome-badge outcome-ok">true</span>
+                        {% elif val is sameas false %}
+                            <span class="outcome-badge outcome-fail">false</span>
+                        {% elif val is number and val is float and (val|abs >= 1e6 or (0 < val|abs < 1e-3)) %}
+                            {{ "%.6e" | format(val) }}
+                        {% elif val is number and val is float %}
+                            {{ "%.6f" | format(val) }}
+                        {% elif val is mapping %}
+                            <div class="ds-inline-tree" id="ds-results-tree-{{ qname }}-{{ key }}"></div>
+                            <script>
+                            (function(){
+                                                if (document.getElementById('ds-results-tree-{{ qname }}-{{ key }}') && typeof renderJsonTree === 'function')
+                                    renderJsonTree('ds-results-tree-{{ qname }}-{{ key }}', {{ val | tojson }}, {defaultDepth: 2, valueClick: 'copy'});
+                            })();
+                            </script>
+                        {% elif val is iterable and val is not string %}
+                            <code>{{ val | join(', ') }}</code>
+                        {% else %}
+                            {{ val }}
+                        {% endif %}
+                        {% set tgt = qtargets.get(key) %}
+                        {% if tgt %}<button type="button" class="btn-sm outline fit-apply-btn"
+                                title="Apply {{ tgt.label }} to {{ tgt.path }} on the loaded state"
+                                data-fit-path="{{ tgt.path }}" data-fit-value="{{ tgt.value }}"
+                                data-fit-qubit="{{ qname }}" data-fit-label="{{ tgt.label }}"
+                                onclick="applyFitValue(this)">Apply &rarr;</button><button type="button" class="btn-sm outline fit-goto-btn"
+                                title="Show {{ tgt.path }} in the Explorer (raw JSON tree)"
+                                data-fit-path="{{ tgt.path }}"
+                                onclick="goToFitState(this)">Go to state</button>{% else %}<span
+                                class="fit-copy-only muted"
+                                title="This fitted value isn't mapped to a chip state field — it's a diagnostic / derived result (or its target operation isn't recorded in this run), so it can be read or copied but not auto-applied. Copy it manually if you need it.">copy-only</span>{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+                {% else %}
+                <tr><td class="col-prop"><code>value</code></td><td class="col-val">{{ qresults }}</td></tr>
+                {% endif %}
+                </tbody>
+            </table>
+        </details>
+        {% endfor %}
+    {% else %}
+        <p class="muted" style="padding:1rem;text-align:center">No fit results available for this run.</p>
+    {% endif %}
+</section>
+
+{# ── Section: Figures ── #}
+<section class="ds-fv-section" data-fvsec="figures">
+
+    {# ── Top row: Fit Results (left) + Parameters (right) in 2 columns ──
+       Duplicates Overview/Results, so it's hidden in Full View (.ds-fig-context)
+       and only shown when the Figures tab is viewed on its own. ── #}
+    {% if run.fit_results or run.parameters %}
+    <div class="fig-info-row ds-fig-context">
+        <div class="fig-info-col">
+            {% if run.fit_results %}
+            <details open class="detail-section">
+                <summary class="section-header">Fit Results</summary>
+                {% for qname, qresults in run.fit_results.items() %}
+                <details open class="detail-section" style="margin-left:.5rem">
+                    <summary class="section-header">{{ qname }}<button type="button" class="btn-sm outline section-copy-btn" title="Copy this table as tab-separated rows (paste into Excel/Sheets)" onclick="event.stopPropagation(); copyPropTable(this, 'tsv')">Copy</button></summary>
+                    <table class="prop-table" role="grid">
+                        <thead><tr><th class="col-prop">Property</th><th class="col-val">Value</th></tr></thead>
+                        <tbody>
+                        {% if qresults is mapping %}
+                        {% for key, val in qresults.items() %}
+                        <tr>
+                            <td class="col-prop"><code>{{ key }}</code></td>
+                            <td class="col-val"{% if val is number and val is float %} data-copy="{{ val }}"{% endif %}>
+                                {% if val is none %}
+                                    <em class="null-value">not set</em>
+                                {% elif val is sameas true %}
+                                    <span class="outcome-badge outcome-ok">true</span>
+                                {% elif val is sameas false %}
+                                    <span class="outcome-badge outcome-fail">false</span>
+                                {% elif val is number and val is float and (val|abs >= 1e6 or (0 < val|abs < 1e-3)) %}
+                                    {{ "%.6e" | format(val) }}
+                                {% elif val is number and val is float %}
+                                    {{ "%.6f" | format(val) }}
+                                {% elif val is mapping %}
+                                    <div class="ds-inline-tree" id="ds-fig-tree-{{ qname }}-{{ key }}"></div>
+                                    <script>
+                                    (function(){
+                                        var c = document.getElementById('ds-fig-tree-{{ qname }}-{{ key }}');
+                                        if (c && typeof renderJsonTree === 'function') renderJsonTree('ds-fig-tree-{{ qname }}-{{ key }}', {{ val | tojson }}, {defaultDepth: 2, valueClick: 'copy'});
+                                    })();
+                                    </script>
+                                {% elif val is iterable and val is not string %}
+                                    <code>{{ val | join(', ') }}</code>
+                                {% else %}
+                                    {{ val }}
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        {% else %}
+                        <tr><td class="col-prop"><code>value</code></td><td class="col-val">{{ qresults }}</td></tr>
+                        {% endif %}
+                        </tbody>
+                    </table>
+                </details>
+                {% endfor %}
+            </details>
+            {% else %}
+            <p class="muted" style="padding:.5rem">No fit results.</p>
+            {% endif %}
+        </div>
+        <div class="fig-info-col">
+            {% if run.parameters %}
+            <details open class="detail-section">
+                <summary class="section-header">Parameters<button type="button" class="btn-sm outline section-copy-btn" title="Copy these parameters as JSON" data-json='{{ run.parameters | tojson }}' onclick="event.stopPropagation(); window.copyWithFeedback(this.getAttribute('data-json'), this, 'Copied parameters as JSON.')">Copy JSON</button></summary>
+                <div id="ds-fig-params-tree" style="padding:.5rem 1rem"></div>
+                <script>
+                    (function() {
+                        if (document.getElementById('ds-fig-params-tree') && typeof renderJsonTree === 'function') {
+                            renderJsonTree('ds-fig-params-tree', {{ run.parameters | tojson }}, {defaultDepth: 2, valueClick: 'copy'});
+                        }
+                    })();
+                </script>
+            </details>
+            {% else %}
+            <p class="muted" style="padding:.5rem">No parameters.</p>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    {# ── Figures grid (2 columns) ── #}
+    {% if run.figure_names %}
+    <div class="figure-grid">
+        {% for fig_name in run.figure_names %}
+        <div class="figure-card">
+            <div class="figure-label">
+                <code>{{ fig_name }}</code>
+                {% if run.qubits %}
+                <span class="figure-qubit-actions">
+                    {% for q in run.qubits %}
+                    <button class="btn-sm outline" onclick="event.stopPropagation(); (function(){ var m = _resolveExperimentPath('{{ run.experiment_name }}', '{{ q }}'); _navigateToExplorerPath(m ? m[0].path : 'qubits.{{ q }}'); })()" title="Edit {{ q }}">{{ q }}</button>
+                    {% endfor %}
+                </span>
+                {% endif %}
+            </div>
+            <img src="/dataset/{{ uid }}/fig/{{ fig_name }}"
+                 alt="{{ fig_name }}"
+                 loading="lazy"
+                 onclick="toggleFigureZoom(this)"
+                 title="Click to zoom">
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+        <p class="muted" style="padding:1rem;text-align:center">No figures saved for this run.</p>
+    {% endif %}
+</section>
+</div>{# /#ds-tab-combined #}
+
+{# ── Tab: Prev State (lazy) — full diff vs the previous run + older/newer stepper ── #}
+{% if run.has_quam_state and run.prev_run_id %}
+<div class="dataset-tab-content hidden" id="ds-tab-prev">
+    <div id="ds-prevdiff-container" data-run-id="{{ uid }}" data-loaded="0">
+        <p class="muted" style="padding:1rem">Loading diff…</p>
+    </div>
+</div>
+{% endif %}
+
+{# ── Tab: Interactive ── #}
+<div class="dataset-tab-content hidden" id="ds-tab-interactive">
+    {% if run.has_ds_raw or run.has_ds_fit %}
+    {# Strategy-B: reproduce figures by re-running the experiment's own plotting.py
+       in the selected QM env. Opt-in (subprocess + env), so it never slows the
+       default recipe view below. #}
+    <div class="ds-replot-bar">
+        <button type="button" class="btn-sm" id="ds-replot-btn-{{ uid }}"
+                onclick="loadDatasetReplot('{{ uid }}', this.closest('.dataset-tab-content'), false)"
+                title="Re-run this experiment's plotting.py on the saved data — exact, and tracks analysis changes">
+            ⚡ Reproduce from experiment code
+        </button>
+        <small class="muted">Exact figures via the experiment's own plotting — tracks analysis edits.</small>
+    </div>
+    <div id="ds-replot-container" data-run-id="{{ uid }}" data-loaded="0"></div>
+    <div id="ds-interactive-container" data-run-id="{{ uid }}" data-loaded="0">
+        <p class="muted" style="padding:1rem">Loading interactive figures…</p>
+    </div>
+    {% else %}
+        <p class="muted" style="padding:1rem;text-align:center">No HDF5 datasets in this run.</p>
+    {% endif %}
+</div>
+
+{# ── Tab: Raw Data → N-D data viewer (ndview) ── #}
+<div class="dataset-tab-content hidden" id="ds-tab-data">
+    {# LAZY: the viewer shell loads only when the tab is first opened
+       (switchDatasetTab fires ds-h5-open; data-loaded guard). The shell lists
+       every *.h5 in the run folder; each variable's cube loads on click. #}
+    <div id="h5-summary-container"
+         hx-get="/dataset/{{ uid }}/ndview"
+         hx-trigger="ds-h5-open" hx-swap="innerHTML">
+        <p class="muted" style="padding:1rem">Loading data files…</p>
+    </div>
+</div>
+
+
+{# ── Tab: State ── #}
+<div class="dataset-tab-content hidden" id="ds-tab-state">
+
+    {# Compact Load State bar (only when quam_state available) #}
+    {% if run.has_quam_state %}
+    <div class="ds-state-action-bar">
+        <button hx-post="/dataset/{{ uid }}/load-state"
+                hx-confirm="Load this run's state? Unsaved edits will be lost."
+                class="btn-sm">Load State</button>
+        <small class="muted">Replaces the active state with this run's snapshot</small>
+    </div>
+    {% endif %}
+
+    {# File sub-tabs #}
+    <div class="tree-file-tabs" id="ds-state-file-tabs">
+        {% if run.has_quam_state %}
+        <span class="tree-file-tab active" onclick="switchDatasetStateTab('state')">state.json</span>
+        <span class="tree-file-tab" onclick="switchDatasetStateTab('wiring')">wiring.json</span>
+        {% endif %}
+        <span class="tree-file-tab{% if not run.has_quam_state %} active{% endif %}"
+              onclick="switchDatasetStateTab('node')">node.json</span>
+        <span class="tree-file-tab" onclick="switchDatasetStateTab('data')">data.json</span>
+    </div>
+
+    {# Toolbar: search + depth controls (reuses existing .tree-toolbar CSS) #}
+    <div class="tree-toolbar">
+        <span class="tree-search-icon">&#128269;</span>
+        <input type="text" class="tree-search" id="ds-state-search"
+               placeholder="Search keys or values..."
+               oninput="jsonTreeSearch(_dsStateActiveId(), this.value)" autocomplete="off">
+        <div class="tree-depth-group">
+            <span class="tree-depth-label">Depth:</span>
+            <button class="btn-sm outline" onclick="jsonTreeCollapseAll(_dsStateActiveId())">0</button>
+            <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_dsStateActiveId(),1)">1</button>
+            <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_dsStateActiveId(),2)">2</button>
+            <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_dsStateActiveId(),3)">3</button>
+            <button class="btn-sm outline" onclick="jsonTreeExpandAll(_dsStateActiveId())">All</button>
+        </div>
+    </div>
+
+    {# Tree containers (lazy-loaded) #}
+    {% if run.has_quam_state %}
+    <div id="ds-state-tree-state" class="ds-state-tree"></div>
+    <div id="ds-state-tree-wiring" class="ds-state-tree" style="display:none"></div>
+    {% endif %}
+    <div id="ds-state-tree-node" class="ds-state-tree{% if run.has_quam_state %}" style="display:none{% endif %}"></div>
+    <div id="ds-state-tree-data" class="ds-state-tree" style="display:none"></div>
+
+    <script>
+    (function() {
+        var runId = '{{ uid }}';
+        var hasState = {{ 'true' if run.has_quam_state else 'false' }};
+        var _loaded = {};
+
+        function _loadStateFile(which) {
+            if (_loaded[which]) return;
+            _loaded[which] = true;
+            var cid = 'ds-state-tree-' + which;
+            var el = document.getElementById(cid);
+            if (!el) return;
+            el.innerHTML = '<p class="muted" style="padding:.5rem">Loading\u2026</p>';
+            fetch('/dataset/' + runId + '/json?file=' + which)
+                .then(function(r){ return r.json(); })
+                .then(function(data){
+                    el.innerHTML = '';
+                    // Lazy/collapsed — state.json/wiring.json/data.json are large
+                    // (50-qubit chips, multi-MB data). Expanding everything up front
+                    // built ~15k–30k DOM nodes and stalled the tab ~1–2s + slowed the
+                    // whole panel. Render shallow; the user expands on demand.
+                    renderJsonTree(cid, data, {defaultDepth: 1, valueClick: 'copy'});
+                })
+                .catch(function(e){
+                    el.innerHTML = '<p style="color:var(--pico-del-color);padding:.5rem">Error loading ' + which + '.json: ' + e + '</p>';
+                });
+        }
+
+        window.switchDatasetStateTab = function(which) {
+            document.querySelectorAll('#ds-state-file-tabs .tree-file-tab').forEach(function(t) {
+                t.classList.toggle('active', t.textContent.trim() === which + '.json');
+            });
+            // Query by ID, not class — renderJsonTree clobbers className with "json-tree"
+            ['state', 'wiring', 'node', 'data'].forEach(function(name) {
+                var el = document.getElementById('ds-state-tree-' + name);
+                if (el) el.style.display = (name === which) ? '' : 'none';
+            });
+            _loadStateFile(which);
+            var s = document.getElementById('ds-state-search');
+            if (s && s.value) jsonTreeSearch('ds-state-tree-' + which, s.value);
+        };
+
+        window._dsStateActiveId = function() {
+            var a = document.querySelector('#ds-state-file-tabs .tree-file-tab.active');
+            return a ? 'ds-state-tree-' + a.textContent.trim().replace('.json','') : 'ds-state-tree-node';
+        };
+
+        // Load first visible tab immediately
+        _loadStateFile(hasState ? 'state' : 'node');
+    })();
+    </script>
+</div>
+
+</article>
+</div>

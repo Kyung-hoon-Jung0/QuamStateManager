@@ -1,0 +1,6 @@
+{# Cold-cache affordance on the apply popup: the verdict replay is slow the first
+   time, so offer it opt-in instead of auto-spinning. app.js wires the button. #}
+<div class="pp-verdict-check" data-uid="{{ uid }}" data-qubit="{{ qubit }}">
+  <button type="button" id="pp-verdict-check-btn" class="btn-xs outline">Check this fit vs the current gate</button>
+  <span class="muted">first check runs the analysis (up to a minute)</span>
+</div>

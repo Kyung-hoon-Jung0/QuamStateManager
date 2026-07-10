@@ -1,0 +1,32 @@
+{# "What is checked?" popup — a static, chip-independent inventory of every check
+   the diagnostics linter runs, grouped by domain. Driven by diagnostics.check_catalog()
+   (the single source of truth in core/diagnostics.py). Native <dialog> so the
+   backdrop + Esc-to-close come for free. #}
+<dialog id="diag-checks-dialog" class="diag-checks-dialog">
+  <div class="diag-checks-head">
+    <div>
+      <strong class="diag-checks-title">What this page checks</strong>
+      <p class="diag-checks-sub muted">Every check runs in-process on your state, wiring{% if has_config %} and generated config{% endif %} — no hardware needed. Findings only surface; nothing is auto-changed.</p>
+    </div>
+    <button type="button" class="btn-close" aria-label="Close"
+            onclick="document.getElementById('diag-checks-dialog').close()">&times;</button>
+  </div>
+  <div class="diag-checks-body">
+    {% for domain in diag_catalog %}
+    <section class="diag-checks-group">
+      <h4 class="diag-checks-group-title">{{ domain.label }}</h4>
+      <ul class="diag-checks-list">
+        {% for c in domain.checks %}
+        <li class="diag-checks-item">
+          <div class="diag-checks-row1">
+            <span class="diag-badge diag-{{ 'advisory' if c.severity == 'recommendation' else c.severity }} diag-checks-sev">{{ c.severity }}</span>
+            <span class="diag-checks-name">{{ c.title }}</span>
+          </div>
+          <div class="diag-checks-desc muted">{{ c.desc }}</div>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endfor %}
+  </div>
+</dialog>

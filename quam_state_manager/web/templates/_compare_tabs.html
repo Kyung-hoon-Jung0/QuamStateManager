@@ -1,0 +1,31 @@
+<h2>Multi-State Comparison</h2>
+
+{% if diff_rows is defined %}
+{% set qs_paths %}{% for p in paths_raw %}&paths={{ p | urlencode }}{% endfor %}{% endset %}
+<div class="compare-tab-bar">
+    <button class="compare-tab active" onclick="switchCompareTab(this)"
+            hx-get="/compare/diff?ref={{ ref_idx | default(0) }}{{ qs_paths }}"
+            hx-target="#compare-content"
+            hx-swap="innerHTML"
+            data-tab="diff">Differences</button>
+    <button class="compare-tab" onclick="switchCompareTab(this)"
+            hx-get="/compare/full?{{ qs_paths }}"
+            hx-target="#compare-content"
+            hx-swap="innerHTML"
+            data-tab="full">Full Compare</button>
+    {% for state in states %}
+    <button class="compare-tab" onclick="switchCompareTab(this)"
+            hx-get="/compare/state?idx={{ loop.index0 }}&ref={{ ref_idx | default(0) }}{{ qs_paths }}"
+            hx-target="#compare-content"
+            hx-swap="innerHTML"
+            data-tab="state-{{ loop.index0 }}">State: {{ state.label | truncate(20) }}</button>
+    {% endfor %}
+</div>
+<div id="compare-content">
+    {% include '_compare_diff.html' %}
+</div>
+{% else %}
+<div class="compare-empty">
+    <p>Select 2+ experiments from the sidebar (checkboxes), then click <strong>Compare Selected</strong>.</p>
+</div>
+{% endif %}

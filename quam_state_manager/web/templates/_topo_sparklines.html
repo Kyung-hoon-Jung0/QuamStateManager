@@ -1,0 +1,19 @@
+{% if rows %}
+<div class="topo-popup-section topo-spark-section">
+    <div class="topo-popup-section-title">Trends &middot; {{ snapshots }} snapshot{{ 's' if snapshots != 1 }}</div>
+    {% for r in rows %}
+    <div class="topo-spark-row" title="{{ r.label }}{% if r.n %} &mdash; {{ r.n }} points{% endif %}">
+        <span class="topo-prop-label">{{ r.abbr }}</span>
+        <span class="topo-spark-delta{% if r.good is true %} good{% elif r.good is false %} bad{% endif %}" data-trend="{{ r.trend or 'flat' }}"
+              title="change vs the previous tracked point">
+            {%- if r.trend and r.delta_pct is not none -%}
+                {{ '▲' if r.trend == 'up' else '▼' }}{{ '%+.1f'|format(r.delta_pct) }}%
+            {%- else -%}–{%- endif -%}
+        </span>
+        <svg class="history-cell-spark" viewBox="0 0 100 30" preserveAspectRatio="none">{{ r.svg_inner|safe }}</svg>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="topo-popup-section muted" style="font-size:0.72em;text-align:center">No trend history yet for this qubit.</div>
+{% endif %}
