@@ -407,3 +407,44 @@ class TestRealScanCommand:
     def test_scan_with_date_filter(self):
         result = runner.invoke(app, ["scan", str(DATA_ROOT), "--date", "2026-02-19"])
         assert result.exit_code == 0
+
+
+class TestVersionResolution:
+    """The CLI must resolve its version without crashing even when the package
+    imports as a namespace (broken/duplicate editable install → __init__.py never
+    runs, so `from quam_state_manager import __version__` would ImportError)."""
+
+    def test_version_flag_works(self):
+        result = runner.invoke(app, ["--version"])
+        assert result.exit_code == 0
+        assert "quam-manager" in result.output
+        # a real version string, not the unknown fallback
+        assert "0.0.0+unknown" not in result.output
+
+    def test_resolve_version_prefers_dist_metadata(self):
+        from quam_state_manager import cli
+        v = cli._resolve_version()
+        assert isinstance(v, str) and v and v != "0.0.0+unknown"
+
+    def test_resolve_version_survives_namespace_package(self, monkeypatch):
+        # Simulate the namespace-package failure mode: both the dist metadata AND
+        # the package attribute are unavailable. The CLI must degrade to the
+        # literal fallback, never raise.
+        import importlib.metadata as im
+        from quam_state_manager import cli
+
+        def _boom(_name):
+            raise im.PackageNotFoundError("quam-state-manager")
+
+        monkeypatch.setattr(im, "version", _boom)
+        # also make the attribute import fail (namespace package has no __version__)
+        import builtins
+        real_import = builtins.__import__
+
+        def _fake_import(name, *a, **k):
+            if name == "quam_state_manager" and a and "__version__" in (a[2] or ()):
+                raise ImportError("cannot import name '__version__' (unknown location)")
+            return real_import(name, *a, **k)
+
+        monkeypatch.setattr(builtins, "__import__", _fake_import)
+        assert cli._resolve_version() == "0.0.0+unknown"   # graceful, no crash

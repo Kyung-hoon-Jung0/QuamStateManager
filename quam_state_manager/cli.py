@@ -31,7 +31,6 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from quam_state_manager import __version__
 from quam_state_manager.core import units
 from quam_state_manager.core.differ import Differ
 from quam_state_manager.core.loader import QuamStore
@@ -42,9 +41,32 @@ from quam_state_manager.core.scanner import Workspace
 from quam_state_manager.core.search_index import SearchIndex
 
 
+def _resolve_version() -> str:
+    """Resolve the version from the INSTALLED distribution metadata, not from
+    ``quam_state_manager.__version__``.
+
+    A broken/duplicate editable install (the "two clones" hazard on Windows —
+    stale artifacts from a prior `pip install -e .` on a differently-named clone)
+    makes ``import quam_state_manager`` resolve as a *namespace* package with
+    ``__file__ = None``, so ``__init__.py`` (which defines ``__version__``) is
+    never executed and ``from quam_state_manager import __version__`` raises
+    ImportError — taking down the whole CLI. The dist metadata that pip writes is
+    always present regardless of that finder quirk, so read it there; fall back
+    to the package attribute (source-tree runs), then a literal."""
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+        return version("quam-state-manager")
+    except Exception:  # noqa: BLE001 — PackageNotFoundError or any metadata issue
+        try:
+            from quam_state_manager import __version__ as _v
+            return _v
+        except Exception:  # noqa: BLE001
+            return "0.0.0+unknown"
+
+
 def _version_callback(value: bool) -> None:
     if value:
-        typer.echo(f"quam-manager {__version__}")
+        typer.echo(f"quam-manager {_resolve_version()}")
         raise typer.Exit(0)
 
 
