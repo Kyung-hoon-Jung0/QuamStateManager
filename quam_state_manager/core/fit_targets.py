@@ -118,11 +118,20 @@ def curated_fit_keys() -> list[str]:
 
 
 def _match(experiment_name: str) -> dict[str, dict[str, Any]]:
-    """The fit_key spec for the longest experiment-prefix that matches ``name``."""
+    """The fit_key spec for the longest experiment-prefix that matches ``name``.
+
+    Match through registry._normalize_node_name on BOTH sides: FIT_TARGET_MAP keys are
+    graph-prefixed ("1Q_03_resonator_spectroscopy"), so a plain startswith missed
+    standalone-launched runs ("03_resonator_spectroscopy_single") and their fit rows
+    silently lost the Apply affordance — the same normalization the recipe registry
+    got for exactly this reason (doc 48)."""
+    from quam_state_manager.core.interactive_plots.registry import _normalize_node_name
+    norm_name = _normalize_node_name(experiment_name)
     best: tuple[str, dict] | None = None
     for prefix, spec in FIT_TARGET_MAP.items():
-        if experiment_name.startswith(prefix) and (best is None or len(prefix) > len(best[0])):
-            best = (prefix, spec)
+        np = _normalize_node_name(prefix)
+        if norm_name.startswith(np) and (best is None or len(np) > len(best[0])):
+            best = (np, spec)
     return best[1] if best else {}
 
 

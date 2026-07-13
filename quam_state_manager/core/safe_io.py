@@ -220,10 +220,10 @@ def read_state_wiring(folder: Path | str, *, attempts: int | None = None) -> tup
     state_path = folder / "state.json"
     wiring_path = folder / "wiring.json"
     for attempt in range(n):
-        before = state_wiring_mtimes(folder)
-        last_state = read_json(state_path)
-        last_wiring = read_json(wiring_path)
-        after = state_wiring_mtimes(folder)
+        before = _pair_fingerprint(folder)   # (mtime_ns, size) per file — catches
+        last_state = read_json(state_path)    # coarse/non-advancing-mtime rewrites a
+        last_wiring = read_json(wiring_path)  # float-mtime bracket would miss
+        after = _pair_fingerprint(folder)
         if before == after:
             return last_state, last_wiring
         logger.debug(
@@ -315,6 +315,19 @@ def _write_tmp_json(path: Path, data) -> Path:
     return tmp
 
 
+def _write_tmp_bytes(path: Path, data: bytes) -> Path:
+    """Write raw *data* bytes to a ``.tmp`` sibling of *path* (flushed + fsync'd).
+
+    Used to restore a file to EXACT prior bytes (a rollback), where re-serialising
+    a parsed dict could reorder/reformat it."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    return tmp
+
+
 def atomic_write_json(path: Path | str, data) -> None:
     """Write *data* as pretty JSON to *path* atomically.
 
@@ -345,6 +358,18 @@ def write_state_wiring(folder: Path | str, state: dict, wiring: dict) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     state_path = folder / "state.json"
     wiring_path = folder / "wiring.json"
+    # Snapshot the OLD state bytes so we can roll back if the wiring replace fails
+    # AFTER the state replace already landed — otherwise the folder is left holding
+    # NEW state + OLD wiring, a torn pair ("a chip that never existed") an
+    # experiment could then load. Best-effort: no snapshot ⇒ no rollback (no worse
+    # than before). open_shared never blocks a concurrent writer.
+    old_state_bytes: bytes | None = None
+    if state_path.exists():
+        try:
+            with open_shared(state_path) as f:
+                old_state_bytes = f.read()
+        except OSError:
+            old_state_bytes = None
     state_tmp = _write_tmp_json(state_path, state)
     try:
         wiring_tmp = _write_tmp_json(wiring_path, wiring)
@@ -356,7 +381,21 @@ def write_state_wiring(folder: Path | str, state: dict, wiring: dict) -> None:
             pass
         raise
     _replace_into_place(state_tmp, state_path)
-    _replace_into_place(wiring_tmp, wiring_path)
+    try:
+        _replace_into_place(wiring_tmp, wiring_path)
+    except OSError:   # LiveFileError is an OSError — covers exhausted retries too
+        # State replaced but wiring failed → roll state back to the old bytes so the
+        # live pair stays CONSISTENT (old+old) rather than torn (new+old). If the
+        # rollback ALSO fails, log loudly and re-raise the original wiring error.
+        if old_state_bytes is not None:
+            try:
+                _replace_into_place(_write_tmp_bytes(state_path, old_state_bytes),
+                                    state_path)
+            except OSError:
+                logger.error(
+                    "write_state_wiring: wiring replace failed AND state rollback "
+                    "failed for %s — live may hold NEW state + OLD wiring", folder)
+        raise
 
 
 # ----------------------------------------------------------------------
@@ -374,3 +413,18 @@ def state_wiring_mtimes(folder: Path | str) -> tuple[float, float]:
         (folder / "state.json").stat().st_mtime,
         (folder / "wiring.json").stat().st_mtime,
     )
+
+
+def _pair_fingerprint(folder: Path) -> tuple:
+    """``((state mtime_ns, size), (wiring mtime_ns, size))`` — the torn-pair bracket.
+
+    Stronger than float ``st_mtime``: that's a float (~0.24µs at this epoch,
+    discarding NTFS 100ns precision) and can FAIL TO ADVANCE on a same-second /
+    coarse / 9p / FAT rewrite (labs write experiment data to SMB shares; the dev
+    env is a 9p/WSL mount), so a writer replacing wiring.json between the two reads
+    could slip a MIXED pair past a float-mtime bracket. ``st_mtime_ns`` is lossless
+    and ``st_size`` changes on virtually every real state save, so this catches it.
+    Raises ``OSError`` if a file is missing (same as the caller's read)."""
+    st = (folder / "state.json").stat()
+    wi = (folder / "wiring.json").stat()
+    return ((st.st_mtime_ns, st.st_size), (wi.st_mtime_ns, wi.st_size))

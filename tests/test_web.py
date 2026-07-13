@@ -769,6 +769,18 @@ class TestWorkspace:
         resp = client.post("/workspace/select", data={"path": ""})
         assert resp.status_code == 400
 
+    def test_workspace_select_corrupt_state_is_400_not_500(self, client, tmp_path):
+        """A corrupt/unreadable state.json raises ValueError (bad JSON), not
+        FileNotFoundError — workspace_select must catch it and return a friendly
+        400 status toast, not a generic 500 Internal Server Error."""
+        bad = tmp_path / "badchip" / "quam_state"
+        bad.mkdir(parents=True)
+        (bad / "state.json").write_text("{ this is not valid json", encoding="utf-8")
+        (bad / "wiring.json").write_text("{}", encoding="utf-8")
+        resp = client.post("/workspace/select", data={"path": str(bad)})
+        assert resp.status_code == 400
+        assert b"Internal Server Error" not in resp.data
+
     def test_workspace_select_htmx_chip_folder_redirects(self, client, synth_folder):
         """A plain chip-folder sidebar entry (no run_id, no inplace flag) keeps
         the full-render HX-Redirect so the header reflects the switched chip."""
@@ -2371,6 +2383,9 @@ class TestDatasetsPoll:
             ),
         }
         ds.rescan_if_stale = MagicMock(return_value=False)
+        # The poll iterates runs_snapshot() (lock-safe accessor) rather than
+        # .runs.values() directly — mirror the real runs for the mocked store.
+        ds.runs_snapshot = MagicMock(return_value=list(ds.runs.values()))
         ds.folder_path = tmp_path          # multi-folder: poll keys runs by folder
         ds.run_count = 2
 
@@ -3214,8 +3229,10 @@ class TestGenerate:
         )
         client.post("/generate/select-env", json={"python": sys.executable})
 
+        out = tmp_path / "out"          # a CLEAN, dedicated output folder (tmp_path
+        out.mkdir()                     # itself holds the test app's instance/ JSONs)
         resp = client.post("/generate/build", json={
-            "spec": _gen_valid_spec(), "output_path": str(tmp_path),
+            "spec": _gen_valid_spec(), "output_path": str(out),
         })
         data = resp.get_json()
         assert "needs_confirm" not in data

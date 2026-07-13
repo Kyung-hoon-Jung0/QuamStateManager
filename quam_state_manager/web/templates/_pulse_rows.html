@@ -8,14 +8,16 @@
     <thead>
         <tr>
             <th class="pulse-sel-col"></th>
+            {# data-col = the REAL <td> index incl. the leading checkbox cell (col 0):
+               0=sel 1=Owner 2=Channel 3=Operation 4=Class 5=Waveform 6=Length 7=Amp 8=Used by #}
             <th class="sortable" data-col="1" data-type="str">Owner</th>
-            <th class="sortable" data-col="1" data-type="str">Channel</th>
-            <th class="sortable" data-col="2" data-type="str">Operation</th>
-            <th class="sortable" data-col="3" data-type="str">Class</th>
+            <th class="sortable" data-col="2" data-type="str">Channel</th>
+            <th class="sortable" data-col="3" data-type="str">Operation</th>
+            <th class="sortable" data-col="4" data-type="str">Class</th>
             <th>Waveform</th>
-            <th class="sortable" data-col="5" data-type="num">Length <span class="unit">(ns)</span></th>
-            <th class="sortable" data-col="6" data-type="num">Amp</th>
-            <th class="sortable" data-col="7" data-type="num">Used by</th>
+            <th class="sortable" data-col="6" data-type="num">Length <span class="unit">(ns)</span></th>
+            <th class="sortable" data-col="7" data-type="num">Amp</th>
+            <th class="sortable" data-col="8" data-type="num">Used by</th>
         </tr>
     </thead>
     <tbody>

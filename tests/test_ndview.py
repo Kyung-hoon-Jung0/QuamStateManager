@@ -129,6 +129,69 @@ class TestCubeSynthetic:
         # kept indices are REAL source indices (click maps to true points)
         assert det["coord"][kept.index(dip)] == pytest.approx(x[dip])
 
+    def test_iq_siblings_share_kept_indices_after_decimation(self, tmp_path):
+        """|IQ|/phase usability: decimated I and Q must ship IDENTICAL kept
+        sets (derived from a combined |I|+|Q| representative), or the client
+        can never combine them. Give each variable its own dip at a different
+        sweep point — solo per-variable decimation keeps different indices;
+        the shared representative must keep BOTH dips in BOTH cubes."""
+        p = tmp_path / "ds_raw.h5"
+        n = 50_000
+        x = np.linspace(0, 1, n)
+        yi = np.ones(n); dip_i = n // 3; yi[dip_i] = -100.0     # I's dip
+        yq = np.ones(n); dip_q = (2 * n) // 3; yq[dip_q] = -100.0  # Q's dip
+        with h5py.File(p, "w") as f:
+            d = f.create_dataset("detuning", data=x)
+            d.attrs["CLASS"] = np.bytes_("DIMENSION_SCALE")
+            q = f.create_dataset("qubit",
+                                 data=np.array([f"q{i}".encode() for i in range(20)]))
+            q.attrs["CLASS"] = np.bytes_("DIMENSION_SCALE")
+            I = f.create_dataset("I", data=np.tile(yi, (20, 1)))   # 1M > budget
+            Q = f.create_dataset("Q", data=np.tile(yq, (20, 1)))
+            for ds in (I, Q):
+                ds.dims[0].attach_scale(q)
+                ds.dims[1].attach_scale(d)
+        cube_i = ndview.build_cube(p, "I")
+        cube_q = ndview.build_cube(p, "Q")
+        assert cube_i["ok"] and cube_q["ok"]
+        ki = cube_i["kept"]["detuning"]
+        kq = cube_q["kept"]["detuning"]
+        assert ki == kq, "IQ siblings must ship identical kept sets"
+        # The combined representative preserves EACH variable's feature in both.
+        assert dip_i in ki and dip_q in ki
+        assert min(cube_i["data"][0]) == -100.0   # I's dip value survived
+        assert min(cube_q["data"][0]) == -100.0   # Q's dip value survived
+
+    def test_iq_siblings_stay_aligned_through_byte_shrink(self, tmp_path):
+        """The BYTE-shrink pass derives its budgets from the measured serialized
+        length — and I's and Q's lengths differ (float text widths), so the pair
+        re-diverged here even after the element pass aligned them. Under the
+        pair-max shrink both siblings must walk to IDENTICAL kept maps. This
+        cube is UNDER the element budget but OVER the byte target, so only the
+        byte-shrink pass decimates it."""
+        p = tmp_path / "ds_raw.h5"
+        rng = np.random.default_rng(2)
+        nf, na = 700, 600                            # 420k elems < 500k element budget
+        with h5py.File(p, "w") as f:
+            fr = f.create_dataset("freq", data=np.linspace(4e9, 5e9, nf))
+            fr.attrs["CLASS"] = np.bytes_("DIMENSION_SCALE")
+            am = f.create_dataset("amp", data=np.linspace(0, 1, na))
+            am.attrs["CLASS"] = np.bytes_("DIMENSION_SCALE")
+            I = f.create_dataset("I", data=rng.normal(size=(nf, na)))
+            Q = f.create_dataset("Q", data=rng.normal(size=(nf, na)) * 3.0)
+            for ds in (I, Q):
+                ds.dims[0].attach_scale(fr)
+                ds.dims[1].attach_scale(am)
+        cube_i = ndview.build_cube(p, "I")
+        cube_q = ndview.build_cube(p, "Q")
+        assert cube_i["ok"] and cube_q["ok"]
+        # byte-shrink actually fired (the whole point of this fixture)
+        assert any(d["decimated"] for d in cube_i["dims"])
+        assert (cube_i["kept"] or {}) == (cube_q["kept"] or {}), \
+            "byte-shrink must keep IQ siblings on identical kept maps"
+        assert [(d["name"], d["size"]) for d in cube_i["dims"]] == \
+            [(d["name"], d["size"]) for d in cube_q["dims"]]
+
     def test_probe_lists_fit_coords(self, tmp_path):
         """Fit results riding as non-dim coords must be discoverable."""
         p = tmp_path / "ds_fit.h5"

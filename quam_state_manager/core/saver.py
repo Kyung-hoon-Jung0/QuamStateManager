@@ -117,6 +117,13 @@ class Saver:
 
         fieldnames, rows = _labeled_columns(props, rows, with_units)
 
+        # Neutralize spreadsheet formula injection in both headers and cells — chip
+        # string values (and any attacker-influenced column) starting with = @ + -
+        # would execute as a formula when the CSV is opened in Excel/Sheets.
+        from quam_state_manager.core.report_card import csv_safe_cell
+        fieldnames = [csv_safe_cell(fn) for fn in fieldnames]
+        rows = [{csv_safe_cell(k): csv_safe_cell(v) for k, v in row.items()} for row in rows]
+
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")

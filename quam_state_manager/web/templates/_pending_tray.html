@@ -93,7 +93,7 @@
                   hx-post="/discard"
                   hx-target="#pending-tray"
                   hx-swap="outerHTML"
-                  hx-vals='{"index": "{{ loop.index0 }}"}'
+                  hx-vals='{"index": "{{ loop.index0 }}", "expect_path": {{ c.dot_path | tojson }}}'
                   hx-confirm="Discard change to {{ c.dot_path }}?"
                   aria-label="Discard pending change to {{ c.dot_path }}"
                   title="Discard this change">&#10005;</button>

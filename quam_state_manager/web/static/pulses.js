@@ -146,7 +146,11 @@ window.PulsesPage = (function () {
             var state = collectOverrides(root);
             updateDirtyUI(root, state.dirty);
             if (!state.dirty || Object.keys(state.overrides).length === 0) {
-                // no shape-relevant changes — drop the overlay
+                // no shape-relevant changes — drop the overlay. Bump the fetch
+                // generation so an ALREADY in-flight synth (fired before an Esc
+                // reset elapsed the debounce) is dropped as stale when it
+                // resolves, instead of re-drawing the discarded value's preview.
+                _gen++;
                 renderPulsePlot('pulse-detail-plot', root._committedPlot);
                 showSynthErr(root, '');
                 return;

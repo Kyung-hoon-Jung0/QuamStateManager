@@ -219,7 +219,16 @@ def lint_state(store) -> list[Finding]:
     hit = _lint_state_cache.get(store)
     if hit is not None and hit[0] == seq:
         return list(hit[1])
-    out = _lint_state_uncached(store)
+    # Hold the store lock across the walk: _lint_state_uncached iterates
+    # store.merged, and a concurrent /field/edit inserting/deleting a key would
+    # raise 'dict changed size during iteration'. Read-only + ms-fast; the store's
+    # RLock is reentrant so nested resolver calls that re-take it are fine.
+    lock = getattr(store, "_lock", None)
+    if lock is not None:
+        with lock:
+            out = _lint_state_uncached(store)
+    else:
+        out = _lint_state_uncached(store)
     try:
         _lint_state_cache[store] = (seq, out)
     except TypeError:  # pragma: no cover - store not weak-referenceable
@@ -724,7 +733,15 @@ def _dangling_pointer_findings(store) -> list[Finding]:
         return findings
     for w in warnings:
         if isinstance(w.pointer, str) and w.pointer.startswith("#/ports/"):
-            continue
+            # Only skip the pointers _port_findings ACTUALLY re-reports: the wiring
+            # opx_output/opx_input leaves. A dangling #/ports/ pointer living
+            # elsewhere (e.g. ports.mw_inputs.*.downconverter_frequency, which the
+            # generator + apply-fix create) is NOT covered there, so hiding it here
+            # made a real dangling pointer invisible to the page's own catalog.
+            _dp = w.dot_path if isinstance(w.dot_path, str) else ""
+            _leaf = _dp.rsplit(".", 1)[-1]
+            if _dp.startswith("wiring.") and _leaf in ("opx_output", "opx_input"):
+                continue
         if getattr(w, "soft", False):
             # The target object exists; only an optional field is omitted (it's at
             # its quam default). quam resolves it to the default at runtime — no

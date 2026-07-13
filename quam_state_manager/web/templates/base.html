@@ -20,6 +20,16 @@
         document.documentElement.setAttribute('data-theme', theme);
       })();
     </script>
+    {# Render-time chip fingerprint token (topology-only). Set on every FULL page
+       load; HTMX fragment swaps deliberately don't reset it, so it stays pinned to
+       the chip that was active when this page was rendered. Sent as expect_chip on
+       every edit POST so a stale tab (another tab switched the active chip) is
+       caught by the server's 409 gate instead of writing onto the wrong chip.
+       A chip switch always does a full reload (HX-Redirect), refreshing this. #}
+    <script>
+      window.__chipToken = {{ (chip_token if chip_token is defined else '')|tojson }};
+      window.__activePath = {{ (active_path if active_path is defined and active_path else '')|tojson }};
+    </script>
     <link rel="stylesheet" href="{{ url_for('static', filename='pico.min.css') }}">
     {# Stylesheet up top so CSS downloads in parallel with the scripts. #}
     <link rel="stylesheet" href="{{ asset_url('style.css') }}">
@@ -809,6 +819,18 @@
         }
         persistInput("workspace-path-input", "quam_workspace_path");
         persistInput("load-path-input", "quam_load_path");
+        // Sync the load-path box to the SERVER's active chip on every full
+        // render (a chip switch always full-reloads via HX-Redirect). Without
+        // this the box kept showing the PREVIOUS folder from localStorage after
+        // a sidebar switch — a stale path that used to get silently /load-ed
+        // back by plot-click / Explorer flows.
+        try {
+            var _lp = document.getElementById("load-path-input");
+            if (_lp && window.__activePath) {
+                _lp.value = window.__activePath;
+                localStorage.setItem("quam_load_path", window.__activePath);
+            }
+        } catch (e) {}
     });
     </script>
 
@@ -1168,14 +1190,22 @@
             chipRev = rev;
         }
         var _schedPolling = false;
+        var _schedActive = false;   // last poll saw a running queue
         function poll() {
-            // In-flight guard + visibility gating (audit B24): don't pile up
-            // overlapping requests if one is slow, and don't hammer the server
-            // while the desktop window is hidden/backgrounded.
-            if (_schedPolling || document.hidden) return;
+            // In-flight guard (don't stack overlapping requests if one is slow).
+            if (_schedPolling) return;
+            // This poll ALSO carries the browser-alive heartbeat (touch_ui). Skip
+            // while hidden ONLY when no queue is running — a running queue MUST keep
+            // heartbeating from a hidden/minimized window, else the worker pauses it
+            // after HEARTBEAT_TIMEOUT_S (the overnight walk-away/lock-screen case
+            // the 90s timeout was designed for). B24's perf gate still holds at idle.
+            if (document.hidden && !_schedActive) return;
             _schedPolling = true;
             fetch("/scheduler/status").then(function (r) { return r.json(); })
-                .then(apply).catch(function () {})
+                .then(function (s) {
+                    _schedActive = !!(s && s.run && s.run.status === "running");
+                    apply(s);
+                }).catch(function () {})
                 .then(function () { _schedPolling = false; });
         }
         document.addEventListener("DOMContentLoaded", function () {

@@ -567,6 +567,57 @@ class TestP2Strips:
         assert b"cmp-strip-banner" in r.data
         assert b"cmp-strips-json" in r.data
 
+    def test_bucket1_strip_hidden_when_only_port_value_recalibrated(self, tmp_path):
+        # Two snapshots of the SAME chip over time: identical topology (same
+        # qubits, grid, and opx_output routing) but a ``ports`` NUMERIC value
+        # recalibrated (LO/downconverter freq drift).  This is a calibration
+        # change, not a wiring/topology change — the strip must stay hidden.
+        # Regression: the Infrastructure trigger used to count ports/octaves/
+        # mixers value changes, firing a false "Wiring / topology changed"
+        # banner on structurally identical snapshots.
+        st = _make_state(f_01=6.25e9)
+        st["ports"] = {"mw_inputs": {"con1": {"1": {"1": {
+            "band": 2, "downconverter_frequency": 7.35e9}}}}}
+        a = tmp_path / "p1" / "chipA" / "quam_state"
+        b = tmp_path / "p2" / "chipB" / "quam_state"
+        for folder in (a, b):
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / "wiring.json").write_text(
+                json.dumps(_make_wiring()), encoding="utf-8")
+        (a / "state.json").write_text(json.dumps(st), encoding="utf-8")
+        st_b = json.loads(json.dumps(st))
+        st_b["ports"]["mw_inputs"]["con1"]["1"]["1"][
+            "downconverter_frequency"] = 7.36e9   # 10 MHz LO retune
+        (b / "state.json").write_text(json.dumps(st_b), encoding="utf-8")
+
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        client = app.test_client()
+        r = client.get(f"/compare-hub?src=ws:{a}&src=ws:{b}&bucket=1")
+        assert r.status_code == 200
+        assert b"cmp-strip-banner" not in r.data
+        assert b"cmp-strips-json" not in r.data
+
+    def test_bucket2_self_ref_does_not_false_tint(self, tmp_path):
+        # Audit finding (routes.py:7011): the ② stone-tint 'changed' filter
+        # counted every class except equal/within — including CLS_DERIVED
+        # (#./ self-refs resolve per-source), so two DIFFERENT devices whose
+        # qubit values are byte-identical but carry a #./ self-ref were falsely
+        # tinted as differing. Only a real inter-source difference may tint.
+        st = _make_state()
+        st["qubits"]["qA1"]["xy"]["intermediate_frequency"] = "#./RF_frequency"
+        a = _write_quam(tmp_path / "sr" / "devA" / "quam_state", state=st)
+        b = _write_quam(tmp_path / "sr" / "devB" / "quam_state",
+                        state=json.loads(json.dumps(st)))   # byte-identical values
+        wb = _make_wiring()
+        wb["network"]["host"] = "10.9.9.9"                  # different DEVICE (cluster)
+        (b / "wiring.json").write_text(json.dumps(wb), encoding="utf-8")
+
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        client = app.test_client()
+        r = client.get(f"/compare-hub?src=ws:{a}&src=ws:{b}&bucket=2&map=qA1:qA1")
+        assert r.status_code == 200
+        assert b"cmp-stone-diff" not in r.data   # self-ref is derived, not a diff
+
     def test_bucket2_tints_changed_stones(self, env):
         c, a, b = env    # f_01 differs → qA1 changed under the map
         r = c.get(f"/compare-hub?src=ws:{a}&src=ws:{b}&bucket=2&map=qA1:qA1")
@@ -900,6 +951,32 @@ class TestFinalAuditHardening:
         r2 = c.get(f"/compare-hub?src=hist:{key}/{ts1}&src=ws:{b}&bucket=2")
         assert r2.status_code == 200
         assert b"saved mapping" in r2.data     # reloaded across snapshots
+
+    def test_run_anchor_distinguishes_devices_under_one_flat_root(self, tmp_path):
+        """Audit finding (routes.py:7115): run: mappings anchored on
+        p.parent.parent.parent = the workspace DATA ROOT, which the flat
+        qualibrate layout (<root>/<date>/#run/quam_state) shares across every
+        device — collapsing all run<->run mappings onto one record. The anchor
+        must instead come from the run's data-derived chip identity so two
+        different chips under one flat root key to DIFFERENT records."""
+        from quam_state_manager.core import compare_sources as cs
+        from quam_state_manager.web import routes as R
+        root = tmp_path / "flat" / "2026-07-04"
+        qs_a = _write_quam(root / "#12_rabi_153000" / "quam_state", n_qubits=2)
+        qs_b = _write_quam(root / "#13_rabi_154000" / "quam_state", n_qubits=3)
+        pool = cs.SourcePool()
+        src_a = cs.resolve_source(f"run:{qs_a}", pool)
+        src_b = cs.resolve_source(f"run:{qs_b}", pool)
+        # Old code: both → str(p.parent.parent.parent) == the shared flat root.
+        shared_root = str(qs_a.parent.parent)
+        assert str(qs_b.parent.parent) == shared_root      # they DO share a root
+        anchor_a = R._hub_map_anchor(src_a)
+        anchor_b = R._hub_map_anchor(src_b)
+        assert anchor_a != shared_root                     # not the data root
+        assert anchor_a != anchor_b                        # and device-distinct
+        # Device-stable: a second run of the SAME chip anchors identically.
+        qs_a2 = _write_quam(root / "#14_rabi_155000" / "quam_state", n_qubits=2)
+        assert R._hub_map_anchor(cs.resolve_source(f"run:{qs_a2}", pool)) == anchor_a
 
     def test_no_suggestion_for_wiring_missing_sources(self, env, tmp_path):
         c, _a, _b = env

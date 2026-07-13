@@ -43,6 +43,13 @@ from typing import Any
 # (residual loss 0). See docs/51_regenerate_config.md.
 ENTITY_COLLECTIONS = {"qubits", "qubit_pairs", "ports", "octaves", "mixers"}
 
+# Of those, the hardware collections whose ENTIRE subtree is rebuild-authoritative
+# (their entities live several levels deep and carry no user-addable leaves) — so
+# an OLD-only key at ANY depth under them is a removed port/octave/mixer and must
+# NOT be grafted back. qubits/qubit_pairs are intentionally excluded: below the
+# direct entity level they hold user-added operations/macros that DO graft.
+_HW_ENTITY_COLLECTIONS = {"ports", "octaves", "mixers"}
+
 # Leaf keys that encode structural membership -> always take the NEW value so a
 # structural add/remove in the rebuild is reflected, never overwritten by OLD.
 STRUCTURAL_LEAF_KEYS = {
@@ -145,8 +152,16 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats) -> Any:
                 out[k] = copy.deepcopy(nv)
                 stats.kept_new_only += _count_leaves(nv)
         # tier 2: additive graft -- but NEVER resurrect a removed structural
-        # entity (an OLD-only key directly under an entity collection).
-        graftable_here = path not in ENTITY_COLLECTIONS
+        # entity. For qubits/qubit_pairs the entity is a DIRECT child, and keys
+        # DEEPER than that are user-added operations/macros we DO want to graft,
+        # so block only the direct-child level. For ports/octaves/mixers the
+        # whole subtree is rebuild-authoritative hardware config (a port entity
+        # lives 3-4 levels deep, e.g. ports.mw_outputs.con1.1.2, with no
+        # user-addable leaves), so block the graft at EVERY depth — otherwise a
+        # removed qubit's now-unallocated port was resurrected wholesale.
+        top = path.split(".", 1)[0] if path else ""
+        graftable_here = not (path in ENTITY_COLLECTIONS
+                              or top in _HW_ENTITY_COLLECTIONS)
         for k, ov in old.items():
             if k in new or k == "__class__" or k in STRUCTURAL_LEAF_KEYS:
                 continue

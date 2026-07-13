@@ -285,8 +285,16 @@
             state.editingPath = null;
             // Tab / click-away COMMITS (like Enter). applyOne no-ops when the path
             // isn't dirty (unchanged value) or while an apply is already in flight.
+            // BUT a click on the Apply-all / Apply-to-live / Reset toolbar buttons must
+            // NOT commit here: the commit sets state.applying, which makes those buttons'
+            // own handlers no-op (Apply looks dead), and for Reset it turns discard into
+            // a commit. A pointerdown on those buttons fires before this blur; honour it
+            // (relatedTarget is null in some engines) so the toolbar handler runs instead.
+            var to = e.relatedTarget;
+            var onToolbar = (state.toolbarPressTs && (Date.now() - state.toolbarPressTs) < 1000)
+                || (to && to.closest && to.closest('#av-apply, #av-apply-sync, #av-reset'));
             var path = e.target.getAttribute('data-dot-path');
-            if (path && state.dirty.has(path)) applyOne(path, e.target);
+            if (!onToolbar && path && state.dirty.has(path)) applyOne(path, e.target);
             scheduleRender();                 // catch up the window deferred during the edit
         }
     }
@@ -415,7 +423,7 @@
         var chunk = updates.slice(start, start + CHUNK);
         fetch('/field/edit-batch', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ updates: chunk })
+            body: JSON.stringify({ updates: chunk, expect_chip: window.__chipToken || '' })
         }).then(function (r) { return r.json(); }).then(function (jb) {
             if (!jb.ok) { setApplying(false); applyError(jb, start); return; }   // start = edits already committed
             reconcile(jb.results);
@@ -486,7 +494,7 @@
         state.applying = true;   // in-flight guard: an Enter + quick blur can fire two
         fetch('/field/edit-batch', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ updates: [{ dot_path: path, value: d.value }] })
+            body: JSON.stringify({ updates: [{ dot_path: path, value: d.value }], expect_chip: window.__chipToken || '' })
         }).then(function (r) { return r.json(); }).then(function (jb) {
             if (!jb.ok) { applyError(jb); return; }
             reconcile(jb.results);
@@ -629,12 +637,16 @@
         if (ea) ea.addEventListener('click', function () { expandAll(true); });
         var ca = document.getElementById('av-collapse-all');
         if (ca) ca.addEventListener('click', function () { expandAll(false); });
+        // Stamp a toolbar-press timestamp on pointerdown (fires before the focused
+        // input's blur) so onTbodyFocusOut skips its click-away commit and lets these
+        // handlers act on the full dirty set (Apply) or discard it (Reset).
+        function _stampToolbar() { state.toolbarPressTs = Date.now(); }
         var ap = document.getElementById('av-apply');
-        if (ap) ap.addEventListener('click', function () { applyAll(); });   // no event arg → syncAfter stays false
+        if (ap) { ap.addEventListener('pointerdown', _stampToolbar); ap.addEventListener('click', function () { applyAll(); }); }   // no event arg → syncAfter stays false
         var aps = document.getElementById('av-apply-sync');
-        if (aps) aps.addEventListener('click', function () { applyAll(true); });
+        if (aps) { aps.addEventListener('pointerdown', _stampToolbar); aps.addEventListener('click', function () { applyAll(true); }); }
         var rs = document.getElementById('av-reset');
-        if (rs) rs.addEventListener('click', resetDirty);
+        if (rs) { rs.addEventListener('pointerdown', _stampToolbar); rs.addEventListener('click', resetDirty); }
         var chips = document.getElementById('av-chips');
         if (chips) chips.addEventListener('click', function (e) {
             var b = e.target.closest ? e.target.closest('.av-chip') : null;

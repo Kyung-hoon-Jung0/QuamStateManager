@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import threading
 import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
@@ -155,6 +156,12 @@ class Workspace:
     """
 
     def __init__(self) -> None:
+        # Serialises the root-mutating methods so the dedup check-then-append in
+        # add_root is atomic (two concurrent adds of one path used to both pass
+        # the `path in root_folders` check and both append a duplicate root).
+        # Readers stay lock-free: they iterate self.tree, which mutators only ever
+        # replace by atomic attribute rebind, never mutate in place.
+        self._lock = threading.RLock()
         self.root_folders: list[Path] = []
         self.tree: dict[str, list[DateGroup]] = {}
         self._entries_by_path: dict[Path, ExperimentEntry] = {}
@@ -184,43 +191,53 @@ class Workspace:
         Returns the list of discovered ExperimentEntry objects.
         """
         path = Path(path).resolve()
-        if path in self.root_folders:
-            logger.warning("Root folder already added: %s", path)
-            return self._entries_for_root(path)
+        with self._lock:
+            if path in self.root_folders:
+                logger.warning("Root folder already added: %s", path)
+                return self._entries_for_root(path)
 
-        self.root_folders.append(path)
-        entries = _scan_root(path)
-        groups = _group_by_date(entries)
-        self.tree[str(path)] = groups
-        self._scan_times[str(path)] = time.time()
-        for entry in entries:
-            self._entries_by_path[entry.quam_state_path.resolve()] = entry
+            self.root_folders.append(path)
+            entries = _scan_root(path)
+            groups = _group_by_date(entries)
+            # Rebind self.tree to a FRESH dict instead of mutating in place: the sidebar
+            # poll / manual refresh mutate the tree while every page render iterates it
+            # (all_entries + _sidebar_tree.html) with no lock. An in-place key insert/pop
+            # during iteration raises 'dict changed size'. A single attribute rebind is
+            # atomic, so a concurrent reader keeps iterating the OLD dict unharmed.
+            self.tree = {**self.tree, str(path): groups}
+            self._scan_times[str(path)] = time.time()
+            for entry in entries:
+                self._entries_by_path[entry.quam_state_path.resolve()] = entry
 
-        self._version += 1
-        logger.info("Scanned %s: found %d quam_state folders", path, len(entries))
-        return entries
+            self._version += 1
+            logger.info("Scanned %s: found %d quam_state folders", path, len(entries))
+            return entries
 
     def remove_root(self, path: str | Path) -> None:
         """Remove a root folder and evict all its cached stores."""
         path = Path(path).resolve()
-        if path not in self.root_folders:
-            return
-        self.root_folders.remove(path)
-        key = str(path)
-        removed_entries = []
-        for group in self.tree.pop(key, []):
-            removed_entries.extend(group.entries)
-        for entry in removed_entries:
-            resolved = entry.quam_state_path.resolve()
-            self._entries_by_path.pop(resolved, None)
-            self._loaded_stores.pop(resolved, None)
-        self._version += 1
+        with self._lock:
+            if path not in self.root_folders:
+                return
+            self.root_folders.remove(path)
+            key = str(path)
+            removed_entries = []
+            for group in self.tree.get(key, []):
+                removed_entries.extend(group.entries)
+            # Atomic rebind (see add_root) — never pop in place while readers iterate.
+            self.tree = {k: v for k, v in self.tree.items() if k != key}
+            for entry in removed_entries:
+                resolved = entry.quam_state_path.resolve()
+                self._entries_by_path.pop(resolved, None)
+                self._loaded_stores.pop(resolved, None)
+            self._version += 1
 
     def rescan_root(self, path: str | Path) -> list[ExperimentEntry]:
         """Re-scan a root folder (e.g. after new experiments are added)."""
         path = Path(path).resolve()
-        self.remove_root(path)
-        return self.add_root(path)
+        with self._lock:   # remove+add as one unit (RLock: nested calls re-enter)
+            self.remove_root(path)
+            return self.add_root(path)
 
     def rescan_all(self) -> None:
         """Force-rescan every root regardless of mtime (used by the manual Refresh button)."""

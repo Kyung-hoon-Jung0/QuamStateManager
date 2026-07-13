@@ -415,6 +415,26 @@ def _quam_ctx_dirty(ctx: dict) -> bool:
     )
 
 
+def any_unsaved_changes(app) -> bool:
+    """True if ANY loaded context has in-memory edits not yet written to disk.
+
+    ONLY counts ``change_log`` — the applied-but-unsaved field/bulk/pulse edits
+    that live nowhere on disk until Save, so closing the process loses them.
+    ``working_dirty`` / ``pending_reapply`` are on the working copy / recoverable
+    on reload, so they are NOT a close-time data-loss and don't trigger the guard.
+    Used by the desktop window-close confirmation (main.py) — reads lock-free
+    (list truthiness is GIL-atomic), never raises into the close handler.
+    """
+    try:
+        for ctx in (app.config.get("contexts") or {}).values():
+            store = ctx.get("store")
+            if store is not None and getattr(store, "change_log", None):
+                return True
+    except Exception:  # noqa: BLE001 — never trap the user in an unclosable window
+        pass
+    return False
+
+
 # Throttle for the ground-truth (content-hash) divergence re-check. MUST stay well
 # above the ~3s topology live-poll interval (app.js topoLivePollInterval): the cheap
 # os.stat mtime check runs every poll and catches normal external writes immediately,
@@ -883,24 +903,31 @@ def _wiring_json() -> str:
     return json.dumps(store.wiring) if store else "{}"
 
 
-def _invalidate_engine_cache() -> None:
+def _invalidate_engine_cache(ctx: dict | None = None) -> None:
     """Clear derived caches after a store mutation: the QueryEngine qubit/pair
     cache, the pulse_index, and the cached wiring JSON.
 
     ``ctx["wiring_json"]`` was assumed immutable after load, but a wiring-field
     edit (set_value writes into store.wiring) mutates it — so without refreshing
-    it here the wiring / topology views render stale wiring after an edit."""
-    engine = _engine()
+    it here the wiring / topology views render stale wiring after an edit.
+
+    Pass the request-captured ``ctx`` so a concurrent /load that flips the
+    active context mid-request can't misdirect the invalidation to the wrong
+    chip — the mutated chip's derived caches would otherwise stay stale (and a
+    freshly-loaded chip's caches be cleared spuriously)."""
+    if ctx is None:
+        ctx = _active_ctx()
+    if ctx is None:
+        return
+    engine = ctx.get("engine")
     if engine:
         engine.invalidate_cache()
-    ctx = _active_ctx()
-    if ctx is not None:
-        pulse_index = ctx.get("pulse_index")
-        if pulse_index is not None:
-            pulse_index.invalidate()
-        store = ctx.get("store")
-        if store is not None:
-            ctx["wiring_json"] = json.dumps(store.wiring)
+    pulse_index = ctx.get("pulse_index")
+    if pulse_index is not None:
+        pulse_index.invalidate()
+    store = ctx.get("store")
+    if store is not None:
+        ctx["wiring_json"] = json.dumps(store.wiring)
 
 
 def _rebuild_after_working_copy_replaced(ctx: dict) -> None:
@@ -977,9 +1004,15 @@ def _working_dirty() -> bool:
     return bool(ctx.get("working_dirty")) if ctx else False
 
 
-def _set_working_dirty(value: bool) -> None:
-    """Record whether the working copy differs from the live chip."""
-    ctx = _active_ctx()
+def _set_working_dirty(value: bool, ctx: dict | None = None) -> None:
+    """Record whether the working copy differs from the live chip.
+
+    Pass the request-captured ``ctx`` so a mid-request /load flip can't mark the
+    wrong (freshly-loaded) chip dirty while the actually-mutated chip's flag
+    stays stale — the divergence banner + blocked auto-pull then attach to the
+    wrong chip."""
+    if ctx is None:
+        ctx = _active_ctx()
     if ctx is not None:
         ctx["working_dirty"] = value
 
@@ -1150,6 +1183,40 @@ def _pending_reapply() -> dict:
     return _ctx_obj("pending_reapply") or {}
 
 
+def _merge_reapply(base: dict, incoming: dict) -> dict:
+    """Compose an incoming op-tagged replay map onto *base* using the SAME rules as
+    _capture_change_log_as_updates (which only composes WITHIN one capture).
+
+    A working-copy Save clears the change log and stashes the capture, so a
+    ``delete pulse → Save → recreate the same op`` sequence stashed ``{op: delete}``
+    then a fresh capture ``{op: create}``. Plain dict.update produced a bare
+    ``create``, which on a later pull-with-reapply KeyErrors (the pulled live still
+    holds the original) and DROPS the user's recreated pulse. Composition-aware
+    merge turns it into ``replace`` so the recreate survives.
+    """
+    out = dict(base)
+    for path, opval in incoming.items():
+        op, value = opval
+        prev = out.get(path)
+        if op == "create":
+            out[path] = ("replace", value) if (prev and prev[0] == "delete") else ("create", value)
+        elif op == "delete":
+            prefix = path + "."
+            for stale in [p for p in out if p == path or p.startswith(prefix)]:
+                out.pop(stale)
+            if prev and prev[0] == "create":
+                continue   # created then deleted across captures → net nothing
+            out[path] = ("delete", None)
+        elif op == "replace":
+            prefix = path + "."
+            for stale in [p for p in out if p != path and p.startswith(prefix)]:
+                out.pop(stale)
+            out[path] = ("replace", value)
+        else:  # set
+            out[path] = (prev[0], value) if (prev and prev[0] in ("create", "replace")) else ("set", value)
+    return out
+
+
 def _stash_reapply(updates: dict, ctx: dict | None = None) -> None:
     """Accumulate user edits into the reapply stash.
 
@@ -1170,9 +1237,9 @@ def _stash_reapply(updates: dict, ctx: dict | None = None) -> None:
         ctx = _active_ctx()
     if ctx is None:
         return
-    merged = dict(ctx.get("pending_reapply") or {})
-    merged.update(updates)
-    ctx["pending_reapply"] = merged
+    # Composition-aware merge (not dict.update) so a delete→Save→recreate across
+    # captures composes to 'replace' instead of a bare 'create' that drops on replay.
+    ctx["pending_reapply"] = _merge_reapply(ctx.get("pending_reapply") or {}, updates)
 
 
 def _clear_reapply(ctx: dict | None = None) -> None:
@@ -1320,6 +1387,13 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         "active_name": ident["name"] if ident else None,
         "chip_identity": ident,          # full identity for _chip_header.html
         "chip_origin": ident["origin"] if ident else "live",
+        # Render-time chip fingerprint token (topology-only: network + qubit/pair
+        # labels, NOT values — so value edits never change it). Baked into the page
+        # as window.__chipToken and sent back as expect_chip on every edit POST, so
+        # an edit committed from a stale tab after another tab switched the active
+        # chip is caught server-side by _chip_mismatch_response (409) instead of
+        # silently landing on the wrong chip. "" when no chip is loaded → no gate.
+        "chip_token": _active_chip_token() or "",
         "context_type": _context_type(),
         "change_count": _change_count(),
         "working_dirty": _working_dirty(),
@@ -1586,6 +1660,34 @@ def workbench_watch():
     return jsonify(qualibrate_config.live_state_status())
 
 
+# Single-slot cache for the workbench-match verdict. The /workbench poll fires
+# every 3 s and, in the persistent different-folder states, path_match.verdict
+# falls through to fingerprint_of(qb)+fingerprint_of(sm) = 4 full state/wiring
+# JSON parses of the LIVE folders (~180 ms each on 9p) — a sustained content
+# stat-storm that also breaks the "background detection is os.stat-only" invariant.
+# Cache keyed on (paths, reason, file mtimes): recompute only when an mtime moves.
+# Lock-free: dict get/set is GIL-atomic and a rare double-compute is harmless.
+_workbench_match_cache: dict[str, tuple] = {}
+
+
+def _workbench_match_key(qb, sm, qb_reason) -> tuple:
+    def _mt(folder, name):
+        if not folder:
+            return None
+        try:
+            # (mtime_ns, size), not float st_mtime — a same-tick content swap on a
+            # coarse/9p/FAT clock would otherwise serve a stale verdict (the exact
+            # weakness safe_io._pair_fingerprint hardens against). Advisory UI, but
+            # keep the two invalidation keys consistent.
+            st = (Path(folder) / name).stat()
+            return (st.st_mtime_ns, st.st_size)
+        except OSError:
+            return None
+    return (str(qb), str(sm), qb_reason,
+            _mt(qb, "state.json"), _mt(qb, "wiring.json"),
+            _mt(sm, "state.json"), _mt(sm, "wiring.json"))
+
+
 @bp.route("/workbench/match")
 def workbench_match():
     """Does the quam_state Qualibrate is writing == the one SM has open?
@@ -1606,7 +1708,15 @@ def workbench_match():
     qb_reason = None if qb else qualibrate_config.live_state_status().get("reason")
     sm = _active_path()
 
-    v = path_match.verdict(qb, sm, qb_reason=qb_reason)
+    # Serve the cached verdict unless a folder path or a state/wiring mtime moved
+    # (cheap os.stat) — avoids re-reading the live JSON every 3 s poll.
+    _key = _workbench_match_key(qb, sm, qb_reason)
+    _hit = _workbench_match_cache.get("v")
+    if _hit is not None and _hit[0] == _key:
+        v = _hit[1]
+    else:
+        v = path_match.verdict(qb, sm, qb_reason=qb_reason)
+        _workbench_match_cache["v"] = (_key, v)
     qb_dir = Path(qb) if qb else None
     loadable = bool(qb_dir and qb_dir.is_dir() and (qb_dir / "state.json").exists())
     return jsonify({
@@ -2089,7 +2199,7 @@ def _freq_twin_path(dot_path: str) -> str | None:
     return None
 
 
-def _maybe_mirror_freq(modifier, dot_path: str, entry) -> str | None:
+def _maybe_mirror_freq(modifier, dot_path: str, entry, group_id: str | None = None) -> str | None:
     """Soft-link an inspector edit: when the just-edited f_01/RF field had a twin that
     still held the SAME pre-edit value — i.e. they were coupled, as the calibration
     nodes write them — mirror the committed value into the twin too, so the user
@@ -2116,7 +2226,9 @@ def _maybe_mirror_freq(modifier, dot_path: str, entry) -> str | None:
     if twin_old != old:
         return None  # already detuned → respect it
     try:
-        modifier.set_value(twin, entry.new_value)
+        # Share the primary edit's group_id so a single Ctrl+Z (undo_group)
+        # reverts BOTH the primary and this mirror atomically.
+        modifier.set_value(twin, entry.new_value, group_id=group_id)
         return twin
     except (KeyError, TypeError, ValueError, IndexError):
         return None
@@ -2135,9 +2247,19 @@ def _freq_mirror_oob(mirrored: str) -> str:
 
 @bp.route("/qubit/<name>/edit", methods=["POST"])
 def qubit_edit(name: str):
-    modifier = _modifier()
+    ctx = _active_ctx()
+    modifier = ctx.get("modifier") if ctx else None
     if not modifier:
         return render_template("_status.html", message="No state loaded", level="warning")
+
+    # Chip-identity gate (audit #1): reject a stale tab's edit whose render-time
+    # chip token no longer matches the loaded chip — same protection the bulk /
+    # all-values grids already carry; the inspector forms were the opt-in gap.
+    guard = _chip_mismatch_html(
+        request.form.get("expect_chip", ""),
+        request.form.get("force_chip") in ("1", "true", "True"))
+    if guard is not None:
+        return guard
 
     dot_path = request.form.get("dot_path", "")
     raw_value = request.form.get("value", "")
@@ -2145,13 +2267,30 @@ def qubit_edit(name: str):
     freq_sync = request.form.get("freq_sync", "1") != "0"
 
     from quam_state_manager.cli import _parse_value
-    parsed = _parse_value(raw_value)
 
     try:
-        entry = modifier.set_value(dot_path, parsed)
-        mirrored = _maybe_mirror_freq(modifier, dot_path, entry) if freq_sync else None
-        _invalidate_engine_cache()
-    except (KeyError, TypeError) as e:
+        # Same server-side hardening as /field/edit (audit-P0), so these legacy
+        # inspector routes aren't an open side door around it: parse inside the try
+        # (a non-finite 'inf'/'1e999' becomes a 400, not a 500), resolve pointer
+        # leaves to their literal target (value-mode, never stringify the pointer),
+        # and enforce the read-only policy (membership arrays / identity keys / list
+        # elements) instead of letting an incidental coercion error leak through.
+        parsed = _parse_value(raw_value)
+        target_path = _resolve_edit_path(modifier.store, dot_path)
+        _ro = _editability_reason(modifier.store, target_path)
+        if _ro is not None:
+            raise ValueError(_ro)
+        # Mint one group id when the freq-mirror can fire, so the primary edit
+        # and its mirrored twin share it and a single Ctrl+Z reverts both
+        # atomically (otherwise one undo reverts only the twin → f_01≠RF
+        # detuned, the exact invariant the mirror exists to hold). A lone edit
+        # with no twin stays ungrouped, so one undo still reverts it.
+        gid = (modifier.new_group_id()
+               if freq_sync and _freq_twin_path(target_path) else None)
+        entry = modifier.set_value(target_path, parsed, group_id=gid)
+        mirrored = _maybe_mirror_freq(modifier, target_path, entry, group_id=gid) if freq_sync else None
+        _invalidate_engine_cache(ctx)
+    except (KeyError, TypeError, ValueError, IndexError) as e:
         return render_template("_status.html", message=str(e), level="error"), 400
 
     detail = _render_qubit_detail(name, focus_path=dot_path)
@@ -2179,22 +2318,11 @@ def _op_of_path(dot_path: str) -> str | None:
 
 
 def _resolve_edit_path(store, dot_path: str) -> str:
-    """Resolve a write path through QUAM pointers when it isn't navigable as-is.
-
-    Safety net so an alias path like ``qubits.q.xy.operations.x180.amplitude``
-    (where ``x180`` is a ``#./`` pointer) writes the real literal. A path that
-    navigates directly — including one whose leaf is itself a pointer string —
-    is returned unchanged, preserving existing edit semantics.
-    """
-    try:
-        store.get_value(dot_path)
-        return dot_path
-    except (KeyError, TypeError, ValueError, IndexError):
-        from quam_state_manager.core.pointer_path import resolve_field_target
-        ft = resolve_field_target(store.merged, dot_path)
-        if ft["resolvable"] and ft["resolved_path"] != dot_path:
-            return ft["resolved_path"]
-        return dot_path
+    """Follow a pointer-valued leaf to its literal target (value-mode). The canonical
+    implementation is core.edit_policy.resolve_edit_path — SHARED with the CLI so
+    the two edit paths can't diverge (they did: the CLI stringified pointer leaves)."""
+    from quam_state_manager.core.edit_policy import resolve_edit_path
+    return resolve_edit_path(store, dot_path)
 
 
 def _active_chip_token() -> str | None:
@@ -2228,6 +2356,28 @@ def _chip_mismatch_response(expect_chip: str, force_chip: bool):
     return None
 
 
+def _chip_mismatch_html(expect_chip: str, force_chip: bool):
+    """HTML-flavoured chip-identity guard for the inspector edit routes, which
+    return an ``_status.html`` fragment (not JSON like /field/edit). Returns a
+    409 status template when the client's render-time chip token no longer
+    matches the loaded chip (another tab switched chips), else None. Keeps the
+    inspector forms from the "opt-in gate" gap the bulk/all-values grids close.
+    """
+    if force_chip:
+        return None
+    expect_chip = (expect_chip or "").strip()
+    if not expect_chip:
+        return None
+    active = _active_chip_token()
+    if active is not None and active != expect_chip:
+        return render_template(
+            "_status.html",
+            message="This edit was staged against a different chip than the one "
+                    "now loaded — not applied (another tab may have switched chips).",
+            level="error"), 409
+    return None
+
+
 @bp.route("/chip/active-token", methods=["GET"])
 def chip_active_token():
     """The loaded chip's fingerprint token + display name (for the apply-fit
@@ -2241,13 +2391,21 @@ def chip_active_token():
             name = history.chip_name_for(_Path(ctx["path"]))
         except (OSError, ValueError):
             name = ""
-    return jsonify(token=_active_chip_token() or "", name=name)
+    # ``loaded`` distinguishes "no chip loaded" from "loaded but token
+    # uncomputable" (corrupt wiring) — clients that treat the ACTIVE context as
+    # authoritative need the truth, not an empty-token proxy for it.
+    return jsonify(token=_active_chip_token() or "", name=name,
+                   loaded=bool(ctx and ctx.get("path")),
+                   path=(ctx.get("path") if ctx else None) or "")
 
 
 @bp.route("/field/edit", methods=["POST"])
 def field_edit():
     """Generic field editor — works for any dot-path in state or wiring."""
-    modifier = _modifier()
+    # Capture the context up front so the post-mutation cache invalidation binds
+    # to THIS chip even if a concurrent /load flips the active context.
+    ctx = _active_ctx()
+    modifier = ctx.get("modifier") if ctx else None
     if not modifier:
         return jsonify(ok=False, error="No active context"), 400
 
@@ -2274,7 +2432,7 @@ def field_edit():
         if _ro is not None:
             raise ValueError(_ro)
         modifier.set_value(target_path, parsed)
-        _invalidate_engine_cache()
+        _invalidate_engine_cache(ctx)
     except (KeyError, TypeError, ValueError) as e:
         return jsonify(ok=False, error=str(e)), 400
 
@@ -2338,48 +2496,12 @@ def field_peek():
     return jsonify(ok=True, values=values, errors=errors, resolved=resolved)
 
 
-def _container_at(merged: Any, segs: list[str]) -> Any:
-    """Walk ``merged`` by string segments (dict keys or list indices). Returns the
-    value at the path, or None if any segment is missing/out of range."""
-    cur = merged
-    for s in segs:
-        if isinstance(cur, dict):
-            if s not in cur:
-                return None
-            cur = cur[s]
-        elif isinstance(cur, list):
-            try:
-                cur = cur[int(s)]
-            except (ValueError, IndexError):
-                return None
-        else:
-            return None
-    return cur
-
-
 def _editability_reason(store: QuamStore, target_path: str) -> str | None:
-    """SERVER-SIDE editability guard (audit P0): the read-only safety policy —
-    chip-membership arrays (active_*), identity/type keys (__class__/id/digital_marker),
-    and list/matrix ELEMENTS — must be enforced at the server (the only durable layer),
-    not merely hinted in the All-values client render. Returns a rejection reason for a
-    non-editable resolved target, else None.
-
-    Deliberately does NOT reject POINTERS here: the bulk grid edits pointer-aliases in
-    value-mode (they resolve THROUGH to a scalar target) and the Explorer live-diff
-    accept legitimately writes a pointer string, so pointer policy stays client-side.
-    The list check uses the ACTUAL parent container being a Python list, so
-    ``ports.*.<num>.*`` number-keyed DICT leaves stay editable (the structural in_list rule)."""
-    from quam_state_manager.core.leaf_classify import MEMBERSHIP_TOPS, SKIP_LEAVES
-    segs = target_path.split(".")
-    if not segs:
-        return None
-    if segs[0] in MEMBERSHIP_TOPS:
-        return "chip-membership array — edit via the chip add/remove controls, not here"
-    if segs[-1] in SKIP_LEAVES:
-        return "identity / type key — read-only"
-    if len(segs) >= 2 and isinstance(_container_at(store.merged, segs[:-1]), list):
-        return "list / matrix element — edit the whole array in the inspector"
-    return None
+    """Durable read-only safety policy. Canonical impl is
+    core.edit_policy.editability_reason — SHARED with the CLI (which used to
+    overwrite identity keys / membership arrays straight to live)."""
+    from quam_state_manager.core.edit_policy import editability_reason
+    return editability_reason(store, target_path)
 
 
 @bp.route("/field/edit-batch", methods=["POST"])
@@ -2397,7 +2519,10 @@ def field_edit_batch():
     individual rows applied or annotate the failing one with its error
     message.
     """
-    modifier = _modifier()
+    # Capture the context up front so the post-mutation cache invalidation binds
+    # to THIS chip even if a concurrent /load flips the active context.
+    ctx = _active_ctx()
+    modifier = ctx.get("modifier") if ctx else None
     if not modifier:
         return jsonify(ok=False, error="No active context"), 400
 
@@ -2515,7 +2640,7 @@ def field_edit_batch():
                     continue
                 modifier.store.search_index.update_entry(entry.dot_path, entry.new_value)
 
-    _invalidate_engine_cache()
+    _invalidate_engine_cache(ctx)
     return jsonify(ok=True, tray_html=_tray_html(), results=results,
                    modified=_modified_delta())
 
@@ -2771,24 +2896,44 @@ def pair_add_gate(name: str):
 
 @bp.route("/pair/<name>/edit", methods=["POST"])
 def pair_edit(name: str):
-    modifier = _modifier()
+    ctx = _active_ctx()
+    modifier = ctx.get("modifier") if ctx else None
     if not modifier:
         return render_template("_status.html", message="No state loaded", level="warning")
+
+    # Chip-identity gate (audit #1) — see qubit_edit.
+    guard = _chip_mismatch_html(
+        request.form.get("expect_chip", ""),
+        request.form.get("force_chip") in ("1", "true", "True"))
+    if guard is not None:
+        return guard
 
     dot_path = request.form.get("dot_path", "")
     raw_value = request.form.get("value", "")
     freq_sync = request.form.get("freq_sync", "1") != "0"
 
     from quam_state_manager.cli import _parse_value
-    parsed = _parse_value(raw_value)
 
     try:
-        entry = modifier.set_value(dot_path, parsed)
+        # Same server-side hardening as /field/edit (audit-P0) — see qubit_edit:
+        # parse inside the try, resolve pointer leaves to their literal target,
+        # enforce the read-only policy. Keeps these legacy routes from being a side
+        # door around the durable policy layer.
+        parsed = _parse_value(raw_value)
+        target_path = _resolve_edit_path(modifier.store, dot_path)
+        _ro = _editability_reason(modifier.store, target_path)
+        if _ro is not None:
+            raise ValueError(_ro)
+        # Group primary + freq-mirror twin under one id (see qubit_edit) so a
+        # single Ctrl+Z reverts both atomically instead of leaving f_01≠RF.
+        gid = (modifier.new_group_id()
+               if freq_sync and _freq_twin_path(target_path) else None)
+        entry = modifier.set_value(target_path, parsed, group_id=gid)
         # No-op for pair-level fields (their paths carry no f_01/RF suffix); covers
         # the case where a pair inspector exposes a member qubit's frequency.
-        mirrored = _maybe_mirror_freq(modifier, dot_path, entry) if freq_sync else None
-        _invalidate_engine_cache()
-    except (KeyError, TypeError) as e:
+        mirrored = _maybe_mirror_freq(modifier, target_path, entry, group_id=gid) if freq_sync else None
+        _invalidate_engine_cache(ctx)
+    except (KeyError, TypeError, ValueError, IndexError) as e:
         return render_template("_status.html", message=str(e), level="error"), 400
 
     detail = _render_pair_detail(name, focus_path=dot_path)
@@ -2833,7 +2978,15 @@ def comparison_table():
         rows = [r for r in all_rows if r["id"].startswith(f"q{chain_filter}")]
 
     if sort_by and sort_by in selected:
-        rows.sort(key=lambda r: (r.get(sort_by) is None, r.get(sort_by, 0)), reverse=(sort_dir == "desc"))
+        def _sort_key(r):
+            v = r.get(sort_by)
+            # Numerics sort numerically; a dangling-pointer string (real data has
+            # them — pointer_resolver returns raw strings for unresolvable pointers)
+            # or any non-number sorts in a SEPARATE bucket after, so a column mixing
+            # str and float can't raise TypeError → 500 the HTMX-swapped table.
+            num = isinstance(v, (int, float)) and not isinstance(v, bool)
+            return (v is None, not num, v if num else str(v))
+        rows.sort(key=_sort_key, reverse=(sort_dir == "desc"))
 
     # col_stats computed on ALL filtered rows (before pagination) for accurate min/max
     col_stats: dict[str, dict] = {}
@@ -3221,25 +3374,52 @@ def state_history_restore_live(timestamp: str):
     # Snapshot the current live BEFORE overwriting — the restore is reversible.
     # The reversibility guarantee is the whole safety story of Mode 2, so if the
     # snapshot can't be taken we refuse the restore rather than proceed blind.
-    try:
-        hm.check_and_snapshot(path, "manual", force=True)
-    except Exception as exc:
-        logger.warning("Pre-restore snapshot failed", exc_info=True)
-        return render_template(
-            "_status.html",
-            message=(f"Could not snapshot the current state before restoring "
-                     f"({exc}). Aborted so the restore stays reversible — retry, "
-                     "or use 'Load as working state' to review first."),
-            level="error"), 500
-
-    try:
-        state, wiring = _snapshot_state_wiring(hm, path, timestamp)
-    except Exception as exc:
-        return render_template("_status.html",
-                               message=f"Could not load snapshot {timestamp}: {exc}",
-                               level="error"), 404
+    # The pre-restore backup, the snapshot load, and the live overwrite all run
+    # UNDER the per-folder build lock, so no in-app mutator (another tab's apply,
+    # the scheduler's post-node reconcile) can write new live between the backup
+    # and the overwrite — that content would otherwise be clobbered and exist in
+    # NO snapshot while the user is told the restore is reversible. Taking the
+    # backup immediately before the write also minimises the external-writer
+    # (experiment) window.
+    #
+    # check_and_snapshot reports failure BOTH ways: it raises, OR it returns None
+    # (source mtime unreadable / OSError writing the snapshot dir). With force=True
+    # the dedup/no-change early-returns are bypassed, so None here unambiguously
+    # means "no backup was taken" — treat it identically to the exception branch,
+    # never fall through to overwrite the live chip while telling the user it's
+    # reversible (matches the sibling /state/archive route's `if meta is None`).
     try:
         with _active_wc_lock(ctx):
+            try:
+                backup_meta = hm.check_and_snapshot(path, "manual", force=True)
+            except Exception as exc:
+                logger.warning("Pre-restore snapshot failed", exc_info=True)
+                return render_template(
+                    "_status.html",
+                    message=(f"Could not snapshot the current state before restoring "
+                             f"({exc}). Aborted so the restore stays reversible — retry, "
+                             "or use 'Load as working state' to review first."),
+                    level="error"), 500
+            if backup_meta is None:
+                logger.warning(
+                    "Pre-restore snapshot returned None (no backup taken) — aborting "
+                    "restore to keep it reversible")
+                return render_template(
+                    "_status.html",
+                    message=("Could not snapshot the current state before restoring "
+                             "(the live files may be locked by a running experiment, or "
+                             "the snapshot could not be written). Aborted so the restore "
+                             "stays reversible — retry, or use 'Load as working state' to "
+                             "review first."),
+                    level="error"), 500
+
+            try:
+                state, wiring = _snapshot_state_wiring(hm, path, timestamp)
+            except Exception as exc:
+                return render_template("_status.html",
+                                       message=f"Could not load snapshot {timestamp}: {exc}",
+                                       level="error"), 404
+
             safe_io.write_state_wiring(wc.working_folder, state, wiring)
             working_copy.apply_to_live(wc, force=True)
             _rebuild_after_working_copy_replaced(ctx)
@@ -3366,18 +3546,25 @@ def instrument_view():
         return render_template("_empty_state.html", page="instrument wiring")
 
     store = _store()
+    instrument_error = None
     try:
         instrument_data = engine.get_instrument_wiring()
         instrument_json = json.dumps(instrument_data)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        # Surface the failure as a visible banner instead of the empty-rack
+        # sentinel — an empty {"controllers": {}} renders as "no wiring data",
+        # which wrongly tells the user their chip is unwired and sends them
+        # debugging state files instead of reporting a tool bug.
         logger.exception("Failed to build instrument wiring data")
         instrument_json = '{"controllers": {}}'
+        instrument_error = str(exc) or exc.__class__.__name__
     wiring_json = _wiring_json()
 
     template = "_instrument_wiring.html" if _is_htmx() else "instrument_wiring.html"
     return render_template(
         template,
-        **_ctx(page="instrument", instrument_json=instrument_json, wiring_json=wiring_json),
+        **_ctx(page="instrument", instrument_json=instrument_json,
+               wiring_json=wiring_json, instrument_error=instrument_error),
     )
 
 
@@ -3571,7 +3758,7 @@ def pulses_page():
     channel = request.args.get("channel", "")
     query = request.args.get("q", "").strip()
     page = _int_arg("page", 1, minimum=1)
-    per_page = _int_arg("per_page", _DEFAULT_PER_PAGE, minimum=1)
+    per_page = _int_arg("per_page", _DEFAULT_PER_PAGE, minimum=0)  # 0 = "All" (see _paginate)
     rows_only = request.args.get("rows") == "1"
 
     all_rows = pulse_index.rows()
@@ -3854,9 +4041,18 @@ def pulse_edit():
             if isinstance(resolved, bool) and not isinstance(parsed, bool):
                 parsed = str(parsed).strip().lower() in ("1", "true", "yes", "on")
             elif isinstance(resolved, int) and not isinstance(resolved, bool):
-                parsed = int(float(parsed))
+                # Mirror modifier._type_coerce: a non-integral edit to an int field
+                # must NOT silently truncate (typing 0.3 to unlink an int-resolved
+                # pointer wrote 0 — data-loss). Keep the fractional value as a float.
+                as_f = float(parsed)
+                parsed = int(as_f) if as_f.is_integer() else as_f
             elif isinstance(resolved, float):
                 parsed = float(parsed)
+            elif isinstance(resolved, str):
+                # Type the literal against a str-resolved pointer too, else an int is
+                # written over a str field uncoerced and generate_config gets the
+                # wrong type.
+                parsed = str(parsed)
             modifier.set_value(dot_path, parsed, coerce=False)
         else:  # value — follow pointer aliases to the real write target
             parsed = _parse_value(raw_value)
@@ -4516,8 +4712,14 @@ def search():
     index = _index()
     query = request.args.get("q", "").strip()
 
-    if not index or not query:
+    if not query:
         return render_template("_search_results.html", results=[], query=query, active_category=None)
+    if not index:
+        # Distinguish "no chip loaded" from a genuine miss so the user isn't told
+        # "No results" (which reads as: the value isn't in this chip) when in fact
+        # nothing is loaded to search.
+        return render_template("_search_results.html", results=[], query=query,
+                               active_category=None, no_state=True)
 
     category = request.args.get("category")
     limit = _int_arg("limit", 50, minimum=1)
@@ -4560,7 +4762,9 @@ def save():
 
     # Save writes the working copy only — the live chip is untouched until an
     # explicit "Apply to live".  History is snapshotted on apply, not here.
-    _set_working_dirty(True)
+    # Flag THIS captured chip dirty, not whatever a concurrent /load may have
+    # made active mid-request.
+    _set_working_dirty(True, ctx)
 
     toast = render_template(
         "_status.html",
@@ -4644,8 +4848,14 @@ def discard():
     except (ValueError, TypeError):
         return render_template("_status.html", message="Invalid index", level="error"), 400
 
+    # Identity guard: the tray posts the change's dot_path alongside its
+    # render-time index. If another tab's discard/undo shifted the log since,
+    # the index now names a DIFFERENT entry — discard() rejects the mismatch so
+    # the stale click can't revert the wrong change.
+    expect_path = request.form.get("expect_path") or None
+
     try:
-        entry = modifier.discard(index)
+        entry = modifier.discard(index, expect_path=expect_path)
     except KeyError as exc:
         # e.g. discarding a delete whose key was re-created since, or an edit
         # inside a subtree that a later entry deleted — surface, don't 500.
@@ -5032,11 +5242,17 @@ def state_baseline_reset():
         return jsonify(ok=False,
                        error="This chip was opened from a read-only archive."), 409
     wc = ctx["working_copy"]
+    build_lock = _active_wc_lock(ctx)
     try:
-        live_state, live_wiring = working_copy.read_live(wc)
+        # Serialise vs an in-flight apply-to-live (which holds this SAME per-folder
+        # lock while writing the live files): without it, baseline reset could read
+        # the PRE-apply live and record THAT as the baseline, then report the user's
+        # just-applied edits as fresh live drift.
+        with build_lock:
+            live_state, live_wiring = working_copy.read_live(wc)
+            ptr = _history().set_live_baseline(ctx["path"], live_state, live_wiring)
     except (OSError, ValueError) as exc:
         return jsonify(ok=False, error=f"Could not read the live chip: {exc}"), 500
-    ptr = _history().set_live_baseline(ctx["path"], live_state, live_wiring)
     _clear_drift_cache(ctx)
     return jsonify(ok=True, baseline_utc=ptr["captured_utc"], count=0)
 
@@ -5079,7 +5295,7 @@ def state_sync():
     # log no longer holds) plus any still-unsaved change-log edits, with the
     # latter winning per path. Snapshot BEFORE the sync's reload clears them.
     with store._lock:
-        pending = {**_pending_reapply(), **_capture_change_log_as_updates(store)}
+        pending = _merge_reapply(_pending_reapply(), _capture_change_log_as_updates(store))
 
     # Build lock: sync_from_live rewrites the working folder and advances the
     # (mtime, mtime, hash) sync point on the SAME WorkingCopy a concurrent
@@ -5094,24 +5310,31 @@ def state_sync():
     # blanket refresh on every apply was the "blink/freeze" — but suppressing it
     # when third-party changes WERE pulled left the grid silently stale).
     _pre_sync_hash = wc.synced_live_hash
+    pulled_other_changes = False
+    replay = None
     try:
+        # Hold the build lock across sync + rebuild + replay (not just sync): the
+        # scheduler worker's post-node _reconcile_cached_quam_ctx takes this SAME
+        # per-folder lock and fires exactly when a node finishes — i.e. exactly when
+        # users click Sync. Rebuilding outside the lock let its reload/index/
+        # wiring_json/flag rebuild interleave with ours (mixing two reload
+        # generations), and store.reload() could read the working folder mid-rewrite
+        # (safe_io's torn-pair refusal → ValueError → 500). Matches the
+        # State-History callers, which already hold the lock across the rebuild.
         with build_lock:
             working_copy.sync_from_live(wc)
+            pulled_other_changes = (_pre_sync_hash is not None
+                                    and wc.synced_live_hash != _pre_sync_hash)
+            # Rebuild the store + derived objects from the freshly-synced copy.
+            _rebuild_after_working_copy_replaced(ctx)   # the pull consumed the change
+            if mode in ("reapply", "apply") and pending:
+                replay = _replay_updates(ctx["modifier"], pending)
+                _invalidate_engine_cache()   # replay used _defer_hooks — refresh caches
+                ctx["working_dirty"] = False  # edits unsaved in the change log, not saved
     except FileNotFoundError:
         return jsonify({"status": "error", "message": "Live state folder not found"}), 404
     except (OSError, ValueError) as exc:
         return jsonify({"status": "error", "message": str(exc)}), 500
-    pulled_other_changes = (_pre_sync_hash is not None
-                            and wc.synced_live_hash != _pre_sync_hash)
-
-    # Rebuild the store + derived objects from the freshly-synced working copy.
-    _rebuild_after_working_copy_replaced(ctx)   # the pull consumed the change
-
-    replay = None
-    if mode in ("reapply", "apply") and pending:
-        replay = _replay_updates(ctx["modifier"], pending)
-        _invalidate_engine_cache()    # replay used _defer_hooks — refresh derived caches
-        ctx["working_dirty"] = False  # edits are unsaved in the change log, not saved
 
     # "apply" goes one step further: save the re-applied edits and push them to
     # the live chip now, instead of leaving them pending for a second click.
@@ -5735,7 +5958,10 @@ def workspace_select():
 
     try:
         _activate_quam(path)
-    except FileNotFoundError as e:
+    except (FileNotFoundError, ValueError, OSError) as e:
+        # Corrupt/unreadable state.json raises ValueError (bad JSON) or OSError,
+        # not FileNotFoundError — catch all three (matching /load) so a bad chip
+        # yields a friendly status toast, not a generic 500 "Internal Server Error".
         return render_template("_status.html", message=str(e), level="error"), 400
 
     # A dataset-RUN sidebar entry fires this POST *and*, concurrently, a JS swap
@@ -7008,9 +7234,11 @@ def _hub_strips(result: dict, sources) -> dict:
             if g.get("section") != "Qubits":
                 continue
             c = g.get("counts") or {}
-            if sum(v for k, v in c.items()
-                   if k not in (compare_engine.CLS_EQUAL,
-                                compare_engine.CLS_WITHIN)):
+            # Only REAL inter-source differences tint a stone — not derived
+            # (#./ self-refs), provenance, unresolved, link-changed or
+            # type-changed rows, which the over-broad "not equal/within" filter
+            # counted (false stone tints on identical chips with self-refs).
+            if sum(v for k, v in c.items() if k in compare_engine.CHANGED_CLASSES):
                 changed_entities.add(g.get("entity"))
     mapping_pairs = (result.get("mapping") or {}).get("pairs") or {}
     mapped_changed = {mapping_pairs.get(e) for e in changed_entities} - {None}
@@ -7046,14 +7274,25 @@ def _hub_strips(result: dict, sources) -> dict:
         })
 
     if bucket == 1:
+        # Topology signal only: the ``wiring`` section carries the string port
+        # ASSIGNMENTS (a genuine re-route), so a non-equal count there is a real
+        # wiring change.  The ``ports``/``octaves``/``mixers`` sections carry
+        # calibrated NUMERIC values (LO/downconverter freq, port delay, DC
+        # offset) that drift on routine recalibration WITHOUT any topology
+        # change — counting those here fired a false "Wiring / topology changed"
+        # banner on structurally identical snapshots.  A real structural change
+        # (qubit/pair/instrument set, grid, gate) is caught by the structure
+        # fallback below.
         changed = False
         for g in result.get("groups") or []:
-            if g.get("section") != "Infrastructure":
+            if (g.get("section") != "Infrastructure"
+                    or g.get("entity") != "wiring"):
                 continue
             c = g.get("counts") or {}
-            if sum(v for k, v in c.items()
-                   if k not in (compare_engine.CLS_EQUAL,
-                                compare_engine.CLS_WITHIN)):
+            # A real re-route is a MODIFIED/one-sided assignment — not a
+            # link-changed (same physical port via a rewired pointer) or a
+            # derived/provenance row (same over-broad filter as the ② tints).
+            if sum(v for k, v in c.items() if k in compare_engine.CHANGED_CLASSES):
                 changed = True
                 break
         if not changed:
@@ -7095,13 +7334,22 @@ def _hub_map_anchor(src) -> str:
     - ``hist:`` sources anchor on the chip key — every snapshot of a chip
       shares one record (per-snapshot path anchors fragmented the
       confirm-once promise: each new snapshot re-asked for confirmation).
-    - ``run:`` archive layouts anchor on the chip-level folder for the
-      same reason.
+    - ``run:`` archive layouts anchor on the run's DATA-derived chip
+      identity (fingerprint token), never its folder depth: the flat
+      qualibrate layout is ``<data_root>/<date>/#run/quam_state``, so
+      three-up from quam_state is the shared data root — every device in a
+      single-cluster / flat-storage workspace collapsed onto ONE anchor,
+      cross-applying ② maps between different chips. The fingerprint token
+      (network + qubit/pair topology) is device-stable AND distinguishes
+      chips of different design; fall back to the folder chip-name, then
+      the path.
     - ``ws:``/``working:``/``drop:`` anchor on the folder path (stable on
       this machine; drops never persist anyway).
     Known v1 drift: the SAME chip reached via ws: live vs hist: snapshot
     still keys two records — unifying those needs a cross-origin device
-    identity, deferred with the shareable-URL work.
+    identity, deferred with the shareable-URL work. Two same-design chips
+    on one cluster are indistinguishable from run data alone; that residual
+    ambiguity is out of scope (their auto-map is identity anyway).
     """
     if src.origin == compare_sources.ORIGIN_HISTORY:
         rest = src.ref.split(":", 1)[1]
@@ -7109,12 +7357,10 @@ def _hub_map_anchor(src) -> str:
         if chip:
             return f"hist:{chip}"
     if src.origin == compare_sources.ORIGIN_RUN:
-        try:
-            p = Path(src.path)
-            if p.name == "quam_state" and _RUN_DIR_RE.match(p.parent.name):
-                return str(p.parent.parent.parent)
-        except (OSError, ValueError):
-            pass
+        if src.fingerprint_token:
+            return f"run:{src.fingerprint_token}"
+        if src.chip_name:
+            return f"run:{src.chip_name}"
     return src.path
 
 
@@ -8683,14 +8929,16 @@ def _split_dataset_uid(uid: str) -> tuple[str, int] | None:
 # set is an ~17-folder result recomputed from an O(runs) ``is_dir()`` stat storm,
 # yet ``_active_dataset_stores`` calls it twice on every /datasets render AND
 # every /datasets/changes-since poll (~every 60s). On a 10k-run workspace that's
-# ~10k stats to rebuild an unchanging set, forever. We cache the computed set
-# keyed on ``HistoryManager._workspace_token`` — a cheap shallow-stat token that
-# flips when the workspace layout changes (root added/removed, or a chip/date
-# dir touched, which is exactly when a *new* data folder appears), so a newly
-# added data folder is still discovered. The stat-heavy rebuild only runs on a
-# token miss; we never hold the lock across the rebuild.
+# ~10k stats to rebuild an unchanging set, forever. We cache the computed set as
+# ``(workspace_token, ws.version, list)``. The non-fast path validates the token
+# (a shallow-stat that flips on any layout change); the fast path (the polls)
+# skips the stat-walk and validates the cheap monotonic ``ws.version`` instead,
+# which the scanner bumps whenever it discovers a new root/chip/date dir — so a
+# fast poll STILL surfaces a brand-new chip dir once the sidebar scan picks it up,
+# without paying the token walk each poll. The stat-heavy rebuild only runs on a
+# miss; we never hold the lock across the rebuild.
 _dataset_candidates_lock = threading.Lock()
-_dataset_candidates_cache: dict[Any, tuple[Any, list[Path]]] = {}
+_dataset_candidates_cache: dict[Any, tuple[Any, int, list[Path]]] = {}
 
 
 def _dataset_candidate_folders(*, fast: bool = False) -> list[Path]:
@@ -8703,22 +8951,22 @@ def _dataset_candidate_folders(*, fast: bool = False) -> list[Path]:
     Memoized on a workspace token (finding B22): the result is rebuilt only
     when the workspace layout changes, never on every poll.
 
-    ``fast=True`` returns the cached list WITHOUT recomputing the validator
-    token. The token is a directory stat-walk that costs ~1ms/stat × ~900
-    stats on a 9p (WSL2→Windows) workspace — ~1.2s, i.e. the validator costs
-    ~1000× more than the rebuild it guards, and it used to run on EVERY
-    per-run click (the measured ~900ms run-detail latency, warm included).
-    Per-run routes use fast=True + rebuild-on-miss (see _store_for_folder_key):
-    a clicked row's folder is by definition already in the last-rendered list,
-    and workspace mutations invalidate the cache explicitly."""
+    ``fast=True`` skips recomputing the validator token — a directory stat-walk
+    that costs ~1ms/stat × ~900 stats on a 9p (WSL2→Windows) workspace (~1.2s),
+    i.e. ~1000× more than the rebuild it guards, and it used to run on EVERY
+    per-run click (the measured ~900ms run-detail latency) and every ~60s poll.
+    It instead validates the cheap monotonic ``ws.version`` (bumped by the scanner
+    when a root/chip/date dir appears), so a fast caller still rebuilds — and
+    discovers a new candidate dir — when the workspace tree actually changes."""
     ws = current_app.config.get("workspace")
     if not ws:
         return []
     if fast:
         cached = _dataset_candidates_cache.get(id(current_app._get_current_object()))
-        if cached is not None:
-            return list(cached[1])
-        # Cache empty (first request after startup) — fall through to build once.
+        if cached is not None and cached[1] == ws.version:
+            return list(cached[2])
+        # Miss (empty, or the scanner discovered a new dir → version moved) —
+        # fall through to the token-validated rebuild.
     # Cheap-on-ext4, EXPENSIVE-on-9p token — flips when the workspace layout
     # changes (mirrors ``HistoryManager``'s alignment cache). Outside the lock.
     try:
@@ -8730,8 +8978,8 @@ def _dataset_candidate_folders(*, fast: bool = False) -> list[Path]:
     app_key = id(current_app._get_current_object())
     if token is not None:
         cached = _dataset_candidates_cache.get(app_key)
-        if cached is not None and cached[0] == token:
-            return list(cached[1])
+        if cached is not None and cached[0] == token and cached[1] == ws.version:
+            return list(cached[2])
     candidates: set[Path] = set()
     for root in ws.root_folders:
         candidates.add(Path(root))
@@ -8744,11 +8992,11 @@ def _dataset_candidate_folders(*, fast: bool = False) -> list[Path]:
     result = sorted(candidates)
     if token is not None:
         with _dataset_candidates_lock:
-            _dataset_candidates_cache[app_key] = (token, list(result))
+            _dataset_candidates_cache[app_key] = (token, ws.version, list(result))
     return result
 
 
-def _active_dataset_stores() -> list[dict[str, Any]]:
+def _active_dataset_stores(*, fast: bool = False) -> list[dict[str, Any]]:
     """Every workspace data folder that yielded >=1 run, each as
     ``{"key", "path", "label", "store"}``.
 
@@ -8756,10 +9004,16 @@ def _active_dataset_stores() -> list[dict[str, Any]]:
     merged Datasets table, the delta-poll, and the new-run poll. Stores are
     LRU-cached (``_get_or_create_store``) so repeat calls are cheap; the LRU
     cap is sized to hold them all at once (see ``_DATASET_STORE_LRU_MAX``).
+
+    ``fast=True`` (the periodic polls) reuses the cached candidate-folder list
+    instead of recomputing the expensive workspace-token stat-walk (~0.3-1s on
+    9p) every 60 s — a poll only needs the already-known folder set, and
+    workspace mutations invalidate the candidates cache explicitly. The per-store
+    ``rescan_if_stale`` below still runs, so new runs are still detected.
     """
     result: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
-    for cand in _dataset_candidate_folders():
+    for cand in _dataset_candidate_folders(fast=fast):
         store = _get_or_create_store(cand)
         if store is None or store.run_count == 0:
             continue
@@ -8883,7 +9137,7 @@ def _folder_fingerprint(store: DatasetStore):
     Reuses ``history.fingerprint_of`` (network host/cluster + qubit/pair labels).
     """
     from quam_state_manager.core.history import fingerprint_of
-    for run in store.runs.values():
+    for run in store.runs_snapshot():
         if getattr(run, "has_quam_state", False):
             qs = store.get_quam_state_path(run.run_id)
             if qs:
@@ -9086,7 +9340,7 @@ def datasets_changes_since():
     # Aggregate the per-folder deltas: tag each updated row with its folder_key
     # and namespace the vanished list by uid (so a #250-vanishes-in-A +
     # #250-appears-in-B never reads as a single run resurrecting).
-    active = _active_dataset_stores()
+    active = _active_dataset_stores(fast=True)   # 60s poll — skip the token stat-walk
     if not active:
         return jsonify({"updated": [], "vanished": [], "now": 0})
     try:
@@ -9117,7 +9371,11 @@ def datasets_rescan():
                                message="No data folders in workspace", level="warning")
     for fol in active:
         try:
-            fol["store"].rescan_if_stale()
+            # force_rescan (not rescan_if_stale): the explicit button must bypass
+            # the mtime gate + B27 date-dir skip so an in-place node.json/data.json
+            # rewrite (fit-result writeback) is actually re-read — otherwise the
+            # user's recovery button was a silent no-op on the run they care about.
+            fol["store"].force_rescan()
         except Exception:
             logger.exception("Manual rescan failed for %s", fol["path"])
     if _is_htmx():
@@ -9136,12 +9394,12 @@ def datasets_poll():
     is active never fires a popup — only a genuinely newer run does. (This is
     the multi-folder fix for the spurious "New Experiment Run" popup.)
     """
-    active = _active_dataset_stores()
+    active = _active_dataset_stores(fast=True)   # 60s poll — skip the token stat-walk
     latest_key: tuple[str, str] | None = None
     latest_uid: str | None = None
     latest_run = None
     for fol in active:
-        for run in fol["store"].runs.values():
+        for run in fol["store"].runs_snapshot():
             key = (run.date or "", run.time or "")
             if latest_key is None or key > latest_key:
                 latest_key = key
@@ -9522,8 +9780,12 @@ def dataset_json_file(uid):
     if not json_path.exists():
         return jsonify({"error": f"{file}.json not found"}), 404
     try:
-        with open(json_path, encoding="utf-8") as f:
-            return jsonify(json.load(f))
+        # safe_io.read_json (not a bare open): on Windows a default open() lacks
+        # FILE_SHARE_DELETE and blocks a still-writing experiment's atomic
+        # os.replace of this exact file — viewing the JSON tab of the running run
+        # during its final writeback would fail the experiment's save. safe_io also
+        # retries transient locks instead of 500-ing on a mid-write read.
+        return jsonify(safe_io.read_json(json_path))
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
@@ -9800,7 +10062,7 @@ def trends_data():
     key_of: dict[int, str] = {}
     matching: list = []
     for f in sel:
-        for run in f["store"].runs.values():
+        for run in f["store"].runs_snapshot():
             if run.experiment_name == experiment and (qubit is None or qubit in run.qubits):
                 key_of[id(run)] = f["key"]
                 matching.append(run)
@@ -9979,6 +10241,36 @@ def generate_allocate():
     return jsonify(outcome)
 
 
+def _build_output_guard(output_path: str) -> dict | None:
+    """A needs_confirm payload if building into *output_path* would clobber an
+    existing chip or ingest stray JSON, else None. Two hazards: (1) an EXISTING chip
+    (state.json present) would be silently OVERWRITTEN with no backup; (2) QUAM's
+    loader RECURSIVELY ingests every .json under the folder (rglob, dot-dirs skipped),
+    so stray .json — including in subfolders (experiment archives, datasets) — would
+    corrupt the built state (the old guard only checked the top level + exempted the
+    state/wiring pair, so an existing chip slipped through silently)."""
+    out = Path(output_path)
+    if not out.is_dir():
+        return None
+    stray = sorted({
+        p.relative_to(out).as_posix() for p in out.rglob("*.json")
+        if not any(part.startswith(".") for part in p.relative_to(out).parts)
+        and p.relative_to(out).as_posix() not in ("state.json", "wiring.json")
+    })
+    existing_chip = (out / "state.json").exists()
+    if not stray and not existing_chip:
+        return None
+    parts = []
+    if existing_chip:
+        parts.append("This folder already contains a chip (state.json + wiring.json) "
+                     "that would be OVERWRITTEN with no backup.")
+    if stray:
+        parts.append("QUAM's loader reads every .json under a folder recursively, so "
+                     "these would corrupt the generated state: " + ", ".join(stray[:20]))
+    return {"ok": False, "needs_confirm": True, "conflict_files": stray,
+            "existing_chip": existing_chip, "error": " ".join(parts)}
+
+
 @bp.route("/generate/build", methods=["POST"])
 def generate_build():
     """Build state.json + wiring.json from a spec into the chosen folder."""
@@ -10024,23 +10316,9 @@ def generate_build():
     # stray file there would corrupt the state.json the build is about to
     # write. Block on any non-state/wiring .json unless the user forces it.
     if not bool(data.get("force")):
-        out = Path(output_path)
-        if out.is_dir():
-            stray = sorted(
-                p.name for p in out.glob("*.json")
-                if p.name.lower() not in ("state.json", "wiring.json")
-            )
-            if stray:
-                return jsonify({
-                    "ok": False,
-                    "needs_confirm": True,
-                    "conflict_files": stray,
-                    "error": (
-                        "The output folder already contains other JSON files. "
-                        "QUAM's loader reads every .json in a folder, so they "
-                        "would corrupt the generated state."
-                    ),
-                })
+        guard = _build_output_guard(output_path)
+        if guard is not None:
+            return jsonify(guard)
 
     outcome = config_generator.run_generator(
         python_path, "build", spec, Path(output_path), timeout=600
@@ -10053,7 +10331,9 @@ def regenerate_reconstruct():
     """Reconstruct a build spec from an existing chip (the loaded chip by
     default, or an explicit ``folder``) to pre-fill the Re-generate wizard."""
     data = request.get_json(silent=True) or {}
-    folder = (data.get("folder") or "").strip() or _active_path()
+    # Prefer the WORKING COPY (like the Config Viewer's _ctx_path), so a
+    # reconstruct carries the user's in-app edits instead of the stale live files.
+    folder = (data.get("folder") or "").strip() or _ctx_path()
     if not folder:
         return jsonify({"ok": False, "error": "No chip loaded and no folder given."}), 400
     try:
@@ -10079,7 +10359,9 @@ def regenerate_build():
     data = request.get_json(silent=True) or {}
     spec = data.get("spec")
     output_path = (data.get("output_path") or "").strip()
-    source_folder = (data.get("source_folder") or "").strip() or _active_path()
+    # Working copy (see regenerate_reconstruct) so the value-merge carries in-app
+    # edits, not the stale live files.
+    source_folder = (data.get("source_folder") or "").strip() or _ctx_path()
 
     errors = config_generator.validate_spec(spec)
     if errors:
@@ -10122,23 +10404,9 @@ def regenerate_build():
     # Same stray-.json guard as /generate/build — QUAM's loader reads every
     # .json in a folder, so a stray file would corrupt the generated state.
     if not bool(data.get("force")):
-        out = Path(output_path)
-        if out.is_dir():
-            stray = sorted(
-                p.name for p in out.glob("*.json")
-                if p.name.lower() not in ("state.json", "wiring.json")
-            )
-            if stray:
-                return jsonify({
-                    "ok": False,
-                    "needs_confirm": True,
-                    "conflict_files": stray,
-                    "error": (
-                        "The output folder already contains other JSON files. "
-                        "QUAM's loader reads every .json in a folder, so they "
-                        "would corrupt the generated state."
-                    ),
-                })
+        guard = _build_output_guard(output_path)
+        if guard is not None:
+            return jsonify(guard)
 
     outcome = regenerate.run_regenerate(
         python_path, source_folder, spec, Path(output_path), timeout=600
@@ -10670,6 +10938,23 @@ def diagnostics_apply_fix():
             and pointer.startswith("#/ports/mw_outputs/")
             and pointer.endswith("/upconverter_frequency")):
         return jsonify(ok=False, error="fix is not an allowed downconverter link"), 400
+    # Re-validate against the CURRENT store (not the render-time client form): re-run
+    # the linter and confirm a LIVE finding still offers EXACTLY this fix. This one
+    # check enforces chip identity (a fix baked for chip A won't match chip B's
+    # findings after a background /load flip — contexts are app-global), current
+    # wiring pairing, and paired-output/target existence (the finding is only offered
+    # when the output resolves) — the gates the raw form-driven apply-fix bypassed.
+    from quam_state_manager.core.diagnostics import _downconverter_findings
+    if not any(
+        (fnd.fix or {}).get("action") == action
+        and (fnd.fix or {}).get("dot_path") == dot_path
+        and (fnd.fix or {}).get("pointer") == pointer
+        for fnd in _downconverter_findings(modifier.store.merged)
+    ):
+        return jsonify(ok=False, error=(
+            "This fix is no longer valid for the loaded chip — the chip, wiring, or "
+            "paired output changed since Diagnostics was rendered. Reload the page."
+        )), 409
     try:
         modifier.set_value(dot_path, pointer, coerce=False)
         _invalidate_engine_cache()
@@ -10689,7 +10974,7 @@ def _fit_audit_targets() -> list[dict]:
     targets: list[dict] = []
     for fol in _active_dataset_stores():
         store, key = fol["store"], fol["key"]
-        for run in store.runs.values():
+        for run in store.runs_snapshot():
             fam = fit_audit.family_for(run.experiment_name)
             if fam is None:
                 continue
@@ -10714,9 +10999,13 @@ def _fit_audit_page_ctx(**extra) -> dict:
         by_family[t["family_label"]] = by_family.get(t["family_label"], 0) + 1
     job = fit_audit.get_sweep(_FIT_AUDIT_JOB_KEY)
     snap = job.snapshot() if job else None
-    # A digest computed against a now-changed source root is stale — flag it so the
-    # confusion table can't pass off old-gate verdicts as current.
-    digest_stale = bool(snap and (snap.get("source_root") or None) != (source_root or None))
+    # A digest computed against a now-changed source root OR a different QM env is
+    # stale — flag it so the confusion table can't pass off old-gate verdicts as
+    # current (the gate math depends on the env's calibration code too, not just
+    # the source tree).
+    digest_stale = bool(snap and (
+        (snap.get("source_root") or None) != (source_root or None)
+        or (snap.get("env") or None) != (env or None)))
     ctx = {
         "env": env,
         "source_root": source_root,
@@ -11077,6 +11366,11 @@ _SCHEDULER_MUTATOR_ENDPOINTS = {
     "main.generate_build", "main.generate_allocate",
     "main.generate_preview_config", "main.generate_load",
     "main.config_regenerate", "main.config_preview",
+    # Re-generate spawns the SAME run_build subprocess as generate_build (a 2nd
+    # OPX-connecting build during a run); fit-audit spawns a heavy env subprocess
+    # (no OPX, but CPU/RAM contention with a live experiment). Sibling routes above
+    # were locked but these were omitted.
+    "main.regenerate_build", "main.regenerate_reconstruct", "main.fit_audit_run",
 }
 
 
@@ -11122,14 +11416,14 @@ def scheduler_page():
     )
 
 
-@bp.route("/scheduler/settings", methods=["GET", "POST"])
-def scheduler_settings():
-    """Read (GET) or persist (POST) Scheduler settings."""
-    inst = current_app.instance_path
-    if request.method == "GET":
-        return jsonify(scheduler.load_settings(inst))
+# Settings whose change mid-run alters what runs on hardware / against which chip
+# — locked while a queue is active (mirrors the mutator lock).
+_SCHED_CRITICAL_SETTINGS = (
+    "global_simulate", "quam_state_path", "env_python", "calibrations_folder")
 
-    data = request.get_json(silent=True) or request.form.to_dict() or {}
+
+def _sched_settings_patch(data: dict) -> dict[str, Any]:
+    """Extract the persistable Scheduler settings from a request body."""
     patch: dict[str, Any] = {}
     for key in ("calibrations_folder", "env_python", "quam_state_path", "failure_policy"):
         if key in data:
@@ -11142,6 +11436,33 @@ def scheduler_settings():
             patch["default_timeout_s"] = int(data.get("default_timeout_s"))
         except (TypeError, ValueError):
             pass
+    return patch
+
+
+@bp.route("/scheduler/settings", methods=["GET", "POST"])
+def scheduler_settings():
+    """Read (GET) or persist (POST) Scheduler settings."""
+    inst = current_app.instance_path
+    if request.method == "GET":
+        return jsonify(scheduler.load_settings(inst))
+
+    data = request.get_json(silent=True) or request.form.to_dict() or {}
+    patch = _sched_settings_patch(data)
+    # Refuse mid-run changes to the hardware/chip-affecting settings: the worker
+    # re-reads settings before every item, so un-ticking Dry run (or re-pointing
+    # the chip/env) while a queue runs would flip the REST of it to LIVE hardware —
+    # with none of the Strict-gate safeguards that gate Start. Non-critical keys
+    # (failure_policy, continue_without_ui, timeout) stay editable.
+    if scheduler.is_active(inst):
+        current = scheduler.load_settings(inst)
+        changed = [k for k in _SCHED_CRITICAL_SETTINGS
+                   if k in patch and patch[k] != current.get(k)]
+        if changed:
+            return jsonify({
+                "ok": False,
+                "error": ("Can't change " + ", ".join(changed) + " while the "
+                          "scheduler is running — pause or cancel the queue first."),
+            }), 409
     return jsonify({"ok": True, "settings": scheduler.save_settings(inst, patch)})
 
 
@@ -11525,6 +11846,25 @@ def _scheduler_refresh_hook(app, instance_path, folder, item_id, status) -> None
 def scheduler_start():
     inst = _sched_inst()
     data = request.get_json(silent=True) or {}
+    # Persist the POSTed settings BEFORE the preflight + start, so the values the
+    # Strict gate validates are exactly the ones the worker reads from disk. The
+    # text fields are debounce-saved (400ms), so a Start that beats the debounce —
+    # or whose settings POST lost the race — would otherwise preflight the NEW chip
+    # path while the run executed against the OLD one (the wrong-chip case the gate
+    # exists to block).
+    #
+    # ONLY on a genuine cold start: guard on `not is_active()` so a racing/
+    # double-submit POST to /scheduler/start DURING a live run can't write new
+    # critical settings (quam_state_path / global_simulate) to disk — the worker
+    # re-reads settings per item, so an unguarded persist would flip the rest of
+    # the queue to a new chip / LIVE mode, bypassing the mid-run settings lock
+    # (/scheduler/settings 409). start() below already no-ops a duplicate worker,
+    # but only AFTER this persist would have landed, so the guard must be here.
+    if not scheduler.is_active(inst):
+        try:
+            scheduler.save_settings(inst, _sched_settings_patch(data))
+        except Exception:  # noqa: BLE001
+            logger.warning("start settings persist failed", exc_info=True)
     # Strict gate: re-run the identity/safety preflight server-side and refuse to
     # start if it fails (wrong chip, env unusable, library mismatch, …) — unless
     # the user explicitly forces past the warnings.

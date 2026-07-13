@@ -271,19 +271,19 @@ def test_read_state_wiring_retries_until_mtimes_settle(tmp_path, monkeypatch):
     (tmp_path / "state.json").write_text(json.dumps({"qubits": {"qA1": {"f_01": 6e9}}}), encoding="utf-8")
     (tmp_path / "wiring.json").write_text(json.dumps({"wiring": {}}), encoding="utf-8")
 
-    real_mtimes = safe_io.state_wiring_mtimes
+    real_fp = safe_io._pair_fingerprint
     calls = {"n": 0}
 
-    def flaky_mtimes(folder):
+    def flaky_fp(folder):
         calls["n"] += 1
-        real = real_mtimes(folder)
+        (st, wi) = real_fp(folder)
         # Calls 1+2 are the first (before, after) pair: make them differ
         # to simulate a concurrent write between our two reads.
         if calls["n"] == 2:
-            return (real[0] + 5.0, real[1])
-        return real
+            return ((st[0] + 5, st[1]), wi)
+        return (st, wi)
 
-    monkeypatch.setattr(safe_io, "state_wiring_mtimes", flaky_mtimes)
+    monkeypatch.setattr(safe_io, "_pair_fingerprint", flaky_fp)
 
     state, wiring = read_state_wiring(tmp_path)
     assert state["qubits"]["qA1"]["f_01"] == 6e9
@@ -299,16 +299,16 @@ def test_read_state_wiring_never_settles_raises_not_torn(tmp_path, monkeypatch):
     (tmp_path / "state.json").write_text(json.dumps({"qubits": {}}), encoding="utf-8")
     (tmp_path / "wiring.json").write_text(json.dumps({"wiring": {}}), encoding="utf-8")
 
-    real_mtimes = safe_io.state_wiring_mtimes
+    real_fp = safe_io._pair_fingerprint
     flip = {"n": 0}
 
     def always_drifting(folder):
-        # Every 'after' stat disagrees with its 'before' → never settles.
+        # Every 'after' fingerprint disagrees with its 'before' → never settles.
         flip["n"] += 1
-        base = real_mtimes(folder)
-        return (base[0] + flip["n"], base[1])
+        (st, wi) = real_fp(folder)
+        return ((st[0] + flip["n"], st[1]), wi)
 
-    monkeypatch.setattr(safe_io, "state_wiring_mtimes", always_drifting)
+    monkeypatch.setattr(safe_io, "_pair_fingerprint", always_drifting)
     monkeypatch.setattr(safe_io, "_READ_BACKOFF_S", 0.0)  # keep the test fast
 
     with pytest.raises(safe_io.LiveFileError):

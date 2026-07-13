@@ -16,7 +16,11 @@
 
   <div id="phd-chart" style="width:100%;height:340px"></div>
 
-  <script id="phd-data" type="application/json">{{ row_json|safe }}</script>
+  {# script_json (NOT |safe): row carries property names / pointer strings from a
+     possibly third-party state.json; json.dumps does not escape </script>, and the
+     drawer force-executes any <script> it finds (app.js paramHistoryOpenDrawer), so
+     a raw embed is stored DOM-XSS. The filter \u-escapes < > & (parse-equivalent). #}
+  <script id="phd-data" type="application/json">{{ row_json | script_json }}</script>
   <script>
     (function() {
       var data = JSON.parse(document.getElementById('phd-data').textContent);

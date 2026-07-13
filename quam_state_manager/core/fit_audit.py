@@ -124,9 +124,14 @@ def validate_source_root(source_root: str | None) -> tuple[bool, str]:
 # ---------------------------------------------------------------------------
 
 def _read_fit_results(folder: Path) -> dict:
+    from quam_state_manager.core import safe_io
     p = folder / "data.json"
     try:
-        j = json.loads(p.read_text(encoding="utf-8"))
+        # safe_io (not read_text): the fit-audit popup is most-used on the NEWEST
+        # run — the one whose writer may still be doing its fit-result writeback.
+        # A plain read lacks FILE_SHARE_DELETE (blocks the writer on Windows) and
+        # has no mid-write retry (a torn read would silently drop the fit results).
+        j = safe_io.read_json(p)
     except (OSError, ValueError):
         return {}
     fr = j.get("fit_results")

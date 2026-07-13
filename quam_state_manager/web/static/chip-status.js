@@ -1760,7 +1760,21 @@ window.ChipStatus.mount = function (opts) {
             });
             if (best) _setActiveTab(best);
         }
-        if (pane) pane.addEventListener('scroll', _throttle(onScroll, 120), { passive: true });
+        if (pane) {
+            var _spyHandler = _throttle(onScroll, 120);
+            pane.addEventListener('scroll', _spyHandler, { passive: true });
+            // Teardown: #table-pane is the PERSISTENT HTMX swap target (survives
+            // navigation), so without removing this the scroll listener accumulates
+            // one per Chip Status visit — every OTHER per-mount listener here has this
+            // beforeSwap teardown; the scroll-spy was the one that was missed.
+            function _spyTeardown(evt) {
+                if (evt.detail && evt.detail.target && evt.detail.target.id === 'table-pane') {
+                    pane.removeEventListener('scroll', _spyHandler);
+                    document.body.removeEventListener('htmx:beforeSwap', _spyTeardown);
+                }
+            }
+            document.body.addEventListener('htmx:beforeSwap', _spyTeardown);
+        }
     }
 
     // Re-fit the topology diagram to the current pane width (no rebuild) — runs
@@ -1887,6 +1901,12 @@ window.ChipStatus.mount = function (opts) {
         var czBelow = edges.filter(function(e) {
             var v = _verdict(_mval(e, 'cz_fidelity'), thresholds.cz_fidelity); return v === 'warn' || v === 'fail';
         }).length;
+        // Track CZ FAILS separately so a failing CZ pair drives the overall verdict
+        // to 'fail' — the exported report card already fails on a cz fail, so the
+        // on-screen banner must too (they were disagreeing: banner warn vs card fail).
+        var czFailCount = edges.filter(function(e) {
+            return _verdict(_mval(e, 'cz_fidelity'), thresholds.cz_fidelity) === 'fail';
+        }).length;
         var diagErr = 0, diagWarn = 0;
         (diagFindings || []).forEach(function(f) {
             if (f.severity === 'error') diagErr++; else if (f.severity === 'warning') diagWarn++;
@@ -1900,7 +1920,7 @@ window.ChipStatus.mount = function (opts) {
         html += _hTile('qubits below spec', belowCount, belowCount ? (failCount ? 'fail' : 'warn') : 'pass',
                        failCount ? (failCount + ' failing &middot; ' + (belowCount - failCount) + ' warn')
                                  : (belowCount ? 'to watch' : 'all in spec'));
-        html += _hTile('CZ below spec', czBelow, czBelow ? 'warn' : 'pass',
+        html += _hTile('CZ below spec', czBelow, czBelow ? (czFailCount ? 'fail' : 'warn') : 'pass',
                        czBelow ? 'of ' + edges.length + ' pairs' : 'all pairs in spec');
         var diagTotal = diagErr + diagWarn;
         html += '<a class="topo-health-tile ' + (diagErr ? 'fail' : (diagWarn ? 'warn' : 'pass')) + '" ' +
@@ -1917,7 +1937,7 @@ window.ChipStatus.mount = function (opts) {
         var banner = document.getElementById('topo-verdict-banner');
         if (banner) {
             var failQubits = Object.keys(below).filter(function(k) { return below[k] === 'fail'; });
-            var verdict = (diagErr > 0 || failCount > 0) ? 'fail'
+            var verdict = (diagErr > 0 || failCount > 0 || czFailCount > 0) ? 'fail'
                         : (belowCount > 0 || czBelow > 0 || diagWarn > 0) ? 'warn' : 'pass';
             var icon = verdict === 'fail' ? '⛔' : (verdict === 'warn' ? '⚠' : '✓');
             var headline;
@@ -2383,11 +2403,42 @@ window.ChipStatus.liveDetection = function () {
     window.ChipStatus._livePollTimer = pollTimer;
     poll();
 
+    // In-app edits (inspector commit, diagnostics apply-fix, pulse create/delete)
+    // mutate the WORKING COPY, which the live-file poll above never sees — the
+    // health tiles + verdict + Overview would keep pre-edit numbers until the user
+    // navigates away and back. Re-derive them from a fresh /api/topology whenever
+    // the app signals a state mutation. Debounced so rapid edits coalesce into one
+    // fetch, and guarded on the dashboard still being mounted (the events fire
+    // app-wide, including from pages that don't own these tiles).
+    var metricsRefreshTimer = null;
+    function refreshMetrics() {
+        if (!document.getElementById('topo-health-tiles')) return;  // not mounted
+        fetch('/api/topology', { cache: 'no-store' })
+            .then(function(r) { return r.ok ? r.json() : null; })
+            .then(function(data) {
+                if (!data || !document.getElementById('topo-health-tiles')) return;
+                topo = data;                       // reassign the closure's topo…
+                buildHealthSummary();              // …then re-derive every consumer
+                buildOverviewTiles();              //    so tiles + graph stay in sync
+                if (window._recolorTopology) window._recolorTopology();
+            })
+            .catch(function() {});
+    }
+    function onStateMutated() {
+        clearTimeout(metricsRefreshTimer);
+        metricsRefreshTimer = setTimeout(refreshMetrics, 250);
+    }
+    document.body.addEventListener('pulses-changed', onStateMutated);
+    document.body.addEventListener('diagnostics-changed', onStateMutated);
+
     // Cleanup on navigation away from the topology view.
     document.body.addEventListener('htmx:beforeSwap', function cleanup(evt) {
         if (evt.detail.target && evt.detail.target.id === 'table-pane') {
             clearInterval(pollTimer);
             clearTimeout(debounceTimer);
+            clearTimeout(metricsRefreshTimer);
+            document.body.removeEventListener('pulses-changed', onStateMutated);
+            document.body.removeEventListener('diagnostics-changed', onStateMutated);
             document.body.removeEventListener('htmx:beforeSwap', cleanup);
         }
     });

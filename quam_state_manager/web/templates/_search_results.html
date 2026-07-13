@@ -1,7 +1,7 @@
 {% if query %}
 {% set inspector_type = "search" %}
 {% set inspector_label = query %}
-{% set inspector_sub = (results | length) ~ " result(s)" if results else "No results" %}
+{% set inspector_sub = "no chip loaded" if no_state else ((results | length) ~ " result(s)" if results else "No results") %}
 {% include '_inspector_header.html' %}
 <div class="search-panel">
     <nav class="category-tabs">
@@ -19,7 +19,9 @@
         </ul>
     </nav>
 
-    {% if results %}
+    {% if no_state %}
+    <p class="muted"><em>No chip loaded — open a chip from the sidebar to search its parameters.</em></p>
+    {% elif results %}
     <table class="data-table search-table" role="grid">
         <thead><tr><th>Entity</th><th>Key</th><th>Value</th><th>Path</th><th class="col-score">Score</th></tr></thead>
         <tbody>

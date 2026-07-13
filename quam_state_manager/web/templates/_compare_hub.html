@@ -47,7 +47,7 @@
           <button type="button"
                   class="cmp-src-star{% if row.valid_idx == ref_idx %} active{% endif %}"
                   title="Use as the reference (Δ and added/removed are vs this source)"
-                  onclick="cmpHub.setRef({{ row.valid_idx }})">★</button>
+                  onclick="cmpHub.setRef(this)">★</button>
           <span class="cmp-src-ord">{{ row.valid_idx + 1 }}</span>
           <span class="cmp-src-label" title="{{ row.path }}">{{ row.label }}</span>
           <span class="cmp-src-badge cmp-badge-{{ row.badge | lower }}">{{ row.badge }}</span>

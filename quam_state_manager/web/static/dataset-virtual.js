@@ -1112,9 +1112,20 @@
     function startPolling() {
         if (state.pollTimer) clearInterval(state.pollTimer);
         state.pollTimer = setInterval(function() {
+            // Skip while the tab is hidden — /datasets/changes-since runs an
+            // O(chips×date-dirs) workspace stat-walk server-side (~0.3-1s on 9p),
+            // so a backgrounded /datasets tab shouldn't stat-storm the disk all
+            // night. Catch up on visibilitychange below.
+            if (document.hidden) return;
             flushPendingIfIdle();
             pollDelta();
         }, state.pollIntervalMs);
+        if (!state._visBound) {
+            state._visBound = true;
+            document.addEventListener('visibilitychange', function() {
+                if (!document.hidden && state.pollTimer) { flushPendingIfIdle(); pollDelta(); }
+            });
+        }
     }
 
     // Header sort + the resize handles are bound inside buildHeader() (the header

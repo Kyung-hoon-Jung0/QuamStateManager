@@ -99,19 +99,27 @@ def rf_at_run(bundle, qname: str, *, resonator: bool = False) -> float | None:
             det = np.asarray(det, dtype=float)
             qubits = list(coords.get("qubit") or [])
             row = ff
+            skip = False
             if ff.ndim == 2:
                 # dim-order guard: full_freq is [qubit, detuning] in every
                 # archive file, but tolerate the transpose.
                 if (len(qubits) and ff.shape[0] != len(qubits)
                         and ff.shape[1] == len(qubits)):
                     ff = ff.T
-                qi = qubits.index(qname) if qname in qubits else 0
-                row = ff[qi]
-            d0 = det.reshape(-1)[0]
-            f0 = np.asarray(row, dtype=float).reshape(-1)[0]
-            v = float(f0 - d0)
-            if v == v:
-                return v
+                if qname in qubits:
+                    row = ff[qubits.index(qname)]
+                else:
+                    # The clicked qubit isn't in this dataset's qubit coord —
+                    # do NOT silently anchor to row 0 (a wrong RF for this
+                    # qubit); fall through to the frozen-snapshot value below.
+                    logger.debug("rf_at_run: qubit %r absent from ds qubit coord", qname)
+                    skip = True
+            if not skip:
+                d0 = det.reshape(-1)[0]
+                f0 = np.asarray(row, dtype=float).reshape(-1)[0]
+                v = float(f0 - d0)
+                if v == v:
+                    return v
     except Exception:
         logger.debug("rf_at_run dataset recovery failed", exc_info=True)
     field = (f"qubits.{qname}.resonator.RF_frequency" if resonator

@@ -171,6 +171,41 @@ class TestInspectorMirror:
         assert "f₀₁↔RF linked" not in html
 
 
+class TestInspectorMirrorUndo:
+    """Regression: a single Ctrl+Z after a freq-synced inspector edit must revert
+    BOTH the primary and the mirrored twin. They used to be two ungrouped change
+    entries, so one undo reverted only the twin and left f_01 ≠ RF_frequency."""
+
+    def test_one_undo_reverts_both_primary_and_mirror(self, client):
+        s = _store(client)
+        _edit(client, "qubits.q1.f_01", "8.0e9")           # mirrors xy.RF too
+        assert s.get_value("qubits.q1.f_01") == 8.0e9
+        assert s.get_value("qubits.q1.xy.RF_frequency") == 8.0e9
+        # the two writes share one group id
+        assert len(s.change_log) == 2
+        assert s.change_log[-1].group_id is not None
+        assert s.change_log[-1].group_id == s.change_log[-2].group_id
+
+        r = client.post("/undo")
+        assert r.status_code == 200
+        # ONE undo reverts BOTH — no detuned half-reverted state, no stale entry
+        assert s.get_value("qubits.q1.f_01") == 5.0e9
+        assert s.get_value("qubits.q1.xy.RF_frequency") == 5.0e9
+        assert len(s.change_log) == 0
+
+    def test_lone_edit_without_twin_still_single_undo(self, client):
+        s = _store(client)
+        original = s.get_value("qubits.q1.anharmonicity")
+        _edit(client, "qubits.q1.anharmonicity", "-1.9e8")   # no freq twin
+        assert s.get_value("qubits.q1.anharmonicity") == -1.9e8
+        assert len(s.change_log) == 1
+        assert s.change_log[-1].group_id is None             # stays ungrouped
+        r = client.post("/undo")
+        assert r.status_code == 200
+        assert s.get_value("qubits.q1.anharmonicity") == original
+        assert len(s.change_log) == 0
+
+
 class TestBulkPointerGuardSignal:
     """The bulk soft-link must NOT auto-couple a pointer-encoded RF twin (its resolved
     display looks equal to f_01) — Apply would clobber the #/ pointer with a literal.
