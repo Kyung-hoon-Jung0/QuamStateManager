@@ -920,3 +920,159 @@ class TestUnlinkPrevLink:
         html = loaded_client.get(
             f"/pulse/detail?path={XY}.x90_DragCosine").data.decode()
         assert "ptr-prev-link" not in html
+
+
+# ---------------------------------------------------------------------------
+# Class-churn hardening: leaf-matched rendering + chip-derived create paths
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def foreign_folder(tmp_path: Path) -> Path:
+    """The same chip, but every catalog class under a foreign module prefix —
+    the audited new-stack scenario (path rewrite, identical fields)."""
+    state = json.loads(json.dumps(_make_state()).replace(
+        "quam.components.pulses.", "newstack.pulses."))
+    folder = tmp_path / "foreign"
+    folder.mkdir()
+    (folder / "state.json").write_text(json.dumps(state, indent=2),
+                                       encoding="utf-8")
+    (folder / "wiring.json").write_text(json.dumps(_make_wiring(), indent=2),
+                                        encoding="utf-8")
+    return folder
+
+
+@pytest.fixture
+def foreign_client(client, foreign_folder):
+    client.post("/load", data={"folder": str(foreign_folder)})
+    return client
+
+
+class TestLeafMatchedRendering:
+    def test_rows_soft_chip_and_sparkline_together(self, foreign_client):
+        # The sparkline is the first place a wrong leaf match renders
+        # confidently — the soft chip on the SAME row is its honesty signal.
+        html = foreign_client.get("/pulses").data.decode()
+        start = html.index('data-pulse-path="qubits.qA1.xy.operations.saturation"')
+        row_html = html[start:html.index("</tr>", start)]
+        assert "pulse-class-soft" in row_html
+        assert "<svg" in row_html
+        assert "Matched by class name only" in row_html
+
+    def test_rows_unknown_class_still_unknown_chip(self, foreign_client):
+        html = foreign_client.get("/pulses").data.decode()
+        start = html.index('data-pulse-path="qubits.qA1.xy.operations.mystery"')
+        row_html = html[start:html.index("</tr>", start)]
+        assert "pulse-class-unknown" in row_html
+        assert "<svg" not in row_html
+
+    def test_detail_leaf_matched_preview_plus_caution(self, foreign_client):
+        html = foreign_client.get(
+            f"/pulse/detail?path={XY}.x180_DragCosine").data.decode()
+        assert "Matched by class" in html          # soft caution banner
+        assert "newstack.pulses.DragCosinePulse" in html   # chip's path shown
+        assert "quam.components.pulses.DragCosinePulse" in html  # catalog's too
+        assert "Verify vs config" in html
+        assert "Unrecognized pulse class" not in html
+        assert '"ok": true' in html                # preview traces present
+
+    def test_exact_match_chip_shows_no_caution(self, loaded_client):
+        html = loaded_client.get(
+            f"/pulse/detail?path={XY}.x180_DragCosine").data.decode()
+        assert "Matched by class" not in html
+        assert "pulse-soft-banner" not in html
+
+    def test_alias_opened_detail_shows_targets_real_path(self, foreign_client):
+        # Opened via the alias, the leaf banner must show the resolved
+        # TARGET's stored class path — the alias row's own qclass is None,
+        # and "this chip stores None" is worse than no banner at all.
+        html = foreign_client.get(
+            f"/pulse/detail?path={XY}.x180").data.decode()
+        assert "Matched by class" in html
+        assert "newstack.pulses.DragCosinePulse" in html
+        assert "<code>None</code>" not in html
+
+    def test_synth_api_reports_unmodeled_fields(self, foreign_client):
+        resp = foreign_client.post("/api/pulse/synth", json={
+            "qclass": "newstack.pulses.SquarePulse",
+            "params": {"amplitude": 0.1, "length": 40, "brand_new_knob": 1},
+        }).get_json()
+        assert resp["ok"] is True                  # warning never flips ok
+        assert any("brand_new_knob" in w for w in resp["plot"]["warnings"])
+
+
+class TestCreateChipQclass:
+    def test_create_on_foreign_chip_reuses_chip_prefix(self, foreign_client):
+        resp = foreign_client.post("/api/pulse/create", data={
+            "target_kind": "qubit", "qubit": "qA1", "channel": "xy",
+            "op_name": "sat2", "pulse_type": "SquarePulse",
+            "length": "100", "amplitude": "0.1",
+        })
+        assert resp.status_code == 200
+        peek = foreign_client.get(
+            f"/field/peek?dot_path={XY}.sat2.__class__").get_json()
+        assert peek["values"][f"{XY}.sat2.__class__"] \
+            == "newstack.pulses.SquarePulse"
+
+    def test_create_on_foreign_chip_derives_prefix_for_new_class(self, foreign_client):
+        # No GaussianPulse exists on the chip — the dominant prefix of the
+        # chip's catalog-recognized pulses must be used, never the catalog's.
+        resp = foreign_client.post("/api/pulse/create", data={
+            "target_kind": "qubit", "qubit": "qA1", "channel": "xy",
+            "op_name": "gauss1", "pulse_type": "GaussianPulse",
+            "length": "40", "amplitude": "0.1", "sigma": "8",
+        })
+        assert resp.status_code == 200
+        peek = foreign_client.get(
+            f"/field/peek?dot_path={XY}.gauss1.__class__").get_json()
+        assert peek["values"][f"{XY}.gauss1.__class__"] \
+            == "newstack.pulses.GaussianPulse"
+
+    def test_create_on_stock_chip_unchanged(self, loaded_client):
+        resp = loaded_client.post("/api/pulse/create", data={
+            "target_kind": "qubit", "qubit": "qA1", "channel": "xy",
+            "op_name": "sat3", "pulse_type": "SquarePulse",
+            "length": "100", "amplitude": "0.1",
+        })
+        assert resp.status_code == 200
+        peek = loaded_client.get(
+            f"/field/peek?dot_path={XY}.sat3.__class__").get_json()
+        assert peek["values"][f"{XY}.sat3.__class__"] \
+            == "quam.components.pulses.SquarePulse"
+
+    def test_create_explicit_qclass_written_verbatim(self, loaded_client):
+        resp = loaded_client.post("/api/pulse/create", data={
+            "target_kind": "qubit", "qubit": "qA1", "channel": "xy",
+            "op_name": "sat4", "pulse_type": "SquarePulse",
+            "length": "100", "amplitude": "0.1",
+            "qclass": "my.stack.pulses.SquarePulse",
+        })
+        assert resp.status_code == 200
+        peek = loaded_client.get(
+            f"/field/peek?dot_path={XY}.sat4.__class__").get_json()
+        assert peek["values"][f"{XY}.sat4.__class__"] \
+            == "my.stack.pulses.SquarePulse"
+
+    def test_create_qclass_leaf_mismatch_400(self, loaded_client):
+        # Cross-wiring the class path against the selected type's form schema
+        # would write a body whose fields belong to another class.
+        resp = loaded_client.post("/api/pulse/create", data={
+            "target_kind": "qubit", "qubit": "qA1", "channel": "xy",
+            "op_name": "sat5", "pulse_type": "SquarePulse",
+            "length": "100", "amplitude": "0.1",
+            "qclass": "my.stack.pulses.GaussianPulse",
+        })
+        assert resp.status_code == 400
+
+    def test_create_qclass_malformed_400(self, loaded_client):
+        resp = loaded_client.post("/api/pulse/create", data={
+            "target_kind": "qubit", "qubit": "qA1", "channel": "xy",
+            "op_name": "sat6", "pulse_type": "SquarePulse",
+            "length": "100", "amplitude": "0.1",
+            "qclass": "not a path..SquarePulse",
+        })
+        assert resp.status_code == 400
+
+    def test_create_form_carries_chip_qclass(self, foreign_client):
+        html = foreign_client.get("/pulse/new").data.decode()
+        assert "pulse-create-qclass" in html
+        assert "newstack.pulses.SquarePulse" in html  # in the catalog JSON

@@ -53,6 +53,16 @@ def merged() -> dict:
                             "length": 10, "amplitude": 0.1,
                             "__class__": "quam_builder.custom.WeirdPulse",
                         },
+                        # foreign module path, known leaf — the class-churn
+                        # case (docs/32-era SNZPulse path move); length is the
+                        # inferred-pointer form so resolution NEEDS the spec
+                        "snz_newstack": {
+                            "length": "#./inferred_length",
+                            "amplitude": 0.06, "flat_length": 20,
+                            "t_phi_eff": 2.0, "padding": 0,
+                            "__class__": ("quam_builder.architecture"
+                                          ".components.pulses.SNZPulse"),
+                        },
                     },
                 },
                 "z": {
@@ -102,6 +112,17 @@ def merged() -> dict:
                             "__class__": QC + "SNZPulse",
                         },
                         "coupler_flux_pulse": {"amplitude": 0.1, "length": 100},
+                    },
+                    # flat-top-shaped IMPLICIT body (no __class__) — exactly
+                    # what the app's own cz_flattop gate template writes; the
+                    # guessed SquarePulse spec models neither flat_length nor
+                    # smoothing_length, so this pins the implicit no-caution
+                    # gate with fields that WOULD flag under a class claim
+                    "cz_flattop": {
+                        "flux_pulse_qubit": {
+                            "amplitude": 0.209, "flat_length": 48,
+                            "smoothing_length": 8, "length": 68,
+                        },
                     },
                     "cz": "#./cz_unipolar",
                 },
@@ -209,6 +230,42 @@ class TestListPulses:
         assert not row["known"]
         assert row["class_short"] == "WeirdPulse"
         assert row["length"] == 10  # raw numeric length still shown
+        assert row["class_match"] is None
+        assert row["unmodeled"] == []
+
+    def test_foreign_prefix_known_leaf_resolves(self, merged):
+        # A pure module-path rewrite (identical fields) must keep the full
+        # experience: typed row, resolved inferred length — flagged as a
+        # name-only match, never silently degraded to unknown.
+        row = self._row(merged, f"{XY}.snz_newstack")
+        assert row["known"]
+        assert row["class_match"] == "leaf"
+        assert row["class_short"] == "SNZPulse"
+        assert row["qclass"].startswith("quam_builder.")  # chip's own string
+        assert row["length"] == 24  # inferred via the catalog spec
+        assert row["unmodeled"] == []
+
+    def test_foreign_prefix_unmodeled_field_flagged(self, merged):
+        merged["qubits"]["qA1"]["xy"]["operations"]["snz_newstack"][
+            "b_comp_scale"] = 0.5
+        row = self._row(merged, f"{XY}.snz_newstack")
+        assert row["unmodeled"] == ["b_comp_scale"]
+
+    def test_class_match_provenance_exact_and_implicit(self, merged):
+        assert self._row(merged, f"{XY}.saturation")["class_match"] == "exact"
+        implicit = self._row(
+            merged, "qubit_pairs.qA1-qA2.macros.cz_unipolar.flux_pulse_qubit")
+        assert implicit["class_match"] == "implicit"
+        assert implicit["unmodeled"] == []  # a guess is not a class claim
+
+    def test_implicit_flattop_shape_produces_no_caution(self, merged):
+        # Strong version of the implicit gate: this body's flat_length /
+        # smoothing_length ARE unmodeled under the guessed SquarePulse spec —
+        # unmodeled == [] here holds ONLY while the implicit gate holds.
+        row = self._row(
+            merged, "qubit_pairs.qA1-qA2.macros.cz_flattop.flux_pulse_qubit")
+        assert row["class_match"] == "implicit"
+        assert row["unmodeled"] == []
 
     def test_square_with_axis_angle_is_iq(self, merged):
         row = self._row(merged, "qubits.qA1.z.operations.const")

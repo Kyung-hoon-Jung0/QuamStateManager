@@ -131,6 +131,39 @@ class TestSynthesizePayload:
             payload = synthesize("SquarePulse", params)
             assert payload["ok"] is False
 
+    def test_unmodeled_fields_warn_but_never_flip_ok(self):
+        p = synthesize("newstack.pulses.SquarePulse",
+                       {"length": 10, "amplitude": 0.1, "brand_new_knob": 3})
+        assert p["ok"] is True
+        assert p["class_match"] == "leaf"
+        assert p["unmodeled_fields"] == ["brand_new_knob"]
+        assert any("brand_new_knob" in w for w in p["warnings"])
+
+    def test_implicit_gate_slot_suppresses_unmodeled(self):
+        # The app's own cz_flattop template writes flat_length/smoothing_length
+        # with NO __class__; the guessed SquarePulse spec models neither. A
+        # guess is not a class claim — the caution must stay silent, or every
+        # flattop flux slot on every chip cries wolf.
+        body = {"amplitude": 0.209, "flat_length": 48,
+                "smoothing_length": 8, "length": 68}
+        p = synthesize("SquarePulse", body, class_match="implicit")
+        assert p["ok"] and p["class_match"] == "implicit"
+        assert p["unmodeled_fields"] == [] and p["warnings"] == []
+        # ...and the same body under an actual class CLAIM does flag them
+        # (pins that the suppression above is the implicit gate, not a hole).
+        claimed = synthesize("SquarePulse", body)
+        assert claimed["unmodeled_fields"] == ["flat_length", "smoothing_length"]
+
+    def test_unmodeled_survives_error_payloads(self):
+        # Likeliest churn case: leaf match + missing required param. The
+        # error payload must still carry the unmodeled/provenance signals.
+        p = synthesize("newstack.pulses.GaussianPulse",
+                       {"length": 40, "amplitude": 0.1, "new_knob": 1})
+        assert not p["ok"] and "sigma" in p["param_errors"]
+        assert p["class_match"] == "leaf"
+        assert p["unmodeled_fields"] == ["new_knob"]
+        assert any("new_knob" in w for w in p["warnings"])
+
 
 def p2_errors(payload):
     errs = dict(payload["param_errors"])

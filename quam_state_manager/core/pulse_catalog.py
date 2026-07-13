@@ -25,6 +25,7 @@ included with ``creatable=False`` because real chip states use them; the
 from __future__ import annotations
 
 import math
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -33,7 +34,11 @@ __all__ = [
     "PulseSpec",
     "PULSE_CATALOG",
     "by_qclass",
+    "resolve_qclass",
     "infer_spec",
+    "infer_spec_ex",
+    "unmodeled_fields",
+    "chip_qclass",
     "build_template",
     "inferred_length",
     "resolve_length",
@@ -401,56 +406,196 @@ _QCLASS_ALIASES = {
 
 _BY_QCLASS: dict[str, PulseSpec] = {spec.qclass: spec for spec in _SPECS}
 
+# Leaf-name form of the deprecated aliases — QM stacks churn module homes
+# (quam.components.pulses.X → quam_builder.….pulses.X); the class *name* is
+# the stable part, so the leaf step below must cover alias leaves too.
+_LEAF_ALIASES: dict[str, str] = {
+    qc.rsplit(".", 1)[-1]: key for qc, key in _QCLASS_ALIASES.items()
+}
+
 
 # ---------------------------------------------------------------------------
 # Lookup
 # ---------------------------------------------------------------------------
 
-def by_qclass(qclass: str) -> PulseSpec | None:
-    """Resolve a ``__class__`` string (or bare key) to its spec, or None."""
-    if not isinstance(qclass, str):
-        return None
+def resolve_qclass(qclass: Any) -> tuple[PulseSpec | None, str | None]:
+    """Resolve a ``__class__`` string (or bare key) to ``(spec, how)``.
+
+    how:
+        "exact" — a catalog path or bare key the catalog was transcribed from.
+        "alias" — a deprecated full-path alias (DragPulse → DragGaussianPulse).
+        "leaf"  — matched by class *name* only: the module path is not one the
+            catalog knows (path-churned QM stack, fork, or an unrelated class
+            that shares a name). Render it, but callers must flag it — our
+            transcription is not verified against that class.
+        None    — unknown.
+
+    The leaf step is appended strictly AFTER the bare-key step: the golden
+    payload test (``test_payload_layer_matches_raw``) reaches this function
+    with bare keys and must keep resolving as before.
+    """
+    if not isinstance(qclass, str) or not qclass:
+        return None, None
     spec = _BY_QCLASS.get(qclass)
     if spec is not None:
-        return spec
+        return spec, "exact"
     alias = _QCLASS_ALIASES.get(qclass)
     if alias is not None:
-        return PULSE_CATALOG[alias]
-    return PULSE_CATALOG.get(qclass)  # bare key, e.g. "SquarePulse"
+        return PULSE_CATALOG[alias], "alias"
+    spec = PULSE_CATALOG.get(qclass)  # bare key, e.g. "SquarePulse"
+    if spec is not None:
+        return spec, "exact"
+    leaf = qclass.rsplit(".", 1)[-1]
+    spec = PULSE_CATALOG.get(leaf)
+    if spec is not None:
+        return spec, "leaf"
+    alias = _LEAF_ALIASES.get(leaf)
+    if alias is not None:
+        return PULSE_CATALOG[alias], "leaf"
+    return None, None
+
+
+def by_qclass(qclass: str) -> PulseSpec | None:
+    """Resolve a ``__class__`` string (or bare key) to its spec, or None."""
+    return resolve_qclass(qclass)[0]
+
+
+def infer_spec_ex(pulse_dict: dict, *, context_slot: str | None = None
+                  ) -> tuple[PulseSpec | None, str | None]:
+    """``(spec, how)`` for a pulse dict from a state file.
+
+    Adds ``how="implicit"`` over :func:`resolve_qclass`: no ``__class__``
+    inside a gate flux slot ⇒ SquarePulse (quam-builder's declared default
+    for ``flux_pulse_qubit``/``coupler_flux_pulse``). That is a structural
+    *guess*, not a class match — callers must never style it as one (no
+    leaf-caution chips, no unmodeled-field warnings).
+    """
+    if not isinstance(pulse_dict, dict):
+        return None, None
+    qclass = pulse_dict.get("__class__")
+    if isinstance(qclass, str):
+        return resolve_qclass(qclass)
+    if context_slot in ("flux_pulse_qubit", "coupler_flux_pulse"):
+        return PULSE_CATALOG["SquarePulse"], "implicit"
+    return None, None
 
 
 def infer_spec(pulse_dict: dict, *, context_slot: str | None = None) -> PulseSpec | None:
-    """Best-effort spec for a pulse dict from a state file.
+    """Best-effort spec for a pulse dict (see :func:`infer_spec_ex`)."""
+    return infer_spec_ex(pulse_dict, context_slot=context_slot)[0]
 
-    1. explicit ``__class__`` → :func:`by_qclass`;
-    2. no ``__class__`` inside a gate flux slot → SquarePulse (quam-builder's
-       declared default for ``flux_pulse_qubit``/``coupler_flux_pulse``);
-    3. otherwise None — the caller renders a degraded, synth-less view.
+
+def unmodeled_fields(spec: PulseSpec | None, body: Any) -> list[str]:
+    """Body keys the catalog spec does not model, sorted.
+
+    ``__class__`` is identity. ``length`` is stored on EVERY pulse — the
+    inferred/derived-length classes deliberately omit it from ``params``
+    (the file holds a ``"#./inferred_length"`` self-ref there, written by
+    :func:`build_template` and ``machine.save()`` alike), so it can never
+    count as unmodeled; explicit-length classes declare it as a param anyway.
     """
-    if not isinstance(pulse_dict, dict):
-        return None
-    qclass = pulse_dict.get("__class__")
-    if isinstance(qclass, str):
-        return by_qclass(qclass)
-    if context_slot in ("flux_pulse_qubit", "coupler_flux_pulse"):
-        return PULSE_CATALOG["SquarePulse"]
-    return None
+    if spec is None or not isinstance(body, dict):
+        return []
+    known = {p.name for p in spec.params} | {"__class__", "length"}
+    return sorted(k for k in body if k not in known)
 
 
 # ---------------------------------------------------------------------------
 # Template building (create flow)
 # ---------------------------------------------------------------------------
 
-def build_template(spec: PulseSpec, fields: dict[str, Any]) -> dict[str, Any]:
+def _chip_pulse_classes(merged: dict) -> list[str]:
+    """Every explicit pulse ``__class__`` string on the chip.
+
+    Walks the same two structural shapes as ``pulse_index.list_pulses``
+    (qubit channel operations + pair-gate flux slots). Only bodies carrying
+    a literal ``__class__`` contribute — implicit slots and alias strings
+    are no evidence about the chip's module layout (and the row-level
+    ``qclass`` back-fill must never be used here: it injects the catalog's
+    own path for implicit slots, poisoning the pool).
+    """
+    from quam_state_manager.core.pulse_index import GATE_SLOTS, PULSE_CHANNELS
+
+    out: list[str] = []
+    qubits = merged.get("qubits")
+    if isinstance(qubits, dict):
+        for qubit in qubits.values():
+            if not isinstance(qubit, dict):
+                continue
+            for channel in PULSE_CHANNELS:
+                chan = qubit.get(channel)
+                ops = chan.get("operations") if isinstance(chan, dict) else None
+                if not isinstance(ops, dict):
+                    continue
+                for body in ops.values():
+                    if isinstance(body, dict) and isinstance(body.get("__class__"), str):
+                        out.append(body["__class__"])
+    pairs = merged.get("qubit_pairs")
+    if isinstance(pairs, dict):
+        for pair in pairs.values():
+            macros = pair.get("macros") if isinstance(pair, dict) else None
+            if not isinstance(macros, dict):
+                continue
+            for macro in macros.values():
+                if not isinstance(macro, dict):
+                    continue
+                for slot in GATE_SLOTS:
+                    body = macro.get(slot)
+                    if isinstance(body, dict) and isinstance(body.get("__class__"), str):
+                        out.append(body["__class__"])
+    return out
+
+
+def chip_qclass(merged: Any, spec: PulseSpec) -> tuple[str, str]:
+    """The ``__class__`` string a NEW pulse of *spec* should carry on THIS chip.
+
+    Never invent a module path the chip's stack can't load — prefer evidence
+    from the chip itself over the catalog's transcription source. Returns
+    ``(qclass, how)``:
+
+        "reused"  — an existing pulse of the same class name; its exact
+            string, verbatim (majority count, tie → lexicographic — a chip
+            mid-migration must not flip paths between requests).
+        "prefix"  — no same-class pulse, but the chip's catalog-recognized
+            classed pulses share a strict-majority module prefix.
+        "catalog" — no usable evidence (empty or classless chip); the
+            catalog's own ``spec.qclass`` (long-standing behavior).
+    """
+    classes = _chip_pulse_classes(merged) if isinstance(merged, dict) else []
+
+    same_leaf = [c for c in classes if c.rsplit(".", 1)[-1] == spec.key]
+    if same_leaf:
+        ranked = sorted(Counter(same_leaf).items(), key=lambda kv: (-kv[1], kv[0]))
+        return ranked[0][0], "reused"
+
+    prefixes = []
+    for c in classes:
+        if "." not in c:
+            continue
+        prefix, leaf = c.rsplit(".", 1)
+        if leaf in PULSE_CATALOG:  # a custom class must not donate its prefix
+            prefixes.append(prefix + ".")
+    if prefixes:
+        ranked = sorted(Counter(prefixes).items(), key=lambda kv: (-kv[1], kv[0]))
+        if ranked[0][1] * 2 > len(prefixes):  # strict majority, else no evidence
+            return ranked[0][0] + spec.key, "prefix"
+
+    return spec.qclass, "catalog"
+
+
+def build_template(spec: PulseSpec, fields: dict[str, Any], *,
+                   qclass: str | None = None) -> dict[str, Any]:
     """Build the dict written into the state JSON for a new pulse.
 
     Only catalog-declared params are copied (whitelist, like the legacy
     ``_build_pulse_template``). ``id``/``digital_marker`` are dropped when
     None so new pulses stay minimal. Inferred-length classes get their
     canonical self-ref pointer so the file matches what ``machine.save()``
-    produces.
+    produces. *qclass* overrides the written ``__class__`` (the create flow
+    passes :func:`chip_qclass` so a new-stack chip gets its own module path,
+    not the catalog's transcription source).
     """
-    template: dict[str, Any] = {"__class__": spec.qclass}
+    template: dict[str, Any] = {"__class__": qclass or spec.qclass}
     for p in spec.params:
         if p.name in ("id", "digital_marker") and fields.get(p.name) is None:
             continue

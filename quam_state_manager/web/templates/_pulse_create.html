@@ -65,6 +65,15 @@
                oninput="PulsesPage.createValidateName()">
     </div>
 
+    <div class="pulse-create-row">
+        <label for="pulse-create-qclass">Class path
+            <span class="muted">(the <code>__class__</code> written to state.json)</span></label>
+        <input type="text" name="qclass" id="pulse-create-qclass"
+               autocomplete="off" spellcheck="false"
+               pattern="[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*">
+        <p class="pulse-qclass-hint muted" id="pulse-create-qclass-hint"></p>
+    </div>
+
     <div id="pulse-create-fields" class="pulse-create-fields">
         {# per-type parameter fieldsets are rendered by JS from the catalog
            JSON (defaults pre-filled); pointer strings are accepted verbatim #}

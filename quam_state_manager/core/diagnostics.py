@@ -1226,6 +1226,14 @@ def _pulse_peak(store, row: dict) -> tuple[float | None, str | None]:
     except Exception:  # pragma: no cover - synth must never crash a lint
         return None, None
 
+    if payload.get("class_match") == "leaf":
+        # The class matched the catalog by NAME only — a foreign module path
+        # (churned QM stack, fork, or an unrelated same-named class). Our
+        # transcription may not be that class's math: render it elsewhere,
+        # but never fabricate a config-crash / DAC-range finding from it.
+        # Verify-vs-config is the authoritative check for these.
+        return None, None
+
     if payload.get("ok"):
         peak = 0.0
         for arr in (payload.get("i"), payload.get("q")):

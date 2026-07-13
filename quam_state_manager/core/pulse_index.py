@@ -29,9 +29,9 @@ from quam_state_manager.core.pointer_path import pointer_to_abs, resolve_field_t
 from quam_state_manager.core.pointer_resolver import is_pointer
 from quam_state_manager.core.pulse_catalog import (
     PulseSpec,
-    by_qclass,
-    infer_spec,
+    infer_spec_ex,
     resolve_length,
+    unmodeled_fields,
 )
 
 logger = logging.getLogger(__name__)
@@ -168,6 +168,8 @@ def _row_for_pulse(merged: dict, path: str, body: Any, *,
         "qclass": None,
         "class_short": None,
         "known": False,
+        "class_match": None,
+        "unmodeled": [],
         "creatable": False,
         "iq": False,
         "readout": False,
@@ -205,11 +207,17 @@ def _row_for_pulse(merged: dict, path: str, body: Any, *,
         row["summary"] = repr(body)
         return row
 
-    spec = infer_spec(body, context_slot=channel if gate else None)
+    spec, class_match = infer_spec_ex(body, context_slot=channel if gate else None)
     qclass = body.get("__class__")
     row["qclass"] = qclass or (spec.qclass if spec and gate else None)
     row["class_short"] = _short_class(qclass, spec)
     row["known"] = spec is not None
+    row["class_match"] = class_match
+    # A leaf match is a class NAME claim only — surface what the catalog spec
+    # does not model so the table/detail can flag it. Implicit slots are a
+    # structural guess, not a class claim: never flagged.
+    row["unmodeled"] = (unmodeled_fields(spec, body)
+                        if class_match in ("exact", "alias", "leaf") else [])
     row["creatable"] = bool(spec and spec.creatable)
     row["readout"] = bool(spec and spec.readout)
     row["params"] = {k: v for k, v in body.items() if k != "__class__"}

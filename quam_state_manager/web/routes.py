@@ -29,7 +29,7 @@ import shutil
 import tempfile
 import threading
 import time
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -2165,6 +2165,9 @@ _PULSE_CHANNELS = ("xy", "z", "resonator")
 
 _PULSE_NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{0,63}$")
 
+# A dotted Python class path (the create form's editable __class__ field).
+_QCLASS_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
+
 
 @bp.route("/qubit/<name>")
 def qubit_detail(name: str):
@@ -2761,7 +2764,44 @@ _GATE_TYPES: dict[str, dict[str, Any]] = {
 }
 
 
-def _build_gate_template(gate_type: str, fields: dict[str, Any]) -> dict:
+# Fallback ParametricCZGate class path — matches the quam_builder layout the
+# app was developed against. Only used when the chip itself carries no
+# ParametricCZGate macro to copy the path from (see _parametric_cz_qclass).
+_PARAMETRIC_CZ_QCLASS = (
+    "quam_builder.architecture.superconducting.custom_gates"
+    ".flux_tunable_transmon_pair.two_qubit_gates.ParametricCZGate"
+)
+
+
+def _parametric_cz_qclass(store) -> str:
+    """The ParametricCZGate ``__class__`` to write on THIS chip.
+
+    Reuse an existing macro's class string verbatim when one names a
+    ParametricCZGate (majority, tie → lexicographic) — evidence beats
+    guessing. Otherwise keep the literal: real chips rarely carry macro
+    ``__class__`` markers at all, and gate classes live in a different
+    package family than pulses, so no prefix heuristic is safe here.
+    """
+    merged = getattr(store, "merged", None)
+    pairs = merged.get("qubit_pairs") if isinstance(merged, dict) else None
+    found: list[str] = []
+    if isinstance(pairs, dict):
+        for pair in pairs.values():
+            macros = pair.get("macros") if isinstance(pair, dict) else None
+            if not isinstance(macros, dict):
+                continue
+            for macro in macros.values():
+                qc = macro.get("__class__") if isinstance(macro, dict) else None
+                if isinstance(qc, str) and qc.rsplit(".", 1)[-1] == "ParametricCZGate":
+                    found.append(qc)
+    if found:
+        ranked = sorted(Counter(found).items(), key=lambda kv: (-kv[1], kv[0]))
+        return ranked[0][0]
+    return _PARAMETRIC_CZ_QCLASS
+
+
+def _build_gate_template(gate_type: str, fields: dict[str, Any], *,
+                         parametric_qclass: str | None = None) -> dict:
     """Construct the macro dict for ``gate_type`` from validated *fields*."""
     if gate_type == "cz_unipolar":
         return {
@@ -2792,10 +2832,7 @@ def _build_gate_template(gate_type: str, fields: dict[str, Any]) -> dict:
         }
     if gate_type == "cz_parametric":
         return {
-            "__class__": (
-                "quam_builder.architecture.superconducting.custom_gates"
-                ".flux_tunable_transmon_pair.two_qubit_gates.ParametricCZGate"
-            ),
+            "__class__": parametric_qclass or _PARAMETRIC_CZ_QCLASS,
             "fidelity": {},
             "flux_pulse_qubit": {
                 "amplitude": fields["amplitude"],
@@ -2833,6 +2870,9 @@ def pair_gate_form(name: str):
         pair_name=name,
         gate_types=_GATE_TYPES,
         existing_gates=existing_gates,
+        # The JSON preview in the form must show the class the SERVER will
+        # write (chip-derived when possible), not a duplicated literal.
+        parametric_qclass=_parametric_cz_qclass(store),
     )
 
 
@@ -2876,7 +2916,8 @@ def pair_add_gate(name: str):
         except (TypeError, ValueError):
             fields[field_name] = default
 
-    template = _build_gate_template(gate_type, fields)
+    template = _build_gate_template(
+        gate_type, fields, parametric_qclass=_parametric_cz_qclass(store))
     dot_path = f"qubit_pairs.{name}.macros.{gate_name}"
     try:
         modifier.create_subtree(dot_path, template)
@@ -3848,7 +3889,8 @@ def _render_pulse_detail(path: str, *, status_msg: str | None = None,
                                message=f"Pulse not found: {path}",
                                level="error"), 404
 
-    from quam_state_manager.core.pulse_catalog import infer_spec
+    from quam_state_manager.core.pulse_catalog import (
+        infer_spec_ex, unmodeled_fields)
     from quam_state_manager.core.waveform_synth import synth_for_operation
 
     payload = synth_for_operation(store, path)
@@ -3863,7 +3905,13 @@ def _render_pulse_detail(path: str, *, status_msg: str | None = None,
     if not isinstance(body, dict):
         body = {}
 
-    spec = infer_spec(body, context_slot=actual_path.rsplit(".", 1)[-1])
+    # Derived from the ACTUAL body (not the row) so an alias opened here
+    # reports its resolved target's class provenance, consistent with the
+    # synth payload built from the same dict.
+    spec, class_match = infer_spec_ex(
+        body, context_slot=actual_path.rsplit(".", 1)[-1])
+    unmodeled = (unmodeled_fields(spec, body)
+                 if class_match in ("exact", "alias", "leaf") else [])
     pointer_fields = payload.get("pointer_fields") or {}
     resolved_params = payload.get("resolved_params") or {}
 
@@ -3961,8 +4009,15 @@ def _render_pulse_detail(path: str, *, status_msg: str | None = None,
         owner=row["owner"],
         channel=row["channel"],
         class_short=row["class_short"],
-        qclass=row.get("qclass"),
+        # payload["qclass"] carries the RESOLVED target's __class__ — the
+        # alias row's own qclass is None, and the leaf-caution banner must
+        # show the chip's real stored path, not "None" (same source as
+        # detail_json above).
+        qclass=payload.get("qclass") or row.get("qclass"),
         known=row["known"],
+        class_match=class_match,
+        unmodeled=unmodeled,
+        catalog_qclass=spec.qclass if spec else None,
         params=param_rows,
         used_by=used_by_target,
         delete_used_by=delete_used_by,
@@ -4211,12 +4266,17 @@ def pulse_create_form():
         return render_template("_status.html", message="No state loaded",
                                level="warning")
 
-    from quam_state_manager.core.pulse_catalog import PULSE_CATALOG
+    from quam_state_manager.core.pulse_catalog import PULSE_CATALOG, chip_qclass
 
     creatable = [s for s in PULSE_CATALOG.values() if s.creatable]
     groups: dict[str, list] = {}
     for s in creatable:
         groups.setdefault(s.group, []).append(s)
+
+    # The __class__ each type would write on THIS chip (+ provenance) — the
+    # form shows it as an editable field with a caution when it is a guess
+    # ("prefix"/"catalog") rather than evidence ("reused" from the chip).
+    chip_classes = {s.key: chip_qclass(store.merged, s) for s in creatable}
 
     qubit_names = [q.get("id") for q in engine.list_qubits() if q.get("id")]
     pairs_map: dict[str, list[str]] = {}
@@ -4242,6 +4302,8 @@ def pulse_create_form():
         s.key: {
             "label": s.label, "group": s.group, "doc": s.doc,
             "iq": s.iq, "length_mode": s.length_mode,
+            "qclass": chip_classes[s.key][0],
+            "qclass_how": chip_classes[s.key][1],
             "params": [
                 {"name": p.name, "label": p.label, "kind": p.kind,
                  "default": p.default, "unit": p.unit, "synth": p.synth,
@@ -4276,7 +4338,7 @@ def api_pulse_create():
         return render_template("_status.html", message="No state loaded",
                                level="warning")
 
-    from quam_state_manager.core.pulse_catalog import PULSE_CATALOG, build_template
+    from quam_state_manager.core.pulse_catalog import PULSE_CATALOG
 
     pulse_type = request.form.get("pulse_type", "").strip()
     spec = PULSE_CATALOG.get(pulse_type)
@@ -4284,6 +4346,20 @@ def api_pulse_create():
         return render_template("_status.html",
                                message=f"Unknown pulse type {pulse_type!r}",
                                level="error"), 400
+
+    # Optional explicit class path (the create form surfaces the derived one
+    # as an editable field). The LEAF must equal the chosen spec — otherwise
+    # the form's field schema and the written class cross-wire.
+    qclass = (request.form.get("qclass") or "").strip()
+    if qclass:
+        if (not _QCLASS_RE.match(qclass)
+                or qclass.rsplit(".", 1)[-1] != spec.key):
+            return render_template(
+                "_status.html",
+                message=(f"Class path {qclass!r} does not name a "
+                         f"{spec.key} (the last segment must match the "
+                         "selected pulse type)"),
+                level="error"), 400
 
     fields, errors = _coerce_catalog_fields(spec, request.form)
     if errors:
@@ -4298,7 +4374,8 @@ def api_pulse_create():
     # existence check and the write. Modifier methods re-enter the RLock;
     # the (synth-heavy) detail render happens after release.
     with store._lock:
-        outcome = _pulse_create_locked(store, modifier, spec, fields, target_kind)
+        outcome = _pulse_create_locked(store, modifier, spec, fields,
+                                       target_kind, qclass=qclass or None)
     if not isinstance(outcome, str):
         return outcome  # an error response (html, code)
     dot_path = outcome
@@ -4308,13 +4385,16 @@ def api_pulse_create():
         dot_path, status_msg=f"Created {dot_path.rsplit('.', 1)[-1]}"))
 
 
-def _pulse_create_locked(store, modifier, spec, fields, target_kind):
+def _pulse_create_locked(store, modifier, spec, fields, target_kind,
+                         qclass: str | None = None):
     """Validate the target and insert the pulse. Caller holds store._lock.
 
     Returns the created dot_path on success, or an (html, status) error
-    response tuple.
+    response tuple. *qclass* (already leaf-validated) overrides the written
+    ``__class__``; absent, it is derived from the chip's own pulses
+    (``chip_qclass``) so a path-churned stack gets its real module path.
     """
-    from quam_state_manager.core.pulse_catalog import build_template
+    from quam_state_manager.core.pulse_catalog import build_template, chip_qclass
 
     replace_none_slot = False
     if target_kind == "pair":
@@ -4364,7 +4444,9 @@ def _pulse_create_locked(store, modifier, spec, fields, target_kind):
                                    level="error"), 409
         dot_path = f"qubits.{qubit}.{channel}.operations.{op_name}"
 
-    template = build_template(spec, fields)
+    if not qclass:
+        qclass, _how = chip_qclass(store.merged, spec)
+    template = build_template(spec, fields, qclass=qclass)
     try:
         if replace_none_slot:
             modifier.set_value(dot_path, template, coerce=False)
