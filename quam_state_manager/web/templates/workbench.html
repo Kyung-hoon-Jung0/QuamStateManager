@@ -466,7 +466,13 @@
           .then(function (d) {
             if (!d) return;
             var st = d.state;
-            matchLinked = (st === "linked" || st === "linked-different-folder");
+            // Gate the content-aware nudge on the EXACT-folder link only. In
+            // "linked-different-folder" (same chip, physically different dirs) a
+            // Qualibrate fit writes ITS folder, but /state/live-diff diffs SM's
+            // OWN untouched folder → total=0 → a misleading "no value change"
+            // nudge. The badge + message below still explain the link; the nudge
+            // just doesn't fire for this state.
+            matchLinked = (st === "linked");
             var b = MATCH_BADGE[st] || { cls: "warn", text: st };
             matchBadge.className = "wb-link-badge " + b.cls;
             matchBadge.textContent = b.text;

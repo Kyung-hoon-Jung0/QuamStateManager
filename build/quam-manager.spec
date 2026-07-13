@@ -43,9 +43,22 @@ a = Analysis(
         "quam_state_manager.core.saver",
         "quam_state_manager.core.differ",
         "quam_state_manager.core.config_generator",
+        # Pulses-page waveform synthesis (lazy-imported in routes.py) + its
+        # scipy dependency — pin so the frozen bundle keeps them.
+        "quam_state_manager.core.waveform_synth",
+        "scipy",
+        "scipy.ndimage",
+        "scipy.signal.windows",
         "quam_state_manager.web",
         "quam_state_manager.web.app",
         "quam_state_manager.web.routes",
+        # routes.py imports _parse_value from cli.py, which imports typer/rich/click
+        # at module top — pin them so the frozen web app doesn't miss typer/rich's
+        # dynamic bits (their absence 500s /field/edit on first use).
+        "quam_state_manager.cli",
+        "typer",
+        "rich",
+        "click",
         "flask",
         "jinja2",
         "webview",
@@ -62,7 +75,11 @@ a = Analysis(
         "pytest",
         "IPython",
         "notebook",
-        "scipy",
+        # NOTE: scipy must NOT be excluded — core/waveform_synth.py imports
+        # scipy.ndimage + scipy.signal.windows at module top for the Pulses-page
+        # waveform preview/sparklines/synth. Excluding it makes those routes 500
+        # in the frozen exe (invisible from a source run). See the pre-delivery
+        # audit's packaging finding.
     ],
     noarchive=False,
     cipher=block_cipher,
@@ -79,7 +96,10 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    # UPX OFF: it is a known cause of frozen-exe crashes when it compresses native
+    # DLLs (scipy/h5py/numpy MKL, pywebview's WebView2 loader) — corrupted or
+    # AV-quarantined on Windows. The onedir startup win doesn't need it.
+    upx=False,
     console=False,
     icon=None,
 )
@@ -89,7 +109,7 @@ coll = COLLECT(
     a.binaries,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     name="quam-manager",
 )

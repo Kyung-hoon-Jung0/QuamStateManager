@@ -67,10 +67,31 @@
     }
 
     /* ── component math (I/Q/|z|/phase) ───────────────────────────────── */
+    // I and Q are decimated INDEPENDENTLY server-side (each keeps the indices its
+    // own peaks fall on), so a large cube's siblings hold DIFFERENT source points.
+    // Zipping them element-wise would combine value[i] of I with value[i] of Q from
+    // a different frequency/amplitude → a physically WRONG |IQ|/phase that looks
+    // plausible. Only combine when the two line up exactly (same dims, and identical
+    // kept-index maps on every decimated dim); otherwise refuse.
+    function _iqAligned(cube, partner) {
+        var da = cube.dims || [], db = partner.dims || [];
+        if (da.length !== db.length) return false;
+        for (var i = 0; i < da.length; i++)
+            if (da[i].name !== db[i].name || da[i].size !== db[i].size) return false;
+        var ka = cube.kept || {}, kb = partner.kept || {}, names = {};
+        Object.keys(ka).forEach(function (n) { names[n] = 1; });
+        Object.keys(kb).forEach(function (n) { names[n] = 1; });
+        for (var n in names) {
+            var xa = ka[n] || [], xb = kb[n] || [];
+            if (xa.length !== xb.length) return false;
+            for (var j = 0; j < xa.length; j++) if (xa[j] !== xb[j]) return false;
+        }
+        return true;
+    }
     function componentData(cube, partner, comp) {
         if (comp === 'base' || !partner) return cube._fx;
         var a = cube._fx, b = partner._fx;
-        if (a.flat.length !== b.flat.length) return a;
+        if (a.flat.length !== b.flat.length || !_iqAligned(cube, partner)) return null;
         var out = new Float64Array(a.flat.length);
         var isI = /^I/.test(cube.var);
         for (var i = 0; i < a.flat.length; i++) {
@@ -154,8 +175,16 @@
         fb.hidden = true; fb.innerHTML = '';
         if (!cube.ok) { return renderFallback(cube); }
         if (cube.scalar !== undefined && cube.data === null) {
-            plotEl.innerHTML = '<div class="ndv-scalar"><span>' + esc(cube.var) + '</span><strong>' +
-                window.PlotTheme.siFormat(cube.scalar, cube.units) + '</strong></div>';
+            // siFormat guards on !isFinite, but JS isFinite coerces strings, so a
+            // numeric-looking string scalar ("1.5") slips through to v.toPrecision()
+            // and THROWS — uncaught on the cached-cube path (this sits before the
+            // try). Only siFormat real numbers; show string scalars as their text
+            // (the server took care to ship them) instead of throwing or '—'.
+            var sval = (typeof cube.scalar === 'number')
+                ? window.PlotTheme.siFormat(cube.scalar, cube.units)
+                : esc(String(cube.scalar));
+            plotEl.innerHTML = '<div class="ndv-scalar"><span>' + esc(cube.var) +
+                '</span><strong>' + sval + '</strong></div>';
             return;
         }
         try { renderPlot(plotEl, cube); }
@@ -169,6 +198,18 @@
     function renderPlot(plotEl, cube) {
         if (!cube._fx) cube._fx = flatten(cube.data, cube.dims);
         var fx = componentData(cube, state.partnerCube, state.comp);
+        if (!fx) {
+            // Honest degradation: I and Q couldn't be safely combined (decimated to
+            // different sample points). Show the individual components, never a
+            // wrong magnitude/phase.
+            return renderFallback({
+                error: 'Magnitude / phase is unavailable for this view: I and Q were '
+                    + 'decimated to different sample points, so combining them here '
+                    + 'would show physically wrong values. View the I or Q component '
+                    + 'on its own, or open a smaller run.',
+                fallback: null,
+            });
+        }
         var v = cube.default_view || {};
         var xI = dimByName(cube, v.x), yI = v.y ? dimByName(cube, v.y) : -1;
         // fixed = every non-axis, non-overlay dim at its selected index

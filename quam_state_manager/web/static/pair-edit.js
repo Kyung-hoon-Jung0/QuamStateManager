@@ -281,7 +281,7 @@
         if (!updates.length) return Promise.resolve({ ok: true, tray_html: null });
         return fetch('/field/edit-batch', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ updates: updates })
+            body: JSON.stringify({ updates: updates, expect_chip: window.__chipToken || '' })
         }).then(function (resp) { return resp.json().then(function (j) { return { status: resp.status, body: j }; }); })
             .then(function (r) {
                 var byPath = {};
@@ -458,6 +458,15 @@
             if (t._pairBound) { _refreshGlobal(); return; }
             t._pairBound = true;
 
+            // Discard-intent guard (see bulk-edit.js): a pointerdown on Reset fires
+            // before the focused cell's focusout, so record it and let focusout skip
+            // its click-away commit — otherwise "Reset" commits the focused row.
+            var _pRstBtn = document.getElementById('bulk-pair-reset');
+            if (_pRstBtn && !_pRstBtn._resetGuardBound) {
+                _pRstBtn._resetGuardBound = true;
+                _pRstBtn.addEventListener('pointerdown', function () { BulkPairEdit._resetPressTs = Date.now(); });
+            }
+
             t.addEventListener('click', function (e) {
                 if (e.target.closest && e.target.closest('.bulk-resize-handle')) return;
                 if (_resizeJustEnded) return;
@@ -507,8 +516,10 @@
                 var row = _rowOf(cell);
                 var to = e.relatedTarget;
                 if (to && row && row.contains(to)) return;
-                // Let an "Apply all" / "Apply to live" button commit the whole set.
-                if (to && to.closest && to.closest('#bulk-pair-apply-all, #bulk-pair-apply-sync')) return;
+                // Let an "Apply all" / "Apply to live" button commit the whole set;
+                // and never let a click on Reset commit the focused row (discard intent).
+                if (BulkPairEdit._resetPressTs && (Date.now() - BulkPairEdit._resetPressTs) < 1000) return;
+                if (to && to.closest && to.closest('#bulk-pair-apply-all, #bulk-pair-apply-sync, #bulk-pair-reset')) return;
                 var b = row && row.querySelector('.bulk-row-apply');
                 if (b && !b.disabled) BulkPairEdit.applyRow(b);
             });

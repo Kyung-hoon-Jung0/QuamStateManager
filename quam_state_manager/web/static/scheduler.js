@@ -411,6 +411,11 @@
     if (el("sched-start")) el("sched-start").disabled = running;
     if (el("sched-pause")) el("sched-pause").disabled = !running;
     if (el("sched-cancel")) el("sched-cancel").disabled = !(running || run.status === "paused");
+    // Lock the hardware/chip-affecting settings while a queue runs (the server
+    // also 409s them). Un-ticking Dry run or re-pointing the chip/env mid-run
+    // would flip the rest of the queue to LIVE hardware with no Strict-gate check.
+    ["sched-simulate", "sched-quam-state", "sched-env-path", "sched-cal-folder"]
+        .forEach(function (id) { var e = el(id); if (e) e.disabled = running; });
 
     // list — skip the rebuild while dragging, while a queue field is focused
     // (rebuild would clobber the edit + caret), or when structurally unchanged.
@@ -489,13 +494,17 @@
         ? '<button type="button" class="sched-mini sched-result-link" data-act="result" title="View run #'
           + esc(it.result_ref.run_id) + ' in Datasets" aria-label="View run '
           + esc(it.result_ref.run_id) + ' in Datasets">↗</button>' : "") +
-      btn("remove", "Remove", "✕");
+      // No Remove on the running item — its subprocess is driving hardware; the
+      // server no-ops it too (removing the row wouldn't kill the run).
+      (it.status === "running" ? "" : btn("remove", "Remove", "✕"));
     var overflowMenu =
       '<details class="sched-overflow"><summary class="sched-mini" title="More actions"'
         + ' aria-label="More actions for ' + nm + '">⋯</summary>'
       + '<div class="sched-overflow-menu" role="menu">'
         + menuItem("insert", "Insert node after…")
-        + (canTarget ? menuItem("expand", "Expand per qubit/pair") : "")
+        // No Expand on the running item — it would delete the live row and enqueue
+        // per-target copies that RE-RUN on hardware (server no-ops it too).
+        + (canTarget && it.status !== "running" ? menuItem("expand", "Expand per qubit/pair") : "")
         + menuItem("dup", "Duplicate")
         + (canOverride ? menuItem("rules", "On-failure rules…") : "")
         + menuItem("label", it.label ? "Rename label…" : "Add label…")

@@ -55,6 +55,21 @@ _BASELINE_SIDECAR = "_baseline.json"
 # it returns, so stride-sample misses still get reconstructed.
 _SQL_PULL_MULTIPLIER = 10
 
+# Bounded LRU size for the extract_property_history result cache (docs/23 A4:
+# ~50-200 MB per cached chip-grid, so keep only a handful).
+_EXTRACT_CACHE_CAP = 8
+
+
+def _ts_minute_bucket(ts: str | None) -> str | None:
+    """Bucket a ``YYYYMMDD_HHMMSS_mmm`` cutoff to the MINUTE for the extract-cache
+    KEY only (the SQL still filters on the exact ts). A now-relative Param History
+    window (``now-7d`` etc.) resolves to a fresh SECOND on every render, so an
+    un-bucketed key never hits AND leaks a new entry per render. Bucketing lets
+    rapid filter clicks in the same minute share an entry. A new snapshot
+    invalidates the whole chip's cache (``_bump_chip_version``), so the sub-minute
+    boundary drift can never serve stale-recent data."""
+    return ts[:13] if isinstance(ts, str) and len(ts) >= 13 else ts
+
 # Phase 3 §1.2 / §4.2 — backfill tuning.
 # Commit every N ingested rows so SQLite batches fsyncs (sqlite default
 # is autocommit per statement, which is brutal at 10⁴ inserts).
@@ -603,9 +618,9 @@ class HistoryManager:
         # carries the chip-dir version it was computed against so a new
         # snapshot (which bumps the version via ``_bump_chip_version``)
         # invalidates it automatically.
-        self._extract_history_cache: dict[
+        self._extract_history_cache: OrderedDict[
             tuple[Any, ...], tuple[int, list[dict[str, Any]]]
-        ] = {}
+        ] = OrderedDict()
         # Phase 3 §3.2 — per-entry alignment cache. When the outer
         # ``_alignment_cache`` misses (e.g. workspace root mtime moved
         # because the user just dropped one new experiment), the entry-
@@ -713,10 +728,10 @@ class HistoryManager:
             self._chip_histories_cache = None
             # Drop every cached extract_history result that referenced
             # this chip dir — they're now stale (Phase 3 §5.1).
-            self._extract_history_cache = {
-                k: v for k, v in self._extract_history_cache.items()
+            self._extract_history_cache = OrderedDict(
+                (k, v) for k, v in self._extract_history_cache.items()
                 if k[0] != key
-            }
+            )
             # Snapshot list on disk changed → next read must re-walk
             # before deciding self-heal isn't needed.
             self._last_index_check.pop(key, None)
@@ -1047,9 +1062,14 @@ class HistoryManager:
                     )
                     return None
 
-            # Compute diff against previous snapshot
+            # Compute diff against previous snapshot. List priors from the
+            # ROUTED hist_dir (not the path-derived dir) so prior_dir below —
+            # hist_dir / prior.timestamp — actually exists: under fingerprint
+            # routing (chip swap) the path-derived dir holds a DIFFERENT chip's
+            # timestamps, and joining one onto hist_dir gave a nonexistent path,
+            # so the diff threw and was silently recorded as zero.
             diff_summary = {"added": 0, "removed": 0, "modified": 0, "total": 0}
-            prev_snapshots = self._list_snapshots_uncached(path)
+            prev_snapshots = self._list_snapshots_in_dir(hist_dir)
             # prev_snapshots is newest-first; the one we just created is at [0]
             # so the prior snapshot (if any) is the first one whose ts != current
             prior = None
@@ -1167,7 +1187,16 @@ class HistoryManager:
 
     def _list_snapshots_uncached(self, quam_state_path: Path) -> list[SnapshotMeta]:
         """Scan disk for snapshot folders and parse meta.json files."""
-        hist_dir = self._history_dir(quam_state_path)
+        return self._list_snapshots_in_dir(self._history_dir(quam_state_path))
+
+    def _list_snapshots_in_dir(self, hist_dir: Path) -> list[SnapshotMeta]:
+        """Scan a SPECIFIC chip history dir for snapshot folders + meta.json.
+
+        Split out from ``_list_snapshots_uncached`` so the snapshot writer can
+        list priors from the fingerprint-ROUTED dir (which may differ from the
+        path-derived one on a chip swap) — otherwise the diff joins a prior
+        timestamp from one chip's dir onto another chip's dir, the path doesn't
+        exist, and the diff is silently recorded as zero."""
         if not hist_dir.is_dir():
             return []
 
@@ -1959,8 +1988,8 @@ class HistoryManager:
             chip_dir_str,
             tuple(properties),
             tuple(qubit_filter or ()),
-            since,
-            until,
+            _ts_minute_bucket(since),   # bucket now-relative cutoffs so the key
+            _ts_minute_bucket(until),   # actually repeats across renders (see helper)
             tuple(triggers or ()),
             downsample,
         )
@@ -1968,6 +1997,7 @@ class HistoryManager:
             current_version = self._chip_dir_version.get(chip_dir_str, 0)
             cached = self._extract_history_cache.get(cache_key)
             if cached is not None and cached[0] == current_version:
+                self._extract_history_cache.move_to_end(cache_key)   # LRU touch
                 return cached[1]
 
         clauses = ["property IN (" + ",".join("?" * len(properties)) + ")"]
@@ -2058,6 +2088,9 @@ class HistoryManager:
 
         with self._lock:
             self._extract_history_cache[cache_key] = (current_version, results)
+            self._extract_history_cache.move_to_end(cache_key)
+            while len(self._extract_history_cache) > _EXTRACT_CACHE_CAP:
+                self._extract_history_cache.popitem(last=False)   # evict LRU
         return results
 
     def count_window(

@@ -49,8 +49,11 @@ def _pairs_of(bundle) -> list[str]:
 
 
 def _name(bundle) -> str:
-    return (bundle.node_meta or {}).get("name") or getattr(
-        bundle.run, "experiment_name", "") or ""
+    # node.json stores the name under metadata.name — a bare top-level .get("name")
+    # is always None, so this recipe used to fall back to the folder name (breaking
+    # _kind/_norm family classification). Match the sibling recipes.
+    return ((bundle.node_meta or {}).get("metadata") or {}).get("name") \
+        or getattr(bundle.run, "experiment_name", "") or ""
 
 
 def _norm(bundle) -> str:

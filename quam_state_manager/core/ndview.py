@@ -419,18 +419,59 @@ def _cube_meta(cube: dict) -> dict:
     return {"ok": bool(cube.get("ok")), "default_view": cube.get("default_view")}
 
 
-def _build_cube_bytes_uncached(h5_path: Path, var: str) -> tuple[bytes, dict]:
+def _iq_pair_aligned(cube: dict, pcube: dict) -> bool:
+    """True when two sibling cubes are combinable: same dim names+sizes AND the
+    same kept-index maps (the element pass guarantees the latter for aligned
+    pairs built with equal budgets)."""
+    return (bool(cube.get("ok")) and bool(pcube.get("ok"))
+            and [(d["name"], d["size"]) for d in (cube.get("dims") or [])]
+                == [(d["name"], d["size"]) for d in (pcube.get("dims") or [])]
+            and cube.get("kept") == pcube.get("kept"))
+
+
+def _build_cube_bytes_uncached(h5_path: Path, var: str) -> tuple[bytes, dict, list]:
     """Build + serialize one cube, enforcing the BYTE budget.
 
     If the first (element-budgeted) build serializes over ``_CUBE_BYTE_TARGET``,
     rebuild with proportionally tighter per-sweep-dim budgets (min/max index
     keeping and bin-mean coarsening both stay peak-preserving) until it fits or
     nothing decimatable remains. A tightened rebuild that comes back broken or
-    no smaller never replaces the last good build."""
+    no smaller never replaces the last good build.
+
+    IQ pairing: the shrink budgets are derived from the measured byte length,
+    and I's and Q's lengths differ (float text widths) — so the pair's kept
+    maps re-diverged here even after the element pass aligned them, killing
+    |IQ|/phase on every over-target cube. When the var has a dim-aligned IQ
+    partner and the byte target is in play, build the partner at the SAME
+    budgets and drive every shrink decision on the PAIR MAXIMUM length (a
+    symmetric statistic), so both sides walk identical rounds to identical
+    budgets. The partner's finished bytes are returned as a cache prime (third
+    element) so its own request is a warm hit, not a duplicate pair-build.
+
+    Returns ``(raw, meta, primes)`` — primes is ``[(var, raw, meta)]`` for
+    opportunistically cacheable sibling builds (empty for solo vars)."""
     cube = _build_cube_uncached(h5_path, var)
     raw = _serialize_cube(cube)
+
+    partner = cube.get("iq_partner") if cube.get("ok") else None
+    pcube, praw = None, None
+    # Only pay the partner build when the byte target is actually in play:
+    # comfortably-under-target pairs (≤90% of target) can't diverge here — the
+    # sibling's length differs by float-text widths (a few %), so it fits too
+    # and neither side shrinks.
+    if partner and len(raw) > int(_CUBE_BYTE_TARGET * 0.9):
+        try:
+            pc = _build_cube_uncached(h5_path, partner)
+            if _iq_pair_aligned(cube, pc):
+                pcube, praw = pc, _serialize_cube(pc)
+        except Exception:   # noqa: BLE001 — partner trouble → solo shrink
+            pcube, praw = None, None
+
+    def _eff_len() -> int:
+        return max(len(raw), len(praw)) if praw is not None else len(raw)
+
     for _ in range(_BYTE_SHRINK_ROUNDS):
-        if len(raw) <= _CUBE_BYTE_TARGET or not cube.get("ok") or cube.get("data") is None:
+        if _eff_len() <= _CUBE_BYTE_TARGET or not cube.get("ok") or cube.get("data") is None:
             break
         dims = cube.get("dims") or []
         dec = [d for d in dims if d.get("kind") in ("sweep", "synthetic")
@@ -440,8 +481,9 @@ def _build_cube_bytes_uncached(h5_path: Path, var: str) -> tuple[bytes, dict]:
         shipped = 1
         for d in dims:
             shipped *= max(1, int(d.get("size", 1)))
-        # Element target from the measured bytes/element of THIS cube.
-        target_elems = max(1_000, int(shipped * (_CUBE_BYTE_TARGET / len(raw)) * 0.85))
+        # Element target from the measured bytes/element — the PAIR MAX when
+        # paired, so both siblings compute identical budgets.
+        target_elems = max(1_000, int(shipped * (_CUBE_BYTE_TARGET / _eff_len()) * 0.85))
         factor = (target_elems / shipped) ** (1.0 / len(dec))
         dim_budgets = {d["name"]: max(16, int(d["size"] * factor)) for d in dec}
         cube2 = _build_cube_uncached(h5_path, var,
@@ -450,10 +492,27 @@ def _build_cube_bytes_uncached(h5_path: Path, var: str) -> tuple[bytes, dict]:
         if not cube2.get("ok") or cube2.get("data") is None:
             break
         raw2 = _serialize_cube(cube2)
-        if len(raw2) >= len(raw):
+        pcube2, praw2 = None, None
+        if praw is not None:
+            try:
+                pc2 = _build_cube_uncached(h5_path, partner,
+                                           element_budget=target_elems,
+                                           dim_budgets=dim_budgets)
+                if _iq_pair_aligned(cube2, pc2):
+                    pcube2, praw2 = pc2, _serialize_cube(pc2)
+            except Exception:   # noqa: BLE001
+                pcube2, praw2 = None, None
+            if praw2 is None:
+                break   # pairing broke (shouldn't happen) — keep the last good pair
+        new_eff = max(len(raw2), len(praw2)) if praw2 is not None else len(raw2)
+        if new_eff >= _eff_len():
             break
         cube, raw = cube2, raw2
-    return raw, _cube_meta(cube)
+        pcube, praw = pcube2, praw2
+
+    primes = ([(partner, praw, _cube_meta(pcube))]
+              if praw is not None and pcube is not None else [])
+    return raw, _cube_meta(cube), primes
 
 
 def build_cube_bytes(h5_path: Path, var: str) -> tuple[bytes, dict]:
@@ -472,14 +531,19 @@ def build_cube_bytes(h5_path: Path, var: str) -> tuple[bytes, dict]:
     if hit is not None:
         return hit
     try:
-        raw, meta = _build_cube_bytes_uncached(h5_path, var)
+        raw, meta, primes = _build_cube_bytes_uncached(h5_path, var)
     except Exception as exc:   # noqa: BLE001 — the never-crash contract
         logger.warning("ndview cube build failed for %s::%s", h5_path, var, exc_info=True)
         cube = {"ok": False,
                 "error": f"Could not read this variable ({type(exc).__name__}: {exc})",
                 "fallback": None}
-        raw, meta = _serialize_cube(cube), _cube_meta(cube)
+        raw, meta, primes = _serialize_cube(cube), _cube_meta(cube), []
     _cache_put(key, (raw, meta))
+    # An IQ pair-shrink already produced the partner's exact bytes — prime its
+    # cache slot so the (typically immediate) sibling request is a warm hit
+    # instead of a duplicate pair-build.
+    for p_var, p_raw, p_meta in primes:
+        _cache_put((str(h5_path), mtime, p_var), (p_raw, p_meta))
     return raw, meta
 
 
@@ -556,29 +620,50 @@ def _build_cube_uncached(h5_path: Path, var: str, *,
                     "decimated": False,
                 })
 
-            # Aux 2-D coords (full_freq(qubit,detuning)…): alternative x-axes.
+            # Aux 2-D coords (full_freq(qubit,detuning)…) as alternative x-axes are
+            # NOT built: no client code reads `aux_axes`, and shipping them
+            # full-resolution bypassed the cube's byte budget (measured ~8.8 MB) and
+            # misaligned them with the decimated dims. Ship an empty list until the
+            # alternative-x-axis feature exists client-side (then subsample them with
+            # the SAME kept indices as the dims they map to).
             aux_axes: list[dict] = []
-            coords_attr = _attr(ds, "coordinates")
-            if isinstance(coords_attr, str):
-                dim_names = {d["name"] for d in dims}
-                for cname in coords_attr.split():
-                    cds = f.get(cname)
-                    if (isinstance(cds, h5py.Dataset) and cds.ndim >= 1
-                            and cds.dtype.kind == "f"
-                            and cds.size <= _CUBE_ELEMENT_BUDGET):
-                        cdims = [d["name"] for d in _dim_names_for(f, cds)]
-                        if all(cd in dim_names for cd in cdims):
-                            aux_axes.append({
-                                "name": cname, "dims": cdims,
-                                "units": _attr(cds, "units"),
-                                "data": _nan_to_none_list(cds[()]),
-                            })
+
+            all_names = set(f.keys())
+            partner = _iq_partner(var, all_names)
 
             # Decimation to budget — sweep dims only, largest first.
             view = _default_view(dims)
             total = int(np.prod(data.shape)) if data.ndim else 1
             kept: dict[str, list[int]] = {}
             if total > element_budget:
+                # IQ-shared decimation: min/max index-keeping picks indices from a
+                # per-VARIABLE representative, so I and Q used to keep DIFFERENT
+                # source indices — the client then (correctly) refuses to combine
+                # them and |IQ|/phase became unavailable on any decimated cube.
+                # Derive the kept indices from a COMBINED representative
+                # (rep(|I|) + rep(|Q|), symmetric in the pair) so both siblings
+                # ship IDENTICAL kept sets and mag/phase is computable again.
+                # The partner array rides through every slice/bin-mean below so
+                # multi-axis decimation stays aligned step by step. Guarded on
+                # exact dim-name/shape agreement (real files can order sibling
+                # dims differently — then we fall back to solo decimation and
+                # the client degrades honestly, exactly as before).
+                partner_data = None
+                if partner is not None:
+                    try:
+                        pds = f.get(partner)
+                        if (isinstance(pds, h5py.Dataset) and pds.shape == ds.shape
+                                and [m["name"] for m in _dim_names_for(f, pds)]
+                                    == [m["name"] for m in dim_meta]):
+                            partner_data = pds[()]
+                            if partner_data.dtype.kind in ("i", "u", "b"):
+                                partner_data = partner_data.astype(np.float64, copy=False)
+                            if partner_data.dtype.kind == "c":
+                                partner_data = np.abs(partner_data)
+                            if partner_data.dtype.kind not in ("f",):
+                                partner_data = None
+                    except Exception:   # noqa: BLE001 — partner unreadable → solo
+                        partner_data = None
                 order = sorted(range(len(dims)), key=lambda i: dims[i]["size"],
                                reverse=True)
                 for axis in order:
@@ -595,12 +680,18 @@ def _build_cube_uncached(h5_path: Path, var: str, *,
                         data, centers = _block_mean(data, axis, budget)
                         idx = centers
                         d["bin_mean"] = True
+                        if partner_data is not None:   # keep the pair in lockstep
+                            partner_data, _ = _block_mean(partner_data, axis, budget)
                     else:
                         rep = _representative(data, axis)
+                        if partner_data is not None:
+                            rep = rep + _representative(partner_data, axis)
                         idx = _minmax_keep_indices(rep, budget)
                         sl = [slice(None)] * data.ndim
                         sl[axis] = idx
                         data = data[tuple(sl)]
+                        if partner_data is not None:
+                            partner_data = partner_data[tuple(sl)]
                     # coord follows the kept indices. The FULL coord rides
                     # along for click-snap ONLY when it's small: on a 400k-pt
                     # sweep coord_full alone was ~8 MB of JSON — and ``kept``
@@ -623,9 +714,6 @@ def _build_cube_uncached(h5_path: Path, var: str, *,
                             "error": (f"{var} is too high-volume to view interactively "
                                       f"even after decimation."),
                             "fallback": _table_fallback(data, dims)}
-
-            all_names = set(f.keys())
-            partner = _iq_partner(var, all_names)
 
             return {
                 "ok": True,

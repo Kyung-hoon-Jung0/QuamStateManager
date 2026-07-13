@@ -499,6 +499,13 @@ class DatasetStore:
         seen_paths: set[Path] = set()
         parsed = 0
         reused = 0
+        # Scan-cursor: sample the mtime BEFORE the walk. A run landing mid-scan
+        # (the walk of a 10k-run workspace takes seconds) bumps a date-dir mtime
+        # above this value, so the next rescan_if_stale re-triggers and catches it.
+        # Stamping _last_mtime with a POST-walk sample instead would swallow that
+        # bump as "already seen" and the run would stay invisible until an unrelated
+        # change moved an mtime again.
+        pre_walk_mtime = self._current_mtime()
 
         root = self.folder_path
         if not root.is_dir():
@@ -642,6 +649,15 @@ class DatasetStore:
         vanished = [p for p in self._folder_fp.keys() if p not in seen_paths]
         for p in vanished:
             _, _, _, vanished_id = self._folder_fp.pop(p)
+            # Only drop the run if the one currently indexed under this id actually
+            # came from the folder that vanished. run_ids are unique only per
+            # qualibrate storage root, so merged/copied archives (or a reset id
+            # counter) can put the same #N on two dates in one folder; deleting the
+            # shadowed copy must NOT evaporate the surviving run (and broadcast a
+            # false 'vanished' that makes polling clients delete the visible row).
+            existing = self.runs.get(vanished_id)
+            if existing is not None and getattr(existing, "folder_path", None) != p:
+                continue
             self.runs.pop(vanished_id, None)
             self._data_json_cache.pop(vanished_id, None)
             self._vanished.append((vanished_id, now_ts))
@@ -661,7 +677,7 @@ class DatasetStore:
         # Sorted run-id index for O(log n) previous/next-run lookups (the
         # prev-state diff). Rebuilt here whenever self.runs changes.
         self._run_ids_sorted = sorted(self.runs.keys())
-        self._last_mtime = self._current_mtime()
+        self._last_mtime = pre_walk_mtime
         if parsed or vanished:
             logger.info(
                 "DatasetStore scan: %d parsed, %d reused, %d removed (total %d runs, %d dates)",
@@ -707,6 +723,33 @@ class DatasetStore:
             self._load_tags()
             new_max = max(self.runs.keys()) if self.runs else -1
             return new_max > old_max
+
+    def force_rescan(self) -> None:
+        """Unconditional rescan for the user's explicit Rescan button.
+
+        Bypasses BOTH the mtime gate (rescan_if_stale short-circuits when no
+        date-dir mtime moved) AND the B27 date-dir fingerprint short-circuit, so
+        an in-place node.json/data.json rewrite — a fit-result writeback that
+        never bumped a date-dir mtime — is actually picked up. The per-run
+        (folder, node, data) mtime fingerprint in ``_scan`` still avoids
+        re-parsing genuinely-unchanged runs, so this stays cheap on big
+        workspaces while honouring the button's "check now" intent.
+        """
+        with self._scan_lock:
+            self._date_fp = {}   # drop the B27 date-dir skip → re-walk every date
+            self._scan()
+            self._load_tags()
+
+    def runs_snapshot(self) -> list:
+        """A point-in-time list of the RunInfo values, taken under the scan lock.
+
+        Callers outside DatasetStore must iterate THIS instead of ``.runs.values()``
+        directly: ``_scan`` mutates ``self.runs`` in place (insert/pop), so a bare
+        iteration racing a concurrent rescan raises 'dictionary changed size during
+        iteration' and 500s the poll/trends page mid-experiment.
+        """
+        with self._scan_lock:
+            return list(self.runs.values())
 
     # ------------------------------------------------------------------
     # Querying
@@ -1594,14 +1637,26 @@ class DatasetStore:
 
         # Apply to RunInfo objects. `bookmarked` is now DERIVED from the favorite
         # tag (the star reflects whether the run carries FAVORITE_TAG).
+        # Per-key tolerance: a single non-integer key (hand-edited file, another
+        # tool, partial corruption) must NOT raise out of __init__ — that made
+        # _get_or_create_store swallow the whole DatasetStore and the entire data
+        # folder silently vanished from the Datasets page.
         for rid_str, tags in self._tags_data.get("tags", {}).items():
-            rid = int(rid_str)
+            try:
+                rid = int(rid_str)
+            except (ValueError, TypeError):
+                logger.warning("Skipping non-integer tag key %r in %s", rid_str, self._tags_path)
+                continue
             if rid in self.runs:
                 self.runs[rid].tags = list(tags)
                 self.runs[rid].bookmarked = FAVORITE_TAG in tags
 
         for rid_str, note in self._tags_data.get("notes", {}).items():
-            rid = int(rid_str)
+            try:
+                rid = int(rid_str)
+            except (ValueError, TypeError):
+                logger.warning("Skipping non-integer note key %r in %s", rid_str, self._tags_path)
+                continue
             if rid in self.runs:
                 self.runs[rid].note = note
 

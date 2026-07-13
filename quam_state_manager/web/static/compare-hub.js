@@ -182,8 +182,31 @@
             p.delete("hint");
             reload(p, { keepSetupOpen: true });
         },
-        setRef: function (validIdx) {
+        setRef: function (btnOrIdx) {
             var p = currentParams();
+            var validIdx;
+            var row = btnOrIdx && btnOrIdx.closest
+                ? btnOrIdx.closest(".cmp-src-row") : null;
+            if (row) {
+                // Address the row by TOKEN, exactly like removeAt: the pane
+                // re-render is async, so a ★ click during a pending remove /
+                // reorder carries a stale positional valid-index and would star
+                // the WRONG source (the same harness-proven failure class
+                // removeAt was hardened against — server ref-clamping keeps it
+                // in range but does NOT keep it on the right source). Only trust
+                // the rendered valid-index when the row's token still sits where
+                // it was rendered in the CURRENT src list; if the basket shifted
+                // under it, ignore the stale click (the user re-clicks after the
+                // re-render) rather than move the ★ onto a different source.
+                var token = row.dataset.ref;
+                var srcIdx = parseInt(row.dataset.srcIdx, 10);
+                var list = srcList(p);
+                if (token != null && !(srcIdx >= 0 && list[srcIdx] === token)) return;
+                validIdx = parseInt(row.dataset.validIdx, 10);
+            } else {
+                validIdx = parseInt(btnOrIdx, 10);
+            }
+            if (isNaN(validIdx)) return;
             p.set("ref", String(validIdx));
             // A confirmed ② map is oriented ref-side→other: moving the ★
             // would silently invert it and compare NOTHING (review P1) —

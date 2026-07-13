@@ -409,7 +409,7 @@
         if (!updates.length) return Promise.resolve({ ok: true, tray_html: null });
         return fetch('/field/edit-batch', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ updates: updates })
+            body: JSON.stringify({ updates: updates, expect_chip: window.__chipToken || '' })
         }).then(function (resp) { return resp.json().then(function (j) { return { status: resp.status, body: j }; }); })
             .then(function (r) {
                 var byPath = {};
@@ -774,6 +774,15 @@
             if (t._bulkBound) { _refreshGlobal(); return; }
             t._bulkBound = true;
 
+            // Discard-intent guard: a pointerdown on Reset fires BEFORE the focused
+            // cell's focusout, so record it and let focusout skip its click-away
+            // commit (otherwise "Reset" would commit the focused row, not discard it).
+            var _rstBtn = document.getElementById('bulk-reset');
+            if (_rstBtn && !_rstBtn._resetGuardBound) {
+                _rstBtn._resetGuardBound = true;
+                _rstBtn.addEventListener('pointerdown', function () { BulkEdit._resetPressTs = Date.now(); });
+            }
+
             // Header sort is delegated (no inline onclick) so a click on a resize
             // handle — or a click right after a drag — never triggers a sort.
             t.addEventListener('click', function (e) {
@@ -823,8 +832,12 @@
                 if (to && row && row.contains(to)) return;   // still inside the row
                 // Focus went to an "Apply all" / "Apply to live" button → let IT
                 // commit the whole dirty set; a per-row commit here would double-fire
-                // the same row (two change-log entries for one edit).
-                if (to && to.closest && to.closest('#bulk-apply-all, #bulk-apply-sync')) return;
+                // the same row (two change-log entries for one edit). Same for the
+                // Reset button: a click-away commit would turn "discard" into a
+                // COMMIT of the focused row. relatedTarget is null in some engines,
+                // so also honour a pointerdown-on-Reset flag that fires before blur.
+                if (BulkEdit._resetPressTs && (Date.now() - BulkEdit._resetPressTs) < 1000) return;
+                if (to && to.closest && to.closest('#bulk-apply-all, #bulk-apply-sync, #bulk-reset')) return;
                 var b = row && row.querySelector('.bulk-row-apply');
                 if (b && !b.disabled) BulkEdit.applyRow(b);
             });
@@ -880,7 +893,15 @@
                 document.addEventListener('quam:state-changed', function () {
                     var tt = table();
                     if (!tt || window._bulkSelfEdit) return;
-                    if (_cells(tt).some(_isDirty)) return;   // don't wipe unsaved edits
+                    if (_cells(tt).some(_isDirty)) return;   // don't wipe unsaved qubit edits
+                    // …and don't wipe unapplied edits in the PAIR grid or the
+                    // All-values tab either: those live in #table-pane too, so a
+                    // background re-GET would swap them out and trip pair-edit.js's
+                    // nav guard, firing a surprise "discard?" confirm from an event
+                    // the user never triggered. Both surfaces mark dirty cells/rows
+                    // with a class, so the check stays decoupled.
+                    if (document.querySelector('#bulk-pair-table .dirty')
+                            || document.querySelector('.av-row-dirty')) return;
                     if (window.htmx) htmx.ajax('GET', '/bulk', { target: '#table-pane', swap: 'innerHTML' });
                 });
             }

@@ -50,6 +50,36 @@ def test_tier2_grafts_user_added_operation_subtree():
     assert r.stats.residual_lost == []
 
 
+def test_removed_port_not_resurrected_but_user_op_still_grafts():
+    """Regression: an OLD-only port slot (a removed qubit's now-unallocated port,
+    which lives several levels deep under `ports`) must NOT be grafted back, while
+    a user-added operation under a SURVIVING qubit still grafts. The old guard
+    only matched the exact path 'ports', so deep port slots leaked through."""
+    old = {
+        "qubits": {"q1": {"xy": {"operations": {
+            "x180": {"amplitude": 0.1},
+            "my_custom": {"amplitude": 0.3},        # user-added op on a surviving qubit
+        }}}},
+        "ports": {"mw_outputs": {"con1": {"1": {
+            "2": {"full_scale_power_dbm": -11},     # q1's port (survives the rebuild)
+            "3": {"full_scale_power_dbm": -11},     # removed q2's port
+        }}}},
+    }
+    new = {
+        "qubits": {"q1": {"xy": {"operations": {
+            "x180": {"amplitude": 0.0},
+        }}}},
+        "ports": {"mw_outputs": {"con1": {"1": {
+            "2": {"full_scale_power_dbm": 0},       # rebuild kept only q1's port
+        }}}},
+    }
+    r = merge_states(old, new)
+    # The removed port slot .3 must NOT be resurrected (deep-path graft blocked).
+    assert set(r.merged["ports"]["mw_outputs"]["con1"]["1"].keys()) == {"2"}
+    # ...but the user-added op under the surviving qubit still grafts.
+    assert "my_custom" in r.merged["qubits"]["q1"]["xy"]["operations"]
+
+
 def test_residual_lost_when_structure_removed():
     # User dropped q2 in the rebuild -> its calibrated values have no home.
     old = {"qubits": {"q1": {"f_01": 5e9}, "q2": {"f_01": 6e9}}}

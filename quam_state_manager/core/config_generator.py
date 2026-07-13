@@ -466,12 +466,60 @@ def _save_probe_cache(instance_path, cache: dict[str, dict]) -> None:
         logger.warning("Could not persist probe cache", exc_info=True)
 
 
-def _python_mtime(python_path: str) -> float | None:
-    """Stat the interpreter binary; ``None`` if it doesn't exist."""
+def _site_packages_for(python_path: str) -> Path | None:
+    """Best-effort resolve an interpreter's site-packages dir WITHOUT running it.
+
+    Covers the conda and venv layouts on both Linux and Windows:
+      * ``<env>/bin/python``          → ``<env>/lib/pythonX.Y/site-packages`` (posix)
+      * ``<env>/python.exe``          → ``<env>/Lib/site-packages``          (win conda)
+      * ``<env>/Scripts/python.exe``  → ``<env>/Lib/site-packages``          (win venv)
+    Returns ``None`` if none resolves (the caller then falls back to a coarser
+    signature that just re-probes — never to serving a stale entry).
+    """
+    p = Path(python_path)
+    env = p.parent
+    if env.name.lower() in ("bin", "scripts"):
+        env = env.parent
+    candidates = [env / "Lib" / "site-packages"]          # windows conda + venv
+    libdir = env / "lib"
     try:
-        return Path(python_path).stat().st_mtime
+        if libdir.is_dir():
+            for child in sorted(libdir.glob("python*")):    # posix: pythonX.Y
+                candidates.append(child / "site-packages")
+    except OSError:
+        pass
+    for c in candidates:
+        try:
+            if c.is_dir():
+                return c
+        except OSError:
+            continue
+    return None
+
+
+def _env_signature(python_path: str) -> str | None:
+    """A cheap change-signature for an interpreter's *installed packages*.
+
+    Composites the interpreter binary's mtime with the site-packages directory's
+    mtime. The latter is the load-bearing part: ``pip install``/``uninstall``
+    writes (or removes) the ``<dist>-<ver>.dist-info`` dir straight under
+    site-packages, bumping that directory's mtime — while the interpreter binary
+    is left untouched. Keying on the binary alone (the old behaviour) therefore
+    served a STALE version/usable verdict after a pip install into an existing
+    env. Returns ``None`` only when the interpreter itself is gone (→ re-probe).
+    """
+    try:
+        pstat = Path(python_path).stat()
     except OSError:
         return None
+    parts = [str(pstat.st_mtime_ns)]
+    sp = _site_packages_for(python_path)
+    if sp is not None:
+        try:
+            parts.append(str(sp.stat().st_mtime_ns))
+        except OSError:
+            pass
+    return "|".join(parts)
 
 
 def probe_envs(
@@ -486,9 +534,10 @@ def probe_envs(
     :func:`probe_env` returns, plus a ``"cached": True`` marker on entries
     served from the on-disk cache.
 
-    Cache key: ``(python_path, mtime_of_python_binary)``. A reinstall in-
-    place changes the mtime, which invalidates the entry — so an env that
-    gained the QM stack since the last probe is re-probed automatically.
+    Cache key: ``(python_path, _env_signature)`` where the signature folds in
+    the site-packages mtime — so an env that gained or lost the QM stack via a
+    ``pip install`` (which leaves the interpreter binary's mtime untouched) is
+    re-probed automatically, not served a stale verdict.
     The cache is written under ``<instance>/config_generator_probe_cache.json``
     via :func:`safe_io.atomic_write_json`; if *instance_path* is None the
     cache is in-memory only (used by tests and by call sites without a
@@ -506,9 +555,9 @@ def probe_envs(
     needs_probe: list[str] = []
 
     for path in python_paths:
-        mt = _python_mtime(path)
+        sig = _env_signature(path)
         entry = cache.get(path)
-        if entry is not None and mt is not None and entry.get("mtime") == mt:
+        if entry is not None and sig is not None and entry.get("sig") == sig:
             result = dict(entry.get("result", {}))
             result["cached"] = True
             results[path] = result
@@ -520,9 +569,9 @@ def probe_envs(
         with ThreadPoolExecutor(max_workers=workers) as ex:
             for path, result in zip(needs_probe, ex.map(probe_env, needs_probe)):
                 results[path] = result
-                mt = _python_mtime(path)
-                if mt is not None and result.get("error") is None:
-                    cache[path] = {"mtime": mt, "result": result}
+                sig = _env_signature(path)
+                if sig is not None and result.get("error") is None:
+                    cache[path] = {"sig": sig, "result": result}
         if instance_path is not None:
             _save_probe_cache(instance_path, cache)
 

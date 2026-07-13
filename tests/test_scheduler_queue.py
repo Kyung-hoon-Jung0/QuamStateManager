@@ -1259,3 +1259,36 @@ class TestSequenceEditor:
         assert len(q) == 1 and q[0]["status"] == "queued"
         # classification came from the FRESH scan, not the stale preset label
         assert q[0]["kind"] == "node"
+
+
+class TestReconcileOrphanLiveness:
+    """Hardware safety: after a crashed SM process restarts, an experiment
+    subprocess that outlived it may still be driving the OPX. _reconcile_orphaned
+    must probe the persisted worker PID and keep editing LOCKED when the orphan is
+    alive, only reconciling to idle when the worker is provably gone."""
+
+    def test_pid_alive_probe(self):
+        import os
+        assert scheduler._pid_alive(os.getpid()) is True
+        assert scheduler._pid_alive(2_000_000_000) is False   # implausible/dead PID
+        assert scheduler._pid_alive(None) is False
+        assert scheduler._pid_alive(0) is False
+
+    def test_reconcile_keeps_lock_when_orphan_alive(self, tmp_path):
+        import os
+        st = scheduler.load_queue(tmp_path)
+        st["run"].update({"status": "running", "worker_pid": os.getpid()})
+        scheduler.save_queue(tmp_path, st)
+        out = scheduler._reconcile_orphaned(tmp_path)
+        # Live orphan PID → editing stays locked (status still 'running' + warning).
+        assert out["run"]["status"] == "running"
+        assert "may still be running" in out["run"]["message"]
+
+    def test_reconcile_unlocks_when_worker_gone(self, tmp_path):
+        st = scheduler.load_queue(tmp_path)
+        st["run"].update({"status": "running", "worker_pid": 2_000_000_000})
+        scheduler.save_queue(tmp_path, st)
+        out = scheduler._reconcile_orphaned(tmp_path)
+        # No live worker → reconcile to idle (safe to unlock editing).
+        assert out["run"]["status"] == "idle"
+        assert out["run"]["worker_pid"] is None

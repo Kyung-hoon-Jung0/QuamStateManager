@@ -552,6 +552,69 @@ class TestClassification:
         assert row["cls"] == C.CLS_MODIFIED     # worst across cells
         assert len(res["sources"]) == 3
 
+    def test_nway_cumulative_drift_is_not_hidden(self, tmp_path, env):
+        # Guard against the classic "invisible drift" bug: a parameter that
+        # creeps every run, each STEP under tolerance, but whose whole-range
+        # drift is over tolerance. The engine compares each source vs a FIXED
+        # reference over the full gap (not adjacent step-vs-step), so the drift
+        # must surface. This pins that contract against a future refactor to a
+        # step-wise or first-vs-last comparison, either of which would hide it.
+        pool, cache = env
+        state, wiring = one_chip()
+        base = state["qubits"]["q1"]["f_01"]
+        srcs = []
+        for i, delta in enumerate((0.0, 40.0, 80.0, 120.0)):  # each step +40 < lab 100 Hz
+            s = copy.deepcopy(state)
+            s["qubits"]["q1"]["f_01"] = base + delta
+            f = write_chip(tmp_path / f"drift{i}", s, copy.deepcopy(wiring))
+            srcs.append(cs.resolve_source(f"ws:{f}", pool))
+        res = C.compare(srcs, pool, cache=cache)
+        row = rows_by_key(res)["qubits.q1.f_01"]
+        # +40 and +80 are within lab tol of the ref; +120 (whole-range) is over.
+        assert row["cells"][3] == C.CLS_MODIFIED
+        assert row["cls"] == C.CLS_MODIFIED, "cumulative over-tol drift must not read as unchanged"
+
+    def test_nway_excursion_and_return_is_not_hidden(self, tmp_path, env):
+        # base -> +over-tol -> back-to-base. A first-vs-last comparison would
+        # report 'equal' and hide the mid-run excursion; the fixed-ref-vs-each
+        # design flags the middle run. Pins that it is NOT first-vs-last.
+        pool, cache = env
+        state, wiring = one_chip()
+        base = state["qubits"]["q1"]["f_01"]
+        srcs = []
+        for i, delta in enumerate((0.0, 5e5, 0.0)):   # excursion way over tol, then return
+            s = copy.deepcopy(state)
+            s["qubits"]["q1"]["f_01"] = base + delta
+            f = write_chip(tmp_path / f"exc{i}", s, copy.deepcopy(wiring))
+            srcs.append(cs.resolve_source(f"ws:{f}", pool))
+        res = C.compare(srcs, pool, cache=cache)
+        row = rows_by_key(res)["qubits.q1.f_01"]
+        assert row["cells"][1] == C.CLS_MODIFIED
+        assert row["cls"] == C.CLS_MODIFIED, "mid-run excursion must not be hidden by first-vs-last"
+
+    def test_nway_drift_visible_when_ref_lacks_the_leaf(self, tmp_path, env):
+        # Audit finding (compare.py:1004): a leaf ABSENT on the ★ref source but
+        # present on later sources was classed 'added' on every present source
+        # regardless of value, so drift AMONG those sources was invisible.
+        # Real case: q2 is added in snapshot 2, and its f_01 then drifts 1 MHz
+        # (10,000x lab tol) into snapshot 3 — that drift must surface.
+        pool, cache = env
+        state, wiring = one_chip()
+        base = state["qubits"]["q2"]["f_01"]
+        s0 = copy.deepcopy(state)
+        del s0["qubits"]["q2"]                 # ref (snapshot 1) lacks q2 entirely
+        s1 = copy.deepcopy(state)              # q2 appears
+        s2 = copy.deepcopy(state)
+        s2["qubits"]["q2"]["f_01"] = base + 1e6  # q2.f_01 drifts 1 MHz
+        srcs = [cs.resolve_source(f"ws:{write_chip(tmp_path / n, s, copy.deepcopy(wiring))}", pool)
+                for n, s in (("A", s0), ("B", s1), ("Cc", s2))]
+        res = C.compare(srcs, pool, cache=cache)
+        row = rows_by_key(res)["qubits.q2.f_01"]
+        assert row["cells"][0] == "ref"          # ref lacks it
+        assert row["cells"][1] == C.CLS_ADDED     # first present = anchor
+        assert row["cells"][2] == C.CLS_MODIFIED  # drift vs the anchor is surfaced
+        assert row["cls"] == C.CLS_MODIFIED, "drift among present sources must not read as a clean add"
+
 
 # ===========================================================================
 # coalescing (A5)

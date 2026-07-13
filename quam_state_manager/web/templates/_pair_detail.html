@@ -35,12 +35,12 @@
                     {% elif p.editable %}
                         {% set _stored = p.key | unit_hint %}
                         <form class="inline-edit" hx-post="/pair/{{ pair_name }}/edit" hx-target="#inspector-pane" hx-swap="innerHTML"
-                              hx-vals='js:{freq_sync: window.freqSyncFlag ? window.freqSyncFlag() : "1"}'>
+                              hx-vals='js:{freq_sync: window.freqSyncFlag ? window.freqSyncFlag() : "1", expect_chip: window.__chipToken || ""}'>
                             <input type="hidden" name="dot_path" value="{{ p.dot_path }}">
                             <input type="text" name="value" class="edit-input{% if is_modified %} edit-input-modified{% endif %}"
                                    value="{% if p.value is none %}{% elif p.value is float and (p.value|abs >= 1e6 or (0 < p.value|abs < 1e-3)) %}{{ '%.6e' | format(p.value) }}{% else %}{{ p.value }}{% endif %}"
                                    placeholder="{% if p.value is none %}not set{% endif %}"
-                                   title="{% if is_modified %}Modified — was: {{ modified_map[p.dot_path] }}{% else %}Press Enter to save. Current: {{ p.value }}{% if _stored %} (raw {{ _stored }}){% endif %}{% endif %}">
+                                   title="{% if is_modified %}Modified — was: {{ modified_map[p.dot_path] }}{% else %}Press Enter to stage this edit (then Save to working state / Apply to live). Current: {{ p.value }}{% if _stored %} (raw {{ _stored }}){% endif %}{% endif %}">
                         </form>
                         {% set _human = p.value | qty(p.key, 'full') %}
                         {% if _human %}<span class="unit-preview muted"{% if _stored %} title="stored raw in {{ _stored }}"{% endif %}>{{ _human }}</span>{% endif %}

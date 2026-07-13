@@ -134,14 +134,16 @@ def scan_params(python_path: str, folder: str, *, instance_path=None,
 
     Hardware-safe (qualibrate inspection mode stops at the constructor). Slow —
     it imports every file — so the result is cached under
-    ``<instance>/scheduler_scan_cache.json`` keyed on (folder, interpreter mtime,
+    ``<instance>/scheduler_scan_cache.json`` keyed on (folder, env signature,
     folder fingerprint); a 2nd..Nth load with no changes is an instant disk read.
+    The env signature folds in site-packages mtime, so a ``pip install`` that
+    changes a library a node imports re-scans (interpreter mtime alone wouldn't).
     """
     cache_path = Path(instance_path) / _SCAN_CACHE_FILENAME if instance_path else None
     key = "|".join([
         norm_path(folder) or "",
         python_path or "",
-        str(config_generator._python_mtime(python_path)),
+        str(config_generator._env_signature(python_path)),
         _folder_fingerprint(folder),
     ])
     if use_cache and cache_path is not None and cache_path.exists():
@@ -578,6 +580,20 @@ def save_queue(instance_path, state: dict) -> None:
     safe_io.atomic_write_json(queue_path(instance_path), state)
 
 
+def _persist_worker_pid(instance_path, pid) -> None:
+    """Record (pid) or clear (pid=None) the running experiment subprocess's OS
+    PID in the queue file, so a post-crash _reconcile_orphaned can probe whether
+    that subprocess outlived a killed SM process before it unlocks editing.
+    Non-fatal: PID tracking is a safety hint, never a gate."""
+    try:
+        with _QLOCK:
+            state = load_queue(instance_path)
+            state["run"]["worker_pid"] = int(pid) if pid else None
+            save_queue(instance_path, state)
+    except Exception:   # noqa: BLE001
+        logger.debug("could not persist worker pid", exc_info=True)
+
+
 def _find(state: dict, item_id: str) -> dict | None:
     for it in state["queue"]:
         if it.get("id") == item_id:
@@ -649,6 +665,13 @@ def add_item(instance_path, info: dict, targets: list | None = None,
 def remove_item(instance_path, item_id: str) -> None:
     with _QLOCK:
         state = load_queue(instance_path)
+        it = _find(state, item_id)
+        if it is not None and it.get("status") == "running":
+            # Never drop the running item — its subprocess is driving hardware, and
+            # removing the row would hide a live run (the worker's terminal write
+            # then finds nothing → result/log/error silently lost) WITHOUT killing
+            # it. Mirrors load_preset's 'never drop a running item' invariant.
+            return
         state["queue"] = [it for it in state["queue"] if it.get("id") != item_id]
         _renumber(state)
         save_queue(instance_path, state)
@@ -901,6 +924,12 @@ def expand_per_qubit(instance_path, item_id: str, targets: list[str]) -> int:
         it = _find(state, item_id)
         if it is None or not targets:
             return 0
+        if it.get("status") == "running":
+            # Expanding the running item would delete its row (dangling current_id,
+            # lost result) AND enqueue fresh per-target copies that RE-RUN on
+            # hardware after the in-flight all-targets run finishes — double
+            # execution the user never intended. Refuse.
+            return 0
         base_order = it.get("order", len(state["queue"]))
         made = 0
         for t in targets:
@@ -1069,6 +1098,47 @@ def _kill(proc) -> None:
         logger.debug("kill failed for pid %s", getattr(proc, "pid", "?"), exc_info=True)
 
 
+def _pid_alive(pid) -> bool:
+    """Best-effort EXISTENCE probe for *pid* — never kills, only checks. Used by
+    _reconcile_orphaned to tell a genuinely-gone worker (safe to unlock editing)
+    from an experiment subprocess that outlived a crashed SM process (still
+    driving the OPX → must NOT silently unlock). Bounded, safe failure modes: a
+    false 'alive' (PID reused) keeps the lock the user clears via Start; a false
+    'dead' is no worse than today.
+    """
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            import ctypes
+            k32 = ctypes.windll.kernel32
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            STILL_ACTIVE = 259
+            h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not h:
+                return False
+            code = ctypes.c_ulong()
+            ok = k32.GetExitCodeProcess(h, ctypes.byref(code))
+            k32.CloseHandle(h)
+            return bool(ok) and code.value == STILL_ACTIVE
+        except Exception:   # noqa: BLE001 — probe failure ⇒ treat as gone (safe default)
+            return False
+    # POSIX: signal 0 is the classic existence check.
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True          # exists but owned by another user → still alive
+    except OSError:
+        return False
+
+
 def _classify_result(work_dir: Path, returncode: int) -> tuple[str, str | None]:
     """Map a finished run to (status, error) from its ``_result.json``."""
     result_file = work_dir / "_result.json"
@@ -1200,9 +1270,24 @@ def _run_item(instance_path, item: dict, settings: dict, runner: dict) -> dict:
         if cfg_file:
             argv += ["--config-file", cfg_file]
 
+        # Cancel can fire during the (hundreds-of-ms on a 9p mount) pre-spawn prep
+        # above — re-classify, splice, mkdtemp, temp copy. Check right before launch
+        # so a cancelled item never starts an experiment on the OPX in the window
+        # after cancel() already flipped the UI back to idle.
+        if runner["cancel"].is_set():
+            return {"status": "cancelled", "error": "cancelled by user",
+                    "returncode": None, "log_file": log_str}
         proc, logf = _spawn(argv, log_path)
         with runner["proc_lock"]:
             runner["proc"] = proc
+            # Re-check under the SAME lock cancel() takes: if cancel landed between
+            # the check above and registering proc, its _kill saw proc=None and did
+            # nothing — so kill it here. Closes the spawn/kill race.
+            if runner["cancel"].is_set():
+                _kill(proc)
+        # Persist the OS PID so a post-crash restart can tell a live orphan
+        # (still driving the OPX) from a genuinely-gone worker before unlocking.
+        _persist_worker_pid(instance_path, getattr(proc, "pid", None))
         timed_out = False
         try:
             proc.wait(timeout=timeout)
@@ -1214,6 +1299,7 @@ def _run_item(instance_path, item: dict, settings: dict, runner: dict) -> dict:
             logf.close()
             with runner["proc_lock"]:
                 runner["proc"] = None
+            _persist_worker_pid(instance_path, None)   # subprocess done → clear
 
         rc = proc.returncode
         # Prefer the real result: if the node wrote a successful _result.json it
@@ -1373,10 +1459,27 @@ def _reconcile_orphaned(instance_path) -> dict | None:
         if is_running(instance_path):
             return None
         state = load_queue(instance_path)
+        # Hardware safety: if the file says 'running' but no in-memory worker,
+        # the experiment subprocess MIGHT have outlived a killed SM process and
+        # still be driving the OPX. Probe the persisted PID: if it's alive, keep
+        # the run flagged 'running' (editing stays locked) with a clear warning
+        # rather than silently unlocking — the user verifies the OPX is idle and
+        # then Start clears it (start() resets stale 'running' items). Only when
+        # the worker is provably gone do we reconcile to idle.
+        if state["run"].get("status") == "running" and _pid_alive(state["run"].get("worker_pid")):
+            warn = ("⚠ An experiment from a previous session (PID "
+                    f"{state['run'].get('worker_pid')}) may still be running on the "
+                    "OPX. Verify it is idle, then Start to clear.")
+            if state["run"].get("message") != warn:
+                state["run"]["message"] = warn
+                save_queue(instance_path, state)
+            return state
+
         changed = False
         msg = "interrupted (worker stopped or app restarted)"
         if state["run"].get("status") == "running":
-            state["run"].update({"status": "idle", "current_id": None, "message": msg})
+            state["run"].update({"status": "idle", "current_id": None,
+                                  "message": msg, "worker_pid": None})
             changed = True
         for it in state["queue"]:
             if it.get("status") == "running":
@@ -1445,10 +1548,32 @@ def cancel(instance_path) -> dict:
         runner["cancel"].set()
         with runner["proc_lock"]:
             _kill(runner.get("proc"))
+        # Sweep the injected _sched_*.py temp copy the killed item left in the
+        # customer's calibrations folder: the worker's own finally cleanup does NOT
+        # run when cancel (or the os._exit window-close via _kill_scheduler) kills
+        # it mid-run, and a leftover marked copy can be picked up by qualibrate's
+        # own scanner as a real node. Best-effort.
+        try:
+            folder = load_settings(instance_path).get("calibrations_folder")
+            if folder:
+                node_inject.cleanup_orphan_temp_copies(folder)
+        except Exception:  # noqa: BLE001
+            logger.warning("scheduler temp-copy sweep on cancel failed", exc_info=True)
     with _QLOCK:
         state = load_queue(instance_path)
-        state["run"].update({"status": "idle", "current_id": None, "message": "cancelled",
-                             "pause_requested": False})
+        if is_running(instance_path):
+            # A live worker will do the terminal idle-flip in its own finally once
+            # it reaps the killed item. Do NOT flip to 'idle' here: is_active()
+            # keys the edit lock on status=='running', and flipping it now would
+            # release the lock while the just-killed experiment may still be tearing
+            # down (or, in the pre-spawn window, about to launch — now caught by the
+            # cancel check in _run_item). Keep 'running' so the lock holds through
+            # the cancel window; the worker settles it to 'idle' within moments.
+            state["run"]["message"] = "cancelling…"
+            state["run"]["pause_requested"] = False
+        else:
+            state["run"].update({"status": "idle", "current_id": None,
+                                 "message": "cancelled", "pause_requested": False})
         save_queue(instance_path, state)
         return state["run"]
 

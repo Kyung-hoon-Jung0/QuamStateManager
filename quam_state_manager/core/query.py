@@ -79,6 +79,11 @@ class QueryEngine:
         if cached is not None:
             return cached
 
+        # Snapshot the mutation counter BEFORE this lock-free compute; store the
+        # result only if no edit landed meanwhile (see the fill below). Otherwise a
+        # pre-edit result computed here can land AFTER a concurrent /field/edit
+        # cleared the cache, poisoning it until the next mutation.
+        seq = self.store.mutation_seq
         qubits = self.store.merged.get("qubits", {})
         if name not in qubits:
             raise KeyError(f"Qubit {name!r} not found (available: {sorted(qubits.keys())})")
@@ -149,7 +154,8 @@ class QueryEngine:
         result["gate_fidelity_x180"] = gf.get("x180") if isinstance(gf, dict) else None
         result["gate_fidelity_x90"] = gf.get("x90") if isinstance(gf, dict) else None
 
-        self._qubit_cache[name] = result
+        if seq == self.store.mutation_seq:   # skip a stale fill that races invalidation
+            self._qubit_cache[name] = result
         return result
 
     # ------------------------------------------------------------------
@@ -165,6 +171,7 @@ class QueryEngine:
         if cached is not None:
             return cached
 
+        seq = self.store.mutation_seq   # see get_qubit: guard the fill against races
         pairs = self.store.merged.get("qubit_pairs", {})
         if name not in pairs:
             raise KeyError(f"Qubit pair {name!r} not found (available: {sorted(pairs.keys())})")
@@ -265,7 +272,8 @@ class QueryEngine:
         result["confusion"] = p.get("confusion")
         result["mutual_flux_bias"] = p.get("mutual_flux_bias")
 
-        self._pair_cache[name] = result
+        if seq == self.store.mutation_seq:   # skip a stale fill that races invalidation
+            self._pair_cache[name] = result
         return result
 
     # ------------------------------------------------------------------
@@ -422,6 +430,7 @@ class QueryEngine:
         """
         if self._topology_cache is not None:
             return self._topology_cache
+        seq = self.store.mutation_seq   # see get_qubit: guard the fill against races
         root = self.store.merged
         nodes = []
         for name in self.store.qubit_names:
@@ -515,6 +524,17 @@ class QueryEngine:
                     bell = fid.get("Bell_State") or {}
                     if isinstance(bell, dict) and bell.get("Fidelity") is not None:
                         val = bell["Fidelity"]
+                        # Numeric guard: a dangling-pointer string / non-number must
+                        # NOT reach the `>` comparison — a pair mixing a string and a
+                        # float 500'd the WHOLE topology (Chip Status, /api/topology,
+                        # compare cards). Physicality guard: a broken fit (Fidelity > 1)
+                        # must not WIN best-gate or paint the edge green over a real
+                        # gate — skip it so the edge/★/tile agree with the gated health
+                        # records (which already quarantine it), instead of the page
+                        # contradicting itself (green 2270% edge vs 'missing' tile).
+                        if (not isinstance(val, (int, float)) or isinstance(val, bool)
+                                or not chip_health.physicality("cz_fidelity", val)):
+                            continue
                         if best_fidelity is None or val > best_fidelity:
                             best_fidelity = val
                             best_gate = gate_name
@@ -597,8 +617,10 @@ class QueryEngine:
             "pair_count": len(edges),
         }
 
-        self._topology_cache = {"nodes": nodes, "edges": edges, "summary": summary}
-        return self._topology_cache
+        topo = {"nodes": nodes, "edges": edges, "summary": summary}
+        if seq == self.store.mutation_seq:   # skip a stale fill that races invalidation
+            self._topology_cache = topo
+        return topo
 
     # ------------------------------------------------------------------
     # Instrument wiring diagram
@@ -616,40 +638,64 @@ class QueryEngine:
 
         # (ctrl, fem, port, port_type) → list of assignment dicts
         port_assignments: dict[tuple, list] = {}
+        # Count refs we saw vs actually placed, so the UI can tell a genuinely
+        # unwired chip apart from one whose ports we couldn't parse (OPX+ 5-part
+        # refs / Octave) — otherwise both render as an empty rack with a
+        # misleading "no wiring" message.
+        ref_stats = {"seen": 0, "placed": 0}
 
         def add_assignment(ref_str: str, role: str, element: str, extra: dict) -> None:
             """Parse a port reference and record the assignment with role-specific metadata."""
+            ref_stats["seen"] += 1
             parsed = _parse_port_ref(ref_str)
             if not parsed:
                 logger.warning("Unrecognized port ref: %r (element=%s, role=%s)", ref_str, element, role)
                 return
+            ref_stats["placed"] += 1
             port_type, ctrl, fem, port = parsed
             key = (ctrl, fem, port, port_type)
             if key not in port_assignments:
                 port_assignments[key] = []
             port_dict = _resolve_port_dict(root, ref_str)
+
+            def _pv(*names: str) -> Any:
+                # First present value across *names*, pointer-resolved. The project's
+                # post-build fix-up rewrites an MW input port's downconverter_frequency
+                # as a JSON pointer to the paired output's upconverter_frequency, so the
+                # raw value is a "#/..." string on every built chip — resolve it to the
+                # number instead of showing the literal pointer in the port popup.
+                for nm in names:
+                    v = port_dict.get(nm)
+                    if v is not None:
+                        return _resolve(self.store, v, ("ports", ref_str, nm))
+                return None
+
             port_assignments[key].append({
                 "role": role,
                 "element": element,
                 "label": f"{element}.{role}",
                 "port_type": port_type,
-                "band": port_dict.get("band"),
-                "lo_frequency": port_dict.get("upconverter_frequency") or port_dict.get("downconverter_frequency"),
-                "full_scale_power_dbm": port_dict.get("full_scale_power_dbm"),
-                "sampling_rate": port_dict.get("sampling_rate"),
-                "output_mode": port_dict.get("output_mode"),
-                "upsampling_mode": port_dict.get("upsampling_mode"),
+                "band": _pv("band"),
+                "lo_frequency": _pv("upconverter_frequency", "downconverter_frequency"),
+                "full_scale_power_dbm": _pv("full_scale_power_dbm"),
+                "sampling_rate": _pv("sampling_rate"),
+                "output_mode": _pv("output_mode"),
+                "upsampling_mode": _pv("upsampling_mode"),
                 **extra,
             })
 
         for qname, qw in wiring_qubits.items():
-            q = root.get("qubits", {}).get(qname, {})
-            xy = q.get("xy", {})
+            # `or {}` (not `.get(k, {})`): a channel key present with a JSON null
+            # value returns None, and real data has it (KRISS_CR pairs carry
+            # "coupler": null; nulling a channel in Explorer produces it too). The
+            # subsequent .get() on None crashed the whole diagram → blank rack.
+            q = (root.get("qubits") or {}).get(qname) or {}
+            xy = q.get("xy") or {}
             x180 = _get_nested(xy, "operations", "x180_DragCosine") or {}
             sat = _get_nested(xy, "operations", "saturation") or {}
-            rr = q.get("resonator", {})
+            rr = q.get("resonator") or {}
             ro = _get_nested(rr, "operations", "readout") or {}
-            z = q.get("z", {})
+            z = q.get("z") or {}
 
             xy_ref = _get_nested(qw, "xy", "opx_output")
             if xy_ref:
@@ -690,8 +736,8 @@ class QueryEngine:
                 })
 
         for pair_name, pw in wiring_pairs.items():
-            p = root.get("qubit_pairs", {}).get(pair_name, {})
-            coupler = p.get("coupler", {})
+            p = (root.get("qubit_pairs") or {}).get(pair_name) or {}
+            coupler = p.get("coupler") or {}
             c_ref = _get_nested(pw, "c", "opx_output") or _get_nested(pw, "coupler", "opx_output")
             if c_ref:
                 add_assignment(c_ref, "coupler", pair_name, {
@@ -699,11 +745,21 @@ class QueryEngine:
                     "decouple_offset": coupler.get("decouple_offset"),
                     "interaction_offset": coupler.get("interaction_offset"),
                 })
+            # Cross-resonance drive line: CR-gate chips (which the Generate wizard
+            # produces) wire each pair as wiring.qubit_pairs.<pair>.cr.opx_output,
+            # usually on a dedicated MW-FEM. Without collecting it, that whole FEM is
+            # simply absent from the rack (FEMs only appear when they have >=1 port).
+            cr_ref = _get_nested(pw, "cr", "opx_output") or _get_nested(pw, "cross_resonance", "opx_output")
+            if cr_ref:
+                add_assignment(cr_ref, "cr", pair_name, {
+                    "qubit_control": p.get("qubit_control"),
+                    "qubit_target": p.get("qubit_target"),
+                })
 
         wiring_twpas = _get_nested(root, "wiring", "twpas") or {}
         for twpa_name, tw in wiring_twpas.items():
-            t = root.get("twpas", {}).get(twpa_name, {})
-            spec_state = t.get("spectroscopy", {})
+            t = (root.get("twpas") or {}).get(twpa_name) or {}
+            spec_state = t.get("spectroscopy") or {}
             pump_ref = _get_nested(tw, "pump", "opx_output")
             if pump_ref:
                 add_assignment(pump_ref, "twpa_pump", twpa_name, {
@@ -763,8 +819,24 @@ class QueryEngine:
                 }
             result[ctrl] = {"fems": sorted_fems, "max_output_port": max_output_port}
 
+        # Octave RF path uses opx_output_I/Q + frequency_converter_up rather than a
+        # single opx_output, which we don't collect — detect it so the UI can say the
+        # layout isn't rendered yet instead of showing a misleading empty rack.
+        octave_detected = any(
+            isinstance(ch, dict) and (
+                "opx_output_I" in ch or "opx_input_I" in ch or "frequency_converter_up" in ch)
+            for qw in wiring_qubits.values() if isinstance(qw, dict)
+            for ch in qw.values()
+        )
         logger.debug("Instrument wiring: %d port assignments, %d controllers", len(port_assignments), len(result))
-        return {"controllers": result}
+        return {
+            "controllers": result,
+            "stats": {
+                "refs_seen": ref_stats["seen"],
+                "refs_placed": ref_stats["placed"],
+                "octave_detected": octave_detected,
+            },
+        }
 
 
 # ======================================================================

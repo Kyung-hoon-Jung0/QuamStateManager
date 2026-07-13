@@ -28,6 +28,19 @@
 <script>
 (function() {
     var container = document.getElementById('instrument-diagram');
+    var instrumentError = {{ (instrument_error if instrument_error is defined else None) | script_json }};
+    if (instrumentError && container) {
+        // A builder failure — show it, don't fall through to the empty-rack
+        // "no wiring data" message (which wrongly blames the chip). textContent
+        // keeps the exception string inert.
+        var p = document.createElement('p');
+        p.style.cssText = 'padding:1rem;color:var(--pico-del-color,#c0392b)';
+        p.textContent = 'Failed to build the wiring diagram: ' + instrumentError +
+            ' — this is a tool error, not a problem with your chip; see the server log.';
+        container.innerHTML = '';
+        container.appendChild(p);
+        return;
+    }
     try {
         var instrumentData = {{ instrument_json | script_json }};
         var rawWiring = {{ wiring_json | script_json }};

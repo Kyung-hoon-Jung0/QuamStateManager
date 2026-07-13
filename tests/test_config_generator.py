@@ -883,3 +883,71 @@ class TestProbeEnvsCaching:
         cg.probe_envs(paths, instance_path=None, max_workers=4)
         elapsed = time.time() - start
         assert elapsed < 1.0, f"parallel probe took {elapsed:.2f}s; expected < 1.0s"
+
+    def test_pip_install_invalidates_cache_without_binary_touch(self, tmp_path, monkeypatch):
+        """The load-bearing regression: a ``pip install`` writes a dist-info dir
+        under site-packages (bumping THAT dir's mtime) but never touches the
+        interpreter binary. The old cache keyed only on the binary's mtime →
+        served a stale usable/version verdict. The env-signature must fold in
+        site-packages mtime so this re-probes."""
+        import os
+        from quam_state_manager.core import config_generator as cg
+
+        env = tmp_path / "envA"
+        fake_py = env / "bin" / "python"
+        fake_py.parent.mkdir(parents=True)
+        fake_py.write_text("#!/bin/bash\necho", encoding="utf-8")
+        # A conda/venv posix layout so _site_packages_for resolves it.
+        site = env / "lib" / "python3.11" / "site-packages"
+        site.mkdir(parents=True)
+
+        calls = []
+
+        def fake_probe(path):
+            calls.append(path)
+            return {"python": "3.11", "versions": {}, "usable": False, "missing": [], "error": None}
+
+        monkeypatch.setattr(cg, "probe_env", fake_probe)
+        cg.probe_envs([str(fake_py)], instance_path=tmp_path)
+        assert len(calls) == 1
+
+        # Simulate `pip install foo`: a new dist-info under site-packages bumps
+        # the site-packages dir mtime; the interpreter binary is left untouched.
+        (site / "foo-1.0.dist-info").mkdir()
+        bumped = site.stat().st_mtime + 100
+        os.utime(site, (bumped, bumped))
+        py_mtime_before = fake_py.stat().st_mtime
+
+        cg.probe_envs([str(fake_py)], instance_path=tmp_path)
+        assert fake_py.stat().st_mtime == py_mtime_before, "test must not touch the binary"
+        assert len(calls) == 2, "a site-packages change (pip install) must re-probe"
+
+    def test_site_packages_resolves_common_layouts(self, tmp_path):
+        from quam_state_manager.core import config_generator as cg
+
+        # posix conda/venv: <env>/bin/python -> <env>/lib/pythonX.Y/site-packages
+        posix_env = tmp_path / "conda"
+        (posix_env / "bin").mkdir(parents=True)
+        (posix_env / "bin" / "python").write_text("x", encoding="utf-8")
+        (posix_env / "lib" / "python3.12" / "site-packages").mkdir(parents=True)
+        assert cg._site_packages_for(str(posix_env / "bin" / "python")) == \
+            posix_env / "lib" / "python3.12" / "site-packages"
+
+        # windows conda: <env>/python.exe -> <env>/Lib/site-packages
+        win_env = tmp_path / "winconda"
+        win_env.mkdir()
+        (win_env / "python.exe").write_text("x", encoding="utf-8")
+        (win_env / "Lib" / "site-packages").mkdir(parents=True)
+        assert cg._site_packages_for(str(win_env / "python.exe")) == \
+            win_env / "Lib" / "site-packages"
+
+        # windows venv: <env>/Scripts/python.exe -> <env>/Lib/site-packages
+        wenv = tmp_path / "winvenv"
+        (wenv / "Scripts").mkdir(parents=True)
+        (wenv / "Scripts" / "python.exe").write_text("x", encoding="utf-8")
+        (wenv / "Lib" / "site-packages").mkdir(parents=True)
+        assert cg._site_packages_for(str(wenv / "Scripts" / "python.exe")) == \
+            wenv / "Lib" / "site-packages"
+
+        # unresolvable → None (caller then re-probes rather than caching stale)
+        assert cg._site_packages_for(str(tmp_path / "nope" / "bin" / "python")) is None

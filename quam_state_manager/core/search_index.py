@@ -315,7 +315,11 @@ class SearchIndex:
         self.entries.append(entry)
         self.path_to_idx[dot_path] = idx
 
-        _add_to_prefix_map(self.prefix_map, value_str, idx)
+        # Mirror _build_prefix_map: index value_str AND leaf_key/parent_id prefixes,
+        # else a freshly-created leaf isn't findable by its key/qubit via a short
+        # prefix query (and remove_entry's matching strip would be asymmetric).
+        for s in (value_str, leaf_key.lower(), parent_id.lower()):
+            _add_to_prefix_map(self.prefix_map, s, idx)
         if self._trigram_built:   # else: deferred build reads this new entry
             _add_to_trigram_index(self.trigram_index, value_str, idx)
             for s in (leaf_key.lower(), parent_id.lower()):
@@ -336,7 +340,11 @@ class SearchIndex:
             return
         entry = self.entries[idx]
 
-        _remove_from_prefix_map(self.prefix_map, entry.value_str, idx)
+        # Strip value_str AND leaf_key/parent_id prefixes (add_entry/_build_prefix_map
+        # index all three) — else a deleted/renamed leaf keeps surfacing via a short
+        # prefix of its key or qubit name (prefix hits are UNIONed with trigram hits).
+        for s in (entry.value_str, entry.leaf_key.lower(), entry.parent_id.lower()):
+            _remove_from_prefix_map(self.prefix_map, s, idx)
         if self._trigram_built:   # else: deferred build skips this removed slot
             _remove_from_trigram_index(self.trigram_index, entry.value_str, idx)
             for s in (entry.leaf_key.lower(), entry.parent_id.lower()):

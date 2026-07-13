@@ -120,7 +120,7 @@ def load_dataset(run, which: str, vars=None, max_elements: int = _MAX_ELEMENTS) 
                         continue
                     d = f[name]
                     a = dict(d.attrs)
-                    dims = _dim_names(a, d.shape, coords)
+                    dims = _dim_names(f, d, coords)   # DIMENSION_LIST deref (see fn)
                     n_elem = 1
                     for s in d.shape:
                         n_elem *= int(s)
@@ -144,8 +144,39 @@ def load_dataset(run, which: str, vars=None, max_elements: int = _MAX_ELEMENTS) 
             "dim_order": dim_order, "root_attrs": root_attrs}
 
 
-def _dim_names(attrs: dict, shape, coords: dict) -> list[str]:
-    """Resolve a variable's dimension names (``_ARRAY_DIMENSIONS`` or shape-match)."""
+def _dim_names(f, ds, coords: dict) -> list[str]:
+    """Resolve a variable's dimension names.
+
+    DIMENSION_LIST FIRST (real axis truth): every archive file carries it and NONE
+    carry _ARRAY_DIMENSIONS, so the old length-equality guess was what actually ran
+    — and it mis-assigned axes whenever two coords shared a length (square heatmaps,
+    a length-1 sweep colliding with the length-1 qubit coord), transposing the
+    heatmap so a click stages the WRONG coordinate's value (this path STAGES
+    calibration edits). ndview already deref's DIMENSION_LIST; the recipe path was
+    missed (doc 48). Fall back to _ARRAY_DIMENSIONS, then the length guess.
+    """
+    try:
+        dim_list = ds.attrs.get("DIMENSION_LIST")
+    except Exception:
+        dim_list = None
+    if dim_list is not None:
+        names: list[str] = []
+        ok = True
+        for axis in range(ds.ndim):
+            nm = None
+            try:
+                if axis < len(dim_list) and len(dim_list[axis]):
+                    nm = f[dim_list[axis][0]].name.rsplit("/", 1)[-1]
+            except Exception:
+                nm = None
+            if nm is None:
+                ok = False
+                break
+            names.append(nm)
+        if ok and len(names) == ds.ndim:
+            return names
+
+    attrs = dict(ds.attrs)
     ad = attrs.get("_ARRAY_DIMENSIONS")
     if ad is not None:
         if hasattr(ad, "tolist"):
@@ -154,8 +185,9 @@ def _dim_names(attrs: dict, shape, coords: dict) -> list[str]:
             return [_decode(x) for x in ad]
         if isinstance(ad, bytes):
             return [ad.decode()]
+
     dims: list[str] = []
-    for i, size in enumerate(shape):
+    for i, size in enumerate(ds.shape):
         matched = False
         for cname, cvals in coords.items():
             if len(cvals) == size:

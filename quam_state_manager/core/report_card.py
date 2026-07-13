@@ -218,24 +218,49 @@ def render_markdown(r: dict) -> str:
     return "\n".join(out) + "\n"
 
 
+def csv_safe_cell(v: Any) -> str:
+    """Neutralize spreadsheet formula injection. A cell starting with = @ (or a
+    control char) is a live formula in Excel/Sheets; + and - are too, unless the
+    cell is a plain number (chip data is full of legit negatives, so keep those
+    numeric). Chip names / ids / notes come from third-party state files, so an
+    exported =HYPERLINK(...) / @cmd would execute on open. Prefix the trigger with
+    a single quote."""
+    s = v if isinstance(v, str) else ("" if v is None else str(v))
+    if not s:
+        return s
+    c0 = s[0]
+    if c0 in ("=", "@", "\t", "\r"):
+        return "'" + s
+    if c0 in ("+", "-"):
+        try:
+            float(s)   # a real number → leave it numeric
+        except ValueError:
+            return "'" + s
+    return s
+
+
 def render_csv(r: dict) -> str:
     import csv
     import io
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["section", "id", "metric", "value", "extra"])
+
+    def wr(cells):
+        w.writerow([csv_safe_cell(c) for c in cells])
+
+    wr(["section", "id", "metric", "value", "extra"])
     c = r["counts"]
-    w.writerow(["summary", r["chip"], "verdict", r["verdict"], r["generated_at"]])
+    wr(["summary", r["chip"], "verdict", r["verdict"], r["generated_at"]])
     for k, v in c.items():
-        w.writerow(["summary", "", k, v, ""])
+        wr(["summary", "", k, v, ""])
     for b in r["below_spec"]:
-        w.writerow(["below_spec", b["id"], b["metric"], b["value"], b["verdict"]])
+        wr(["below_spec", b["id"], b["metric"], b["value"], b["verdict"]])
     for b in r["cz_below_spec"]:
-        w.writerow(["below_spec", b["id"], "cz_fidelity", b["value"], b["verdict"]])
+        wr(["below_spec", b["id"], "cz_fidelity", b["value"], b["verdict"]])
     for b in r["bad_fits"]:
-        w.writerow(["bad_fit", b["id"], b["metric"], b["raw"], "unphysical"])
+        wr(["bad_fit", b["id"], b["metric"], b["raw"], "unphysical"])
     for o in r["outliers"]:
-        w.writerow(["outlier", o["id"], o["metric"], o["value"], o["score"]])
+        wr(["outlier", o["id"], o["metric"], o["value"], o["score"]])
     return buf.getvalue()
 
 

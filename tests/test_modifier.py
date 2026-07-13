@@ -103,6 +103,31 @@ def modifier_with_index(store) -> Modifier:
     return Modifier(store)
 
 
+def test_discard_expect_path_guards_stale_index():
+    """Group-B race: the pending tray posts a render-time index; another tab's
+    discard shifts every lower index, so a stale ✕ click must NOT revert a
+    different change. discard(index, expect_path=...) rejects the mismatch."""
+    s = {"qubits": {"q1": {"a": 1.0, "b": 2.0, "c": 3.0}}}
+    store = QuamStore.from_dicts(s, {"wiring": {}})
+    mod = Modifier(store)
+    mod.set_value("qubits.q1.a", 10.0)   # entry A @ index 0
+    mod.set_value("qubits.q1.b", 20.0)   # entry B @ index 1
+    mod.set_value("qubits.q1.c", 30.0)   # entry C @ index 2
+    assert len(store.change_log) == 3
+    # Another tab discards A → the log shifts to [B, C]; index 1 now names C.
+    mod.discard(0)
+    assert [e.dot_path for e in store.change_log] == ["qubits.q1.b", "qubits.q1.c"]
+    # A STALE ✕ on B posts its render-time index=1 with expect_path=B. Index 1
+    # now names C — the guard must REJECT (return None), leaving both intact.
+    assert mod.discard(1, expect_path="qubits.q1.b") is None
+    assert [e.dot_path for e in store.change_log] == ["qubits.q1.b", "qubits.q1.c"]
+    assert store.merged["qubits"]["q1"]["c"] == 30.0     # C NOT reverted
+    # The correct (in-sync) index still discards with the matching path.
+    ok = mod.discard(0, expect_path="qubits.q1.b")
+    assert ok is not None and ok.dot_path == "qubits.q1.b"
+    assert store.merged["qubits"]["q1"]["b"] == 2.0      # B reverted to original
+
+
 def test_set_value_accepts_pointer_on_numeric_field():
     """A JSON ``#/`` pointer is a valid value for ANY field, so set_value accepts it
     with OR without coerce. This is the fix for the 'Convert to pointer' diagnostics

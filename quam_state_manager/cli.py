@@ -347,11 +347,21 @@ def set_value(
     store = _load_store(folder)
     mod = Modifier(store)
 
-    parsed = _parse_value(value)
-
+    # Same hardening as the web /field/edit path (they MUST NOT diverge): resolve a
+    # pointer-valued leaf to its literal target (value-mode, never stringify the
+    # pointer) and enforce the read-only policy (membership arrays / identity keys /
+    # list elements) — this CLI writes LIVE files directly, so an unguarded set was
+    # a data-loss hole. Parse inside the try so 'inf'/'nan' is a clean error, not a
+    # traceback.
+    from quam_state_manager.core.edit_policy import editability_reason, resolve_edit_path
     try:
-        entry = mod.set_value(dot_path, parsed)
-    except (KeyError, TypeError) as e:
+        parsed = _parse_value(value)
+        target_path = resolve_edit_path(store, dot_path)
+        reason = editability_reason(store, target_path)
+        if reason is not None:
+            raise ValueError(reason)
+        entry = mod.set_value(target_path, parsed)
+    except (KeyError, TypeError, ValueError, IndexError) as e:
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(1)
 
@@ -564,7 +574,7 @@ def trend(
     selected = flat[:limit]
     stores = [ws.load_store(e.quam_state_path) for e in selected]
     labels = [
-        f"#{e.run_id} {e.name or '?'}" if e.run_id else e.quam_state_path.parent.name
+        f"#{e.run_id} {e.experiment_name or '?'}" if e.run_id else e.quam_state_path.parent.name
         for e in selected
     ]
 

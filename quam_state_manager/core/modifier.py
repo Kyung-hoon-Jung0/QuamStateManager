@@ -337,18 +337,27 @@ class Modifier:
                         "y" if len(reverted) == 1 else "ies")
             return reverted
 
-    def discard(self, index: int) -> ChangeEntry | None:
+    def discard(self, index: int, expect_path: str | None = None) -> ChangeEntry | None:
         """Discard a specific change by its index in the change log.
 
         Restores the old value (or deletes, if the entry was a creation) and
         removes the entry.  Returns the discarded ChangeEntry, or None if the
-        index is out of range.
+        index is out of range, OR if ``expect_path`` is given and does not
+        match the ``dot_path`` of the entry currently at ``index``.
+
+        The ``expect_path`` guard defends a STALE tray: the per-change ✕ posts
+        an index frozen at render time, but another tab's discard/undo (or a
+        batch undo_group) shifts every index below the removed entry — without
+        the check a stale click would silently revert a DIFFERENT change than
+        the one the user clicked.
         """
         with self.store._lock:
             if index < 0 or index >= len(self.store.change_log):
                 return None
 
             entry = self.store.change_log[index]
+            if expect_path is not None and entry.dot_path != expect_path:
+                return None   # stale tray — the index no longer names this change
             self._revert_entry(entry)
             self.store.change_log.pop(index)
             logger.info("discard [%d] %s%s", index, "(create) " if entry.created else "", entry.dot_path)

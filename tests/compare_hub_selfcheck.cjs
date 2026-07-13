@@ -143,5 +143,38 @@ const afterAdd = historyLog[historyLog.length - 1][1];
 ok(!/hint=1/.test(afterAdd), "add() strips hint (manual basket, U1b)");
 while (pendingAjax.length) pendingAjax.shift().resolve();
 
+// ── 5. setRef by token with a stale DOM (same class as removeAt) ─────
+// The ★ (setRef) used to write the render-time valid-index straight to the
+// URL, so a star click during a pending remove/reorder starred the WRONG
+// source. Now it resolves by token: fresh click → uses the rendered index;
+// stale click (list shifted under the row) → bails, never stars a different
+// source.
+setref_check: {
+    // (a) fresh: token still at its rendered src position → ref moves to it
+    loc.pathname = "/compare-hub";
+    loc.search = "?src=ws:/a&src=ws:/b&ref=0";
+    const A = makeRow(0, "ws:/a", 0), B = makeRow(1, "ws:/b", 1);
+    rootEl._rows = [A.row, B.row];
+    cmpHub.setRef(B.btn);
+    ok(new URLSearchParams(loc.search).get("ref") === "1",
+        "setRef on an in-sync row sets ref to that row's valid index");
+    while (pendingAjax.length) pendingAjax.shift().resolve();
+
+    // (b) stale: remove A, then a star click on B whose DOM still says
+    // src-idx=1 (now ws:/c in the shifted list) must NOT star that source
+    loc.search = "?src=ws:/a&src=ws:/b&src=ws:/c&ref=0";
+    const A2 = makeRow(0, "ws:/a", 0), B2 = makeRow(1, "ws:/b", 1);
+    rootEl._rows = [A2.row, B2.row];
+    cmpHub.removeAt(A2.btn);                 // list → [ws:/b, ws:/c]
+    while (pendingAjax.length) pendingAjax.shift().resolve();
+    const refBefore = new URLSearchParams(loc.search).get("ref");
+    cmpHub.setRef(B2.btn);                   // stale row: src-idx=1 → ws:/c ≠ ws:/b
+    const refAfter = new URLSearchParams(loc.search).get("ref");
+    ok(refAfter === refBefore,
+        "stale ★ click bails instead of starring the shifted-in source " +
+        "(ref " + refBefore + " → " + refAfter + ")");
+    while (pendingAjax.length) pendingAjax.shift().resolve();
+}
+
 if (fails) { console.error(fails + " check(s) FAILED"); process.exit(1); }
 console.log("compare_hub_selfcheck: all checks passed");

@@ -480,6 +480,26 @@ def test_index_self_heals_when_missing(hm, trended_quam_path):
     assert any(r["qubit"] == "qA1" and r["property"] == "T1" for r in rows)
 
 
+def test_extract_cache_buckets_now_relative_since_and_caps_lru(hm, trended_quam_path):
+    from quam_state_manager.core.history import _EXTRACT_CACHE_CAP
+    hm.check_and_snapshot(trended_quam_path, "save")
+
+    # Two now-relative cutoffs in the SAME minute must share one cache entry —
+    # otherwise every render (second-resolution cutoff) leaked a fresh, never-hit
+    # entry and the cache grew unboundedly.
+    hm._extract_history_cache.clear()
+    hm.extract_property_history(trended_quam_path, ["T1"], since="20260710_143001_000")
+    n1 = len(hm._extract_history_cache)
+    hm.extract_property_history(trended_quam_path, ["T1"], since="20260710_143059_000")
+    assert len(hm._extract_history_cache) == n1   # bucketed key → cache HIT, no new entry
+
+    # LRU: distinct-minute cutoffs beyond the cap evict the oldest.
+    for m in range(_EXTRACT_CACHE_CAP + 5):
+        hm.extract_property_history(trended_quam_path, ["T1"],
+                                    since=f"20260710_14{m:02d}00_000")
+    assert len(hm._extract_history_cache) <= _EXTRACT_CACHE_CAP
+
+
 def test_extract_property_history_resolves_pointer_amplitude(hm, trended_quam_path):
     # Snapshot 1: x180 amplitude = 0.15, x90 points to it
     hm.check_and_snapshot(trended_quam_path, "save")
@@ -2463,3 +2483,42 @@ class TestBaselineCache:
         assert hm.get_live_baseline(quam_path) is not None
         hm._baseline_file(Path(quam_path)).unlink()
         assert hm.get_live_baseline(quam_path) is None
+
+
+def test_chip_swap_diff_computed_against_routed_dir(tmp_path):
+    """Fingerprint routing: when a snapshot is routed to a DIFFERENT chip dir
+    (chip swap), its diff must be computed against THAT dir's prior snapshot,
+    not the path-derived dir's. The writer used to list priors from the
+    path-derived dir and join a prior timestamp onto the routed dir — a
+    nonexistent path — so the diff threw and was silently recorded as zero."""
+    def _state(f_01):
+        s = _base_state()
+        s["qubits"]["qA1"]["f_01"] = f_01
+        return s
+
+    hm = HistoryManager(tmp_path / "instance", max_snapshots=50)
+
+    # Chip B lives at folder chipB (host .20); build its two-snapshot timeline.
+    wB = _base_wiring()
+    wB["network"]["host"] = "10.2.2.20"
+    pB = tmp_path / "chipB" / "quam_state"
+    _write_quam_state(pB, _state(6.0e9), wB)
+    hm.check_and_snapshot(pB, "manual", force=True)
+    _write_quam_state(pB, _state(6.1e9), wB)
+    m_b2 = hm.check_and_snapshot(pB, "manual", force=True)
+    assert m_b2.diff_summary["total"] >= 1        # sanity: normal diff works
+
+    # Chip A lives at folder chipA (host .18); its own dir + timeline.
+    pA = tmp_path / "chipA" / "quam_state"
+    _write_quam_state(pA, _state(5.0e9), _base_wiring())
+    hm.check_and_snapshot(pA, "manual", force=True)
+
+    # Write CHIP B content into path A → the new snapshot routes to chip B's
+    # dir (swap_to_existing). Its diff must be vs chip B's prior (6.1e9), i.e.
+    # a real change to 6.2e9 — NOT a bogus zero from diffing a missing dir.
+    _write_quam_state(pA, _state(6.2e9), wB)
+    m_swap = hm.check_and_snapshot(pA, "manual", force=True)
+    assert m_swap is not None
+    assert m_swap.chip_swap_detected is not None
+    assert m_swap.chip_swap_detected["type"] == "swap_to_existing"
+    assert m_swap.diff_summary["total"] >= 1      # diff vs routed dir's prior

@@ -94,6 +94,21 @@ ALL_CLASSES = (
 )
 
 _ONE_SIDED = {CLS_ADDED, CLS_REMOVED, CLS_ONLY_IN}
+
+# The U3 "changed" family: classes that mean the two sources ACTUALLY DIFFER in
+# value or shape — a real modification, a one-sided presence, or a schema flip.
+# Deliberately EXCLUDES derived (#./ self-refs resolve per-source), provenance
+# (timestamps), unresolved (dangling pointers), link_changed (SAME value, only
+# the pointer rewired), type_changed (int↔float meta), equal, and within-
+# tolerance — none of which mean the sources' values differ. Use this to decide
+# "did this entity change" (e.g. structure-strip tints / banners) instead of the
+# over-broad "everything not equal/within", which false-flagged identical chips
+# whose qubits merely carry a #./ self-ref.
+CHANGED_CLASSES = frozenset({
+    CLS_MODIFIED, CLS_ADDED, CLS_REMOVED, CLS_ONLY_IN,
+    CLS_NOT_IN_SOURCE, CLS_SCHEMA_CHANGED,
+})
+
 _SEVERITY = {CLS_EQUAL: 0, CLS_WITHIN: 1, CLS_TYPE_CHANGED: 2,
              CLS_LINK_CHANGED: 3, CLS_MODIFIED: 4}
 
@@ -1006,17 +1021,33 @@ def _classify_row(key: str, views: list[_View], ref: int, bucket: int,
             cls = CLS_REMOVED if present[ref] else CLS_ADDED
         else:
             cls = CLS_ONLY_IN
+        # N-way drift guard: when the ★ref LACKS the leaf, the sources that DO
+        # have it would all be classed "added" regardless of value — so
+        # beyond-tolerance drift among them (real case: a qubit added in a later
+        # snapshot whose f_01 then drifts across subsequent runs) was completely
+        # invisible. Use the first present source as a local reference and
+        # compare the other present cells against it, escalating the drifting
+        # cell + the row to modified. Scoped to bucket ① (over-time trend).
+        local_ref = (next((i for i, p in enumerate(present) if p), None)
+                     if bucket == 1 and not present[ref] else None)
+        row_cls = cls
         for i in range(len(views)):
             if i == ref:
                 continue
             if present[i] != present[ref]:
                 cells[i] = cls
+                if local_ref is not None and present[i] and i != local_ref:
+                    c = _classify_cell(views[local_ref].resolved[key],
+                                       views[i].resolved[key], key, preset)
+                    if c == CLS_MODIFIED:
+                        cells[i] = CLS_MODIFIED
+                        row_cls = CLS_MODIFIED
             elif present[i]:      # both sides have it → real value comparison
                 cells[i] = _classify_cell(views[ref].resolved[key],
                                           views[i].resolved[key], key, preset)
             else:                 # absent on both (present on a third source)
                 cells[i] = CLS_EQUAL
-        return cls, cells
+        return row_cls, cells
 
     if leaf == "__class__":
         raws = [v.raw.get(key, v.resolved.get(key)) for v in views]

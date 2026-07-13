@@ -43,7 +43,12 @@ def _is_power(bundle) -> bool:
 def _is_gef(bundle) -> bool:
     from ..registry import _normalize_node_name
     n = _normalize_node_name(_name(bundle))
-    return n.startswith("readout_power_optimization_gef") or _name(bundle).startswith("1Q_30")
+    # The FAMILY names normalize with gef_ FIRST ("gef_readout_frequency_optimization"
+    # / "gef_readout_power_optimization"), so the old "readout_power_optimization_gef"
+    # prefix was dead code and only the raw 1Q_30 fallback matched — standalone
+    # "30(a)_gef_readout_*" runs fell through to the 1Q_15a frequency builder and got
+    # the wrong (absolute f_01) click. Gate on the semantic marker (mirrors _is_ef).
+    return n.startswith("gef_readout") or _name(bundle).startswith("1Q_30")
 
 
 def _is_gef_power(bundle) -> bool:

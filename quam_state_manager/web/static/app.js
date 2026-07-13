@@ -140,6 +140,7 @@ var UI_CONFIG = {
         rr_in:     '#f0a030',   /* Readout input       — gold     */
         z:         '#3498db',   /* Flux / Z line       — blue     */
         coupler:   '#1abc9c',   /* Coupler             — teal     */
+        cr:        '#27ae60',   /* Cross-resonance drive — green  */
         twpa_pump: '#e74c3c',   /* TWPA pump           — red      */
         twpa_ro:   '#a93226',   /* TWPA readout        — dark red */
         twpa_in:   '#d63384',   /* TWPA input          — magenta  */
@@ -273,6 +274,11 @@ window.getPageSize = function(storageKey, defaultVal) {
  */
 document.addEventListener('htmx:beforeSwap', function(evt) {
     if (!evt.detail) return;
+    // No swap will happen (htmx drops 4xx/5xx bodies → shouldSwap=false), so the
+    // container keeps its current content — purging its live plots here would
+    // blank them with nothing to replace them (a failed inspector-pane load used
+    // to wipe the visible figures). Only tear down when the swap is real.
+    if (evt.detail.shouldSwap === false) return;
     if (typeof Plotly === 'undefined') return;
     var el = evt.detail.target || evt.detail.elt;   // the container being replaced
     if (!el || !el.querySelectorAll) return;
@@ -289,6 +295,7 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
    detached node until the next pointer/key event. Run it deterministically here. */
 document.addEventListener('htmx:beforeSwap', function(evt) {
     if (!evt.detail) return;
+    if (evt.detail.shouldSwap === false) return;   // no swap → don't tear down (see above)
     var el = evt.detail.target || evt.detail.elt;   // the container being replaced
     if (!el || !el.querySelectorAll) return;
     var zoomed = el.querySelectorAll('img.figure-zoomed');
@@ -335,6 +342,31 @@ document.addEventListener('htmx:responseError', function(evt) {
         if (m) { var clean = m[1].replace(/<[^>]+>/g, '').trim(); if (clean) msg = clean; }
     }
     if (window.showToast) window.showToast(msg, "error");
+});
+
+// Network-level failure (server unreachable / connection dropped / request
+// aborted) fires htmx:sendError, NOT htmx:responseError — so without this the
+// loading indicator just vanishes and the click silently no-ops. For the
+// desktop build (pywebview → local Flask) this is exactly what a backend crash
+// or hang looks like, so the user must be told the app is unreachable rather
+// than left thinking nothing happened. Same target exclusions as responseError
+// (those hosts render their own inline failure state).
+document.addEventListener('htmx:sendError', function(evt) {
+    var t = evt.detail && evt.detail.target;
+    if (t && t.classList && t.classList.contains('config-status-host')) return;
+    if (t && t.id === 'state-history-detail') return;
+    if (window.showToast) window.showToast("Couldn't reach the app — is it still running? Please retry.", "error");
+});
+
+// Global unsaved-edits guard: the pending tray's change_log ("N unsaved") lives
+// only in server memory — nothing writes it to disk until Save — so closing the
+// tab/window discards those edits with no warning. Warn whenever the tray shows
+// pending changes. (The per-grid beforeunload guards cover cells the user typed
+// but hasn't POSTed yet; this covers the committed-but-unsaved change_log.)
+window.addEventListener('beforeunload', function (ev) {
+    var tray = document.getElementById('pending-tray');
+    var n = tray ? parseInt(tray.getAttribute('data-change-count') || '0', 10) : 0;
+    if (n > 0) { ev.preventDefault(); ev.returnValue = ''; return ''; }
 });
 
 /* ------------------------------------------------------------------ */
@@ -2411,6 +2443,7 @@ window.selectHistoryEntry = function(checkbox) {
     var checked = document.querySelectorAll(".history-compare-cb:checked");
     if (checked.length > 2) {
         checkbox.checked = false;
+        if (window.showToast) window.showToast("Pick exactly two snapshots to compare.", "info");
         return;
     }
     var btn = document.getElementById("history-compare-btn");
@@ -2438,7 +2471,10 @@ window.StateHistory = (function () {
     }
     function toggleSelect(cb) {
         var sel = selected();
-        if (sel.length > 2) { cb.checked = false; sel = selected(); }
+        if (sel.length > 2) {
+            cb.checked = false; sel = selected();
+            if (window.showToast) window.showToast("Pick exactly two snapshots to compare.", "info");
+        }
         var btn = document.getElementById('sh-compare-btn');
         if (btn) btn.disabled = sel.length !== 2;
     }
@@ -2787,7 +2823,12 @@ window.initPathAutocomplete = function(inputEl) {
             var name = dirPath.split(/[\\/]/).pop() || dirPath;
             row.textContent = name;
 
-            if (name === "quam_state" || data.has_quam_state) {
+            // Highlight a CHILD only when it is itself a quam_state folder.
+            // data.has_quam_state describes the CURRENT (parent) folder, so
+            // OR-ing it here painted every child as a quam folder whenever the
+            // parent held state.json. The parent's own state is shown by the
+            // badge below, not by tinting its children.
+            if (name === "quam_state") {
                 row.classList.add("is-quam");
             }
 
@@ -3814,6 +3855,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             var body = new URLSearchParams();
             body.append("dot_path", dotPath);
             body.append("value", newVal);
+            body.append("expect_chip", window.__chipToken || "");   // wrong-chip 409 gate
 
             fetch("/field/edit", {
                 method: "POST",
@@ -3963,6 +4005,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         var body = new URLSearchParams();
         body.append("dot_path", m.path);
         body.append("value", JSON.stringify(val));
+        body.append("expect_chip", window.__chipToken || "");   // wrong-chip 409 gate
         fetch("/field/edit", {
             method: "POST",
             headers: {"Content-Type": "application/x-www-form-urlencoded"},
@@ -4046,6 +4089,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             var body = new URLSearchParams();
             body.append("dot_path", dotPath);
             body.append("value", txt);   // server re-parses (authoritative coercion)
+            body.append("expect_chip", window.__chipToken || "");   // wrong-chip 409 gate
             fetch("/field/edit", {
                 method: "POST",
                 headers: {"Content-Type": "application/x-www-form-urlencoded"},
@@ -4593,7 +4637,22 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
 
     var controllers = (data && data.controllers) || {};
     if (Object.keys(controllers).length === 0) {
-        container.innerHTML = '<p style="padding:1rem;color:var(--pico-muted-color)">No instrument wiring data found. Load a quam_state with wiring information.</p>';
+        // Distinguish a genuinely-unwired chip from one whose ports we couldn't
+        // place (OPX+ 5-part refs / Octave opx_output_I/Q) — otherwise both looked
+        // like "no wiring", wrongly telling the user their chip is unwired.
+        var st = (data && data.stats) || {};
+        var unplaceable = st.octave_detected || (st.refs_seen > 0 && !st.refs_placed);
+        var msg = unplaceable
+            ? ('This chip’s wiring uses a layout this diagram doesn’t render yet '
+               + '(e.g. OPX+ or an Octave RF setup)'
+               + (st.refs_seen ? ' — ' + st.refs_seen + ' port connection(s) were found but couldn’t be placed on the rack' : '')
+               + '.')
+            : 'No instrument wiring data found. Load a quam_state with wiring information.';
+        var pEl = document.createElement('p');
+        pEl.style.cssText = 'padding:1rem;color:var(--pico-muted-color)';
+        pEl.textContent = msg;
+        container.innerHTML = '';
+        container.appendChild(pEl);
         return;
     }
 
@@ -4941,6 +5000,13 @@ function _getPopupFields(a) {
         {key: 'interact ofs',   value: _fmtNum(a.interaction_offset, 4)},
         {key: 'output mode',    value: a.output_mode},
         {key: 'upsampling',     value: a.upsampling_mode},
+    ];
+    if (r === 'cr') return [
+        {key: 'control',    value: a.qubit_control},
+        {key: 'target',     value: a.qubit_target},
+        {key: 'LO',         value: _fmtVal(a.lo_frequency, 'GHz')},
+        {key: 'band',       value: a.band},
+        {key: 'power',      value: _fmtVal(a.full_scale_power_dbm, 'dBm')},
     ];
     if (r === 'twpa_pump') return [
         {key: 'pump freq',  value: _fmtVal(a.pump_frequency, 'GHz')},
@@ -5932,49 +5998,63 @@ function _showPlotApplyPopup(mappings, pt, expName, qubitName) {
    (recipe `clickable` spec). Activates the loaded state first so edits target it. */
 function _openPlotApplyPopup(updates, expName, qubitName, contextRows, chipExpect) {
     if (!updates || !updates.length) return;
-    var loadInput = document.getElementById('load-path-input');
-    var statePath = loadInput ? loadInput.value.trim() : '';
-    if (!statePath) {
-        _showPlotClickToast('No state loaded — cannot apply', null, null);
-        return;
-    }
     // chipExpect = {token, name} for a dataset fit-apply: the run's OWN chip
     // identity. We carry it into every Apply so the server refuses (409) to
     // write a run's fit onto a different loaded chip that reuses qubit names.
     var expect = (chipExpect && chipExpect.token) ? chipExpect : null;
     function render() {
-        // Even if /load failed, still render — the popup shows real per-row
-        // errors when Apply is clicked.
+        // Even if activation failed, still render — the popup shows real
+        // per-row errors when Apply is clicked.
         _renderPlotApplyPopup(updates, expName, qubitName, contextRows, expect);
         _fetchPlotApplyOldValues(updates);
     }
-    // Activate the state first so the modifier targets the right context.
-    fetch('/load', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/x-www-form-urlencoded', 'HX-Request': 'true'},
-        body: 'folder=' + encodeURIComponent(statePath),
-        redirect: 'manual'
-    }).then(function () {
-        // Cross-chip pre-check: warn BEFORE the popup if the loaded chip isn't
-        // the chip this fit came from. Cancel aborts; OK marks it force-applied.
-        if (!expect) { render(); return; }
-        return fetch('/chip/active-token').then(function (r) { return r.json(); })
-            .then(function (act) {
-                if (act && act.token && expect.token && act.token !== expect.token) {
-                    var ok = window.confirm(
-                        'This fitted value is from chip "' + (expect.name || '?') +
-                        '", but the loaded chip is "' + (act.name || '?') + '".\n\n' +
-                        'Applying will write ' + (expect.name || 'that chip') +
-                        '’s value onto the loaded chip. Continue anyway?');
-                    if (!ok) throw new Error('__chip_cancelled__');
-                    expect.forced = true;  // user accepted → send force_chip
-                }
-                render();
+    // Cross-chip pre-check: warn BEFORE the popup if the loaded chip isn't
+    // the chip this fit came from. Cancel aborts; OK marks it force-applied.
+    function preCheckAndRender(act) {
+        // Freshen the render-time active path (the popup's "Target chip:" line
+        // reads it) — an in-page context switch may have outdated the baked one.
+        if (act && act.path) window.__activePath = act.path;
+        if (expect && act && act.token && expect.token && act.token !== expect.token) {
+            var ok = window.confirm(
+                'This fitted value is from chip "' + (expect.name || '?') +
+                '", but the loaded chip is "' + (act.name || '?') + '".\n\n' +
+                'Applying will write ' + (expect.name || 'that chip') +
+                '’s value onto the loaded chip. Continue anyway?');
+            if (!ok) return;               // abort — nothing rendered
+            expect.forced = true;          // user accepted → send force_chip
+        }
+        render();
+    }
+    // The ACTIVE chip is authoritative. The old flow read the load-path text
+    // box and silently POSTed /load on it — so a researcher who had switched
+    // chips via the sidebar got their context flipped BACK to the stale box
+    // path on a plot click (and, for tokenless runs, the value written to that
+    // stale chip). Only when NOTHING is loaded fall back to activating the box
+    // path (first-use convenience).
+    fetch('/chip/active-token').then(function (r) { return r.json(); })
+        .then(function (act) {
+            if (act && act.loaded) { preCheckAndRender(act); return; }
+            var loadInput = document.getElementById('load-path-input');
+            var statePath = loadInput ? loadInput.value.trim() : '';
+            if (!statePath) {
+                _showPlotClickToast('No state loaded — cannot apply', null, null);
+                return;
+            }
+            return fetch('/load', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded', 'HX-Request': 'true'},
+                body: 'folder=' + encodeURIComponent(statePath),
+                redirect: 'manual'
+            }).then(function () {
+                if (!expect) { render(); return; }
+                return fetch('/chip/active-token')
+                    .then(function (r2) { return r2.json(); })
+                    .then(preCheckAndRender);
             });
-    }).catch(function (e) {
-        if (e && String(e.message || e).indexOf('__chip_cancelled__') >= 0) return;  // abort
-        render();  // any other failure: fail open, per-row errors still show
-    });
+        })
+        .catch(function () {
+            render();   // any failure: fail open, per-row errors still show
+        });
 }
 
 /* Dataset Results tab → "Apply" a single mapped fitted value to the loaded state,
@@ -6179,9 +6259,12 @@ function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExp
         var bits = [];
         if (expName)   bits.push('<small>Experiment: <code>' + _ppEscape(expName) + '</code></small>');
         if (qubitName) bits.push('<small>Qubit: <code>'      + _ppEscape(qubitName) + '</code></small>');
-        // The edit targets the loaded chip (not the dataset's own snapshot) — show it.
+        // The edit targets the LOADED chip (not the dataset's own snapshot) —
+        // show the active context's path, refreshed by the popup's pre-check;
+        // the load-path box is only a fallback when nothing is loaded.
         var _loadInput = document.getElementById('load-path-input');
-        var _chip = _loadInput ? _loadInput.value.trim() : '';
+        var _chip = window.__activePath
+            || (_loadInput ? _loadInput.value.trim() : '');
         if (_chip) bits.push('<small>Target chip: <code>' + _ppEscape(_chip) + '</code></small>');
         ctxBox.innerHTML = bits.join(' &middot; ');
     }
@@ -6446,13 +6529,24 @@ function applyAllPlotRows() {
         } else {
             var byPath = {};
             (r.body.results || []).forEach(function(res) { byPath[res.dot_path] = res; });
+            var shown = false;
             pending.forEach(function(row) {
                 var info = byPath[row.getAttribute('data-dot-path')];
                 if (info && !info.applied && info.error) {
                     var e = row.querySelector('.plot-apply-row-error');
-                    if (e) { e.hidden = false; e.textContent = info.error; }
+                    if (e) { e.hidden = false; e.textContent = info.error; shown = true; }
                 }
             });
+            // Batch-level failure with no per-row results (e.g. /field/edit-batch
+            // 400 "No active context"/"No updates supplied", or a 500) was
+            // silently swallowed — the button just re-enabled. Surface it.
+            if (!shown) {
+                var msg = (r.body && r.body.error) || ('Apply failed (' + r.status + ')');
+                var first0 = pending[0];
+                var fe = first0 && first0.querySelector('.plot-apply-row-error');
+                if (fe) { fe.hidden = false; fe.textContent = msg; }
+                else if (window.showToast) window.showToast(msg, 'error');
+            }
         }
     }).catch(function(e) {
         if (applyAllBtn) { applyAllBtn.disabled = false; applyAllBtn.textContent = prevLabel; }
@@ -6627,24 +6721,7 @@ function _showPlotClickToast(coordText, qubitName, dotPath) {
  * e.g. "qubits.q4.resonator.time_of_flight"
  */
 function _navigateToExplorerPath(dotPath) {
-    // The Explorer must show the state from the user's explicitly loaded folder,
-    // not whatever sidebar-clicked experiment happens to be active.
-    var loadInput = document.getElementById('load-path-input');
-    var statePath = loadInput ? loadInput.value.trim() : '';
-
-    if (!statePath) {
-        _showPlotClickToast('Enter a quam_state folder path to edit fields', null, null);
-        return;
-    }
-
-    // Re-activate the user's state folder, then load Explorer
-    fetch('/load', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/x-www-form-urlencoded',
-                   'HX-Request': 'true'},
-        body: 'folder=' + encodeURIComponent(statePath),
-        redirect: 'manual'
-    }).then(function() {
+    function openExplorer() {
         htmx.ajax('GET', '/explorer', {target: '#table-pane', swap: 'innerHTML'}).then(function() {
             var attempts = 0;
             var maxAttempts = 15;
@@ -6663,7 +6740,29 @@ function _navigateToExplorerPath(dotPath) {
             }
             tryExpand();
         });
-    });
+    }
+    // The ACTIVE chip is authoritative \u2014 the old flow re-POSTed /load on the
+    // load-path text box, silently flipping a sidebar-switched context back to
+    // the stale box path. Only when NOTHING is loaded fall back to activating
+    // the box path.
+    fetch('/chip/active-token').then(function (r) { return r.json(); })
+        .then(function (act) {
+            if (act && act.loaded) { openExplorer(); return; }
+            var loadInput = document.getElementById('load-path-input');
+            var statePath = loadInput ? loadInput.value.trim() : '';
+            if (!statePath) {
+                _showPlotClickToast('Enter a quam_state folder path to edit fields', null, null);
+                return;
+            }
+            return fetch('/load', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded',
+                           'HX-Request': 'true'},
+                body: 'folder=' + encodeURIComponent(statePath),
+                redirect: 'manual'
+            }).then(openExplorer);
+        })
+        .catch(openExplorer);   // probe failure \u2192 fail open (Explorer shows its own state)
 }
 
 /**
@@ -6982,9 +7081,14 @@ function _showTagPicker(runId, btnEl, td, allTags, currentTags) {
     }
     allTags.forEach(function(tag) {
         var isOn = currentTags.indexOf(tag) !== -1;
-        listHtml += '<div class="tag-picker-item" data-tag="' + tag + '">' +
+        // Tags are arbitrary user strings (e.g. "T1<10us") stored verbatim server-side
+        // and shared across a LAN-served instance, so escape both the attribute and the
+        // visible label (matching _rebuildTagCell); getAttribute('data-tag') decodes the
+        // entities back on toggle, so escaped values round-trip.
+        var esc = _ppEscape(tag);
+        listHtml += '<div class="tag-picker-item" data-tag="' + esc + '">' +
             '<span class="tag-picker-check">' + (isOn ? '&#10003;' : '') + '</span>' +
-            '<span>' + tag + '</span>' +
+            '<span>' + esc + '</span>' +
         '</div>';
     });
     listHtml += '</div>';
@@ -7331,6 +7435,25 @@ window._pinnedRunId = null;
 window._pinnedHtml = null;
 
 /**
+ * innerHTML never runs <script> tags nor wires htmx attributes. The Pin & Browse
+ * flows build their panes via innerHTML, so without this the browsed (right)
+ * column's htmx-driven bits (the Raw Data tab's hx-trigger container, lazy
+ * loaders) never activate — the tab spins "Loading data files…" forever — and
+ * inline init scripts never run. Mirror swapPane(): re-create each <script> so
+ * it executes, then htmx.process the subtree.
+ */
+function _activatePinnedPane(pane) {
+    if (!pane) return;
+    var scripts = pane.querySelectorAll('script');
+    for (var i = 0; i < scripts.length; i++) {
+        var old = scripts[i], s = document.createElement('script');
+        if (old.src) s.src = old.src; else s.textContent = old.textContent;
+        if (old.parentNode) old.parentNode.replaceChild(s, old);
+    }
+    if (window.htmx && htmx.process) htmx.process(pane);
+}
+
+/**
  * Unpin: clear pin state and collapse the split to just the current (right) run.
  * Shared by the pin button's second press AND the pinned (left) column's X close.
  */
@@ -7341,7 +7464,16 @@ window.unpinDataset = function() {
     if (btn) btn.classList.remove('pinned');
     var pane = document.getElementById('inspector-pane');
     var currentCol = pane ? pane.querySelector('.inspector-current-col') : null;
-    if (currentCol) pane.innerHTML = currentCol.innerHTML;
+    if (currentCol) {
+        // Purge live Plotly plots BEFORE innerHTML destroys them — otherwise
+        // dangling <defs>/clip-paths corrupt the next plot (clipped/invisible axes)
+        // and ~2-5MB of WebGL/DOM leaks per unpin. These are plain calls, so the
+        // htmx:beforeSwap purge handler never runs.
+        if (window.Plotly) pane.querySelectorAll('.js-plotly-plot')
+            .forEach(function (p) { try { Plotly.purge(p); } catch (e) {} });
+        pane.innerHTML = currentCol.innerHTML;
+        _activatePinnedPane(pane);
+    }
 };
 
 /**
@@ -7361,7 +7493,11 @@ function _closeCurrentKeepPinned() {
     tmp.querySelectorAll('[id^="pinned-"]').forEach(function(el) { el.id = el.id.slice(7); });
     window._pinnedRunId = null;
     window._pinnedHtml = null;
+    // Purge live plots before innerHTML nukes them (see unpinDataset).
+    if (window.Plotly) pane.querySelectorAll('.js-plotly-plot')
+        .forEach(function (p) { try { Plotly.purge(p); } catch (e) {} });
     pane.innerHTML = tmp.innerHTML;
+    _activatePinnedPane(pane);
 }
 
 /**
@@ -7482,6 +7618,10 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     var pane = document.getElementById('inspector-pane');
     if (pane) {
         pane.innerHTML = _wrapPinnedLayout(window._pinnedHtml, evt.detail.serverResponse);
+        // innerHTML skips <script> execution + htmx wiring, so without this the
+        // browsed (right) column's Raw Data tab (hx-trigger container) never
+        // activates and spins "Loading data files…" forever — the inert-column bug.
+        _activatePinnedPane(pane);
         // No tab rewiring needed: each column's native onclick="switchDatasetTab('…', this)"
         // now scopes to its own panel via _h5Panel(this), so the two columns' tabs work
         // independently (the old _syncPinnedTabs/_switchBothColumns looked for the removed
@@ -10248,6 +10388,27 @@ window.closePulseCompare = function () {
     if (overlay) overlay.style.display = "none";
 };
 
+/* Strip any existing `key=` from a URL's query string and, when value is
+   non-empty, append the fresh one — so overriding a baked query param can't
+   create a `key=stale&key=fresh` duplicate (Flask reads the first). Preserves
+   the path, other params, and any #hash. */
+function _setQueryParam(path, key, value) {
+    if (typeof path !== "string") return path;
+    var hashIdx = path.indexOf("#");
+    var hash = hashIdx >= 0 ? path.slice(hashIdx) : "";
+    if (hashIdx >= 0) path = path.slice(0, hashIdx);
+    var qIdx = path.indexOf("?");
+    var base = qIdx >= 0 ? path.slice(0, qIdx) : path;
+    var qs = qIdx >= 0 ? path.slice(qIdx + 1) : "";
+    var parts = qs ? qs.split("&").filter(function (p) {
+        return p && decodeURIComponent(p.split("=")[0]) !== key;
+    }) : [];
+    if (value !== null && value !== undefined && value !== "") {
+        parts.push(encodeURIComponent(key) + "=" + encodeURIComponent(value));
+    }
+    return base + (parts.length ? "?" + parts.join("&") : "") + hash;
+}
+
 document.addEventListener("htmx:configRequest", function (evt) {
     var el = evt.detail.elt;
     if (!el) return;
@@ -10260,21 +10421,25 @@ document.addEventListener("htmx:configRequest", function (evt) {
     var isPulsesReq = el.id === "pulses-rows-wrap" ||
         (el.matches && el.matches('.table-filter input[name="q"], #pulse-channel-tabs a'));
     if (!isPulsesReq) return;
-    // Read the live search input value.
+    // Rewrite evt.detail.path itself rather than setting evt.detail.parameters:
+    // htmx 2.x SERIALIZES parameters and APPENDS them to the baked query string,
+    // so a stale baked `channel=xy` plus a parameter `channel=all` produced
+    // `?channel=xy&channel=all` and Flask took the FIRST duplicate — leaving the
+    // filter stuck on the render-time channel. Strip+set the params in the path
+    // and drop them from parameters so no duplicate is appended.
     var searchInput = document.querySelector('.table-filter input[name="q"]');
-    if (searchInput) {
-        var q = searchInput.value.trim();
-        if (q) evt.detail.parameters["q"] = q;
-        else delete evt.detail.parameters["q"];
-    }
-    // Read the active channel from the badge tabs.
+    var q = searchInput ? searchInput.value.trim() : "";
+    var channel = "";
     var activeTab = document.querySelector("#pulse-channel-tabs a.active");
     if (activeTab) {
-        var href = activeTab.getAttribute("hx-get") || "";
-        var m = href.match(/channel=([^&]+)/);
-        if (m) evt.detail.parameters["channel"] = m[1];
-        else delete evt.detail.parameters["channel"];
+        var m = (activeTab.getAttribute("hx-get") || "").match(/channel=([^&]+)/);
+        if (m) channel = decodeURIComponent(m[1]);   // "" ⇒ all channels
     }
+    var path = _setQueryParam(evt.detail.path, "q", q);
+    path = _setQueryParam(path, "channel", channel);
+    evt.detail.path = path;
+    delete evt.detail.parameters["q"];
+    delete evt.detail.parameters["channel"];
     // Keep the browser URL in sync so a later full re-fetch / reload preserves both.
     if (window._pulsesSyncUrl) window._pulsesSyncUrl();
 });
