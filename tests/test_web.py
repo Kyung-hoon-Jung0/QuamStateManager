@@ -3357,6 +3357,10 @@ class TestAddGateFlow:
         assert "cz_unipolar" in html
         assert "cz_flattop" in html
         assert 'name="gate_name"' in html
+        # cz_parametric is evidence-gated: this chip carries no
+        # ParametricCZGate macro, and recent quam-builder removed the class —
+        # offering it would write an unloadable state.json.
+        assert "cz_parametric" not in html
 
     def test_gate_form_cancel(self, loaded_client):
         html = loaded_client.get("/pair/qA1-A2/gate/new/cancel").data.decode()
@@ -3383,24 +3387,48 @@ class TestAddGateFlow:
         store_html = loaded_client.get("/pair/qA1-A2").data.decode()
         assert "cz_v3_amplitude" in store_html or "cz_v3" in store_html
 
-    def test_create_cz_parametric(self, loaded_client):
-        loaded_client.post("/pair/qA1-A2/gate", data={
-            "gate_name": "cz_param_v1",
-            "gate_type": "cz_parametric",
-            "amplitude": "0.04",
-            "length": "120",
-            "modulation_frequency": "300e6",
-            "coupler_amplitude": "0.01",
-            "phase_shift_control": "0.0",
-            "phase_shift_target": "0.0",
-        })
-        app = loaded_client.application
+    _PARAMETRIC_FORM = {
+        "gate_name": "cz_param_v1",
+        "gate_type": "cz_parametric",
+        "amplitude": "0.04",
+        "length": "120",
+        "modulation_frequency": "300e6",
+        "coupler_amplitude": "0.01",
+        "phase_shift_control": "0.0",
+        "phase_shift_target": "0.0",
+    }
+
+    @staticmethod
+    def _store_of(client):
+        app = client.application
         ctx_name = list(app.config["contexts"].keys())[0]
-        store = app.config["contexts"][ctx_name]["store"]
-        macros = store.merged["qubit_pairs"]["qA1-A2"]["macros"]
-        assert "cz_param_v1" in macros
-        macro = macros["cz_param_v1"]
-        assert macro["__class__"].endswith(".ParametricCZGate")
+        return app.config["contexts"][ctx_name]["store"]
+
+    def test_create_cz_parametric_requires_on_chip_evidence(self, loaded_client):
+        # No ParametricCZGate macro on this chip → refuse to guess a class
+        # path (quam-builder 0.4.0 removed the class; a wrong path makes the
+        # whole state.json unloadable).
+        resp = loaded_client.post("/pair/qA1-A2/gate", data=self._PARAMETRIC_FORM)
+        assert resp.status_code == 409
+        macros = self._store_of(loaded_client).merged["qubit_pairs"]["qA1-A2"]["macros"]
+        assert "cz_param_v1" not in macros
+
+    def test_create_cz_parametric_with_evidence(self, loaded_client):
+        # A chip that already carries a ParametricCZGate proves the class
+        # exists in its stack — creation reuses that exact path verbatim.
+        store = self._store_of(loaded_client)
+        evidence_qclass = ("my_lab.custom_gates.flux_pair"
+                          ".two_qubit_gates.ParametricCZGate")
+        store.merged["qubit_pairs"]["qA1-A2"]["macros"]["cz_param_old"] = {
+            "__class__": evidence_qclass,
+            "flux_pulse_qubit": {"amplitude": 0.02, "length": 80},
+        }
+        html = loaded_client.get("/pair/qA1-A2/gate/new").data.decode()
+        assert "cz_parametric" in html          # option offered again
+        resp = loaded_client.post("/pair/qA1-A2/gate", data=self._PARAMETRIC_FORM)
+        assert resp.status_code == 200
+        macro = store.merged["qubit_pairs"]["qA1-A2"]["macros"]["cz_param_v1"]
+        assert macro["__class__"] == evidence_qclass   # verbatim reuse
         assert macro["modulation_frequency"] == pytest.approx(3.0e8)
         assert macro["flux_pulse_qubit"]["amplitude"] == pytest.approx(0.04)
         assert macro["flux_pulse_qubit"]["length"] == 120

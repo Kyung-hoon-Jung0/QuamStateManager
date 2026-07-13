@@ -35,9 +35,10 @@ from scipy.signal.windows import gaussian as _gaussian_window
 from quam_state_manager.core.pulse_catalog import (
     PULSE_CATALOG,
     PulseSpec,
-    by_qclass,
-    infer_spec,
+    infer_spec_ex,
     inferred_length,
+    resolve_qclass,
+    unmodeled_fields,
 )
 
 __all__ = ["synthesize", "synthesize_raw", "synth_for_operation",
@@ -515,18 +516,28 @@ def _coerce_param(spec_param, value):
 
 
 def _payload_error(error: str, *, spec_key: str | None = None,
-                   param_errors: dict | None = None) -> dict:
+                   param_errors: dict | None = None,
+                   class_match: str | None = None,
+                   unmodeled: list | None = None,
+                   warnings: list | None = None) -> dict:
+    # class_match / unmodeled_fields / warnings must survive error payloads —
+    # the likeliest churn case is a leaf match that ALSO misses a required
+    # param, and diagnostics gates its skip on class_match.
     return {
         "ok": False, "kind": None, "iq": False,
         "x_ns": [], "i": [], "q": None,
         "length": None, "constant_value": None,
         "spec_key": spec_key, "error": error,
-        "warnings": [], "param_errors": param_errors or {},
+        "warnings": list(warnings) if warnings else [],
+        "param_errors": param_errors or {},
+        "class_match": class_match,
+        "unmodeled_fields": list(unmodeled) if unmodeled else [],
     }
 
 
 def synthesize(qclass_or_key: str, params: dict[str, Any], *,
-               max_samples: int = MAX_SAMPLES) -> dict:
+               max_samples: int = MAX_SAMPLES,
+               class_match: str | None = None) -> dict:
     """Synthesize a waveform payload for the live preview. Never raises.
 
     Pointer-valued params must be resolved by the caller (see
@@ -534,8 +545,16 @@ def synthesize(qclass_or_key: str, params: dict[str, Any], *,
     ``param_errors``. Constant waveforms (Square family) are expanded to a
     flat line of ``length`` samples for plotting, with the scalar kept in
     ``constant_value``.
+
+    *class_match* lets a store-aware caller pass the real match provenance
+    (``infer_spec_ex``'s ``how``) — a bare ``spec.key`` resolves as "exact"
+    here, which would misreport leaf/implicit matches. ``"implicit"``
+    suppresses the unmodeled-fields warning (the spec is a structural guess,
+    not a class claim).
     """
-    spec = by_qclass(qclass_or_key)
+    spec, how = resolve_qclass(qclass_or_key)
+    if class_match is not None:
+        how = class_match
     if spec is None:
         return _payload_error(
             f"no synthesizer for pulse class {qclass_or_key!r}")
@@ -544,8 +563,28 @@ def synthesize(qclass_or_key: str, params: dict[str, Any], *,
     param_errors: dict[str, str] = {}
     resolved: dict[str, Any] = {}
 
+    # Fields the spec does not model are DROPPED by the whitelist loop below
+    # — say so, or a remapped class with a new shape field renders a
+    # confidently wrong preview. Never flips ``ok``.
+    unmodeled = [] if how == "implicit" else unmodeled_fields(spec, params)
+    if unmodeled:
+        warnings.append(
+            "field(s) the catalog spec does not model (ignored by the "
+            "preview): " + ", ".join(unmodeled))
+
     for p in spec.params:
-        value = params.get(p.name, p.default if not p.required else None)
+        if p.name in params:
+            value = params[p.name]
+        else:
+            # renamed-field aliases (e.g. quam_builder 0.4.0 stores the
+            # GaussianFiltered* padding as padding_length) — normalized
+            # onto the canonical name so the raw synth funcs see one name
+            for alias in p.aliases:
+                if alias in params:
+                    value = params[alias]
+                    break
+            else:
+                value = p.default if not p.required else None
         if isinstance(value, str) and value.startswith(("#/", "#./", "#../")):
             if p.synth:
                 param_errors[p.name] = f"unresolved pointer {value!r}"
@@ -591,22 +630,30 @@ def synthesize(qclass_or_key: str, params: dict[str, Any], *,
     if param_errors:
         first = next(iter(param_errors.items()))
         return _payload_error(f"{first[0]}: {first[1]}", spec_key=spec.key,
-                              param_errors=param_errors)
+                              param_errors=param_errors, class_match=how,
+                              unmodeled=unmodeled, warnings=warnings)
 
     if length is not None and length > max_samples:
         return _payload_error(
             f"length {length} exceeds the preview cap of {max_samples} samples",
-            spec_key=spec.key, param_errors={"length": "too long for preview"})
+            spec_key=spec.key, param_errors={"length": "too long for preview"},
+            class_match=how, unmodeled=unmodeled, warnings=warnings)
     if length is not None and length < 0:
         return _payload_error("length must be non-negative", spec_key=spec.key,
-                              param_errors={"length": "negative"})
+                              param_errors={"length": "negative"},
+                              class_match=how, unmodeled=unmodeled,
+                              warnings=warnings)
 
     try:
         raw = synthesize_raw(spec.key, resolved)
     except (ValueError, KeyError, ZeroDivisionError, IndexError) as exc:
-        return _payload_error(str(exc), spec_key=spec.key)
+        return _payload_error(str(exc), spec_key=spec.key, class_match=how,
+                              unmodeled=unmodeled, warnings=warnings)
 
-    return _shape_payload(spec, raw, length, warnings)
+    payload = _shape_payload(spec, raw, length, warnings)
+    payload["class_match"] = how
+    payload["unmodeled_fields"] = unmodeled
+    return payload
 
 
 def _shape_payload(spec: PulseSpec, raw: Any, length: int | None,
@@ -749,17 +796,22 @@ def synth_for_operation(store, op_path: str, *,
             resolved_params[key] = value
 
     qclass = snapshot.get("__class__")
-    spec = infer_spec(snapshot, context_slot=context_slot)
+    spec, how = infer_spec_ex(snapshot, context_slot=context_slot)
     if spec is None:
         payload = _payload_error(
             f"unrecognized pulse class {qclass!r}" if qclass
             else "pulse has no __class__ and no recognizable context")
         payload.update({"path": op_path, "alias_of": alias_of,
                         "pointer_fields": pointer_fields,
-                        "resolved_params": resolved_params})
+                        "resolved_params": resolved_params,
+                        "qclass": qclass})
         return payload
 
-    payload = synthesize(spec.key, resolved_params, max_samples=max_samples)
+    # resolved_params here is the full body minus __class__, BEFORE the
+    # container filter below — so the unmodeled-fields check inside
+    # synthesize() sees list/dict-valued unknowns too.
+    payload = synthesize(spec.key, resolved_params, max_samples=max_samples,
+                         class_match=how)
     payload.update({
         "path": op_path,
         "alias_of": alias_of,

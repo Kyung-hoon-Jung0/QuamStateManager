@@ -108,3 +108,14 @@ class TestWaveformInvalidScope:
     def test_unrecognized_custom_class_not_invalid(self):
         op = {"__class__": "quam_builder.custom.WeirdPulse", "length": 40, "amplitude": 0.1}
         assert _invalid(_pulse_store(op)) == []
+
+    def test_foreign_prefix_known_leaf_not_invalid(self):
+        # Leaf-matched class (foreign module path, catalog-known name): our
+        # transcription may not be that class's math, so never fabricate a
+        # config-crash finding from it. Same params as
+        # test_dragcosine_len1_still_invalid — which DOES report under the
+        # exact catalog path — must stay silent under a foreign path.
+        op = {"__class__": "newstack.pulses.DragCosinePulse", "length": 1,
+              "amplitude": 0.1, "alpha": 0.5, "anharmonicity": -2e8,
+              "axis_angle": 0.0}
+        assert _invalid(_pulse_store(op)) == []

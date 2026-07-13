@@ -108,9 +108,12 @@
                 phase_shift_target: vals.phase_shift_target,
             };
         }
+        {% if "cz_parametric" in gate_types %}
         if (type === "cz_parametric") {
             return {
-                __class__: "quam_builder.architecture.superconducting.custom_gates.flux_tunable_transmon_pair.two_qubit_gates.ParametricCZGate",
+                {# the class the SERVER will write (chip-derived when possible) —
+                   a duplicated literal here would lie about the result #}
+                __class__: {{ parametric_qclass | tojson }},
                 fidelity: {},
                 flux_pulse_qubit: { amplitude: vals.amplitude, length: vals.length },
                 modulation_frequency: vals.modulation_frequency,
@@ -119,6 +122,7 @@
                 phase_shift_target: vals.phase_shift_target,
             };
         }
+        {% endif %}
         return {};
     }
 

@@ -47,6 +47,16 @@ _TWO_Q_FTC = ("quam_builder.architecture.superconducting.custom_gates."
 _TWO_Q_FIX = ("quam_builder.architecture.superconducting.custom_gates."
               "fixed_transmon_pair.two_qubit_gates")
 _PULSES = "quam.components.pulses"
+# Every module home QM stacks have shipped pulse classes in — MUST mirror
+# run_build._PULSE_HOMES (the consumer), or the report card and the build
+# disagree: quam 0.6.0 / quam_builder 0.4.0 moved SNZPulse + ErfSquarePulse
+# into the quam_builder architecture package and duplicated the FlatTop
+# family into quam_builder.common.pulses.
+_PULSE_HOMES = [
+    _PULSES,
+    "quam_builder.architecture.superconducting.components.pulses",
+    "quam_builder.common.pulses",
+]
 
 CATALOG: dict[str, dict] = {
     # -- wiring: Connectivity line methods --------------------------------
@@ -79,12 +89,12 @@ CATALOG: dict[str, dict] = {
     "pair.fixed_pair": {"module": "quam_builder.architecture.superconducting.qubit_pair.flux_tunable_transmon_pair",
                         "attr": "FluxTunableTransmonPair"},
     "pair.cr_gate": {"any_module": [_TWO_Q_FIX, _TWO_Q_FTC], "attr": "CRGate"},
-    # -- CZ-variant pulse shapes (quam.components.pulses) ------------------
-    "pulse.cz_flattop": {"module": _PULSES, "attr": "_FlatTopGaussianPulse"},
-    "pulse.cz_bipolar": {"module": _PULSES, "attr": "_CosineBipolarPulse"},
-    "pulse.cz_snz": {"module": _PULSES, "attr": "SNZPulse"},
-    "pulse.cz_erf": {"module": _PULSES, "attr": "ErfSquarePulse"},
-    "pulse.cr_flattop": {"module": _PULSES, "attr": "FlatTopGaussianPulse"},
+    # -- CZ-variant pulse shapes (any known pulse-module home) -------------
+    "pulse.cz_flattop": {"any_module": _PULSE_HOMES, "attr": "_FlatTopGaussianPulse"},
+    "pulse.cz_bipolar": {"any_module": _PULSE_HOMES, "attr": "_CosineBipolarPulse"},
+    "pulse.cz_snz": {"any_module": _PULSE_HOMES, "attr": "SNZPulse"},
+    "pulse.cz_erf": {"any_module": _PULSE_HOMES, "attr": "ErfSquarePulse"},
+    "pulse.cr_flattop": {"any_module": _PULSE_HOMES, "attr": "FlatTopGaussianPulse"},
     # -- runtime (preview/QUA only, not build) ----------------------------
     "runtime.qm_qua": {"module": "qm", "attr": "QuantumMachinesManager"},
 }

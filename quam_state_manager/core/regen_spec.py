@@ -379,12 +379,20 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
         if not isinstance(ch, dict):
             continue
         twpa_ids.append(tid)
-        pump = _parse_port((ch.get("pump") or {}).get("opx_output")) if isinstance(ch.get("pump"), dict) else None
+        # quam_builder 0.4.0 / qualang_tools 0.22 write the short line keys
+        # "p"/"i" (same convention as qubit "rr"/"xy"/"z"); older stacks
+        # wrote "pump"/"isolation". Accept both or the TWPA is silently
+        # lost on re-generate.
+        pump_ch = ch.get("pump") if isinstance(ch.get("pump"), dict) else (
+            ch.get("p") if isinstance(ch.get("p"), dict) else None)
+        pump = _parse_port(pump_ch.get("opx_output")) if pump_ch else None
         if pump:
             note_fem(pump[0], pump[1], pump[2])
             lines.append({"element": tid, "line": "twpa_pump",
                           "channel": {"kind": "mw_fem", "con": pump[1], "slot": pump[2], "out_port": pump[3]}})
-        iso = _parse_port((ch.get("isolation") or {}).get("opx_output")) if isinstance(ch.get("isolation"), dict) else None
+        iso_ch = ch.get("isolation") if isinstance(ch.get("isolation"), dict) else (
+            ch.get("i") if isinstance(ch.get("i"), dict) else None)
+        iso = _parse_port(iso_ch.get("opx_output")) if iso_ch else None
         if iso:
             note_fem(iso[0], iso[1], iso[2])
             lines.append({"element": tid, "line": "twpa_isolation",

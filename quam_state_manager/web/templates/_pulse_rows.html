@@ -42,7 +42,11 @@
                 {%- if r.is_alias %} <span class="pointer-badge" title="Alias — resolves to {{ r.alias_target }}">alias</span>{% endif %}
                 {%- if r.iq %} <span class="pulse-flag-iq" title="I and Q components">IQ</span>{% endif %}
                 {%- if r.readout %} <span class="pulse-flag-readout" title="Readout pulse">RO</span>{% endif %}</td>
-            <td><span class="pulse-class-chip{% if not r.known and not r.is_alias %} pulse-class-unknown{% endif %}">{{
+            <td><span class="pulse-class-chip
+                {%- if not r.known and not r.is_alias %} pulse-class-unknown
+                {%- elif not r.is_alias and (r.class_match == 'leaf' or r.unmodeled) %} pulse-class-soft{% endif %}"
+                {%- if not r.is_alias and r.class_match == 'leaf' %} title="Matched by class name only — this chip stores {{ r.qclass }}"
+                {%- elif not r.is_alias and r.unmodeled %} title="Field(s) the catalog spec does not model: {{ r.unmodeled | join(', ') }}"{% endif %}>{{
                 '→' if r.is_alias else r.class_short }}</span></td>
             <td class="pulse-spark-cell">
                 {%- if r.is_alias -%}

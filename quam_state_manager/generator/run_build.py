@@ -213,7 +213,12 @@ def build_connectivity(spec: dict):
         )
     elif twpa_elems:
         for tid in twpa_elems:
-            kwargs = {"twpas": [tid]}
+            # qualang_tools renders the element as f"twpa{id}" — a spec id
+            # that already says "twpa1"/"twpaA" would double-prefix to
+            # "twpatwpa1" in state+wiring keys. Strip the redundant prefix.
+            tid_norm = tid[4:] if (tid.lower().startswith("twpa")
+                                   and len(tid) > 4) else tid
+            kwargs = {"twpas": [tid_norm]}
             if twpa_pumps.get(tid) is not None:
                 kwargs["pump_constraints"] = _make_constraint(twpa_pumps[tid])
             if twpa_iso.get(tid) is not None:
@@ -781,6 +786,35 @@ def _norm_pair_qubits(spec_pair):
 _CZ_VARIANTS = ("unipolar", "flattop", "bipolar", "SNZ", "flattop_erf")
 
 
+# Module homes QM stacks have shipped pulse classes in, tried in order.
+# quam <=0.5.x carried everything in quam.components.pulses; quam 0.6.0 /
+# quam_builder 0.4.0 moved SNZPulse / ErfSquarePulse /
+# GaussianFilteredSymmetricBipolarPulse into the quam_builder architecture
+# package and GaussianFilteredSquarePulse / FlatTop duplicates into
+# quam_builder.common.pulses. Verified against the qop37_new env (waveform
+# formulas bit-identical across homes — see docs/53_qop37_alignment.md).
+_PULSE_HOMES = (
+    "quam.components.pulses",
+    "quam_builder.architecture.superconducting.components.pulses",
+    "quam_builder.common.pulses",
+)
+
+
+def _pulse_class(name):
+    """Resolve a pulse class by name across every known module home."""
+    import importlib
+
+    for mod_name in _PULSE_HOMES:
+        try:
+            mod = importlib.import_module(mod_name)
+        except ImportError:
+            continue
+        cls = getattr(mod, name, None)
+        if cls is not None:
+            return cls
+    return None
+
+
 def _cz_variant_pulses(variant, *, amplitude, duration, smoothing, padding):
     """Build the (qubit_pulse, coupler_pulse, link_attrs) for a CZ *variant*.
 
@@ -788,17 +822,18 @@ def _cz_variant_pulses(variant, *, amplitude, duration, smoothing, padding):
     z line (SNZ / flattop_erf) — safe on fixed OR tunable couplers. ``link_attrs``
     are the shape fields to mirror from the qubit pulse onto the coupler pulse by
     JSON reference (single source of truth). Returns None if the variant needs a
-    pulse class missing from this quam_builder install (caller falls back).
+    pulse class missing from EVERY home in this env (caller falls back).
     """
-    from quam.components import pulses as P
-
     if variant == "unipolar":
-        return (P.SquarePulse(length=duration, amplitude=amplitude),
-                P.SquarePulse(length=duration, amplitude=amplitude),
+        square = _pulse_class("SquarePulse")
+        if square is None:
+            return None
+        return (square(length=duration, amplitude=amplitude),
+                square(length=duration, amplitude=amplitude),
                 ("length", "amplitude"))
 
     if variant == "flattop":
-        cls = getattr(P, "_FlatTopGaussianPulse", None)
+        cls = _pulse_class("_FlatTopGaussianPulse")
         if cls is None:
             return None
         mk = lambda: cls(amplitude=amplitude, flat_length=duration,
@@ -807,8 +842,8 @@ def _cz_variant_pulses(variant, *, amplitude, duration, smoothing, padding):
                 ("amplitude", "flat_length", "smoothing_length", "post_zero_padding_length"))
 
     if variant == "bipolar":
-        bcls = getattr(P, "_CosineBipolarPulse", None)
-        fcls = getattr(P, "_FlatTopGaussianPulse", None)
+        bcls = _pulse_class("_CosineBipolarPulse")
+        fcls = _pulse_class("_FlatTopGaussianPulse")
         if bcls is None or fcls is None:
             return None
         # qubit gets the bipolar shape; the coupler mirrors a flat-top (pair_gates).
@@ -819,14 +854,14 @@ def _cz_variant_pulses(variant, *, amplitude, duration, smoothing, padding):
                 ("amplitude", "flat_length", "smoothing_length", "post_zero_padding_length"))
 
     if variant == "SNZ":
-        cls = getattr(P, "SNZPulse", None)
+        cls = _pulse_class("SNZPulse")
         if cls is None:
             return None
         return (cls(amplitude=amplitude, flat_length=duration, t_phi_eff=0.0,
                     padding=padding), None, ())
 
     if variant == "flattop_erf":
-        cls = getattr(P, "ErfSquarePulse", None)
+        cls = _pulse_class("ErfSquarePulse")
         if cls is None:
             return None
         return (cls(amplitude=amplitude, flat_length=duration, risetime_samples=16,
@@ -1023,7 +1058,12 @@ def _seed_cr_gate(pair, *, vals=None):
     if cr is None:
         return None  # not a CR-wired pair; nothing to seed
 
-    from quam.components.pulses import SquarePulse, FlatTopGaussianPulse
+    SquarePulse = _pulse_class("SquarePulse")
+    FlatTopGaussianPulse = _pulse_class("FlatTopGaussianPulse")
+    if SquarePulse is None or FlatTopGaussianPulse is None:
+        # same failure surface as the old direct import
+        raise ImportError("SquarePulse/FlatTopGaussianPulse not found in any "
+                          "known pulse module home of this env")
 
     pid = str(getattr(pair, "id", None) or getattr(pair, "name", "") or "")
     drive_amp = vals.get("cr_drive_amplitude", 1.0)

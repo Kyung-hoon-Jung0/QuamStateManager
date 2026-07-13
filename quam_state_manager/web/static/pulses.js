@@ -583,6 +583,21 @@ window.PulsesPage = (function () {
                 (spec.length_mode === 'inferred'
                     ? ' · length auto-inferred (#./inferred_length)' : '');
         }
+        var qcInput = document.getElementById('pulse-create-qclass');
+        if (qcInput) {
+            qcInput.value = spec.qclass || '';
+            var qcHint = document.getElementById('pulse-create-qclass-hint');
+            if (qcHint) {
+                qcHint.textContent =
+                    spec.qclass_how === 'reused'
+                        ? 'copied from an existing ' + sel.value + ' on this chip'
+                        : (spec.qclass_how === 'prefix'
+                            ? "derived from this chip's module prefix — edit if your stack imports this class from elsewhere"
+                            : 'catalog default — edit if your stack imports this class from elsewhere');
+                qcHint.classList.toggle('pulse-qclass-caution',
+                    spec.qclass_how !== 'reused');
+            }
+        }
         buildFieldRows(spec);
         schedulCreatePreview(root);
     }

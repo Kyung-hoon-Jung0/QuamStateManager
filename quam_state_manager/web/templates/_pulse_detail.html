@@ -27,6 +27,24 @@
 </div>
 {% endif %}
 
+{% if class_match == 'leaf' %}
+<div class="pulse-soft-banner">
+    Matched by class <strong>name</strong> only: this chip stores
+    <code>{{ qclass }}</code>, while the catalog was transcribed from
+    <code>{{ catalog_qclass }}</code>. The preview and inferred length use
+    the catalog's math &mdash; use <em>Verify vs config</em> to check
+    against the real stack.
+</div>
+{% endif %}
+
+{% if unmodeled %}
+<div class="pulse-soft-banner">
+    Field{{ 's' if unmodeled | length > 1 }} the catalog spec does not model
+    (ignored by the preview):
+    {% for f in unmodeled %}<code>{{ f }}</code>{{ ", " if not loop.last }}{% endfor %}.
+</div>
+{% endif %}
+
 <div class="pulse-actions">
     {% if can_rename %}
     <button type="button" class="btn-sm outline"

@@ -166,19 +166,26 @@ REGISTRY: dict[str, dict] = {
         "fix": "upgrade quam to a build with _CosineBipolarPulse", "severity": DEGRADE},
     "pulse.cz_snz": {
         "label": "SNZ CZ shape", "category": "2Q pulse shapes",
-        "package": "quam", "symbol": "pulses.SNZPulse",
+        "package": "quam / quam-builder", "symbol": "pulses.SNZPulse",
         "produces": "the SNZ CZ flux pulse (else falls back to unipolar)",
-        "fix": "upgrade quam to a build with SNZPulse", "severity": DEGRADE},
+        "fix": "upgrade quam or quam-builder to a build with SNZPulse "
+               "(quam <=0.5 ships it in quam.components.pulses; "
+               "quam-builder >=0.4 in its architecture package)",
+        "severity": DEGRADE},
     "pulse.cz_erf": {
         "label": "Erf-square CZ shape", "category": "2Q pulse shapes",
-        "package": "quam", "symbol": "pulses.ErfSquarePulse",
+        "package": "quam / quam-builder", "symbol": "pulses.ErfSquarePulse",
         "produces": "the erf-square CZ flux pulse (else falls back to unipolar)",
-        "fix": "upgrade quam to a build with ErfSquarePulse", "severity": DEGRADE},
+        "fix": "upgrade quam or quam-builder to a build with ErfSquarePulse "
+               "(quam <=0.5 ships it in quam.components.pulses; "
+               "quam-builder >=0.4 in its architecture package)",
+        "severity": DEGRADE},
     "pulse.cr_flattop": {
         "label": "Flat-top CR shape", "category": "2Q pulse shapes",
-        "package": "quam", "symbol": "pulses.FlatTopGaussianPulse",
+        "package": "quam / quam-builder", "symbol": "pulses.FlatTopGaussianPulse",
         "produces": "the flat-top CR drive op (else CR keeps only its square op)",
-        "fix": "upgrade quam to a build with FlatTopGaussianPulse", "severity": DEGRADE},
+        "fix": "upgrade quam or quam-builder to a build with FlatTopGaussianPulse",
+        "severity": DEGRADE},
     # -- runtime (preview / QUA only) -------------------------------------
     "runtime.qm_qua": {
         "label": "qm-qua runtime", "category": "runtime",

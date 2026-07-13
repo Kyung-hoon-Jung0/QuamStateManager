@@ -7562,6 +7562,10 @@ button.diag-badge { cursor: pointer; }
     background: transparent; color: var(--pico-muted-color);
     border: 1px dashed var(--pico-muted-border-color);
 }
+/* leaf-matched / unmodeled-fields — rendered normally but flagged */
+.pulse-class-soft {
+    border: 1px dashed #e6a23c;
+}
 
 .pulse-flag-iq, .pulse-flag-readout {
     font-size: 0.75em; font-weight: 700; padding: 0 4px; border-radius: 3px;
@@ -7602,7 +7606,7 @@ button.diag-badge { cursor: pointer; }
     border-left: 3px solid var(--pointer-badge-text); padding-left: 0.5rem;
 }
 
-.pulse-alias-banner, .pulse-unknown-banner {
+.pulse-alias-banner, .pulse-unknown-banner, .pulse-soft-banner {
     margin: 0.25rem 0.5rem; padding: 0.35rem 0.6rem; font-size: 0.85em;
     color: var(--pico-color);
     border-left: 3px solid var(--pointer-badge-text);
@@ -7610,6 +7614,10 @@ button.diag-badge { cursor: pointer; }
     border-radius: 0 4px 4px 0;
 }
 .pulse-unknown-banner { border-left-color: #e6a23c; }
+.pulse-soft-banner { border-left-color: #e6a23c; border-left-style: dashed; }
+
+.pulse-qclass-hint { font-size: 0.78em; margin: 0.15rem 0 0; }
+.pulse-qclass-caution { color: #e6a23c; }
 
 .pulse-nosynth-tag { font-size: 0.72em; margin-left: 0.3rem; }
 .pulse-list-value { font-size: 0.82em; word-break: break-all; }

@@ -194,3 +194,262 @@ class TestResolveLength:
 
     def test_bool_is_not_a_length(self):
         assert resolve_length(None, {"length": True}) is None
+
+
+# ---------------------------------------------------------------------------
+# Class-churn hardening: resolve_qclass / infer_spec_ex / unmodeled_fields /
+# chip_qclass (docs/… — Pulses page must survive QM-stack module-path churn)
+# ---------------------------------------------------------------------------
+
+from quam_state_manager.core.pulse_catalog import (  # noqa: E402
+    chip_qclass,
+    infer_spec_ex,
+    resolve_qclass,
+    unmodeled_fields,
+)
+
+
+class TestResolveQclass:
+    def test_exact_full_path(self):
+        spec, how = resolve_qclass(_QC + "SNZPulse")
+        assert spec.key == "SNZPulse" and how == "exact"
+
+    def test_bare_key_is_exact(self):
+        spec, how = resolve_qclass("SNZPulse")
+        assert spec.key == "SNZPulse" and how == "exact"
+
+    def test_full_path_alias(self):
+        spec, how = resolve_qclass(_QC + "DragPulse")
+        assert spec.key == "DragGaussianPulse" and how == "alias"
+
+    def test_foreign_prefix_resolves_by_leaf(self):
+        # A truly unknown module prefix (not one of the registered
+        # quam/quam_builder homes) matches by class name only.
+        spec, how = resolve_qclass("newstack.pulses.SNZPulse")
+        assert spec.key == "SNZPulse" and how == "leaf"
+
+    def test_foreign_prefix_alias_leaf(self):
+        spec, how = resolve_qclass("x.y.DragPulse")
+        assert spec.key == "DragGaussianPulse" and how == "leaf"
+        spec, how = resolve_qclass("x.y.ConstantReadoutPulse")
+        assert spec.key == "SquareReadoutPulse" and how == "leaf"
+
+    def test_unknown_leaf_still_none(self):
+        assert resolve_qclass("quam_builder.custom.WeirdPulse") == (None, None)
+        assert resolve_qclass(None) == (None, None)
+        assert resolve_qclass("") == (None, None)
+        assert resolve_qclass(42) == (None, None)
+
+
+class TestInferSpecEx:
+    def test_explicit_leaf_match(self):
+        spec, how = infer_spec_ex(
+            {"__class__": "newstack.pulses.SquarePulse", "amplitude": 0.1})
+        assert spec.key == "SquarePulse" and how == "leaf"
+
+    def test_implicit_gate_slot(self):
+        spec, how = infer_spec_ex({"amplitude": 0.05, "length": 100},
+                                  context_slot="flux_pulse_qubit")
+        assert spec.key == "SquarePulse" and how == "implicit"
+
+    def test_no_class_no_slot(self):
+        assert infer_spec_ex({"amplitude": 0.1}) == (None, None)
+
+
+class TestUnmodeledFields:
+    def test_stray_field_caught(self):
+        spec = PULSE_CATALOG["_FlatTopGaussianPulse"]
+        body = {"__class__": "new.pulses._FlatTopGaussianPulse",
+                "amplitude": 0.1, "flat_length": 100, "smoothing_length": 20,
+                "brand_new_knob": 3.0}
+        assert unmodeled_fields(spec, body) == ["brand_new_knob"]
+
+    def test_stock_snz_with_inferred_pointer_is_clean(self):
+        # EVERY inferred-length pulse stores length="#./inferred_length" —
+        # written by build_template and machine.save() alike. It must never
+        # count as unmodeled or the caution fires on every healthy chip.
+        spec = PULSE_CATALOG["SNZPulse"]
+        body = {"__class__": _QC + "SNZPulse", "amplitude": 0.1,
+                "flat_length": 20, "t_phi_eff": 2.0, "padding": 0,
+                "length": "#./inferred_length", "id": None,
+                "digital_marker": None, "axis_angle": None}
+        assert unmodeled_fields(spec, body) == []
+
+    def test_none_spec_or_non_dict(self):
+        assert unmodeled_fields(None, {"x": 1}) == []
+        assert unmodeled_fields(PULSE_CATALOG["SquarePulse"], "#./alias") == []
+
+
+class TestChipQclass:
+    SQ = "SquarePulse"
+
+    @staticmethod
+    def _chip(*classes, slot_class=None):
+        ops = {
+            f"op{i}": {"__class__": c, "amplitude": 0.1, "length": 40}
+            for i, c in enumerate(classes)
+        }
+        merged = {"qubits": {"qA1": {"xy": {"operations": ops}}}}
+        if slot_class is not None:
+            merged["qubit_pairs"] = {"p": {"macros": {"cz": {
+                "flux_pulse_qubit": {"__class__": slot_class, "amplitude": 0.1},
+            }}}}
+        return merged
+
+    def test_reused_verbatim(self):
+        chip = self._chip("newstack.pulses.SquarePulse")
+        assert chip_qclass(chip, PULSE_CATALOG[self.SQ]) == (
+            "newstack.pulses.SquarePulse", "reused")
+
+    def test_reused_majority_then_lexicographic(self):
+        # Mid-migration chip: two paths for the same leaf — deterministic.
+        chip = self._chip("b.pulses.SquarePulse", "a.pulses.SquarePulse",
+                          "b.pulses.SquarePulse")
+        assert chip_qclass(chip, PULSE_CATALOG[self.SQ])[0] == "b.pulses.SquarePulse"
+        tie = self._chip("b.pulses.SquarePulse", "a.pulses.SquarePulse")
+        assert chip_qclass(tie, PULSE_CATALOG[self.SQ])[0] == "a.pulses.SquarePulse"
+
+    def test_prefix_requires_known_home(self):
+        # The dominant prefix is only written when prefix+key is a REGISTERED
+        # home of the class — an unknown stack's guessed path can make
+        # Quam.load fail on the whole file, so it falls back to the catalog
+        # path (and the create form's editable class field covers the rest).
+        chip = self._chip("newstack.pulses.DragCosinePulse",
+                          "newstack.pulses.GaussianPulse")
+        assert chip_qclass(chip, PULSE_CATALOG[self.SQ]) == (
+            PULSE_CATALOG[self.SQ].qclass, "catalog")
+        # ...but a KNOWN home (quam_builder.common defines GaussianPulse)
+        # still gets the prefix rule.
+        chip2 = self._chip("quam_builder.common.pulses.FlatTopGaussianPulse",
+                           "quam_builder.common.pulses.FlatTopCosinePulse")
+        assert chip_qclass(chip2, PULSE_CATALOG["GaussianPulse"]) == (
+            "quam_builder.common.pulses.GaussianPulse", "prefix")
+
+    def test_custom_class_never_donates_prefix(self):
+        # A chip whose only classed pulse is a custom lab class must fall
+        # back to the catalog path — quam_builder.custom.SquarePulse would
+        # be wrong on EVERY stack.
+        chip = self._chip("quam_builder.custom.WeirdPulse")
+        assert chip_qclass(chip, PULSE_CATALOG[self.SQ]) == (
+            PULSE_CATALOG[self.SQ].qclass, "catalog")
+
+    def test_split_prefix_no_strict_majority(self):
+        chip = self._chip("a.pulses.DragCosinePulse", "b.pulses.GaussianPulse")
+        assert chip_qclass(chip, PULSE_CATALOG[self.SQ])[1] == "catalog"
+
+    def test_gate_slot_class_counts_as_evidence(self):
+        chip = self._chip(slot_class="newstack.pulses.SquarePulse")
+        assert chip_qclass(chip, PULSE_CATALOG[self.SQ]) == (
+            "newstack.pulses.SquarePulse", "reused")
+
+    def test_empty_chip_falls_back_to_catalog(self):
+        assert chip_qclass({}, PULSE_CATALOG[self.SQ]) == (
+            PULSE_CATALOG[self.SQ].qclass, "catalog")
+        assert chip_qclass(None, PULSE_CATALOG[self.SQ])[1] == "catalog"
+
+
+class TestBuildTemplateQclass:
+    def test_override_written_verbatim(self):
+        spec = PULSE_CATALOG["SquarePulse"]
+        t = build_template(spec, {"amplitude": 0.2, "length": 80},
+                           qclass="newstack.pulses.SquarePulse")
+        assert t["__class__"] == "newstack.pulses.SquarePulse"
+
+    def test_default_unchanged(self):
+        spec = PULSE_CATALOG["SquarePulse"]
+        t = build_template(spec, {"amplitude": 0.2, "length": 80})
+        assert t["__class__"] == spec.qclass
+
+
+# ---------------------------------------------------------------------------
+# qop37_new alignment: quam_builder module homes + the padding_length rename
+# (quam 0.6.0 / quam_builder 0.4.0 — docs/53_qop37_alignment.md)
+# ---------------------------------------------------------------------------
+
+_QB_ARCH = "quam_builder.architecture.superconducting.components.pulses."
+_QB_COMMON = "quam_builder.common.pulses."
+
+
+class TestQuamBuilderHomes:
+    def test_arch_homes_resolve_exact(self):
+        for key in ("SNZPulse", "ErfSquarePulse", "DragCosinePulse",
+                    "GaussianFilteredSymmetricBipolarPulse"):
+            spec, how = resolve_qclass(_QB_ARCH + key)
+            assert spec.key == key and how == "exact", key
+
+    def test_common_homes_resolve_exact(self):
+        for key in ("GaussianFilteredSquarePulse", "GaussianPulse",
+                    "FlatTopGaussianPulse", "FlatTopCosinePulse"):
+            spec, how = resolve_qclass(_QB_COMMON + key)
+            assert spec.key == key and how == "exact", key
+
+    def test_arch_does_not_claim_unhomed_classes(self):
+        # quam_builder's arch module has NO GaussianPulse/SquarePulse — those
+        # paths are not exact matches (leaf fallback still renders them).
+        spec, how = resolve_qclass(_QB_ARCH + "GaussianPulse")
+        assert spec.key == "GaussianPulse" and how == "leaf"
+
+    def test_smoothed_successors_alias_to_deprecated_specs(self):
+        # quam_builder 0.4.0's Smoothed* classes keep the OLD centered-padding
+        # semantics bit-for-bit (golden-verified) — they load via our specs.
+        spec, how = resolve_qclass(_QB_ARCH + "SmoothedFlatTopGaussianPulse")
+        assert spec.key == "_FlatTopGaussianPulse" and how == "alias"
+        spec, how = resolve_qclass(_QB_ARCH + "SmoothedCosineBipolarPulse")
+        assert spec.key == "_CosineBipolarPulse" and how == "alias"
+
+    def test_chip_qclass_never_writes_unhomed_prefix(self):
+        # B4 regression: on a chip whose classed pulses share the arch prefix,
+        # creating a class that module does NOT define must fall back to the
+        # catalog path — the guessed path would make Quam.load fail wholesale.
+        chip = {"qubits": {"q1": {"xy": {"operations": {
+            f"op{i}": {"__class__": _QB_ARCH + "DragCosinePulse", "amplitude": 0.1}
+            for i in range(4)}}}}}
+        qc, how = chip_qclass(chip, PULSE_CATALOG["GaussianPulse"])
+        assert (qc, how) == ("quam.components.pulses.GaussianPulse", "catalog")
+        # ...while a class the module DOES define keeps the prefix rule.
+        qc, how = chip_qclass(chip, PULSE_CATALOG["DragGaussianPulse"])
+        assert (qc, how) == (_QB_ARCH + "DragGaussianPulse", "prefix")
+
+
+class TestPaddingLengthAlias:
+    BODY = {"__class__": _QB_COMMON + "GaussianFilteredSquarePulse",
+            "pulse_length": 100, "padding_length": 60, "amplitude": 0.05,
+            "gaussian_filter_frequency_mhz": 50.0,
+            "length": "#./inferred_length"}
+
+    def test_not_unmodeled(self):
+        spec, how = infer_spec_ex(self.BODY)
+        assert how == "exact"
+        assert unmodeled_fields(spec, self.BODY) == []
+
+    def test_inferred_length_reads_alias(self):
+        spec = PULSE_CATALOG["GaussianFilteredSquarePulse"]
+        assert resolve_length(spec, self.BODY) == 160  # ceil((100+60)/4)*4
+        assert inferred_length("GaussianFilteredSymmetricBipolarPulse",
+                               {"pulse_length": 100, "padding_length": 60}) == 160
+
+    def test_canonical_name_still_wins(self):
+        assert inferred_length("GaussianFilteredSquarePulse",
+                               {"pulse_length": 100,
+                                "post_zero_padding_length": 20,
+                                "padding_length": 999}) == 120
+
+    def test_spec_param_lookup_matches_alias(self):
+        spec = PULSE_CATALOG["GaussianFilteredSquarePulse"]
+        p = spec.param("padding_length")
+        assert p is not None and p.name == "post_zero_padding_length"
+
+
+class TestPulseHomesInSync:
+    def test_generator_scripts_share_the_home_list(self):
+        # The catalog's registered homes, run_build's import resolver, the
+        # capability probe, and the golden dump script must agree on where
+        # pulse classes live — a drift re-opens the silent-degrade bug.
+        import quam_state_manager.generator.probe_capabilities as probe
+        import quam_state_manager.generator.run_build as run_build
+        import quam_state_manager.generator.run_waveform_golden as golden
+        assert tuple(probe._PULSE_HOMES) == run_build._PULSE_HOMES
+        assert golden._PULSE_HOMES == run_build._PULSE_HOMES
+        from quam_state_manager.core.pulse_catalog import _QB_ARCH, _QB_COMMON
+        assert _QB_ARCH.rstrip(".") in run_build._PULSE_HOMES
+        assert _QB_COMMON.rstrip(".") in run_build._PULSE_HOMES
