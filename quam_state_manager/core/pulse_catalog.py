@@ -67,6 +67,12 @@ class ParamSpec:
     required: bool = False
     synth: bool = True
     doc: str = ""
+    # Other field names QM stacks have stored this SAME parameter under
+    # (e.g. quam_builder 0.4.0 renamed the GaussianFiltered* classes'
+    # post_zero_padding_length to padding_length). Alias values are read
+    # into this param by synthesis / inferred-length math and never count
+    # as unmodeled fields.
+    aliases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -99,7 +105,7 @@ class PulseSpec:
 
     def param(self, name: str) -> ParamSpec | None:
         for p in self.params:
-            if p.name == name:
+            if p.name == name or name in p.aliases:
                 return p
         return None
 
@@ -112,8 +118,10 @@ class PulseSpec:
 # Shared param fragments
 # ---------------------------------------------------------------------------
 
-def _p(name, label, kind, default=None, unit="", required=False, synth=True, doc=""):
-    return ParamSpec(name, label, kind, default, unit, required, synth, doc)
+def _p(name, label, kind, default=None, unit="", required=False, synth=True,
+       doc="", aliases=()):
+    return ParamSpec(name, label, kind, default, unit, required, synth, doc,
+                     aliases)
 
 
 _LENGTH = _p("length", "Length", "int", 100, unit="ns", required=True)
@@ -318,7 +326,9 @@ _SPECS: tuple[PulseSpec, ...] = (
         iq="optional", readout=False, channels=("z",),
         params=(
             _p("pulse_length", "Core length", "int", 100, unit="ns", required=True),
-            _p("post_zero_padding_length", "Post zero padding", "int", 0, unit="ns"),
+            _p("post_zero_padding_length", "Post zero padding", "int", 0, unit="ns",
+               aliases=("padding_length",),
+               doc="quam_builder >=0.4 stores this as padding_length"),
             _p("amplitude", "Amplitude", "float", 0.05, unit="V", required=True),
             _p("gaussian_filter_frequency_mhz", "Filter freq", "float", 50.0,
                unit="MHz", required=True),
@@ -336,7 +346,9 @@ _SPECS: tuple[PulseSpec, ...] = (
         params=(
             _p("pulse_length", "Core length", "int", 100, unit="ns", required=True,
                doc="Total of both lobes; must be even"),
-            _p("post_zero_padding_length", "Post zero padding", "int", 0, unit="ns"),
+            _p("post_zero_padding_length", "Post zero padding", "int", 0, unit="ns",
+               aliases=("padding_length",),
+               doc="quam_builder >=0.4 stores this as padding_length"),
             _p("amplitude", "Amplitude", "float", 0.05, unit="V", required=True),
             _p("gaussian_filter_frequency_mhz", "Filter freq", "float", 50.0,
                unit="MHz", required=True),
@@ -398,13 +410,46 @@ _SPECS: tuple[PulseSpec, ...] = (
 
 PULSE_CATALOG: dict[str, PulseSpec] = {spec.key: spec for spec in _SPECS}
 
+# Additional module homes where these classes VERIFIABLY exist with the same
+# waveform semantics — transcribed from the qop37_new env (quam 0.6.0 /
+# quam_builder 0.4.0) and pinned bit-identical against our committed golden
+# (see docs/53_qop37_alignment.md). resolve_qclass treats these paths as
+# exact matches, and chip_qclass only derives a "prefix" write when the
+# target class actually lives under that prefix — a guessed path that no
+# stack can import makes the whole state.json unloadable.
+_QB_ARCH = "quam_builder.architecture.superconducting.components.pulses."
+_QB_COMMON = "quam_builder.common.pulses."
+_EXTRA_HOMES: dict[str, tuple[str, ...]] = {
+    "BlackmanIntegralPulse": (_QB_ARCH,),
+    "DragCosinePulse": (_QB_ARCH,),
+    "DragGaussianPulse": (_QB_ARCH,),
+    "ErfSquarePulse": (_QB_ARCH,),
+    "FlatTopBlackmanPulse": (_QB_ARCH,),
+    "FlatTopTanhPulse": (_QB_ARCH,),
+    "GaussianFilteredSymmetricBipolarPulse": (_QB_ARCH,),
+    "SNZPulse": (_QB_ARCH,),
+    "FlatTopCosinePulse": (_QB_COMMON,),
+    "FlatTopGaussianPulse": (_QB_COMMON,),
+    "GaussianFilteredSquarePulse": (_QB_COMMON,),
+    "GaussianPulse": (_QB_COMMON,),
+}
+
 # Deprecated aliases → successor spec (loadable, never offered for create).
+# quam_builder 0.4.0's Smoothed* classes preserve the OLD centered-padding
+# semantics of our deprecated _-classes bit-for-bit (golden-verified), so
+# they render and synthesize through those specs.
 _QCLASS_ALIASES = {
     _QC + "DragPulse": "DragGaussianPulse",
     _QC + "ConstantReadoutPulse": "SquareReadoutPulse",
+    _QB_ARCH + "DragPulse": "DragGaussianPulse",
+    _QB_ARCH + "SmoothedFlatTopGaussianPulse": "_FlatTopGaussianPulse",
+    _QB_ARCH + "SmoothedCosineBipolarPulse": "_CosineBipolarPulse",
 }
 
 _BY_QCLASS: dict[str, PulseSpec] = {spec.qclass: spec for spec in _SPECS}
+_BY_QCLASS.update({prefix + key: PULSE_CATALOG[key]
+                   for key, prefixes in _EXTRA_HOMES.items()
+                   for prefix in prefixes})
 
 # Leaf-name form of the deprecated aliases — QM stacks churn module homes
 # (quam.components.pulses.X → quam_builder.….pulses.X); the class *name* is
@@ -497,6 +542,8 @@ def unmodeled_fields(spec: PulseSpec | None, body: Any) -> list[str]:
     if spec is None or not isinstance(body, dict):
         return []
     known = {p.name for p in spec.params} | {"__class__", "length"}
+    for p in spec.params:
+        known.update(p.aliases)
     return sorted(k for k in body if k not in known)
 
 
@@ -577,8 +624,16 @@ def chip_qclass(merged: Any, spec: PulseSpec) -> tuple[str, str]:
             prefixes.append(prefix + ".")
     if prefixes:
         ranked = sorted(Counter(prefixes).items(), key=lambda kv: (-kv[1], kv[0]))
-        if ranked[0][1] * 2 > len(prefixes):  # strict majority, else no evidence
-            return ranked[0][0] + spec.key, "prefix"
+        candidate = ranked[0][0] + spec.key
+        # Strict majority AND the candidate must be a KNOWN home of this
+        # class — QM stacks scatter classes across modules (quam_builder's
+        # architecture package has SNZPulse but no GaussianPulse), and a
+        # guessed path that no stack defines makes Quam.load fail on the
+        # whole file. No known home ⇒ the catalog path (always importable
+        # somewhere) + the editable create-form field for the rest.
+        if (ranked[0][1] * 2 > len(prefixes)
+                and candidate in _BY_QCLASS):
+            return candidate, "prefix"
 
     return spec.qclass, "catalog"
 
@@ -646,10 +701,10 @@ def inferred_length(spec_key: str, params: dict[str, Any]) -> int | None:
             )
         if spec_key in ("GaussianFilteredSquarePulse",
                         "GaussianFilteredSymmetricBipolarPulse"):
-            return _ceil4(
-                int(params["pulse_length"])
-                + int(params.get("post_zero_padding_length", 0) or 0)
-            )
+            pad = params.get("post_zero_padding_length")
+            if pad is None:  # quam_builder >=0.4 field name
+                pad = params.get("padding_length", 0)
+            return _ceil4(int(params["pulse_length"]) + int(pad or 0))
         if spec_key in ("_FlatTopGaussianPulse", "_CosineBipolarPulse"):
             return _ceil4(
                 int(params["flat_length"])

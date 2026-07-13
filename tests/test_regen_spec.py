@@ -54,6 +54,24 @@ def test_twpa_lines_extracted_and_buildable():
     assert config_generator.validate_spec(rec.spec) == []   # string-id TWPAs accepted
 
 
+def test_twpa_short_line_keys_accepted():
+    # quam_builder 0.4.0 / qualang_tools 0.22 write the TWPA pump under the
+    # SHORT key "p" (isolation under "i") — same convention as qubit rr/xy/z.
+    # A chip built by that stack must not lose its TWPA on re-generate.
+    state = {"qubits": {"q1": {}}, "twpas": {"twpa1": {"pump": {}}}}
+    wiring = {"network": {"host": "1.2.3.4", "cluster_name": "C"}, "wiring": {
+        "qubits": {"q1": {"rr": {"opx_output": "#/ports/mw_outputs/con1/1/1",
+                                 "opx_input": "#/ports/mw_inputs/con1/1/1"}}},
+        "twpas": {"twpa1": {"p": {"opx_output": "#/ports/mw_outputs/con1/1/4"},
+                            "i": {"opx_output": "#/ports/mw_outputs/con1/1/5"}}}}}
+    rec = reconstruct_spec(state, wiring)
+    assert rec.spec["twpas"] == ["twpa1"]
+    pump = [ln for ln in rec.spec["lines"] if ln["line"] == "twpa_pump"]
+    iso = [ln for ln in rec.spec["lines"] if ln["line"] == "twpa_isolation"]
+    assert len(pump) == 1 and pump[0]["channel"]["out_port"] == 4
+    assert len(iso) == 1 and iso[0]["channel"]["out_port"] == 5
+
+
 def test_reconstructs_structure():
     state, wiring = _tiny()
     r = reconstruct_spec(state, wiring)

@@ -363,3 +363,25 @@ class TestDecimate:
         values = list(np.sin(np.linspace(0, 30, 5000)))
         xs, _, _ = decimate_minmax(values, 100)
         assert xs == sorted(xs)
+
+
+class TestPaddingLengthAliasSynth:
+    def test_gf_padding_length_synthesizes_correct_length(self):
+        # quam_builder 0.4.0 field name; identical math (golden-verified).
+        p = synthesize("GaussianFilteredSquarePulse",
+                       {"pulse_length": 100, "padding_length": 60,
+                        "amplitude": 0.05, "gaussian_filter_frequency_mhz": 50.0})
+        assert p["ok"], p["error"]
+        assert p["length"] == 160          # ceil((100+60)/4)*4 — not 100
+        assert p["unmodeled_fields"] == [] # alias is modeled, not flagged
+        assert p["warnings"] == []
+
+    def test_gf_both_names_agree(self):
+        old = synthesize("GaussianFilteredSquarePulse",
+                         {"pulse_length": 100, "post_zero_padding_length": 16,
+                          "amplitude": 0.05, "gaussian_filter_frequency_mhz": 50.0})
+        new = synthesize("GaussianFilteredSquarePulse",
+                         {"pulse_length": 100, "padding_length": 16,
+                          "amplitude": 0.05, "gaussian_filter_frequency_mhz": 50.0})
+        assert old["ok"] and new["ok"]
+        assert old["i"] == new["i"] and old["length"] == new["length"]

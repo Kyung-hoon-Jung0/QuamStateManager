@@ -2773,14 +2773,13 @@ _PARAMETRIC_CZ_QCLASS = (
 )
 
 
-def _parametric_cz_qclass(store) -> str:
-    """The ParametricCZGate ``__class__`` to write on THIS chip.
+def _parametric_cz_evidence(store) -> str | None:
+    """An existing ParametricCZGate macro ``__class__`` on this chip, or None.
 
-    Reuse an existing macro's class string verbatim when one names a
-    ParametricCZGate (majority, tie → lexicographic) — evidence beats
-    guessing. Otherwise keep the literal: real chips rarely carry macro
-    ``__class__`` markers at all, and gate classes live in a different
-    package family than pulses, so no prefix heuristic is safe here.
+    Reuses the exact string verbatim (majority, tie → lexicographic) —
+    evidence beats guessing. Real chips rarely carry macro ``__class__``
+    markers at all, and gate classes live in a different package family
+    than pulses, so no prefix heuristic is safe here.
     """
     merged = getattr(store, "merged", None)
     pairs = merged.get("qubit_pairs") if isinstance(merged, dict) else None
@@ -2797,7 +2796,12 @@ def _parametric_cz_qclass(store) -> str:
     if found:
         ranked = sorted(Counter(found).items(), key=lambda kv: (-kv[1], kv[0]))
         return ranked[0][0]
-    return _PARAMETRIC_CZ_QCLASS
+    return None
+
+
+def _parametric_cz_qclass(store) -> str:
+    """The ParametricCZGate ``__class__`` to write on THIS chip."""
+    return _parametric_cz_evidence(store) or _PARAMETRIC_CZ_QCLASS
 
 
 def _build_gate_template(gate_type: str, fields: dict[str, Any], *,
@@ -2865,14 +2869,23 @@ def pair_gate_form(name: str):
     if pair_obj is None:
         return render_template("_status.html", message=f"Unknown pair: {name}", level="error"), 404
     existing_gates = sorted((pair_obj.get("macros") or {}).keys())
+    # cz_parametric writes a ParametricCZGate __class__. quam_builder 0.4.0
+    # removed that class entirely — a chip carrying it becomes unloadable on
+    # that stack. Offer the option only when the chip itself already proves
+    # the class exists (an existing ParametricCZGate macro to copy the exact
+    # path from); otherwise drop it rather than corrupt the file.
+    gate_types = _GATE_TYPES
+    if _parametric_cz_evidence(store) is None:
+        gate_types = {k: v for k, v in _GATE_TYPES.items() if k != "cz_parametric"}
+    parametric_qclass = _parametric_cz_qclass(store)
     return render_template(
         "_pair_add_gate.html",
         pair_name=name,
-        gate_types=_GATE_TYPES,
+        gate_types=gate_types,
         existing_gates=existing_gates,
         # The JSON preview in the form must show the class the SERVER will
         # write (chip-derived when possible), not a duplicated literal.
-        parametric_qclass=_parametric_cz_qclass(store),
+        parametric_qclass=parametric_qclass,
     )
 
 
@@ -2905,6 +2918,19 @@ def pair_add_gate(name: str):
         return render_template(
             "_status.html",
             message=f"Gate {gate_name!r} already exists on this pair. Pick a different name.",
+            level="error",
+        ), 409
+    # Server-side twin of the form gating: without on-chip evidence that
+    # ParametricCZGate exists in this chip's stack, refuse to write a class
+    # path that may make the whole file unloadable (quam_builder 0.4.0
+    # removed the class).
+    if gate_type == "cz_parametric" and _parametric_cz_evidence(store) is None:
+        return render_template(
+            "_status.html",
+            message=("cz_parametric is unavailable: this chip carries no "
+                     "ParametricCZGate macro to copy the class path from, and "
+                     "recent quam-builder releases removed the class — a "
+                     "guessed path would make state.json unloadable."),
             level="error",
         ), 409
 

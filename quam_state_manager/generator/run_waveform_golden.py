@@ -67,12 +67,59 @@ def _materialize_length(pulse) -> int | None:
     return None
 
 
+# Module homes QM stacks have shipped pulse classes in, tried in order —
+# quam 0.6.0 / quam_builder 0.4.0 moved SNZPulse, ErfSquarePulse and the
+# GaussianFiltered* classes out of quam.components.pulses (mirrors
+# run_build._PULSE_HOMES).
+_PULSE_HOMES = (
+    "quam.components.pulses",
+    "quam_builder.architecture.superconducting.components.pulses",
+    "quam_builder.common.pulses",
+)
+
+
+def _resolve_class(key: str):
+    import importlib
+
+    for mod_name in _PULSE_HOMES:
+        try:
+            mod = importlib.import_module(mod_name)
+        except ImportError:
+            continue
+        cls = getattr(mod, key, None)
+        if cls is not None:
+            return cls
+    raise AttributeError(f"{key} not found in any of {_PULSE_HOMES}")
+
+
+def _adapt_params(cls, params: dict) -> dict:
+    """Rename kwargs to the installed class's field names.
+
+    quam_builder 0.4.0 renamed the GaussianFiltered* classes'
+    ``post_zero_padding_length`` to ``padding_length`` (same math — verified
+    bit-identical), and quam 0.6.0 dropped ``sigma`` from
+    ``_FlatTopGaussianPulse`` (it was already ignored by qualang_tools).
+    """
+    import dataclasses
+
+    try:
+        fields = {f.name for f in dataclasses.fields(cls)}
+    except TypeError:
+        return params
+    out = dict(params)
+    if ("post_zero_padding_length" in out and "post_zero_padding_length" not in fields
+            and "padding_length" in fields):
+        out["padding_length"] = out.pop("post_zero_padding_length")
+    if "sigma" in out and "sigma" not in fields:
+        out.pop("sigma")
+    return out
+
+
 def run(out_dir: Path) -> int:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
     from waveform_matrix import CASES  # noqa: E402
 
     import quam
-    import quam.components.pulses as qpulses
 
     try:
         import qualang_tools
@@ -96,7 +143,8 @@ def run(out_dir: Path) -> int:
         case_id, key, params = case["id"], case["key"], dict(case["params"])
         entry: dict = {"key": key}
         try:
-            cls = getattr(qpulses, key)
+            cls = _resolve_class(key)
+            params = _adapt_params(cls, params)
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", DeprecationWarning)
                 pulse = cls(**params)

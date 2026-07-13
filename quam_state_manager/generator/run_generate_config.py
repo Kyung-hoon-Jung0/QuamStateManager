@@ -68,12 +68,18 @@ def _load_machine(state_folder: Path):
     except Exception as exc:  # noqa: BLE001 — collected and reported below
         errors.append(f"__class__ load failed with {type(exc).__name__}: {exc}")
 
-    # 2./3. Legacy module layouts.
+    # 2./3. Known module layouts, oldest first — then the qpu PACKAGE-attr
+    # form, which resolves across every quam_builder layout so far (0.4.0
+    # renamed the leaf modules to flux_tunable_quam / fixed_frequency_quam,
+    # killing the two literal paths below for legacy-marker chips; the
+    # package itself re-exports both classes on all releases we've probed).
     for module_name, cls_name in (
         ("quam_builder.architecture.superconducting.qpu.flux_tunable",
          "FluxTunableQuam"),
         ("quam_builder.architecture.superconducting.qpu.fixed_frequency",
          "FixedFrequencyQuam"),
+        ("quam_builder.architecture.superconducting.qpu", "FluxTunableQuam"),
+        ("quam_builder.architecture.superconducting.qpu", "FixedFrequencyQuam"),
     ):
         try:
             machine_cls = getattr(importlib.import_module(module_name), cls_name)

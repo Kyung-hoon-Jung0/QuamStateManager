@@ -1013,9 +1013,12 @@ class TestCreateChipQclass:
         assert peek["values"][f"{XY}.sat2.__class__"] \
             == "newstack.pulses.SquarePulse"
 
-    def test_create_on_foreign_chip_derives_prefix_for_new_class(self, foreign_client):
-        # No GaussianPulse exists on the chip — the dominant prefix of the
-        # chip's catalog-recognized pulses must be used, never the catalog's.
+    def test_create_unhomed_prefix_falls_back_to_catalog(self, foreign_client):
+        # No GaussianPulse exists on the chip, and "newstack.pulses." is not
+        # a REGISTERED home of the class — writing the guessed prefix would
+        # risk an unloadable state.json (docs/53: quam_builder scatters
+        # classes across modules), so the catalog path wins; the create
+        # form's editable class field covers genuinely foreign stacks.
         resp = foreign_client.post("/api/pulse/create", data={
             "target_kind": "qubit", "qubit": "qA1", "channel": "xy",
             "op_name": "gauss1", "pulse_type": "GaussianPulse",
@@ -1025,7 +1028,7 @@ class TestCreateChipQclass:
         peek = foreign_client.get(
             f"/field/peek?dot_path={XY}.gauss1.__class__").get_json()
         assert peek["values"][f"{XY}.gauss1.__class__"] \
-            == "newstack.pulses.GaussianPulse"
+            == "quam.components.pulses.GaussianPulse"
 
     def test_create_on_stock_chip_unchanged(self, loaded_client):
         resp = loaded_client.post("/api/pulse/create", data={

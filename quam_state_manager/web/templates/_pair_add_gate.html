@@ -108,6 +108,7 @@
                 phase_shift_target: vals.phase_shift_target,
             };
         }
+        {% if "cz_parametric" in gate_types %}
         if (type === "cz_parametric") {
             return {
                 {# the class the SERVER will write (chip-derived when possible) —
@@ -121,6 +122,7 @@
                 phase_shift_target: vals.phase_shift_target,
             };
         }
+        {% endif %}
         return {};
     }
 

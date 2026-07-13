@@ -573,7 +573,18 @@ def synthesize(qclass_or_key: str, params: dict[str, Any], *,
             "preview): " + ", ".join(unmodeled))
 
     for p in spec.params:
-        value = params.get(p.name, p.default if not p.required else None)
+        if p.name in params:
+            value = params[p.name]
+        else:
+            # renamed-field aliases (e.g. quam_builder 0.4.0 stores the
+            # GaussianFiltered* padding as padding_length) — normalized
+            # onto the canonical name so the raw synth funcs see one name
+            for alias in p.aliases:
+                if alias in params:
+                    value = params[alias]
+                    break
+            else:
+                value = p.default if not p.required else None
         if isinstance(value, str) and value.startswith(("#/", "#./", "#../")):
             if p.synth:
                 param_errors[p.name] = f"unresolved pointer {value!r}"
