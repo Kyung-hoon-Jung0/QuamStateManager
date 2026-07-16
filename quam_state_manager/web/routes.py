@@ -6684,6 +6684,29 @@ def browse_directory():
         "parent": parent_str,
         **({"missing": missing} if missing else {}),
     }
+
+    # kind=dataset (the Dataset-load / workspace-add pickers): mark which
+    # children are dataset RUN folders (node.json / data.json — the same
+    # markers core/dataset.py discovers on) so the dialog highlights the
+    # folders the user is actually hunting, not quam_state ones. One cheap
+    # stat pair per shown child, computed only when asked for.
+    if request.args.get("kind") == "dataset":
+        ds_dirs = []
+        for c in payload["dirs"]:
+            try:
+                cp = Path(c)
+                if (cp / "node.json").is_file() or (cp / "data.json").is_file():
+                    ds_dirs.append(c)
+            except OSError:
+                continue
+        payload["dataset_dirs"] = ds_dirs
+        try:
+            payload["has_dataset"] = (
+                (p / "node.json").is_file() or (p / "data.json").is_file()
+            )
+        except OSError:
+            payload["has_dataset"] = False
+
     if err:
         payload["error"] = err
     return jsonify(payload)

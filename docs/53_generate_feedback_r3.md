@@ -253,3 +253,41 @@ semantics: a dead path lands at its nearest existing folder with a
 an explicit `/` root crumb; bare `D:` normalizes to `D:\` (CWD-relative
 footgun). Pinned by the browse-route ancestor-walk suite + selfcheck
 G6–G8.
+
+---
+
+# r5 — dataset-aware picker · statistical trends · global UI scale · multi-select compare
+
+Fourth feedback round (2026-07-17), built in the isolated worktree. **Held
+off main pending the maintainer's browser verification.**
+
+**Dataset-aware folder picker.** The Dataset Load picker passes
+`kind=dataset`; `/browse` then marks children carrying `node.json` /
+`data.json` (`dataset_dirs` + `has_dataset`) and the dialog highlights
+those (green `is-dataset`) instead of `quam_state` folders — each picker
+now highlights what its caller is hunting.
+
+**Statistical trend layer.** `rollingStats` + `trendStatTraces` (app.js):
+a centered moving-average line with a shaded ±σ band (window auto-scales,
+n≥5), color-derived fill, one legend entry, hover-silent band edges — on
+the Param History drawer chart AND the /trends mini charts. Band traces
+render first (beneath the data, and they pin the category-axis order).
+
+**Global UI scale (readability, the critical one).** Settings gains
+"UI scale" (A− / % / A+): CSS `zoom` on `<html>`, 80–150% in 10% steps,
+persisted (`quam_ui_scale`) and applied **pre-paint** by the head inline
+script — the pragmatic whole-app control given ~100 hardcoded px font
+sizes that the rem-based S/M/L setting never touched (that setting now
+also applies pre-paint; its active-state selector was over-broad and
+would have lit unrelated buttons). Plus: dark-mode muted text brightened
+(#9aa0a6 → #b3bac2), Generate band titles brighter/bolder with stronger
+hairlines.
+
+**Sidebar multi-select → compare.** File-manager convention instead of
+drag-rubber-band (finicky in a scrolling tree): SHIFT-click a compare
+checkbox to select the whole range since the last click; the Compare /
+Trend buttons echo the live count, a Clear chip appears, and checked rows
+tint. Delegated on document, so htmx tree re-renders keep the behavior.
+
+Tests: `ui_readability_selfcheck.cjs` R1–R5 + wrapper; `TestDatasetKind`
+in the browse-route suite.

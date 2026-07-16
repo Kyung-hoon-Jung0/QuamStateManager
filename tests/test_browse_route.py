@@ -165,3 +165,37 @@ class TestAncestorWalkAndCompletion:
         body = r.get_json()
         assert body["dirs"] == []
         assert body["missing"] == "Z:/totally/bogus"
+
+
+class TestDatasetKind:
+    """kind=dataset (Dataset Load picker): children carrying node.json /
+    data.json are marked so the dialog highlights dataset runs instead of
+    quam_state folders."""
+
+    def test_marks_dataset_children(self, client, tmp_path):
+        run1 = tmp_path / "#1_res_spec_101010"
+        run1.mkdir()
+        (run1 / "node.json").write_text("{}")
+        run2 = tmp_path / "#2_rabi_111111"
+        run2.mkdir()
+        (run2 / "data.json").write_text("{}")
+        (tmp_path / "plain").mkdir()
+        r = client.get("/browse", query_string={"path": str(tmp_path),
+                                                "kind": "dataset"})
+        body = r.get_json()
+        assert sorted(body["dataset_dirs"]) == sorted([str(run1), str(run2)])
+        assert str(tmp_path / "plain") not in body["dataset_dirs"]
+        assert body["has_dataset"] is False   # the parent itself has no markers
+
+    def test_current_folder_marker(self, client, tmp_path):
+        (tmp_path / "node.json").write_text("{}")
+        r = client.get("/browse", query_string={"path": str(tmp_path),
+                                                "kind": "dataset"})
+        assert r.get_json()["has_dataset"] is True
+
+    def test_no_kind_no_dataset_fields(self, client, tmp_path):
+        run1 = tmp_path / "run"
+        run1.mkdir()
+        (run1 / "node.json").write_text("{}")
+        body = client.get("/browse", query_string={"path": str(tmp_path)}).get_json()
+        assert "dataset_dirs" not in body and "has_dataset" not in body
