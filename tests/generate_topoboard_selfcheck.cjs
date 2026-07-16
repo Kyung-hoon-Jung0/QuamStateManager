@@ -62,14 +62,12 @@ function stone(win, qid) {
   G.state.spec.qubit_pairs = [];   // start from a clean slate (count auto-chains)
   G.state.pairsTouched = true;
 
-  // Open the topology board.
-  const details = win.document.getElementById('gen-topo');
-  details.open = true;
-  details.dispatchEvent(new win.Event('toggle'));
-
-  // The board rendered a grid; default zone is near-square for 6 qubits.
+  // The board is ALWAYS visible now (step-4 redesign removed the <details>
+  // collapse) — the grid must already be rendered by the count change alone.
+  ok(win.document.getElementById('gen-topo').tagName === 'DIV',
+     'board wrapper is a plain div (no collapse)');
   const grid = win.document.querySelector('.gen-topo-grid');
-  ok(!!grid, 'board grid rendered');
+  ok(!!grid, 'board grid rendered without any open/toggle');
   const z = win.WiringGrid.zone();
   ok(z.cols >= 3 && z.rows >= 3, 'default zone holds 6 qubits (' + z.cols + 'x' + z.rows + ')');
 
@@ -128,7 +126,7 @@ function stone(win, qid) {
   function freshChip() {
     const w = makeWorld(); const g = w.QuamGen; g.init(); g.goToStep(4);
     setInput(w, 'gen-qubit-count', '6');
-    const d = w.document.getElementById('gen-topo'); d.open = true; d.dispatchEvent(new w.Event('toggle'));
+    // (board is always visible — no details to open)
     return w;
   }
   const QS = ['q1', 'q2', 'q3', 'q4', 'q5', 'q6'];

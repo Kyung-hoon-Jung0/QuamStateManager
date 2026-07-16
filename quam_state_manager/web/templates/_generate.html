@@ -106,45 +106,70 @@
     <section class="gen-panel" data-step="4">
       <h3>Qubits, Pairs &amp; TWPAs</h3>
 
-      <div class="gen-subsection" id="gen-chip-arch-section">
-        <h4>Chip architecture</h4>
-        <p class="muted">Declare the qubit + coupler type first &mdash; it sets the
-          qubit flux lines and the 2-qubit gate below. A tunable coupler requires
-          flux-tunable qubits; a fixed-frequency chip uses cross-resonance.</p>
-        <label class="gen-chassis-count-field">
-          Architecture:
-          <select id="gen-chip-arch">
-            <option value="flux_tunable_coupler">Flux-tunable qubits + tunable coupler &mdash; CZ via coupler</option>
-            <option value="flux_tunable_fixed_coupler">Flux-tunable qubits + fixed coupler &mdash; CZ via qubit z</option>
-            <option value="fixed_frequency">Fixed-frequency qubits &mdash; cross-resonance (MW-only)</option>
-          </select>
-        </label>
-        <p class="muted" id="gen-chip-arch-note"></p>
-      </div>
+      {# ---- DEFINE band: everything that parameterizes the chip, in compact
+         rows. No collapsibles — naming is always visible (customer feedback:
+         essential controls must never hide behind a closed panel). #}
+      <div class="gen-band" id="gen-chip-arch-section">
+        <div class="gen-define-row">
+          <label class="gen-chassis-count-field">
+            Architecture:
+            <select id="gen-chip-arch">
+              <option value="flux_tunable_coupler">Flux-tunable qubits + tunable coupler &mdash; CZ via coupler</option>
+              <option value="flux_tunable_fixed_coupler">Flux-tunable qubits + fixed coupler &mdash; CZ via qubit z</option>
+              <option value="fixed_frequency">Fixed-frequency qubits &mdash; cross-resonance (MW-only)</option>
+            </select>
+          </label>
+          <label class="gen-chassis-count-field">
+            Qubits:
+            <input type="number" id="gen-qubit-count" min="0" max="200" value="0">
+          </label>
+          <label class="gen-chassis-count-field"
+                 title="Readout is multiplexed — qubits on one feedline share a single RF input + output pair. 6 is typical (one MW-FEM per feedline).">
+            Per feedline:
+            <input type="number" id="gen-mux-size" min="1" max="16" value="6">
+          </label>
+        </div>
+        <p class="muted gen-oneline" id="gen-chip-arch-note"></p>
+        <p class="muted gen-oneline" id="gen-qubit-summary">No qubits &mdash; set the count.</p>
 
-      <div class="gen-subsection">
-        <h4>Qubits</h4>
-        <label class="gen-chassis-count-field">
-          Number of qubits:
-          <input type="number" id="gen-qubit-count" min="0" max="200" value="0">
-        </label>
-        <label class="gen-chassis-count-field">
-          Qubits per readout feedline:
-          <input type="number" id="gen-mux-size" min="1" max="16" value="6">
-        </label>
-        <p class="muted">Readout is multiplexed &mdash; qubits on one feedline
-          share a single RF input + output pair. 6 is typical (one MW-FEM per
-          feedline).</p>
-        <p class="muted" id="gen-qubit-summary">No qubits yet.</p>
+        {# Read-only confirmation — control lines are DERIVED from the
+           architecture (single source of truth); the controls are disabled on
+           purpose and labeled as confirmation so users know why they're shown. #}
+        <div class="gen-line-confirm" id="gen-line-types">
+          <span class="muted gen-line-confirm-why"
+                title="Derived from the Architecture above — change the architecture to change these.">
+            For confirmation &mdash; control lines this architecture wires:</span>
+          <span class="gen-line-toggle gen-line-auto" id="gen-line-resonator-drive"
+                title="Automatically enabled when MW-FEM or OPX+ is present">
+            <span class="gen-line-indicator" id="gen-rd-indicator">&#x2713;</span>
+            <span>Readout + XY drive</span>
+            <span class="muted gen-line-hw-note" id="gen-line-mw-note">(auto)</span>
+          </span>
+          <label class="gen-line-toggle" id="gen-line-qubit-flux"
+                 title="Derived from the architecture — flux-tunable chips get z lines (needs LF-FEM or OPX+)">
+            <input type="checkbox" id="gen-chk-qubit-flux" checked disabled>
+            <span>Qubit flux (z)</span>
+            <span class="muted gen-line-hw-note" id="gen-line-lf-note"></span>
+          </label>
+          <label class="gen-line-toggle" id="gen-line-pair-gate"
+                 title="Derived from the architecture — the 2-qubit gate seeded on every pair">
+            <span>Gate</span>
+            <select id="gen-pair-gate" disabled>
+              <option value="cz_tunable">CZ &mdash; tunable coupler</option>
+              <option value="cz_fixed">CZ &mdash; fixed coupler</option>
+              <option value="cr">Cross-resonance (CR)</option>
+            </select>
+            <span class="muted gen-line-hw-note" id="gen-pair-gate-note"></span>
+          </label>
+        </div>
 
         {# Naming scheme: presets (q1…, q0…, board-derived grid letters, custom
-           prefix) + per-qubit inline rename. Renames remap populate values,
-           pairs and TWPA lists in one pass (applyQubitIdMap); hidden in
-           regenerate mode (names come from the source chip). #}
-        <details id="gen-naming" class="gen-naming">
-          <summary class="gen-topo-summary">Qubit naming
-            <span class="muted" id="gen-naming-caption"></span></summary>
+           prefix) + per-qubit inline rename — always visible. Renames remap
+           populate values, pairs and TWPA lists in one pass (applyQubitIdMap);
+           hidden in regenerate mode (names come from the source chip). #}
+        <div id="gen-naming" class="gen-naming">
           <div class="gen-naming-controls">
+            <span class="gen-band-sublabel">Qubit naming</span>
             <label>Scheme
               <select id="gen-naming-preset">
                 <option value="one_based">q1, q2, q3, &hellip;</option>
@@ -160,79 +185,60 @@
             <button type="button" class="outline btn-sm" id="gen-naming-apply"
                     title="Rename every qubit to the scheme (values move with each qubit)">
               Apply names</button>
+            <span class="muted" id="gen-naming-caption" hidden></span>
           </div>
-          <p class="muted" id="gen-naming-note"></p>
+          <p class="muted gen-oneline" id="gen-naming-note"></p>
           <div id="gen-qubit-name-list" class="gen-qubit-name-list"></div>
-        </details>
+        </div>
       </div>
 
-      <div class="gen-subsection">
-        <h4>Qubit pairs <span class="muted">&mdash; coupled qubits</span></h4>
-        {# Visual chip-topology board: place qubits on the grid + draw arbitrary
-           edges (ring / star / heavy-hex), not just grid adjacency. Writes
-           grid_location + qubit_pairs; the dropdown list below stays in sync as a
-           keyboard / large-chip fallback. #}
-        <details id="gen-topo" class="gen-topo">
-          <summary class="gen-topo-summary">Chip board <span class="muted" id="gen-topo-caption"></span></summary>
-          <div class="gen-topo-controls">
-            <label>Grid <input type="number" id="gen-topo-cols" min="1" max="20" class="gen-topo-dim"> &times;
-              <input type="number" id="gen-topo-rows" min="1" max="20" class="gen-topo-dim"></label>
-            <span class="gen-topo-presets">
-              <button type="button" class="outline btn-sm" data-topo-preset="chain" title="Linear chain: q1–q2–…–qN">Chain</button>
-              <button type="button" class="outline btn-sm" data-topo-preset="ring" title="Closed loop: q1–q2–…–qN–q1">Ring</button>
-              <button type="button" class="outline btn-sm" data-topo-preset="star" title="Hub q1 connected to every other qubit">Star</button>
-              <button type="button" class="outline btn-sm" data-topo-preset="grid" title="2-D grid, nearest-neighbour couplings">Grid (NN)</button>
-            </span>
-            <button type="button" class="btn-sm gen-topo-renumber" id="gen-topo-renumber" hidden
-                    title="Close the gaps in qubit ids (q1…qN)">Renumber q1…qN</button>
+      {# ---- LAYOUT band: the interactive chip board (always visible) with the
+         pair list as its textual mirror at its side — edit an edge on the
+         board, watch the row appear. The list doubles as the keyboard /
+         large-chip fallback. #}
+      <div class="gen-band gen-band-layout">
+        <div class="gen-band-head">Chip layout
+          <span class="muted" id="gen-topo-caption"></span>
+          <button type="button" class="btn-sm gen-topo-renumber" id="gen-topo-renumber" hidden
+                  title="Close the gaps in qubit ids">Renumber</button>
+        </div>
+        <div class="gen-topo-controls">
+          <span class="gen-topo-presets">
+            <button type="button" class="outline btn-sm" data-topo-preset="chain" title="Linear chain: q1–q2–…–qN">Chain</button>
+            <button type="button" class="outline btn-sm" data-topo-preset="ring" title="Closed loop: q1–q2–…–qN–q1">Ring</button>
+            <button type="button" class="outline btn-sm" data-topo-preset="star" title="Hub q1 connected to every other qubit">Star</button>
+            <button type="button" class="outline btn-sm" data-topo-preset="grid" title="2-D grid, nearest-neighbour couplings">Grid (NN)</button>
+          </span>
+          <label>Grid <input type="number" id="gen-topo-cols" min="1" max="20" class="gen-topo-dim"> &times;
+            <input type="number" id="gen-topo-rows" min="1" max="20" class="gen-topo-dim"></label>
+        </div>
+        <div class="gen-layout-row">
+          <div id="gen-topo" class="gen-topo">
+            <div id="gen-topo-board" class="gen-topo-board"></div>
+            <p class="gen-topo-status" id="gen-topo-status" aria-live="polite"></p>
+            <p class="muted gen-topo-gestures">Click to place &middot; click two
+              qubits to pair &middot; drag to move &middot; <kbd>Del</kbd> removes
+              &middot; <kbd>Esc</kbd> cancels
+              <span class="gen-info-glyph"
+                    title="Place qubits in order (q1, q2, …) by clicking an empty cell. Pair: click a qubit, then another — the line shows the coupling; for CR the arrow points control→target. Remove a pair by clicking its line. Move a qubit by dragging it. Delete a qubit: select it, then press Delete/Backspace. Esc cancels a half-drawn pair.">&#x24D8;</span></p>
+            <p class="gen-topo-legend" id="gen-topo-legend"></p>
           </div>
-          <ul class="muted gen-topo-hint">
-            <li><strong>Place</strong> qubits in order (q1, q2, …): click an empty cell.</li>
-            <li><strong>Pair</strong>: click a qubit, then another (the line shows the coupling; for CR the arrow points control→target).</li>
-            <li><strong>Remove</strong> a pair: click its line. <strong>Move</strong> a qubit: drag it. <strong>Delete</strong> a qubit: select it, then press Delete/Backspace.</li>
-            <li>Swap a pair's control/target in the list below · <kbd>Esc</kbd> cancels a half-drawn pair.</li>
-          </ul>
-          <p class="gen-topo-legend" id="gen-topo-legend"></p>
-          <p class="gen-topo-status" id="gen-topo-status" aria-live="polite"></p>
-          <div id="gen-topo-board" class="gen-topo-board"></div>
-        </details>
-        <div id="gen-pair-list" class="gen-pair-list"></div>
-        <button type="button" class="outline btn-sm" id="gen-add-pair">
-          + Add pair</button>
+          <div class="gen-pairs-rail">
+            <div class="gen-pairs-rail-head">
+              <span class="gen-band-sublabel">Pairs</span>
+              <button type="button" class="outline btn-sm" id="gen-add-pair">+ Add pair</button>
+            </div>
+            <div id="gen-pair-list" class="gen-pair-list"></div>
+          </div>
+        </div>
       </div>
 
-      <div class="gen-subsection" id="gen-line-types">
-        <h4>Control lines</h4>
-        <p class="muted">Which control lines each qubit gets. MW-FEM enables
-          resonator + XY drive; LF-FEM enables flux lines. Disable what your
-          setup doesn't use.</p>
-        <span class="gen-line-toggle gen-line-auto" id="gen-line-resonator-drive"
-              title="Automatically enabled when MW-FEM or OPX+ is present">
-          <span class="gen-line-indicator" id="gen-rd-indicator">&#x2713;</span>
-          <span>Resonator + XY drive</span>
-          <span class="muted gen-line-hw-note" id="gen-line-mw-note">(auto)</span>
-        </span>
-        <label class="gen-line-toggle" id="gen-line-qubit-flux">
-          <input type="checkbox" id="gen-chk-qubit-flux" checked>
-          <span>Qubit flux (z) lines</span>
-          <span class="muted gen-line-hw-note" id="gen-line-lf-note">(requires LF-FEM or OPX+)</span>
-        </label>
-        <label class="gen-line-toggle" id="gen-line-pair-gate">
-          <span>2-qubit gate</span>
-          <select id="gen-pair-gate">
-            <option value="cz_tunable">CZ &mdash; tunable coupler</option>
-            <option value="cz_fixed">CZ &mdash; fixed coupler</option>
-            <option value="cr">Cross-resonance (CR)</option>
-          </select>
-          <span class="muted gen-line-hw-note" id="gen-pair-gate-note">(applies to the pairs above)</span>
-        </label>
-      </div>
-
-      <div class="gen-subsection">
-        <h4>TWPAs <span class="muted">&mdash; optional</span></h4>
-        <p class="muted">TWPA entries are saved with your spec and will be included
-          automatically once <code>quam_builder</code> adds TWPA wiring support
-          (the current 0.2.0 does not yet generate them).</p>
+      {# ---- TWPA band #}
+      <div class="gen-band">
+        <div class="gen-band-head">TWPAs <span class="muted">&mdash; optional</span></div>
+        <p class="muted gen-oneline"
+           title="TWPA entries are saved with your spec and will be included automatically once quam_builder adds TWPA wiring support (the current 0.2.0 does not yet generate them).">
+          Saved with the spec &mdash; generated once quam_builder supports TWPA wiring.</p>
         <div id="gen-twpa-list" class="gen-twpa-list"></div>
         <button type="button" class="outline btn-sm" id="gen-add-twpa">
           + Add TWPA</button>

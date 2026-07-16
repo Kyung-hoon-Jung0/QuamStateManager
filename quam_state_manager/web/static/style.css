@@ -6235,10 +6235,58 @@ table.gen-wiring tbody tr.pinned {
     padding: 0.05rem 0.3rem; height: auto; min-height: 0; box-sizing: content-box;
     font-family: var(--font-mono); font-size: 12.5px; text-align: center;
 }
+/* ---- Step-4 flow bands (readability redesign): DEFINE → LAYOUT → TWPAs.
+   Hairline-separated sections, no collapsibles — the board, naming and pair
+   list are always visible (customer feedback). ---- */
+.gen-band { border-top: 1px solid var(--pico-muted-border-color); padding: 0.6rem 0 0.7rem; }
+.gen-band-head {
+    display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap;
+    font-weight: 600; font-size: 13px; margin: 0 0 0.3rem;
+}
+.gen-band-head .muted { font-weight: 400; }
+.gen-band-sublabel { font-weight: 600; font-size: 12.5px; }
+.gen-oneline { margin: 0.15rem 0; font-size: 12.5px; }
+/* DEFINE band: architecture + count + mux inline on one wrapping row */
+.gen-define-row { display: flex; gap: 1.2rem; align-items: center; flex-wrap: wrap; }
+.gen-define-row .gen-chassis-count-field { margin: 0; }
+/* Read-only control-line confirmation (derived from the architecture) */
+.gen-line-confirm {
+    display: flex; gap: 0.9rem; align-items: center; flex-wrap: wrap;
+    margin: 0.35rem 0; font-size: 12.5px;
+}
+.gen-line-confirm .gen-line-toggle { margin: 0; font-size: 12.5px; }
+.gen-line-confirm select { margin: 0; width: auto; padding: 0 1.6rem 0 0.4rem; height: auto; font-size: 12.5px; }
+.gen-line-confirm input[type="checkbox"] { margin: 0; }
+.gen-line-confirm-why { font-style: italic; }
+/* LAYOUT band: board + pairs rail side by side; wraps to stacked when the
+   container is narrow (flex-wrap — house idiom, no media query). */
+.gen-layout-row { display: flex; flex-wrap: wrap; gap: 0.4rem 1.4rem; align-items: flex-start; }
+.gen-layout-row .gen-topo { flex: 1.5 1 420px; min-width: 0; margin: 0; }
+.gen-pairs-rail { flex: 1 1 240px; min-width: 0; max-height: 56vh; overflow: auto; }
+.gen-pairs-rail-head { display: flex; align-items: center; gap: 0.7rem; margin: 0 0 0.3rem; }
+.gen-pairs-rail-head button { margin: 0; }
+/* Board empty state (count 0 — clicks would be inert; say so) */
+.gen-topo-empty { padding: 1.2rem 0.8rem; font-size: 12.5px; color: var(--pico-muted-color); }
+/* Partial placement = exactly what the Next-gate rejects — pre-announce it */
+.gen-topo-caption-warn { color: var(--color-warning-text) !important; }
+/* Condensed gesture line + info glyph (replaces the 4-bullet hint list) */
+.gen-topo-gestures { font-size: 11.5px; margin: 0.15rem 0; }
+.gen-info-glyph { cursor: help; user-select: none; margin-left: 0.25rem; }
+/* Manual orientation pin on a CZ pair row (restrained outline chip) */
+.gen-pair-manual-chip {
+    font-size: 10.5px; padding: 0 0.35rem; border-radius: 8px;
+    border: 1px solid var(--pico-muted-border-color);
+    color: var(--pico-muted-color); line-height: 1.5; user-select: none;
+}
 .gen-topo-summary { cursor: pointer; font-weight: 600; font-size: 13px; }
 .gen-topo-controls { display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; margin: 0.4rem 0 0.2rem; }
+.gen-topo-controls label { display: flex; align-items: center; gap: 0.35rem; margin: 0; }
+/* input. prefix lifts specificity over Pico's input{width:100%} — without it
+   the Grid cols×rows inputs render full-width and stack vertically. */
+input.gen-topo-dim { width: 3.2em; margin: 0; }
 .gen-topo-dim { width: 3.2em; }
 .gen-topo-presets { display: inline-flex; gap: 0.3rem; }
+.gen-topo-presets button { margin: 0; }
 .gen-topo-hint { font-size: 11px; margin: 0.1rem 0 0.3rem; }
 .gen-topo-board { overflow: auto; max-height: 56vh; padding: 4px; }
 .gen-topo-grid { position: relative; }
@@ -6415,11 +6463,25 @@ tr.gen-pop-setall > td {
 .gen-lo-map-summary::marker,
 .gen-pop-topo-summary::marker,
 .gen-pop-wiring-summary::marker { content: ""; }
-/* Also kill Pico's own right-floated summary::after chevron so only our left
-   chevron shows (the far-right arrow the user flagged). */
+/* Replace Pico's faint right-floated chevron with an EXPLICIT Show/Hide pill —
+   customer feedback: the old lone arrow was invisible as a toggle affordance.
+   Pure CSS off the details[open] state, so renderLoMap()/renderPopTopo()
+   rewriting the summary text can't break it. */
 .gen-lo-map-summary::after,
 .gen-pop-topo-summary::after,
-.gen-pop-wiring-summary::after { display: none; }
+.gen-pop-wiring-summary::after {
+    content: "Show";
+    display: inline-block; margin-left: auto; flex: none;
+    background: none; background-image: none; transform: none;
+    width: auto; height: auto;
+    font-size: 0.78em; font-weight: 600; line-height: 1.6;
+    color: var(--color-accent);
+    border: 1px solid var(--pico-muted-border-color);
+    border-radius: 4px; padding: 0 0.5rem;
+}
+.gen-lo-map[open] > .gen-lo-map-summary::after,
+.gen-pop-topo[open] > .gen-pop-topo-summary::after,
+.gen-pop-wiring[open] > .gen-pop-wiring-summary::after { content: "Hide"; }
 .gen-lo-map-summary::before,
 .gen-pop-topo-summary::before,
 .gen-pop-wiring-summary::before {

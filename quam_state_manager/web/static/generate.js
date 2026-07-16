@@ -292,10 +292,10 @@
       // isn't visible — without this, revisiting step 4 shows the stale
       // pre-flip Control/Target dropdowns.
       renderPairs();
-      // Re-render the topology board from state if its panel is open (e.g. after a
-      // qubit-count change or a draft restore).
-      var topoD = document.getElementById("gen-topo");
-      if (topoD && topoD.open && window.WiringGrid) window.WiringGrid.refresh();
+      // Re-render the always-visible topology board from state (count change,
+      // draft restore, CZ auto-flip while away). The WiringGrid guard stays —
+      // several selfchecks eval generate.js without wiring-grid.js.
+      if (window.WiringGrid) window.WiringGrid.refresh();
     }
     if (state.step === 5) enterWiringStep();
     if (state.step === 6) enterPopulateStep();
@@ -889,8 +889,7 @@
     state.allocation = null;        // old element-id keys are stale → re-allocate
     state.pairsTouched = true;
     deriveLines();
-    renderQubitsStep();
-    if (window.WiringGrid) window.WiringGrid.refresh();
+    renderQubitsStep();             // includes the (unconditional) board repaint
     showMessage(null);              // clear any stale gap warning
   }
 
@@ -1247,13 +1246,29 @@
     }).join("");
   }
 
+  // Live confirmation caption: count + the feedline grouping the mux size
+  // implies (default consecutive chunks — the same default deriveLines uses).
+  // Replaces the old "N qubits: q1, q2, …" sentence, which triple-duplicated
+  // the name chips and the board stones.
   function renderQubitSummary() {
     var el = document.getElementById("gen-qubit-summary");
     if (!el) return;
     var qs = state.spec.qubits;
-    el.textContent = qs.length
-      ? qs.length + " qubit" + (qs.length === 1 ? "" : "s") + ": " + qs.join(", ")
-      : "No qubits yet — set the count above.";
+    if (!qs.length) {
+      el.textContent = "No qubits — set the count.";
+      return;
+    }
+    var mux = state.muxSize > 0 ? state.muxSize : 6;
+    var groups = [];
+    for (var i = 0; i < qs.length; i += mux) {
+      var chunk = qs.slice(i, i + mux);
+      groups.push(chunk.length === 1 ? chunk[0]
+        : chunk[0] + "–" + chunk[chunk.length - 1]);
+    }
+    var shown = groups.slice(0, 4).join(" · ") + (groups.length > 4 ? " · …" : "");
+    el.textContent = qs.length + " qubit" + (qs.length === 1 ? "" : "s") +
+      " · " + groups.length + " feedline" + (groups.length === 1 ? "" : "s") +
+      ": " + shown;
   }
 
   function renderPairs() {
@@ -1264,43 +1279,61 @@
       list.innerHTML = '<p class="muted">No pairs.</p>';
       return;
     }
-    // Column header — pair[0] is the control qubit, pair[1] the target.
+    // Gate-aware header. CR: the drive direction is a physical choice made
+    // HERE — label the roles and use the directed glyph (the board draws the
+    // matching arrowhead). CZ: roles don't exist yet — they're assigned from
+    // the RF frequencies typed at Populate — so the columns stay neutral and
+    // a one-line caption says when the roles appear.
+    var cz = czOrderActive();
     var head = document.createElement("div");
     head.className = "gen-pair-row gen-pair-head";
-    head.innerHTML =
-      '<span class="gen-pair-col">Control</span>' +
-      '<span class="gen-pair-link">↔</span>' +
-      '<span class="gen-pair-col">Target</span>';
+    head.innerHTML = cz
+      ? '<span class="gen-pair-col">Qubit</span>' +
+        '<span class="gen-pair-link">↔</span>' +
+        '<span class="gen-pair-col">Qubit</span>'
+      : '<span class="gen-pair-col">Control</span>' +
+        '<span class="gen-pair-link">→</span>' +
+        '<span class="gen-pair-col">Target</span>';
     list.appendChild(head);
-    // CZ chips: the roles are frequency-derived (step 6) — say so up front,
-    // and honor a hand-picked order by marking that pair manual below.
-    if (czOrderActive()) {
+    if (cz) {
       var hint = document.createElement("p");
       hint.className = "muted gen-pair-cz-hint";
-      hint.textContent = "CZ chips: control/target is auto-assigned from the " +
-        "RF frequencies typed in step 6 — higher = control. A hand-picked " +
-        "order here is kept (marked manual in the pair table).";
+      hint.textContent = "Control/target assigned automatically from qubit " +
+        "frequencies at Populate (higher = control).";
+      hint.title = "The higher-RF_freq qubit becomes the control, the lower " +
+        "the target, re-checked as frequencies are typed in step 6. A " +
+        "hand-picked order here is kept (marked manual).";
       list.appendChild(hint);
     }
+    var popPairs = (state.spec.populate || {}).pairs || {};
     state.spec.qubit_pairs.forEach(function (pair, idx) {
       var row = document.createElement("div");
       row.className = "gen-pair-row";
+      // Surface the (previously invisible) manual orientation pin.
+      var isManual = cz && pair[0] && pair[1] &&
+        (popPairs[pair[0] + "-" + pair[1]] || {}).cz_order === "manual";
       row.innerHTML =
         '<select class="gen-pair-c"><option value="">—</option>' +
         qubitOptions(pair[0]) + "</select>" +
-        '<span class="gen-pair-link">↔</span>' +
+        '<span class="gen-pair-link">' + (cz ? "↔" : "→") + "</span>" +
         '<select class="gen-pair-t"><option value="">—</option>' +
         qubitOptions(pair[1]) + "</select>" +
+        (isManual
+          ? '<span class="gen-pair-manual-chip" title="Orientation pinned by ' +
+            'hand — frequency auto-assignment skips this pair">manual</span>'
+          : "") +
         '<button type="button" class="gen-row-del">×</button>';
       row.querySelector(".gen-pair-c").addEventListener("change", function (e) {
         pair[0] = e.target.value;
         state.pairsTouched = true;
         markPairManual(pair);
+        renderPairs();   // repaint (the manual chip may have just appeared)
       });
       row.querySelector(".gen-pair-t").addEventListener("change", function (e) {
         pair[1] = e.target.value;
         state.pairsTouched = true;
         markPairManual(pair);
+        renderPairs();
       });
       row.querySelector(".gen-row-del").addEventListener("click", function () {
         state.pairsTouched = true;
@@ -1370,9 +1403,8 @@
     syncLineTypeToggles();
     deriveLines();
     // Re-style the board edges to the new gate's line bundle (CR arrow / CZ dashed
-    // / coupler dot) if it's open — edgeStyle() reads state.pairGate at render.
-    var topoD = document.getElementById("gen-topo");
-    if (topoD && topoD.open && window.WiringGrid) window.WiringGrid.refresh();
+    // / coupler dot) — edgeStyle() reads state.pairGate at render.
+    if (window.WiringGrid) window.WiringGrid.refresh();
   }
 
   function syncLineTypeToggles() {
@@ -1419,10 +1451,13 @@
       }
       state.couplerFlux = (gate === "cz_tunable") && lf && hasPairs;
       if (pairNote) {
-        if (!hasPairs) pairNote.textContent = "(add qubit pairs above)";
-        else if (gate === "cr") pairNote.textContent = mw ? "(CR drive on the control qubit)" : "(needs an MW-FEM)";
-        else if (gate === "cz_fixed") pairNote.textContent = lf ? "(CZ flux on the qubit z line)" : "(needs an LF-FEM)";
-        else pairNote.textContent = lf ? "(CZ flux on qubit z + a coupler line)" : "(needs an LF-FEM)";
+        // Confirmation echo: how many pairs the gate applies to (live count).
+        var n = state.spec.qubit_pairs.length;
+        var echo = " · applies to " + n + " pair" + (n === 1 ? "" : "s");
+        if (!hasPairs) pairNote.textContent = "(add qubit pairs below)";
+        else if (gate === "cr") pairNote.textContent = mw ? "(CR drive on the control qubit" + echo + ")" : "(needs an MW-FEM)";
+        else if (gate === "cz_fixed") pairNote.textContent = lf ? "(CZ flux on the qubit z line" + echo + ")" : "(needs an LF-FEM)";
+        else pairNote.textContent = lf ? "(CZ flux on qubit z + coupler" + echo + ")" : "(needs an LF-FEM)";
       }
       // The qubit-flux checkbox + gate select are now DERIVED from the explicit
       // Chip-architecture selector — show them read-only so there's one source of
@@ -1468,6 +1503,21 @@
     renderTwpas();
     syncLineTypeToggles();
     renderNamingUi();
+    // The board is always visible now — repaint it on every qubits-step
+    // render (count changes, renames, draft restore, regenerate hydration).
+    // Rendering into a display:none panel is safe: WiringGrid.render() is a
+    // pure innerHTML build with no layout reads. Keep the guard — selfchecks
+    // eval generate.js without wiring-grid.js.
+    if (window.WiringGrid) {
+      window.WiringGrid.refresh();
+      // Mirror the (count-derived) zone into the Grid cols×rows inputs — the
+      // old sync only ran via the board's own onChange.
+      var z = window.WiringGrid.zone();
+      var zc = document.getElementById("gen-topo-cols");
+      var zr = document.getElementById("gen-topo-rows");
+      if (zc) zc.value = z.cols;
+      if (zr) zr.value = z.rows;
+    }
   }
 
   function bindQubitsStep() {
@@ -1486,7 +1536,10 @@
       // Mirror the DOM-only mux field into state so it persists in a draft.
       muxInput.addEventListener("input", function () {
         var m = parseInt(muxInput.value, 10);
-        if (!isNaN(m)) state.muxSize = m;
+        if (!isNaN(m)) {
+          state.muxSize = m;
+          renderQubitSummary();   // live feedline-grouping confirmation
+        }
       });
     }
     if (addPair) {
@@ -1510,26 +1563,11 @@
         renderTwpas();
       });
     }
-    // Bind line-type checkboxes. Eagerly rebuild spec.lines so downstream
-    // steps (wiring table, populate, review) always reflect the current choice.
-    var chkQF = document.getElementById("gen-chk-qubit-flux");
-    var pairSel = document.getElementById("gen-pair-gate");
-    if (chkQF) {
-      chkQF.addEventListener("change", function () {
-        state.qubitFlux = chkQF.checked;
-        deriveLines();
-      });
-    }
-    if (pairSel) {
-      pairSel.addEventListener("change", function () {
-        state.pairGate = pairSel.value;
-        reconcilePopulatePairs();   // drop now-irrelevant CR/CZ pair populate
-        syncLineTypeToggles();   // refresh the derived couplerFlux mirror + note
-        deriveLines();
-      });
-    }
+    // (The old gen-chk-qubit-flux / gen-pair-gate change listeners were dead
+    // code — syncLineTypeToggles force-disables both controls; the line
+    // summary is a read-only confirmation derived from the architecture.)
     // Explicit chip-architecture selector — the primary control (drives qubitFlux
-    // + pairGate). The qubit-flux/gate controls above are read-only reflections.
+    // + pairGate). The line summary below it is a read-only reflection.
     var archSel = document.getElementById("gen-chip-arch");
     if (archSel) {
       archSel.value = state.chipArch;
@@ -1608,14 +1646,16 @@
       syncZoneInputs();
       syncTopoControls();      // show/hide the Renumber button as holes appear/clear
     });
-    var details = document.getElementById("gen-topo");
-    if (details && !details.dataset.bound) {
-      details.dataset.bound = "1";
-      details.addEventListener("toggle", function () {
-        if (details.open) window.WiringGrid.refresh();
-      });
-      // Architecture presets (Chain / Ring / Star / Grid-NN) — auto-place + connect.
-      details.querySelectorAll("[data-topo-preset]").forEach(function (btn) {
+    // The board section is always visible (no <details> gate any more) —
+    // rendering happens on step entry / renderQubitsStep; only the button
+    // bindings live here (once-guarded on the board wrapper).
+    var topo = document.getElementById("gen-topo");
+    if (topo && !topo.dataset.bound) {
+      topo.dataset.bound = "1";
+      // Architecture presets (Chain / Ring / Star / Grid-NN) — auto-place +
+      // connect. They live on the LAYOUT band's control row (outside
+      // #gen-topo), so query the document; the ids/attributes are unique.
+      document.querySelectorAll("[data-topo-preset]").forEach(function (btn) {
         btn.addEventListener("click", function () {
           window.WiringGrid.preset(btn.getAttribute("data-topo-preset"));
         });
@@ -3778,8 +3818,10 @@
 
   // Persist the LO-map panel's open state (mirrors the populate-units pattern).
   function loadLoMapOpen() {
-    try { return localStorage.getItem("quam_lo_map_open") === "1"; }
-    catch (e) { return false; }
+    // Open by default (customer feedback: SM shows its reference panels; a
+    // user's explicit collapse — stored "0" — is remembered).
+    try { return localStorage.getItem("quam_lo_map_open") !== "0"; }
+    catch (e) { return true; }
   }
   function saveLoMapOpen(open) {
     try { localStorage.setItem("quam_lo_map_open", open ? "1" : "0"); }
@@ -4408,8 +4450,9 @@
   }
 
   function loadPopWiringOpen() {
-    try { return localStorage.getItem("quam_pop_wiring_open") === "1"; }
-    catch (e) { return false; }
+    // Open by default (customer feedback) — explicit collapse remembered.
+    try { return localStorage.getItem("quam_pop_wiring_open") !== "0"; }
+    catch (e) { return true; }
   }
   function savePopWiringOpen(open) {
     try { localStorage.setItem("quam_pop_wiring_open", open ? "1" : "0"); }

@@ -153,3 +153,69 @@ idiom so it needs no `quam_config` template repo.
 
 Tests: `test_script_emitter.py` (15 + golden under
 `tests/golden/scripts_bundle_cz/`), `test_script_emitter_live.py`.
+
+---
+
+# r3.1 — Step-4 "Qubits" page readability redesign (flow bands)
+
+Customer follow-up: the Qubits page was "not good at reading" — a
+~3-viewport single-column stack that hid the chip board and qubit naming
+behind collapsed `<details>`, drowned the controls in 9 paragraphs of
+prose, rendered the Grid cols×rows inputs stacked (a Pico specificity bug:
+`input{width:100%}` at (0,1,1) beat `.gen-topo-dim{width:3.2em}` at
+(0,1,0)), and labeled CZ pairs "Control/Target" before frequencies exist.
+Principles: Seamlessness, Conciseness, Stability.
+
+## Layout: three flow bands (reading order = doing order)
+
+1. **DEFINE** — architecture select + its 1-line dynamic note, qubit count +
+   per-feedline inline, a live confirmation caption ("3 qubits · 2
+   feedlines: q1–q2 · q3"), the **read-only control-line confirmation
+   block** (explicitly labeled "For confirmation — control lines this
+   architecture wires:", controls disabled by design — they were already
+   dead-derived from the architecture selector; the gate note echoes the
+   live pair count), and the **always-visible naming row** (scheme select +
+   Apply + rename chips).
+2. **LAYOUT** — band header carries the placement-progress caption (tinted
+   `--color-warning-text` while partially placed — pre-announcing exactly
+   what the Next-gate rejects) + the reserved Renumber slot; presets +
+   Grid inputs inline; then the **always-visible board** (left, ~2/3) with
+   the **pair list as its side-by-side textual mirror** (right rail,
+   height-locked to the board's 56vh, internal scroll). The 4-bullet
+   gesture list became one 11.5px line + an ⓘ tooltip; a count-0 board
+   shows "Set the qubit count to start placing." instead of a dead grid.
+3. **TWPAs** — one caption line + list + add.
+
+Wraps to a single column under ~790px container width (flex-wrap, house
+idiom — no media query). Zero `<details>` remain on step 4.
+
+## Gate-aware pair headers
+
+CZ chips: neutral **"Qubit ↔ Qubit"** header + a one-line caption
+("Control/target assigned automatically from qubit frequencies at Populate
+(higher = control)") — step 4 no longer pretends to know CZ roles. Rows
+whose `cz_order` is pinned show a restrained **manual** chip (previously
+invisible state). CR chips keep **"Control → Target"** with the `→` glyph
+(the board draws the matching arrowhead); the direction there is a physical
+choice made on this step.
+
+## JS contract change
+
+The board renders **unconditionally**: `render()`'s step-4 branch,
+`applyChipArch`, and `renderQubitsStep` all call `WiringGrid.refresh()`
+(guarded on `window.WiringGrid` for selfcheck worlds); the `<details>`
+toggle listener is gone; `renderQubitsStep` also mirrors the count-derived
+zone into the Grid inputs. `WiringGrid.render()` is a pure innerHTML build
+(no layout reads) — safe at 200 qubits and into `display:none` panels.
+
+## Step-6 reference mirrors
+
+LO map / Chip topology / Wiring diagram now **default OPEN** (user
+feedback: SM shows its reference panels; an explicit collapse is remembered
+per user via the existing localStorage keys). The faint right-arrow toggle
+became an explicit **Show/Hide pill** (pure CSS off `details[open]`, so the
+render functions rewriting summary text can't break it).
+
+Tests: `generate_step4_layout_selfcheck.cjs` (L1–L5) +
+`test_generate_step4_layout.py`; topoboard selfcheck updated (no more
+`details.open` plumbing — the board renders from the count change alone).

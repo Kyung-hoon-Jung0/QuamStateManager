@@ -143,6 +143,14 @@ window.WiringGrid = (function () {
 
   function render() {
     var host = root(); if (!host) return;
+    // Fault-proof empty state: with no qubits the grid is inert (clicks
+    // place nothing) — say so instead of showing a dead 3×3 board.
+    if (!qubits().length) {
+      host.innerHTML = '<div class="gen-topo-empty">Set the qubit count to ' +
+        'start placing.</div>';
+      renderCaption();
+      return;
+    }
     var z = zone();
     var W = z.cols * CELL, H = z.rows * CELL;
     var html = '<div class="gen-topo-grid" style="width:' + W + 'px;height:' + H + 'px">';
@@ -225,7 +233,12 @@ window.WiringGrid = (function () {
     var placed = 0, qs = qubits();
     for (var i = 0; i < qs.length; i++) if (cellOf(qs[i])) placed++;
     var npairs = ((spec() && spec().qubit_pairs) || []).length;
-    if (cap) cap.textContent = placed + "/" + qs.length + " qubits placed · " + npairs + " pairs";
+    if (cap) {
+      cap.textContent = placed + "/" + qs.length + " qubits placed · " + npairs + " pairs";
+      // Pre-announce the step-leave gate: partial placement (some but not all)
+      // is exactly what the Next-check rejects — tint the progress chip now.
+      cap.classList.toggle("gen-topo-caption-warn", placed > 0 && placed < qs.length);
+    }
     var leg = document.getElementById("gen-topo-legend");
     if (leg) leg.textContent = window.TopoGraph ? window.TopoGraph.legendForGate(curGate()) : "";
     renderStatus();
