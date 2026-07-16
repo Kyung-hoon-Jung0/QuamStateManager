@@ -518,7 +518,11 @@ from the spec on every render** (`recomputeAllPowerFindings`, called from
 self-clear when Power input flips back to manual, prune with a deleted or
 renumbered qubit, key readout banks by the **physical port** (fixing one
 resonator clears the whole bank's finding), and reappear after a draft
-restore. They render in the same conflict panel (heading gains "/ power" when
+restore. One deliberate exception to "self-clear on manual": the feedline
+**Σ|amp| > 1 CLIP warning is mode-independent** — coherent tones summing
+past DAC full scale clip no matter how the amplitudes were typed, so the
+readout-bank sweep also runs in manual mode with `sumOnly` (per-tone and
+0.5-headroom findings stay absolute-only; pinned by selfcheck case C9). They render in the same conflict panel (heading gains "/ power" when
 present) and ring the affected ports. The unreachable case (target > 18 dBm)
 clamps amp at 1 and surfaces an "at the port's maximum output" note; a
 resonator edited before Auto-allocate is solved single-tone with a "not

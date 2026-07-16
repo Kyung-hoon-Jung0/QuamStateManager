@@ -2431,6 +2431,11 @@
         } else if (group === "pulses") {
           recomputeXyPower(rid);
         }
+      } else if (col.field === "readout_amplitude" && group === "resonator") {
+        // Manual mode: a readout-amp edit can push the feedline's coherent
+        // sum past full scale — re-derive the (sum-only) power findings.
+        recomputeAllPowerFindings();
+        renderAllConflicts();
       }
     });
     return input;
@@ -2504,6 +2509,10 @@
         } else if (group === "pulses") {
           rowIds.forEach(function (rid) { recomputeXyPower(rid); });
         }
+      } else if (col.field === "readout_amplitude" && group === "resonator") {
+        // Manual mode: bulk-filled readout amps can clip the feedline sum.
+        recomputeAllPowerFindings();
+        renderAllConflicts();
       }
     });
     return input;
@@ -3335,7 +3344,11 @@
   // `tones` = [{rid, group, field, amp}] — amp is the stored, DAC-clamped
   // (≤1) value; the dBm shown is fsp + 20·log10(amp). `sumBudget` is true for
   // a multiplexed readout bank (its tones sum coherently at the DAC).
-  function powerFindings(portDesc, fsp, tones, sumBudget) {
+  // `sumOnly` (manual power mode) keeps just the physical Σ>1 CLIP check —
+  // the per-tone and headroom findings are absolute-mode allocation policy,
+  // but a feedline whose amplitudes sum past full scale clips REGARDLESS of
+  // how the user typed them (customer requirement: warn in both modes).
+  function powerFindings(portDesc, fsp, tones, sumBudget, sumOnly) {
     var warns = [];
     var members = [];
     var seen = {};
@@ -3346,6 +3359,20 @@
       }
     });
     function pulseName(t) { return t.rid + " " + t.field.replace("_amplitude", ""); }
+    if (sumOnly) {
+      if (sumBudget) {
+        var so = tones.reduce(function (s, t) { return s + Math.abs(t.amp); }, 0);
+        if (so > PWR.SUM_MAX) {
+          warns.push({
+            message: portDesc + ": multiplexed amplitudes sum to " +
+              so.toFixed(2) + " > 1 — simultaneous tones will CLIP at the " +
+              "DAC even at FSP " + fsp + " dBm. Lower the per-tone power.",
+            members: members
+          });
+        }
+      }
+      return warns;
+    }
     tones.forEach(function (t) {
       if (t.amp >= 1 - 1e-6 && fsp >= PWR.FSP_MAX) {
         // At the hardware ceiling: amp is pinned at full scale AND the FSP is
@@ -3399,12 +3426,17 @@
   // the panel always reflects live state. No spec mutation — pure derivation.
   function recomputeAllPowerFindings() {
     _powerWarnings = {};
-    if (state.powerMode !== "absolute") return;
+    // Manual mode still runs the readout-bank sweep with sumOnly=true: the
+    // Σ|amp| > 1 feedline clip is a physical DAC fact, not an allocation
+    // choice, so it must warn no matter how the amplitudes were typed.
+    var absolute = state.powerMode === "absolute";
     var pop = state.spec.populate || {};
     var qubits = state.spec.qubits || [];
 
     // xy drive ports — one per qubit; both pulses share the qubit FSP.
-    qubits.forEach(function (rid) {
+    // Absolute-mode only: single-tone ports can't clip by summation, and the
+    // sliver/at-max findings describe the auto-allocation.
+    if (absolute) qubits.forEach(function (rid) {
       var pl = (pop.pulses || {})[rid] || {};
       var fsp = fspForAmp("pulses", rid);
       var tones = [];
@@ -3430,7 +3462,9 @@
       if (key == null) {
         // Not allocated yet — solved single-tone, so the multiplex budget is
         // unchecked. Surface it rather than silently under-warning.
-        _powerWarnings["rr/unalloc/" + rid] = [{
+        // (Absolute-mode note: in manual mode nothing was "solved", and with
+        // no port grouping there is no sum to check either.)
+        if (absolute) _powerWarnings["rr/unalloc/" + rid] = [{
           message: "Readout port for " + rid + " not allocated yet — power " +
             "solved single-tone; run Auto-allocate (step 5) to solve the " +
             "multiplexed bank.",
@@ -3448,7 +3482,7 @@
                  amp: Math.abs(parseFloat(pop.resonator[rid].readout_amplitude)) };
       });
       var w = powerFindings("Readout bank (" + rids.join(", ") + ")",
-                            fsp, tones, true);
+                            fsp, tones, true, !absolute);
       if (w.length) _powerWarnings["rr/" + key] = w;
     });
   }

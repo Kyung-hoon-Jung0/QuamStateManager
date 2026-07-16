@@ -443,7 +443,9 @@ function powerModeSelect(win) {
 })();
 
 // C6: manual mode is UNCHANGED — dBm unit entry converts against the fixed
-// FSP and does NOT re-allocate (regression guard for today's users).
+// FSP and does NOT re-allocate (regression guard for today's users). The one
+// deliberate exception is the mode-independent Σ|amp|>1 feedline clip warning
+// (customer requirement) — pinned separately in C9.
 (function manualUnchanged() {
   const win = makeWorld();
   const G = buildWizard(win);
@@ -460,6 +462,39 @@ function powerModeSelect(win) {
     r1.full_scale_power_dbm + ')');
   close(r1.readout_amplitude, Math.pow(10, (-25 - (-5)) / 20), 1e-9,
     'C6: amp converts against the FIXED FSP (no re-allocation)');
+})();
+
+// C9: MANUAL-mode feedline clip — the Σ|amp| > 1 warning is a physical DAC
+// fact and must fire regardless of power mode (customer requirement). The
+// 0.5 headroom ADVISORY stays absolute-only (allocation policy, not physics).
+(function manualModeBankClip() {
+  const win = makeWorld();
+  const G = buildWizard(win);
+  ok(G.state.powerMode === 'manual', 'C9: world starts in manual mode');
+
+  // 0.6 + 0.6 + 0.1 on the shared feedline → Σ = 1.3 > 1 → CLIP, immediately
+  // on the amp commit (no mode toggle, no step re-entry).
+  setInput(win, cell(win, 'resonator', 'q1', 'readout_amplitude'), '0.6');
+  setInput(win, cell(win, 'resonator', 'q2', 'readout_amplitude'), '0.6');
+  setInput(win, cell(win, 'resonator', 'q3', 'readout_amplitude'), '0.1');
+  let panel = win.document.getElementById('gen-band-warnings').textContent;
+  ok(panel.indexOf('CLIP') >= 0, 'C9: manual-mode bank clip warning rendered');
+  ok(panel.indexOf('power conflicts') >= 0, 'C9: heading names power conflicts');
+  ok(panel.indexOf('headroom budget') < 0,
+    'C9: 0.5 advisory absent in manual mode (policy stays absolute-only)');
+
+  // Lowering one tone under the budget clears it (still manual mode)...
+  setInput(win, cell(win, 'resonator', 'q2', 'readout_amplitude'), '0.2');
+  panel = win.document.getElementById('gen-band-warnings').textContent;
+  ok(panel.indexOf('CLIP') < 0, 'C9: clip clears when the sum drops under 1');
+  // ...and Σ = 0.9 (> 0.5) still shows NO advisory in manual mode.
+  ok(panel.indexOf('headroom budget') < 0,
+    'C9: sum 0.9 draws no advisory in manual mode');
+
+  // Sliver amps never warn in manual mode (absolute-mode allocation policy).
+  setInput(win, cell(win, 'resonator', 'q3', 'readout_amplitude'), '0.001');
+  panel = win.document.getElementById('gen-band-warnings').textContent;
+  ok(panel.indexOf('sliver') < 0, 'C9: no sliver warning in manual mode');
 })();
 
 // C8: multi-dirty flush clobber — two amp cells on one bank both dirty; the
