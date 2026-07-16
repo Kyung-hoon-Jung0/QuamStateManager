@@ -110,15 +110,23 @@
          rows. No collapsibles — naming is always visible (customer feedback:
          essential controls must never hide behind a closed panel). #}
       <div class="gen-band" id="gen-chip-arch-section">
+        <div class="gen-band-head"><span class="gen-band-title">Chip definition</span></div>
+        {# Architecture as ALWAYS-VISIBLE radios (customer feedback: a select
+           costs two clicks and hides the alternatives). The hidden select
+           stays as the single state anchor — syncLineTypeToggles writes its
+           value/disabled flags and renderArchRadios mirrors them; the radios
+           proxy changes back through it so every existing code path (and
+           selfcheck) keeps driving #gen-chip-arch. #}
+        <select id="gen-chip-arch" hidden>
+          <option value="flux_tunable_coupler">Flux-tunable qubits + tunable coupler &mdash; CZ via coupler</option>
+          <option value="flux_tunable_fixed_coupler">Flux-tunable qubits + fixed coupler &mdash; CZ via qubit z</option>
+          <option value="fixed_frequency">Fixed-frequency qubits &mdash; cross-resonance (MW-only)</option>
+        </select>
         <div class="gen-define-row">
-          <label class="gen-chassis-count-field">
-            Architecture:
-            <select id="gen-chip-arch">
-              <option value="flux_tunable_coupler">Flux-tunable qubits + tunable coupler &mdash; CZ via coupler</option>
-              <option value="flux_tunable_fixed_coupler">Flux-tunable qubits + fixed coupler &mdash; CZ via qubit z</option>
-              <option value="fixed_frequency">Fixed-frequency qubits &mdash; cross-resonance (MW-only)</option>
-            </select>
-          </label>
+          <div class="gen-arch-field">
+            <span class="gen-field-label">Architecture</span>
+            <div id="gen-arch-radios" class="gen-arch-radios"></div>
+          </div>
           <label class="gen-chassis-count-field">
             Qubits:
             <input type="number" id="gen-qubit-count" min="0" max="200" value="0">
@@ -197,7 +205,7 @@
          board, watch the row appear. The list doubles as the keyboard /
          large-chip fallback. #}
       <div class="gen-band gen-band-layout">
-        <div class="gen-band-head">Chip layout
+        <div class="gen-band-head"><span class="gen-band-title">Chip layout</span>
           <span class="muted" id="gen-topo-caption"></span>
           <button type="button" class="btn-sm gen-topo-renumber" id="gen-topo-renumber" hidden
                   title="Close the gaps in qubit ids">Renumber</button>
@@ -235,7 +243,7 @@
 
       {# ---- TWPA band #}
       <div class="gen-band">
-        <div class="gen-band-head">TWPAs <span class="muted">&mdash; optional</span></div>
+        <div class="gen-band-head"><span class="gen-band-title">TWPAs</span> <span class="muted">&mdash; optional</span></div>
         <p class="muted gen-oneline"
            title="TWPA entries are saved with your spec and will be included automatically once quam_builder adds TWPA wiring support (the current 0.2.0 does not yet generate them).">
           Saved with the spec &mdash; generated once quam_builder supports TWPA wiring.</p>

@@ -6236,26 +6236,42 @@ table.gen-wiring tbody tr.pinned {
     font-family: var(--font-mono); font-size: 12.5px; text-align: center;
 }
 /* ---- Step-4 flow bands (readability redesign): DEFINE → LAYOUT → TWPAs.
-   Hairline-separated sections, no collapsibles — the board, naming and pair
-   list are always visible (customer feedback). ---- */
-.gen-band { border-top: 1px solid var(--pico-muted-border-color); padding: 0.6rem 0 0.7rem; }
+   Hairline-separated sections in the VSCode idiom (small uppercase muted
+   section titles over readable 14px content), no collapsibles — the board,
+   naming and pair list are always visible (customer feedback). Font sizes
+   run ~1px larger than the app's 13px ceiling on purpose: users reported
+   the step's content wasn't inviting to read. ---- */
+.gen-band { border-top: 1px solid var(--pico-muted-border-color); padding: 0.8rem 0 0.9rem; margin-top: 0.3rem; }
 .gen-band-head {
-    display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap;
-    font-weight: 600; font-size: 13px; margin: 0 0 0.3rem;
+    display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap;
+    margin: 0 0 0.45rem; font-size: 13.5px;
+}
+.gen-band-title {
+    font-weight: 700; font-size: 12px; letter-spacing: 0.09em;
+    text-transform: uppercase; color: var(--pico-muted-color);
 }
 .gen-band-head .muted { font-weight: 400; }
-.gen-band-sublabel { font-weight: 600; font-size: 12.5px; }
-.gen-oneline { margin: 0.15rem 0; font-size: 12.5px; }
-/* DEFINE band: architecture + count + mux inline on one wrapping row */
-.gen-define-row { display: flex; gap: 1.2rem; align-items: center; flex-wrap: wrap; }
-.gen-define-row .gen-chassis-count-field { margin: 0; }
+.gen-band-sublabel { font-weight: 600; font-size: 13.5px; }
+.gen-oneline { margin: 0.2rem 0; font-size: 13.5px; }
+/* DEFINE band: architecture radios + count + mux inline on one wrapping row */
+.gen-define-row { display: flex; gap: 1.6rem; align-items: flex-start; flex-wrap: wrap; }
+.gen-define-row .gen-chassis-count-field { margin: 0; font-size: 14px; }
+.gen-field-label { font-weight: 600; font-size: 14px; display: block; margin-bottom: 0.25rem; }
+/* Architecture radio group — all three options visible, one click to switch */
+.gen-arch-radios { display: flex; flex-direction: column; gap: 0.25rem; }
+.gen-arch-radio {
+    display: flex; align-items: center; gap: 0.45rem; margin: 0;
+    font-size: 14px; cursor: pointer;
+}
+.gen-arch-radio input[type="radio"] { margin: 0; flex: none; }
+.gen-arch-radio-off { color: var(--pico-muted-color); cursor: not-allowed; }
 /* Read-only control-line confirmation (derived from the architecture) */
 .gen-line-confirm {
-    display: flex; gap: 0.9rem; align-items: center; flex-wrap: wrap;
-    margin: 0.35rem 0; font-size: 12.5px;
+    display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;
+    margin: 0.45rem 0; font-size: 13.5px;
 }
-.gen-line-confirm .gen-line-toggle { margin: 0; font-size: 12.5px; }
-.gen-line-confirm select { margin: 0; width: auto; padding: 0 1.6rem 0 0.4rem; height: auto; font-size: 12.5px; }
+.gen-line-confirm .gen-line-toggle { margin: 0; font-size: 13.5px; }
+.gen-line-confirm select { margin: 0; width: auto; padding: 0 1.6rem 0 0.4rem; height: auto; font-size: 13.5px; }
 .gen-line-confirm input[type="checkbox"] { margin: 0; }
 .gen-line-confirm-why { font-style: italic; }
 /* LAYOUT band: board + pairs rail side by side; wraps to stacked when the
@@ -6266,18 +6282,31 @@ table.gen-wiring tbody tr.pinned {
 .gen-pairs-rail-head { display: flex; align-items: center; gap: 0.7rem; margin: 0 0 0.3rem; }
 .gen-pairs-rail-head button { margin: 0; }
 /* Board empty state (count 0 — clicks would be inert; say so) */
-.gen-topo-empty { padding: 1.2rem 0.8rem; font-size: 12.5px; color: var(--pico-muted-color); }
+.gen-topo-empty { padding: 1.2rem 0.8rem; font-size: 13.5px; color: var(--pico-muted-color); }
 /* Partial placement = exactly what the Next-gate rejects — pre-announce it */
 .gen-topo-caption-warn { color: var(--color-warning-text) !important; }
 /* Condensed gesture line + info glyph (replaces the 4-bullet hint list) */
-.gen-topo-gestures { font-size: 11.5px; margin: 0.15rem 0; }
+.gen-topo-gestures { font-size: 12.5px; margin: 0.2rem 0; }
 .gen-info-glyph { cursor: help; user-select: none; margin-left: 0.25rem; }
 /* Manual orientation pin on a CZ pair row (restrained outline chip) */
 .gen-pair-manual-chip {
-    font-size: 10.5px; padding: 0 0.35rem; border-radius: 8px;
+    font-size: 11px; padding: 0 0.35rem; border-radius: 8px;
     border: 1px solid var(--pico-muted-border-color);
     color: var(--pico-muted-color); line-height: 1.5; user-select: none;
 }
+/* Step-4 readability bump: muted captions + the CZ pair hint at 13.5px, the
+   naming scheme select compact (it rendered outsized + over-wide). */
+.gen-panel[data-step="4"] .muted { font-size: 13.5px; }
+.gen-naming-controls { font-size: 14px; }
+.gen-naming-controls label { font-size: 14px; }
+.gen-naming-controls select {
+    font-size: 13.5px; height: auto; max-width: 17rem;
+    padding: 0.15rem 1.8rem 0.15rem 0.5rem;
+}
+.gen-naming-controls button { margin: 0; }
+.gen-qubit-name-in { font-size: 13.5px; }
+.gen-pair-list { font-size: 13.5px; }
+.gen-pair-cz-hint { max-width: 30rem; }
 .gen-topo-summary { cursor: pointer; font-weight: 600; font-size: 13px; }
 .gen-topo-controls { display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; margin: 0.4rem 0 0.2rem; }
 .gen-topo-controls label { display: flex; align-items: center; gap: 0.35rem; margin: 0; }
@@ -6428,15 +6457,12 @@ tr.gen-pop-setall > td {
 .gen-lo-row-freq { color: var(--pico-muted-color); white-space: nowrap; }
 
 /* Read-only wiring diagram in the Populate step + table/diagram linking.
-   Sticky-pinned to the top of the scroll area so it stays visible while the
-   user scrolls down the populate tables (#table-pane is the scroll container;
-   the app topbar is a separate sticky bar outside it, so top:0 is correct). */
+   NOT sticky: it used to pin to the top of the scroll area, but with the
+   panel now open by default the pinned diagram floated OVER the populate
+   tables while scrolling (customer bug report) — it scrolls normally now. */
 .gen-pop-wiring {
-    position: sticky; top: 0; z-index: 10;
     margin: 0.3rem 0 0.6rem;
-    background: var(--pico-background-color);
     border-bottom: 1px solid var(--pico-muted-border-color);
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.08);
 }
 /* Cap the pinned diagram so it can't dominate a short window — scoped to the
    step-6 instance by id, leaving step 5's .gen-wiring-diagram untouched. */

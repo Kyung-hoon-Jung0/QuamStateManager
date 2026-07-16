@@ -212,5 +212,43 @@ function buildTo4(win, opts) {
     'L5: the others stay open');
 })();
 
+// L6: architecture radios — all options visible, one-click switching, the
+// hidden #gen-chip-arch select stays the state anchor, hardware-impossible
+// options render disabled.
+(function archRadios() {
+  const win = makeWorld();
+  const G = buildTo4(win);
+  const radios = win.document.querySelectorAll('#gen-arch-radios input[type="radio"]');
+  ok(radios.length === 3, 'L6: three architecture radios rendered');
+  ok(win.document.getElementById('gen-chip-arch').hidden === true,
+    'L6: the select anchor is hidden');
+  const checked = function () {
+    return win.document.querySelector('#gen-arch-radios input:checked');
+  };
+  ok(checked() && checked().value === 'flux_tunable_coupler',
+    'L6: default arch radio checked');
+  // One click switches the architecture through the anchor.
+  const ff = win.document.querySelector(
+    '#gen-arch-radios input[value="fixed_frequency"]');
+  ff.checked = true;
+  ff.dispatchEvent(new win.Event('change', { bubbles: true }));
+  ok(G.state.chipArch === 'fixed_frequency' && G.state.pairGate === 'cr',
+    'L6: radio click drives applyChipArch (got ' + G.state.chipArch + ')');
+  ok(checked() && checked().value === 'fixed_frequency',
+    'L6: re-rendered radios mirror the new state');
+  // Driving the anchor directly (the selfcheck idiom) re-syncs the radios.
+  const sel = win.document.getElementById('gen-chip-arch');
+  sel.value = 'flux_tunable_fixed_coupler';
+  sel.dispatchEvent(new win.Event('change', { bubbles: true }));
+  ok(checked() && checked().value === 'flux_tunable_fixed_coupler',
+    'L6: anchor-driven change mirrors back into the radios');
+  // MW-only hardware: the two flux-tunable options render disabled.
+  const win2 = makeWorld();
+  buildTo4(win2, { mwOnly: true });
+  const off = win2.document.querySelectorAll('#gen-arch-radios input:disabled');
+  ok(off.length === 2, 'L6: flux-tunable radios disabled without an LF-FEM (got ' +
+    off.length + ')');
+})();
+
 if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
 console.log('generate_step4_layout_selfcheck: all checks passed');

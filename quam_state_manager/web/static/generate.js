@@ -1495,6 +1495,42 @@
           + "the qubit z line only.";
       }
     }
+    renderArchRadios();
+  }
+
+  // The visible architecture radios — a mirror of the hidden #gen-chip-arch
+  // select (the single state anchor every code path + selfcheck drives).
+  // Radios show all three options at once (customer feedback: the select
+  // cost two clicks and hid the alternatives); a disabled option (hardware
+  // can't build it) renders disabled with the reason in its tooltip.
+  function renderArchRadios() {
+    var host = document.getElementById("gen-arch-radios");
+    var sel = document.getElementById("gen-chip-arch");
+    if (!host || !sel) return;
+    host.innerHTML = "";
+    Array.prototype.forEach.call(sel.options, function (opt) {
+      var lab = document.createElement("label");
+      lab.className = "gen-arch-radio" + (opt.disabled ? " gen-arch-radio-off" : "");
+      var r = document.createElement("input");
+      r.type = "radio";
+      r.name = "gen-chip-arch-radio";
+      r.value = opt.value;
+      r.checked = opt.value === sel.value;
+      r.disabled = opt.disabled;
+      if (opt.disabled) {
+        lab.title = opt.value === "fixed_frequency"
+          ? "Needs an MW-FEM — add one in step 3."
+          : "Needs an LF-FEM (qubit flux) — add one in step 3.";
+      }
+      r.addEventListener("change", function () {
+        if (!r.checked) return;
+        sel.value = r.value;   // proxy through the anchor → applyChipArch runs
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      lab.appendChild(r);
+      lab.appendChild(document.createTextNode(" " + opt.textContent));
+      host.appendChild(lab);
+    });
   }
 
   function renderQubitsStep() {
