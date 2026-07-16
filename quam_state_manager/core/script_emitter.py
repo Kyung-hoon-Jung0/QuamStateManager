@@ -63,7 +63,7 @@ _RUN_BUILD_PATH = Path(__file__).resolve().parent.parent / "generator" / "run_bu
 # rendered by repr; functions by inspect.getsource. A missing name raises at
 # emit time (and fails the golden test) — the moment run_build refactors,
 # this list is the single thing to update.
-_RUNTIME_CONSTS = ("_BAND_TO_DELAY_NS", "_CZ_VARIANTS")
+_RUNTIME_CONSTS = ("_BAND_TO_DELAY_NS", "_CZ_VARIANTS", "_PULSE_HOMES")
 _RUNTIME_FUNCS = (
     "_norm_index", "_parse_pair", "_quam_pair_id", "_norm_pair_qubits",
     "_num", "_target_lo",
@@ -71,7 +71,7 @@ _RUNTIME_FUNCS = (
     "_set_port_lo", "_set_channel_lo", "_operation",
     "_apply_resonator", "_apply_qubit", "_apply_flux", "_apply_pulses",
     "_make_cz_gate", "_apply_pairs", "apply_populate",
-    "_cz_variant_pulses", "_seed_cz_variant",
+    "_pulse_class", "_cz_variant_pulses", "_seed_cz_variant",
     "_import_cr_gate", "_seed_cr_gate",
     "_cz_order_warning", "_finalize_pair_gates",
     "_split_port_pointer", "_walk_state", "_link_input_downconverters_to_outputs",
