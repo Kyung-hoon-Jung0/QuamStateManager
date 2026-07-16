@@ -129,6 +129,19 @@ def _extract_populate(state: dict, root: dict) -> dict:
         if isinstance(xy_out, dict):
             if _num(xy_out.get("upconverter_frequency")):
                 qv["LO_frequency"] = xy_out["upconverter_frequency"]
+            else:
+                # Dual-upconverter port (the shared-port CR layout): 1 = the
+                # qubit's own drive LO, 2 = the CR LO. Without this fallback a
+                # customer-chip regenerate loses EVERY xy LO (the scalar field
+                # is None once upconverters exist).
+                ucs = xy_out.get("upconverters")
+                if isinstance(ucs, dict):
+                    u1 = ucs.get("1", ucs.get(1))
+                    if isinstance(u1, dict) and _num(u1.get("frequency")):
+                        qv["LO_frequency"] = u1["frequency"]
+                    u2 = ucs.get("2", ucs.get(2))
+                    if isinstance(u2, dict) and _num(u2.get("frequency")):
+                        qv["cr_lo_frequency"] = u2["frequency"]
             if _num(xy_out.get("full_scale_power_dbm")):
                 qv["full_scale_power_dbm"] = xy_out["full_scale_power_dbm"]
             if _num(xy_out.get("band")):              # real band, never hardcode
@@ -228,6 +241,65 @@ def _extract_populate(state: dict, root: dict) -> dict:
                     pairv["cz_interaction_duration"] = fpq["length"]
                 if _num(fpq.get("amplitude")):
                     pairv["cz_amplitude"] = fpq["amplitude"]
+
+        # --- CR channel: levers + drive-op geometry (flavor-tolerant via
+        # cr_semantics; numeric values only — pointers are re-created by the
+        # seeder, and the value-merge preserves everything regardless).
+        from quam_state_manager.core import cr_semantics
+        cr = cr_semantics.cr_channel(pair)
+        if cr is not None:
+            for lever, suffix in cr_semantics.lever_map(pair).items():
+                if (lever.startswith(("zz_", "macro_"))
+                        or lever in ("upconverter", "bell_state_fidelity")):
+                    continue
+                node = pair
+                for seg in suffix.split("."):
+                    node = node.get(seg) if isinstance(node, dict) else None
+                if _num(node) is not None:
+                    pairv[f"cr_{lever}"] = node
+            ops = cr.get("operations") if isinstance(cr.get("operations"), dict) else {}
+            sq = ops.get("square")
+            if isinstance(sq, dict):
+                if _num(sq.get("amplitude")):
+                    pairv["cr_drive_amplitude"] = sq["amplitude"]
+                if _num(sq.get("length")):
+                    pairv["cr_square_length"] = sq["length"]
+            ft = ops.get("flattop")
+            if isinstance(ft, dict):
+                if _num(ft.get("length")):
+                    pairv["cr_flattop_length"] = ft["length"]
+                if _num(ft.get("flat_length")):
+                    pairv["cr_flattop_flat_length"] = ft["flat_length"]
+            if {"cosine", "gauss"} <= set(ops):
+                pairv["cr_shapes"] = "full"
+            for k in ("target_qubit_LO_frequency", "target_qubit_IF_frequency"):
+                if _num(cr.get(k)):
+                    pairv[k] = cr[k]
+            # cancel amplitude lives on the TARGET's xy stub (cr_square_<pid>)
+            tgt_name = str(pair.get("qubit_target", "")).split("/")[-1]
+            tq = (state.get("qubits") or {}).get(tgt_name)
+            stub = ((tq or {}).get("xy") or {}).get("operations", {}) \
+                .get(f"cr_square_{pid}") if isinstance(tq, dict) else None
+            if isinstance(stub, dict) and _num(stub.get("amplitude")):
+                pairv["cr_cancel_amplitude"] = stub["amplitude"]
+
+        # --- ZZ channel (zz_drive on a08bf66/fa540b6, zz at the branch tip)
+        zz = cr_semantics.zz_channel(pair)
+        if zz is not None:
+            _zk, zch = zz
+            if _num(zch.get("detuning")):
+                pairv["zz_detuning"] = zch["detuning"]
+            zops = zch.get("operations") if isinstance(zch.get("operations"), dict) else {}
+            zsq = zops.get("square")
+            if isinstance(zsq, dict) and _num(zsq.get("amplitude")):
+                pairv["zz_drive_amplitude"] = zsq["amplitude"]
+            zft = zops.get("flattop")
+            if isinstance(zft, dict):
+                if _num(zft.get("length")):
+                    pairv["zz_flattop_length"] = zft["length"]
+                if _num(zft.get("flat_length")):
+                    pairv["zz_flattop_flat_length"] = zft["flat_length"]
+
         if pairv:
             pop_pairs[pid] = pairv
 
@@ -328,11 +400,13 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
                           "channel": {"kind": "mw_fem", "con": con, "slot": slot,
                                       "in_port": iport, "out_port": oport}})
 
+    xy_ports: dict = {}          # qubit -> parsed xy port (shared-port detection)
     for q, ch in (wire.get("qubits") or {}).items():
         if not isinstance(ch, dict):
             continue
         p = _parse_port(ch.get("xy", {}).get("opx_output"))
         if p:
+            xy_ports[q] = p
             note_fem(p[0], p[1], p[2])
             lines.append({"element": q, "line": "drive",
                           "channel": {"kind": "mw_fem", "con": p[1], "slot": p[2], "out_port": p[3]}})
@@ -347,6 +421,8 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
     # so reading pairs off wiring would miss them entirely. The coupler wiring
     # constraint (tunable-coupler chips only) is pulled from wiring when present.
     pairs: list[list[str]] = []
+    cr_total = 0                 # CR lines seen / sharing the control xy port
+    cr_shared = 0
     wire_pairs = wire.get("qubit_pairs") or {}
     for pid, p in (state.get("qubit_pairs") or {}).items():
         if not isinstance(p, dict):
@@ -368,6 +444,31 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
             note_fem(cp[0], cp[1], cp[2])
             lines.append({"element": f"{ctrl}-{tgt}", "line": "coupler",
                           "channel": {"kind": "lf_fem", "con": cp[1], "slot": cp[2], "out_port": cp[3]}})
+
+        # CR / ZZ drive lines (docs/54): wiring keys are the WiringLineType
+        # values 'cr' / 'zz'. Each is pinned to its stored MW port — this is
+        # THE inversion the old coupler-only parse dropped, which cascaded
+        # into a rebuild with zero pairs (CR pairs exist only via their
+        # wiring lines) and every CR calibration in residual_lost.
+        for wkey, ltype in (("cr", "cross_resonance"), ("zz", "zz_drive")):
+            chd = wp.get(wkey) if isinstance(wp.get(wkey), dict) else None
+            if not chd:
+                continue
+            pp = _parse_port(chd.get("opx_output"))
+            if pp:
+                note_fem(pp[0], pp[1], pp[2])
+                lines.append({"element": f"{ctrl}-{tgt}", "line": ltype,
+                              "channel": {"kind": "mw_fem", "con": pp[1],
+                                          "slot": pp[2], "out_port": pp[3]}})
+                if wkey == "cr":
+                    cr_total += 1
+                    if xy_ports.get(ctrl) == pp:
+                        cr_shared += 1
+            else:
+                lines.append({"element": f"{ctrl}-{tgt}", "line": ltype,
+                              "channel": None})
+                notes.append(f"pair {pid!r}: {ltype} line has no parseable "
+                             "port — left unpinned (the allocator will pick)")
 
     # TWPAs: modern quam_builder builds them natively (Connectivity.add_twpa_lines),
     # so pin each pump line from the source wiring instead of losing them. The pump
@@ -426,4 +527,15 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
         "pair_gate": pair_gate,
         "populate": populate,   # pre-fills the wizard; merge still owns fidelity
     }
+    # Shared-port detection (docs/54): when EVERY CR line rides its control's
+    # xy port, the chip is the customer's dual-upconverter layout — record the
+    # mode so a rebuild keeps the port plan (mixed layouts stay unset: the
+    # explicit per-line pins above reproduce the ports either way, the mode
+    # flag only changes unpinned behavior + capability requirements).
+    if cr_total > 0 and cr_shared == cr_total:
+        spec["cr_port_mode"] = "shared_xy"
+    elif cr_shared > 0:
+        notes.append(
+            f"{cr_shared} of {cr_total} CR lines share their control's xy "
+            "port — mixed layout; rebuilt from the explicit per-line pins.")
     return ReconstructedSpec(spec=spec, mixed_gates=mixed, notes=notes)

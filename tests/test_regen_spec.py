@@ -116,3 +116,65 @@ def test_real_chip_reconstructs_to_valid_buildable_spec():
     assert len(r.spec["qubit_pairs"]) == 7
     assert r.spec["pair_gate"] == "cz_tunable"
     assert config_generator.validate_spec(r.spec) == []   # buildable
+
+
+class TestCrReconstruction:
+    """docs/54 — CR/ZZ inversion: wp['cr']/wp['zz'] become pinned lines,
+    shared-port layouts are detected, and the CR populate table pre-fills."""
+
+    def _fixture(self, **kw):
+        import sys as _s
+        from pathlib import Path as _P
+        _s.path.insert(0, str(_P(__file__).parent))
+        from cr_fixtures import make_flavor_b
+        return make_flavor_b(**kw)
+
+    def test_cr_lines_pinned_and_shared_detected(self):
+        state, wiring = self._fixture()
+        rec = reconstruct_spec(state, wiring)
+        spec = rec.spec
+        cr_lines = [ln for ln in spec["lines"] if ln["line"] == "cross_resonance"]
+        assert len(cr_lines) == 4                    # both directions, all pairs
+        # each CR line pinned to its CONTROL's xy port (q0 xy = con1/1/2)
+        q01 = next(ln for ln in cr_lines if ln["element"] == "q0-q1")
+        assert q01["channel"] == {"kind": "mw_fem", "con": 1,
+                                  "slot": 1, "out_port": 2}
+        assert spec["cr_port_mode"] == "shared_xy"
+        assert spec["pair_gate"] == "cr"
+        assert ["q0", "q1"] in spec["qubit_pairs"]
+        assert ["q1", "q0"] in spec["qubit_pairs"]   # directed pairs preserved
+        assert not rec.mixed_gates
+
+    def test_zz_line_inverted(self):
+        state, wiring = self._fixture(with_zz=True)
+        spec = reconstruct_spec(state, wiring).spec
+        zz_lines = [ln for ln in spec["lines"] if ln["line"] == "zz_drive"]
+        assert len(zz_lines) == 1 and zz_lines[0]["element"] == "q0-q1"
+        pv = spec["populate"]["pairs"]["q0-1"]
+        assert pv["zz_detuning"] == -30e6
+        assert pv["zz_flattop_length"] == 300
+
+    def test_cr_populate_prefilled(self):
+        state, wiring = self._fixture()
+        pv = reconstruct_spec(state, wiring).spec["populate"]["pairs"]["q0-1"]
+        assert pv["cr_drive_phase"] == 0.11
+        assert pv["cr_drive_amplitude_scaling"] == 1.0
+        assert pv["cr_drive_amplitude"] == 0.79      # square op amplitude
+        assert pv["cr_flattop_length"] == 300
+        assert pv["cr_cancel_amplitude"] == 0.01     # target-xy stub amplitude
+        # dual-upconverter LO recovery on the qubit side
+        qv = reconstruct_spec(state, wiring).spec["populate"]["qubit"]["q0"]
+        assert qv["LO_frequency"] == 5.0e9           # upconverters["1"]
+        assert qv["cr_lo_frequency"] == 5.0e9        # upconverters["2"]
+
+    def test_dedicated_cr_not_marked_shared(self):
+        import sys as _s
+        from pathlib import Path as _P
+        _s.path.insert(0, str(_P(__file__).parent))
+        from cr_fixtures import make_flavor_a
+        state, wiring = make_flavor_a()
+        spec = reconstruct_spec(state, wiring).spec
+        cr_lines = [ln for ln in spec["lines"] if ln["line"] == "cross_resonance"]
+        assert len(cr_lines) == 2                    # dedicated FEM-2 ports
+        assert cr_lines[0]["channel"]["slot"] == 2
+        assert "cr_port_mode" not in spec
