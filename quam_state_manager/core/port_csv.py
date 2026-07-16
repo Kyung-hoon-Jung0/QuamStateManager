@@ -75,6 +75,7 @@ def parse_port_label_csv(text: str) -> dict:
     # --- qubit rows -----------------------------------------------------
     entries: list[dict] = []
     seen_ports: dict[tuple, str] = {}       # (con, fem, port, is_input) -> owner
+    seen_idx: dict[int, int] = {}           # chip qubit index -> csv row number
     for i, row in enumerate(rows):
         if not row.get("chip control row") or not row.get("chip control column"):
             continue                          # separator / readout row
@@ -91,6 +92,12 @@ def parse_port_label_csv(text: str) -> dict:
         if is_in:
             errors.append(f"row {i + 2}: a control port cannot be an input (IN…)")
             continue
+        if idx in seen_idx:
+            errors.append(f"row {i + 2}: chip qubit index {idx} already used "
+                          f"by row {seen_idx[idx]} — duplicate qubit ids "
+                          "would corrupt the wizard spec")
+            continue
+        seen_idx[idx] = i + 2
         name = f"q{idx}"
         key = (con, fem, port, False)
         if key in seen_ports:
@@ -130,14 +137,18 @@ def parse_port_label_csv(text: str) -> dict:
         try:
             con = int(row["QM chassis"])
             fem = int(row["QM FEM"])
-            port, _is_in = _parse_port(row["QM port"])
+            port, is_in = _parse_port(row["QM port"])
         except (KeyError, ValueError) as exc:
             errors.append(f"row {i + 2}: unparseable readout row ({exc})")
             continue
-        readout.setdefault(mux, {})[endpoint] = (con, fem, port)
+        # Keep the DIRECTION: MW-FEM input N and output N are distinct
+        # physical ports — "out 1 / IN1" is the standard feedline pairing
+        # (and this module's own fallback), never a same-port typo.
+        readout.setdefault(mux, {})[endpoint] = (con, fem, port, is_in)
     for mux, ep in readout.items():
         if ("in" in ep and "out" in ep and ep["in"] == ep["out"]):
-            errors.append(f"mux {mux}: readout in and out are the same port")
+            errors.append(f"mux {mux}: readout in and out name the same "
+                          "directed port")
         if ("in" in ep and "out" in ep
                 and ep["in"][:2] != ep["out"][:2]):
             errors.append(f"mux {mux}: readout in/out rows use different "
@@ -153,7 +164,7 @@ def parse_port_label_csv(text: str) -> dict:
     for e in entries:
         fems.setdefault(e["con"], set()).add(e["fem"])
     for ep in readout.values():
-        for con, fem, _p in ep.values():
+        for con, fem, _p, _is_in in ep.values():
             fems.setdefault(con, set()).add(fem)
 
     qubits = [e["name"] for e in entries]
@@ -169,8 +180,8 @@ def parse_port_label_csv(text: str) -> dict:
                                          "slot": e["fem"], "out_port": e["port"]}}
         ep = readout.get(e["mux"])
         if ep and "in" in ep and "out" in ep:
-            (ocon, ofem, oport) = ep["out"]
-            (_icon, _ifem, iport) = ep["in"]
+            (ocon, ofem, oport, _oin) = ep["out"]
+            (_icon, _ifem, iport, _iin) = ep["in"]
             pin["resonator"] = {"kind": "mw_fem", "con": ocon, "slot": ofem,
                                 "out_port": oport, "in_port": iport}
         else:

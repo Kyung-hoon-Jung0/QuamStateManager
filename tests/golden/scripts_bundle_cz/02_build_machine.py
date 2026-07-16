@@ -834,7 +834,14 @@ def _seed_cr_gate(pair, *, vals=None, shared=False):
     control = getattr(pair, "qubit_control", None)
     flavor = _cr_flavor(cr)
 
-    if shared and control is not None:
+    # Gate the upconverter-2 rewiring on the dict ACTUALLY existing —
+    # _apply_dual_upconverters legitimately skips a control (no xy port, LOs
+    # unknown on a zero-populate build, install raised) with a warning that
+    # promises "the CR drive keeps the single-LO port"; rewiring anyway would
+    # ship a dangling upconverters/2 reference the config generator rejects.
+    _dual = getattr(getattr(getattr(control, "xy", None), "opx_output", None),
+                    "upconverters", None)
+    if shared and control is not None and _dual:
         try:
             cr.upconverter = 2
             cr.LO_frequency = (control.get_reference()
@@ -1081,7 +1088,11 @@ def _seed_zz_gate(pair, *, vals=None, shared=False):
 
     control = getattr(pair, "qubit_control", None)
     target = getattr(pair, "qubit_target", None)
-    if shared and control is not None:
+    # Same dict-exists gate as _seed_cr_gate: never point at upconverters/2
+    # on a port _apply_dual_upconverters skipped (single-LO port kept).
+    _dual = getattr(getattr(getattr(control, "xy", None), "opx_output", None),
+                    "upconverters", None)
+    if shared and control is not None and _dual:
         try:
             zz.upconverter = 2
             zz.LO_frequency = (control.get_reference()

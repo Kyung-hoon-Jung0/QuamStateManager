@@ -54,7 +54,10 @@
         {% endfor %}
 
         {% if "stark_cz" in gate_types and xy_detuned_missing %}
-        <p class="add-gate-caution muted" data-gate-type="stark_cz">
+        {# hidden unless the SELECTED type is stark_cz — showActiveFields()
+           toggles it with the fieldsets, so a user filling in a CR gate never
+           reads an inertness warning about a gate they aren't creating #}
+        <p class="add-gate-caution muted" data-gate-type="stark_cz" hidden>
             ⚠ This pair has no <code>xy_detuned</code> channel yet — a
             Stark-CZ gate will be inert until the target's detuned drive is
             configured.
@@ -89,6 +92,9 @@
         const t = typeSel.value;
         fieldsets.forEach(fs => {
             fs.hidden = (fs.dataset.gateType !== t);
+        });
+        form.querySelectorAll(".add-gate-caution[data-gate-type]").forEach(el => {
+            el.hidden = (el.dataset.gateType !== t);
         });
     }
 

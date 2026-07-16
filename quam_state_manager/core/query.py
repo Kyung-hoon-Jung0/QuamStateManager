@@ -285,6 +285,11 @@ class QueryEngine:
         if fid is not None:
             result["pair_fidelity"] = fid["value"]
             result["pair_fidelity_source"] = fid["source"]
+            # Quarantine philosophy (chip_health): a value outside (0,1] is a
+            # failed fit — shown raw + flagged, never painted green. Without
+            # this the CR pairs table contradicted Chip Status's gated edge.
+            result["pair_fidelity_physical"] = chip_health.physicality(
+                "cz_fidelity", fid["value"])
 
         result["active"] = cr_semantics.is_active(root, name) if (
             cr is not None or zz is not None) else None

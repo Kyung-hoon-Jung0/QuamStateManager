@@ -332,12 +332,28 @@ def _emit_wiring(spec: dict, allocation: dict, chip: str, stamp: str) -> str:
         lt = ln.get("line")
         el = ln.get("element")
         c = _constraint(ln.get("channel"))
-        if c == "None" and pin_from_allocation:
+        # Allocation-frozen pins are MW-only (CR/ZZ) — a coupler is a DC line
+        # on an LF-FEM; rendering its LF allocation as mw_fem_spec would make
+        # add_qubit_pair_flux_lines unsatisfiable (mirror run_build's
+        # _add_one_pair_line, which pins only cross_resonance/zz_drive).
+        if (c == "None" and pin_from_allocation
+                and lt in ("cross_resonance", "zz_drive")):
             c = _pair_pin(allocation, el, lt) or "None"
         note = _alloc_comment(allocation, el, lt)
         ctl, tgt = str(el).split("-", 1)
         w("connectivity.%s(qubit_pairs=[(%r, %r)], constraints=%s)%s"
           % (_PAIR_FN[lt], _norm_index(ctl), _norm_index(tgt), c, note))
+
+    # Partition mirror of run_build.allocate_full (audit round 2): in shared
+    # mode only CR/ZZ lines with a frozen pin may allocate per-line from the
+    # freed pool; couplers and unpinnable CR/ZZ join the FIRST call, where
+    # in-call blocking guarantees collision-free allocation.
+    def _pinnable(ln) -> bool:
+        if ln.get("line") not in ("cross_resonance", "zz_drive"):
+            return False
+        if ln.get("channel"):
+            return True
+        return _pair_pin(allocation, ln.get("element"), ln.get("line")) is not None
 
     emitted_any = False
     for ln in lines:
@@ -353,7 +369,7 @@ def _emit_wiring(spec: dict, allocation: dict, chip: str, stamp: str) -> str:
             w("connectivity.add_qubit_flux_lines(qubits=%r, constraints=%s)%s"
               % (_norm_index(el), c, note))
             emitted_any = True
-        elif lt in _PAIR_FN and not shared:
+        elif lt in _PAIR_FN and (not shared or not _pinnable(ln)):
             _emit_pair_line(ln, pin_from_allocation=False)
             emitted_any = True
     if emitted_any:
@@ -361,11 +377,12 @@ def _emit_wiring(spec: dict, allocation: dict, chip: str, stamp: str) -> str:
 
     if shared:
         # Shared-port CR layout (dual upconverter, docs/54): allocate the
-        # qubit lines first with block_used_channels=False (the used xy ports
-        # return to the pool at call end), then each CR/ZZ line pinned onto
-        # its control's xy port with its OWN allocate call — within one call,
-        # channels used by earlier specs stay blocked, so two CR lines pinned
-        # to the same control port would collide (the customer script's
+        # qubit lines (+ any unpinnable pair lines) first with
+        # block_used_channels=False (the used xy ports return to the pool at
+        # call end), then each PINNED CR/ZZ line onto its control's xy port
+        # with its OWN allocate call — within one call, channels used by
+        # earlier specs stay blocked, so two CR lines pinned to the same
+        # control port would collide (the customer script's
         # allocate-after-every-add idiom). Pins are INLINED from the wizard's
         # allocation so the script stays deterministic.
         w("# shared-port CR: per-line allocation (CR/ZZ ride the control's")
@@ -373,7 +390,7 @@ def _emit_wiring(spec: dict, allocation: dict, chip: str, stamp: str) -> str:
         w("allocate_wiring(connectivity, instruments, block_used_channels=False)")
         w("")
         for ln in lines:
-            if ln.get("line") in _PAIR_FN:
+            if ln.get("line") in _PAIR_FN and _pinnable(ln):
                 _emit_pair_line(ln, pin_from_allocation=True)
                 w("allocate_wiring(connectivity, instruments, block_used_channels=False)")
     else:

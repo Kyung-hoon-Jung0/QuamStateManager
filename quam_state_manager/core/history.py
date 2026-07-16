@@ -102,8 +102,11 @@ DEFAULT_TRACKED_PROPERTIES: tuple[str, ...] = (
 # PAIR-scope trend properties (docs/54): the entity column holds the pair id
 # (e.g. "q0-1") — a disjoint name+property space from qubits, so the existing
 # (timestamp, qubit, property) PK carries both without schema change. Rows are
-# SPARSE (emitted only when a value exists) — CZ chips get pair_bell_fidelity
-# for free via the macro ladder; qubit-only chips get zero extra rows.
+# SPARSE (emitted only when a value exists) and CR-FAMILY only: the fidelity
+# ladder (cr_semantics.fidelity) reads CR/Stark macros + the channel
+# bell_state_fidelity — flux-CZ macro fidelities are NOT captured here (CZ
+# chips and qubit-only chips get zero pair rows; their v2 upgrade is a
+# stamp-only no-op).
 PAIR_TRACKED_PROPERTIES: tuple[str, ...] = (
     "pair_bell_fidelity",
     "pair_drive_amplitude_scaling",
@@ -699,8 +702,11 @@ class HistoryManager:
         self._db_initialised: set[str] = set()
         # Chip dirs whose index content generation (PRAGMA user_version) has
         # been verified this process — the one-time v2 pair-rows upgrade check
-        # in ``_ensure_index_fresh`` runs once, not per read.
+        # in ``_ensure_index_fresh`` runs once, not per read. The per-chip
+        # locks serialize the check→upgrade→stamp sequence (two concurrent
+        # readers on a pre-v2 chip must not both upgrade).
         self._schema_verified: set[str] = set()
+        self._upgrade_locks: dict[str, threading.Lock] = {}
 
     def _known_hashes_for_chip(self, hist_dir: Path) -> set[str]:
         """Return the set of state_hashes already present in a chip dir.
@@ -1650,6 +1656,14 @@ class HistoryManager:
             # schema is on disk. CREATE … IF NOT EXISTS is idempotent.
             with self._lock:
                 self._db_initialised.add(key)
+        elif brand_new:
+            # The flag said initialised but the FILE didn't exist when we
+            # sampled (out-of-band deletion) — re-run the idempotent CREATEs
+            # so the caller never SELECTs from a table-less brand-new DB.
+            with self._lock:
+                self._db_initialised.discard(key)
+            conn.close()
+            return self._open_index(quam_state_path)
         return conn
 
     @staticmethod
@@ -1775,6 +1789,62 @@ class HistoryManager:
             if own_conn:
                 conn.close()
 
+    def _upgrade_index_pair_rows(self, quam_state_path: Path, conn) -> int:
+        """v1→v2 content upgrade: append the PAIR-scope rows for every existing
+        snapshot — incremental (qubit rows untouched), one shared connection,
+        one transaction (concurrent readers see old-or-new atomically).
+
+        Fast path: when the NEWEST snapshot yields no pair rows the chip can't
+        gain any (qubit-only / flux-CZ — the fidelity ladder is CR-family
+        only), so the caller just stamps v2 without walking 10k snapshots.
+        Returns the number of rows appended. Caller holds the per-chip
+        upgrade lock and owns *conn* (and the version stamp).
+        """
+        snapshots = self._list_snapshots_uncached(quam_state_path)
+        if not snapshots:
+            return 0
+        hist_dir = self._history_dir(quam_state_path)
+
+        def _pair_rows(meta) -> list[tuple]:
+            snap_dir = hist_dir / meta.timestamp
+            try:
+                state = safe_io.read_json(snap_dir / "state.json")
+            except (OSError, ValueError):
+                return []
+            if not isinstance(state, dict):
+                return []
+            return _extract_pair_index_rows(state, meta)
+
+        newest = max(snapshots, key=lambda m: m.timestamp)
+        if not _pair_rows(newest):
+            logger.info("Param-history v2 upgrade: %s yields no pair rows — "
+                        "stamping without re-ingest", hist_dir)
+            return 0
+
+        appended = 0
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            for meta in snapshots:
+                rows = _pair_rows(meta)
+                if rows:
+                    conn.executemany(
+                        "INSERT OR REPLACE INTO param_history "
+                        "(timestamp, qubit, property, value, raw_pointer, "
+                        "trigger, run_id, experiment) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        rows,
+                    )
+                    appended += len(rows)
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        if appended:
+            self._bump_chip_version(hist_dir)
+        logger.info("Param-history v2 upgrade: appended %d pair rows for %s",
+                    appended, hist_dir)
+        return appended
+
     def rebuild_index(
         self,
         quam_state_path: str | Path,
@@ -1802,15 +1872,19 @@ class HistoryManager:
         stamp_version = force or not idx.exists()
 
         if force and idx.exists():
+            # Wipe IN PLACE — never unlink a potentially-open WAL database:
+            # deleting the file while another thread/tab holds a connection
+            # orphans the -wal/-shm sidecars onto the NEW file created at the
+            # same path (SQLite's documented corruption case), and a rebuild
+            # racing the unlink writes its rows to a dead inode. A DELETE
+            # inside one connection keeps every concurrent reader consistent
+            # (they see the old or the new generation atomically) and leaves
+            # the schema + _db_initialised bookkeeping untouched.
+            conn = self._open_index(path)
             try:
-                idx.unlink()
-            except OSError:
-                logger.warning("Could not delete index for rebuild: %s", idx)
-            else:
-                # The file is gone — the next _open_index must re-run the
-                # CREATEs, or the fresh DB has no param_history table at all.
-                with self._lock:
-                    self._db_initialised.discard(str(idx))
+                conn.execute("DELETE FROM param_history")
+            finally:
+                conn.close()
 
         snapshots = self._list_snapshots_uncached(path)
         if not snapshots:
@@ -1877,23 +1951,33 @@ class HistoryManager:
         snap_count = len(snapshots)
 
         # One-time schema-generation upgrade (verified once per process per
-        # chip): a pre-v2 index has no pair rows for its EXISTING snapshots —
-        # only a force rebuild re-derives them (self-heal appends new
-        # timestamps only). Cost = one full re-index per chip dir on first
-        # open after upgrade, same class as the existing self-heal.
+        # chip): a pre-v2 index has no pair rows for its EXISTING snapshots.
+        # Design constraints (audit round 2): (a) the check→upgrade→stamp
+        # sequence is serialized per chip so two concurrent readers can't
+        # both run it; (b) the upgrade is INCREMENTAL — it appends only the
+        # pair rows via one shared connection in one transaction (never a
+        # full re-ingest, never an unlink); (c) chips whose snapshots can't
+        # yield pair rows (qubit-only / flux-CZ — cr_semantics.fidelity is a
+        # CR-family ladder) are just stamped, paying one newest-snapshot
+        # probe instead of a 10k-snapshot walk.
         with self._lock:
             schema_ok = chip_key in self._schema_verified
+            up_lock = self._upgrade_locks.setdefault(chip_key, threading.Lock())
         if not schema_ok:
-            conn = self._open_index(quam_state_path)
-            try:
-                ver = conn.execute("PRAGMA user_version").fetchone()[0]
-            finally:
-                conn.close()
-            if ver < _INDEX_SCHEMA_VERSION:
-                logger.info("Param-history index at %s is schema v%d — "
-                            "rebuilding for v%d (pair trends)",
+            with up_lock:
+                conn = self._open_index(quam_state_path)
+                try:
+                    ver = conn.execute("PRAGMA user_version").fetchone()[0]
+                    if ver < _INDEX_SCHEMA_VERSION:
+                        logger.info(
+                            "Param-history index at %s is schema v%d — "
+                            "upgrading to v%d (pair trends)",
                             chip_key, ver, _INDEX_SCHEMA_VERSION)
-                self.rebuild_index(quam_state_path, force=True)
+                        self._upgrade_index_pair_rows(quam_state_path, conn)
+                        conn.execute(
+                            f"PRAGMA user_version={_INDEX_SCHEMA_VERSION}")
+                finally:
+                    conn.close()
             with self._lock:
                 self._schema_verified.add(chip_key)
         with self._lock:

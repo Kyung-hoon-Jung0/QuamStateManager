@@ -4143,8 +4143,21 @@ def pulses_page():
     # Tab visibility: pair tabs render only when matching rows exist, so CZ
     # chips keep exactly their old tab set and CR chips gain "Pair CR/ZZ"
     # (and drop a dead "Pair flux") without any chip-type sniffing.
-    has_pair_flux = any(r["owner_kind"] == "pair" and r["channel"] in GATE_SLOTS
-                        for r in all_rows)
+    # STRUCTURAL evidence, not row existence: a mid-bringup flux chip whose
+    # gate slots are declared-but-null yields zero flux rows, yet its "Pair
+    # flux" tab is exactly where the create flow's replace_none_slot path
+    # fills them — dropping the tab there would hide the surface.
+    has_pair_flux = any(
+        r["owner_kind"] == "pair" and r["channel"] in GATE_SLOTS
+        for r in all_rows
+    ) or any(
+        slot in macro
+        for pair in (store.merged.get("qubit_pairs") or {}).values()
+        if isinstance(pair, dict)
+        for macro in (pair.get("macros") or {}).values()
+        if isinstance(macro, dict)
+        for slot in GATE_SLOTS
+    )
     has_pair_drive = any(r["owner_kind"] == "pair"
                          and r["channel"] in PAIR_PULSE_CHANNELS
                          for r in all_rows)

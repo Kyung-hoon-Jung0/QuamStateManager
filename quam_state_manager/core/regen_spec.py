@@ -256,7 +256,14 @@ def _extract_populate(state: dict, root: dict) -> dict:
                 for seg in suffix.split("."):
                     node = node.get(seg) if isinstance(node, dict) else None
                 if _num(node) is not None:
-                    pairv[f"cr_{lever}"] = node
+                    # The correction phases are consumed UNPREFIXED everywhere
+                    # (run_build's seed table, the wizard columns, the preset
+                    # allowlist) — a cr_ prefix here would silently orphan the
+                    # calibrated ZI/IZ phases on a regenerate round-trip.
+                    key = (lever if lever in ("qc_correction_phase",
+                                              "qt_correction_phase")
+                           else f"cr_{lever}")
+                    pairv[key] = node
             ops = cr.get("operations") if isinstance(cr.get("operations"), dict) else {}
             sq = ops.get("square")
             if isinstance(sq, dict):
@@ -275,11 +282,15 @@ def _extract_populate(state: dict, root: dict) -> dict:
             for k in ("target_qubit_LO_frequency", "target_qubit_IF_frequency"):
                 if _num(cr.get(k)):
                     pairv[k] = cr[k]
-            # cancel amplitude lives on the TARGET's xy stub (cr_square_<pid>)
+            # cancel amplitude lives on the TARGET's xy stub (cr_square_<pid>).
+            # Explicit-null / pointer-string xy and operations are real
+            # serializations — the type guards (not dict.get defaults) are
+            # what keep a sparse chip from 500-ing the Re-generate wizard.
             tgt_name = str(pair.get("qubit_target", "")).split("/")[-1]
             tq = (state.get("qubits") or {}).get(tgt_name)
-            stub = ((tq or {}).get("xy") or {}).get("operations", {}) \
-                .get(f"cr_square_{pid}") if isinstance(tq, dict) else None
+            txy = tq.get("xy") if isinstance(tq, dict) else None
+            txy_ops = (txy.get("operations") or {}) if isinstance(txy, dict) else {}
+            stub = txy_ops.get(f"cr_square_{pid}")
             if isinstance(stub, dict) and _num(stub.get("amplitude")):
                 pairv["cr_cancel_amplitude"] = stub["amplitude"]
 
@@ -515,6 +526,42 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
     merged = dict(state)
     merged["wiring"] = wiring.get("wiring", {})
     populate = _extract_populate(state, merged)
+
+    # Wiring-only pairs: a wiring.qubit_pairs entry with a live channel whose
+    # state pair was deleted (partial edit) would otherwise vanish SILENTLY —
+    # no line, no pair, no note — and the merge can never resurrect it
+    # (entity collections are never resurrected). Recover when the channel's
+    # own qubit pointers resolve; otherwise at least say so.
+    seen_pids = set(state.get("qubit_pairs") or {})
+    for pid, wp in wire_pairs.items():
+        if pid in seen_pids or not isinstance(wp, dict):
+            continue
+        for wkey, ltype in (("c", "coupler"), ("cr", "cross_resonance"),
+                            ("zz", "zz_drive")):
+            chd = wp.get(wkey) if isinstance(wp.get(wkey), dict) else None
+            if not chd:
+                continue
+            ctrl = str(chd.get("control_qubit", "")).split("/")[-1]
+            tgt = str(chd.get("target_qubit", "")).split("/")[-1]
+            if not (ctrl and tgt):
+                notes.append(
+                    f"pair {pid!r} exists only in wiring and its {ltype} "
+                    "channel names no qubits — its port is NOT carried into "
+                    "the rebuild.")
+                continue
+            if [ctrl, tgt] not in pairs:
+                pairs.append([ctrl, tgt])
+            pp = _parse_port(chd.get("opx_output"))
+            if pp:
+                note_fem(pp[0], pp[1], pp[2])
+                kind = "lf_fem" if ltype == "coupler" else "mw_fem"
+                lines.append({"element": f"{ctrl}-{tgt}", "line": ltype,
+                              "channel": {"kind": kind, "con": pp[1],
+                                          "slot": pp[2], "out_port": pp[3]}})
+            notes.append(
+                f"pair {pid!r} existed only in wiring (state pair deleted) — "
+                f"recovered its {ltype} line; the rebuild re-creates the pair "
+                "with DEFAULT values (no calibration to merge).")
 
     spec = {
         "network": {"host": net.get("host"), "cluster_name": net.get("cluster_name"),

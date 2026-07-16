@@ -341,14 +341,48 @@ def allocate_full(spec: dict, instruments) -> tuple:
         allocate_wiring(connectivity, instruments)
         return connectivity, warnings
 
+    # Partition the pair lines (audit round 2): ONLY CR/ZZ lines that will
+    # actually be pinned (an explicit channel pin, or a control with a drive
+    # line whose allocated xy port we can read back) may allocate from the
+    # freed pool — an UNPINNED line there would silently grab a just-freed,
+    # already-in-use port (a coupler stealing a qubit's flux port; a CR line
+    # whose control has no drive grabbing another qubit's xy). Unpinned pair
+    # lines join the FIRST call instead, where in-call blocking guarantees
+    # collision-free allocation.
+    drive_controls = {str(_norm_index(ln["element"]))
+                      for ln in spec.get("lines", [])
+                      if ln.get("line") == "drive"}
+
+    def _pinnable(line) -> bool:
+        if line.get("line") not in ("cross_resonance", "zz_drive"):
+            return False
+        if line.get("channel"):
+            return True
+        control, _target = _parse_pair(line["element"])
+        return str(control) in drive_controls
+
+    pair_lines = [ln for ln in spec.get("lines", [])
+                  if ln.get("line") in ("coupler", "cross_resonance", "zz_drive")]
+    unpinned = [ln for ln in pair_lines if not _pinnable(ln)]
+    for ln in unpinned:
+        if ln.get("line") != "coupler":
+            warnings.append(
+                f"{ln.get('element')}: {ln.get('line')} line has no pin and "
+                "its control has no drive line — allocated a dedicated port "
+                "(shared-port layout needs the control's xy line).")
+        _add_one_pair_line(connectivity, ln)
+
     allocate_wiring(connectivity, instruments, block_used_channels=False)
-    # ONE allocate call per pair line — within a single call, channels used by
-    # earlier specs stay blocked until the call ends, so two CR lines pinned
-    # to the same control xy port (q2-1 + q2-3) would collide. Per-line calls
-    # free the port between lines — exactly the customer script's idiom
-    # (allocate_wiring after every add, block_used_channels=False).
+
+    # ONE allocate call per pinned pair line — within a single call, channels
+    # used by earlier specs stay blocked until the call ends, so two CR lines
+    # pinned to the same control xy port (q2-1 + q2-3) would collide.
+    # Per-line calls free the port between lines — exactly the customer
+    # script's idiom (allocate_wiring after every add, block_used_channels=False).
     xy_pins = _control_xy_pins(connectivity)
-    for line in spec.get("lines", []):
+    for line in pair_lines:
+        if line in unpinned:
+            continue
         if _add_one_pair_line(connectivity, line, xy_pins):
             allocate_wiring(connectivity, instruments, block_used_channels=False)
     return connectivity, warnings
@@ -1355,7 +1389,11 @@ def _seed_zz_gate(pair, *, vals=None, shared=False):
 
     control = getattr(pair, "qubit_control", None)
     target = getattr(pair, "qubit_target", None)
-    if shared and control is not None:
+    # Same dict-exists gate as _seed_cr_gate: never point at upconverters/2
+    # on a port _apply_dual_upconverters skipped (single-LO port kept).
+    _dual = getattr(getattr(getattr(control, "xy", None), "opx_output", None),
+                    "upconverters", None)
+    if shared and control is not None and _dual:
         try:
             zz.upconverter = 2
             zz.LO_frequency = (control.get_reference()
@@ -1525,7 +1563,14 @@ def _seed_cr_gate(pair, *, vals=None, shared=False):
     control = getattr(pair, "qubit_control", None)
     flavor = _cr_flavor(cr)
 
-    if shared and control is not None:
+    # Gate the upconverter-2 rewiring on the dict ACTUALLY existing —
+    # _apply_dual_upconverters legitimately skips a control (no xy port, LOs
+    # unknown on a zero-populate build, install raised) with a warning that
+    # promises "the CR drive keeps the single-LO port"; rewiring anyway would
+    # ship a dangling upconverters/2 reference the config generator rejects.
+    _dual = getattr(getattr(getattr(control, "xy", None), "opx_output", None),
+                    "upconverters", None)
+    if shared and control is not None and _dual:
         try:
             cr.upconverter = 2
             cr.LO_frequency = (control.get_reference()

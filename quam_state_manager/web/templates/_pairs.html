@@ -36,7 +36,11 @@
         <td>{{ "%.4f" | format(p.cr_drive_phase) if p.get('cr_drive_phase') is not none else '-' }}</td>
         <td>
             {% if p.get('pair_fidelity') is not none %}
-            {% if p.pair_fidelity >= 0.95 %}
+            {% if not p.get('pair_fidelity_physical', True) %}
+            {# quarantine, never a green paint: outside (0,1] = failed fit —
+               matches Chip Status's gated edge for the SAME value #}
+            <span class="muted" aria-label="Likely failed fit" title="Outside (0, 1] — likely a failed fit; excluded from health colouring">&#9888; {{ "%.4f" | format(p.pair_fidelity) }}</span>
+            {% elif p.pair_fidelity >= 0.95 %}
             <span class="cell-good" aria-label="Good"><span class="cell-glyph" aria-hidden="true">&#10003;</span>{{ "%.4f" | format(p.pair_fidelity) }}</span>
             {% elif p.pair_fidelity >= 0.85 %}
             <span class="cell-ok" aria-label="OK"><span class="cell-glyph" aria-hidden="true">&#9888;</span>{{ "%.4f" | format(p.pair_fidelity) }}</span>

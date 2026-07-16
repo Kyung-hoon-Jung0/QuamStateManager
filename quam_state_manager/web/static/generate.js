@@ -1553,6 +1553,19 @@
     renderCrOptions();
   }
 
+  // Shared mode defaults every pair to the customer's full 4-shape CR set —
+  // called by BOTH shared_xy entry points (the port-mode radio and the CSV
+  // import) so the flagship customer-CSV flow builds the customer library.
+  function seedSharedCrShapes() {
+    var pop = state.spec.populate.pairs = state.spec.populate.pairs || {};
+    state.spec.qubit_pairs.forEach(function (p) {
+      if (!p[0] || !p[1]) return;
+      var pid = p[0] + "-" + p[1];
+      pop[pid] = pop[pid] || {};
+      if (!pop[pid].cr_shapes) pop[pid].cr_shapes = "full";
+    });
+  }
+
   // CR sub-options (docs/54): drive-port layout + the Stark-CZ (ZZ) toggle.
   // Rendered under the architecture radios, only for fixed_frequency chips.
   function renderCrOptions() {
@@ -1583,16 +1596,7 @@
         r.addEventListener("change", function () {
           if (!r.checked) return;
           state.crPortMode = r.value;
-          // shared mode defaults new pairs to the customer's full shape set
-          if (r.value === "shared_xy") {
-            var pop = state.spec.populate.pairs = state.spec.populate.pairs || {};
-            state.spec.qubit_pairs.forEach(function (p) {
-              if (!p[0] || !p[1]) return;
-              var pid = p[0] + "-" + p[1];
-              pop[pid] = pop[pid] || {};
-              if (!pop[pid].cr_shapes) pop[pid].cr_shapes = "full";
-            });
-          }
+          if (r.value === "shared_xy") seedSharedCrShapes();
           deriveLines();
           saveDraft();
         });
@@ -1649,6 +1653,7 @@
     state.chipArch = "fixed_frequency";
     state.pairGate = "cr";
     state.qubitFlux = false;
+    seedSharedCrShapes();      // the customer flow gets the customer library
     var archSel = document.getElementById("gen-chip-arch");
     if (archSel) {
       archSel.value = "fixed_frequency";
@@ -5348,7 +5353,11 @@
     fetch("/generate/capabilities", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ spec: state.spec })
+      // regenerate mode: the source chip's folder rides along so the server
+      // can compare its CR schema flavor against the env (null in plain
+      // Generate mode — no chip to compare).
+      body: JSON.stringify({ spec: state.spec,
+                             source_folder: state.sourcePath || null })
     })
       .then(function (r) { return r.json(); })
       .then(function (res) {
@@ -5371,6 +5380,15 @@
           ? "✓ This environment can build everything this chip needs."
           : "✗ This environment is missing something this chip needs.";
         box.appendChild(h);
+        // Chip↔env schema-flavor mismatches (regenerate: warn BEFORE any
+        // Quam.load fails in a subprocess). Shape: {level, message}.
+        (res.flavor || []).forEach(function (f) {
+          var line = document.createElement("p");
+          line.className = (f.level === "blocker")
+            ? "gen-cap-blocker" : "gen-cap-degrade";
+          line.textContent = (f.level === "blocker" ? "✗ " : "⚠ ") + f.message;
+          box.appendChild(line);
+        });
         _capRows(box, rep.blockers, "gen-cap-blocker", "Cannot build");
         _capRows(box, rep.warnings, "gen-cap-degrade", "Will be skipped / downgraded");
         _capInventory(box, rep.inventory);
@@ -5425,7 +5443,8 @@
       fetch("/generate/capabilities", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spec: state.spec, force: true })
+        body: JSON.stringify({ spec: state.spec, force: true,
+                               source_folder: state.sourcePath || null })
       }).then(function () { renderCapabilityReport(box); });
     });
     box.appendChild(btn);

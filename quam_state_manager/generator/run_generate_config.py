@@ -86,6 +86,10 @@ def _load_machine(state_folder: Path):
          "FixedFrequencyZZDriveQuam"),
         ("quam_builder.architecture.superconducting.qpu", "FixedFrequencyQuam"),
     ):
+        # The shim below may repoint QUAM_STATE_PATH at a (deleted) scratch
+        # dir; restore it per iteration or every later fallback candidate
+        # loads from a nonexistent folder and fails spuriously.
+        os.environ["QUAM_STATE_PATH"] = str(state_folder)
         try:
             machine_cls = getattr(importlib.import_module(module_name), cls_name)
             return machine_cls.load()
@@ -129,6 +133,21 @@ def _retry_without_unknown_empty_keys(state_folder: Path, machine_cls, exc):
         return None
     dropped = []
     probe = dict(state)
+    try:
+        return _retry_loop(state_folder, machine_cls, probe, dropped, m)
+    finally:
+        # NEVER leave QUAM_STATE_PATH pointing at a deleted scratch dir —
+        # the caller's remaining fallback candidates load from it.
+        os.environ["QUAM_STATE_PATH"] = str(state_folder)
+
+
+def _retry_loop(state_folder: Path, machine_cls, probe, dropped, m):
+    import json as _json
+    import os
+    import re as _re
+    import shutil
+    import tempfile
+
     while True:
         key = m.group(1)
         val = probe.get(key, None)
