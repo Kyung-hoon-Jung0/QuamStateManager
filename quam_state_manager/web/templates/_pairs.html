@@ -7,6 +7,54 @@
     </div>
 </div>
 
+{% if pair_vocab == 'cr' %}
+{# CR-native columns (docs/54): drive levers + canonical 2Q fidelity + the
+   emulated effective IF; rows arrive adjacency-sorted so both DIRECTIONS of
+   one physical edge sit together. #}
+<table id="pairs-table" class="data-table" role="grid">
+    <thead>
+        <tr>
+            <th class="sortable" data-col="0" data-type="str">Pair</th>
+            <th class="sortable" data-col="1" data-type="str">Control</th>
+            <th class="sortable" data-col="2" data-type="str">Target</th>
+            <th class="sortable" data-col="3" data-type="str">Active</th>
+            <th class="sortable" data-col="4" data-type="num">Drive Amp &times;</th>
+            <th class="sortable" data-col="5" data-type="num">Drive Phase</th>
+            <th class="sortable" data-col="6" data-type="num">2Q Fidelity</th>
+            <th class="sortable" data-col="7" data-type="num">Eff. IF <span class="unit">(MHz)</span></th>
+        </tr>
+    </thead>
+    <tbody>
+    {% if pairs %}
+    {% for p in pairs %}
+    <tr class="clickable-row" data-pair-id="{{ p.id }}" hx-get="/pair/{{ p.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
+        <td><strong>{{ p.qubit_control or '?' }} &rarr; {{ p.qubit_target or '?' }}</strong> <small class="muted">{{ p.id }}</small></td>
+        <td>{{ p.qubit_control or '-' }}</td>
+        <td>{{ p.qubit_target or '-' }}</td>
+        <td>{% if p.get('active') %}<span class="cell-good">&#10003;</span>{% elif p.get('active') is sameas false %}<span class="muted">off</span>{% else %}-{% endif %}</td>
+        <td>{{ "%.4f" | format(p.cr_drive_amplitude_scaling) if p.get('cr_drive_amplitude_scaling') is not none else '-' }}</td>
+        <td>{{ "%.4f" | format(p.cr_drive_phase) if p.get('cr_drive_phase') is not none else '-' }}</td>
+        <td>
+            {% if p.get('pair_fidelity') is not none %}
+            {% if p.pair_fidelity >= 0.95 %}
+            <span class="cell-good" aria-label="Good"><span class="cell-glyph" aria-hidden="true">&#10003;</span>{{ "%.4f" | format(p.pair_fidelity) }}</span>
+            {% elif p.pair_fidelity >= 0.85 %}
+            <span class="cell-ok" aria-label="OK"><span class="cell-glyph" aria-hidden="true">&#9888;</span>{{ "%.4f" | format(p.pair_fidelity) }}</span>
+            {% else %}
+            <span class="cell-bad" aria-label="Bad"><span class="cell-glyph" aria-hidden="true">&#10007;</span>{{ "%.4f" | format(p.pair_fidelity) }}</span>
+            {% endif %}
+            {% if p.get('pair_fidelity_source') == 'channel' %}<small class="muted">(bell)</small>{% endif %}
+            {% else %}-{% endif %}
+        </td>
+        <td>{% if p.get('cr_effective_if') is not none %}{{ "%.1f" | format(p.cr_effective_if / 1e6) }}{% if p.get('cr_if_problems') %} <span class="cell-bad" title="{{ p.cr_if_problems | join('; ') }}">&#9888;</span>{% endif %}{% else %}-{% endif %}</td>
+    </tr>
+    {% endfor %}
+    {% else %}
+        <tr><td colspan="8" class="muted" style="text-align:center;padding:2rem">No qubit pairs found in this state file.</td></tr>
+    {% endif %}
+    </tbody>
+</table>
+{% else %}
 <table id="pairs-table" class="data-table" role="grid">
     <thead>
         <tr>
@@ -47,6 +95,7 @@
     {% endif %}
     </tbody>
 </table>
+{% endif %}
 
 {% set base_url = "/pairs" %}
 {% set extra_qs = "" %}
@@ -92,10 +141,13 @@
         var treeEl = document.getElementById('json-panel-tree');
         if (!panel || !treeEl) return;
 
-        // Build a combined wiring view: pair coupler wiring + both qubit wirings
+        // Build a wiring view keyed by the pair's REAL line types (cr / zz / c)
+        // — the old fixed "coupler" caption lied on CR chips.
         var subtree = {};
         if (pairsWiring[name]) {
-            subtree.coupler = pairsWiring[name];
+            Object.keys(pairsWiring[name]).forEach(function (lineType) {
+                subtree[lineType] = pairsWiring[name][lineType];
+            });
         }
 
         document.getElementById('json-panel-title').textContent = 'Wiring JSON \u2014 ' + name;

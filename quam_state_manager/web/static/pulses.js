@@ -602,16 +602,23 @@ window.PulsesPage = (function () {
         schedulCreatePreview(root);
     }
 
+    // Target kinds that name their op (vs the pair-gate flux SLOTS, whose
+    // "name" is the slot itself). data-target-kind holds a space-separated
+    // token list so one row (the op-name input) can serve several kinds.
+    var NAMED_TARGET_KINDS = ['qubit', 'pair_channel'];
+
     function createTargetKind(radio) {
         var root = createRoot();
         if (!root) return;
         root.querySelectorAll('[data-target-kind]').forEach(function (el) {
-            el.hidden = el.getAttribute('data-target-kind') !== radio.value;
+            var kinds = el.getAttribute('data-target-kind').split(' ');
+            el.hidden = kinds.indexOf(radio.value) === -1;
         });
         var nameInput = document.getElementById('pulse-create-name');
         if (nameInput) {
-            nameInput.required = radio.value === 'qubit';
-            if (radio.value !== 'qubit') {
+            var named = NAMED_TARGET_KINDS.indexOf(radio.value) !== -1;
+            nameInput.required = named;
+            if (!named) {
                 // a stale duplicate-name validity on the now-hidden field
                 // would silently block the whole form's submit
                 nameInput.setCustomValidity('');
@@ -635,17 +642,43 @@ window.PulsesPage = (function () {
         });
     }
 
+    function createPairChannels(sel) {
+        var root = createRoot();
+        var chans = root && root._pairChannels;
+        if (!chans) return;
+        var chanSel = root.querySelector('select[name="pc_channel"]');
+        if (!chanSel) return;
+        chanSel.innerHTML = '';
+        (chans[sel.value] || []).forEach(function (ch) {
+            var opt = document.createElement('option');
+            opt.textContent = ch;
+            chanSel.appendChild(opt);
+        });
+        createValidateName();
+    }
+
     function createValidateName() {
         var root = createRoot();
         if (!root || !root._existing) return;
         var nameInput = document.getElementById('pulse-create-name');
         if (!nameInput) return;
-        var qubit = (root.querySelector('select[name="qubit"]') || {}).value;
-        var channel = (root.querySelector('select[name="channel"]') || {}).value;
-        var taken = root._existing[qubit + '/' + channel] || [];
+        var kindRadio = root.querySelector('input[name="target_kind"]:checked');
+        var key, where;
+        if (kindRadio && kindRadio.value === 'pair_channel') {
+            var pair = (root.querySelector('select[name="pc_pair"]') || {}).value;
+            var pchan = (root.querySelector('select[name="pc_channel"]') || {}).value;
+            key = 'pair:' + pair + '/' + pchan;
+            where = pair + '.' + pchan;
+        } else {
+            var qubit = (root.querySelector('select[name="qubit"]') || {}).value;
+            var channel = (root.querySelector('select[name="channel"]') || {}).value;
+            key = qubit + '/' + channel;
+            where = qubit + '.' + channel;
+        }
+        var taken = root._existing[key] || [];
         nameInput.setCustomValidity(
             taken.indexOf(nameInput.value) !== -1
-                ? 'An operation with this name already exists on ' + qubit + '.' + channel
+                ? 'An operation with this name already exists on ' + where
                 : '');
     }
 
@@ -656,6 +689,7 @@ window.PulsesPage = (function () {
         root._catalog = parseEmbeddedJson('pulse-catalog-data') || {};
         root._existing = parseEmbeddedJson('pulse-existing-data') || {};
         root._pairs = parseEmbeddedJson('pulse-pairs-data') || {};
+        root._pairChannels = parseEmbeddedJson('pulse-pair-channels-data') || {};
 
         var typeSel = document.getElementById('pulse-create-type');
         if (typeSel) createTypeChanged(typeSel);
@@ -737,6 +771,7 @@ window.PulsesPage = (function () {
         createTypeChanged: createTypeChanged,
         createTargetKind: createTargetKind,
         createPairGates: createPairGates,
+        createPairChannels: createPairChannels,
         createValidateName: createValidateName
     };
 })();

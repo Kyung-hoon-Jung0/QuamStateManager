@@ -480,7 +480,8 @@ class TestCrossResonancePair:
         assert "Coupler" not in names      # no empty coupler section on a CR pair
         assert "Cr" not in names           # no phantom CZ section from the cr macro
         cr_sec = next(s for s in secs if s["name"] == "Cross Resonance")
-        uc = next(p for p in cr_sec["props"] if p["key"] == "cr_upconverter")
+        # dynamic section (docs/54): lever rows carry bare names + real paths
+        uc = next(p for p in cr_sec["props"] if p["key"] == "upconverter")
         assert uc["editable"] and uc["dot_path"] == "qubit_pairs.qc-qt.cross_resonance.upconverter"
 
 

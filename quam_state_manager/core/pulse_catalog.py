@@ -554,14 +554,17 @@ def unmodeled_fields(spec: PulseSpec | None, body: Any) -> list[str]:
 def _chip_pulse_classes(merged: dict) -> list[str]:
     """Every explicit pulse ``__class__`` string on the chip.
 
-    Walks the same two structural shapes as ``pulse_index.list_pulses``
-    (qubit channel operations + pair-gate flux slots). Only bodies carrying
-    a literal ``__class__`` contribute — implicit slots and alias strings
-    are no evidence about the chip's module layout (and the row-level
-    ``qclass`` back-fill must never be used here: it injects the catalog's
-    own path for implicit slots, poisoning the pool).
+    Walks the same structural shapes as ``pulse_index.list_pulses``
+    (qubit channel operations + pair-gate flux slots + pair drive channels —
+    on some CR chips the only DragGaussian evidence lives on a
+    ``cross_resonance`` channel). Only bodies carrying a literal ``__class__``
+    contribute — implicit slots and alias strings are no evidence about the
+    chip's module layout (and the row-level ``qclass`` back-fill must never be
+    used here: it injects the catalog's own path for implicit slots, poisoning
+    the pool).
     """
-    from quam_state_manager.core.pulse_index import GATE_SLOTS, PULSE_CHANNELS
+    from quam_state_manager.core.pulse_index import (
+        GATE_SLOTS, PAIR_PULSE_CHANNELS, PULSE_CHANNELS)
 
     out: list[str] = []
     qubits = merged.get("qubits")
@@ -580,14 +583,23 @@ def _chip_pulse_classes(merged: dict) -> list[str]:
     pairs = merged.get("qubit_pairs")
     if isinstance(pairs, dict):
         for pair in pairs.values():
-            macros = pair.get("macros") if isinstance(pair, dict) else None
-            if not isinstance(macros, dict):
+            if not isinstance(pair, dict):
                 continue
-            for macro in macros.values():
-                if not isinstance(macro, dict):
+            macros = pair.get("macros")
+            if isinstance(macros, dict):
+                for macro in macros.values():
+                    if not isinstance(macro, dict):
+                        continue
+                    for slot in GATE_SLOTS:
+                        body = macro.get(slot)
+                        if isinstance(body, dict) and isinstance(body.get("__class__"), str):
+                            out.append(body["__class__"])
+            for channel in PAIR_PULSE_CHANNELS:
+                chan = pair.get(channel)
+                ops = chan.get("operations") if isinstance(chan, dict) else None
+                if not isinstance(ops, dict):
                     continue
-                for slot in GATE_SLOTS:
-                    body = macro.get(slot)
+                for body in ops.values():
                     if isinstance(body, dict) and isinstance(body.get("__class__"), str):
                         out.append(body["__class__"])
     return out

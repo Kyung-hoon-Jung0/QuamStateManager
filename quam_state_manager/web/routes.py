@@ -54,6 +54,7 @@ from quam_state_manager.core import (
     chip_health,
     config_generator,
     config_view,
+    cr_semantics,
     diagnostics,
     gen_presets,
     node_scan,
@@ -1506,6 +1507,136 @@ def _humanize_gate_name(gate_name: str) -> str:
     return " ".join(tok.upper() if tok == "cz" else tok.capitalize() for tok in gate_name.split("_"))
 
 
+def _pair_prop(store: QuamStore, key: str, dot_path: str | None,
+               resolved_value: Any = None, *, editable: bool | None = None) -> dict:
+    """One inspector property row (the shared shape all section builders emit)."""
+    raw_value = resolved_value
+    ptr = False
+    self_ref = False
+    if dot_path:
+        try:
+            raw_value = store.get_value(dot_path)
+            ptr = is_pointer(raw_value)
+            self_ref = is_self_ref(raw_value) if ptr else False
+            if resolved_value is None and not ptr:
+                resolved_value = raw_value
+            elif resolved_value is None and ptr and not self_ref:
+                resolved_value = store.resolve_pointer(
+                    raw_value, tuple(dot_path.split(".")))
+        except (KeyError, TypeError):
+            pass
+    if editable is None:
+        editable = dot_path is not None and not isinstance(resolved_value, (list, dict))
+    return {
+        "key": key,
+        "value": resolved_value,
+        "raw": raw_value,
+        "dot_path": dot_path,
+        "is_pointer": ptr and not self_ref,
+        "is_self_ref": self_ref,
+        "editable": editable,
+    }
+
+
+def _build_cr_zz_sections(name: str, store: QuamStore) -> list[dict]:
+    """Dynamic Cross Resonance / ZZ Drive / CR Gate inspector sections.
+
+    Built from the pair's ACTUAL keys via ``cr_semantics`` because the
+    calibration levers live in flavor-dependent homes (channel vs macro,
+    ``zz_drive`` vs ``zz``) — a static property map cannot hold their dot
+    paths, and emitting absent keys would recreate the phantom-section bug
+    (editable rows whose Apply 400s). Frequency-chain rows: raw pointers are
+    display-only (value-mode editing ``target_qubit_RF_frequency`` would write
+    into the TARGET qubit's calibration from a pair page — the cross-entity
+    surprise the 3-mode Explorer editor exists to make explicit); the computed
+    effective LO/RF/IF rows have no dot path at all.
+    """
+    pair_obj = store.merged.get("qubit_pairs", {}).get(name)
+    if not isinstance(pair_obj, dict):
+        return []
+    sections: list[dict] = []
+    levers = cr_semantics.lever_map(pair_obj)
+
+    def _channel_section(title: str, chan_key: str, kind: str) -> None:
+        props: list[dict] = []
+        base = f"qubit_pairs.{name}.{chan_key}"
+        eff = cr_semantics.effective_frequencies(store, name, channel=kind)
+        # calibration levers (editable, flavor-correct paths)
+        for lever, suffix in sorted(levers.items()):
+            is_zz = lever.startswith("zz_")
+            if (kind == "zz") != is_zz or lever.startswith("macro_"):
+                continue
+            label = lever[3:] if is_zz else lever
+            props.append(_pair_prop(store, label, f"qubit_pairs.{name}.{suffix}"))
+        # frequency chain: raw fields display-only, then the emulated values
+        chan = store.merged["qubit_pairs"][name].get(chan_key)
+        if isinstance(chan, dict):
+            for fkey in ("LO_frequency", "target_qubit_RF_frequency",
+                         "target_qubit_LO_frequency", "target_qubit_IF_frequency",
+                         "intermediate_frequency"):
+                if fkey in chan:
+                    props.append(_pair_prop(store, fkey, f"{base}.{fkey}",
+                                            editable=False))
+            ops = chan.get("operations")
+            if isinstance(ops, dict) and ops:
+                props.append(_pair_prop(store, "operations", None,
+                                        ", ".join(ops.keys()), editable=False))
+        if eff is not None:
+            props.append(_pair_prop(store, "effective LO", None, eff.lo_hz,
+                                    editable=False))
+            props.append(_pair_prop(store, "effective target RF", None,
+                                    eff.target_rf_hz, editable=False))
+            props.append(_pair_prop(store, "effective IF", None, eff.if_hz,
+                                    editable=False))
+            for problem in eff.problems:
+                props.append(_pair_prop(store, "⚠", None, problem,
+                                        editable=False))
+        if props:
+            sections.append({"name": title, "props": props})
+
+    cr = cr_semantics.cr_channel(pair_obj)
+    if cr is not None:
+        cr_key = next((k for k in cr_semantics.CR_CHANNEL_KEYS
+                       if pair_obj.get(k) is cr), "cross_resonance")
+        _channel_section("Cross Resonance", cr_key, "cr")
+    zz = cr_semantics.zz_channel(pair_obj)
+    if zz is not None:
+        _channel_section("ZZ Drive", zz[0], "zz")
+    xy_det = cr_semantics.xy_detuned_channel(pair_obj)
+    if xy_det is not None:
+        base = f"qubit_pairs.{name}.{cr_semantics.XY_DETUNED_KEY}"
+        props = [_pair_prop(store, k, f"{base}.{k}", editable=False)
+                 for k in ("detuning", "intermediate_frequency", "RF_frequency")
+                 if k in xy_det]
+        if props:
+            sections.append({"name": "XY Detuned", "props": props})
+
+    # CR gate macro: correction phases editable, runtime/id display-only,
+    # fidelity through the canonical macro-then-channel ladder.
+    hit = cr_semantics.cr_gate_macro(pair_obj)
+    if hit is not None:
+        gate_name, gate = hit
+        gbase = f"qubit_pairs.{name}.macros.{gate_name}"
+        props = []
+        for k in ("qc_correction_phase", "qt_correction_phase",
+                  "drive_amplitude_scaling", "drive_phase",
+                  "cancel_amplitude_scaling", "cancel_phase"):
+            if k in gate:
+                props.append(_pair_prop(store, k, f"{gbase}.{k}"))
+        for k in ("duration", "id"):
+            if k in gate:
+                props.append(_pair_prop(store, k, f"{gbase}.{k}", editable=False))
+        fid = cr_semantics.fidelity(pair_obj)
+        if fid is not None:
+            props.append(_pair_prop(
+                store, f"fidelity ({fid['source']})", None, fid["value"],
+                editable=False))
+        if props:
+            sections.append({"name": f"{_humanize_gate_name(gate_name)} Gate",
+                             "props": props})
+    return sections
+
+
 def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore) -> list[dict]:
     """Build pointer-aware, sectioned property list for pair detail template."""
     sections: list[dict] = []
@@ -1549,6 +1680,9 @@ def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore)
     # doesn't show an empty "Coupler" section and a CZ pair doesn't show an empty
     # "Cross Resonance" section. Identity always has an id, so it survives.
     sections = [s for s in sections if any(p["value"] is not None for p in s["props"])]
+
+    # Dynamic CR / ZZ / gate-macro sections (flavor-aware; empty on CZ chips).
+    sections.extend(_build_cr_zz_sections(name, store))
 
     # Dynamic CZ gate sections
     _CZ_GATE_FIELDS = [
@@ -2668,6 +2802,21 @@ def pairs():
         except KeyError:
             continue
 
+    # CR chips get CR-native columns (drive levers, 2Q fidelity, effective IF,
+    # active badge) and adjacency ordering so the two DIRECTIONS of a physical
+    # edge sit together (they are independent calibration targets — never
+    # collapsed, docs/54). CZ/mixed chips keep the table byte-identical.
+    pair_vocab = "cz"
+    if cr_semantics.is_cr_chip(store.merged):
+        kinds = {("cr" if "cr_upconverter" in p or "cr_operations" in p else "cz")
+                 for p in pair_data}
+        pair_vocab = "cr" if kinds == {"cr"} else "mixed"
+    if pair_vocab == "cr":
+        pair_data.sort(key=lambda p: (
+            tuple(sorted((str(p.get("qubit_control") or ""),
+                          str(p.get("qubit_target") or "")))),
+            str(p.get("qubit_control") or "")))
+
     page = _int_arg("page", 1, minimum=1)
     per_page = _int_arg("per_page", _DEFAULT_PER_PAGE, minimum=1)
     page_pairs, total, page, total_pages = _paginate(pair_data, page, per_page)
@@ -2680,6 +2829,7 @@ def pairs():
         **_ctx(
             page="pairs",
             pairs=page_pairs,
+            pair_vocab=pair_vocab,
             current_page=page,
             total_pages=total_pages,
             total=total,
@@ -2708,10 +2858,9 @@ def _render_pair_detail(name: str, *, focus_path: str | None = None):
 
     sections = _build_pair_sections(name, data, store)
 
-    port_info = {}
-    coupler_port = engine.get_port_for_pair(name)
-    if coupler_port:
-        port_info["coupler"] = coupler_port
+    # Honest role labels (coupler / cr / zz) — a CR drive port used to render
+    # captioned "coupler" through the single-return fallback.
+    port_info = engine.get_pair_port_roles(name)
 
     template = "_pair_detail.html" if _is_htmx() else "pair_detail.html"
     return render_template(
@@ -2728,9 +2877,14 @@ def _render_pair_detail(name: str, *, focus_path: str | None = None):
     )
 
 
+# ``arch`` gates each type to the pair's architecture (docs/54): flux types
+# need flux evidence (z lines / coupler / CZ-shaped macros) and must never be
+# written onto a FixedFrequencyTransmonPair; CR/Stark types need the matching
+# pair drive channel. Enforced in pair_gate_form (UI) AND pair_add_gate (409).
 _GATE_TYPES: dict[str, dict[str, Any]] = {
     "cz_unipolar": {
         "label": "CZ Unipolar (square pulse)",
+        "arch": "flux",
         "fields": [
             ("amplitude", "Flux amplitude", 0.05, "float"),
             ("length", "Flux length (ns)", 100, "int"),
@@ -2742,6 +2896,7 @@ _GATE_TYPES: dict[str, dict[str, Any]] = {
     },
     "cz_flattop": {
         "label": "CZ Flat-top (Gaussian envelope)",
+        "arch": "flux",
         "fields": [
             ("amplitude", "Flux amplitude", 0.05, "float"),
             ("flat_length", "Flat length (ns)", 200, "int"),
@@ -2753,6 +2908,7 @@ _GATE_TYPES: dict[str, dict[str, Any]] = {
     },
     "cz_parametric": {
         "label": "CZ Parametric (AC-flux modulated)",
+        "arch": "flux",
         "fields": [
             ("amplitude", "Flux amplitude", 0.05, "float"),
             ("length", "Flux length (ns)", 100, "int"),
@@ -2762,7 +2918,55 @@ _GATE_TYPES: dict[str, dict[str, Any]] = {
             ("phase_shift_target", "Phase shift (target)", 0.0, "float"),
         ],
     },
+    "cr_gate": {
+        "label": "CR gate (cross-resonance macro)",
+        "arch": "cr",
+        "fields": [
+            ("qc_correction_phase", "Correction phase (control)", 0.0, "float"),
+            ("qt_correction_phase", "Correction phase (target)", 0.0, "float"),
+        ],
+    },
+    "stark_cz": {
+        "label": "Stark-induced CZ (ZZ drive macro)",
+        "arch": "zz",
+        "fields": [
+            ("qc_correction_phase", "Correction phase (control)", 0.0, "float"),
+            ("qt_correction_phase", "Correction phase (target)", 0.0, "float"),
+        ],
+    },
 }
+
+
+def _pair_arch(store, pair_obj: dict) -> dict[str, bool]:
+    """Structural evidence for which gate families this pair supports.
+
+    A pair with no evidence either way (bare macros, no channels, no flux)
+    defaults to flux — the legacy add-gate behavior for hand-built chips.
+    """
+    merged = store.merged
+    cr = cr_semantics.cr_channel(pair_obj) is not None
+    zz = cr_semantics.zz_channel(pair_obj) is not None
+    macros = pair_obj.get("macros") if isinstance(pair_obj.get("macros"), dict) else {}
+    has_flux_macro = any(cr_semantics.is_cz_shaped_macro(m)
+                         for m in macros.values() if isinstance(m, dict))
+    qc, qt = cr_semantics.pair_endpoints(pair_obj)
+    has_z = any(
+        isinstance(((merged.get("qubits") or {}).get(q) or {}).get("z"), dict)
+        for q in (qc, qt) if q)
+    flux = bool(isinstance(pair_obj.get("coupler"), dict) or has_flux_macro or has_z)
+    if not cr and not zz and not flux:
+        flux = True
+    return {"cr": cr, "zz": zz, "flux": flux}
+
+
+# Fallback CR/Stark macro class paths (the quam-builder CR branch layout).
+# Only used when the chip carries no same-leaf macro to copy the exact path
+# from — evidence beats guessing (the _parametric_cz_evidence idiom, via
+# cr_semantics.gate_class_evidence).
+_CR_GATE_QCLASS = ("quam_builder.architecture.superconducting.custom_gates"
+                   ".fixed_transmon_pair.two_qubit_gates.CRGate")
+_STARK_CZ_QCLASS = ("quam_builder.architecture.superconducting.custom_gates"
+                    ".fixed_transmon_pair.two_qubit_gates.StarkInducedCZGate")
 
 
 # Fallback ParametricCZGate class path — matches the quam_builder layout the
@@ -2806,8 +3010,29 @@ def _parametric_cz_qclass(store) -> str:
 
 
 def _build_gate_template(gate_type: str, fields: dict[str, Any], *,
-                         parametric_qclass: str | None = None) -> dict:
+                         parametric_qclass: str | None = None,
+                         cr_qclass: str | None = None,
+                         stark_qclass: str | None = None) -> dict:
     """Construct the macro dict for ``gate_type`` from validated *fields*."""
+    if gate_type == "cr_gate":
+        # the modern CRGate shape (verified on every flavor artifact, docs/54)
+        return {
+            "__class__": cr_qclass or _CR_GATE_QCLASS,
+            "id": "#./inferred_id",
+            "fidelity": None,
+            "duration": "#./inferred_duration",
+            "qc_correction_phase": fields["qc_correction_phase"],
+            "qt_correction_phase": fields["qt_correction_phase"],
+        }
+    if gate_type == "stark_cz":
+        return {
+            "__class__": stark_qclass or _STARK_CZ_QCLASS,
+            "id": "#./inferred_id",
+            "fidelity": None,
+            "duration": "#./inferred_duration",
+            "qc_correction_phase": fields["qc_correction_phase"],
+            "qt_correction_phase": fields["qt_correction_phase"],
+        }
     if gate_type == "cz_unipolar":
         return {
             "fidelity": {},
@@ -2875,9 +3100,14 @@ def pair_gate_form(name: str):
     # that stack. Offer the option only when the chip itself already proves
     # the class exists (an existing ParametricCZGate macro to copy the exact
     # path from); otherwise drop it rather than corrupt the file.
-    gate_types = _GATE_TYPES
+    # Architecture gate: flux types on flux pairs, CR/Stark on their channels —
+    # never offer a flux-CZ macro on a FixedFrequencyTransmonPair (writing one
+    # corrupts the pair for quam's loader) nor a CR macro on a coupler pair.
+    arch = _pair_arch(store, pair_obj)
+    gate_types = {k: v for k, v in _GATE_TYPES.items()
+                  if arch.get(v.get("arch", "flux"))}
     if _parametric_cz_evidence(store) is None:
-        gate_types = {k: v for k, v in _GATE_TYPES.items() if k != "cz_parametric"}
+        gate_types = {k: v for k, v in gate_types.items() if k != "cz_parametric"}
     parametric_qclass = _parametric_cz_qclass(store)
     return render_template(
         "_pair_add_gate.html",
@@ -2887,6 +3117,12 @@ def pair_gate_form(name: str):
         # The JSON preview in the form must show the class the SERVER will
         # write (chip-derived when possible), not a duplicated literal.
         parametric_qclass=parametric_qclass,
+        cr_gate_qclass=(cr_semantics.gate_class_evidence(store.merged, "CRGate")
+                        or _CR_GATE_QCLASS),
+        stark_cz_qclass=(cr_semantics.gate_class_evidence(
+            store.merged, "StarkInducedCZGate") or _STARK_CZ_QCLASS),
+        xy_detuned_missing=(arch["zz"] and cr_semantics.xy_detuned_channel(
+            pair_obj) is None),
     )
 
 
@@ -2921,10 +3157,24 @@ def pair_add_gate(name: str):
             message=f"Gate {gate_name!r} already exists on this pair. Pick a different name.",
             level="error",
         ), 409
-    # Server-side twin of the form gating: without on-chip evidence that
-    # ParametricCZGate exists in this chip's stack, refuse to write a class
-    # path that may make the whole file unloadable (quam_builder 0.4.0
-    # removed the class).
+    # Server-side twin of the form's architecture gating (never trust the
+    # form): a flux-CZ macro on a CR pair — or a CR macro on a coupler pair —
+    # corrupts the pair for quam's loader.
+    arch = _pair_arch(store, pair_obj)
+    wanted_arch = _GATE_TYPES[gate_type].get("arch", "flux")
+    if not arch.get(wanted_arch):
+        labels = {"flux": "a flux-tunable/coupler pair",
+                  "cr": "a pair with a cross-resonance channel",
+                  "zz": "a pair with a ZZ drive channel"}
+        return render_template(
+            "_status.html",
+            message=(f"{gate_type} needs {labels[wanted_arch]} — this pair's "
+                     "architecture doesn't support it."),
+            level="error",
+        ), 409
+    # Without on-chip evidence that ParametricCZGate exists in this chip's
+    # stack, refuse to write a class path that may make the whole file
+    # unloadable (quam_builder 0.4.0 removed the class).
     if gate_type == "cz_parametric" and _parametric_cz_evidence(store) is None:
         return render_template(
             "_status.html",
@@ -2944,7 +3194,11 @@ def pair_add_gate(name: str):
             fields[field_name] = default
 
     template = _build_gate_template(
-        gate_type, fields, parametric_qclass=_parametric_cz_qclass(store))
+        gate_type, fields,
+        parametric_qclass=_parametric_cz_qclass(store),
+        cr_qclass=cr_semantics.gate_class_evidence(store.merged, "CRGate"),
+        stark_qclass=cr_semantics.gate_class_evidence(
+            store.merged, "StarkInducedCZGate"))
     dot_path = f"qubit_pairs.{name}.macros.{gate_name}"
     try:
         modifier.create_subtree(dot_path, template)
@@ -2952,7 +3206,9 @@ def pair_add_gate(name: str):
     except (KeyError, ValueError, TypeError) as e:
         return render_template("_status.html", message=str(e), level="error"), 400
 
-    detail = _render_pair_detail(name, focus_path=f"{dot_path}.flux_pulse_qubit.amplitude")
+    focus_field = ("qc_correction_phase" if wanted_arch in ("cr", "zz")
+                   else "flux_pulse_qubit.amplitude")
+    detail = _render_pair_detail(name, focus_path=f"{dot_path}.{focus_field}")
     if isinstance(detail, tuple):
         return detail
     # A new gate macro adds pulse-shaped nodes (flux_pulse_qubit, …) — tell an
@@ -3777,9 +4033,14 @@ def instrument_compare():
 # Mutating pulse endpoints only ever touch paths of these two shapes —
 # the guard keeps them from becoming arbitrary-dot-path gadgets.
 _PULSE_PATH_RES = (
-    re.compile(r"^qubits\.[^.]+\.(xy|z|resonator)\.operations\.[^.]+$"),
+    re.compile(r"^qubits\.[^.]+\.(xy|z|resonator|xy_detuned)\.operations\.[^.]+$"),
     re.compile(
         r"^qubit_pairs\.[^.]+\.macros\.[^.]+\.(flux_pulse_qubit|coupler_flux_pulse)$"),
+    # Pair drive-channel ops (CR/ZZ chips): the real CR drive pulses.
+    # `zz_drive` vs `zz` is the quam-builder generation rename (docs/54).
+    re.compile(
+        r"^qubit_pairs\.[^.]+\.(cross_resonance|zz_drive|zz|xy_detuned)"
+        r"\.operations\.[^.]+$"),
 )
 
 _PULSE_PLOT_MAX_POINTS = 2000
@@ -3829,10 +4090,27 @@ def pulses_page():
     per_page = _int_arg("per_page", _DEFAULT_PER_PAGE, minimum=0)  # 0 = "All" (see _paginate)
     rows_only = request.args.get("rows") == "1"
 
+    from quam_state_manager.core.pulse_index import GATE_SLOTS, PAIR_PULSE_CHANNELS
+
     all_rows = pulse_index.rows()
+    # Tab visibility: pair tabs render only when matching rows exist, so CZ
+    # chips keep exactly their old tab set and CR chips gain "Pair CR/ZZ"
+    # (and drop a dead "Pair flux") without any chip-type sniffing.
+    has_pair_flux = any(r["owner_kind"] == "pair" and r["channel"] in GATE_SLOTS
+                        for r in all_rows)
+    has_pair_drive = any(r["owner_kind"] == "pair"
+                         and r["channel"] in PAIR_PULSE_CHANNELS
+                         for r in all_rows)
     if channel == "flux":
-        all_rows = [r for r in all_rows if r["owner_kind"] == "pair"]
-    elif channel in ("xy", "z", "resonator"):
+        # pair-gate flux slots only — pair drive channels have their own tab
+        # (this filter used to be `owner_kind == "pair"`, which would silently
+        # swallow the CR rows into "Pair flux")
+        all_rows = [r for r in all_rows if r["owner_kind"] == "pair"
+                    and r["channel"] in GATE_SLOTS]
+    elif channel == "pair_drive":
+        all_rows = [r for r in all_rows if r["owner_kind"] == "pair"
+                    and r["channel"] in PAIR_PULSE_CHANNELS]
+    elif channel in ("xy", "z", "resonator", "xy_detuned"):
         all_rows = [r for r in all_rows
                     if r["owner_kind"] == "qubit" and r["channel"] == channel]
 
@@ -3885,6 +4163,8 @@ def pulses_page():
             total_pages=total_pages,
             total=total,
             per_page=per_page,
+            has_pair_flux=has_pair_flux,
+            has_pair_drive=has_pair_drive,
         ),
     )
 
@@ -4305,25 +4585,54 @@ def pulse_create_form():
     # ("prefix"/"catalog") rather than evidence ("reused" from the chip).
     chip_classes = {s.key: chip_qclass(store.merged, s) for s in creatable}
 
+    from quam_state_manager.core.pulse_index import PAIR_PULSE_CHANNELS, PULSE_CHANNELS
+
     qubit_names = [q.get("id") for q in engine.list_qubits() if q.get("id")]
     pairs_map: dict[str, list[str]] = {}
+    pair_channels_map: dict[str, list[str]] = {}
     for pair_name, pair in (store.merged.get("qubit_pairs") or {}).items():
-        macros = pair.get("macros") if isinstance(pair, dict) else None
+        if not isinstance(pair, dict):
+            continue
+        macros = pair.get("macros")
         if isinstance(macros, dict):
-            gates = [g for g, m in macros.items() if isinstance(m, dict)]
+            # Flux-slot targets: never offer CR/Stark macros — their drive
+            # lives on the pair's cross_resonance/zz channel, and inserting a
+            # flux_pulse_qubit would corrupt the macro schema.
+            gates = [
+                g for g, m in macros.items()
+                if isinstance(m, dict)
+                and cr_semantics.classify_class(m.get("__class__"))[0]
+                not in ("cr_gate", "stark_cz_gate")
+            ]
             if gates:
                 pairs_map[pair_name] = gates
+        channels = [
+            ch for ch in PAIR_PULSE_CHANNELS
+            if isinstance(pair.get(ch), dict)
+            and isinstance(pair[ch].get("operations"), dict)
+        ]
+        if channels:
+            pair_channels_map[pair_name] = channels
 
     # existing op names per target, for client-side duplicate validation
     existing: dict[str, list[str]] = {}
+    has_xy_detuned = False
     for qubit_name, qubit in (store.merged.get("qubits") or {}).items():
         if not isinstance(qubit, dict):
             continue
-        for channel in ("xy", "z", "resonator"):
+        for channel in PULSE_CHANNELS:
             chan = qubit.get(channel)
             ops = chan.get("operations") if isinstance(chan, dict) else None
             if isinstance(ops, dict):
                 existing[f"{qubit_name}/{channel}"] = sorted(ops.keys())
+                if channel == "xy_detuned":
+                    has_xy_detuned = True
+    for pair_name, channels in pair_channels_map.items():
+        pair = (store.merged.get("qubit_pairs") or {}).get(pair_name) or {}
+        for channel in channels:
+            ops = (pair.get(channel) or {}).get("operations")
+            if isinstance(ops, dict):
+                existing[f"pair:{pair_name}/{channel}"] = sorted(ops.keys())
 
     catalog_json = json.dumps({
         s.key: {
@@ -4349,10 +4658,14 @@ def pulse_create_form():
         groups=groups,
         qubit_names=qubit_names,
         pairs_map=pairs_map,
+        pair_channels_map=pair_channels_map,
+        has_xy_detuned=has_xy_detuned,
         existing_json=json.dumps(existing),
         catalog_json=catalog_json,
         sel_qubit=sel_qubit if sel_qubit in qubit_names else "",
-        sel_channel=sel_channel if sel_channel in ("xy", "z", "resonator") else "",
+        sel_channel=(sel_channel
+                     if sel_channel in ("xy", "z", "resonator", "xy_detuned")
+                     else ""),
     )
 
 
@@ -4423,6 +4736,8 @@ def _pulse_create_locked(store, modifier, spec, fields, target_kind,
     """
     from quam_state_manager.core.pulse_catalog import build_template, chip_qclass
 
+    from quam_state_manager.core.pulse_index import PAIR_PULSE_CHANNELS
+
     replace_none_slot = False
     if target_kind == "pair":
         pair = request.form.get("pair", "").strip()
@@ -4437,6 +4752,17 @@ def _pulse_create_locked(store, modifier, spec, fields, target_kind,
             return render_template("_status.html",
                                    message=f"Gate {gate!r} not found on {pair!r}",
                                    level="error"), 404
+        # Never write a flux slot into a CR/Stark macro — the gate's drive
+        # lives on the pair's cross_resonance/zz channel; a flux_pulse_qubit
+        # here corrupts the macro's schema for quam's loader.
+        if cr_semantics.classify_class(macro.get("__class__"))[0] in (
+                "cr_gate", "stark_cz_gate"):
+            return render_template(
+                "_status.html",
+                message=(f"{gate!r} is a CR/Stark gate — it takes no flux "
+                         "pulse. Create the pulse on the pair's "
+                         "cross-resonance / ZZ channel instead."),
+                level="error"), 409
         if slot in macro and macro[slot] is not None:
             return render_template(
                 "_status.html",
@@ -4444,11 +4770,40 @@ def _pulse_create_locked(store, modifier, spec, fields, target_kind,
                 level="error"), 409
         replace_none_slot = slot in macro  # present-but-None → set, not create
         dot_path = f"qubit_pairs.{pair}.macros.{gate}.{slot}"
+    elif target_kind == "pair_channel":
+        pair = request.form.get("pc_pair", "").strip()
+        channel = request.form.get("pc_channel", "").strip()
+        op_name = request.form.get("op_name", "").strip()
+        if channel not in PAIR_PULSE_CHANNELS:
+            return render_template("_status.html", message="Invalid channel",
+                                   level="error"), 400
+        if not _PULSE_NAME_RE.match(op_name):
+            return render_template(
+                "_status.html",
+                message="Name must start with a letter (letters/digits/_, max 64)",
+                level="error"), 400
+        pair_obj = (store.merged.get("qubit_pairs") or {}).get(pair)
+        chan = pair_obj.get(channel) if isinstance(pair_obj, dict) else None
+        ops = chan.get("operations") if isinstance(chan, dict) else None
+        # The channel itself is never created here — a null zz_drive means the
+        # chip wasn't built/wired for it; fabricating the channel dict would
+        # produce a state quam can't map onto its component classes.
+        if not isinstance(ops, dict):
+            return render_template(
+                "_status.html",
+                message=(f"{pair!r} has no {channel}.operations dict — "
+                         "this pair channel cannot hold pulses yet"),
+                level="error"), 400
+        if op_name in ops:
+            return render_template("_status.html",
+                                   message=f"Operation {op_name!r} already exists",
+                                   level="error"), 409
+        dot_path = f"qubit_pairs.{pair}.{channel}.operations.{op_name}"
     else:
         qubit = request.form.get("qubit", "").strip()
         channel = request.form.get("channel", "").strip()
         op_name = request.form.get("op_name", "").strip()
-        if channel not in ("xy", "z", "resonator"):
+        if channel not in ("xy", "z", "resonator", "xy_detuned"):
             return render_template("_status.html", message="Invalid channel",
                                    level="error"), 400
         if not _PULSE_NAME_RE.match(op_name):
@@ -4540,10 +4895,13 @@ def api_pulse_duplicate():
 
     path = request.form.get("path", "").strip()
     new_name = (request.form.get("new_name") or "").strip()
-    if not _PULSE_PATH_RES[0].match(path):
+    # Channel operations only (qubit channels + pair CR/ZZ drive channels) —
+    # a gate FLUX SLOT (flux_pulse_qubit) is schema, not a named op: renaming
+    # or duplicating it would corrupt the macro shape.
+    if not (_PULSE_PATH_RES[0].match(path) or _PULSE_PATH_RES[2].match(path)):
         return render_template(
             "_status.html",
-            message="Duplicate applies to qubit operations only",
+            message="Duplicate applies to channel operations only",
             level="error"), 400
     if not _PULSE_NAME_RE.match(new_name):
         return render_template(
@@ -4591,10 +4949,13 @@ def api_pulse_rename():
     path = request.form.get("path", "").strip()
     new_name = (request.form.get("new_name") or "").strip()
     retarget = request.form.get("retarget", "1") == "1"
-    if not _PULSE_PATH_RES[0].match(path):
+    # Channel operations only — see api_pulse_duplicate. Retarget-on-rename is
+    # what keeps the target-xy cancellation stubs' pointers into a renamed CR
+    # drive op from silently dangling.
+    if not (_PULSE_PATH_RES[0].match(path) or _PULSE_PATH_RES[2].match(path)):
         return render_template(
             "_status.html",
-            message="Rename applies to qubit operations only",
+            message="Rename applies to channel operations only",
             level="error"), 400
     if not _PULSE_NAME_RE.match(new_name):
         return render_template(
@@ -4647,21 +5008,35 @@ def api_pulse_rename():
         new_path, status_msg=note))
 
 
-def _config_op_for_pulse_path(config: dict, path: str) -> tuple[str | None, str | None]:
-    """Map a state-file pulse path to a (element_prefix, op_name) in the
+def _config_op_for_pulse_path(config: dict, path: str,
+                              state: dict | None = None) -> tuple[str | None, str | None]:
+    """Map a state-file pulse path to a (element_key_or_prefix, op_name) in the
     generated config.
 
     Qubit ops are exact: ``qubits.<q>.<ch>.operations.<op>`` → element
-    ``<q>.<ch>``, operation ``<op>``. Pair-gate flux pulses are registered by
-    quam-builder on the CONTROL qubit's z element under generated names like
-    ``cz_unipolar_pulse_qA1`` / ``cz_SNZ_flux_pulse_qA2-qA1`` — we scan all
-    elements for op names starting with the gate name and disambiguate by
-    pair/qubit hints; ambiguous or missing → (None, None).
+    ``<q>.<ch>``, operation ``<op>``. Pair drive-channel ops map through the
+    channel's own ``id`` in *state* (quam-builder names the element after it:
+    ``cr_q1_q2`` / ``zz_q1_q2`` — dot-less keys). Pair-gate flux pulses are
+    registered by quam-builder on the CONTROL qubit's z element under generated
+    names like ``cz_unipolar_pulse_qA1`` / ``cz_SNZ_flux_pulse_qA2-qA1`` — we
+    scan all elements for op names starting with the gate name and disambiguate
+    by pair/qubit hints; ambiguous or missing → (None, None).
     """
     m = _PULSE_PATH_RES[0].match(path)
     if m:
         parts = path.split(".")
         return f"{parts[1]}.{parts[2]}", parts[4]
+
+    m = _PULSE_PATH_RES[2].match(path)
+    if m:
+        parts = path.split(".")
+        pair_name, channel, op = parts[1], parts[2], parts[4]
+        chan = (((state or {}).get("qubit_pairs") or {}).get(pair_name) or {}
+                ).get(channel)
+        elem_id = chan.get("id") if isinstance(chan, dict) else None
+        if isinstance(elem_id, str) and elem_id:
+            return elem_id, op
+        return None, None
 
     m = _PULSE_PATH_RES[1].match(path)
     if not m:
@@ -4721,7 +5096,7 @@ def api_pulse_ground_truth():
     from quam_state_manager.core import config_view
     from quam_state_manager.core.waveform_synth import synth_for_operation
 
-    elem_or_prefix, op_name = _config_op_for_pulse_path(cfg, path)
+    elem_or_prefix, op_name = _config_op_for_pulse_path(cfg, path, store.merged)
     if op_name is None:
         return jsonify({
             "ok": False, "status": "not-found",
@@ -4744,7 +5119,9 @@ def api_pulse_ground_truth():
                       "Regenerate to include it."),
         }), 404
 
-    # both branches return a full element key "<target>.<channel>"
+    # Qubit/flux branches return a dotted "<target>.<channel>" key; pair-drive
+    # elements (cr_q1_q2 / zz_q1_q2) are dot-less — rpartition then yields an
+    # empty prefix, which waveform_for_operation treats as "channel IS the key".
     prefix, _, chan = elem_or_prefix.rpartition(".")
     truth = config_view.waveform_for_operation(cfg, prefix, op_name, channel=chan)
     if truth is None or not truth.get("traces"):

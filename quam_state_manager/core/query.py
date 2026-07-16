@@ -236,23 +236,58 @@ class QueryEngine:
 
         # Cross-resonance drive channel (the CR 2Q gate). Surface the channel
         # parameters; the CR pulse shapes (operations) live on the Pulses page.
-        # Branch on cross_resonance presence so any future pair component is
-        # handled generically rather than assumed to be a CZ/coupler gate.
-        cr = p.get("cross_resonance")
-        if isinstance(cr, dict):
+        # Flavor-tolerant via cr_semantics (docs/54): target frequency may be a
+        # single RF pointer (customer flavor) or LO+IF literals (a08bf66), the
+        # calibration levers may live on the channel or the macro, and the
+        # runtime-only #./inferred_* IF is emulated numerically.
+        cr = cr_semantics.cr_channel(p)
+        if cr is not None:
             crbase = base + ("cross_resonance",)
             result["cr_lo_frequency"] = _resolve(
                 self.store, cr.get("LO_frequency"), crbase + ("LO_frequency",))
-            result["cr_target_qubit_rf"] = _resolve(
-                self.store, cr.get("target_qubit_RF_frequency"),
-                crbase + ("target_qubit_RF_frequency",))
-            # intermediate_frequency is a QUAM runtime @property (#./ self-ref) —
-            # shown raw (no concrete value lives in the file).
             result["cr_intermediate_frequency"] = cr.get("intermediate_frequency")
             result["cr_upconverter"] = cr.get("upconverter")
             ops = cr.get("operations")
             if isinstance(ops, dict) and ops:
                 result["cr_operations"] = ", ".join(ops.keys())
+            eff = cr_semantics.effective_frequencies(self.store, name)
+            if eff is not None:
+                # flavor-aware target RF (the old key read only the RF-pointer
+                # flavor and showed nothing on LO/IF-literal chips)
+                result["cr_target_qubit_rf"] = eff.target_rf_hz
+                result["cr_effective_lo"] = eff.lo_hz
+                result["cr_effective_if"] = eff.if_hz
+                result["cr_if_problems"] = list(eff.problems)
+            for lever, suffix in cr_semantics.lever_map(p).items():
+                if lever.startswith("zz_") or lever == "upconverter":
+                    continue     # zz_* surfaced below; upconverter set above
+                try:
+                    raw = self.store.get_value(f"qubit_pairs.{name}.{suffix}")
+                except (KeyError, TypeError, ValueError, IndexError):
+                    continue
+                result[f"cr_{lever}"] = _resolve(
+                    self.store, raw, base + tuple(suffix.split(".")))
+
+        zz = cr_semantics.zz_channel(p)
+        if zz is not None:
+            zz_key, zz_chan = zz
+            result["zz_channel_key"] = zz_key
+            result["zz_upconverter"] = zz_chan.get("upconverter")
+            zops = zz_chan.get("operations")
+            if isinstance(zops, dict) and zops:
+                result["zz_operations"] = ", ".join(zops.keys())
+            zeff = cr_semantics.effective_frequencies(self.store, name, channel="zz")
+            if zeff is not None:
+                result["zz_effective_if"] = zeff.if_hz
+                result["zz_if_problems"] = list(zeff.problems)
+
+        fid = cr_semantics.fidelity(p)
+        if fid is not None:
+            result["pair_fidelity"] = fid["value"]
+            result["pair_fidelity_source"] = fid["source"]
+
+        result["active"] = cr_semantics.is_active(root, name) if (
+            cr is not None or zz is not None) else None
 
         coupler = p.get("coupler") or {}
         result["coupler_decouple_offset"] = coupler.get("decouple_offset")
@@ -347,6 +382,34 @@ class QueryEngine:
         if isinstance(resolved, str):
             return {"port_ref": resolved}
         return None
+
+    def get_pair_port_roles(self, pair: str) -> dict[str, dict]:
+        """Every drive-port role on a pair → resolved port info.
+
+        ``{"coupler"|"cr"|"zz": port_dict}`` — honestly labeled, unlike
+        :meth:`get_port_for_pair` whose single return forced the pair detail
+        page to caption a CR drive port "coupler". Explicit-null channels are
+        skipped (the type guard, not ``dict.get`` defaults — real data
+        serializes both missing-key and null).
+        """
+        p = self.store.merged.get("qubit_pairs", {}).get(pair)
+        if not isinstance(p, dict):
+            return {}
+        out: dict[str, dict] = {}
+        candidates = [("coupler", "coupler")]
+        candidates += [("cr", k) for k in cr_semantics.CR_CHANNEL_KEYS]
+        candidates += [("zz", k) for k in cr_semantics.ZZ_CHANNEL_KEYS]
+        for role, key in candidates:
+            chan = p.get(key)
+            if not isinstance(chan, dict) or chan.get("opx_output") is None:
+                continue
+            resolved = _resolve(self.store, chan["opx_output"],
+                                ("qubit_pairs", pair, key, "opx_output"))
+            if isinstance(resolved, dict):
+                out.setdefault(role, resolved)
+            elif isinstance(resolved, str):
+                out.setdefault(role, {"port_ref": resolved})
+        return out
 
     # ------------------------------------------------------------------
     # List / filter qubits

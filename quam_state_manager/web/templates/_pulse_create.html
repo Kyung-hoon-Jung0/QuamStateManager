@@ -16,6 +16,9 @@
         <label><input type="radio" name="target_kind" value="pair"
                       onchange="PulsesPage.createTargetKind(this)"
                       {% if not pairs_map %}disabled title="No pair gates on this chip"{% endif %}> Pair gate flux</label>
+        <label><input type="radio" name="target_kind" value="pair_channel"
+                      onchange="PulsesPage.createTargetKind(this)"
+                      {% if not pair_channels_map %}disabled title="No CR/ZZ pair channels on this chip"{% endif %}> Pair CR/ZZ channel</label>
         <span data-target-kind="qubit" class="pulse-target-fields">
             <select name="qubit" aria-label="Qubit"
                     onchange="PulsesPage.createValidateName()">
@@ -26,6 +29,7 @@
                 <option {% if sel_channel == 'xy' %}selected{% endif %}>xy</option>
                 <option {% if sel_channel == 'z' %}selected{% endif %}>z</option>
                 <option {% if sel_channel == 'resonator' %}selected{% endif %}>resonator</option>
+                {% if has_xy_detuned %}<option {% if sel_channel == 'xy_detuned' %}selected{% endif %}>xy_detuned</option>{% endif %}
             </select>
         </span>
         <span data-target-kind="pair" class="pulse-target-fields" hidden>
@@ -38,6 +42,16 @@
             <select name="slot" aria-label="Slot">
                 <option value="flux_pulse_qubit">flux_pulse_qubit</option>
                 <option value="coupler_flux_pulse">coupler_flux_pulse</option>
+            </select>
+        </span>
+        <span data-target-kind="pair_channel" class="pulse-target-fields" hidden>
+            <select name="pc_pair" aria-label="Pair"
+                    onchange="PulsesPage.createPairChannels(this)">
+                {% for p in pair_channels_map %}<option>{{ p }}</option>{% endfor %}
+            </select>
+            <select name="pc_channel" aria-label="Pair channel"
+                    onchange="PulsesPage.createValidateName()">
+                {% for ch in pair_channels_map.values() | first | default([]) %}<option>{{ ch }}</option>{% endfor %}
             </select>
         </span>
     </fieldset>
@@ -57,7 +71,7 @@
         <p class="pulse-type-hint muted" id="pulse-create-hint"></p>
     </div>
 
-    <div class="pulse-create-row" data-target-kind="qubit">
+    <div class="pulse-create-row" data-target-kind="qubit pair_channel">
         <label for="pulse-create-name">Operation name</label>
         <input type="text" name="op_name" id="pulse-create-name" required
                pattern="[a-zA-Z][a-zA-Z0-9_]{0,63}" autocomplete="off"
@@ -94,5 +108,6 @@
 <script id="pulse-catalog-data" type="application/json">{{ catalog_json | script_json }}</script>
 <script id="pulse-existing-data" type="application/json">{{ existing_json | script_json }}</script>
 <script id="pulse-pairs-data" type="application/json">{{ pairs_map | tojson }}</script>
+<script id="pulse-pair-channels-data" type="application/json">{{ pair_channels_map | tojson }}</script>
 <script>if (window.PulsesPage) window.PulsesPage.initCreate();</script>
 </div>

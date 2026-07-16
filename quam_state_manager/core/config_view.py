@@ -287,7 +287,9 @@ def waveform_for_operation(
     pulses_dict = config.get("pulses") or {}
     candidate_keys: list[str]
     if channel is not None:
-        candidate_keys = [f"{target_prefix}.{channel}"]
+        # Dedicated pair-drive elements (``cr_q1_q2`` / ``zz_q1_q2``) are
+        # dot-less — an empty prefix means the channel IS the element key.
+        candidate_keys = [f"{target_prefix}.{channel}" if target_prefix else channel]
     else:
         candidate_keys = _element_keys_for(config, target_prefix)
     for elem_key in candidate_keys:

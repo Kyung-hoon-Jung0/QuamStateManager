@@ -36,13 +36,10 @@ _PAIR_PROPERTY_MAP: list[tuple[str, str, str | None]] = [
     ("Coupler", "coupler_decouple_offset", "qubit_pairs.{name}.coupler.decouple_offset"),
     ("Coupler", "coupler_interaction_offset", "qubit_pairs.{name}.coupler.interaction_offset"),
     ("Coupler", "coupler_delay_ns", "qubit_pairs.{name}.coupler.opx_output.delay"),
-    # Cross-resonance drive channel (CR 2Q gate). LO/IF/target-RF are
-    # resolved/runtime read-outs (display-only); upconverter is editable.
-    ("Cross Resonance", "cr_lo_frequency", None),
-    ("Cross Resonance", "cr_intermediate_frequency", None),
-    ("Cross Resonance", "cr_target_qubit_rf", None),
-    ("Cross Resonance", "cr_upconverter", "qubit_pairs.{name}.cross_resonance.upconverter"),
-    ("Cross Resonance", "cr_operations", None),
+    # Cross Resonance / ZZ Drive sections are built DYNAMICALLY by
+    # routes._build_cr_zz_sections — the calibration levers' dot paths differ
+    # per quam-builder schema flavor (channel vs macro, zz_drive vs zz), so a
+    # static template map cannot hold them. See docs/54_cr_integration.md.
 ]
 
 # CZ gate keys are dynamic (cz_flattop_*, cz_unipolar_*) — built at runtime by _build_pair_sections()

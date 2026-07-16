@@ -51,10 +51,20 @@
                hx-target="#pulses-rows-wrap" hx-include="[name='q']"
                onclick="pulseTabActive(this)"
                class="{% if active_channel == 'resonator' %}active{% endif %}">Resonator</a></li>
+        {# Pair tabs are evidence-gated: CZ chips keep exactly their old tab
+           set; CR chips gain "Pair CR/ZZ" and drop a dead "Pair flux". #}
+        {% if has_pair_flux %}
         <li><a href="/pulses?channel=flux{{ _q }}" hx-get="/pulses?rows=1&channel=flux&per_page={{ per_page }}"
                hx-target="#pulses-rows-wrap" hx-include="[name='q']"
                onclick="pulseTabActive(this)"
                class="{% if active_channel == 'flux' %}active{% endif %}">Pair flux</a></li>
+        {% endif %}
+        {% if has_pair_drive %}
+        <li><a href="/pulses?channel=pair_drive{{ _q }}" hx-get="/pulses?rows=1&channel=pair_drive&per_page={{ per_page }}"
+               hx-target="#pulses-rows-wrap" hx-include="[name='q']"
+               onclick="pulseTabActive(this)"
+               class="{% if active_channel == 'pair_drive' %}active{% endif %}">Pair CR/ZZ</a></li>
+        {% endif %}
     </ul>
 </nav>
 

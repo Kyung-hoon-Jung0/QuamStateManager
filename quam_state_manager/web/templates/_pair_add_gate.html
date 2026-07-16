@@ -53,6 +53,14 @@
         </fieldset>
         {% endfor %}
 
+        {% if "stark_cz" in gate_types and xy_detuned_missing %}
+        <p class="add-gate-caution muted" data-gate-type="stark_cz">
+            ⚠ This pair has no <code>xy_detuned</code> channel yet — a
+            Stark-CZ gate will be inert until the target's detuned drive is
+            configured.
+        </p>
+        {% endif %}
+
         <details class="add-gate-preview-wrap">
             <summary>Preview JSON</summary>
             <pre class="add-gate-preview" id="add-gate-preview"></pre>
@@ -120,6 +128,30 @@
                 coupler_flux_pulse: { amplitude: vals.coupler_amplitude },
                 phase_shift_control: vals.phase_shift_control,
                 phase_shift_target: vals.phase_shift_target,
+            };
+        }
+        {% endif %}
+        {% if "cr_gate" in gate_types %}
+        if (type === "cr_gate") {
+            return {
+                __class__: {{ cr_gate_qclass | tojson }},
+                id: "#./inferred_id",
+                fidelity: null,
+                duration: "#./inferred_duration",
+                qc_correction_phase: vals.qc_correction_phase,
+                qt_correction_phase: vals.qt_correction_phase,
+            };
+        }
+        {% endif %}
+        {% if "stark_cz" in gate_types %}
+        if (type === "stark_cz") {
+            return {
+                __class__: {{ stark_cz_qclass | tojson }},
+                id: "#./inferred_id",
+                fidelity: null,
+                duration: "#./inferred_duration",
+                qc_correction_phase: vals.qc_correction_phase,
+                qt_correction_phase: vals.qt_correction_phase,
             };
         }
         {% endif %}

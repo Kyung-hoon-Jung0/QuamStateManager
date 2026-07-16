@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "PULSE_CHANNELS",
+    "PAIR_PULSE_CHANNELS",
     "GATE_SLOTS",
     "PulseIndex",
     "build_reverse_pointer_index",
@@ -47,7 +48,15 @@ __all__ = [
     "rewrite_referrer_pointer",
 ]
 
-PULSE_CHANNELS = ("xy", "z", "resonator")
+# Qubit-level channels holding an ``operations`` dict. ``xy_detuned`` exists on
+# FixedFrequencyZZDriveTransmon qubits (the Stark-CZ target lobe drives it).
+PULSE_CHANNELS = ("xy", "z", "resonator", "xy_detuned")
+# Pair-level drive channels (CR/ZZ chips): the real CR drive pulses live at
+# ``qubit_pairs.<p>.cross_resonance.operations.*`` — invisible to the Pulses
+# page until enumerated here. ``zz_drive``/``zz`` is the same channel across
+# quam-builder generations (the branch tip renamed the field); pair-level
+# ``xy_detuned`` is serialized by some generations too. See docs/54.
+PAIR_PULSE_CHANNELS = ("cross_resonance", "zz_drive", "zz", "xy_detuned")
 GATE_SLOTS = ("flux_pulse_qubit", "coupler_flux_pulse")
 
 
@@ -108,6 +117,12 @@ def _op_path_of(target: str) -> str | None:
         return ".".join(segs[:5])
     if (len(segs) >= 5 and segs[0] == "qubit_pairs"
             and segs[2] == "macros" and segs[4] in GATE_SLOTS):
+        return ".".join(segs[:5])
+    # Pair-channel ops (CR/ZZ drive pulses): the target-xy cancellation stubs
+    # point INTO these (length/sigma/flat_length), so mapping them here is what
+    # gives the CR drive pulses used_by rows + rename-impact disclosure.
+    if (len(segs) >= 5 and segs[0] == "qubit_pairs"
+            and segs[2] in PAIR_PULSE_CHANNELS and segs[3] == "operations"):
         return ".".join(segs[:5])
     return None
 
@@ -285,22 +300,36 @@ def list_pulses(merged: dict, *, with_used_by: bool = True) -> list[dict]:
         if not isinstance(pair, dict):
             continue
         macros = pair.get("macros")
-        if not isinstance(macros, dict):
-            continue
-        for gate_name, macro in macros.items():
-            if not isinstance(macro, dict):
-                continue  # gate-level aliases ("cz": "#./cz_unipolar") are
-                # not pulse rows; they still appear in used_by via the index
-            for slot in GATE_SLOTS:
-                if slot not in macro:
-                    continue
-                body = macro[slot]
-                if body is None:
-                    continue  # declared-but-empty coupler slot
-                path = f"qubit_pairs.{pair_name}.macros.{gate_name}.{slot}"
+        if isinstance(macros, dict):
+            for gate_name, macro in macros.items():
+                if not isinstance(macro, dict):
+                    continue  # gate-level aliases ("cz": "#./cz_unipolar") are
+                    # not pulse rows; they still appear in used_by via the index
+                for slot in GATE_SLOTS:
+                    if slot not in macro:
+                        continue
+                    body = macro[slot]
+                    if body is None:
+                        continue  # declared-but-empty coupler slot
+                    path = f"qubit_pairs.{pair_name}.macros.{gate_name}.{slot}"
+                    rows.append(_row_for_pulse(
+                        merged, path, body, owner_kind="pair", owner=pair_name,
+                        channel=slot, op_name=f"{gate_name}.{slot}", gate=gate_name,
+                        reverse_index=reverse_index, op_referrers=op_referrers))
+        # Pair drive channels (CR/ZZ): every op is a real pulse row — sparkline,
+        # detail, synth, used_by (the target-xy cancel stubs point in here).
+        for channel in PAIR_PULSE_CHANNELS:
+            chan = pair.get(channel)
+            if not isinstance(chan, dict):
+                continue  # explicit-null (zz_drive on CR-only pairs) or absent
+            operations = chan.get("operations")
+            if not isinstance(operations, dict):
+                continue
+            for op_name, body in operations.items():
+                path = f"qubit_pairs.{pair_name}.{channel}.operations.{op_name}"
                 rows.append(_row_for_pulse(
                     merged, path, body, owner_kind="pair", owner=pair_name,
-                    channel=slot, op_name=f"{gate_name}.{slot}", gate=gate_name,
+                    channel=channel, op_name=op_name, gate=None,
                     reverse_index=reverse_index, op_referrers=op_referrers))
 
     return rows
