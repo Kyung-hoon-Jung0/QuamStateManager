@@ -2390,6 +2390,13 @@
       pop[group][rid] = pop[group][rid] || {};
       setPopValue(pop[group][rid], col, input.value, group, rid);
       if (Object.keys(pop[group][rid]).length === 0) delete pop[group][rid];
+      // As-you-type inline validation (debounced per cell; keystroke storms
+      // collapse to one run). Read-only decoration — the heavier LO / power
+      // recomputes stay on the change handler.
+      clearTimeout(input._valTimer);
+      input._valTimer = setTimeout(function () {
+        validateCellInline(input, group, rid, col);
+      }, VALIDATE_DEBOUNCE_MS);
     });
     // Compact value-fit + comma input. Numeric cells become comma-aware + auto-grow
     // (NumberInput flips number→text so "100,000,000" survives); text cells just
@@ -2437,6 +2444,10 @@
         recomputeAllPowerFindings();
         renderAllConflicts();
       }
+      // Commit-time inline validation, immediately (blur is authoritative —
+      // don't leave a pending debounce timer racing the refreshed display).
+      clearTimeout(input._valTimer);
+      validateCellInline(input, group, rid, col);
     });
     return input;
   }
@@ -2514,6 +2525,8 @@
         recomputeAllPowerFindings();
         renderAllConflicts();
       }
+      // A bulk fill rewrote a whole column — re-validate every cell.
+      validateAllPopCells();
     });
     return input;
   }
@@ -2768,6 +2781,218 @@
     if (band === 2) return rf >= 4.5e9 && rf < 7.5e9;
     if (band === 3) return rf >= 6.5e9 && rf <= 10.5e9;
     return false;
+  }
+
+  // -- step 6: inline as-you-type cell validation ----------------------
+  // Layering rule: the INLINE layer flags per-cell, single-cell-derivable
+  // facts IMMEDIATELY (debounced 'input' events); the conflict PANEL keeps
+  // the cross-cell/port-level findings (LO solver + recomputeAllPowerFindings)
+  // at blur/commit time. The inline validator is read-only — it never writes
+  // _powerWarnings, panel entries, or the spec. The one deliberate overlap is
+  // the feedline Σ|amp| > 1 clip (the customer wants it the moment it's
+  // typed): short-form on the typed cell here, port-keyed panel entry on
+  // commit.
+  //
+  // VALIDATE_RANGES mirrors core/diagnostics.py MW_OUTPUT_FREQ_RANGE_HZ /
+  // MW_INPUT_FREQ_RANGE_HZ and core/spec_constraints.py
+  // FULL_SCALE_POWER_DBM_RANGE — keep in sync (pinned by the JS↔Py parity
+  // test in tests/test_generate_validation.py).
+  var VALIDATE_DEBOUNCE_MS = 250;
+  var VALIDATE_RANGES = { drive: [50e6, 10.5e9], readout: [2e9, 10.5e9], fsp: [-11, 18] };
+  var _lastLoCalc = null;   // cached computeLoAssignments() result (recomputeLOs)
+
+  // The LO group (from the last LO calc) that `group/rid` belongs to, or null.
+  function loGroupOf(group, rid) {
+    if (!_lastLoCalc) return null;
+    var gid = _lastLoCalc.elementGroup[group + "/" + rid];
+    if (gid == null) return null;
+    for (var i = 0; i < _lastLoCalc.groups.length; i++) {
+      if (_lastLoCalc.groups[i].id === gid) return _lastLoCalc.groups[i];
+    }
+    return null;
+  }
+
+  // Σ|amp| over `rid`'s readout feedline with `rid`'s own contribution
+  // replaced by `ownAbs` (the value being typed). Null when unallocated.
+  function feedlineAmpSum(rid, ownAbs) {
+    var members = readoutBankMembers(rid);
+    if (!members) return null;
+    var res = (state.spec.populate || {}).resonator || {};
+    var sum = ownAbs;
+    members.forEach(function (m) {
+      if (m.rid === rid) return;
+      var a = Math.abs(parseFloat((res[m.rid] || {}).readout_amplitude));
+      if (isFinite(a)) sum += a;
+    });
+    return sum;
+  }
+
+  // Validate ONE cell's BASE value (SI units / dimensionless amp — unit
+  // conversion happens in the caller). Returns null when fine, else
+  // { severity: "err" | "warn", message }. Pure derivation, no side effects.
+  function validateCellValue(group, rid, col, base, raw) {
+    function err(m) { return { severity: "err", message: m }; }
+    function warn(m) { return { severity: "warn", message: m }; }
+    if (isNaN(base)) return err('"' + raw + '" is not a number.');
+
+    if (col.dim === "freq" && col.field === "RF_freq") {
+      if (base <= 0) return err("Frequency must be positive.");
+      if (group === "resonator") {
+        if (base < VALIDATE_RANGES.readout[0] || base > VALIDATE_RANGES.readout[1]) {
+          return err("RF " + fmtFreq(base) + " is outside the MW-FEM input range (2–10.5 GHz).");
+        }
+      } else if (base < VALIDATE_RANGES.drive[0] || base > VALIDATE_RANGES.drive[1]) {
+        return err("RF " + fmtFreq(base) + " is outside the MW-FEM hardware reach (0.05–10.5 GHz).");
+      }
+      return null;
+    }
+
+    if (col.field === "LO_frequency") {
+      if (base <= 0) return err("Frequency must be positive.");
+      var b = bandOf(base);
+      if (b == null) {
+        return err("LO " + fmtFreq(base) + " is outside every MW-FEM Nyquist band (0.05–10.5 GHz).");
+      }
+      var g = loGroupOf(group, rid);
+      if (g) {
+        var pop = state.spec.populate || {};
+        for (var i = 0; i < g.members.length; i++) {
+          var m = g.members[i];
+          var rf = parseFloat(((pop[m.group] || {})[m.rid] || {}).RF_freq);
+          if (!isFinite(rf)) continue;
+          if (Math.abs(rf - base) > LO_IF_HALF_WINDOW) {
+            return err(m.rid + "'s RF " + fmtFreq(rf) +
+              " is outside this LO's ±0.4 GHz IF window.");
+          }
+          if (!rfInBand(rf, b)) {
+            return warn("LO band " + b + " does not cover " + m.rid +
+              "'s RF " + fmtFreq(rf) + ".");
+          }
+          if (m.group === "resonator" && Math.abs(rf - base) <= LO_IF_HOLE_HZ) {
+            return warn(m.rid + " sits within the 5 MHz demod hole of this LO" +
+              " (|IF| ≤ 5 MHz is unreadable).");
+          }
+        }
+      }
+      return null;
+    }
+
+    if (col.dim === "amp") {
+      if (state.powerMode === "absolute") {
+        // The cell is an absolute dBm target; committing re-solves the FSP,
+        // so the only single-cell fact is the hardware ceiling: amp 1 at
+        // FSP 18 = +18 dBm is the port's maximum output.
+        var dbm = parseFloat(window.NumberInput.strip(raw));
+        if (isFinite(dbm) && dbm > PWR.FSP_MAX) {
+          return err("+" + dbm + " dBm exceeds the port's maximum output (+" +
+            PWR.FSP_MAX + " dBm at FSP " + PWR.FSP_MAX + ", amp 1).");
+        }
+        return null;   // bank re-solve is commit-time; the panel covers Σ
+      }
+      if (Math.abs(base) > 1 + 1e-9) {
+        var mode = ampMode();
+        if (mode === "dBm" || mode === "V_pk") {
+          return err("Unreachable: needs |amp| " + Math.abs(base).toPrecision(3) +
+            " > 1 at FSP " + fspForAmp(group, rid) + " dBm.");
+        }
+        return err("|amp| " + Math.abs(base).toPrecision(3) +
+          " exceeds DAC full scale (amp is dimensionless in [-1, 1]).");
+      }
+      if (col.field === "readout_amplitude" && group === "resonator") {
+        var sum = feedlineAmpSum(rid, Math.abs(base));
+        if (sum != null && sum > PWR.SUM_MAX + 1e-9) {
+          return err("Feedline Σ|amp| = " + sum.toFixed(2) +
+            " > 1 — simultaneous readout tones will CLIP at the DAC.");
+        }
+      }
+      return null;
+    }
+
+    if (col.field === "full_scale_power_dbm") {
+      // Editable only in manual mode (absolute mode disables the cell).
+      if (base < VALIDATE_RANGES.fsp[0] || base > VALIDATE_RANGES.fsp[1]) {
+        return err("FSP " + base + " dBm is outside the MW-FEM range [" +
+          VALIDATE_RANGES.fsp[0] + ", " + VALIDATE_RANGES.fsp[1] + "] dBm.");
+      }
+      if (base % 1 !== 0) {
+        return warn("FSP uses an integer dB grid — " + base + " will not " +
+          "round-trip exactly.");
+      }
+      return null;
+    }
+
+    if (col.dim === "freq" && base !== 0 && Math.abs(base) > 10.5e9) {
+      // Generic frequency-dimension sanity (anharmonicity, detuning, IF):
+      // nothing on an MW-FEM chip is legitimately beyond the hardware reach.
+      return warn(fmtFreq(Math.abs(base)) + " is beyond the MW-FEM range — " +
+        "check the unit (" + state.populateUnits.freq + ").");
+    }
+    return null;
+  }
+
+  // Decorate one cell from a finding (or clear it when null). Idempotent —
+  // reuses the td's existing flag span, preserves the cell's original title.
+  function setCellFlag(input, finding) {
+    if (input.dataset.baseTitle == null) input.dataset.baseTitle = input.title || "";
+    input.classList.toggle("gen-cell-err", !!finding && finding.severity === "err");
+    input.classList.toggle("gen-cell-warn", !!finding && finding.severity === "warn");
+    input.title = finding ? finding.message : input.dataset.baseTitle;
+    var td = input.parentNode;
+    if (!td) return;
+    var flag = td.querySelector(".gen-cell-flag");
+    if (!finding) {
+      if (flag) flag.remove();
+      return;
+    }
+    if (!flag) {
+      flag = document.createElement("span");
+      flag.textContent = "⚠";
+      td.appendChild(flag);
+    }
+    flag.className = "gen-cell-flag " + finding.severity;
+    flag.title = finding.message;
+  }
+
+  // Parse + validate one populate cell against its column, unit-aware: the
+  // typed display value is converted to BASE first (15.3 typed in GHz mode
+  // validates as 15.3e9). Selects and text cells are never flagged.
+  function validateCellInline(input, group, rid, col) {
+    if (!input.isConnected) return;   // table re-rendered before the timer fired
+    if (!col || col.kind === "select" || col.kind === "text") return;
+    var raw = input.value;
+    if (String(raw == null ? "" : raw).trim() === "") {
+      setCellFlag(input, null);
+      return;
+    }
+    var base;
+    if (col.dim === "amp") base = ampToBase(raw, ampMode(), fspForAmp(group, rid));
+    else if (col.dim) base = toBaseValue(raw, col.dim);
+    else base = parseFloat(window.NumberInput.strip(raw));
+    setCellFlag(input, validateCellValue(group, rid, col, base, raw));
+  }
+
+  // Group -> its populate columns (pairs resolve per the active gate).
+  function popColsOf(group) {
+    if (group === "qubit") return POP_QUBIT_COLS;
+    if (group === "resonator") return POP_RESONATOR_COLS;
+    if (group === "flux") return POP_FLUX_COLS;
+    if (group === "pulses") return POP_PULSE_FIELDS;
+    if (group === "pairs") return pairPopCols();
+    return [];
+  }
+
+  // Re-validate every populate cell (step entry, draft restore, unit toggle,
+  // power-mode flip, LO rewrite, bulk fill). O(cells), pure reads — cheap.
+  function validateAllPopCells() {
+    document.querySelectorAll(".gen-pop-in[data-rid][data-field]")
+      .forEach(function (input) {
+        var group = input.dataset.group, field = input.dataset.field;
+        var col = null;
+        popColsOf(group).forEach(function (c) {
+          if (c.field === field) col = c;
+        });
+        if (col) validateCellInline(input, group, input.dataset.rid, col);
+      });
   }
 
   // Choose one LO for a port pair's elements. entries = [{rf, needHole}] —
@@ -3202,8 +3427,11 @@
     decorateReadoutFSPCells(calc);
     renderLoMap(calc);
     _lastLoWarnings = calc.warnings;
+    _lastLoCalc = calc;            // inline LO-cell validation reads the groups
     recomputeAllPowerFindings();   // derive power warnings fresh from spec
     renderAllConflicts();
+    // LO rewrites repaint LO cells — keep the inline flags in step.
+    validateAllPopCells();
     // Bands changed → refresh the per-qubit LF-FEM delay summary.
     renderFluxDelaySummary((state.spec && state.spec.qubits) || []);
   }
@@ -3879,6 +4107,10 @@
         buildPopTable("pairs", pairs, pairPopCols(), "Pair"),
         "No qubit pairs defined.");
     }
+    // First-paint validation: covers step entry, draft restore, unit toggle
+    // and power-mode flip (all of which land here) — a restored 15.3 GHz
+    // shows its flag with zero keystrokes.
+    validateAllPopCells();
   }
 
   // LF-FEM analog outputs need a fixed delay to align with MW-FEM outputs.
@@ -4937,7 +5169,11 @@
       computeLoAssignments: computeLoAssignments,
       recomputeReadoutPower: recomputeReadoutPower,
       recomputeXyPower: recomputeXyPower,
-      PWR: PWR
+      PWR: PWR,
+      validateCellValue: validateCellValue,
+      validateAllPopCells: validateAllPopCells,
+      VALIDATE_RANGES: VALIDATE_RANGES,
+      setValidateDebounce: function (ms) { VALIDATE_DEBOUNCE_MS = ms; }
     }
   };
 })();

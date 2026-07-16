@@ -6278,6 +6278,25 @@ table.gen-pop-table thead th:first-child { z-index: 4; }
 }
 .gen-pop-in:focus { position: relative; z-index: 4; }
 select.gen-pop-in { width: auto !important; min-width: 7ch; font-family: var(--font-mono); }
+/* Inline as-you-type cell validation (generate.js validateCellInline) —
+   error = physically impossible / DAC clip, warn = out of preferred window.
+   Coloured border + ⚠ icon + title tooltip; the coloured-text-not-border
+   rule (docs/43) applies to the icon via *-text tokens. */
+.gen-pop-in.gen-cell-err {
+    border-color: var(--color-error-border);
+    box-shadow: inset 0 0 0 1px var(--color-error-border);
+    background: var(--color-error-bg);
+}
+.gen-pop-in.gen-cell-warn {
+    border-color: var(--color-warning-border);
+    box-shadow: inset 0 0 0 1px var(--color-warning-border);
+}
+.gen-cell-flag {
+    margin-left: 0.15rem; font-size: 0.8em;
+    cursor: help; user-select: none;
+}
+.gen-cell-flag.err  { color: var(--color-error-text); }
+.gen-cell-flag.warn { color: var(--color-warning-text); }
 /* "Set all" row — bulk-fill a column for every qubit/pair */
 tr.gen-pop-setall > td {
     background: var(--pico-code-background-color);
