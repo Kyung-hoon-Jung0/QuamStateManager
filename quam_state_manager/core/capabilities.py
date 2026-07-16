@@ -70,7 +70,18 @@ REGISTRY: dict[str, dict] = {
         "label": "ZZ-drive lines", "category": "wiring",
         "package": "qualang-tools", "symbol": "Connectivity.add_qubit_pair_zz_drive_lines",
         "produces": "the ZZ-drive channel per pair",
-        "fix": "install/upgrade qualang-tools", "severity": DEGRADE},
+        # BLOCKER (was degrade before any producer of zz lines existed):
+        # build_connectivity calls add_qubit_pair_zz_drive_lines unconditionally
+        # when a zz_drive line is in the spec — a miss is an AttributeError
+        # crash inside the build, not a graceful feature drop.
+        "fix": "install/upgrade qualang-tools", "severity": BLOCKER},
+    "wire.alloc_block_reuse": {
+        "label": "Shared-port wiring allocation", "category": "wiring",
+        "package": "qualang-tools", "symbol": "allocate_wiring(block_used_channels=...)",
+        "produces": "CR/ZZ drives sharing the control qubit's xy port "
+                    "(the dual-upconverter customer layout)",
+        "fix": "upgrade qualang-tools to a build whose allocate_wiring accepts "
+               "block_used_channels", "severity": BLOCKER},
     "wire.twpa_lines": {
         "label": "TWPA pump lines", "category": "wiring",
         "package": "qualang-tools", "symbol": "Connectivity.add_twpa_lines",
@@ -153,6 +164,59 @@ REGISTRY: dict[str, dict] = {
         "produces": "the cr gate macro (else the CR channel exists but pair.apply('cr') is missing)",
         "fix": "upgrade quam-builder to a build with CRGate",
         "severity": DEGRADE},
+    "pair.stark_cz_gate": {
+        "label": "Stark-induced CZ macro", "category": "2Q gates",
+        "package": "quam-builder", "symbol": "StarkInducedCZGate",
+        "produces": "the stark_cz gate macro on ZZ-driven pairs "
+                    "(else the ZZ channel exists but pair.apply('stark_cz') is missing)",
+        "fix": "upgrade quam-builder to a build with StarkInducedCZGate",
+        "severity": DEGRADE},
+    "pair.cr_channel": {
+        "label": "CR channel component", "category": "2Q gates",
+        "package": "quam-builder", "symbol": "CrossResonanceMW / CrossResonanceDriveMW",
+        "produces": "the cross_resonance channel object build_quam creates for "
+                    "each cr wiring line (a modern wirer + old builder passes "
+                    "the wiring blocker yet dies inside build_quam without it)",
+        "fix": "install quam-builder from the CR/CZ-macros branch: pip install "
+               "'quam-builder @ git+https://github.com/qua-platform/"
+               "quam-builder.git@fa540b6'", "severity": BLOCKER},
+    "pair.zz_channel": {
+        "label": "ZZ-drive channel component", "category": "2Q gates",
+        "package": "quam-builder", "symbol": "ZZDriveMW",
+        "produces": "the zz_drive channel object build_quam creates for each "
+                    "zz wiring line",
+        "fix": "install quam-builder from the CR/CZ-macros branch: pip install "
+               "'quam-builder @ git+https://github.com/qua-platform/"
+               "quam-builder.git@fa540b6'", "severity": BLOCKER},
+    "chan.xy_detuned": {
+        "label": "Detuned-xy target channel", "category": "2Q gates",
+        "package": "quam-builder", "symbol": "XYDetunedDriveMW",
+        "produces": "the target qubit's xy_detuned channel that Stark-CZ drives "
+                    "(else ZZ seeds without the target-lobe twins)",
+        "fix": "install quam-builder from the CR/CZ-macros branch (fa540b6)",
+        "severity": DEGRADE},
+    "qpu.fixed_frequency_zz": {
+        "label": "ZZ-drive QPU class", "category": "build",
+        "package": "quam-builder", "symbol": "FixedFrequencyZZDriveQuam",
+        "produces": "the machine root whose qubits carry xy_detuned "
+                    "(else falls back to FixedFrequencyQuam; ZZ twins skipped)",
+        "fix": "install quam-builder from the CR/CZ-macros branch (fa540b6)",
+        "severity": DEGRADE},
+    # -- schema-flavor markers (INFO — inventory only, never *required*; they
+    #    name which CR generation this env writes/loads so flavor_findings can
+    #    warn about chip↔env mismatches BEFORE a Quam.load fails) ------------
+    "cr.flavor_rf_pointer": {
+        "label": "CR schema: RF-pointer flavor", "category": "flavor",
+        "package": "quam-builder", "symbol": "CrossResonance*.target_qubit_RF_frequency",
+        "produces": "reads/writes target_qubit_RF_frequency CR states (the "
+                    "customer flavor); absent = the LO/IF-literal flavor",
+        "fix": "", "severity": INFO},
+    "pair.zz_field_zz_drive": {
+        "label": "ZZ pair field spelled zz_drive", "category": "flavor",
+        "package": "quam-builder", "symbol": "FixedFrequencyTransmonPair.zz_drive",
+        "produces": "serializes the pair's ZZ channel under 'zz_drive' "
+                    "(the branch tip renames it to 'zz')",
+        "fix": "", "severity": INFO},
     # -- CZ-variant pulse shapes ------------------------------------------
     "pulse.cz_flattop": {
         "label": "Flat-top CZ shape", "category": "2Q pulse shapes",
@@ -265,6 +329,21 @@ def required_capabilities(spec: dict) -> set[str]:
             req.add("pair.cr_gate")
             req.add("pulse.cr_flattop")
 
+    # CR/ZZ pair-channel components: build_quam realizes each cr/zz wiring line
+    # through these classes — required whenever the corresponding line exists.
+    if "cross_resonance" in lines:
+        req.add("pair.cr_channel")
+    if "zz_drive" in lines:
+        req.add("pair.zz_channel")
+        req.add("pair.stark_cz_gate")
+        req.add("qpu.fixed_frequency_zz")
+        req.add("chan.xy_detuned")
+
+    # Shared-port CR layout (dual upconverter on the control's xy port) needs
+    # allocate_wiring(block_used_channels=...) for the two-phase allocation.
+    if spec.get("cr_port_mode") == "shared_xy":
+        req.add("wire.alloc_block_reuse")
+
     # per-pair CZ variants + parametric gate type (from the populate step)
     for pv in _pair_populate(spec):
         variant = pv.get("cz_variant")
@@ -354,3 +433,83 @@ def assess(spec: dict, manifest: Any) -> dict:
         "warnings": warnings,
         "inventory": inventory,
     }
+
+
+# ---------------------------------------------------------------------------
+# Chip ↔ env schema-flavor findings (the pre-Quam.load mismatch warning)
+# ---------------------------------------------------------------------------
+
+def flavor_findings(state: dict, manifest: Any) -> list[dict]:
+    """Compare a CHIP's CR schema flavor against an ENV's flavor markers.
+
+    ``Quam.load`` fails on an unknown dataclass field or a missing class — so a
+    chip written by one quam-builder generation cannot even be *loaded* by an
+    env from another (the CR branch renamed fields, classes, and modules while
+    the version string stood still). This surfaces that BEFORE any subprocess
+    load: Config Viewer, generate preview, Verify-vs-config, and regenerate all
+    gate on it. Returns ``[{"level": "blocker"|"warning", "message": str}, ...]``
+    — empty for non-CR chips or when no manifest is available (unknown ≠ bad).
+    """
+    from quam_state_manager.core import cr_semantics
+
+    findings: list[dict] = []
+    caps = (manifest or {}).get("capabilities") or {}
+    if not isinstance(state, dict) or not caps:
+        return findings
+
+    report = cr_semantics.detect_flavor(state)
+    if report.flavor in (cr_semantics.FLAVOR_NONE,):
+        return findings
+
+    def _has(cid: str) -> bool:
+        entry = caps.get(cid) or {}
+        return bool(entry.get("available"))
+
+    env_rf = _has("cr.flavor_rf_pointer")
+    fix = ("pick/build an env with quam-builder from the CR/CZ-macros branch "
+           "(pip install 'quam-builder @ git+https://github.com/qua-platform/"
+           "quam-builder.git@fa540b6')")
+
+    if report.flavor in (cr_semantics.FLAVOR_RF, cr_semantics.FLAVOR_RF_DRIVE):
+        if not _has("pair.cr_channel"):
+            findings.append({"level": "blocker", "message":
+                "this chip has cross-resonance channels but the selected env's "
+                "quam-builder has no CR channel class at all — " + fix})
+        elif not env_rf:
+            findings.append({"level": "blocker", "message":
+                "this chip stores CR as target_qubit_RF_frequency (the "
+                "RF-pointer flavor) — the selected env's CrossResonance class "
+                "has no such field, so Quam.load() will fail; " + fix})
+    elif report.flavor == cr_semantics.FLAVOR_LO_IF and env_rf:
+        findings.append({"level": "warning", "message":
+            "this chip stores CR as target_qubit_LO/IF_frequency literals (the "
+            "older flavor) but the selected env writes the RF-pointer flavor — "
+            "loading may fail on the unknown LO/IF fields; prefer an env "
+            "matching the chip's quam-builder generation"})
+
+    # Qubit class: FixedFrequencyZZDriveTransmon exists only on the CR branch.
+    qubits = state.get("qubits")
+    if isinstance(qubits, dict):
+        uses_zz_transmon = any(
+            isinstance(q, dict)
+            and isinstance(q.get("__class__"), str)
+            and q["__class__"].rsplit(".", 1)[-1] == "FixedFrequencyZZDriveTransmon"
+            for q in qubits.values())
+        if uses_zz_transmon and not _has("qpu.fixed_frequency_zz"):
+            findings.append({"level": "blocker", "message":
+                "this chip's qubits are FixedFrequencyZZDriveTransmon — the "
+                "selected env's quam-builder has no such class, so Quam.load() "
+                "will fail; " + fix})
+
+    # Pair ZZ field spelling: the branch tip renamed zz_drive → zz.
+    pairs = state.get("qubit_pairs")
+    if isinstance(pairs, dict):
+        uses_tip_zz = any(isinstance(p, dict) and "zz" in p and "zz_drive" not in p
+                          for p in pairs.values())
+        if uses_tip_zz and _has("pair.zz_field_zz_drive"):
+            findings.append({"level": "warning", "message":
+                "this chip spells the pair ZZ channel 'zz' (branch-tip flavor) "
+                "but the selected env's pair class still uses 'zz_drive' — "
+                "loading may drop or reject the ZZ channel"})
+
+    return findings

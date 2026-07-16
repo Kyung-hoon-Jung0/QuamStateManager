@@ -12,7 +12,7 @@ import logging
 import operator
 from typing import Any
 
-from quam_state_manager.core import chip_health
+from quam_state_manager.core import chip_health, cr_semantics
 from quam_state_manager.core.loader import QuamStore
 from quam_state_manager.core.pointer_resolver import is_pointer, is_self_ref
 
@@ -196,17 +196,16 @@ class QueryEngine:
             if not isinstance(gate, dict):
                 continue
             # Only emit CZ/coupler-shaped fields for gates that ACTUALLY have
-            # that shape. A CR gate (CRGate macro = only ``__class__``; its drive
-            # lives in the pair's ``cross_resonance`` channel, handled below)
-            # would otherwise produce a whole section of all-None CZ fields — the
-            # misleading blank "Cr" section. Detect by the PRESENCE of CZ keys
-            # (not their value): an uncalibrated CZ gate has the keys set to null
-            # and must still render, while a CR gate has none of them.
-            is_cz = any(k in gate for k in (
-                "flux_pulse_qubit", "coupler_flux_pulse",
-                "phase_shift_control", "phase_shift_target", "fidelity",
-            ))
-            if not is_cz:
+            # that shape. A CR gate (drive lives in the pair's
+            # ``cross_resonance`` channel, handled below) would otherwise
+            # produce a whole section of all-None CZ fields — the misleading
+            # blank "Cr" section. Detection is by PRESENCE of flux-shaped keys
+            # (not their value): an uncalibrated CZ gate has the keys set to
+            # null and must still render. ``fidelity`` is deliberately NOT a
+            # CZ signal — modern CRGate macros carry a (null) ``fidelity``
+            # field, which used to trip this check and resurrect the phantom
+            # section with editable rows whose Apply 400'd.
+            if not cr_semantics.is_cz_shaped_macro(gate):
                 continue
             prefix = gate_name
 

@@ -322,9 +322,10 @@ def validate_spec(spec) -> list[str]:
 _PROBE_SRC = """
 import json, sys
 try:
-    from importlib.metadata import version
+    from importlib.metadata import version, distribution
 except Exception:
     version = None
+    distribution = None
 
 
 def _v(dist):
@@ -336,12 +337,32 @@ def _v(dist):
         return None
 
 
+def _commit(dist):
+    # Install provenance for git/URL installs (PEP 610 direct_url.json).
+    # quam-builder is pinned by git SHA in the field while its version string
+    # stays frozen (0.2.0 metadata on wildly different commits — versions lie),
+    # so the SHA must join the capability-cache key or a reinstall of a
+    # different commit silently serves the stale manifest.
+    if distribution is None:
+        return None
+    try:
+        raw = distribution(dist).read_text("direct_url.json")
+        if not raw:
+            return None
+        info = json.loads(raw)
+        vcs = info.get("vcs_info") or {}
+        return vcs.get("commit_id") or info.get("url")
+    except Exception:
+        return None
+
+
 print(json.dumps({
     "python": sys.version.split()[0],
     "qualang_tools": _v("qualang-tools"),
     "quam_builder": _v("quam-builder"),
     "quam": _v("quam"),
     "qm": _v("qm-qua") or _v("qm"),
+    "quam_builder_commit": _commit("quam-builder"),
 }))
 """
 
@@ -463,7 +484,11 @@ def probe_env(python_path: str) -> dict:
         return info
 
     info["python"] = data.get("python")
-    info["versions"] = {k: data.get(k) for k in ("qualang_tools", "quam_builder", "quam", "qm")}
+    # quam_builder_commit rides along in versions so the version-keyed
+    # capability cache (see _env_versions) is git-SHA-aware: same version
+    # string + different pinned commit → cache miss, fresh deep probe.
+    info["versions"] = {k: data.get(k) for k in (
+        "qualang_tools", "quam_builder", "quam", "qm", "quam_builder_commit")}
     info["missing"] = [lib for lib in _REQUIRED_LIBS if not info["versions"].get(lib)]
     info["usable"] = not info["missing"]
     return info

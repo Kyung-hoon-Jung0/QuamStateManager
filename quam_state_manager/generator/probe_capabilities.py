@@ -19,8 +19,20 @@ Detection descriptor per id (all keys optional except one locator):
                       ``attr`` is set, exposes it) — used where a symbol moved
                       between quam_builder layouts.
   - ``attr``        : the module must expose this top-level attribute.
+  - ``any_attr``    : list of candidate attributes; present if ANY is exposed —
+                      used where a CLASS was renamed between generations
+                      (``CrossResonanceMW`` → ``CrossResonanceDriveMW``).
   - ``cls``+``method``: the module's ``cls`` must have this method (Connectivity /
                       Instruments capability sniffing).
+  - ``cls``/``any_cls``+``field``: the class must carry this dataclass FIELD
+                      (``__dataclass_fields__``, ``hasattr`` fallback) — schema-
+                      flavor markers: the same class name carries different
+                      fields on different quam-builder commits while the version
+                      string never moves.
+  - ``attr``+``param``: the module-level callable must accept this keyword
+                      (``inspect.signature``) — e.g. ``allocate_wiring``'s
+                      ``block_used_channels``, required by the shared-port CR
+                      layout.
 
 Run standalone::  python probe_capabilities.py --out <result.json>
 """
@@ -29,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import inspect
 import json
 import sys
 import traceback
@@ -57,6 +70,21 @@ _PULSE_HOMES = [
     "quam_builder.architecture.superconducting.components.pulses",
     "quam_builder.common.pulses",
 ]
+# CR/ZZ channel component homes: the feat/add-cr-cz-macros branch renamed the
+# module (cross_resonance → cross_resonance_drive) AND the classes
+# (CrossResonanceMW → CrossResonanceDriveMW) at its tip — probe both spellings.
+_CR_COMP_HOMES = [
+    "quam_builder.architecture.superconducting.components.cross_resonance",
+    "quam_builder.architecture.superconducting.components.cross_resonance_drive",
+]
+_ZZ_COMP = "quam_builder.architecture.superconducting.components.zz_drive"
+_XYDET_HOMES = [
+    "quam_builder.architecture.superconducting.components.xy_detuned_drive",
+    "quam_builder.architecture.superconducting.components",
+]
+_QPU = "quam_builder.architecture.superconducting.qpu"
+_PAIR_FF_MOD = ("quam_builder.architecture.superconducting.qubit_pair."
+                "fixed_frequency_transmon_pair")
 
 CATALOG: dict[str, dict] = {
     # -- wiring: Connectivity line methods --------------------------------
@@ -89,6 +117,27 @@ CATALOG: dict[str, dict] = {
     "pair.fixed_pair": {"module": "quam_builder.architecture.superconducting.qubit_pair.flux_tunable_transmon_pair",
                         "attr": "FluxTunableTransmonPair"},
     "pair.cr_gate": {"any_module": [_TWO_Q_FIX, _TWO_Q_FTC], "attr": "CRGate"},
+    "pair.stark_cz_gate": {"any_module": [_TWO_Q_FIX, _TWO_Q_FTC], "attr": "StarkInducedCZGate"},
+    # -- CR/ZZ pair channel components (build_quam realizes cr/zz wiring lines
+    #    through these; a modern wirer + old builder passes the wire.* blockers
+    #    yet dies inside build_quam without them) ---------------------------
+    "pair.cr_channel": {"any_module": _CR_COMP_HOMES,
+                        "any_attr": ["CrossResonanceMW", "CrossResonanceDriveMW"]},
+    "pair.zz_channel": {"module": _ZZ_COMP, "attr": "ZZDriveMW"},
+    "chan.xy_detuned": {"any_module": _XYDET_HOMES, "attr": "XYDetunedDriveMW"},
+    "qpu.fixed_frequency_zz": {"module": _QPU, "attr": "FixedFrequencyZZDriveQuam"},
+    # -- shared-port CR layout: allocate_wiring must accept block_used_channels
+    "wire.alloc_block_reuse": {"module": _WIRER, "attr": "allocate_wiring",
+                               "param": "block_used_channels"},
+    # -- schema-flavor markers (INFO — never required; they name which CR
+    #    generation this env WRITES/LOADS so flavor mismatches with a chip's
+    #    files surface before any Quam.load) --------------------------------
+    "cr.flavor_rf_pointer": {"any_module": _CR_COMP_HOMES,
+                             "any_cls": ["CrossResonanceMW", "CrossResonanceDriveMW"],
+                             "field": "target_qubit_RF_frequency"},
+    "pair.zz_field_zz_drive": {"module": _PAIR_FF_MOD,
+                               "cls": "FixedFrequencyTransmonPair",
+                               "field": "zz_drive"},
     # -- CZ-variant pulse shapes (any known pulse-module home) -------------
     "pulse.cz_flattop": {"any_module": _PULSE_HOMES, "attr": "_FlatTopGaussianPulse"},
     "pulse.cz_bipolar": {"any_module": _PULSE_HOMES, "attr": "_CosineBipolarPulse"},
@@ -104,8 +153,11 @@ CATALOG_IDS = tuple(CATALOG)
 
 def _probe_one(desc: dict) -> tuple[bool, str]:
     """Return ``(available, detail)`` for one catalog descriptor."""
-    attr = desc.get("attr")
+    attrs = desc.get("any_attr") or ([desc["attr"]] if desc.get("attr") else [])
+    cls_names = desc.get("any_cls") or ([desc["cls"]] if desc.get("cls") else [])
     modules = desc.get("any_module") or ([desc["module"]] if desc.get("module") else [])
+    field = desc.get("field")
+    param = desc.get("param")
     last_err = "no module specified"
     for mod_name in modules:
         try:
@@ -113,20 +165,47 @@ def _probe_one(desc: dict) -> tuple[bool, str]:
         except Exception as exc:  # noqa: BLE001 — import error = capability absent
             last_err = f"import {mod_name}: {type(exc).__name__}: {exc}"
             continue
-        cls_name = desc.get("cls")
-        if cls_name:                                   # Connectivity/Instruments method
-            cls = getattr(mod, cls_name, None)
-            if cls is None:
-                last_err = f"{mod_name}.{cls_name} missing"
-                continue
-            if hasattr(cls, desc["method"]):
-                return True, f"{mod_name}.{cls_name}.{desc['method']}"
-            last_err = f"{cls_name}.{desc['method']} missing in {mod_name}"
+        if cls_names and field:                        # dataclass-field flavor marker
+            for cls_name in cls_names:
+                cls = getattr(mod, cls_name, None)
+                if cls is None:
+                    last_err = f"{mod_name}.{cls_name} missing"
+                    continue
+                fields = getattr(cls, "__dataclass_fields__", None) or {}
+                if field in fields or hasattr(cls, field):
+                    return True, f"{mod_name}.{cls_name}.{field}"
+                last_err = f"{cls_name}.{field} missing in {mod_name}"
             continue
-        if attr:                                       # top-level symbol
-            if hasattr(mod, attr):
-                return True, f"{mod_name}.{attr}"
-            last_err = f"{attr} missing in {mod_name}"
+        if cls_names:                                  # Connectivity/Instruments method
+            for cls_name in cls_names:
+                cls = getattr(mod, cls_name, None)
+                if cls is None:
+                    last_err = f"{mod_name}.{cls_name} missing"
+                    continue
+                if hasattr(cls, desc["method"]):
+                    return True, f"{mod_name}.{cls_name}.{desc['method']}"
+                last_err = f"{cls_name}.{desc['method']} missing in {mod_name}"
+            continue
+        if param and attrs:                            # callable keyword sniff
+            for attr in attrs:
+                fn = getattr(mod, attr, None)
+                if fn is None:
+                    last_err = f"{attr} missing in {mod_name}"
+                    continue
+                try:
+                    sig = inspect.signature(fn)
+                except (TypeError, ValueError):
+                    last_err = f"{mod_name}.{attr} has no inspectable signature"
+                    continue
+                if param in sig.parameters:
+                    return True, f"{mod_name}.{attr}({param}=...)"
+                last_err = f"{attr}() lacks {param}= in {mod_name}"
+            continue
+        if attrs:                                      # top-level symbol
+            for attr in attrs:
+                if hasattr(mod, attr):
+                    return True, f"{mod_name}.{attr}"
+            last_err = f"{'/'.join(attrs)} missing in {mod_name}"
             continue
         return True, mod_name                          # bare import success
     return False, last_err

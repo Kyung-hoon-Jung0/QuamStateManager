@@ -24,6 +24,12 @@ BANDS: dict[int, tuple[float, float]] = {
     3: (6.5e9, 10.5e9),
 }
 
+# Max |intermediate frequency| an MW-FEM output can synthesize around its
+# upconverter LO. The QM stack asserts |IF| < 400 MHz for pair-drive (CR/ZZ)
+# channels (the customer's populate scripts enforce exactly this bound);
+# advisory here per the module's warn-never-block philosophy.
+MW_MAX_ABS_IF_HZ: float = 400e6
+
 # LO-coupled OUTPUT port pairs within one (controller, FEM).
 _OUT_PAIRS = {2: 3, 3: 2, 4: 5, 5: 4, 6: 7, 7: 6}
 

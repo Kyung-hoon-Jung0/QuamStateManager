@@ -150,3 +150,114 @@ def test_assess_no_manifest_is_unknown_not_all_missing():
     assert rep["buildable"] is False                # can't confirm → not buildable
     # but we don't fabricate blockers when we simply couldn't probe
     assert rep["blockers"] == [] and rep["warnings"] == []
+
+
+# --- CR/ZZ pair-channel + shared-port requirements (docs/54) -----------------
+
+_CR_SHARED_SPEC = {
+    "instruments": {"controllers": [{"con": 1, "fems": [{"slot": 1, "fem": "mw"}]}]},
+    "qubit_pairs": [["q0", "q1"], ["q1", "q0"]],
+    "pair_gate": "cr",
+    "cr_port_mode": "shared_xy",
+    "lines": [{"element": "q0", "line": "resonator"},
+              {"element": "q0", "line": "drive"},
+              {"element": "q0-q1", "line": "cross_resonance"},
+              {"element": "q0-q1", "line": "zz_drive"}],
+}
+
+
+def test_cr_lines_require_channel_components():
+    req = cap.required_capabilities(_CR_SHARED_SPEC)
+    # a modern wirer + old builder passes the wire blocker yet dies in
+    # build_quam — the channel-component ids close that hole
+    assert "pair.cr_channel" in req
+    assert "pair.zz_channel" in req
+    assert "pair.stark_cz_gate" in req
+    assert "qpu.fixed_frequency_zz" in req
+    assert "chan.xy_detuned" in req
+    assert "wire.alloc_block_reuse" in req          # shared_xy mode
+    # flavor markers are inventory-only, never required
+    assert "cr.flavor_rf_pointer" not in req
+    assert "pair.zz_field_zz_drive" not in req
+
+
+def test_dedicated_mode_does_not_require_block_reuse():
+    spec = dict(_CR_SHARED_SPEC, cr_port_mode="dedicated")
+    assert "wire.alloc_block_reuse" not in cap.required_capabilities(spec)
+
+
+def test_missing_cr_channel_is_blocker_zz_extras_degrade():
+    have = set(CATALOG_IDS) - {"pair.cr_channel", "qpu.fixed_frequency_zz",
+                               "chan.xy_detuned", "pair.stark_cz_gate"}
+    rep = cap.assess(_CR_SHARED_SPEC, _manifest(have))
+    blocker_ids = {r["id"] for r in rep["blockers"]}
+    warning_ids = {r["id"] for r in rep["warnings"]}
+    assert "pair.cr_channel" in blocker_ids          # build_quam would crash
+    assert {"qpu.fixed_frequency_zz", "chan.xy_detuned",
+            "pair.stark_cz_gate"} <= warning_ids     # ZZ degrades gracefully
+    assert rep["buildable"] is False
+
+
+def test_missing_zz_wire_is_blocker_now():
+    # build_connectivity calls add_qubit_pair_zz_drive_lines unconditionally
+    # when a zz line is present — a miss is an AttributeError crash.
+    have = set(CATALOG_IDS) - {"wire.pair_zz_drive_line"}
+    rep = cap.assess(_CR_SHARED_SPEC, _manifest(have))
+    assert "wire.pair_zz_drive_line" in {r["id"] for r in rep["blockers"]}
+
+
+# --- flavor_findings: chip ↔ env schema-generation mismatch ------------------
+
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).parent))
+from cr_fixtures import make_cz_reference, make_flavor_a, make_flavor_b  # noqa: E402
+
+
+def _env_manifest(*, rf_pointer: bool, zz_quam: bool, cr_channel: bool = True):
+    have = set(CATALOG_IDS)
+    if not rf_pointer:
+        have -= {"cr.flavor_rf_pointer"}
+    if not zz_quam:
+        have -= {"qpu.fixed_frequency_zz"}
+    if not cr_channel:
+        have -= {"pair.cr_channel"}
+    return _manifest(have)
+
+
+def test_rf_chip_with_lo_if_env_is_blocker():
+    state, _ = make_flavor_b()
+    findings = cap.flavor_findings(state, _env_manifest(rf_pointer=False, zz_quam=False))
+    assert any(f["level"] == "blocker" and "target_qubit_RF_frequency" in f["message"]
+               for f in findings)
+
+
+def test_rf_chip_with_matching_env_is_clean():
+    state, _ = make_flavor_b()
+    assert cap.flavor_findings(state, _env_manifest(rf_pointer=True, zz_quam=True)) == []
+
+
+def test_lo_if_chip_with_rf_env_warns():
+    state, _ = make_flavor_a()
+    findings = cap.flavor_findings(state, _env_manifest(rf_pointer=True, zz_quam=True))
+    assert any(f["level"] == "warning" for f in findings)
+
+
+def test_zz_transmon_chip_needs_zz_quam():
+    state, _ = make_flavor_b()
+    for q in state["qubits"].values():
+        q["__class__"] = (q["__class__"]
+                          .replace("FixedFrequencyTransmon",
+                                   "FixedFrequencyZZDriveTransmon"))
+    findings = cap.flavor_findings(state, _env_manifest(rf_pointer=True, zz_quam=False))
+    assert any("FixedFrequencyZZDriveTransmon" in f["message"]
+               and f["level"] == "blocker" for f in findings)
+
+
+def test_cz_chip_and_no_manifest_are_silent():
+    state, _ = make_cz_reference()
+    assert cap.flavor_findings(state, _env_manifest(rf_pointer=False, zz_quam=False)) == []
+    state_b, _ = make_flavor_b()
+    assert cap.flavor_findings(state_b, None) == []
+    assert cap.flavor_findings(state_b, {}) == []

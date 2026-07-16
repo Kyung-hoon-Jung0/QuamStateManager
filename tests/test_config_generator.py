@@ -996,3 +996,59 @@ class TestProbeEnvsCaching:
 
         # unresolvable → None (caller then re-probes rather than caching stale)
         assert cg._site_packages_for(str(tmp_path / "nope" / "bin" / "python")) is None
+
+
+class TestProbeCommitProvenance:
+    """quam-builder is pinned by git SHA while its version string stands still
+    (0.2.0/0.4.0 metadata on wildly different commits) — the install commit
+    must ride in ``versions`` so the version-keyed capability cache can't
+    serve a stale manifest across same-version reinstalls (docs/54)."""
+
+    def test_probe_env_carries_commit(self, monkeypatch):
+        out = json.dumps({
+            "python": "3.11.5", "qualang_tools": "0.22.0",
+            "quam_builder": "0.4.0", "quam": "0.6.0", "qm": "1.3.1",
+            "quam_builder_commit": "fa540b6b0c985b1745df725a9df5979984d70633",
+        })
+        monkeypatch.setattr(
+            config_generator, "_run_command",
+            lambda args, timeout=60: (0, out, ""),
+        )
+        info = probe_env("py")
+        assert info["usable"] is True
+        assert info["versions"]["quam_builder_commit"].startswith("fa540b6")
+
+    def test_capability_cache_misses_on_commit_change(self, tmp_path, monkeypatch):
+        commit = {"value": "aaa"}
+        monkeypatch.setattr(
+            config_generator, "_env_versions",
+            lambda python_path: {"quam_builder": "0.4.0",
+                                 "quam_builder_commit": commit["value"]},
+        )
+        deep_probes = {"count": 0}
+
+        def fake_run_script_outcome(cmd, work_dir, timeout, outcome, **kw):
+            deep_probes["count"] += 1
+            outcome["ok"] = True
+            outcome["result"] = {
+                "capabilities": {"build.quam": {"available": True, "detail": ""}},
+                "versions": {"quam_builder": "0.4.0"},
+            }
+
+        monkeypatch.setattr(config_generator, "_run_script_outcome",
+                            fake_run_script_outcome)
+
+        r1 = config_generator.probe_capabilities("py", tmp_path)
+        assert r1["ok"] is True and r1["cached"] is False
+        assert deep_probes["count"] == 1
+
+        # same version tuple + same commit → served from cache
+        r2 = config_generator.probe_capabilities("py", tmp_path)
+        assert r2["cached"] is True
+        assert deep_probes["count"] == 1
+
+        # same version string, DIFFERENT pinned commit → cache miss, re-probe
+        commit["value"] = "bbb"
+        r3 = config_generator.probe_capabilities("py", tmp_path)
+        assert r3["cached"] is False
+        assert deep_probes["count"] == 2

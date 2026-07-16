@@ -10399,13 +10399,32 @@ def generate_capabilities():
         return jsonify({"ok": False, "error": "No environment selected."}), 400
     probe = config_generator.probe_capabilities(
         python_path, current_app.instance_path, force=force)
-    report = capabilities.assess(
-        spec, {"capabilities": probe.get("capabilities"),
-               "versions": probe.get("versions")})
+    manifest = {"capabilities": probe.get("capabilities"),
+                "versions": probe.get("versions")}
+    report = capabilities.assess(spec, manifest)
+    # Chip↔env schema-flavor findings (regenerate flows pass the source chip):
+    # a CR chip written by one quam-builder generation can't even be Quam.load'ed
+    # by another — warn BEFORE any subprocess load fails (docs/54).
+    flavor = _flavor_findings_for_folder(data.get("source_folder"), manifest)
     return jsonify({
         "ok": True, "probe_ok": probe.get("ok"), "probe_error": probe.get("error"),
-        "cached": probe.get("cached"), "report": report,
+        "cached": probe.get("cached"), "report": report, "flavor": flavor,
     })
+
+
+def _flavor_findings_for_folder(folder, manifest) -> list[dict]:
+    """CR schema-flavor mismatch findings for the chip in *folder* vs an env
+    capability *manifest* — ``[]`` when folder/state/manifest is unavailable
+    (unknown ≠ bad; never blocks on a read failure)."""
+    if not folder:
+        return []
+    try:
+        state = safe_io.read_json(Path(folder) / "state.json")
+    except (OSError, ValueError):
+        return []
+    if not isinstance(state, dict):
+        return []
+    return capabilities.flavor_findings(state, manifest)
 
 
 @bp.route("/generate/allocate", methods=["POST"])
@@ -10561,11 +10580,26 @@ def regenerate_reconstruct():
     except (OSError, ValueError) as exc:
         return jsonify({"ok": False, "error": f"Could not read {folder}: {exc}"}), 400
     ident = _active_chip_identity()
+    # Chip↔env flavor mismatch warnings ride the notes so the wizard shows them
+    # before the user reaches the build step (the probe is version-keyed cached
+    # — cheap after the env panel's first check).
+    notes = list(rec.notes)
+    flavor: list[dict] = []
+    python_path = config_generator.get_selected_env(current_app.instance_path)
+    if python_path:
+        probe = config_generator.probe_capabilities(
+            python_path, current_app.instance_path)
+        if probe.get("ok"):
+            flavor = _flavor_findings_for_folder(
+                folder, {"capabilities": probe.get("capabilities"),
+                         "versions": probe.get("versions")})
+            notes.extend(f"[env {f['level']}] {f['message']}" for f in flavor)
     return jsonify({
         "ok": True,
         "spec": rec.spec,
         "mixed_gates": rec.mixed_gates,
-        "notes": rec.notes,
+        "notes": notes,
+        "flavor": flavor,
         "source_folder": str(folder),
         "source_name": ident["name"] if ident else Path(folder).name,
     })
