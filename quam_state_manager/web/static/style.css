@@ -6598,6 +6598,10 @@ tr.gen-pop-row-linked > td {
     color: var(--color-error-text);
 }
 #gen-message.gen-message-error::before { content: "\00d7"; color: var(--color-error-text); }
+#gen-message.gen-message-info {
+    border-left-color: color-mix(in srgb, var(--color-info-border) 55%, transparent);
+}
+#gen-message.gen-message-info::before { content: "i"; color: var(--color-info-border); }
 [data-theme="dark"] #gen-message.gen-message-warn { border-left-color: color-mix(in srgb, var(--color-warning-text) 65%, transparent); }
 [data-theme="dark"] #gen-message.gen-message-error { border-left-color: color-mix(in srgb, var(--color-error-text) 65%, transparent); }
 

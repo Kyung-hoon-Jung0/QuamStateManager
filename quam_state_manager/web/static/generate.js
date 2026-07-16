@@ -272,6 +272,11 @@
     if (state.step === 4) {
       syncLineTypeToggles();
       syncTopoControls();   // show the Renumber button if we arrived with id holes
+      // Re-render the pair list from state: a CZ auto-orientation flip on
+      // step 6/8 (czAutoOrient) reorders spec.qubit_pairs while this list
+      // isn't visible — without this, revisiting step 4 shows the stale
+      // pre-flip Control/Target dropdowns.
+      renderPairs();
       // Re-render the topology board from state if its panel is open (e.g. after a
       // qubit-count change or a draft restore).
       var topoD = document.getElementById("gen-topo");
@@ -1000,6 +1005,16 @@
       '<span class="gen-pair-link">↔</span>' +
       '<span class="gen-pair-col">Target</span>';
     list.appendChild(head);
+    // CZ chips: the roles are frequency-derived (step 6) — say so up front,
+    // and honor a hand-picked order by marking that pair manual below.
+    if (czOrderActive()) {
+      var hint = document.createElement("p");
+      hint.className = "muted gen-pair-cz-hint";
+      hint.textContent = "CZ chips: control/target is auto-assigned from the " +
+        "RF frequencies typed in step 6 — higher = control. A hand-picked " +
+        "order here is kept (marked manual in the pair table).";
+      list.appendChild(hint);
+    }
     state.spec.qubit_pairs.forEach(function (pair, idx) {
       var row = document.createElement("div");
       row.className = "gen-pair-row";
@@ -1013,10 +1028,12 @@
       row.querySelector(".gen-pair-c").addEventListener("change", function (e) {
         pair[0] = e.target.value;
         state.pairsTouched = true;
+        markPairManual(pair);
       });
       row.querySelector(".gen-pair-t").addEventListener("change", function (e) {
         pair[1] = e.target.value;
         state.pairsTouched = true;
+        markPairManual(pair);
       });
       row.querySelector(".gen-row-del").addEventListener("click", function () {
         state.pairsTouched = true;
@@ -2233,6 +2250,11 @@
     { field: "cz_amplitude", label: "CZ amp", dim: "volt" },
     { field: "moving_qubit", label: "moving qubit", kind: "select",
       options: ["", "control", "target"] },
+    // Orientation escape hatch: "manual" pins the pair's control/target as
+    // typed; blank/"auto" lets czAutoOrient() order by RF_freq (higher =
+    // control). Kept in populate.pairs so reconcilePopulatePairs preserves it.
+    { field: "cz_order", label: "order", kind: "select",
+      options: ["", "auto", "manual"] },
     { field: "coupler_interaction_offset", label: "coupler off", dim: "volt" }
   ];
   var POP_CR_PAIR_COLS = [
@@ -2283,6 +2305,149 @@
       });
       if (Object.keys(bucket).length === 0) delete pop.pairs[id];
     });
+  }
+
+  // -- step 6: CZ automatic control/target orientation -----------------
+  // For a CZ chip the pair ROLES follow the physics: the higher-RF_freq
+  // qubit is the control, the lower one the target (customer requirement —
+  // and consistent with _seed_cz_variant's default: the higher-f qubit is
+  // the flux-moving one). Pairs are drawn in step 4 before frequencies
+  // exist, so orientation re-runs on every qubit RF_freq commit and flips
+  // the STORED spec pair (run_build's pair-id contract stays untouched;
+  // run_build only adds a warning safety net). CR pairs NEVER flip — the
+  // CR drive direction is a physical user choice. A per-pair "order"
+  // column (auto/manual) is the escape hatch; hand-editing the step-4
+  // Control/Target dropdowns marks that pair manual.
+  function czOrderActive() {
+    return (state.pairGate === "cz_fixed" || state.pairGate === "cz_tunable") &&
+           state.mode !== "regenerate";
+  }
+
+  function rfFreqOf(qid) {
+    var v = parseFloat((((state.spec.populate || {}).qubit || {})[qid] || {}).RF_freq);
+    return isFinite(v) ? v : null;
+  }
+
+  // Flip one pair in place, dragging along everything keyed by its id:
+  // the populate.pairs bucket, the bucket's moving_qubit ROLE (swapped so
+  // the same PHYSICAL qubit keeps the flux pulse), pinned wiring lines
+  // (deriveLines keys pins on element|line), and allocation entries in
+  // both the spec ("q1-q2") and QUAM ("q1-2") key forms.
+  function flipPairOrder(pair) {
+    var oldId = pair[0] + "-" + pair[1];
+    var t = pair[0]; pair[0] = pair[1]; pair[1] = t;
+    var newId = pair[0] + "-" + pair[1];
+    var pop = state.spec.populate || {};
+    if (pop.pairs && pop.pairs[oldId]) {
+      pop.pairs[newId] = pop.pairs[oldId];
+      delete pop.pairs[oldId];
+      var mv = pop.pairs[newId].moving_qubit;
+      if (mv === "control") pop.pairs[newId].moving_qubit = "target";
+      else if (mv === "target") pop.pairs[newId].moving_qubit = "control";
+    }
+    (state.spec.lines || []).forEach(function (ln) {
+      if (ln.element === oldId) ln.element = newId;
+    });
+    if (state.allocation) {
+      var keyPairs = [[oldId, newId]];
+      if (window.TopoGraph) {
+        keyPairs.push([window.TopoGraph.quamPairId(oldId),
+                       window.TopoGraph.quamPairId(newId)]);
+      }
+      keyPairs.forEach(function (kp) {
+        if (kp[0] !== kp[1] && state.allocation[kp[0]] != null) {
+          state.allocation[kp[1]] = state.allocation[kp[0]];
+          delete state.allocation[kp[0]];
+        }
+      });
+    }
+    state.pairsTouched = true;
+  }
+
+  // Re-orient every CZ pair whose frequencies say the order is wrong.
+  // Returns the flips performed (empty when nothing changed). Strict
+  // ft > fc: equal or missing frequencies never flip.
+  function czAutoOrient() {
+    if (!czOrderActive()) return [];
+    var flips = [];
+    state.spec.qubit_pairs.forEach(function (pair) {
+      if (!pair[0] || !pair[1]) return;
+      var bucket = ((state.spec.populate || {}).pairs || {})[pair[0] + "-" + pair[1]] || {};
+      if (bucket.cz_order === "manual") return;
+      var fc = rfFreqOf(pair[0]), ft = rfFreqOf(pair[1]);
+      if (fc == null || ft == null || !(ft > fc)) return;
+      var oldId = pair[0] + "-" + pair[1];
+      flipPairOrder(pair);
+      flips.push({ from: oldId, to: pair[0] + "-" + pair[1] });
+    });
+    if (flips.length) deriveLines();
+    return flips;
+  }
+
+  // Per-pair orientation status for the note + review summary.
+  function czOrderStatus() {
+    var out = [];
+    state.spec.qubit_pairs.forEach(function (pair) {
+      if (!pair[0] || !pair[1]) return;
+      var id = pair[0] + "-" + pair[1];
+      var bucket = ((state.spec.populate || {}).pairs || {})[id] || {};
+      var fc = rfFreqOf(pair[0]), ft = rfFreqOf(pair[1]);
+      out.push({
+        id: id,
+        status: bucket.cz_order === "manual" ? "manual"
+          : (fc == null || ft == null) ? "pending"
+          : fc === ft ? "equal" : "ok"
+      });
+    });
+    return out;
+  }
+
+  function renderPairOrderNote() {
+    var note = document.getElementById("gen-pop-pair-order-note");
+    if (!note) return;
+    if (!czOrderActive() || !state.spec.qubit_pairs.length) {
+      note.hidden = true;
+      return;
+    }
+    var buckets = { ok: [], manual: [], pending: [], equal: [] };
+    czOrderStatus().forEach(function (s) { buckets[s.status].push(s.id); });
+    var parts = [];
+    if (buckets.ok.length) parts.push(buckets.ok.join(", ") + " set from frequencies");
+    if (buckets.pending.length) parts.push(buckets.pending.join(", ") + " pending (missing RF freq)");
+    if (buckets.equal.length) parts.push(buckets.equal.join(", ") + " equal frequencies (order kept)");
+    if (buckets.manual.length) parts.push(buckets.manual.join(", ") + " manual");
+    note.textContent = "CZ orientation is automatic — higher RF-freq qubit = " +
+      "control, lower = target. " + parts.join(" · ") + ".";
+    note.hidden = false;
+  }
+
+  // A qubit RF_freq commit may re-orient CZ pairs: rebuild the pairs table
+  // (its row keys changed) + surface what moved.
+  function czOrientAfterFreqEdit() {
+    if (!czOrderActive()) return;
+    var flips = czAutoOrient();
+    if (flips.length) {
+      var pairs = state.spec.qubit_pairs
+        .filter(function (p) { return p[0] && p[1]; })
+        .map(function (p) { return p[0] + "-" + p[1]; });
+      setPopHost("gen-pop-pairs",
+        pairs.length ? buildPopTable("pairs", pairs, pairPopCols(), "Pair") : null,
+        "No qubit pairs defined.");
+      showMessage(flips.map(function (f) {
+        return "Pair " + f.from + " reordered to " + f.to;
+      }).join("; ") + " — control is the higher-frequency qubit.", "info");
+    }
+    renderPairOrderNote();
+  }
+
+  // Mark a pair's orientation as hand-picked (step-4 dropdown edit).
+  function markPairManual(pair) {
+    if (!czOrderActive() || !pair[0] || !pair[1]) return;
+    var pop = state.spec.populate;
+    pop.pairs = pop.pairs || {};
+    var id = pair[0] + "-" + pair[1];
+    pop.pairs[id] = pop.pairs[id] || {};
+    pop.pairs[id].cz_order = "manual";
   }
   // MW-FEM XY amplitudes are stored dimensionless ([-1, 1]); the real power
   // depends on each qubit's xy.opx_output.full_scale_power_dbm. The Amplitude
@@ -2422,6 +2587,8 @@
       }
       // Only an RF_freq edit re-derives the LOs, so a hand-typed LO sticks.
       if (col.field === "RF_freq") recomputeLOs();
+      // A qubit frequency edit may re-orient CZ pairs (higher f = control).
+      if (col.field === "RF_freq" && group === "qubit") czOrientAfterFreqEdit();
       // Multiplexed readout shares one MW-FEM port — sync FSP across the group.
       if (col.field === "full_scale_power_dbm" && group === "resonator") {
         recomputeReadoutFSP(rid);
@@ -2503,6 +2670,7 @@
       });
       refreshColumnCells(group, col);
       if (col.field === "RF_freq") recomputeLOs();
+      if (col.field === "RF_freq" && group === "qubit") czOrientAfterFreqEdit();
       if (col.field === "full_scale_power_dbm") {
         if (group === "resonator") {
           // Set-all already fills every row, so the group is already in sync —
@@ -4047,6 +4215,7 @@
 
   function renderPopulateTables() {
     reconcilePopulatePairs();   // drop populate for removed pairs / wrong-gate fields
+    czAutoOrient();             // draft restore / step re-entry: order may be stale
     var qubits = state.spec.qubits;
     var pairs = state.spec.qubit_pairs
       .filter(function (p) { return p[0] && p[1]; })
@@ -4107,6 +4276,7 @@
         buildPopTable("pairs", pairs, pairPopCols(), "Pair"),
         "No qubit pairs defined.");
     }
+    renderPairOrderNote();
     // First-paint validation: covers step entry, draft restore, unit toggle
     // and power-mode flip (all of which land here) — a restored 15.3 GHz
     // shows its flag with zero keystrokes.
@@ -4209,6 +4379,7 @@
   function enterReviewStep() {
     var el = document.getElementById("gen-review");
     if (!el) return;
+    czAutoOrient();   // frequencies may have changed since the pairs table
     var sp = state.spec;
     var inst = sp.instruments;
     var femCount = inst.controllers.reduce(function (n, c) {
@@ -4240,6 +4411,17 @@
       ["Control lines", linesSummary],
       ["Output folder", getOutputPath() || "(not set — step 7)"]
     ];
+    // CZ chips: surface how the pair roles were assigned before generating.
+    if (czOrderActive() && sp.qubit_pairs.length) {
+      var czCounts = { ok: 0, manual: 0, pending: 0, equal: 0 };
+      czOrderStatus().forEach(function (s) { czCounts[s.status]++; });
+      var czParts = [];
+      if (czCounts.ok) czParts.push(czCounts.ok + " auto (higher-f = control)");
+      if (czCounts.manual) czParts.push(czCounts.manual + " manual");
+      if (czCounts.pending) czParts.push(czCounts.pending + " pending frequencies");
+      if (czCounts.equal) czParts.push(czCounts.equal + " equal frequencies");
+      rows.splice(5, 0, ["CZ pair orientation", czParts.join(", ")]);
+    }
     el.innerHTML = '<table class="gen-review-table"><tbody>' +
       rows.map(function (r) {
         return "<tr><th>" + r[0] + "</th><td></td></tr>";
@@ -4680,6 +4862,7 @@
     if (ackDegrades) state._buildAck = true;
     // Re-derive lines from the current qubits/pairs in case the wiring step
     // was skipped via the step chips — otherwise the build gets no lines.
+    czAutoOrient();   // defense-in-depth: never build a CZ pair backwards
     deriveLines();
     var outPath = getOutputPath();
     if (!outPath) {
@@ -5173,7 +5356,10 @@
       validateCellValue: validateCellValue,
       validateAllPopCells: validateAllPopCells,
       VALIDATE_RANGES: VALIDATE_RANGES,
-      setValidateDebounce: function (ms) { VALIDATE_DEBOUNCE_MS = ms; }
+      setValidateDebounce: function (ms) { VALIDATE_DEBOUNCE_MS = ms; },
+      czAutoOrient: czAutoOrient,
+      czOrderStatus: czOrderStatus,
+      flipPairOrder: flipPairOrder
     }
   };
 })();

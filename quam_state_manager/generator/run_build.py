@@ -1172,6 +1172,36 @@ def _seed_cr_gate(pair, *, vals=None):
     return "; ".join(warns) if warns else None
 
 
+def _cz_order_warning(quam_id, pair, vals):
+    """Wizard-contract safety net: CZ pairs arrive oriented control = the
+    higher-f_01 qubit (the wizard's czAutoOrient flips the stored spec pair as
+    frequencies are typed). NEVER flips anything here — reordering after
+    ``apply_populate`` would rename the QUAM pair id out from under the
+    ``populate.pairs`` matching and every element/op name. Just surfaces a
+    warning in ``_result.json`` when a backwards CZ pair reaches the build
+    (old draft / hand-written spec) and the user didn't pin the order with
+    ``cz_order: manual``. Physics stays correct either way — the flux pulse
+    plays on the higher-frequency (moving) qubit regardless of labels.
+    """
+    if (vals or {}).get("cz_order") == "manual":
+        return None
+    try:
+        fc = float(getattr(getattr(pair, "qubit_control", None), "f_01", None) or 0)
+        ft = float(getattr(getattr(pair, "qubit_target", None), "f_01", None) or 0)
+    except (TypeError, ValueError):
+        return None
+    if fc and ft and ft > fc:
+        return (
+            f"pair {quam_id}: target f_01 ({ft / 1e9:.4g} GHz) is higher than "
+            f"control ({fc / 1e9:.4g} GHz) — the wizard orients CZ pairs "
+            "control = higher-frequency qubit. The flux pulse still plays on "
+            "the higher-frequency (moving) qubit; set "
+            f"populate.pairs['{quam_id}'].cz_order = 'manual' to keep this "
+            "order silently."
+        )
+    return None
+
+
 def _finalize_pair_gates(machine, spec, pair_gate):
     """Add the wizard's chosen 2Q-gate macros (CR / CZ fixed / CZ tunable).
 
@@ -1227,6 +1257,9 @@ def _finalize_pair_gates(machine, spec, pair_gate):
         if pair_gate == "cr":
             w = _seed_cr_gate(pair, vals=vals)
         else:
+            ow = _cz_order_warning(quam_id, pair, vals)
+            if ow:
+                warnings.append(ow)
             w = _seed_cz_variant(
                 pair,
                 # "" is the wizard's "use default" sentinel == unipolar.
