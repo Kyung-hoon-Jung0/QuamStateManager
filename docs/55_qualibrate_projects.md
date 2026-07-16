@@ -200,3 +200,29 @@ alternative.
    tree per campaign)? Repair UX presents, never auto-fixes.
 5. Version drift: semantics pinned to qualibrate_config 0.1.12 (config v5 /
    quam v3); SM read-only-degrades on unknown versions.
+
+## 6. Implementation status
+
+**Phase 1 (read-only MVP) — SHIPPED** on `feat/qualibrate-folder`:
+
+- `core/qualibrate_config.py`: env-var fix (`QUALIBRATE_CONFIG_FILE`
+  dir-or-file + `QUAM_STATE_PATH`, legacy names kept as aliases),
+  `native_path` Windows→WSL dialect mapping, `_deep_merge` /
+  `effective_config` (0.1.12 fidelity: force-set project, 0-byte inheritor,
+  `state_path = ""` as explicit override, lazy storage template),
+  `list_projects`, `lint` doctor, `tray_status` (stat-keyed cache — two
+  `os.stat` steady-state per render).
+- Web: `GET /api/qualibrate/projects`, `GET /qualibrate` (Config Manager
+  page, raw-TOML viewer panes, doctor panel), `GET /qualibrate/subnav`
+  (lazy sidebar submenu), `POST /qualibrate/open` (Open in SM: 404 unknown /
+  409 dangling gates, chip load + dataset-root adoption, `HX-Redirect`).
+  Sidebar "Projects" item; topbar `⚗ <active project>` badge (red =
+  dangling state_path, amber = SM has a different chip open than qualibrate
+  writes to); `/workbench/match` now carries `qb_project`.
+- Tests: `tests/test_qualibrate_config.py` (synthetic tree replicating the
+  real folder's anomaly set) + `tests/test_qualibrate_routes.py` — including
+  the doctrine's testable core: hitting every P1 route leaves the
+  `.qualibrate` tree byte- AND mtime-identical.
+
+Phases 2 (switch active project) and 3 (guided overlay repair) are designed
+above but NOT implemented — awaiting the open questions in §5.

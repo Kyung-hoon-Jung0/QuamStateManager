@@ -362,6 +362,29 @@
                            {% if page == 'scheduler' %}class="active"{% endif %}>Scheduler</a></li>
                 </ul>
             </nav>
+            <nav class="sidebar-nav">
+                <ul>
+                    {# QUAlibrate Projects (docs/55): main click = the Config
+                       Manager page; the submenu (lazy-loaded — never pay the
+                       TOML reads on unrelated page renders) lists projects,
+                       row click = "Open in SM" (read-only for qualibrate). #}
+                    <li class="nav-with-sub">
+                        <div class="nav-sub-row">
+                            <a href="/qualibrate" hx-get="/qualibrate" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                               {% if page == 'qualibrate' %}class="active"{% endif %}>Projects</a>
+                            <button type="button" class="nav-sub-toggle"
+                                    aria-expanded="{{ 'true' if page == 'qualibrate' else 'false' }}"
+                                    aria-controls="qualibrate-subnav" aria-label="Toggle QUAlibrate projects"
+                                    onclick="toggleNavSub(this, 'qualibrate-subnav', 'quam_qualibrate_nav_collapsed')">&#9662;</button>
+                        </div>
+                        <ul class="nav-subitems{% if page != 'qualibrate' %} nav-subitems-collapsed{% endif %}"
+                            id="qualibrate-subnav"
+                            hx-get="/qualibrate/subnav" hx-trigger="load" hx-swap="innerHTML">
+                            <li><span class="muted qualibrate-subnav-note">loading&hellip;</span></li>
+                        </ul>
+                    </li>
+                </ul>
+            </nav>
             <div class="sidebar-load">
                 <form id="load-form" hx-post="/load" hx-target="#table-pane">
                     <div class="path-input-group">

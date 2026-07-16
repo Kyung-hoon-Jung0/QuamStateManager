@@ -1,5 +1,5 @@
 <div id="pending-tray"
-     class="pending-tray{% if not active_name and change_count == 0 and not working_dirty %} tray-empty{% endif %}"
+     class="pending-tray{% if not active_name and change_count == 0 and not working_dirty and not (qualibrate_tray is defined and qualibrate_tray) %} tray-empty{% endif %}"
      data-change-count="{{ change_count }}"
      data-working-dirty="{{ '1' if working_dirty else '0' }}"
      {% if oob is defined and oob %}hx-swap-oob="outerHTML:#pending-tray"{% endif %}>
@@ -8,6 +8,16 @@
    working-copy ↔ live diff (the review surface used to be reachable only when
    the tray was non-empty). #}
 {% set _archive = (chip_origin is defined and chip_origin == 'dataset_archive') %}
+{# QUAlibrate active-project badge (docs/55) — a read-only pointer into the
+   Projects page. Red = the active project's state_path doesn't exist (its
+   runs would fail); amber = SM has a DIFFERENT chip open than the one
+   qualibrate writes to; neutral otherwise. #}
+{% if qualibrate_tray is defined and qualibrate_tray %}
+<a href="/qualibrate" hx-get="/qualibrate" hx-target="#table-pane" hx-push-url="true"
+   class="qualibrate-tray-badge{% if qualibrate_tray.dangling %} qualibrate-tray-danger{% elif qualibrate_tray.match == false %} qualibrate-tray-warn{% endif %}"
+   title="{% if qualibrate_tray.dangling %}QUAlibrate active project — its state_path does not exist (see Projects &rarr; Doctor){% elif qualibrate_tray.match == false %}QUAlibrate writes to a different chip than the one open in SM — click to review projects{% elif qualibrate_tray.match %}QUAlibrate active project — same chip as loaded in SM{% else %}QUAlibrate active project — click to manage projects{% endif %}">
+    <span aria-hidden="true">&#9879;</span>&nbsp;{{ qualibrate_tray.project }}</a>
+{% endif %}
 {% if active_name or change_count > 0 or working_dirty %}
 {% set _dirty = change_count > 0 or working_dirty %}
 <button type="button"

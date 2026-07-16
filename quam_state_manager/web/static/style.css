@@ -8675,3 +8675,43 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .pp-verdict-loading { color: var(--color-text-muted); animation: schedPulse 1.4s ease-in-out infinite; }
 .pp-verdict-check { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
 .pp-verdict-check .muted { color: var(--color-text-muted); }
+
+/* ---- QUAlibrate Projects (docs/55) ---- */
+.qualibrate-topstrip { margin-bottom: .6rem; }
+.qualibrate-topstrip p { margin: .15rem 0; }
+.qualibrate-doctor-list { list-style: none; padding-left: .25rem; margin: .3rem 0; }
+.qualibrate-doctor-list li { margin: .25rem 0; }
+.qualibrate-doctor-error .qualibrate-doctor-sev { color: var(--cell-bad-color, #d62728); }
+.qualibrate-doctor-warning .qualibrate-doctor-sev { color: var(--cell-ok-color, #ff7f0e); }
+.qualibrate-doctor-info .qualibrate-doctor-sev { color: var(--pico-muted-color, #888); }
+.qualibrate-doctor-sev { display: inline-block; width: 1.1em; }
+.qualibrate-path-missing code { opacity: .65; text-decoration: line-through; }
+.qualibrate-src { margin-left: .35rem; padding: 0 .3rem; border-radius: .5rem;
+                  font-size: .68em; border: 1px solid var(--pico-muted-border-color); }
+.qualibrate-src-own { border-color: var(--pico-primary); }
+.qualibrate-src-inherited, .qualibrate-src-default { opacity: .7; }
+.qualibrate-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; }
+.qualibrate-toml { max-height: 22rem; overflow: auto; font-size: .78em;
+                   padding: .5rem; white-space: pre; }
+.qualibrate-open-form { margin: 0; }
+.qualibrate-project-row { display: flex; gap: .35rem; align-items: baseline;
+    width: 100%; background: none; border: none; padding: .12rem .3rem;
+    cursor: pointer; font: inherit; color: inherit; text-align: left; }
+.qualibrate-project-row:hover { background: var(--pico-secondary-background, rgba(128,128,128,.12)); }
+.qualibrate-project-active .qualibrate-project-name { font-weight: 600; }
+.qualibrate-project-dot { font-size: .7em; }
+.qualibrate-project-warn { color: var(--cell-ok-color, #ff7f0e); }
+.qualibrate-project-loaded { font-size: .7em; color: var(--pico-primary); }
+.qualibrate-subnav-note { font-size: .8em; padding-left: .4rem; }
+/* topbar active-project badge (⚗ name) — neutral / amber mismatch / red dangling */
+.qualibrate-tray-badge { display: inline-flex; align-items: center; gap: .1rem;
+    font-size: .74rem; padding: .12rem .5rem; margin-right: .4rem;
+    border: 1px solid var(--pico-muted-border-color); border-radius: 1rem;
+    color: var(--color-text-muted, var(--pico-muted-color)); text-decoration: none;
+    white-space: nowrap; }
+.qualibrate-tray-badge:hover { border-color: var(--pico-primary);
+    color: var(--pico-primary); text-decoration: none; }
+.qualibrate-tray-warn { border-color: var(--cell-ok-color, #ff7f0e);
+    color: var(--cell-ok-color, #ff7f0e); }
+.qualibrate-tray-danger { border-color: var(--cell-bad-color, #d62728);
+    color: var(--cell-bad-color, #d62728); }

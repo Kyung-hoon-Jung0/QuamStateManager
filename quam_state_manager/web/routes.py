@@ -1399,6 +1399,7 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         "context_type": _context_type(),
         "change_count": _change_count(),
         "working_dirty": _working_dirty(),
+        "qualibrate_tray": _qualibrate_tray_badge(),
         "live_diverged": bool(_ctx_obj("live_diverged")),
         "wc_gc_count": _working_copy_count(),
         "wc_gc_threshold": _WC_GC_THRESHOLD,
@@ -1879,7 +1880,183 @@ def workbench_match():
         "sm_name": path_match.chip_label(sm) if sm else None,
         "loadable": loadable,
         "load_path": str(qb) if qb else None,
+        # which qualibrate project the resolved path belongs to (docs/55) —
+        # lets the workbench say "Qualibrate is on project X" instead of a
+        # bare path when the verdict is a mismatch.
+        "qb_project": qualibrate_config.active_project(),
     })
+
+
+# ======================================================================
+# QUAlibrate Projects (docs/55) — READ-ONLY over ~/.qualibrate.
+# The No-Conflict doctrine: SM never writes qualibrate's configs in this
+# tier; every read tolerates a torn (mid-write) file.
+# ======================================================================
+
+
+def _qualibrate_listing() -> dict:
+    """list_projects + doctor + the [SM]-loaded marker, one READ-ONLY pass."""
+    from quam_state_manager.core import qualibrate_config
+
+    listing = qualibrate_config.list_projects()
+    listing["doctor"] = qualibrate_config.lint(listing)
+    # Compare against the LIVE folder (ctx["live_path"]) — _ctx_path() is the
+    # private working copy under instance/, which never matches a config path.
+    ctx = _active_ctx()
+    loaded = (ctx or {}).get("live_path")
+    loaded_resolved = None
+    if loaded:
+        try:
+            loaded_resolved = str(Path(loaded).resolve())
+        except OSError:
+            loaded_resolved = str(loaded)
+    for p in listing["projects"]:
+        native = p["state_path"]["native"]
+        try:
+            p["loaded_in_sm"] = bool(
+                loaded_resolved and native
+                and str(Path(native).resolve()) == loaded_resolved)
+        except OSError:
+            p["loaded_in_sm"] = False
+    return listing
+
+
+def _qualibrate_tray_badge() -> dict | None:
+    """State for the topbar '⚗ <project>' badge; ``None`` hides it.
+
+    Cheap enough for every render: qualibrate_config.tray_status is
+    stat-cached (two os.stat steady-state). ``match`` is True/False vs the
+    chip SM has open, or None when either side is unknown."""
+    from quam_state_manager.core import qualibrate_config
+
+    try:
+        st = qualibrate_config.tray_status()
+    except Exception:  # the badge must never break a page render
+        return None
+    if not st.get("config_exists") or not st.get("active"):
+        return None
+    match = None
+    ctx = _active_ctx()
+    live = (ctx or {}).get("live_path")
+    if live and st.get("state_native") and st.get("state_exists"):
+        try:
+            match = Path(live).resolve() == Path(st["state_native"]).resolve()
+        except OSError:
+            match = None
+    return {"project": st["active"], "dangling": not st["state_exists"],
+            "match": match}
+
+
+@bp.route("/api/qualibrate/projects")
+def api_qualibrate_projects():
+    """The Projects sidebar/page payload (projects + doctor findings)."""
+    return jsonify(_qualibrate_listing())
+
+
+@bp.route("/qualibrate/subnav")
+def qualibrate_subnav():
+    """The sidebar's lazy-loaded project submenu (hx-trigger=load) — keeps
+    the base-page render free of the 16 TOML reads."""
+    return render_template("_qualibrate_subnav.html",
+                           listing=_qualibrate_listing())
+
+
+@bp.route("/qualibrate")
+def qualibrate_page():
+    """The Project Config Manager: projects table + effective/raw TOML views
+    + doctor panel. 100% read-only (docs/55 No-Conflict doctrine)."""
+    from quam_state_manager.core import qualibrate_config
+
+    listing = _qualibrate_listing()
+    # raw TOML texts for the detail panes (viewer only — deliberately NO
+    # free-text editor: qualibrate round-trips these files through
+    # tomllib/tomli_w, so hand-edits/comments are destroyed on its next
+    # write, and a typo hard-errors every qualibrate process)
+    cfg_dir = Path(listing["config_dir"])
+    raws: dict[str, str] = {}
+    try:
+        raws["__root__"] = (cfg_dir / "config.toml").read_text(
+            encoding="utf-8", errors="replace")
+    except OSError:
+        raws["__root__"] = "(unreadable)"
+    for p in listing["projects"]:
+        try:
+            raws[p["name"]] = (cfg_dir / "projects" / p["name"]
+                               / "config.toml").read_text(
+                encoding="utf-8", errors="replace") or "(empty overlay — inherits everything)"
+        except OSError:
+            raws[p["name"]] = "(unreadable)"
+
+    template = "_qualibrate.html" if _is_htmx() else "qualibrate.html"
+    return render_template(template, **_ctx(
+        page="qualibrate",
+        listing=listing,
+        raw_tomls=raws,
+        supported_versions={
+            "qualibrate": qualibrate_config.SUPPORTED_QUALIBRATE_VERSION,
+            "quam": qualibrate_config.SUPPORTED_QUAM_VERSION,
+        },
+    ))
+
+
+@bp.route("/qualibrate/open", methods=["POST"])
+def qualibrate_open_project():
+    """'Open in SM': load the project's effective state_path as the chip and
+    add its dataset roots to the workspace. ZERO external writes — this is
+    the safe daily action, distinct from 'Set active in QUAlibrate' (a later
+    tier, guarded). Mirrors /load's HX-Redirect contract so the chip-identity
+    tray re-renders fresh."""
+    name = (request.form.get("project") or "").strip()
+    listing = _qualibrate_listing()
+    proj = next((p for p in listing["projects"] if p["name"] == name), None)
+    if proj is None:
+        return render_template("_status.html",
+                               message=f"Unknown qualibrate project: {name!r}",
+                               level="error"), 404
+    state = proj["state_path"]
+    if not state["native"] or not state["exists"]:
+        return render_template(
+            "_status.html",
+            message=(f"Project {name!r}: its state_path "
+                     f"({state['raw'] or '(empty)'}) does not exist — fix it "
+                     "in qualibrate first (see the Doctor panel)."),
+            level="error"), 409
+
+    try:
+        _activate_quam(state["native"])
+    except (FileNotFoundError, ValueError, OSError) as e:
+        return render_template("_status.html", message=str(e), level="error"), 400
+    _remember_load_path(state["native"])
+
+    # dataset roots from the project's storage location (read-only scan)
+    added = 0
+    storage_native = proj["storage"]["native"]
+    if storage_native and proj["storage"]["exists"]:
+        ws = _ws()
+        existing = {str(p) for p in ws.root_folders}
+        for root in scheduler.find_dataset_roots(storage_native):
+            if root not in existing:
+                try:
+                    ws.add_root(root)
+                    added += 1
+                except (OSError, ValueError):
+                    continue
+        if added:
+            _save_workspace_roots()
+            current_app.config.pop("dataset_store", None)
+
+    # a qualibrate project is a SCOPE on the context, not a new context type
+    ctx = _active_ctx()
+    if ctx is not None:
+        ctx["qualibrate_project"] = name
+
+    logger.info("qualibrate open-in-sm: %s -> %s (+%d dataset roots)",
+                name, state["native"], added)
+    if _is_htmx():
+        resp = make_response()
+        resp.headers["HX-Redirect"] = url_for("main.explorer")
+        return resp
+    return redirect(url_for("main.explorer"))
 
 
 @bp.route("/load", methods=["POST"])
@@ -2231,6 +2408,7 @@ def _render_tray(*, oob: bool) -> str:
         working_dirty=_working_dirty(),
         active_name=ident["name"] if ident else None,
         chip_origin=ident["origin"] if ident else "live",
+        qualibrate_tray=_qualibrate_tray_badge(),
         oob=oob,
     )
 
