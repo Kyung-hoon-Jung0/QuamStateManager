@@ -110,7 +110,11 @@
          rows. No collapsibles — naming is always visible (customer feedback:
          essential controls must never hide behind a closed panel). #}
       <div class="gen-band" id="gen-chip-arch-section">
-        <div class="gen-band-head"><span class="gen-band-title">Chip definition</span></div>
+        <div class="gen-band-head"><span class="gen-band-title">Chip definition</span>
+          <button type="button" class="gen-mini-btn" id="gen-csv-import-btn"
+                  title="Import a port-label-mapping.csv (the QM fixed-transmon reference flow): qubits, grid, directed pairs, instruments and port pins in one file.">Import port CSV&hellip;</button>
+          <input type="file" id="gen-csv-file" accept=".csv,text/csv" hidden>
+        </div>
         {# Architecture as ALWAYS-VISIBLE radios (customer feedback: a select
            costs two clicks and hides the alternatives). The hidden select
            stays as the single state anchor — syncLineTypeToggles writes its
@@ -126,6 +130,10 @@
           <div class="gen-arch-field">
             <span class="gen-field-label">Architecture</span>
             <div id="gen-arch-radios" class="gen-arch-radios"></div>
+            {# CR sub-options (rendered by renderCrOptions(); visible only for
+               the fixed-frequency architecture): drive-port layout + the
+               Stark-CZ (ZZ drive) toggle. #}
+            <div id="gen-cr-options" class="gen-arch-radios" hidden></div>
           </div>
           <label class="gen-chassis-count-field">
             Qubits:

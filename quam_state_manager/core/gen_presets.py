@@ -74,6 +74,10 @@ SECTION_FIELDS: dict[str, set] = {
         "moving_qubit", "cz_order", "coupler_interaction_offset",
         "cr_drive_amplitude", "cr_cancel_amplitude", "cr_drive_phase",
         "cr_cancel_phase", "qc_correction_phase", "qt_correction_phase",
+        # CR shape library + ZZ (Stark-CZ) seeds — docs/54. Target LO/IF stay
+        # excluded (chip-specific frequency plan, like LO_frequency).
+        "cr_shapes", "zz_detuning", "zz_drive_amplitude",
+        "zz_flattop_length", "zz_flattop_flat_length",
     },
 }
 

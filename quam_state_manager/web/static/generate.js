@@ -61,6 +61,14 @@
     //                 creates the pair (no coupler wiring line).
     //   "cz_tunable"  CZ, tunable coupler — needs qubit flux (z) + a coupler flux line.
     pairGate: "cz_tunable",
+    // CR drive port mode (docs/54): "dedicated" = one MW port per CR line;
+    // "shared_xy" = the customer's dual-upconverter layout (CR/ZZ ride the
+    // control qubit's own xy port on upconverter 2). Only used when
+    // pairGate === "cr".
+    crPortMode: "dedicated",
+    // ZZ (Stark-CZ) drive lines per pair — CR chips only. Adds a zz_drive
+    // wiring line + the StarkInducedCZGate seed alongside every CR line.
+    zzEnabled: false,
     // Explicit chip architecture (step 4) — the single source of truth that drives
     // qubitFlux + pairGate. The qubit-flux/gate controls below are derived from it.
     // The physically-unrepresentable "fixed-frequency qubits + tunable coupler" is
@@ -1542,6 +1550,128 @@
       lab.appendChild(document.createTextNode(" " + opt.textContent));
       host.appendChild(lab);
     });
+    renderCrOptions();
+  }
+
+  // CR sub-options (docs/54): drive-port layout + the Stark-CZ (ZZ) toggle.
+  // Rendered under the architecture radios, only for fixed_frequency chips.
+  function renderCrOptions() {
+    var host = document.getElementById("gen-cr-options");
+    if (!host) return;
+    var isCr = state.pairGate === "cr";
+    host.hidden = !isCr;
+    if (!isCr) { host.innerHTML = ""; return; }
+    host.innerHTML = "";
+
+    var modeWrap = document.createElement("span");
+    modeWrap.className = "gen-cr-portmode";
+    modeWrap.appendChild(document.createTextNode("CR drive port: "));
+    [["dedicated", "Dedicated MW port per pair",
+      "Each CR line gets its own MW-FEM output (the wizard's classic layout)."],
+     ["shared_xy", "Shared with control's xy (dual upconverter)",
+      "CR/ZZ tones ride the CONTROL qubit's own xy port on upconverter 2 — " +
+      "the QM fixed-transmon reference layout. Uses half the MW ports."]]
+      .forEach(function (opt) {
+        var lab = document.createElement("label");
+        lab.className = "gen-arch-radio";
+        lab.title = opt[2];
+        var r = document.createElement("input");
+        r.type = "radio";
+        r.name = "gen-cr-portmode-radio";
+        r.value = opt[0];
+        r.checked = (state.crPortMode || "dedicated") === opt[0];
+        r.addEventListener("change", function () {
+          if (!r.checked) return;
+          state.crPortMode = r.value;
+          // shared mode defaults new pairs to the customer's full shape set
+          if (r.value === "shared_xy") {
+            var pop = state.spec.populate.pairs = state.spec.populate.pairs || {};
+            state.spec.qubit_pairs.forEach(function (p) {
+              if (!p[0] || !p[1]) return;
+              var pid = p[0] + "-" + p[1];
+              pop[pid] = pop[pid] || {};
+              if (!pop[pid].cr_shapes) pop[pid].cr_shapes = "full";
+            });
+          }
+          deriveLines();
+          saveDraft();
+        });
+        lab.appendChild(r);
+        lab.appendChild(document.createTextNode(" " + opt[1]));
+        modeWrap.appendChild(lab);
+      });
+    host.appendChild(modeWrap);
+
+    var zzLab = document.createElement("label");
+    zzLab.className = "gen-arch-radio";
+    zzLab.title = "Adds a zz_drive wiring line per pair + the StarkInducedCZGate " +
+      "seed (the target's detuned-xy tones need a quam-builder with " +
+      "FixedFrequencyZZDriveQuam — the env report card will say).";
+    var zz = document.createElement("input");
+    zz.type = "checkbox";
+    zz.checked = !!state.zzEnabled;
+    zz.addEventListener("change", function () {
+      state.zzEnabled = zz.checked;
+      deriveLines();
+      saveDraft();
+    });
+    zzLab.appendChild(zz);
+    zzLab.appendChild(document.createTextNode(" Also wire ZZ (Stark-CZ) drive lines"));
+    host.appendChild(zzLab);
+  }
+
+  // Apply a parsed port-label CSV payload (/generate/import-port-csv) to the
+  // wizard: instruments, qubits (+naming), grid, DIRECTED pairs, feedline
+  // groups and port pins — the QM fixed-transmon reference flow's whole
+  // chip definition in one file (docs/54). The CSV encodes the shared-port
+  // layout, so the architecture flips to fixed_frequency + shared_xy.
+  function applyPortCsv(payload) {
+    if (!payload || !payload.ok) return false;
+    state.spec.instruments = payload.instruments ||
+      { controllers: [], opx_plus: [], octaves: [] };
+    state.spec.qubits = (payload.qubits || []).slice();
+    state.namesTouched = true;      // q0-based ids must survive the scheme gate
+    state.spec.qubit_pairs = (payload.qubit_pairs || [])
+      .map(function (p) { return p.slice(); });
+    state.pairsTouched = true;
+    var popq = state.spec.populate.qubit = state.spec.populate.qubit || {};
+    Object.keys(payload.grid || {}).forEach(function (q) {
+      popq[q] = popq[q] || {};
+      popq[q].grid_location = payload.grid[q];
+    });
+    var countInput = document.getElementById("gen-qubit-count");
+    if (countInput) countInput.value = state.spec.qubits.length;
+
+    // architecture: the CSV layout IS the shared-port CR chip. State first
+    // (deriveLines below must see it even before any UI listener runs), then
+    // the select dispatch so the bound applyChipArch refreshes the step-4 UI.
+    state.crPortMode = "shared_xy";
+    state.chipArch = "fixed_frequency";
+    state.pairGate = "cr";
+    state.qubitFlux = false;
+    var archSel = document.getElementById("gen-chip-arch");
+    if (archSel) {
+      archSel.value = "fixed_frequency";
+      archSel.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    // pins + feedline groups onto the (re)derived lines; wiringTouched keeps
+    // them across later deriveLines passes (the pinned map).
+    state.wiringTouched = true;
+    deriveLines();
+    state.spec.lines.forEach(function (ln) {
+      var pin = (payload.pins || {})[ln.element];
+      if (!pin) return;
+      if (ln.line === "drive" && pin.drive) ln.channel = pin.drive;
+      if (ln.line === "resonator" && pin.resonator) {
+        ln.channel = pin.resonator;
+        var fl = (payload.feedlines || {})[ln.element];
+        if (fl) ln.group = fl;
+      }
+    });
+    saveDraft();
+    if (typeof renderQubitsStep === "function") renderQubitsStep();
+    return true;
   }
 
   function renderQubitsStep() {
@@ -1572,6 +1702,48 @@
     var muxInput = document.getElementById("gen-mux-size");
     var addPair = document.getElementById("gen-add-pair");
     var addTwpa = document.getElementById("gen-add-twpa");
+
+    // Port-label CSV import (docs/54): file picker → text → server parse →
+    // applyPortCsv. Confirm before clobbering a non-empty chip definition.
+    var csvBtn = document.getElementById("gen-csv-import-btn");
+    var csvFile = document.getElementById("gen-csv-file");
+    if (csvBtn && csvFile) {
+      csvBtn.addEventListener("click", function () { csvFile.click(); });
+      csvFile.addEventListener("change", function () {
+        var f = csvFile.files && csvFile.files[0];
+        csvFile.value = "";
+        if (!f) return;
+        if (state.spec.qubits.length &&
+            !window.confirm("Importing the CSV replaces the current qubits, "
+                            + "pairs, instruments and port pins. Continue?")) {
+          return;
+        }
+        var reader = new FileReader();
+        reader.onload = function () {
+          fetch("/generate/import-port-csv", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: String(reader.result || "") })
+          }).then(function (r) { return r.json(); }).then(function (payload) {
+            if (!payload.ok) {
+              window.alert("CSV import failed:\n"
+                           + (payload.errors || ["unknown error"]).join("\n"));
+              return;
+            }
+            applyPortCsv(payload);
+            (payload.warnings || []).forEach(function (m) {
+              console.warn("port CSV:", m);
+            });
+            if (payload.warnings && payload.warnings.length) {
+              window.alert("Imported with warnings:\n" + payload.warnings.join("\n"));
+            }
+          }).catch(function (e) {
+            window.alert("CSV import failed: " + e);
+          });
+        };
+        reader.readAsText(f);
+      });
+    }
 
     if (countInput) {
       countInput.addEventListener("change", function () {
@@ -1730,7 +1902,8 @@
   // -- step 5: wiring --------------------------------------------------
 
   // spec line type -> short code used in the allocation result
-  var ALLOC_KEY = { resonator: "rr", drive: "xy", flux: "z", coupler: "c" };
+  var ALLOC_KEY = { resonator: "rr", drive: "xy", flux: "z", coupler: "c",
+                    cross_resonance: "cr", zz_drive: "zz" };
 
   function deriveLines() {
     // Rebuild lines from the current qubits/pairs, keeping any existing
@@ -1793,7 +1966,8 @@
       }
     });
     // cz_fixed emits no pair wiring line (run_build creates the pair); cr and
-    // cz_tunable emit their line so build_quam wires the pair.
+    // cz_tunable emit their line so build_quam wires the pair. A CR chip with
+    // the ZZ toggle on additionally gets a zz_drive line per pair (Stark-CZ).
     var pairLine = wantCR ? "cross_resonance"
                  : wantCoupler ? "coupler" : null;
     if (pairLine) {
@@ -1801,10 +1975,21 @@
         if (p[0] && p[1]) {
           var el = p[0] + "-" + p[1];
           lines.push({ element: el, line: pairLine, channel: pinned[el + "|" + pairLine] || null });
+          if (wantCR && state.zzEnabled) {
+            lines.push({ element: el, line: "zz_drive",
+                         channel: pinned[el + "|zz_drive"] || null });
+          }
         }
       });
     }
     state.spec.lines = lines;
+    // CR drive port mode (docs/54): 'shared_xy' = the customer's dual-
+    // upconverter layout (CR/ZZ ride the control's xy port, LO 2).
+    if (wantCR) {
+      state.spec.cr_port_mode = state.crPortMode || "dedicated";
+    } else {
+      delete state.spec.cr_port_mode;
+    }
   }
 
   function channelToPin(ch) {
@@ -1821,7 +2006,9 @@
     if (lineType === "resonator") {
       return { kind: "mw_fem", con: con, slot: slot, in_port: port, out_port: port };
     }
-    if (lineType === "drive") {
+    if (lineType === "drive" || lineType === "cross_resonance" || lineType === "zz_drive") {
+      // CR/ZZ are MW drive tones — the old lf_fem fallthrough mis-pinned a
+      // hand-entered CR port onto LF hardware (allocation failure).
       return { kind: "mw_fem", con: con, slot: slot, out_port: port };
     }
     return { kind: "lf_fem", con: con, out_slot: slot, out_port: port };
@@ -1882,7 +2069,7 @@
   // window.renderInstrumentWiring (app.js) expects — the same data shape
   // query.py:get_instrument_wiring() produces for the /instrument page.
   function buildInstrumentData(allocation) {
-    var ROLE = { rr: "rr", xy: "xy", z: "z", c: "coupler" };
+    var ROLE = { rr: "rr", xy: "xy", z: "z", c: "coupler", cr: "cr", zz: "zz" };
     var controllers = {};
     Object.keys(allocation || {}).forEach(function (element) {
       Object.keys(allocation[element] || {}).forEach(function (lineType) {
@@ -2642,11 +2829,23 @@
     { field: "cr_cancel_phase", label: "CR cancel phase" },
     { field: "qc_correction_phase", label: "ZI corr (qc)" },
     { field: "qt_correction_phase", label: "IZ corr (qt)" },
+    // Drive pulse library: "" (default) = basic square+flattop; "full" = the
+    // customer's 4-shape set (+ cosine/gauss with DRAG params slaved to the
+    // target's x180, and their cancel twins).
+    { field: "cr_shapes", label: "CR shapes", kind: "select",
+      options: ["", "basic", "full"] },
     // Escape hatch: run_build derives these from the target qubit's frequencies
     // when populated; set them explicitly to override (the CR drive plays at
     // target_LO + target_IF).
     { field: "target_qubit_LO_frequency", label: "target LO", dim: "freq" },
     { field: "target_qubit_IF_frequency", label: "target IF", dim: "freq" }
+  ];
+  // ZZ (Stark-CZ) populate columns — appended when the ZZ toggle is on.
+  var POP_ZZ_PAIR_COLS = [
+    { field: "zz_detuning", label: "ZZ detuning", dim: "freq" },
+    { field: "zz_drive_amplitude", label: "ZZ drive amp" },
+    { field: "zz_flattop_length", label: "ZZ flattop len", dim: "time" },
+    { field: "zz_flattop_flat_length", label: "ZZ flat len", dim: "time" }
   ];
   // Alias for the LO-map cross-link (the coupler diagram role maps to the pairs
   // group; only present on a tunable-coupler chip, which is always CZ).
@@ -2655,7 +2854,11 @@
   // The pair populate columns for the chip's current 2Q gate. CR uses its own
   // set; CZ drops the coupler-only column unless there's a tunable coupler.
   function pairPopCols() {
-    if (state.pairGate === "cr") return POP_CR_PAIR_COLS;
+    if (state.pairGate === "cr") {
+      return state.zzEnabled
+        ? POP_CR_PAIR_COLS.concat(POP_ZZ_PAIR_COLS)
+        : POP_CR_PAIR_COLS;
+    }
     if (state.pairGate === "cz_tunable") return POP_CZ_PAIR_COLS;
     return POP_CZ_PAIR_COLS.filter(function (c) {
       return c.field !== "coupler_interaction_offset";
@@ -5086,7 +5289,12 @@
     if (lf && state.qubitFlux) lineTypes.push("Qubit flux (z)");
     if (sp.qubit_pairs.length) {
       var pairGate = state.pairGate || "cz_tunable";
-      if (pairGate === "cr" && mw) lineTypes.push("Cross-resonance (CR)");
+      if (pairGate === "cr" && mw) {
+        lineTypes.push("Cross-resonance (CR)"
+          + (state.crPortMode === "shared_xy"
+             ? " — shared xy port (dual upconverter)" : " — dedicated ports"));
+        if (state.zzEnabled) lineTypes.push("ZZ (Stark-CZ) drive");
+      }
       else if (pairGate === "cz_fixed" && lf) lineTypes.push("CZ — fixed coupler");
       else if (pairGate === "cz_tunable" && lf) lineTypes.push("CZ — tunable coupler (coupler flux)");
     }
@@ -5722,6 +5930,7 @@
         scriptsEnabled: state.scriptsEnabled, scriptsPath: state.scriptsPath,
         qubitFlux: state.qubitFlux, couplerFlux: state.couplerFlux,
         pairGate: state.pairGate, chipArch: state.chipArch,
+        crPortMode: state.crPortMode, zzEnabled: state.zzEnabled,
         topoZone: state.topoZone
       }));
     } catch (e) { /* quota / serialisation — non-fatal */ }
@@ -5783,6 +5992,10 @@
       catch (e) { /* private mode */ }
     }
     state.scriptsEnabled = !!d.scriptsEnabled;
+    // CR options — old drafts lack them: dedicated ports, no ZZ (the
+    // historical behavior).
+    state.crPortMode = (d.crPortMode === "shared_xy") ? "shared_xy" : "dedicated";
+    state.zzEnabled = !!d.zzEnabled;
     state.scriptsPath = d.scriptsPath || "";
     if (!state.scriptsPath) {
       try { state.scriptsPath = localStorage.getItem("quam_gen_scripts_path") || ""; }
@@ -6122,7 +6335,13 @@
       expectedNamesOrNull: expectedNamesOrNull,
       applyQubitIdMap: applyQubitIdMap,
       capturePresetSections: capturePresetSections,
-      applyPreset: applyPreset
+      applyPreset: applyPreset,
+      applyPortCsv: applyPortCsv,
+      pinToChannel: pinToChannel,
+      deriveLines: deriveLines,
+      pairPopCols: pairPopCols,
+      ALLOC_KEY: ALLOC_KEY,
+      state: state
     }
   };
 })();

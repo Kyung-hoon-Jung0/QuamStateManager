@@ -10702,6 +10702,23 @@ def generate_envs():
 # seeds) stored server-side under <instance>/gen_presets/ so they survive
 # browser sessions. CSRF is covered by the app-level origin check.
 
+@bp.route("/generate/import-port-csv", methods=["POST"])
+def generate_import_port_csv():
+    """Parse a port-label-mapping CSV (the QM fixed-transmon reference flow)
+    into the wizard prefill payload — instruments, qubits, grid, directed
+    pairs, port pins. The client reads the file via FileReader and posts the
+    text; validation failures come back as a structured error list (400)."""
+    data = request.get_json(silent=True) or {}
+    text = data.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return jsonify({"ok": False, "errors": ["empty CSV"]}), 400
+    if len(text) > 2 * 1024 * 1024:
+        return jsonify({"ok": False, "errors": ["CSV too large (2 MB max)"]}), 400
+    from quam_state_manager.core import port_csv
+    payload = port_csv.parse_port_label_csv(text)
+    return (jsonify(payload), 200) if payload.get("ok") else (jsonify(payload), 400)
+
+
 @bp.route("/generate/presets")
 def generate_presets_list():
     """Summaries of every stored preset (corrupt files flagged, never a 500)."""
