@@ -1052,12 +1052,12 @@ window.setFontSize = function(size) {
 
     // Tree re-renders (workspace add/remove/filter) rebuild the checkboxes —
     // re-sync the count (selections inside the swapped region are gone).
-    document.body && document.body.addEventListener && (function() {
-        document.addEventListener('htmx:afterSwap', function(ev) {
-            var el = ev.target;
-            if (el && el.id === 'sidebar-tree') { lastIdx = -1; syncCompareCount(); }
-        });
-    })();
+    // Listener sits on document (always exists at eval time; the app-wide
+    // rule forbids top-level document.body listeners).
+    document.addEventListener('htmx:afterSwap', function(ev) {
+        var el = ev.target;
+        if (el && el.id === 'sidebar-tree') { lastIdx = -1; syncCompareCount(); }
+    });
 })();
 
 // Global UI scale (Settings → "UI scale"): CSS zoom on <html>, 80%–150% in
