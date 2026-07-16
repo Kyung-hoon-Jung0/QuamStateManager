@@ -3322,10 +3322,66 @@
       });
   }
 
+  // -- step 6: spreadsheet-style arrow navigation -----------------------
+  // Customer feedback: value boxes should be walkable with the arrow keys.
+  // → moves to the next cell only when the caret sits at the END of the
+  // text; ← moves back only from the START (mid-text arrows keep their
+  // native caret behavior); ↑/↓ ALWAYS move to the cell above/below in the
+  // same column (including the "Set all" row). SELECTs are never hijacked
+  // (arrows change their value natively) and disabled cells (e.g. FSP in
+  // absolute power mode) are skipped. One delegated listener per table.
+  function popGridKeydown(ev) {
+    var el = ev.target;
+    if (!el || el.tagName !== "INPUT" || el.disabled ||
+        !el.classList || !el.classList.contains("gen-pop-in")) return;
+    var key = ev.key;
+    if (key !== "ArrowLeft" && key !== "ArrowRight" &&
+        key !== "ArrowUp" && key !== "ArrowDown") return;
+
+    var td = el.closest("td");
+    var tr = td && td.parentNode;
+    if (!td || !tr) return;
+
+    function focusable(cell) {
+      return cell && cell.querySelector(
+        "input.gen-pop-in:not(:disabled), select.gen-pop-in:not(:disabled)");
+    }
+    function move(target) {
+      ev.preventDefault();
+      target.focus();
+      if (target.select) target.select();   // retype-ready, like a spreadsheet
+    }
+
+    if (key === "ArrowLeft" || key === "ArrowRight") {
+      // Only leave the box when the caret is at the matching text edge.
+      var atStart = el.selectionStart === 0 && el.selectionEnd === 0;
+      var atEnd = el.selectionStart === el.value.length &&
+                  el.selectionEnd === el.value.length;
+      if (key === "ArrowLeft" && !atStart) return;
+      if (key === "ArrowRight" && !atEnd) return;
+      var step = key === "ArrowLeft" ? -1 : 1;
+      for (var i = td.cellIndex + step; i >= 0 && i < tr.cells.length; i += step) {
+        var t = focusable(tr.cells[i]);
+        if (t) { move(t); return; }
+      }
+      return;   // row edge — stay put
+    }
+
+    // ↑ / ↓ — same column in the adjacent row (Set-all row included).
+    var row = key === "ArrowUp" ? tr.previousElementSibling : tr.nextElementSibling;
+    while (row) {
+      var vt = focusable(row.cells[td.cellIndex]);
+      if (vt) { move(vt); return; }
+      row = key === "ArrowUp" ? row.previousElementSibling : row.nextElementSibling;
+    }
+    ev.preventDefault();   // table edge — swallow so the page doesn't scroll
+  }
+
   function buildPopTable(group, rowIds, columns, rowLabel) {
     var table = document.createElement("table");
     table.className = "gen-pop-table";
     table.id = "gen-pop-tbl-" + group;       // stable id for armPlainResize
+    table.addEventListener("keydown", popGridKeydown);
     var thead = document.createElement("thead");
     var hr = document.createElement("tr");
     var th0 = document.createElement("th");
@@ -5174,7 +5230,14 @@
       if (!window.confirm('Delete preset "' + label + '"?')) return;
       fetch("/generate/presets/" + encodeURIComponent(sel.value), { method: "DELETE" })
         .then(function (r) { return r.json(); })
-        .then(function () { presetNote("Preset deleted."); loadPresetList(); })
+        .then(function (res) {
+          if (res && res.ok === false) {   // e.g. the undeletable built-in
+            presetNote(res.error || "Delete refused.");
+            return;
+          }
+          presetNote("Preset deleted.");
+          loadPresetList();
+        })
         .catch(function () { presetNote("Delete failed (network)."); });
     });
   }
