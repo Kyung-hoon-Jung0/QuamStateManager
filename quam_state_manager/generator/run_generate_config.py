@@ -73,23 +73,95 @@ def _load_machine(state_folder: Path):
     # renamed the leaf modules to flux_tunable_quam / fixed_frequency_quam,
     # killing the two literal paths below for legacy-marker chips; the
     # package itself re-exports both classes on all releases we've probed).
+    # FixedFrequencyZZDriveQuam (CR-branch builds only) must come BEFORE the
+    # plain fixed root: a CR chip with ZZ-drive transmons type-validates only
+    # against it (guarded — most builds predate the class).
     for module_name, cls_name in (
         ("quam_builder.architecture.superconducting.qpu.flux_tunable",
          "FluxTunableQuam"),
         ("quam_builder.architecture.superconducting.qpu.fixed_frequency",
          "FixedFrequencyQuam"),
         ("quam_builder.architecture.superconducting.qpu", "FluxTunableQuam"),
+        ("quam_builder.architecture.superconducting.qpu",
+         "FixedFrequencyZZDriveQuam"),
         ("quam_builder.architecture.superconducting.qpu", "FixedFrequencyQuam"),
     ):
         try:
             machine_cls = getattr(importlib.import_module(module_name), cls_name)
             return machine_cls.load()
+        except AttributeError as exc:
+            # "Unexpected attribute 'X'": the state carries a TOP-LEVEL key
+            # this root generation lacks (schema drift across the CR branch —
+            # e.g. a customer chip's empty active_twpa_names on a root without
+            # TWPA slots). When every such key holds an EMPTY value, dropping
+            # it is lossless for a read-only preview — retry from a stripped
+            # COPY in a scratch dir (the source folder is never touched).
+            retried = _retry_without_unknown_empty_keys(
+                state_folder, machine_cls, exc)
+            if retried is not None:
+                return retried
+            errors.append(f"{cls_name}.load() failed with AttributeError: {exc}")
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{cls_name}.load() failed with {type(exc).__name__}: {exc}")
 
     raise RuntimeError(
         f"Could not load QUAM machine from {state_folder!s}. " + "; ".join(errors)
     )
+
+
+def _retry_without_unknown_empty_keys(state_folder: Path, machine_cls, exc):
+    """Retry a root-class load from a scratch COPY with unknown-but-EMPTY
+    top-level keys stripped (never mutates the source; non-empty unknown keys
+    are real data → no retry). Returns the machine or None."""
+    import json as _json
+    import os
+    import re as _re
+    import shutil
+    import tempfile
+
+    m = _re.search(r"Unexpected attribute '([^']+)'", str(exc))
+    if not m:
+        return None
+    try:
+        state = _json.loads(
+            (Path(state_folder) / "state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    dropped = []
+    probe = dict(state)
+    while True:
+        key = m.group(1)
+        val = probe.get(key, None)
+        if key not in probe or val not in ([], {}, None):
+            return None                      # real data — never drop silently
+        del probe[key]
+        dropped.append(key)
+        scratch = Path(tempfile.mkdtemp(prefix="quam_preview_shim_"))
+        try:
+            (scratch / "state.json").write_text(
+                _json.dumps(probe), encoding="utf-8")
+            wiring_src = Path(state_folder) / "wiring.json"
+            if wiring_src.exists():
+                shutil.copy2(wiring_src, scratch / "wiring.json")
+            os.environ["QUAM_STATE_PATH"] = str(scratch)
+            try:
+                machine = machine_cls.load()
+                sys.stderr.write(
+                    "preview shim: dropped empty root key(s) "
+                    f"{dropped} for {machine_cls.__name__}.load()\n")
+                return machine
+            except AttributeError as exc2:
+                m = _re.search(r"Unexpected attribute '([^']+)'", str(exc2))
+                if not m or len(dropped) >= 5:
+                    return None
+                continue                     # another empty stray key — loop
+            except Exception:  # noqa: BLE001 — a different failure: give up
+                return None
+        finally:
+            # On success the machine keeps lazy refs into QUAM_STATE_PATH only
+            # during load (quam materialises the tree eagerly); the scratch
+            # dir can go. On failure it must go regardless.
+            shutil.rmtree(scratch, ignore_errors=True)
 
 
 def _read_chip_class(state_folder: Path):

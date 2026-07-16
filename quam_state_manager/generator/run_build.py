@@ -246,38 +246,41 @@ def build_connectivity(spec: dict, include_pair_lines: bool = True):
     return connectivity, warnings
 
 
-def _add_pair_lines(connectivity, spec: dict, xy_pins: dict | None = None) -> None:
-    """Register the spec's pair lines (coupler / cross_resonance / zz_drive).
+def _add_one_pair_line(connectivity, line: dict, xy_pins: dict | None = None) -> bool:
+    """Register ONE pair line (coupler / cross_resonance / zz_drive).
 
-    Split out of :func:`build_connectivity` for the shared-port CR layout
-    (``cr_port_mode == "shared_xy"``): there the pair lines must be added in a
-    SECOND allocation phase, pinned to the control qubit's already-allocated
-    xy port via *xy_pins* — a single pass would raise
-    ``ConstraintsTooStrictException`` because ``allocate_wiring`` returns used
-    channels to the pool only at the END of a call. An explicit per-line pin
-    always wins over *xy_pins* (regenerate reconstructions arrive pinned).
+    An explicit per-line pin always wins over *xy_pins* (regenerate
+    reconstructions arrive pinned); otherwise CR/ZZ lines are pinned to the
+    control qubit's already-allocated xy port when *xy_pins* is given (the
+    shared-port layout). Returns True when a line was registered.
     """
+    line_type = line.get("line")
+    if line_type not in ("coupler", "cross_resonance", "zz_drive"):
+        return False
+    control, target = _parse_pair(line["element"])
+    constraint = _make_constraint(line.get("channel"))
+    if (constraint is None and xy_pins is not None
+            and line_type in ("cross_resonance", "zz_drive")):
+        pin = xy_pins.get(control) or xy_pins.get(str(control))
+        if pin is not None:
+            from qualang_tools.wirer.wirer.channel_specs import mw_fem_spec
+            constraint = mw_fem_spec(con=pin[0], slot=pin[1], out_port=pin[2])
+    if line_type == "coupler":
+        connectivity.add_qubit_pair_flux_lines(
+            qubit_pairs=[(control, target)], constraints=constraint)
+    elif line_type == "cross_resonance":
+        connectivity.add_qubit_pair_cross_resonance_lines(
+            qubit_pairs=[(control, target)], constraints=constraint)
+    elif line_type == "zz_drive":
+        connectivity.add_qubit_pair_zz_drive_lines(
+            qubit_pairs=[(control, target)], constraints=constraint)
+    return True
+
+
+def _add_pair_lines(connectivity, spec: dict, xy_pins: dict | None = None) -> None:
+    """Register the spec's pair lines (single-pass / dedicated mode)."""
     for line in spec.get("lines", []):
-        line_type = line.get("line")
-        if line_type not in ("coupler", "cross_resonance", "zz_drive"):
-            continue
-        control, target = _parse_pair(line["element"])
-        constraint = _make_constraint(line.get("channel"))
-        if (constraint is None and xy_pins is not None
-                and line_type in ("cross_resonance", "zz_drive")):
-            pin = xy_pins.get(control) or xy_pins.get(str(control))
-            if pin is not None:
-                from qualang_tools.wirer.wirer.channel_specs import mw_fem_spec
-                constraint = mw_fem_spec(con=pin[0], slot=pin[1], out_port=pin[2])
-        if line_type == "coupler":
-            connectivity.add_qubit_pair_flux_lines(
-                qubit_pairs=[(control, target)], constraints=constraint)
-        elif line_type == "cross_resonance":
-            connectivity.add_qubit_pair_cross_resonance_lines(
-                qubit_pairs=[(control, target)], constraints=constraint)
-        elif line_type == "zz_drive":
-            connectivity.add_qubit_pair_zz_drive_lines(
-                qubit_pairs=[(control, target)], constraints=constraint)
+        _add_one_pair_line(connectivity, line, xy_pins)
 
 
 def _control_xy_pins(connectivity) -> dict:
@@ -339,8 +342,15 @@ def allocate_full(spec: dict, instruments) -> tuple:
         return connectivity, warnings
 
     allocate_wiring(connectivity, instruments, block_used_channels=False)
-    _add_pair_lines(connectivity, spec, xy_pins=_control_xy_pins(connectivity))
-    allocate_wiring(connectivity, instruments, block_used_channels=False)
+    # ONE allocate call per pair line — within a single call, channels used by
+    # earlier specs stay blocked until the call ends, so two CR lines pinned
+    # to the same control xy port (q2-1 + q2-3) would collide. Per-line calls
+    # free the port between lines — exactly the customer script's idiom
+    # (allocate_wiring after every add, block_used_channels=False).
+    xy_pins = _control_xy_pins(connectivity)
+    for line in spec.get("lines", []):
+        if _add_one_pair_line(connectivity, line, xy_pins):
+            allocate_wiring(connectivity, instruments, block_used_channels=False)
     return connectivity, warnings
 
 
@@ -1265,6 +1275,41 @@ def _pin_cores(machine):
                     pass
 
 
+def _make_xy_detuned(target, vals):
+    """Instantiate the target's ``xy_detuned`` channel (XYDetunedDriveMW),
+    riding the target's OWN xy port on upconverter 1 with its drive frequency
+    slaved to the xy channel — the Stark-CZ target lobe. None when the class
+    is absent from this quam_builder (older builds)."""
+    cls = None
+    for mod_name in (
+            "quam_builder.architecture.superconducting.components.xy_detuned_drive",
+            "quam_builder.architecture.superconducting.components"):
+        try:
+            mod = __import__(mod_name, fromlist=["XYDetunedDriveMW"])
+        except Exception:  # noqa: BLE001 — try the next home
+            continue
+        cls = getattr(mod, "XYDetunedDriveMW", None)
+        if cls is not None:
+            break
+    if cls is None:
+        return None
+    xy = getattr(target, "xy", None)
+    port = getattr(xy, "opx_output", None)
+    if xy is None or port is None:
+        return None
+    try:
+        xref = xy.get_reference()
+        return cls(
+            opx_output=xref + "/opx_output",
+            upconverter=getattr(xy, "upconverter", 1) or 1,
+            xy_RF_frequency=xref + "/RF_frequency",
+            xy_intermediate_frequency=xref + "/intermediate_frequency",
+            detuning=(vals or {}).get("zz_detuning", -30e6),
+        )
+    except Exception:  # noqa: BLE001 — field drift across builds
+        return None
+
+
 def _seed_zz_gate(pair, *, vals=None, shared=False):
     """Seed the Stark-induced-CZ (ZZ drive) family onto *pair* — the customer's
     commented-out populate block, productized (docs/54).
@@ -1344,13 +1389,26 @@ def _seed_zz_gate(pair, *, vals=None, shared=False):
             f"pair {pid}: ZZ drive frequency chain unresolved — left "
             "intermediate_frequency unset to keep the config valid.")
 
-    # Target-lobe twins on xy_detuned (needs the ZZ-drive transmon class).
+    # Target-lobe twins on xy_detuned. The channel has NO wiring line type in
+    # any qualang-tools (verified) — it must be created by direct assignment
+    # onto the target qubit, riding the target's own xy port (the customer's
+    # commented-out populate does exactly this). Only qubit classes with the
+    # field can hold it (FixedFrequencyZZDriveTransmon; plain transmons
+    # degrade with a warning).
     xy_det = getattr(target, "xy_detuned", None)
+    if xy_det is None and target is not None and hasattr(target, "xy_detuned"):
+        xy_det = _make_xy_detuned(target, vals)
+        if xy_det is not None:
+            try:
+                target.xy_detuned = xy_det
+            except Exception:  # noqa: BLE001 — type-union guard (docs/54 R4)
+                xy_det = None
     if xy_det is None:
         warns.append(
             f"pair {pid}: target has no xy_detuned channel (qubit class "
-            "without the ZZ-drive field) — Stark-CZ target-lobe tones "
-            "skipped; the gate drives the control lobe only.")
+            "without the ZZ-drive field, or the channel class is missing) — "
+            "Stark-CZ target-lobe tones skipped; the gate drives the control "
+            "lobe only.")
     elif getattr(xy_det, "operations", None) is not None:
         try:
             zref = zz.get_reference()

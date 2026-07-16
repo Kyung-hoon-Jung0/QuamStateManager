@@ -1002,6 +1002,40 @@ def _make_stark_cz_gate(cls, vals):
             kwargs[key] = vals[key]
     return cls(**kwargs)
 
+def _make_xy_detuned(target, vals):
+    """Instantiate the target's ``xy_detuned`` channel (XYDetunedDriveMW),
+    riding the target's OWN xy port on upconverter 1 with its drive frequency
+    slaved to the xy channel — the Stark-CZ target lobe. None when the class
+    is absent from this quam_builder (older builds)."""
+    cls = None
+    for mod_name in (
+            "quam_builder.architecture.superconducting.components.xy_detuned_drive",
+            "quam_builder.architecture.superconducting.components"):
+        try:
+            mod = __import__(mod_name, fromlist=["XYDetunedDriveMW"])
+        except Exception:  # noqa: BLE001 — try the next home
+            continue
+        cls = getattr(mod, "XYDetunedDriveMW", None)
+        if cls is not None:
+            break
+    if cls is None:
+        return None
+    xy = getattr(target, "xy", None)
+    port = getattr(xy, "opx_output", None)
+    if xy is None or port is None:
+        return None
+    try:
+        xref = xy.get_reference()
+        return cls(
+            opx_output=xref + "/opx_output",
+            upconverter=getattr(xy, "upconverter", 1) or 1,
+            xy_RF_frequency=xref + "/RF_frequency",
+            xy_intermediate_frequency=xref + "/intermediate_frequency",
+            detuning=(vals or {}).get("zz_detuning", -30e6),
+        )
+    except Exception:  # noqa: BLE001 — field drift across builds
+        return None
+
 def _seed_zz_gate(pair, *, vals=None, shared=False):
     """Seed the Stark-induced-CZ (ZZ drive) family onto *pair* — the customer's
     commented-out populate block, productized (docs/54).
@@ -1081,13 +1115,26 @@ def _seed_zz_gate(pair, *, vals=None, shared=False):
             f"pair {pid}: ZZ drive frequency chain unresolved — left "
             "intermediate_frequency unset to keep the config valid.")
 
-    # Target-lobe twins on xy_detuned (needs the ZZ-drive transmon class).
+    # Target-lobe twins on xy_detuned. The channel has NO wiring line type in
+    # any qualang-tools (verified) — it must be created by direct assignment
+    # onto the target qubit, riding the target's own xy port (the customer's
+    # commented-out populate does exactly this). Only qubit classes with the
+    # field can hold it (FixedFrequencyZZDriveTransmon; plain transmons
+    # degrade with a warning).
     xy_det = getattr(target, "xy_detuned", None)
+    if xy_det is None and target is not None and hasattr(target, "xy_detuned"):
+        xy_det = _make_xy_detuned(target, vals)
+        if xy_det is not None:
+            try:
+                target.xy_detuned = xy_det
+            except Exception:  # noqa: BLE001 — type-union guard (docs/54 R4)
+                xy_det = None
     if xy_det is None:
         warns.append(
             f"pair {pid}: target has no xy_detuned channel (qubit class "
-            "without the ZZ-drive field) — Stark-CZ target-lobe tones "
-            "skipped; the gate drives the control lobe only.")
+            "without the ZZ-drive field, or the channel class is missing) — "
+            "Stark-CZ target-lobe tones skipped; the gate drives the control "
+            "lobe only.")
     elif getattr(xy_det, "operations", None) is not None:
         try:
             zref = zz.get_reference()

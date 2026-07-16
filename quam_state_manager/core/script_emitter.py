@@ -74,7 +74,8 @@ _RUNTIME_FUNCS = (
     "_apply_dual_upconverters", "_pin_cores",
     "_pulse_class", "_cz_variant_pulses", "_seed_cz_variant",
     "_cr_flavor", "_import_cr_gate", "_make_cr_gate", "_seed_cr_gate",
-    "_import_stark_cz_gate", "_make_stark_cz_gate", "_seed_zz_gate",
+    "_import_stark_cz_gate", "_make_stark_cz_gate", "_make_xy_detuned",
+    "_seed_zz_gate",
     "_cz_order_warning", "_finalize_pair_gates",
     "_split_port_pointer", "_walk_state", "_link_input_downconverters_to_outputs",
 )
@@ -359,20 +360,22 @@ def _emit_wiring(spec: dict, allocation: dict, chip: str, stamp: str) -> str:
         w("")
 
     if shared:
-        # Shared-port CR layout (dual upconverter, docs/54): a TWO-PHASE
-        # allocation — qubit lines first with block_used_channels=False (the
-        # used xy ports return to the pool at call end), then the CR/ZZ lines
-        # pinned onto each control's xy port. Pins are INLINED from the
-        # wizard's allocation so the script stays deterministic.
-        w("# shared-port CR: two-phase allocation (CR/ZZ ride the control's")
+        # Shared-port CR layout (dual upconverter, docs/54): allocate the
+        # qubit lines first with block_used_channels=False (the used xy ports
+        # return to the pool at call end), then each CR/ZZ line pinned onto
+        # its control's xy port with its OWN allocate call — within one call,
+        # channels used by earlier specs stay blocked, so two CR lines pinned
+        # to the same control port would collide (the customer script's
+        # allocate-after-every-add idiom). Pins are INLINED from the wizard's
+        # allocation so the script stays deterministic.
+        w("# shared-port CR: per-line allocation (CR/ZZ ride the control's")
         w("# xy port, upconverter 2 — pins frozen from the wizard's build)")
         w("allocate_wiring(connectivity, instruments, block_used_channels=False)")
         w("")
         for ln in lines:
             if ln.get("line") in _PAIR_FN:
                 _emit_pair_line(ln, pin_from_allocation=True)
-        w("")
-        w("allocate_wiring(connectivity, instruments, block_used_channels=False)")
+                w("allocate_wiring(connectivity, instruments, block_used_channels=False)")
     else:
         w("allocate_wiring(connectivity, instruments)")
     w("")

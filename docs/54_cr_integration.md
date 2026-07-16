@@ -116,6 +116,32 @@ The branch churns daily (R2) — the tip CANNOT load fa540b6-flavor states
 (module rename); pin the SHA, never the branch name. Windows conda pythons
 cannot see WSL `/tmp` — probe scripts must live on drive-letter paths.
 
+## 8b. Live verification results (2026-07-17)
+
+- **Shared-port build**: a 3-qubit CR+ZZ spec (`cr_port_mode=shared_xy`,
+  directed pairs, `cr_shapes=full`) built in the fa540b6 env with ZERO
+  warnings; every CR/ZZ wiring port == its control's xy port, dual
+  `upconverters {1,2}` installed (LO2 = partner mean), the full RF pointer
+  web, 4 drive shapes + 4 cancel twins, `stark_cz` macro, and the target's
+  `xy_detuned` twins (created by direct assignment — no wiring line type
+  exists for it). Wirer gotcha encoded in `allocate_full`: within ONE
+  `allocate_wiring` call, used channels stay blocked until call end, so
+  shared-mode pair lines get ONE allocate call each (two CR lines pinned to
+  the same control port collide otherwise — the customer script's
+  allocate-after-every-add idiom).
+- **Customer state loads**: the real CR chip (root
+  `quam_config.my_quam.Quam`) now loads + `generate_config()`s in the
+  fa540b6 env via the preview loader's fallback chain — extended with
+  `FixedFrequencyZZDriveQuam` and a lossless shim that retries from a
+  scratch COPY with unknown-but-EMPTY root keys stripped (the chip's
+  `active_twpa_names: []` predates the root's schema; real data never
+  dropped, source never touched).
+- **Effective-IF oracle**: `cr_semantics.effective_frequencies` matches the
+  freshly generated config's per-CR-element `intermediate_frequency`
+  EXACTLY (8/8 directed pairs, < mHz) on the real customer chip —
+  confirming both the emulation and the staleness of the shipped
+  `qua_config.json`.
+
 ## 9. Known caveats
 
 - The shipped `CR_gates/.../qua_config.json` is a **stale** oracle (config IFs
