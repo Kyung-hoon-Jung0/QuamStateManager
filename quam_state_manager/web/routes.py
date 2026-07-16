@@ -10464,10 +10464,17 @@ def _build_output_guard(output_path: str) -> dict | None:
 
 @bp.route("/generate/build", methods=["POST"])
 def generate_build():
-    """Build state.json + wiring.json from a spec into the chosen folder."""
+    """Build state.json + wiring.json from a spec into the chosen folder.
+
+    ``scripts_dir`` (optional) additionally exports the editable Python
+    bundle (core/script_emitter.py) there after a successful build —
+    best-effort: an emission failure lands in ``scripts_error``, never
+    fails the build itself.
+    """
     data = request.get_json(silent=True) or {}
     spec = data.get("spec")
     output_path = (data.get("output_path") or "").strip()
+    scripts_dir = (data.get("scripts_dir") or "").strip()
 
     errors = config_generator.validate_spec(spec)
     if errors:
@@ -10514,6 +10521,28 @@ def generate_build():
     outcome = config_generator.run_generator(
         python_path, "build", spec, Path(output_path), timeout=600
     )
+
+    # Optional editable-scripts export (customer requirement: "generate/
+    # populate python scripts in a different user-defined folder"). Runs
+    # app-side from the same spec + the build's allocation — pure templating,
+    # no QM stack — and never fails a successful build.
+    if scripts_dir and outcome.get("ok"):
+        try:
+            from quam_state_manager.core import script_emitter
+            result = outcome.get("result") or {}
+            bundle = script_emitter.emit_bundle(
+                spec,
+                result.get("allocation") or {},
+                result.get("versions") or probe.get("versions") or {},
+                chip_name=Path(output_path).name or "chip",
+            )
+            outcome["scripts"] = {
+                "dir": scripts_dir,
+                "files": script_emitter.write_bundle(Path(scripts_dir), bundle),
+            }
+        except Exception as exc:  # noqa: BLE001 — best-effort side artefact
+            logger.warning("script bundle emission failed: %s", exc)
+            outcome["scripts_error"] = str(exc)
     return jsonify(outcome)
 
 

@@ -42,6 +42,8 @@
     namesTouched: false,
     muxSize: 6,           // step-4 "Qubits per readout feedline" (DOM-mirrored)
     outputPath: "",       // step-7 destination folder (DOM-mirrored)
+    scriptsEnabled: false, // step-7: also export the editable Python bundle
+    scriptsPath: "",       // …into this folder (DOM-mirrored)
     // step-6 populate display units; overlaid from localStorage on entry
     populateUnits: { freq: "GHz", time: "ns", volt: "V", amp: "0-1" },
     // step-6 power input mode — "manual" (FSP + amplitude, today's flow) or
@@ -216,7 +218,12 @@
       return null;
     },
     7: function () {
-      return getOutputPath() ? null : "Choose an output folder.";
+      if (!getOutputPath()) return "Choose an output folder.";
+      if (state.scriptsEnabled && !getScriptsPath()) {
+        return "Choose a folder for the editable Python scripts, or untick " +
+               "the export.";
+      }
+      return null;
     }
   };
 
@@ -4917,6 +4924,11 @@
     return input ? input.value.trim() : "";
   }
 
+  function getScriptsPath() {
+    var input = document.getElementById("gen-scripts-path");
+    return input ? input.value.trim() : (state.scriptsPath || "");
+  }
+
   // Mirror the DOM-only output-path field into state so it persists in a draft.
   function bindOutputStep() {
     var out = document.getElementById("gen-output-path");
@@ -4934,6 +4946,35 @@
         });
       });
     }
+    // Editable-scripts export controls (same durability treatment).
+    var chk = document.getElementById("gen-scripts-enable");
+    var sp = document.getElementById("gen-scripts-path");
+    var field = document.getElementById("gen-scripts-field");
+    if (chk) {
+      chk.addEventListener("change", function () {
+        state.scriptsEnabled = chk.checked;
+        if (field) field.hidden = !chk.checked;
+      });
+    }
+    if (sp) {
+      ["input", "change"].forEach(function (ev) {
+        sp.addEventListener(ev, function () {
+          state.scriptsPath = sp.value.trim();
+          try { localStorage.setItem("quam_gen_scripts_path", state.scriptsPath); }
+          catch (e) { /* private mode */ }
+        });
+      });
+    }
+  }
+
+  // Paint the step-7 scripts controls from state (draft restore / repaint).
+  function syncScriptsControls() {
+    var chk = document.getElementById("gen-scripts-enable");
+    var sp = document.getElementById("gen-scripts-path");
+    var field = document.getElementById("gen-scripts-field");
+    if (chk) chk.checked = !!state.scriptsEnabled;
+    if (field) field.hidden = !state.scriptsEnabled;
+    if (sp) sp.value = state.scriptsPath || "";
   }
 
   // -- step 8: review & generate ---------------------------------------
@@ -4971,7 +5012,9 @@
       ["Qubits / Pairs / TWPAs", sp.qubits.length + " / " +
         sp.qubit_pairs.length + " / " + sp.twpas.length],
       ["Control lines", linesSummary],
-      ["Output folder", getOutputPath() || "(not set — step 7)"]
+      ["Output folder", getOutputPath() || "(not set — step 7)"],
+      ["Python scripts", state.scriptsEnabled
+        ? (getScriptsPath() || "(folder not set — step 7)") : "(off)"]
     ];
     // CZ chips: surface how the pair roles were assigned before generating.
     if (czOrderActive() && sp.qubit_pairs.length) {
@@ -5230,6 +5273,19 @@
         wel.textContent = "⚠ " + w;
         el.appendChild(wel);
       });
+      // Editable-scripts export outcome (best-effort side artefact).
+      if (res.scripts) {
+        var sc = document.createElement("p");
+        sc.textContent = "✓ Python scripts written to " + res.scripts.dir +
+          " (" + (res.scripts.files || []).join(", ") + ")";
+        el.appendChild(sc);
+      } else if (res.scripts_error) {
+        var se = document.createElement("p");
+        se.className = "gen-build-warn-line";
+        se.textContent = "⚠ Python scripts export failed: " + res.scripts_error +
+          " (the chip itself built fine)";
+        el.appendChild(se);
+      }
 
       // Re-generate value-merge transparency — nothing is hidden: how many
       // calibrated values carried, user-added ops/macros grafted, and anything
@@ -5480,7 +5536,9 @@
       body: JSON.stringify({
         spec: state.spec, output_path: outPath,
         force: !!state._buildForce, ack_degrades: !!state._buildAck,
-        source_folder: state.sourcePath || null   // regenerate: merge from here
+        source_folder: state.sourcePath || null,  // regenerate: merge from here
+        // optional editable-scripts export (step 7 checkbox)
+        scripts_dir: (state.scriptsEnabled && state.scriptsPath) || null
       })
     })
       .then(function (r) { return r.json(); })
@@ -5553,6 +5611,8 @@
     }
     var out = document.getElementById("gen-output-path");
     if (out) state.outputPath = out.value.trim();
+    var sp = document.getElementById("gen-scripts-path");
+    if (sp) state.scriptsPath = sp.value.trim();
   }
 
   function saveDraft() {
@@ -5568,6 +5628,7 @@
         naming: state.naming, namesTouched: state.namesTouched,
         populateUnits: state.populateUnits,
         muxSize: state.muxSize, outputPath: state.outputPath,
+        scriptsEnabled: state.scriptsEnabled, scriptsPath: state.scriptsPath,
         qubitFlux: state.qubitFlux, couplerFlux: state.couplerFlux,
         pairGate: state.pairGate, chipArch: state.chipArch,
         topoZone: state.topoZone
@@ -5630,6 +5691,12 @@
       try { state.outputPath = localStorage.getItem("quam_gen_output_path") || ""; }
       catch (e) { /* private mode */ }
     }
+    state.scriptsEnabled = !!d.scriptsEnabled;
+    state.scriptsPath = d.scriptsPath || "";
+    if (!state.scriptsPath) {
+      try { state.scriptsPath = localStorage.getItem("quam_gen_scripts_path") || ""; }
+      catch (e) { /* private mode */ }
+    }
     // Line-type toggles — default true for backward compat with old drafts.
     state.qubitFlux = d.qubitFlux !== false;
     state.couplerFlux = d.couplerFlux !== false;
@@ -5662,6 +5729,7 @@
     if (mux) mux.value = state.muxSize;
     var out = document.getElementById("gen-output-path");
     if (out) out.value = state.outputPath;
+    syncScriptsControls();
     // Restore line-type checkboxes from draft.
     syncLineTypeToggles();
   }
@@ -5701,12 +5769,18 @@
     state.pairGate = "cz_tunable";
     state.muxSize = 6;
     state.outputPath = "";
-    try { localStorage.removeItem("quam_gen_output_path"); } catch (e) {}
+    state.scriptsEnabled = false;
+    state.scriptsPath = "";
+    try {
+      localStorage.removeItem("quam_gen_output_path");
+      localStorage.removeItem("quam_gen_scripts_path");
+    } catch (e) {}
     ["gen-net-host", "gen-net-cluster", "gen-net-port",
-     "gen-output-path"].forEach(function (id) {
+     "gen-output-path", "gen-scripts-path"].forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.value = "";
     });
+    syncScriptsControls();
     var archSel = document.getElementById("gen-chip-arch");
     if (archSel) archSel.value = state.chipArch;
     var cc = document.getElementById("gen-chassis-count");

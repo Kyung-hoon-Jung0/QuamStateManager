@@ -393,6 +393,25 @@
                   title="Browse folders">&#128193;</button>
         </div>
       </div>
+
+      {# Editable-scripts export: alongside state/wiring, also write a
+         01_make_wiring / 02_build_machine / 03_generate_config + README
+         Python bundle (values inlined) into a SEPARATE folder for IDE use. #}
+      <label class="gen-scripts-toggle">
+        <input type="checkbox" id="gen-scripts-enable">
+        Also export editable Python build scripts
+      </label>
+      <div class="gen-field" id="gen-scripts-field" hidden>
+        <label for="gen-scripts-path">Scripts folder <span class="muted">&mdash;
+          readable Python with this chip's values inlined; edit + re-run in an IDE</span></label>
+        <div class="path-input-group">
+          <input type="text" id="gen-scripts-path" placeholder="…/chip_scripts"
+                 autocomplete="off">
+          <button type="button" class="outline btn-sm btn-browse"
+                  onclick="openFolderBrowser('gen-scripts-path')"
+                  title="Browse folders">&#128193;</button>
+        </div>
+      </div>
     </section>
 
     <section class="gen-panel" data-step="8">
