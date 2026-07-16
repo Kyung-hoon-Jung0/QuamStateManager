@@ -1,5 +1,15 @@
 """Emit a single, human-editable Python build recipe from a reconstructed spec.
 
+.. deprecated:: docs/54
+    FROZEN — kept for legacy chips and its test pins only. The Re-generate
+    flow now emits :mod:`core.script_emitter`'s 01/02/03 bundle instead (see
+    ``regenerate.run_regenerate``): the bundle embeds ``run_build``'s own
+    machinery verbatim — including the CR/ZZ seeders and the shared-port
+    two-phase allocation — which this module's ``pair_gates``-repo idiom
+    structurally cannot express (a CR chip re-built through ``pair_gates.
+    add_cr`` lands on different ports than the wizard's wiring-line build).
+    Do not extend; new gate families go into run_build + script_emitter.
+
 The Re-generate flow rebuilds a chip's *structure* from a spec (see
 :mod:`core.regen_spec`) and merges the calibrated values back on
 (:mod:`core.regen_merge`). This module produces the third artefact the user

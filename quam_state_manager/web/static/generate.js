@@ -5437,8 +5437,9 @@
         sc.className = "gen-merge-report";
         sc.innerHTML =
           '<span class="gen-merge-h">Build recipe</span>' +
-          '<span class="gen-merge-stat gen-merge-ok" title="One editable script ' +
-          '(wiring + populate) reproducing this chip — re-run to rebuild">&#128196; ' +
+          '<span class="gen-merge-stat gen-merge-ok" title="Editable build scripts ' +
+          '(01 wiring / 02 populate+gates / 03 config check) reproducing this chip ' +
+          '— edit the data blocks and re-run to rebuild">&#128196; ' +
           res.script + '</span>' +
           '<span class="gen-merge-muted gen-merge-detail" style="margin-left:.4rem">' +
           'written to the output folder</span>';

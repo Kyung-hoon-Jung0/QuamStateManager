@@ -1560,24 +1560,30 @@ def canonical_pair_fidelity(store: QuamStore, pair: str) -> dict | None:
         return None
     info = _pair_gate_info(pobj)
     active = info.get("active")
-    if not active:
-        return None
-    macros = pobj.get("macros") or {}
-    gate = macros.get(active)
-    if not isinstance(gate, dict):
-        return None
-    fid = gate.get("fidelity")
     out = {"gate": active, "value": None, "clifford": False}
-    if isinstance(fid, dict):
-        srb = fid.get("StandardRB")
-        if isinstance(srb, dict) and _is_num(srb.get("average_gate_fidelity")):
-            out["value"] = srb["average_gate_fidelity"]
-        elif _is_num(srb):
-            out["value"] = srb
-            out["clifford"] = True       # bare float = Clifford fidelity
-    elif _is_num(fid):
-        out["value"] = fid
+    if active:
+        macros = pobj.get("macros") or {}
+        gate = macros.get(active)
+        if isinstance(gate, dict):
+            fid = gate.get("fidelity")
+            if isinstance(fid, dict):
+                srb = fid.get("StandardRB")
+                if isinstance(srb, dict) and _is_num(srb.get("average_gate_fidelity")):
+                    out["value"] = srb["average_gate_fidelity"]
+                elif _is_num(srb):
+                    out["value"] = srb
+                    out["clifford"] = True       # bare float = Clifford fidelity
+            elif _is_num(fid):
+                out["value"] = fid
     if out["value"] is None:
+        # Channel fallback (docs/54): the lo_if CR flavor stores the 2Q Bell
+        # fidelity ON the cross_resonance channel (`bell_state_fidelity`) —
+        # macro-only reading showed no 2Q fidelity row at all on those chips.
+        from quam_state_manager.core import cr_semantics
+        fid2 = cr_semantics.fidelity(pobj)
+        if fid2 is not None and fid2["source"] == "channel":
+            return {"gate": "cr", "value": fid2["value"], "clifford": False,
+                    "source": "channel"}
         return None
     return out
 
@@ -1711,7 +1717,8 @@ def _extract_summary(snaps: list[ComparisonSnapshot], stores: list[QuamStore],
         cols_by_src.append(cols)
         path_maps.append(pm)
     keep_cols = [c for c in cols_by_src[ref]
-                 if c["default_on"] or c["section"] in ("Cross Resonance", "Coupler")]
+                 if c["default_on"] or c["section"] in (
+                     "Cross Resonance", "Coupler", "ZZ Drive", "XY Detuned")]
 
     for p in canon_pairs:
         names = [pair_name(p, i) for i in range(n)]

@@ -56,11 +56,20 @@ _HEADLINE_LEAVES = {
     "amplitude", "length", "flat_length",
     "detuning", "mutual_flux_bias",
     "amplitude_scaling", "phase",
+    # CR/ZZ calibration levers (the full names — the bare `amplitude_scaling`
+    # above never matched them; docs/54)
+    "drive_amplitude_scaling", "drive_phase",
+    "cancel_amplitude_scaling", "cancel_phase",
+    "qc_correction_phase", "qt_correction_phase",
+    "bell_state_fidelity",
 }
 
 # Top-level component → (group slug, display label) and column order.
+# `zz` (the branch tip's rename of `zz_drive`) shares the zz_drive slug so
+# both spellings land in ONE "ZZ Drive" section name — compare's force-keep
+# and the UI section headers stay stable across quam-builder generations.
 _GROUP_ORDER = {"general": 0, "confusion": 1, "coupler": 2,
-                "cross_resonance": 3, "zz_drive": 4}
+                "cross_resonance": 3, "zz_drive": 4, "xy_detuned": 5}
 
 # Short, readable labels for chronically-long path segments.
 _SEG_SHORT = {
@@ -101,8 +110,10 @@ def _group_of(tmpl_segs: list[str]) -> tuple[str, str]:
         return "gate:" + tmpl_segs[1], _humanize(tmpl_segs[1])
     if head == "cross_resonance":
         return "cross_resonance", "Cross Resonance"
-    if head == "zz_drive":
+    if head in ("zz_drive", "zz"):
         return "zz_drive", "ZZ Drive"
+    if head == "xy_detuned":
+        return "xy_detuned", "XY Detuned"
     if head == "coupler":
         return "coupler", "Coupler"
     if head == "confusion":

@@ -2522,3 +2522,100 @@ def test_chip_swap_diff_computed_against_routed_dir(tmp_path):
     assert m_swap.chip_swap_detected is not None
     assert m_swap.chip_swap_detected["type"] == "swap_to_existing"
     assert m_swap.diff_summary["total"] >= 1      # diff vs routed dir's prior
+
+
+class TestPairTrendRows:
+    """docs/54 — PAIR-scope trend rows (sparse; entity column = pair id)."""
+
+    def _cr_state(self):
+        import sys as _s
+        from pathlib import Path as _P
+        _s.path.insert(0, str(_P(__file__).parent))
+        from cr_fixtures import make_flavor_b
+        return make_flavor_b()
+
+    def test_pair_rows_extracted_from_cr_state(self):
+        from quam_state_manager.core.history import (
+            SnapshotMeta, _extract_index_rows_from_state,
+        )
+        state, _w = self._cr_state()
+        meta = SnapshotMeta(
+            timestamp="20260716_000000_000", trigger="manual",
+            diff_summary={"added": 0, "removed": 0, "modified": 0, "total": 0},
+            new_experiments=[], source_path="x", state_size=0, wiring_size=0)
+        rows = _extract_index_rows_from_state(state, meta)
+        pair_rows = [r for r in rows if r[1] == "q0-1"]
+        props = {r[2]: r[3] for r in pair_rows}
+        assert props["pair_drive_amplitude_scaling"] == 1.0
+        assert props["pair_drive_phase"] == 0.11
+        # macro fidelity is null on this fixture and channel bell absent →
+        # sparse: NO pair_bell_fidelity row at all (never a NULL row)
+        assert "pair_bell_fidelity" not in props
+
+    def test_pair_bell_row_from_channel_fallback(self):
+        import sys as _s
+        from pathlib import Path as _P
+        _s.path.insert(0, str(_P(__file__).parent))
+        from cr_fixtures import make_flavor_a
+        from quam_state_manager.core.history import (
+            SnapshotMeta, _extract_index_rows_from_state,
+        )
+        state, _w = make_flavor_a()
+        meta = SnapshotMeta(
+            timestamp="20260716_000000_000", trigger="manual",
+            diff_summary={"added": 0, "removed": 0, "modified": 0, "total": 0},
+            new_experiments=[], source_path="x", state_size=0, wiring_size=0)
+        rows = _extract_index_rows_from_state(state, meta)
+        bell = [r for r in rows if r[2] == "pair_bell_fidelity"]
+        assert [(r[1], r[3]) for r in bell] == [("q1-2", 0.93)]
+
+    def test_cz_reference_gets_no_lever_rows(self):
+        import sys as _s
+        from pathlib import Path as _P
+        _s.path.insert(0, str(_P(__file__).parent))
+        from cr_fixtures import make_cz_reference
+        from quam_state_manager.core.history import (
+            SnapshotMeta, _extract_index_rows_from_state,
+        )
+        state, _w = make_cz_reference()
+        meta = SnapshotMeta(
+            timestamp="20260716_000000_000", trigger="manual",
+            diff_summary={"added": 0, "removed": 0, "modified": 0, "total": 0},
+            new_experiments=[], source_path="x", state_size=0, wiring_size=0)
+        rows = _extract_index_rows_from_state(state, meta)
+        assert not any(r[2].startswith("pair_drive") for r in rows)
+
+    def test_v1_index_upgraded_once(self, tmp_path):
+        """A pre-v2 index (user_version 0) force-rebuilds exactly once, gaining
+        pair rows for EXISTING snapshots; a v2 index is left alone."""
+        import sqlite3
+        from quam_state_manager.core.history import (
+            HistoryManager, _INDEX_SCHEMA_VERSION,
+        )
+        hm = HistoryManager(tmp_path / "instance")
+        path = tmp_path / "chip" / "quam_state"
+        state, wiring = self._cr_state()
+        _write_quam_state(path, state, wiring)
+        hm.check_and_snapshot(path, "manual", force=True)
+
+        idx = hm._index_path(path)
+        conn = sqlite3.connect(str(idx), isolation_level=None)
+        try:
+            # simulate a v1 index: downgrade the stamp + delete the pair rows
+            conn.execute("PRAGMA user_version=0")
+            conn.execute("DELETE FROM param_history WHERE property LIKE 'pair_%'")
+        finally:
+            conn.close()
+        hm._schema_verified.discard(str(hm._history_dir(path)))
+
+        hm._ensure_index_fresh(path)
+        conn = sqlite3.connect(str(idx), isolation_level=None)
+        try:
+            ver = conn.execute("PRAGMA user_version").fetchone()[0]
+            n_pair = conn.execute(
+                "SELECT COUNT(*) FROM param_history WHERE property LIKE 'pair_%'"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        assert ver == _INDEX_SCHEMA_VERSION
+        assert n_pair > 0

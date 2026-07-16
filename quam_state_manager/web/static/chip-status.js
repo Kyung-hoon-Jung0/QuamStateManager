@@ -478,6 +478,9 @@ window.ChipStatus.mount = function (opts) {
         var tStops   = [[30e-6,'#2ca02c'],[10e-6,'#ff7f0e'],[0,'#d62728']];
         var czCount = topo.edges.filter(function(e) { return e.has_cz; }).length;
         var czCoverage = topo.edges.length > 0 ? czCount / topo.edges.length : 0;
+        // Gate-neutral vocabulary: "CZ" on flux chips, "CR" on cross-resonance
+        // chips, "2Q" on mixed (server-derived; metric KEYS stay cz_fidelity).
+        var gateVocab = (topo.summary && topo.summary.gate_vocab) || 'CZ';
 
         var tiles = [
             {title: 'Chip Size', value: topo.nodes.length + ' qubits, ' + topo.edges.length + ' pairs', color: '#4e79a7'},
@@ -489,8 +492,8 @@ window.ChipStatus.mount = function (opts) {
             metricTile('T1', nodeAgg('T1'), us, tStops, 'T1'),
             metricTile('T2 echo', nodeAgg('T2echo'), us, tStops, 'T2echo'),
             metricTile('T2 Ramsey', nodeAgg('T2ramsey'), us, tStops, 'T2ramsey'),
-            {title: 'CZ Coverage', value: czCount + '/' + topo.edges.length + ' (' + (czCoverage * 100).toFixed(0) + '%)',
-             sub: czCount + ' pairs with CZ gate', color: cardColor(czCoverage, [[0.9,'#2ca02c'],[0.5,'#ff7f0e'],[0,'#d62728']])}
+            {title: gateVocab + ' Coverage', value: czCount + '/' + topo.edges.length + ' (' + (czCoverage * 100).toFixed(0) + '%)',
+             sub: czCount + ' pairs with ' + gateVocab + ' gate', color: cardColor(czCoverage, [[0.9,'#2ca02c'],[0.5,'#ff7f0e'],[0,'#d62728']])}
         ];
 
         var html = '';
@@ -559,6 +562,10 @@ window.ChipStatus.mount = function (opts) {
         var containerH = (maxRow - minRow) * SPACING_Y + cardH + PAD * 2;
 
         // ── Build SVG edges ──────────────────────────────────────────
+        // Directed (CR) edges: each direction is its own calibration target —
+        // offset the two anti-parallel lines perpendicular to the run so they
+        // never overpaint, add an arrowhead at the target end, and dim pairs
+        // outside active_qubit_pair_names.
         var svgLines = '';
         topo.edges.forEach(function(e) {
             var si = idToIdx[e.source], ti = idToIdx[e.target];
@@ -574,7 +581,27 @@ window.ChipStatus.mount = function (opts) {
                 color = e.cz_fidelity >= 0.95 ? tCfg.edgeFidelityGood : (e.cz_fidelity >= 0.85 ? tCfg.edgeFidelityWarn : tCfg.edgeFidelityBad);
                 width = 3;
             }
-            svgLines += '<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" stroke="'+color+'" stroke-width="'+width+'" stroke-linecap="round"/>';
+            var opacity = (e.active === false) ? 0.35 : 1;
+            var arrow = '';
+            if (e.directed) {
+                var dx = x2 - x1, dy = y2 - y1;
+                var len = Math.sqrt(dx * dx + dy * dy) || 1;
+                var ux = dx / len, uy = dy / len;
+                // perpendicular offset — travel-direction-relative, so the
+                // reverse pair lands on the opposite side automatically
+                var off = 4;
+                x1 += -uy * off; y1 += ux * off;
+                x2 += -uy * off; y2 += ux * off;
+                // arrowhead chevron 12px before the target center
+                var ax = x2 - ux * 28, ay = y2 - uy * 28;
+                var s = 6;
+                arrow = '<polygon points="'
+                    + (ax + ux * s) + ',' + (ay + uy * s) + ' '
+                    + (ax - ux * s - uy * s) + ',' + (ay - uy * s + ux * s) + ' '
+                    + (ax - ux * s + uy * s) + ',' + (ay - uy * s - ux * s)
+                    + '" fill="' + color + '" opacity="' + opacity + '"/>';
+            }
+            svgLines += '<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" stroke="'+color+'" stroke-width="'+width+'" stroke-linecap="round" opacity="'+opacity+'"/>' + arrow;
         });
 
         // ── Build edge labels ────────────────────────────────────────
@@ -588,17 +615,29 @@ window.ChipStatus.mount = function (opts) {
             // CSS transform: translate(-50%,-50%) handles visual centering.
             var mx = (positions[si].x + positions[ti].x) / 2 + CARD_W / 2;
             var my = (positions[si].y + positions[ti].y) / 2 + cardH / 2;
+            if (e.directed) {
+                // mirror the line's perpendicular offset (larger, so the two
+                // direction labels of one physical edge don't overlap)
+                var ddx = positions[ti].x - positions[si].x;
+                var ddy = positions[ti].y - positions[si].y;
+                var dlen = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
+                mx += -(ddy / dlen) * 14;
+                my += (ddx / dlen) * 14;
+            }
 
             var color = tCfg.edgeFidelityNone;
             if (e.has_cz && e.cz_fidelity != null) {
                 color = e.cz_fidelity >= 0.95 ? tCfg.edgeFidelityGood : (e.cz_fidelity >= 0.85 ? tCfg.edgeFidelityWarn : tCfg.edgeFidelityBad);
             }
             var label = _esc(e.pair_id);
+            if (e.directed) label = _esc(e.source) + '→' + _esc(e.target);
             if (e.cz_fidelity != null) label += ' (' + (e.cz_fidelity * 100).toFixed(1) + '%)';
             if (e.best_gate) label += ' ' + _esc(e.best_gate.replace(/^cz_/, ''));
+            if (e.active === false) label += ' · off';
 
             edgeLabelsHtml += '<div class="topo-edge-label" data-pair="' + _esc(e.pair_id) + '" '
-                + 'style="left:' + mx + 'px;top:' + my + 'px;border-color:' + color + ';color:' + color + '">'
+                + 'style="left:' + mx + 'px;top:' + my + 'px;border-color:' + color + ';color:' + color
+                + (e.active === false ? ';opacity:.45' : '') + '">'
                 + label + '</div>';
         });
 
@@ -896,6 +935,14 @@ window.ChipStatus.mount = function (opts) {
                         if (gd.flat_length != null) parts.push('flat=' + gd.flat_length);
                         if (gd.phase_ctrl != null) parts.push('p\u2081=' + gd.phase_ctrl.toFixed(3));
                         if (gd.phase_tgt != null) parts.push('p\u2082=' + gd.phase_tgt.toFixed(3));
+                        // CR/ZZ drive levers (query._extract_cr_details rows)
+                        if (gd.drive_amplitude_scaling != null) parts.push('drv\u00d7=' + gd.drive_amplitude_scaling.toFixed(4));
+                        if (gd.drive_phase != null) parts.push('drv\u03c6=' + gd.drive_phase.toFixed(4));
+                        if (gd.cancel_amplitude_scaling != null) parts.push('cnl\u00d7=' + gd.cancel_amplitude_scaling.toFixed(4));
+                        if (gd.cancel_phase != null) parts.push('cnl\u03c6=' + gd.cancel_phase.toFixed(4));
+                        if (gd.qc_correction_phase != null) parts.push('\u03c6c=' + gd.qc_correction_phase.toFixed(3));
+                        if (gd.qt_correction_phase != null) parts.push('\u03c6t=' + gd.qt_correction_phase.toFixed(3));
+                        if (gd.eff_if_mhz != null) parts.push('IF=' + gd.eff_if_mhz + 'MHz');
                         html += '<div class="topo-popup-row"><span class="topo-popup-row-label">' + label + '</span><span>' + parts.join(', ') + '</span></div>';
                     });
                     html += '</div>';
@@ -1984,7 +2031,8 @@ window.ChipStatus.mount = function (opts) {
             if (lt) items.push({ id: lt.id, v: us(_mval(lt, 'T1')), t: 'lowest T1',
                                  vr: _verdict(_mval(lt, 'T1'), thresholds.T1), kind: 'q' });
             var lc = lowest(edges, 'cz_fidelity');
-            if (lc) items.push({ id: lc.pair_id, v: pct(_mval(lc, 'cz_fidelity')), t: 'lowest CZ Bell',
+            if (lc) items.push({ id: lc.pair_id, v: pct(_mval(lc, 'cz_fidelity')),
+                                 t: 'lowest ' + (((topo.summary || {}).gate_vocab) || 'CZ') + ' Bell',
                                  vr: _verdict(_mval(lc, 'cz_fidelity'), thresholds.cz_fidelity), kind: 'p' });
             var oq = nodes.filter(function(n) { return n.last_calibrated; });
             if (oq.length) {

@@ -18,11 +18,24 @@ from quam_builder.architecture.superconducting.qpu import (
     FluxTunableQuam, FixedFrequencyQuam,
 )
 
-# Load with whichever architecture the state carries.
+# Load with whichever architecture the state carries (the ZZ-drive root
+# is guarded — older quam_builder predates it).
 try:
-    machine = FluxTunableQuam.load()
-except Exception:  # noqa: BLE001 — fixed-frequency chip
-    machine = FixedFrequencyQuam.load()
+    from quam_builder.architecture.superconducting.qpu import (
+        FixedFrequencyZZDriveQuam,)
+except ImportError:
+    FixedFrequencyZZDriveQuam = None
+machine = None
+for _cls in (FluxTunableQuam, FixedFrequencyZZDriveQuam, FixedFrequencyQuam):
+    if _cls is None:
+        continue
+    try:
+        machine = _cls.load()
+        break
+    except Exception:  # noqa: BLE001 — try the next architecture
+        continue
+if machine is None:
+    sys.exit('could not load the state with any known QUAM root class')
 
 cfg = machine.generate_config()
 print(f"generate_config() OK: {len(cfg['elements'])} elements, "

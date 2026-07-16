@@ -290,11 +290,35 @@ def validate_spec(spec) -> list[str]:
             f"(expected 'cr', 'cz_fixed', or 'cz_tunable')"
         )
 
+    # -- cr_port_mode --------------------------------------------------------
+    # "shared_xy" = the customer's dual-upconverter layout: CR/ZZ drives ride
+    # the CONTROL qubit's own xy MW port on upconverter 2 (two-phase
+    # allocation in run_build.allocate_full). Only meaningful for CR chips.
+    # Documented pass-through populate keys (unvalidated, like the other CR
+    # fields): populate.pairs[*].cr_shapes (""|"basic"|"full"),
+    # zz_detuning / zz_drive_amplitude / zz_flattop_length /
+    # zz_flattop_flat_length; populate.qubit[*].cr_lo_frequency;
+    # populate.options.pin_cores (bool). See docs/54.
+    cr_port_mode = spec.get("cr_port_mode")
+    if cr_port_mode not in (None, "", "dedicated", "shared_xy"):
+        errors.append(
+            f"cr_port_mode: unknown value {cr_port_mode!r} "
+            f"(expected 'dedicated' or 'shared_xy')"
+        )
+    elif cr_port_mode == "shared_xy" and pair_gate != "cr":
+        errors.append(
+            "cr_port_mode: 'shared_xy' requires pair_gate 'cr' — the shared "
+            "dual-upconverter layout is a cross-resonance architecture"
+        )
+
     # -- populate ----------------------------------------------------------
     populate = spec.get("populate")
     if "populate" in spec and not isinstance(populate, dict):
         errors.append("populate: must be an object")
     elif isinstance(populate, dict):
+        pop_options = populate.get("options")
+        if pop_options is not None and not isinstance(pop_options, dict):
+            errors.append("populate.options: must be an object")
         pop_pairs = populate.get("pairs")
         if pop_pairs is not None and not isinstance(pop_pairs, dict):
             errors.append("populate.pairs: must be an object")

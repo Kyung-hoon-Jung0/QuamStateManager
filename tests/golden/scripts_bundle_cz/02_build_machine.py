@@ -19,7 +19,7 @@ from pathlib import Path
 STATE_DIR = sys.argv[1] if len(sys.argv) > 1 else "./quam_state"
 os.environ["QUAM_STATE_PATH"] = os.path.abspath(STATE_DIR)
 
-from quam_builder.architecture.superconducting.qpu import FluxTunableQuam
+from quam_builder.architecture.superconducting.qpu import (FluxTunableQuam as QuamCls)
 
 # ============================ EDIT: populate ==========================
 # Base SI units (Hz, ns, V, dimensionless amp). Blank/missing keys keep
@@ -34,6 +34,11 @@ QUBIT_PAIRS = [['q1', 'q2']]
 
 # 2Q-gate family: 'cz_tunable' | 'cz_fixed' | 'cr' | '' (no wizard gate).
 PAIR_GATE = 'cz_tunable'
+
+# CR drive port mode: '' | 'dedicated' | 'shared_xy' (the customer's
+# dual-upconverter layout — CR/ZZ ride the control's xy port, LO 2).
+CR_PORT_MODE = ''
+PAIR_LINES = []
 
 # ======================================================================
 # Machinery — VERBATIM from the State Manager's generator/run_build.py
@@ -426,6 +431,112 @@ def apply_populate(machine, populate, handle_pairs=True):
         if pairs:
             _apply_pairs(machine, pairs)
 
+def _apply_dual_upconverters(machine, spec):
+    """Shared-port CR layout LO surgery (the customer's dual-upconverter trick).
+
+    Every qubit that CONTROLS a cross_resonance/zz_drive line gets a two-entry
+    ``upconverters`` dict on its xy MW port: 1 = its own drive LO (whatever
+    populate already set), 2 = the CR LO — ``populate.qubit[q].cr_lo_frequency``
+    when given, else the mean of its pair partners' ``f_01`` (the customer's
+    neighbor-average scheme). The scalar ``upconverter_frequency`` is cleared
+    (a port carries one or the other). Runs AFTER apply_populate (LO1/f_01 set)
+    and BEFORE _finalize_pair_gates (the CR channel then points at
+    ``upconverters/2/frequency``). Returns warnings; never raises.
+    """
+    warnings: list = []
+    if spec.get("cr_port_mode") != "shared_xy":
+        return warnings
+    pop_q = (spec.get("populate") or {}).get("qubit") or {}
+    qubits = getattr(machine, "qubits", None) or {}
+
+    # control -> its CR/ZZ targets, from the pair lines actually in the spec
+    partners: dict = {}
+    for line in spec.get("lines", []):
+        if line.get("line") not in ("cross_resonance", "zz_drive"):
+            continue
+        try:
+            control, target = _parse_pair(line["element"])
+        except Exception:  # noqa: BLE001 — malformed element: skip
+            continue
+        partners.setdefault(str(control), set()).add(str(target))
+
+    def _find_qubit(key):
+        if key in qubits:
+            return qubits[key]
+        for qn, q in qubits.items():
+            if str(qn).lstrip("q") == str(key).lstrip("q"):
+                return q
+        return None
+
+    for control, targets in partners.items():
+        q = _find_qubit(control)
+        xy = getattr(q, "xy", None)
+        port = getattr(xy, "opx_output", None)
+        if port is None:
+            warnings.append(f"{control}: no xy port — dual upconverter skipped")
+            continue
+        lo1 = _num(getattr(port, "upconverter_frequency", None))
+        lo2 = _num((pop_q.get(f"q{control}") or pop_q.get(str(control)) or {})
+                   .get("cr_lo_frequency"))
+        if lo2 is None:
+            f01s = [_num(getattr(_find_qubit(t), "f_01", None)) for t in targets]
+            f01s = [f for f in f01s if f is not None]
+            if f01s:
+                lo2 = float(int(round(sum(f01s) / len(f01s))))
+        if lo1 is None or lo2 is None:
+            warnings.append(
+                f"q{control}: dual-upconverter LOs unknown (LO1={lo1}, "
+                f"LO2={lo2}) — populate the qubit frequencies or set "
+                "cr_lo_frequency; the CR drive keeps the single-LO port.")
+            continue
+        try:
+            port.upconverters = {1: {"frequency": lo1}, 2: {"frequency": lo2}}
+            port.upconverter_frequency = None
+        except Exception as exc:  # noqa: BLE001 — quam parent-quirk guard
+            warnings.append(
+                f"q{control}: could not install upconverters dict "
+                f"({type(exc).__name__}: {exc})")
+            continue
+        band = getattr(port, "band", None)
+        b2 = _band_for(lo2)
+        if band is not None and b2 is not None and b2 != band:
+            warnings.append(
+                f"q{control}: CR LO2 {lo2 / 1e9:.4g} GHz falls in band {b2} "
+                f"but the port is band {band} — retune cr_lo_frequency or "
+                "the port band.")
+    return warnings
+
+def _pin_cores(machine):
+    """Customer core-pinning scheme (populate.options.pin_cores): each qubit's
+    resonator + xy share a named core ``{q}_{controller}_slot{fem}``; every CR
+    channel rides its CONTROL qubit's core. Best-effort, never raises."""
+    qubits = getattr(machine, "qubits", None) or {}
+    for qname, q in qubits.items():
+        for chan_name in ("resonator", "xy"):
+            chan = getattr(q, chan_name, None)
+            port = getattr(chan, "opx_output", None)
+            con = getattr(port, "controller_id", None)
+            fem = getattr(port, "fem_id", None)
+            if chan is None or con is None or fem is None:
+                continue
+            try:
+                chan.core = f"{qname}_{con}_slot{fem}"
+            except Exception:  # noqa: BLE001
+                pass
+    for pair in (getattr(machine, "qubit_pairs", None) or {}).values():
+        qc = getattr(pair, "qubit_control", None)
+        xy = getattr(qc, "xy", None)
+        core = getattr(xy, "core", None)
+        if not core:
+            continue
+        for chan_name in ("cross_resonance", "zz_drive", "zz"):
+            chan = getattr(pair, chan_name, None)
+            if chan is not None:
+                try:
+                    chan.core = core
+                except Exception:  # noqa: BLE001
+                    pass
+
 def _pulse_class(name):
     """Resolve a pulse class by name across every known module home."""
     import importlib
@@ -591,6 +702,16 @@ def _seed_cz_variant(pair, *, variant="unipolar", amplitude=0.1, duration=100,
     pair.macros[f"cz_{variant}"] = CZGate(**kwargs)
     return warning
 
+def _cr_flavor(chan) -> str:
+    """The installed CR schema flavor of a channel object: ``"rf"`` when it
+    carries ``target_qubit_RF_frequency`` (the customer's add-cr-cz-macros
+    branch), else ``"lo_if"`` (a08bf66-era ``target_qubit_LO/IF_frequency``
+    literals). Field-based, never version-based — versions lie (docs/54)."""
+    fields = getattr(type(chan), "__dataclass_fields__", None) or {}
+    if "target_qubit_RF_frequency" in fields or hasattr(chan, "target_qubit_RF_frequency"):
+        return "rf"
+    return "lo_if"
+
 def _import_cr_gate():
     """Import the CRGate macro class, version-robustly across quam_builder
     layouts (it lives in the fixed-transmon-pair tree on the customer's
@@ -613,7 +734,18 @@ def _import_cr_gate():
             return cls
     return None
 
-def _seed_cr_gate(pair, *, vals=None):
+def _make_cr_gate(cr_gate_cls, vals):
+    """Construct a CRGate, passing only the params the installed class accepts."""
+    import inspect
+
+    sig = inspect.signature(cr_gate_cls.__init__).parameters
+    kwargs = {}
+    for key in ("qc_correction_phase", "qt_correction_phase"):
+        if key in sig and key in vals:
+            kwargs[key] = vals[key]
+    return cr_gate_cls(**kwargs)
+
+def _seed_cr_gate(pair, *, vals=None, shared=False):
     """Seed a full cross-resonance 2Q gate onto *pair* (the customer's
     pair_gates.py ``add_cr`` recipe, adapted to our wiring-built CR channel).
 
@@ -684,34 +816,67 @@ def _seed_cr_gate(pair, *, vals=None):
             except Exception:  # noqa: BLE001
                 pass
 
-    # The CR drive must play at the TARGET qubit's frequency: the channel's
-    # inferred_intermediate_frequency = target_LO + target_IF - LO. Those two
-    # target frequencies come from populate; when absent, derive them from the
-    # target qubit (its xy LO + f_01), mirroring the customer add_cr. Pin the
-    # inferred-IF reference ONLY when both resolve to NUMBERS — else the quam
-    # property raises (None + None), the unresolved "#./..." string ships into the
-    # config, and qm.open_qm rejects it ("Not a valid number"). When the target
-    # frequency is unknown (e.g. a zero-populate build), leave intermediate_frequency
-    # as None and warn — the config stays valid; calibrate the CR frequency later.
+    # The CR drive must play at the TARGET qubit's frequency. HOW that is
+    # encoded depends on the installed CR schema flavor (docs/54):
+    #   rf    (add-cr-cz-macros builds): a single target_qubit_RF_frequency —
+    #          pointered to the target's xy.RF_frequency so it tracks
+    #          recalibration; inferred IF = target_RF − LO.
+    #   lo_if (a08bf66 builds): target_qubit_LO/IF_frequency literals (from
+    #          populate, else derived from the target's LO + f_01, mirroring
+    #          the customer add_cr); inferred IF = target_LO + target_IF − LO.
+    # In SHARED mode the channel additionally rides the control's xy port
+    # upconverter 2 (the dual-LO layout _apply_dual_upconverters installed).
+    # The "#./inferred_intermediate_frequency" reference is pinned ONLY when
+    # the quam property actually resolves to a number in-process — else the
+    # unresolved "#./..." string ships into the config and qm.open_qm rejects
+    # it; leave it None and warn (config stays valid; calibrate later).
     target = getattr(pair, "qubit_target", None)
-    if _num(getattr(cr, "target_qubit_LO_frequency", None)) is None:
-        tgt_lo = _target_lo(target)
-        if tgt_lo is not None:
+    control = getattr(pair, "qubit_control", None)
+    flavor = _cr_flavor(cr)
+
+    if shared and control is not None:
+        try:
+            cr.upconverter = 2
+            cr.LO_frequency = (control.get_reference()
+                               + "/xy/opx_output/upconverters/2/frequency")
+        except Exception:  # noqa: BLE001
+            pass
+
+    if flavor == "rf":
+        if (getattr(cr, "target_qubit_RF_frequency", None) is None
+                and target is not None):
             try:
-                cr.target_qubit_LO_frequency = tgt_lo
+                cr.target_qubit_RF_frequency = (
+                    target.get_reference() + "/xy/RF_frequency")
             except Exception:  # noqa: BLE001
                 pass
-    if _num(getattr(cr, "target_qubit_IF_frequency", None)) is None:
-        tgt_lo = _num(getattr(cr, "target_qubit_LO_frequency", None))
-        tgt_f01 = _num(getattr(target, "f_01", None))
-        if tgt_lo is not None and tgt_f01 is not None:
-            try:
-                cr.target_qubit_IF_frequency = tgt_f01 - tgt_lo
-            except Exception:  # noqa: BLE001
-                pass
-    have_freqs = (_num(getattr(cr, "target_qubit_LO_frequency", None)) is not None
-                  and _num(getattr(cr, "target_qubit_IF_frequency", None)) is not None)
-    if have_freqs:
+    else:
+        if _num(getattr(cr, "target_qubit_LO_frequency", None)) is None:
+            tgt_lo = _target_lo(target)
+            if tgt_lo is not None:
+                try:
+                    cr.target_qubit_LO_frequency = tgt_lo
+                except Exception:  # noqa: BLE001
+                    pass
+        if _num(getattr(cr, "target_qubit_IF_frequency", None)) is None:
+            tgt_lo = _num(getattr(cr, "target_qubit_LO_frequency", None))
+            tgt_f01 = _num(getattr(target, "f_01", None))
+            if tgt_lo is not None and tgt_f01 is not None:
+                try:
+                    cr.target_qubit_IF_frequency = tgt_f01 - tgt_lo
+                except Exception:  # noqa: BLE001
+                    pass
+
+    # One uniform pin gate for both flavors: the property itself is the oracle
+    # (it follows quam references, so the rf flavor's pointer chain and the
+    # shared-port upconverters dict are both exercised exactly as the config
+    # generator will).
+    resolved_if = None
+    try:
+        resolved_if = cr.inferred_intermediate_frequency
+    except Exception:  # noqa: BLE001
+        resolved_if = None
+    if isinstance(resolved_if, (int, float)) and not isinstance(resolved_if, bool):
         try:
             if getattr(cr, "intermediate_frequency", None) is None:
                 cr.intermediate_frequency = "#./inferred_intermediate_frequency"
@@ -720,7 +885,7 @@ def _seed_cr_gate(pair, *, vals=None):
     else:
         warns.append(
             f"pair {pid}: CR target frequency unknown — populate the qubit "
-            "frequencies (or set target_qubit_LO/IF_frequency) so the cross-"
+            "frequencies (or the target frequency fields) so the cross-"
             "resonance drive lands on the target; left intermediate_frequency "
             "unset to keep the generated config valid. Calibrate before use.")
 
@@ -742,6 +907,58 @@ def _seed_cr_gate(pair, *, vals=None):
         txy.operations[f"cr_square_{pid}"] = sq
         txy.operations[f"cr_flattop_{pid}"] = ft
 
+    # Full customer shape library (populate.pairs[..].cr_shapes == "full"):
+    # cosine + gauss drive ops with DRAG params pointer-slaved to the TARGET's
+    # x180 (they drive the target's transition), plus their cancel twins.
+    # Dedicated-mode default stays "basic" (square+flattop) so existing build
+    # goldens don't move; the wizard defaults shared-mode pairs to "full".
+    if (str(vals.get("cr_shapes") or "").lower() == "full"
+            and ops is not None and txy is not None
+            and getattr(txy, "operations", None) is not None):
+        DragCosinePulse = _pulse_class("DragCosinePulse")
+        DragGaussianPulse = _pulse_class("DragGaussianPulse")
+        if DragCosinePulse is None or DragGaussianPulse is None:
+            warns.append(
+                f"pair {pid}: cr_shapes=full requested but DragCosine/"
+                "DragGaussian pulse classes are missing in this env — kept "
+                "the basic square+flattop set.")
+        else:
+            try:
+                x180_ref = (target.get_reference()
+                            + "/xy/operations/x180_DragCosine")
+            except Exception:  # noqa: BLE001
+                x180_ref = None
+            anh = x180_ref + "/anharmonicity" if x180_ref else 200e6
+            alpha = x180_ref + "/alpha" if x180_ref else 0.0
+            ops["cosine"] = DragCosinePulse(
+                length=sq_len, amplitude=drive_amp, axis_angle=0.0,
+                anharmonicity=anh, alpha=alpha, detuning=0)
+            ops["gauss"] = DragGaussianPulse(
+                length=sq_len, sigma=sq_len / 5, amplitude=drive_amp,
+                axis_angle=0.0, anharmonicity=anh, alpha=alpha, detuning=0,
+                subtracted=True)
+            try:
+                cref2 = cr.get_reference()
+            except Exception:  # noqa: BLE001
+                cref2 = None
+            # cancel twins: length/sigma slaved to the drive op; DRAG params
+            # relative to the target's own x180 (the customer's #../ idiom)
+            cos = DragCosinePulse(
+                length=sq_len, amplitude=cancel_amp, axis_angle=0.0,
+                anharmonicity="#../x180_DragCosine/anharmonicity",
+                alpha="#../x180_DragCosine/alpha", detuning=0)
+            gau = DragGaussianPulse(
+                length=sq_len, sigma=sq_len / 5, amplitude=cancel_amp,
+                axis_angle=0.0,
+                anharmonicity="#../x180_DragCosine/anharmonicity",
+                alpha="#../x180_DragCosine/alpha", detuning=0, subtracted=True)
+            if cref2:
+                cos.length = cref2 + "/operations/cosine/length"
+                gau.length = cref2 + "/operations/gauss/length"
+                gau.sigma = cref2 + "/operations/gauss/sigma"
+            txy.operations[f"cr_cosine_{pid}"] = cos
+            txy.operations[f"cr_gauss_{pid}"] = gau
+
     # The cr gate macro (version-robust import; degrade gracefully if absent).
     cr_gate_cls = _import_cr_gate()
     if cr_gate_cls is None:
@@ -753,6 +970,148 @@ def _seed_cr_gate(pair, *, vals=None):
         macros = getattr(pair, "macros", None)
         if macros is not None:
             macros["cr"] = _make_cr_gate(cr_gate_cls, vals)
+    return "; ".join(warns) if warns else None
+
+def _import_stark_cz_gate():
+    """Import the StarkInducedCZGate macro class (same version-robust pattern
+    as :func:`_import_cr_gate`); None when this install predates it."""
+    candidates = (
+        "quam_builder.architecture.superconducting.custom_gates."
+        "fixed_transmon_pair.two_qubit_gates",
+        "quam_builder.architecture.superconducting.custom_gates."
+        "flux_tunable_transmon_pair.two_qubit_gates",
+    )
+    for mod_name in candidates:
+        try:
+            mod = __import__(mod_name, fromlist=["StarkInducedCZGate"])
+        except Exception:  # noqa: BLE001 — version-robust: try the next path
+            continue
+        cls = getattr(mod, "StarkInducedCZGate", None)
+        if cls is not None:
+            return cls
+    return None
+
+def _make_stark_cz_gate(cls, vals):
+    """Construct a StarkInducedCZGate, passing only accepted params."""
+    import inspect
+
+    sig = inspect.signature(cls.__init__).parameters
+    kwargs = {}
+    for key in ("qc_correction_phase", "qt_correction_phase"):
+        if key in sig and key in vals:
+            kwargs[key] = vals[key]
+    return cls(**kwargs)
+
+def _seed_zz_gate(pair, *, vals=None, shared=False):
+    """Seed the Stark-induced-CZ (ZZ drive) family onto *pair* — the customer's
+    commented-out populate block, productized (docs/54).
+
+    ``build_quam`` creates ``pair.zz_drive`` (ZZDriveMW + a square op) from the
+    zz wiring line. This adds: the flattop drive op, detuning + target LO/IF,
+    the shared-port LO pointer (upconverter 2 on the control's xy port), the
+    target's ``xy_detuned`` twins (``zz_square_<pid>`` / ``zz_flattop_<pid>``,
+    length-linked) — the qubit class must carry the ``xy_detuned`` field
+    (FixedFrequencyZZDriveTransmon; plain transmons degrade with a warning) —
+    and the ``stark_cz`` macro. Returns a warning string or None.
+    """
+    vals = vals or {}
+    zz = getattr(pair, "zz_drive", None)
+    if zz is None:
+        zz = getattr(pair, "zz", None)     # branch-tip field rename
+    if zz is None:
+        return None                        # not a zz-wired pair
+
+    SquarePulse = _pulse_class("SquarePulse")
+    FlatTopGaussianPulse = _pulse_class("FlatTopGaussianPulse")
+    if SquarePulse is None or FlatTopGaussianPulse is None:
+        raise ImportError("SquarePulse/FlatTopGaussianPulse not found in any "
+                          "known pulse module home of this env")
+
+    warns = []
+    pid = str(getattr(pair, "id", None) or getattr(pair, "name", "") or "")
+    zz_amp = vals.get("zz_drive_amplitude", 1.0)
+    ft_len = vals.get("zz_flattop_length", 100)
+    ft_flat = vals.get("zz_flattop_flat_length", 84)
+
+    ops = getattr(zz, "operations", None)
+    if ops is not None:
+        ops["square"] = SquarePulse(length=100, amplitude=zz_amp, axis_angle=0.0)
+        ops["flattop"] = FlatTopGaussianPulse(
+            length=ft_len, amplitude=zz_amp, axis_angle=0.0, flat_length=ft_flat)
+
+    if hasattr(zz, "detuning"):
+        try:
+            zz.detuning = vals.get("zz_detuning", -30e6)
+        except Exception:  # noqa: BLE001
+            pass
+
+    control = getattr(pair, "qubit_control", None)
+    target = getattr(pair, "qubit_target", None)
+    if shared and control is not None:
+        try:
+            zz.upconverter = 2
+            zz.LO_frequency = (control.get_reference()
+                               + "/xy/opx_output/upconverters/2/frequency")
+        except Exception:  # noqa: BLE001
+            pass
+    # target LO/IF: numeric derivation from the target (customer idiom)
+    if hasattr(zz, "target_qubit_LO_frequency"):
+        if _num(getattr(zz, "target_qubit_LO_frequency", None)) is None:
+            tgt_lo = _target_lo(target)
+            if tgt_lo is not None:
+                try:
+                    zz.target_qubit_LO_frequency = tgt_lo
+                except Exception:  # noqa: BLE001
+                    pass
+        if (_num(getattr(zz, "target_qubit_IF_frequency", None)) is None
+                and _num(getattr(zz, "target_qubit_LO_frequency", None)) is not None
+                and _num(getattr(target, "f_01", None)) is not None):
+            try:
+                zz.target_qubit_IF_frequency = (
+                    float(target.f_01) - float(zz.target_qubit_LO_frequency))
+            except Exception:  # noqa: BLE001
+                pass
+    try:
+        inferred = zz.inferred_intermediate_frequency
+        if isinstance(inferred, (int, float)) and getattr(
+                zz, "intermediate_frequency", None) is None:
+            zz.intermediate_frequency = "#./inferred_intermediate_frequency"
+    except Exception:  # noqa: BLE001
+        warns.append(
+            f"pair {pid}: ZZ drive frequency chain unresolved — left "
+            "intermediate_frequency unset to keep the config valid.")
+
+    # Target-lobe twins on xy_detuned (needs the ZZ-drive transmon class).
+    xy_det = getattr(target, "xy_detuned", None)
+    if xy_det is None:
+        warns.append(
+            f"pair {pid}: target has no xy_detuned channel (qubit class "
+            "without the ZZ-drive field) — Stark-CZ target-lobe tones "
+            "skipped; the gate drives the control lobe only.")
+    elif getattr(xy_det, "operations", None) is not None:
+        try:
+            zref = zz.get_reference()
+        except Exception:  # noqa: BLE001
+            zref = None
+        sq = SquarePulse(length=100, amplitude=0.1, axis_angle=0.0)
+        ft = FlatTopGaussianPulse(length=ft_len, amplitude=0.1,
+                                  axis_angle=0.0, flat_length=ft_flat)
+        if zref:
+            sq.length = zref + "/operations/square/length"
+            ft.length = zref + "/operations/flattop/length"
+            ft.flat_length = zref + "/operations/flattop/flat_length"
+        xy_det.operations[f"zz_square_{pid}"] = sq
+        xy_det.operations[f"zz_flattop_{pid}"] = ft
+
+    stark_cls = _import_stark_cz_gate()
+    if stark_cls is None:
+        warns.append(
+            f"pair {pid}: StarkInducedCZGate class not found in this "
+            "quam_builder — seeded the ZZ drive but not the 'stark_cz' macro.")
+    else:
+        macros = getattr(pair, "macros", None)
+        if macros is not None:
+            macros["stark_cz"] = _make_stark_cz_gate(stark_cls, vals)
     return "; ".join(warns) if warns else None
 
 def _cz_order_warning(quam_id, pair, vals):
@@ -834,10 +1193,14 @@ def _finalize_pair_gates(machine, spec, pair_gate):
                 qubit_target=qt.get_reference(),
             )
 
+    shared = (spec.get("cr_port_mode") == "shared_xy")
     for quam_id, pair in list(qpairs.items()):
         vals = norm_pairs.get(quam_id) or {}
         if pair_gate == "cr":
-            w = _seed_cr_gate(pair, vals=vals)
+            w = _seed_cr_gate(pair, vals=vals, shared=shared)
+            zw = _seed_zz_gate(pair, vals=vals, shared=shared)
+            if zw:
+                warnings.append(zw)
         else:
             ow = _cz_order_warning(quam_id, pair, vals)
             if ow:
@@ -977,12 +1340,17 @@ def _link_input_downconverters_to_outputs(state_path, wiring_path):
     os.replace(tmp, state_path)
 
 # =============================== run ==================================
-machine = FluxTunableQuam.load()
-_spec = {"populate": POPULATE, "qubit_pairs": QUBIT_PAIRS}
+machine = QuamCls.load()
+_spec = {"populate": POPULATE, "qubit_pairs": QUBIT_PAIRS,
+         "cr_port_mode": CR_PORT_MODE, "lines": PAIR_LINES}
 apply_populate(machine, POPULATE, handle_pairs=(PAIR_GATE == ""))
+for _w in _apply_dual_upconverters(machine, _spec):
+    print(f"WARNING: {_w}", file=sys.stderr)
 if PAIR_GATE in ("cz_fixed", "cz_tunable", "cr"):
     for _w in _finalize_pair_gates(machine, _spec, PAIR_GATE):
         print(f"WARNING: {_w}", file=sys.stderr)
+if (POPULATE.get("options") or {}).get("pin_cores"):
+    _pin_cores(machine)
 machine.save()
 
 # Readout-LO constraint lock (the wizard's post-save fix-up): each MW

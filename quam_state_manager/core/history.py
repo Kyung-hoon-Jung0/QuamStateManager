@@ -99,6 +99,24 @@ DEFAULT_TRACKED_PROPERTIES: tuple[str, ...] = (
     "x90_amplitude",
 )
 
+# PAIR-scope trend properties (docs/54): the entity column holds the pair id
+# (e.g. "q0-1") — a disjoint name+property space from qubits, so the existing
+# (timestamp, qubit, property) PK carries both without schema change. Rows are
+# SPARSE (emitted only when a value exists) — CZ chips get pair_bell_fidelity
+# for free via the macro ladder; qubit-only chips get zero extra rows.
+PAIR_TRACKED_PROPERTIES: tuple[str, ...] = (
+    "pair_bell_fidelity",
+    "pair_drive_amplitude_scaling",
+    "pair_drive_phase",
+    "pair_cancel_amplitude_scaling",
+    "pair_cancel_phase",
+)
+
+# Index content generation. v2 = pair rows added; a v1 index self-heals only
+# NEW snapshots, so the one-time upgrade must force-rebuild (stamped via
+# PRAGMA user_version, verified once per process per chip).
+_INDEX_SCHEMA_VERSION = 2
+
 # Pointer-aware fields — the source-of-truth path inside a qubit dict.
 # When a value resolves via QueryEngine but the underlying state had a
 # pointer string at this location, we record the original pointer.
@@ -213,6 +231,46 @@ def _extract_index_rows_from_state(
                 meta.timestamp, qname, prop, num, ptr,
                 meta.trigger, meta.run_id, meta.experiment_name,
             ))
+
+    rows.extend(_extract_pair_index_rows(state, meta))
+    return rows
+
+
+def _extract_pair_index_rows(state: dict, meta: SnapshotMeta) -> list[tuple]:
+    """Sparse PAIR-scope rows (docs/54): canonical 2Q fidelity (macro-then-
+    channel via ``cr_semantics.fidelity``) + the CR calibration levers wherever
+    the flavor stores them (``lever_map``). Numeric values only — no NULL-row
+    padding (pairs × props would bloat 10⁴-snapshot indexes for nothing)."""
+    from quam_state_manager.core import cr_semantics
+
+    pairs = state.get("qubit_pairs") or {}
+    if not isinstance(pairs, dict) or not pairs:
+        return []
+    rows: list[tuple] = []
+    for pid, pobj in pairs.items():
+        if not isinstance(pobj, dict):
+            continue
+        fid = cr_semantics.fidelity(pobj)
+        if fid is not None:
+            num = _to_num(fid["value"])
+            if num is not None:
+                rows.append((
+                    meta.timestamp, pid, "pair_bell_fidelity", num, None,
+                    meta.trigger, meta.run_id, meta.experiment_name,
+                ))
+        levers = cr_semantics.lever_map(pobj)
+        for lever in ("drive_amplitude_scaling", "drive_phase",
+                      "cancel_amplitude_scaling", "cancel_phase"):
+            suffix = levers.get(lever)
+            if suffix is None:
+                continue
+            value = _walk_dict(pobj, tuple(suffix.split(".")))
+            num = _to_num(value)
+            if num is not None:
+                rows.append((
+                    meta.timestamp, pid, f"pair_{lever}", num, None,
+                    meta.trigger, meta.run_id, meta.experiment_name,
+                ))
     return rows
 
 
@@ -639,6 +697,10 @@ class HistoryManager:
         # this process, so ``_open_index`` can skip the redundant
         # ``CREATE TABLE/INDEX IF NOT EXISTS`` calls.
         self._db_initialised: set[str] = set()
+        # Chip dirs whose index content generation (PRAGMA user_version) has
+        # been verified this process — the one-time v2 pair-rows upgrade check
+        # in ``_ensure_index_fresh`` runs once, not per read.
+        self._schema_verified: set[str] = set()
 
     def _known_hashes_for_chip(self, hist_dir: Path) -> set[str]:
         """Return the set of state_hashes already present in a chip dir.
@@ -1544,6 +1606,7 @@ class HistoryManager:
         idx_path = self._index_path(quam_state_path)
         idx_path.parent.mkdir(parents=True, exist_ok=True)
         key = str(idx_path)
+        brand_new = not idx_path.exists()
         conn = sqlite3.connect(str(idx_path), isolation_level=None, timeout=10.0)
         # Per-connection pragmas — must be set on every open.
         conn.execute("PRAGMA cache_size=-200000")  # ~200 MB page cache
@@ -1577,6 +1640,11 @@ class HistoryManager:
                 "CREATE INDEX IF NOT EXISTS idx_trigger_ts "
                 "ON param_history (trigger, timestamp)"
             )
+            # A brand-new file's rows can only ever be current-generation —
+            # stamp it so the one-time v2 verification never force-rebuilds
+            # an index that a capture path (not rebuild_index) created.
+            if brand_new:
+                conn.execute(f"PRAGMA user_version={_INDEX_SCHEMA_VERSION}")
             # Mark initialised *after* the CREATEs succeed, so a racing
             # thread that sees ``already_init=True`` is guaranteed the
             # schema is on disk. CREATE … IF NOT EXISTS is idempotent.
@@ -1726,15 +1794,32 @@ class HistoryManager:
         """
         path = Path(quam_state_path)
         idx = self._index_path(path)
+        # A from-scratch build's content is the CURRENT generation — stamp the
+        # schema version after success so the once-per-process verification in
+        # _ensure_index_fresh doesn't force-rebuild it again. A self-heal
+        # (force=False on an existing file) keeps old rows, so it must NOT
+        # claim the new version.
+        stamp_version = force or not idx.exists()
 
         if force and idx.exists():
             try:
                 idx.unlink()
             except OSError:
                 logger.warning("Could not delete index for rebuild: %s", idx)
+            else:
+                # The file is gone — the next _open_index must re-run the
+                # CREATEs, or the fresh DB has no param_history table at all.
+                with self._lock:
+                    self._db_initialised.discard(str(idx))
 
         snapshots = self._list_snapshots_uncached(path)
         if not snapshots:
+            if stamp_version:
+                conn = self._open_index(path)
+                try:
+                    conn.execute(f"PRAGMA user_version={_INDEX_SCHEMA_VERSION}")
+                finally:
+                    conn.close()
             return 0
 
         conn = self._open_index(path)
@@ -1742,6 +1827,8 @@ class HistoryManager:
             existing_ts = {
                 row[0] for row in conn.execute("SELECT DISTINCT timestamp FROM param_history")
             }
+            if stamp_version:
+                conn.execute(f"PRAGMA user_version={_INDEX_SCHEMA_VERSION}")
         finally:
             conn.close()
 
@@ -1788,6 +1875,27 @@ class HistoryManager:
         chip_dir = self._history_dir(quam_state_path)
         chip_key = str(chip_dir)
         snap_count = len(snapshots)
+
+        # One-time schema-generation upgrade (verified once per process per
+        # chip): a pre-v2 index has no pair rows for its EXISTING snapshots —
+        # only a force rebuild re-derives them (self-heal appends new
+        # timestamps only). Cost = one full re-index per chip dir on first
+        # open after upgrade, same class as the existing self-heal.
+        with self._lock:
+            schema_ok = chip_key in self._schema_verified
+        if not schema_ok:
+            conn = self._open_index(quam_state_path)
+            try:
+                ver = conn.execute("PRAGMA user_version").fetchone()[0]
+            finally:
+                conn.close()
+            if ver < _INDEX_SCHEMA_VERSION:
+                logger.info("Param-history index at %s is schema v%d — "
+                            "rebuilding for v%d (pair trends)",
+                            chip_key, ver, _INDEX_SCHEMA_VERSION)
+                self.rebuild_index(quam_state_path, force=True)
+            with self._lock:
+                self._schema_verified.add(chip_key)
         with self._lock:
             last_count = self._last_index_check.get(chip_key)
         if last_count == snap_count:
@@ -2802,10 +2910,15 @@ def _ensure_param_history_schema(idx_path: Path) -> None:
     """Create the param_history schema if missing — used when a migration
     target dir doesn't yet have its own SQLite index."""
     idx_path.parent.mkdir(parents=True, exist_ok=True)
+    brand_new = not idx_path.exists()
     conn = sqlite3.connect(str(idx_path), isolation_level=None, timeout=10.0)
     try:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
+        if brand_new:
+            # A file this helper just created can only hold current-generation
+            # rows — stamp it so the one-time v2 verification never wipes it.
+            conn.execute(f"PRAGMA user_version={_INDEX_SCHEMA_VERSION}")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS param_history (
                 timestamp     TEXT NOT NULL,

@@ -619,8 +619,22 @@ class QueryEngine:
                         cz_updated_at = _o.get("updated_at")
                         break
 
+            # Channel-fidelity fallback (docs/54): the lo_if CR flavor stores
+            # the 2Q Bell fidelity ON the cross_resonance channel — macro-only
+            # reading left those edges gray "no fidelity". Channel source ONLY
+            # (macro ladders beyond Bell_State would alter CZ chips' edges,
+            # which are pinned byte-equal).
+            fidelity_source = "macro" if best_fidelity is not None else None
+            if best_fidelity is None:
+                _fb = cr_semantics.fidelity(p)
+                if (_fb is not None and _fb["source"] == "channel"
+                        and chip_health.physicality("cz_fidelity", _fb["value"])):
+                    best_fidelity = _fb["value"]
+                    fidelity_source = "channel"
+
             gate_fidelities = _extract_pair_gate_fidelities(macros)
             gate_details = _extract_gate_details(macros)
+            gate_details.extend(_extract_cr_details(self.store, pair_name, p))
             confusion_raw = p.get("confusion")
             confusion_offdiag = _extract_pair_confusion_offdiag(confusion_raw)
             confusion_size = len(confusion_raw) if isinstance(confusion_raw, list) else 0
@@ -633,12 +647,21 @@ class QueryEngine:
 
             coupler = p.get("coupler", {}) if isinstance(p.get("coupler"), dict) else {}
 
+            _is_cr_pair = (cr_semantics.cr_channel(p) is not None
+                           or cr_semantics.cr_gate_macro(p) is not None)
             edge = {
                 "pair_id": pair_name,
                 "source": source,
                 "target": target,
                 "has_cz": has_cz,
                 "cz_fidelity": best_fidelity,
+                "fidelity_source": fidelity_source,
+                "gate_kind": "cr" if _is_cr_pair else ("cz" if macros else "none"),
+                "directed": _is_cr_pair,
+                "active": (cr_semantics.is_active(self.store.merged, pair_name)
+                           if _is_cr_pair else None),
+                "edge_key": (list(cr_semantics.physical_edge_key(p) or ())
+                             or None),
                 "best_gate": best_gate,
                 "gate_fidelities": gate_fidelities,
                 "gate_details": gate_details,
@@ -670,6 +693,7 @@ class QueryEngine:
         # /chip-compare; only the summary moved to the record-gated path.)
         cal_epochs = [n["last_calibrated"] for n in nodes if n.get("last_calibrated")]
         cal_epochs += [e["last_calibrated"] for e in edges if e.get("last_calibrated")]
+        _kinds = {e["gate_kind"] for e in edges if e.get("gate_kind") != "none"}
         summary = {
             "nodes": chip_health.aggregate_records(nodes, list(_NODE_METRIC_KEYS)),
             "edges": chip_health.aggregate_records(edges, list(_EDGE_METRIC_KEYS)),
@@ -677,6 +701,11 @@ class QueryEngine:
             "newest_calibration": max(cal_epochs) if cal_epochs else None,
             "qubit_count": len(nodes),
             "pair_count": len(edges),
+            # Gate-neutral labeling: "CZ Coverage"/"lowest CZ Bell" become
+            # CR-branded on CR chips, "2Q" on mixed (the cz_fidelity metric
+            # KEY is stable — it threads thresholds/heatmaps/compare).
+            "gate_vocab": ("CR" if _kinds == {"cr"}
+                           else "CZ" if _kinds <= {"cz"} else "2Q"),
         }
 
         topo = {"nodes": nodes, "edges": edges, "summary": summary}
@@ -1052,6 +1081,39 @@ def _extract_gate_details(macros: dict) -> list[dict]:
         if len(entry) > 1:
             results.append(entry)
     return results
+
+
+def _extract_cr_details(store: QuamStore, pair_name: str, pair_obj: dict) -> list[dict]:
+    """CR/ZZ lever rows for the Chip Status edge popup (``gate_details`` shape).
+
+    The flux extractor (:func:`_extract_gate_details`) reads only
+    flux_pulse_qubit/coupler fields — empty on CR pairs, leaving the popup
+    blank. This emits the drive levers + the emulated effective IF instead.
+    Numeric-only (the popup renders numbers); missing keys are simply absent.
+    """
+    if not isinstance(pair_obj, dict):
+        return []
+    levers = cr_semantics.lever_map(pair_obj)
+    if not levers and cr_semantics.cr_channel(pair_obj) is None:
+        return []
+
+    def _num(v: Any) -> float | None:
+        return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+    entry: dict[str, Any] = {"name": "cr"}
+    for lever, suffix in levers.items():
+        if lever.startswith(("macro_",)):
+            continue
+        try:
+            val = _num(store.get_value(f"qubit_pairs.{pair_name}.{suffix}"))
+        except (KeyError, TypeError, ValueError, IndexError):
+            continue
+        if val is not None:
+            entry[lever] = val
+    eff = cr_semantics.effective_frequencies(store, pair_name)
+    if eff is not None and eff.if_hz is not None:
+        entry["eff_if_mhz"] = round(eff.if_hz / 1e6, 3)
+    return [entry] if len(entry) > 1 else []
 
 
 def _resolve(store: QuamStore, value: Any, path_tuple: tuple[str, ...]) -> Any:

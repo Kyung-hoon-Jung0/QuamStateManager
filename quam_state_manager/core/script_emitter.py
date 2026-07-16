@@ -71,8 +71,10 @@ _RUNTIME_FUNCS = (
     "_set_port_lo", "_set_channel_lo", "_operation",
     "_apply_resonator", "_apply_qubit", "_apply_flux", "_apply_pulses",
     "_make_cz_gate", "_apply_pairs", "apply_populate",
+    "_apply_dual_upconverters", "_pin_cores",
     "_pulse_class", "_cz_variant_pulses", "_seed_cz_variant",
-    "_import_cr_gate", "_seed_cr_gate",
+    "_cr_flavor", "_import_cr_gate", "_make_cr_gate", "_seed_cr_gate",
+    "_import_stark_cz_gate", "_make_stark_cz_gate", "_seed_zz_gate",
     "_cz_order_warning", "_finalize_pair_gates",
     "_split_port_pointer", "_walk_state", "_link_input_downconverters_to_outputs",
 )
@@ -150,7 +152,44 @@ def _constraint(ch) -> str:
 
 # Allocation line-type keys (WiringLineType.value) for the reference comments.
 _ALLOC_KEY = {"resonator": "rr", "drive": "xy", "flux": "z",
-              "coupler": "c", "cross_resonance": "cr"}
+              "coupler": "c", "cross_resonance": "cr", "zz_drive": "zz"}
+
+
+def _pair_pin(allocation, element, line_type) -> str | None:
+    """An inlined ``mw_fem_spec(...)`` pin from the wizard build's allocation
+    for a CR/ZZ pair line — the shared-port bundle must be DETERMINISTIC even
+    if the user reorders lines, so the pins are frozen at emit time."""
+    if not allocation:
+        return None
+    try:
+        key = _run_build()._quam_pair_id(element)
+    except Exception:  # noqa: BLE001
+        return None
+    chans = (allocation.get(key) or {}).get(_ALLOC_KEY.get(line_type, ""), [])
+    for c in chans:
+        con, slot, port = c.get("con"), c.get("slot"), c.get("port")
+        if None not in (con, slot, port):
+            return f"mw_fem_spec(con={con!r}, slot={slot!r}, out_port={port!r})"
+    return None
+
+
+def _quam_cls_import(flux_tunable: bool, zz_lines: bool) -> list[str]:
+    """The QuamCls import block: flux root, ZZ-drive root (guarded — older
+    builders predate FixedFrequencyZZDriveQuam), or plain fixed-frequency."""
+    if flux_tunable:
+        return ["from quam_builder.architecture.superconducting.qpu import ("
+                "FluxTunableQuam as QuamCls)"]
+    if zz_lines:
+        return [
+            "try:",
+            "    from quam_builder.architecture.superconducting.qpu import (",
+            "        FixedFrequencyZZDriveQuam as QuamCls)",
+            "except ImportError:  # older quam_builder: qubits lack xy_detuned",
+            "    from quam_builder.architecture.superconducting.qpu import (",
+            "        FixedFrequencyQuam as QuamCls)",
+        ]
+    return ["from quam_builder.architecture.superconducting.qpu import ("
+            "FixedFrequencyQuam as QuamCls)"]
 
 
 def _alloc_comment(allocation, element, line_type) -> str:
@@ -184,7 +223,8 @@ def _emit_wiring(spec: dict, allocation: dict, chip: str, stamp: str) -> str:
     instruments = spec.get("instruments", {}) or {}
     lines = spec.get("lines", []) or []
     flux_tunable = any(ln.get("line") in ("flux", "coupler") for ln in lines)
-    quam_cls = "FluxTunableQuam" if flux_tunable else "FixedFrequencyQuam"
+    zz_lines = any(ln.get("line") == "zz_drive" for ln in lines)
+    shared = spec.get("cr_port_mode") == "shared_xy"
 
     out: list[str] = []
     w = out.append
@@ -220,7 +260,8 @@ def _emit_wiring(spec: dict, allocation: dict, chip: str, stamp: str) -> str:
     w(")")
     w("from quam_builder.builder.qop_connectivity import build_quam_wiring")
     w("from quam_builder.builder.superconducting import build_quam")
-    w("from quam_builder.architecture.superconducting.qpu import %s" % quam_cls)
+    for ln_ in _quam_cls_import(flux_tunable, zz_lines):
+        w(ln_)
     w("")
     w("# ============================ EDIT: network ============================")
     w("HOST = %s" % _fmt(net.get("host")))
@@ -281,7 +322,22 @@ def _emit_wiring(spec: dict, allocation: dict, chip: str, stamp: str) -> str:
             w("connectivity.add_twpa_lines(%s)" % args)
         w("")
 
-    # 3) drive / flux / coupler / CR / ZZ — spec-lines order.
+    # 3) drive / flux (+ pair lines when NOT shared) — spec-lines order.
+    _PAIR_FN = {"coupler": "add_qubit_pair_flux_lines",
+                "cross_resonance": "add_qubit_pair_cross_resonance_lines",
+                "zz_drive": "add_qubit_pair_zz_drive_lines"}
+
+    def _emit_pair_line(ln, *, pin_from_allocation: bool) -> None:
+        lt = ln.get("line")
+        el = ln.get("element")
+        c = _constraint(ln.get("channel"))
+        if c == "None" and pin_from_allocation:
+            c = _pair_pin(allocation, el, lt) or "None"
+        note = _alloc_comment(allocation, el, lt)
+        ctl, tgt = str(el).split("-", 1)
+        w("connectivity.%s(qubit_pairs=[(%r, %r)], constraints=%s)%s"
+          % (_PAIR_FN[lt], _norm_index(ctl), _norm_index(tgt), c, note))
+
     emitted_any = False
     for ln in lines:
         lt = ln.get("line")
@@ -296,27 +352,39 @@ def _emit_wiring(spec: dict, allocation: dict, chip: str, stamp: str) -> str:
             w("connectivity.add_qubit_flux_lines(qubits=%r, constraints=%s)%s"
               % (_norm_index(el), c, note))
             emitted_any = True
-        elif lt in ("coupler", "cross_resonance", "zz_drive"):
-            ctl, tgt = str(el).split("-", 1)
-            fn = {"coupler": "add_qubit_pair_flux_lines",
-                  "cross_resonance": "add_qubit_pair_cross_resonance_lines",
-                  "zz_drive": "add_qubit_pair_zz_drive_lines"}[lt]
-            w("connectivity.%s(qubit_pairs=[(%r, %r)], constraints=%s)%s"
-              % (fn, _norm_index(ctl), _norm_index(tgt), c, note))
+        elif lt in _PAIR_FN and not shared:
+            _emit_pair_line(ln, pin_from_allocation=False)
             emitted_any = True
     if emitted_any:
         w("")
-    w("allocate_wiring(connectivity, instruments)")
+
+    if shared:
+        # Shared-port CR layout (dual upconverter, docs/54): a TWO-PHASE
+        # allocation — qubit lines first with block_used_channels=False (the
+        # used xy ports return to the pool at call end), then the CR/ZZ lines
+        # pinned onto each control's xy port. Pins are INLINED from the
+        # wizard's allocation so the script stays deterministic.
+        w("# shared-port CR: two-phase allocation (CR/ZZ ride the control's")
+        w("# xy port, upconverter 2 — pins frozen from the wizard's build)")
+        w("allocate_wiring(connectivity, instruments, block_used_channels=False)")
+        w("")
+        for ln in lines:
+            if ln.get("line") in _PAIR_FN:
+                _emit_pair_line(ln, pin_from_allocation=True)
+        w("")
+        w("allocate_wiring(connectivity, instruments, block_used_channels=False)")
+    else:
+        w("allocate_wiring(connectivity, instruments)")
     w("")
     w("# =============================== build ================================")
-    w("machine = %s()" % quam_cls)
+    w("machine = QuamCls()")
     w("# Older quam_builder takes an explicit path kwarg; newer reads")
     w("# QUAM_STATE_PATH — the same shim the wizard build uses.")
     w('_kwargs = {"port": PORT}')
     w('if "path" in inspect.signature(build_quam_wiring).parameters:')
     w('    _kwargs["path"] = os.environ["QUAM_STATE_PATH"]')
     w("build_quam_wiring(connectivity, HOST, CLUSTER, machine, **_kwargs)")
-    w("machine = %s.load()" % quam_cls)
+    w("machine = QuamCls.load()")
     w("build_quam(machine)")
     w('print(f"wiring built: {len(machine.qubits)} qubits, "')
     w('      f"{len(machine.qubit_pairs)} pairs -> {os.environ[\'QUAM_STATE_PATH\']}")')
@@ -329,8 +397,13 @@ def _emit_wiring(spec: dict, allocation: dict, chip: str, stamp: str) -> str:
 def _emit_build(spec: dict, chip: str, stamp: str) -> str:
     lines = spec.get("lines", []) or []
     flux_tunable = any(ln.get("line") in ("flux", "coupler") for ln in lines)
-    quam_cls = "FluxTunableQuam" if flux_tunable else "FixedFrequencyQuam"
+    zz_lines = any(ln.get("line") == "zz_drive" for ln in lines)
     pair_gate = (spec.get("pair_gate") or "").lower()
+    cr_port_mode = spec.get("cr_port_mode") or ""
+    # The slim line list _apply_dual_upconverters walks (control→target pairs).
+    pair_line_data = [{"element": ln.get("element"), "line": ln.get("line")}
+                      for ln in lines
+                      if ln.get("line") in ("cross_resonance", "zz_drive")]
     populate = spec.get("populate", {}) or {}
     qubit_pairs = [list(p) for p in (spec.get("qubit_pairs") or [])]
 
@@ -357,7 +430,8 @@ def _emit_build(spec: dict, chip: str, stamp: str) -> str:
     w('STATE_DIR = sys.argv[1] if len(sys.argv) > 1 else "./quam_state"')
     w('os.environ["QUAM_STATE_PATH"] = os.path.abspath(STATE_DIR)')
     w("")
-    w("from quam_builder.architecture.superconducting.qpu import %s" % quam_cls)
+    for ln_ in _quam_cls_import(flux_tunable, zz_lines):
+        w(ln_)
     w("")
     w("# ============================ EDIT: populate ==========================")
     w("# Base SI units (Hz, ns, V, dimensionless amp). Blank/missing keys keep")
@@ -371,14 +445,24 @@ def _emit_build(spec: dict, chip: str, stamp: str) -> str:
     w("# 2Q-gate family: 'cz_tunable' | 'cz_fixed' | 'cr' | '' (no wizard gate).")
     w("PAIR_GATE = %r" % pair_gate)
     w("")
+    w("# CR drive port mode: '' | 'dedicated' | 'shared_xy' (the customer's")
+    w("# dual-upconverter layout — CR/ZZ ride the control's xy port, LO 2).")
+    w("CR_PORT_MODE = %r" % cr_port_mode)
+    w("PAIR_LINES = %s" % pformat(pair_line_data, indent=4, width=88))
+    w("")
     w(_runtime_block())
     w("# =============================== run ==================================")
-    w("machine = %s.load()" % quam_cls)
-    w('_spec = {"populate": POPULATE, "qubit_pairs": QUBIT_PAIRS}')
+    w("machine = QuamCls.load()")
+    w('_spec = {"populate": POPULATE, "qubit_pairs": QUBIT_PAIRS,')
+    w('         "cr_port_mode": CR_PORT_MODE, "lines": PAIR_LINES}')
     w('apply_populate(machine, POPULATE, handle_pairs=(PAIR_GATE == ""))')
+    w("for _w in _apply_dual_upconverters(machine, _spec):")
+    w('    print(f"WARNING: {_w}", file=sys.stderr)')
     w('if PAIR_GATE in ("cz_fixed", "cz_tunable", "cr"):')
     w("    for _w in _finalize_pair_gates(machine, _spec, PAIR_GATE):")
     w('        print(f"WARNING: {_w}", file=sys.stderr)')
+    w('if (POPULATE.get("options") or {}).get("pin_cores"):')
+    w("    _pin_cores(machine)")
     w("machine.save()")
     w("")
     w("# Readout-LO constraint lock (the wizard's post-save fix-up): each MW")
@@ -419,11 +503,24 @@ def _emit_config_check(chip: str, stamp: str) -> str:
     w("    FluxTunableQuam, FixedFrequencyQuam,")
     w(")")
     w("")
-    w("# Load with whichever architecture the state carries.")
+    w("# Load with whichever architecture the state carries (the ZZ-drive root")
+    w("# is guarded — older quam_builder predates it).")
     w("try:")
-    w("    machine = FluxTunableQuam.load()")
-    w("except Exception:  # noqa: BLE001 — fixed-frequency chip")
-    w("    machine = FixedFrequencyQuam.load()")
+    w("    from quam_builder.architecture.superconducting.qpu import (")
+    w("        FixedFrequencyZZDriveQuam,)")
+    w("except ImportError:")
+    w("    FixedFrequencyZZDriveQuam = None")
+    w("machine = None")
+    w("for _cls in (FluxTunableQuam, FixedFrequencyZZDriveQuam, FixedFrequencyQuam):")
+    w("    if _cls is None:")
+    w("        continue")
+    w("    try:")
+    w("        machine = _cls.load()")
+    w("        break")
+    w("    except Exception:  # noqa: BLE001 — try the next architecture")
+    w("        continue")
+    w("if machine is None:")
+    w("    sys.exit('could not load the state with any known QUAM root class')")
     w("")
     w("cfg = machine.generate_config()")
     w("print(f\"generate_config() OK: {len(cfg['elements'])} elements, \"")

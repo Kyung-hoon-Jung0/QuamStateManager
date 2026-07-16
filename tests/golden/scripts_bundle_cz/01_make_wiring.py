@@ -30,7 +30,7 @@ from qualang_tools.wirer.wirer.channel_specs import (  # noqa: F401
 )
 from quam_builder.builder.qop_connectivity import build_quam_wiring
 from quam_builder.builder.superconducting import build_quam
-from quam_builder.architecture.superconducting.qpu import FluxTunableQuam
+from quam_builder.architecture.superconducting.qpu import (FluxTunableQuam as QuamCls)
 
 # ============================ EDIT: network ============================
 HOST = '10.1.1.1'
@@ -58,14 +58,14 @@ connectivity.add_qubit_pair_flux_lines(qubit_pairs=[(1, 2)], constraints=None)  
 allocate_wiring(connectivity, instruments)
 
 # =============================== build ================================
-machine = FluxTunableQuam()
+machine = QuamCls()
 # Older quam_builder takes an explicit path kwarg; newer reads
 # QUAM_STATE_PATH — the same shim the wizard build uses.
 _kwargs = {"port": PORT}
 if "path" in inspect.signature(build_quam_wiring).parameters:
     _kwargs["path"] = os.environ["QUAM_STATE_PATH"]
 build_quam_wiring(connectivity, HOST, CLUSTER, machine, **_kwargs)
-machine = FluxTunableQuam.load()
+machine = QuamCls.load()
 build_quam(machine)
 print(f"wiring built: {len(machine.qubits)} qubits, "
       f"{len(machine.qubit_pairs)} pairs -> {os.environ['QUAM_STATE_PATH']}")

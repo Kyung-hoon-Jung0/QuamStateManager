@@ -102,15 +102,26 @@ def run_regenerate(
 
     safe_io.atomic_write_json(out_dir / "state.json", result.merged)
 
-    # Emit the single-file build recipe alongside the rebuilt state, so the user
-    # OWNS the config as editable Python (QM's generate + populate combined).
-    # Best-effort: a script-emit hiccup must never fail the build+merge.
+    # Emit the editable build-script bundle alongside the rebuilt state, so the
+    # user OWNS the config as Python. script_emitter is the SINGLE maintained
+    # emitter (docs/54): it embeds run_build's own machinery verbatim —
+    # including the CR/ZZ seeders and the shared-port two-phase allocation —
+    # so the bundle reproduces the wizard build exactly, which regen_script's
+    # pair_gates-repo idiom structurally cannot for CR chips. Written into a
+    # subfolder so the chip dir stays clean (Quam.load ignores non-.json
+    # either way). Best-effort: a script-emit hiccup never fails the merge.
     script_name = None
     try:
+        from . import script_emitter
         chip = out_dir.name or "chip"
-        src = regen_script.emit_build_script(spec, chip_name=chip)
-        script_name = f"build_{chip}.py"
-        (out_dir / script_name).write_text(src, encoding="utf-8")
+        res = outcome.get("result") or {}
+        bundle = script_emitter.emit_bundle(
+            spec, res.get("allocation"), res.get("versions"), chip)
+        bundle_dir = out_dir / "build_scripts"
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        for name, src in bundle.items():
+            (bundle_dir / name).write_text(src, encoding="utf-8")
+        script_name = "build_scripts/"
     except Exception as exc:  # noqa: BLE001 — transparency, not a hard failure
         outcome["script_error"] = str(exc)
         script_name = None

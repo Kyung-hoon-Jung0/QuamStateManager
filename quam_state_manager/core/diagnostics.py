@@ -33,6 +33,7 @@ from quam_state_manager.core import (
     waveform_synth,
 )
 from quam_state_manager.core.loader import _walk
+from quam_state_manager.core.mw_fem import MW_MAX_ABS_IF_HZ
 from quam_state_manager.core.query import _parse_port_ref, _resolve
 
 # Roles that may legitimately share one physical port (readout multiplexing:
@@ -149,6 +150,8 @@ _CHECK_CATALOG: list[tuple[str, list[tuple[str, str, str]]]] = [
         ("error", "No port collisions", "Two elements never share one physical port + upconverter (legal readout- and cross-resonance multiplexing and a TWPA's own pump/pump_ are allowed)."),
         ("error", "MW-FEM IF within ±500 MHz", "The element intermediate frequency (RF_frequency − port LO) stays inside the 1 GSa/s Nyquist limit the QUA compiler enforces."),
         ("warning", "MW-FEM carrier reach", "RF_frequency stays within the FEM's physical range — drive output 50 MHz–10.5 GHz, readout input 2–10.5 GHz."),
+        ("error", "CR/ZZ effective IF within ±500 MHz", "A pair drive's emulated intermediate frequency (effective target RF − LO, the runtime-only #./inferred_* arithmetic) stays inside the Nyquist limit."),
+        ("warning", "CR/ZZ effective IF within ±400 MHz", "The same emulated pair-drive IF stays inside the 400 MHz bound the QM populate scripts assert for cross-resonance / ZZ tones."),
         ("warning", "LO within its band", "Each MW port's upconverter / downconverter frequency lies in its configured band (1: 50 MHz–5.5 GHz, 2: 4.5–7.5, 3: 6.5–10.5 GHz)."),
         ("warning", "Coupled ports share a band", "MW port pairs that are hardware-coupled use the same band (or the allowed 1 & 3 combination)."),
         ("warning", "LF-FEM output bandwidth", "A flux/coupler intermediate frequency stays inside the LF-FEM passband (direct 750 MHz, amplified 330 MHz, 500 MHz on a 1 GSa/s port)."),
@@ -251,6 +254,7 @@ def _lint_state_uncached(store) -> list[Finding]:
     findings.extend(_coupling_findings(root))
     findings.extend(_band_edge_findings(root))
     findings.extend(_mw_carrier_findings(root))
+    findings.extend(_pair_drive_carrier_findings(store))
     findings.extend(_f01_range_findings(root))
     findings.extend(_lffem_output_bw_findings(root))
     findings.extend(_resonator_if_floor_findings(root))
@@ -1469,6 +1473,68 @@ def _mw_carrier_findings(root: dict) -> list[Finding]:
                     f"— the FEM cannot physically {where} this carrier",
                     detail=repr(comp.get("RF_frequency")), jump_path=rf_dp,
                     port_key=pk))
+    return findings
+
+
+def _pair_drive_carrier_findings(store) -> list[Finding]:
+    """CR/ZZ pair-drive effective-IF reachability (docs/54).
+
+    The pair drive's ``intermediate_frequency`` is a runtime-only ``#./``
+    property no other check can see — ``cr_semantics.effective_frequencies``
+    emulates it (target RF − LO, + detuning for ZZ), resolving the pointer
+    chain through the port's per-upconverter LO. Two tiers:
+
+    - error ``pair_drive_if_ceiling``   — |IF| > 500 MHz (the same Nyquist
+      wall as ``connectivity_if_ceiling``; the QUA compiler rejects it);
+    - warning ``pair_drive_if_soft``    — 400 MHz < |IF| ≤ 500 MHz, CR/ZZ
+      channels only: the customer's own populate scripts assert |IF| < 400
+      MHz for these tones (advisory — corpus-proven silent on healthy chips).
+
+    Unresolvable inputs skip silently (dangling pointers have their own
+    findings family; never guess). Non-CR chips exit on the is_cr_chip gate.
+    """
+    from quam_state_manager.core import cr_semantics
+
+    findings: list[Finding] = []
+    root = store.merged
+    if not cr_semantics.is_cr_chip(root):
+        return findings
+    pairs = root.get("qubit_pairs")
+    if not isinstance(pairs, dict):
+        return findings
+    for pid, pobj in pairs.items():
+        if not isinstance(pobj, dict):
+            continue
+        for kind, label in (("cr", "cross-resonance"), ("zz", "ZZ")):
+            eff = cr_semantics.effective_frequencies(store, pid, channel=kind)
+            if eff is None or eff.if_hz is None:
+                continue
+            if kind == "cr":
+                chan_key = next((k for k in cr_semantics.CR_CHANNEL_KEYS
+                                 if isinstance(pobj.get(k), dict)), None)
+            else:
+                zz = cr_semantics.zz_channel(pobj)
+                chan_key = zz[0] if zz else None
+            if chan_key is None:                    # pragma: no cover - guarded above
+                continue
+            dp = f"qubit_pairs.{pid}.{chan_key}.intermediate_frequency"
+            aif = abs(eff.if_hz)
+            if aif > MW_IF_NYQUIST_HZ:
+                findings.append(Finding(
+                    "error", "pair_drive_if_ceiling", dp,
+                    f"{pid} {label} drive effective IF |{aif / 1e6:.6g} MHz| "
+                    f"(target RF {eff.target_rf_hz / 1e9:.6g} GHz − LO "
+                    f"{eff.lo_hz / 1e9:.6g} GHz) exceeds the MW-FEM ±500 MHz "
+                    f"Nyquist limit — the QUA compiler rejects it",
+                    detail=f"formula {eff.formula}", jump_path=dp))
+            elif aif > MW_MAX_ABS_IF_HZ:
+                findings.append(Finding(
+                    "warning", "pair_drive_if_soft", dp,
+                    f"{pid} {label} drive effective IF |{aif / 1e6:.6g} MHz| "
+                    f"exceeds the 400 MHz bound the QM populate scripts assert "
+                    f"for pair drives — retune the port's upconverter-2 LO "
+                    f"closer to the target frequency",
+                    detail=f"formula {eff.formula}", jump_path=dp))
     return findings
 
 

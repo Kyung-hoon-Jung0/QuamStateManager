@@ -1432,9 +1432,11 @@ def _build_qubit_sections(name: str, qubit_data: dict[str, Any], store: QuamStor
         raw_value = resolved_value
         ptr = False
         self_ref = False
+        present = dot_path is None       # dot-path-less rows are always "present"
         if dot_path:
             try:
                 raw_value = store.get_value(dot_path)
+                present = True
                 ptr = is_pointer(raw_value)
                 self_ref = is_self_ref(raw_value) if ptr else False
             except (KeyError, TypeError):
@@ -1452,7 +1454,21 @@ def _build_qubit_sections(name: str, qubit_data: dict[str, Any], store: QuamStor
             "is_pointer": ptr and not self_ref,
             "is_self_ref": self_ref,
             "editable": editable,
+            "_present": present,
         })
+
+    # Drop static sections that are STRUCTURALLY absent — every prop None AND
+    # its path missing from the state (the fixed-frequency CR chip's all-empty
+    # "Flux" section). A present-but-null section (a fresh flux chip's
+    # uncalibrated Flux fields) survives and stays fillable. Parity with the
+    # pair inspector's all-None drop, refined by path presence.
+    sections = [
+        s for s in sections
+        if any(p["value"] is not None or p["_present"] for p in s["props"])
+    ]
+    for s in sections:
+        for p in s["props"]:
+            p.pop("_present", None)
 
     # Surface any operations not covered by the static map — newly-added pulses
     # render automatically, one section per (channel, op_name).
@@ -1991,6 +2007,35 @@ def bulk_edit():
                                           modified, port_info, qid)
                          for spec in _BULK_COLUMNS_SPEC]
 
+    # Dead-CHANNEL column pruning: drop a column whose channel component (the
+    # first path segment under the qubit, e.g. ``z``) is structurally absent
+    # on EVERY qubit — the fixed-frequency CR chip's dead default-on "Flux
+    # offset" column and all-dash Z Port section. Deliberately NOT plain
+    # per-column unresolvability: dead-end OPTIONAL leaves of a present
+    # channel (``xy.opx_output.delay`` on MW ports) stay visible-not-linkable
+    # per the pinned bulk-grid contract, and a declared-but-null field on a
+    # fresh flux chip stays fillable.
+    if qids:
+        def _channel_head(spec) -> str | None:
+            segs = spec["tmpl"].split(".")
+            # "qubits.{name}.<head>.<...>" — a component only when nested
+            return segs[2] if len(segs) > 3 else None
+
+        _chan_present = {}
+        for spec in _BULK_COLUMNS_SPEC:
+            head = _channel_head(spec)
+            if head is None or head in _chan_present:
+                continue
+            _chan_present[head] = any(
+                isinstance((merged.get("qubits", {}).get(qid) or {}).get(head), dict)
+                for qid in qids)
+        keep = [i for i, spec in enumerate(_BULK_COLUMNS_SPEC)
+                if _chan_present.get(_channel_head(spec), True)]
+        if len(keep) < len(columns):
+            columns = [columns[i] for i in keep]
+            for qid in qids:
+                grid[qid] = [grid[qid][i] for i in keep]
+
     # Second pass: attach MW-FEM LO/band metadata to each band / up-or-downconverter-
     # frequency port cell — the LO-coupled peer, its owning qubit + band — so the
     # client can show "shares LO with qX (band N)" and warn when a freq leaves its band.
@@ -2296,7 +2341,9 @@ def _render_qubit_detail(name: str, *, focus_path: str | None = None):
 # create flow (/pulse/new + /api/pulse/create, driven by pulse_catalog)
 # is the single add-pulse surface now (feedback #10).
 
-_PULSE_CHANNELS = ("xy", "z", "resonator")
+# xy_detuned: FixedFrequencyZZDriveTransmon qubits carry the Stark-CZ target
+# lobe's channel — its zz_* twin ops render in the inspector like any other.
+_PULSE_CHANNELS = ("xy", "z", "resonator", "xy_detuned")
 
 _PULSE_NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{0,63}$")
 
