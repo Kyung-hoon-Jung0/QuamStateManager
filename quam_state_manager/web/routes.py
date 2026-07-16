@@ -55,6 +55,7 @@ from quam_state_manager.core import (
     config_generator,
     config_view,
     diagnostics,
+    gen_presets,
     node_scan,
     regenerate,
     safe_io,
@@ -10248,6 +10249,66 @@ def generate_envs():
         "envs": config_generator.discover_envs(),
         "selected": config_generator.get_selected_env(current_app.instance_path),
     })
+
+
+# --- Populate-step default-value presets (core/gen_presets.py) -------------
+# Named default sets (pulse values, resonator timings, flux points, pair
+# seeds) stored server-side under <instance>/gen_presets/ so they survive
+# browser sessions. CSRF is covered by the app-level origin check.
+
+@bp.route("/generate/presets")
+def generate_presets_list():
+    """Summaries of every stored preset (corrupt files flagged, never a 500)."""
+    return jsonify({
+        "ok": True,
+        "presets": gen_presets.list_presets(current_app.instance_path),
+    })
+
+
+@bp.route("/generate/presets/<slug>")
+def generate_presets_get(slug: str):
+    """One preset's full payload."""
+    data = gen_presets.load_preset(current_app.instance_path, slug)
+    if data is None:
+        return jsonify({"ok": False, "error": "Preset not found."}), 404
+    data["ok"] = True
+    data["slug"] = slug
+    return jsonify(data)
+
+
+@bp.route("/generate/presets", methods=["POST"])
+def generate_presets_save():
+    """Save (or overwrite) a named preset.
+
+    An existing slug without ``overwrite`` returns ``needs_confirm`` — the
+    same confirm-round-trip idiom as /generate/build's stray-JSON gate.
+    """
+    data = request.get_json(silent=True) or {}
+    name = data.get("name") or ""
+    sections = data.get("sections") or {}
+    try:
+        summary = gen_presets.save_preset(
+            current_app.instance_path, name, sections,
+            overwrite=bool(data.get("overwrite")),
+        )
+    except FileExistsError as exc:
+        return jsonify({
+            "ok": False, "needs_confirm": True, "slug": str(exc),
+            "error": f'A preset named "{name}" already exists.',
+        })
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except OSError as exc:
+        return jsonify({"ok": False, "error": f"Could not save preset: {exc}"}), 500
+    summary["ok"] = True
+    return jsonify(summary)
+
+
+@bp.route("/generate/presets/<slug>", methods=["DELETE"])
+def generate_presets_delete(slug: str):
+    """Delete a preset (idempotent)."""
+    gen_presets.delete_preset(current_app.instance_path, slug)
+    return jsonify({"ok": True})
 
 
 @bp.route("/generate/probe")

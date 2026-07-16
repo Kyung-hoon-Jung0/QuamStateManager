@@ -4607,9 +4607,278 @@
       + '<div class="gen-pop-flux-delay-chips">' + rows.join("") + '</div>';
   }
 
+  // -- step 6: default-value presets ------------------------------------
+  // Named server-side sets of populate defaults (instance/gen_presets/ via
+  // /generate/presets) — save recurring x180/readout/flux/pair seeds once,
+  // re-apply them to any new chip. Values are BASE units straight from
+  // spec.populate, so unit toggles never corrupt a preset. Capture rule:
+  // a column uniform across every valued row → sections[sec].defaults[field]
+  // (what a "Set all" fill produces); differing rows → .overrides[rid].
+  // Never part of a preset: LO_frequency (re-derived from RF on apply),
+  // grid_location (chip topology), the CR target LO/IF escape hatches.
+  var PRESET_SKIP_FIELDS = {
+    qubit: { LO_frequency: 1, grid_location: 1 },
+    resonator: { LO_frequency: 1 },
+    pairs: { target_qubit_LO_frequency: 1, target_qubit_IF_frequency: 1 }
+  };
+  var PRESET_SECTIONS = ["pulses", "qubit", "resonator", "flux", "pairs"];
+
+  function presetSectionCols(sec) {
+    if (sec === "qubit") return POP_QUBIT_COLS;
+    if (sec === "resonator") return POP_RESONATOR_COLS;
+    if (sec === "flux") return POP_FLUX_COLS;
+    if (sec === "pulses") return POP_PULSE_FIELDS;
+    if (sec === "pairs") return pairPopCols();
+    return [];
+  }
+
+  function presetRowIds(sec) {
+    if (sec === "pairs") {
+      return state.spec.qubit_pairs
+        .filter(function (p) { return p[0] && p[1]; })
+        .map(function (p) { return p[0] + "-" + p[1]; });
+    }
+    return state.spec.qubits;
+  }
+
+  // Which sections are live on the current chip (mirror of the
+  // renderPopulateTables show/hide gating) — applying flux values to a chip
+  // with no LF-FEM would write dead spec keys.
+  function presetActiveSections() {
+    var mw = hasMwFem() || hasOpxPlus();
+    var lf = hasLfFem() || hasOpxPlus();
+    return {
+      qubit: mw, resonator: mw, pulses: mw,
+      flux: lf && state.qubitFlux,
+      pairs: presetRowIds("pairs").length > 0
+    };
+  }
+
+  // Capture the named sections of the current populate spec → the storage
+  // shape ({defaults, overrides} per section). Pure read.
+  function capturePresetSections(sectionNames) {
+    var out = {};
+    var pop = state.spec.populate || {};
+    sectionNames.forEach(function (sec) {
+      var bucket = pop[sec] || {};
+      var skip = PRESET_SKIP_FIELDS[sec] || {};
+      var defaults = {}, overrides = {};
+      presetSectionCols(sec).forEach(function (col) {
+        var f = col.field;
+        if (skip[f]) return;
+        var valued = [];
+        Object.keys(bucket).forEach(function (rid) {
+          var v = (bucket[rid] || {})[f];
+          if (v != null && v !== "") valued.push([rid, v]);
+        });
+        if (!valued.length) return;
+        var uniform = valued.every(function (rv) { return rv[1] === valued[0][1]; });
+        if (uniform) {
+          defaults[f] = valued[0][1];
+        } else {
+          valued.forEach(function (rv) {
+            (overrides[rv[0]] = overrides[rv[0]] || {})[f] = rv[1];
+          });
+        }
+      });
+      out[sec] = { defaults: defaults, overrides: overrides };
+    });
+    return out;
+  }
+
+  // Apply a stored preset to the current chip. defaults fill every current
+  // row; overrides only where the id matches (skips reported, never errors);
+  // fields not in the chip's current column set (e.g. cr_* on a CZ chip)
+  // drop with a note. Returns the report; the caller re-renders + recomputes.
+  function applyPreset(preset, overwrite) {
+    var pop = state.spec.populate;
+    var report = { applied: 0, skippedRows: [], hiddenSections: [], droppedFields: [] };
+    var sections = (preset && preset.sections) || {};
+    var active = presetActiveSections();
+    PRESET_SECTIONS.forEach(function (sec) {
+      var body = sections[sec];
+      if (!body) return;
+      if (!active[sec]) { report.hiddenSections.push(sec); return; }
+      var keep = {};
+      presetSectionCols(sec).forEach(function (c) { keep[c.field] = true; });
+      var skip = PRESET_SKIP_FIELDS[sec] || {};
+      var rowIds = presetRowIds(sec);
+      var rowSet = {};
+      rowIds.forEach(function (r) { rowSet[r] = true; });
+      function put(rid, f, v) {
+        if (!keep[f] || skip[f]) {
+          if (report.droppedFields.indexOf(f) < 0) report.droppedFields.push(f);
+          return;
+        }
+        pop[sec] = pop[sec] || {};
+        var b = pop[sec][rid] = pop[sec][rid] || {};
+        if (!overwrite && b[f] != null && b[f] !== "") return;
+        b[f] = v;
+        report.applied++;
+      }
+      var defaults = body.defaults || {};
+      rowIds.forEach(function (rid) {
+        Object.keys(defaults).forEach(function (f) { put(rid, f, defaults[f]); });
+      });
+      var overrides = body.overrides || {};
+      Object.keys(overrides).forEach(function (rid) {
+        if (!rowSet[rid]) {
+          if (report.skippedRows.indexOf(rid) < 0) report.skippedRows.push(rid);
+          return;
+        }
+        Object.keys(overrides[rid] || {}).forEach(function (f) {
+          put(rid, f, overrides[rid][f]);
+        });
+      });
+    });
+    return report;
+  }
+
+  function presetNote(text) {
+    var el = document.getElementById("gen-preset-note");
+    if (!el) return;
+    el.textContent = text || "";
+    el.hidden = !text;
+  }
+
+  // Fill the preset dropdown from the server. A fetch failure degrades to a
+  // disabled "(presets unavailable)" option — never blocks the step.
+  function loadPresetList(selectSlug) {
+    var sel = document.getElementById("gen-preset-select");
+    if (!sel) return;
+    fetch("/generate/presets")
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        sel.innerHTML = '<option value="">(none)</option>';
+        (res.presets || []).forEach(function (p) {
+          var o = document.createElement("option");
+          o.value = p.slug;
+          var count = Object.keys(p.sections || {}).length;
+          o.textContent = p.corrupt
+            ? p.name + " (unreadable)"
+            : p.name + " (" + count + " section" + (count === 1 ? "" : "s") + ")";
+          if (p.corrupt) o.disabled = true;
+          sel.appendChild(o);
+        });
+        if (selectSlug) sel.value = selectSlug;
+      })
+      .catch(function () {
+        sel.innerHTML = '<option value="">(presets unavailable)</option>';
+      });
+  }
+
+  function bindPresetBar() {
+    var bar = document.getElementById("gen-preset-bar");
+    if (!bar || bar.dataset.bound) return;
+    bar.dataset.bound = "1";
+    var sel = document.getElementById("gen-preset-select");
+    var savebox = document.getElementById("gen-preset-savebox");
+    var errEl = document.getElementById("gen-preset-err");
+
+    function saveErr(msg) { if (errEl) errEl.textContent = msg || ""; }
+
+    document.getElementById("gen-preset-apply").addEventListener("click", function () {
+      if (!sel || !sel.value) { presetNote("Pick a preset to apply."); return; }
+      var overwrite = !!document.getElementById("gen-preset-overwrite").checked;
+      fetch("/generate/presets/" + encodeURIComponent(sel.value))
+        .then(function (r) { return r.json(); })
+        .then(function (preset) {
+          if (!preset.ok) { presetNote(preset.error || "Preset not found."); return; }
+          var rep = applyPreset(preset, overwrite);
+          // Same refresh sequence as step entry: rebuild tables, re-derive
+          // LOs (also re-runs power findings, CZ orientation + inline
+          // validation via their hooks), refresh amp displays.
+          renderPopulateTables();
+          recomputeLOs();
+          refreshAmpCells();
+          var parts = [rep.applied + " value" + (rep.applied === 1 ? "" : "s") +
+            " applied" + (overwrite ? "" : " (empty cells only)")];
+          if (rep.skippedRows.length) {
+            parts.push(rep.skippedRows.length + " per-row override" +
+              (rep.skippedRows.length === 1 ? "" : "s") + " skipped (" +
+              rep.skippedRows.slice(0, 4).join(", ") +
+              (rep.skippedRows.length > 4 ? ", …" : "") + " not on this chip)");
+          }
+          if (rep.hiddenSections.length) {
+            parts.push("sections not on this chip: " + rep.hiddenSections.join(", "));
+          }
+          if (rep.droppedFields.length) {
+            parts.push("fields not applicable: " + rep.droppedFields.join(", "));
+          }
+          presetNote('Preset "' + (preset.name || sel.value) + '": ' + parts.join(" · "));
+        })
+        .catch(function () { presetNote("Could not load the preset."); });
+    });
+
+    document.getElementById("gen-preset-save").addEventListener("click", function () {
+      if (savebox) savebox.hidden = !savebox.hidden;
+      saveErr("");
+      // Disable checkboxes for sections hidden on this chip.
+      var active = presetActiveSections();
+      PRESET_SECTIONS.forEach(function (sec) {
+        var box = document.getElementById("gen-preset-sec-" + sec);
+        if (!box) return;
+        box.disabled = !active[sec];
+        box.parentNode.title = active[sec] ? ""
+          : "Section not active on this chip (no matching hardware/pairs)";
+        if (!active[sec]) box.checked = false;
+      });
+    });
+    document.getElementById("gen-preset-save-cancel").addEventListener("click", function () {
+      if (savebox) savebox.hidden = true;
+      saveErr("");
+    });
+
+    document.getElementById("gen-preset-save-confirm").addEventListener("click", function doSave(ev, overwrite) {
+      var name = (document.getElementById("gen-preset-name").value || "").trim();
+      if (!name) { saveErr("Enter a preset name."); return; }
+      var secs = PRESET_SECTIONS.filter(function (sec) {
+        var box = document.getElementById("gen-preset-sec-" + sec);
+        return box && box.checked && !box.disabled;
+      });
+      if (!secs.length) { saveErr("Tick at least one section."); return; }
+      var sections = capturePresetSections(secs);
+      var any = secs.some(function (sec) {
+        var b = sections[sec];
+        return Object.keys(b.defaults).length || Object.keys(b.overrides).length;
+      });
+      if (!any) { saveErr("Nothing to save — the ticked sections have no values."); return; }
+      fetch("/generate/presets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name, sections: sections, overwrite: !!overwrite })
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          if (res.needs_confirm) {
+            if (window.confirm(res.error + " Overwrite it?")) doSave(null, true);
+            return;
+          }
+          if (!res.ok) { saveErr(res.error || "Save failed."); return; }
+          if (savebox) savebox.hidden = true;
+          saveErr("");
+          presetNote('Preset "' + name + '" saved.');
+          loadPresetList(res.slug);
+        })
+        .catch(function () { saveErr("Save failed (network)."); });
+    });
+
+    document.getElementById("gen-preset-delete").addEventListener("click", function () {
+      if (!sel || !sel.value) { presetNote("Pick a preset to delete."); return; }
+      var label = sel.options[sel.selectedIndex].textContent;
+      if (!window.confirm('Delete preset "' + label + '"?')) return;
+      fetch("/generate/presets/" + encodeURIComponent(sel.value), { method: "DELETE" })
+        .then(function (r) { return r.json(); })
+        .then(function () { presetNote("Preset deleted."); loadPresetList(); })
+        .catch(function () { presetNote("Delete failed (network)."); });
+    });
+  }
+
   function enterPopulateStep() {
     // Clear any stale live-preview panel from a previous visit to this step.
     if (window.GenPreview && window.GenPreview.reset) window.GenPreview.reset();
+    bindPresetBar();
+    loadPresetList();
     loadPopulateUnits();
     loadPowerMode();
     renderUnitToggles();
@@ -5663,7 +5932,9 @@
       applyNamingScheme: applyNamingScheme,
       renameQubit: renameQubit,
       expectedNamesOrNull: expectedNamesOrNull,
-      applyQubitIdMap: applyQubitIdMap
+      applyQubitIdMap: applyQubitIdMap,
+      capturePresetSections: capturePresetSections,
+      applyPreset: applyPreset
     }
   };
 })();

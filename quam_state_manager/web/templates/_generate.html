@@ -271,6 +271,41 @@
         Blank cells keep <code>build_quam</code>'s defaults. Pick how values
         are entered with the unit selectors below.</p>
 
+      {# Default-value presets — named server-side sets of populate defaults
+         (instance/gen_presets/); save the current values, re-apply them to a
+         new chip. Wired by bindPresetBar()/loadPresetList() in generate.js. #}
+      <div id="gen-preset-bar" class="gen-preset-bar">
+        <label>Presets
+          <select id="gen-preset-select">
+            <option value="">(none)</option>
+          </select>
+        </label>
+        <button type="button" class="outline btn-sm" id="gen-preset-apply"
+                title="Fill the tables below from the selected preset">Apply</button>
+        <label class="gen-preset-overwrite">
+          <input type="checkbox" id="gen-preset-overwrite">
+          Overwrite existing values</label>
+        <button type="button" class="outline btn-sm" id="gen-preset-save"
+                title="Save the current populate values as a named preset">Save as preset&hellip;</button>
+        <button type="button" class="outline btn-sm" id="gen-preset-delete"
+                title="Delete the selected preset">Delete</button>
+      </div>
+      <div id="gen-preset-savebox" class="gen-preset-savebox" hidden>
+        <input type="text" id="gen-preset-name" placeholder="Preset name (e.g. Lab defaults)"
+               maxlength="120">
+        <span class="gen-preset-sections">
+          <label><input type="checkbox" id="gen-preset-sec-pulses" checked> Pulses</label>
+          <label><input type="checkbox" id="gen-preset-sec-qubit"> Qubit &amp; XY</label>
+          <label><input type="checkbox" id="gen-preset-sec-resonator"> Resonator</label>
+          <label><input type="checkbox" id="gen-preset-sec-flux"> Flux</label>
+          <label><input type="checkbox" id="gen-preset-sec-pairs"> Pair gates</label>
+        </span>
+        <button type="button" class="btn-sm" id="gen-preset-save-confirm">Save</button>
+        <button type="button" class="outline btn-sm" id="gen-preset-save-cancel">Cancel</button>
+        <span id="gen-preset-err" class="gen-preset-err" aria-live="polite"></span>
+      </div>
+      <p id="gen-preset-note" class="muted" hidden></p>
+
       <div id="gen-pop-units" class="gen-pop-units"></div>
       <div id="gen-band-warnings"></div>
       {# Shared-LO map — which qubits sit on each MW-FEM LO. Collapsible so it
