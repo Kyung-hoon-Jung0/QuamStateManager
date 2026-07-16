@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -173,6 +174,16 @@ def validate_spec(spec) -> list[str]:
     qubit_ids = [str(q) for q in qubits]
     if len(set(qubit_ids)) != len(qubit_ids):
         errors.append("qubits: ids must be unique")
+    # Name shape (mirrors the wizard's validateQubitName): a leading lowercase
+    # "q" (quam_builder derives machine.qubits keys as "q" + stripped index —
+    # other prefixes silently orphan populate values), then letters/digits/
+    # underscore only. A "-" would corrupt pair-id parsing (run_build's
+    # _parse_pair splits on the first "-"); whitespace breaks element naming.
+    for q in qubit_ids:
+        if not re.match(r"^q[A-Za-z0-9_]+$", q):
+            errors.append(
+                f"qubits: id {q!r} must start with 'q' followed by "
+                "letters/digits/underscore only (no '-' or whitespace)")
     qubit_set = set(qubit_ids)
 
     # -- qubit_pairs -------------------------------------------------------

@@ -218,7 +218,8 @@ function stone(win, qid) {
     ok(JSON.stringify(w.QuamGen.state.spec.qubits) === JSON.stringify(['q1', 'q2', 'q4', 'q5', 'q6']),
        'declined renumber leaves the hole intact (no silent mutation)');
     const msg = w.document.getElementById('gen-message');
-    ok(msg && /contiguous/i.test(msg.textContent || ''), 'declined renumber shows the contiguity warning');
+    ok(msg && /naming scheme|contiguous/i.test(msg.textContent || ''),
+       'declined renumber shows the id-conformance warning');
   }
 
   // ---- edge styling + legend reflect the chip type's 2-qubit gate ----

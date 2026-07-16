@@ -33,6 +33,13 @@
     allocation: null,     // last /generate/allocate result, keyed by element
     pairsTouched: false,  // user hand-edited pairs -> stop auto-filling them
     wiringTouched: false, // user drag-edited the wiring -> keep their groups
+    // Qubit naming scheme (step 4): "one_based" (q1, q2, … — the historical
+    // default), "zero_based" (q0, q1, …), "grid" (board-derived letters —
+    // qA1, qB2; one-shot Apply), or "custom" (prefix + start index).
+    naming: { preset: "one_based", prefix: "q", start: 1 },
+    // A per-qubit hand rename detaches the set from the scheme: count changes
+    // stop regenerating names and the scheme-conformance gate turns off.
+    namesTouched: false,
     muxSize: 6,           // step-4 "Qubits per readout feedline" (DOM-mirrored)
     outputPath: "",       // step-7 destination folder (DOM-mirrored)
     // step-6 populate display units; overlaid from localStorage on entry
@@ -177,21 +184,22 @@
                dangling.join("–") + ") — remove it before continuing.";
       }
       // ID-gate: the topology board lets you leave gaps WHILE editing (place a
-      // partial / mid-thought layout), but State Manager indexes qubits
-      // contiguously q1…qN, so gaps must be fixed before leaving the step. Offer a
-      // one-click renumber (spelling out the remap so the user knows q5→q4 etc.);
-      // block if declined.
+      // partial / mid-thought layout), but ids must match the active naming
+      // scheme before leaving the step. Offer a one-click renumber (spelling
+      // out the remap so the user knows q5→q4 etc.); block if declined.
+      // expectedNamesOrNull() is null for regenerate chips (their named ids
+      // are kept verbatim — the value-merge matches on them), hand-renamed
+      // sets, and the one-shot grid preset — no gate in those cases.
       var qs = state.spec.qubits;
-      var hasHoles = qs.some(function (q, i) { return q !== "q" + (i + 1); });
-      // Re-generate keeps the source chip's qubit ids (qA1, qB2, …) verbatim: the
-      // value-merge matches on them, so renumbering to q1…qN would orphan every
-      // carried value. Named ids are valid for the builder, so skip the gate.
-      if (hasHoles && state.mode !== "regenerate") {
+      var expNames = expectedNamesOrNull();
+      var hasHoles = !!expNames &&
+        qs.some(function (q, i) { return q !== expNames[i]; });
+      if (hasHoles) {
         if (window.confirm(renumberPrompt(qs))) {
           renumberContiguous();
         } else {
-          return "Qubit ids must be contiguous (q1…q" + qs.length +
-                 ") before continuing — use the Renumber button to fix the gaps.";
+          return "Qubit ids don't match the naming scheme — use the " +
+                 "Renumber button (or Apply names) to fix them.";
         }
       }
       // Partial-placement gate: if the board is in use (SOME qubits placed) then
@@ -837,18 +845,16 @@
     return pairs;
   }
 
-  // Atomic lock-step renumber of a hole-y qubit set to contiguous q1…qN (the
-  // ID-gate fix). Rewrites qubits + qubit_pairs + every populate bucket +
-  // populate.pairs keys in ONE pass against a single old→new map, preserving the
-  // current qubits order; lines re-derive and the (old-id-keyed) allocation is
-  // dropped so the user re-allocates in step 5. The highest-blast-radius mutator —
-  // a partial rewrite would orphan per-qubit/per-pair data, so it is one pass.
-  function renumberContiguous() {
+  // Atomic lock-step rename of the qubit set against a single old→new map
+  // (extracted from the old renumberContiguous — the highest-blast-radius
+  // mutator; a partial rewrite would orphan per-qubit/per-pair data, so it is
+  // ONE pass). Rewrites qubits + qubit_pairs + every populate bucket +
+  // populate.pairs keys + TWPA qubit lists, preserving order; lines re-derive
+  // and the (old-id-keyed) allocation is dropped so the user re-allocates in
+  // step 5.
+  function applyQubitIdMap(map) {
     var sp = state.spec;
-    var old = (sp.qubits || []).slice();
-    var map = {};
-    old.forEach(function (q, i) { map[q] = "q" + (i + 1); });
-    sp.qubits = old.map(function (q) { return map[q]; });
+    sp.qubits = (sp.qubits || []).map(function (q) { return map[q] || q; });
     sp.qubit_pairs = (sp.qubit_pairs || []).map(function (p) {
       return [map[p[0]] || p[0], map[p[1]] || p[1]];
     });
@@ -869,6 +875,10 @@
       });
       pop.pairs = npairs;
     }
+    // TWPA qubit lists carry qubit ids too (the old renumber missed these).
+    (sp.twpas || []).forEach(function (tw) {
+      tw.qubits = (tw.qubits || []).map(function (q) { return map[q] || q; });
+    });
     state.allocation = null;        // old element-id keys are stale → re-allocate
     state.pairsTouched = true;
     deriveLines();
@@ -877,17 +887,246 @@
     showMessage(null);              // clear any stale gap warning
   }
 
+  // Renumber a hole-y qubit set back onto the active naming scheme (the
+  // ID-gate fix). Falls back to contiguous q1…qN when no scheme expectation
+  // is active (defensive — the gate only fires while one is).
+  function renumberContiguous() {
+    var old = (state.spec.qubits || []).slice();
+    var target = expectedNamesOrNull() ||
+      old.map(function (_q, i) { return "q" + (i + 1); });
+    var map = {};
+    old.forEach(function (q, i) { map[q] = target[i]; });
+    applyQubitIdMap(map);
+  }
+
   // Spell out the renumber so the user sees the identity remap (q5→q4 etc.) and
   // knows their typed values move WITH each qubit — not that they keep the old id.
   function renumberPrompt(qs) {
+    var exp = expectedNamesOrNull() ||
+      qs.map(function (_q, i) { return "q" + (i + 1); });
     var moves = [];
     for (var i = 0; i < qs.length; i++) {
-      var to = "q" + (i + 1);
-      if (qs[i] !== to) moves.push(qs[i] + "→" + to);
+      if (qs[i] !== exp[i]) moves.push(qs[i] + "→" + exp[i]);
     }
-    return "Qubit ids have gaps (" + qs.join(", ") + "). State Manager indexes qubits " +
-           "contiguously (q1…q" + qs.length + "). Renumbering will remap: " +
-           moves.join(", ") + " — your typed values move with each qubit. Renumber now?";
+    return "Qubit ids have gaps (" + qs.join(", ") + "). The naming scheme " +
+           "expects " + exp[0] + "…" + exp[exp.length - 1] + ". Renumbering " +
+           "will remap: " + moves.join(", ") + " — your typed values move " +
+           "with each qubit. Renumber now?";
+  }
+
+  // -- step 4: qubit naming scheme --------------------------------------
+  // Name rule (backed by the pipeline's real constraints): a leading
+  // lowercase "q" (quam_builder derives machine.qubits keys as
+  // "q" + stripped index — other prefixes silently orphan populate values),
+  // then letters/digits/underscore only — a "-" would corrupt pair-id
+  // parsing (_parse_pair splits on the first "-") and whitespace breaks DOM
+  // ids. Mirrored server-side in config_generator.validate_spec.
+  var QUBIT_NAME_RE = /^q[A-Za-z0-9_]+$/;
+
+  function validateQubitName(name, taken) {
+    if (!QUBIT_NAME_RE.test(name)) {
+      return 'Qubit name "' + name + '" is invalid — names must start with a ' +
+        "lowercase 'q' followed by letters/digits/underscore (no '-' or " +
+        "spaces; the builder derives element and pair ids from them).";
+    }
+    if (taken && taken[name]) return 'Duplicate qubit name "' + name + '".';
+    return null;
+  }
+
+  // 0 → "A", 25 → "Z", 26 → "AA", … (board rows for the grid preset).
+  function rowLetter(r) {
+    var s = "";
+    r = Math.floor(r);
+    do {
+      s = String.fromCharCode(65 + (r % 26)) + s;
+      r = Math.floor(r / 26) - 1;
+    } while (r >= 0);
+    return s;
+  }
+
+  // The names the active scheme produces for n qubits: {names} or {error}.
+  // grid: letter = board row (A = row 0 = chip bottom, the QUAM convention),
+  // number = column + 1 — deterministic and collision-free (cells are unique).
+  function schemeNames(n) {
+    var nm = state.naming || {};
+    var preset = nm.preset || "one_based";
+    var names = [], i;
+    if (preset === "zero_based") {
+      for (i = 0; i < n; i++) names.push("q" + i);
+    } else if (preset === "custom") {
+      var prefix = (nm.prefix || "q").trim() || "q";
+      var start = parseInt(nm.start, 10);
+      if (isNaN(start)) start = 1;
+      for (i = 0; i < n; i++) names.push(prefix + (start + i));
+    } else if (preset === "grid") {
+      var popq = (state.spec.populate && state.spec.populate.qubit) || {};
+      var unplaced = state.spec.qubits.filter(function (q) {
+        return (popq[q] || {}).grid_location == null;
+      });
+      if (unplaced.length) {
+        return { error: "Grid naming needs every qubit placed on the board (" +
+          unplaced.slice(0, 6).join(", ") +
+          (unplaced.length > 6 ? ", …" : "") + " unplaced)." };
+      }
+      names = state.spec.qubits.map(function (q) {
+        var gl = String(popq[q].grid_location).split(",");
+        return "q" + rowLetter(parseInt(gl[1], 10)) + (parseInt(gl[0], 10) + 1);
+      });
+    } else {
+      for (i = 0; i < n; i++) names.push("q" + (i + 1));   // one_based default
+    }
+    return { names: names };
+  }
+
+  // The standing name expectation, or null when there is none: hand-renamed
+  // sets and regenerate chips keep their names; the grid preset is one-shot
+  // (board moves must not silently re-rename).
+  function expectedNamesOrNull() {
+    if (state.namesTouched || state.mode === "regenerate") return null;
+    if ((state.naming || {}).preset === "grid") return null;
+    var r = schemeNames(state.spec.qubits.length);
+    return r.error ? null : r.names;
+  }
+
+  function namesConform() {
+    var exp = expectedNamesOrNull();
+    if (!exp) return true;
+    return state.spec.qubits.every(function (q, i) { return q === exp[i]; });
+  }
+
+  function hasPopulateValues() {
+    var pop = state.spec.populate || {};
+    return ["qubit", "resonator", "flux", "pulses", "pairs"].some(function (g) {
+      return pop[g] && Object.keys(pop[g]).some(function (k) {
+        return Object.keys(pop[g][k] || {}).length > 0;
+      });
+    });
+  }
+
+  // Apply the active scheme to the whole set (the "Apply names" button and
+  // the one-shot grid path). Validates the generated names (a custom prefix
+  // can produce illegal ones), confirms when typed values exist, then remaps
+  // in one pass and re-arms the scheme expectation.
+  function applyNamingScheme() {
+    var old = state.spec.qubits.slice();
+    var r = schemeNames(old.length);
+    if (r.error) { showMessage(r.error, "warn"); return; }
+    var names = r.names, seen = {};
+    for (var i = 0; i < names.length; i++) {
+      var err = validateQubitName(names[i], seen);
+      if (err) { showMessage("Naming scheme: " + err, "warn"); return; }
+      seen[names[i]] = true;
+    }
+    var map = {}, changed = false;
+    old.forEach(function (q, i2) {
+      map[q] = names[i2];
+      if (q !== names[i2]) changed = true;
+    });
+    if (changed) {
+      if (hasPopulateValues() && !window.confirm(renamePrompt(old, names))) return;
+      applyQubitIdMap(map);
+    }
+    state.namesTouched = false;   // the set now IS the scheme — re-arm it
+    syncTopoControls();
+    renderNamingUi();
+  }
+
+  function renamePrompt(oldNames, newNames) {
+    var moves = [];
+    for (var i = 0; i < oldNames.length; i++) {
+      if (oldNames[i] !== newNames[i]) moves.push(oldNames[i] + "→" + newNames[i]);
+    }
+    return "Apply the naming scheme? This remaps: " + moves.slice(0, 12).join(", ") +
+      (moves.length > 12 ? ", … (" + moves.length + " total)" : "") +
+      " — your typed values move with each qubit.";
+  }
+
+  // Rename ONE qubit (inline edit). Returns an error string, or null on
+  // success. Success detaches the set from the scheme (namesTouched).
+  function renameQubit(oldId, newId) {
+    var taken = {};
+    state.spec.qubits.forEach(function (q) { if (q !== oldId) taken[q] = true; });
+    var err = validateQubitName(newId, taken);
+    if (err) return err;
+    if (oldId !== newId) {
+      var map = {};
+      map[oldId] = newId;
+      applyQubitIdMap(map);
+      state.namesTouched = true;
+      syncTopoControls();
+      renderNamingUi();
+    }
+    return null;
+  }
+
+  // Per-qubit rename inputs (inside the step-4 naming block).
+  function renderQubitNameList() {
+    var host = document.getElementById("gen-qubit-name-list");
+    if (!host) return;
+    host.innerHTML = "";
+    if (state.mode === "regenerate" || !state.spec.qubits.length) return;
+    state.spec.qubits.forEach(function (q) {
+      var input = document.createElement("input");
+      input.type = "text";
+      input.value = q;
+      input.className = "gen-qubit-name-in";
+      input.title = "Rename " + q + " — typed values and pairs follow the rename";
+      input.addEventListener("change", function () {
+        var v = input.value.trim();
+        if (v === q) return;
+        var err = renameQubit(q, v);
+        if (err) {
+          showMessage(err, "warn");
+          input.value = q;               // restore the valid name
+        } else {
+          showMessage(null);
+        }
+      });
+      host.appendChild(input);
+    });
+  }
+
+  // Keep the naming block's controls + note in step with state. Module-level
+  // (not a bindQubitsStep closure) so renderQubitsStep / hydrateFromSpec can
+  // call it.
+  function renderNamingUi() {
+    var block = document.getElementById("gen-naming");
+    if (!block) return;
+    block.hidden = state.mode === "regenerate";
+    var nm = state.naming || {};
+    var sel = document.getElementById("gen-naming-preset");
+    if (sel) sel.value = nm.preset || "one_based";
+    var custom = (nm.preset || "one_based") === "custom";
+    var pf = document.getElementById("gen-naming-prefix-field");
+    var sf = document.getElementById("gen-naming-start-field");
+    if (pf) pf.hidden = !custom;
+    if (sf) sf.hidden = !custom;
+    var pin = document.getElementById("gen-naming-prefix");
+    if (pin) pin.value = nm.prefix || "q";
+    var sin = document.getElementById("gen-naming-start");
+    if (sin) sin.value = (nm.start == null ? 1 : nm.start);
+    var note = document.getElementById("gen-naming-note");
+    if (note) {
+      if (nm.preset === "grid") {
+        var r = schemeNames(state.spec.qubits.length);
+        note.textContent = r.error ? r.error
+          : "Letters follow board rows (A = bottom row), numbers the column " +
+            "(qA1, qA2, qB1, …). Applied once — re-Apply after board moves.";
+      } else if (state.namesTouched) {
+        note.textContent = "Names were hand-edited — count changes keep them; " +
+          "Apply names re-imposes the scheme.";
+      } else {
+        note.textContent = "New qubits follow the scheme. Rename any qubit " +
+          "below — names must start with 'q' (letters/digits/_ only).";
+      }
+    }
+    var cap = document.getElementById("gen-naming-caption");
+    if (cap) {
+      var qs = state.spec.qubits;
+      cap.textContent = qs.length
+        ? "— " + qs.slice(0, 5).join(", ") + (qs.length > 5 ? ", …" : "") : "";
+    }
+    renderQubitNameList();
   }
 
   // Qubits the user started placing on the board but left unplaced (no grid_location).
@@ -903,13 +1142,14 @@
   // via a path that skipped the step-4 guard. Returns a message or null.
   function topologyBlocker() {
     var qs = state.spec.qubits;
-    // Re-generate keeps the source chip's named ids (qA1…) — they're valid for
-    // the builder and the value-merge matches on them, so DON'T force contiguity
-    // (the dangling-pair + unplaced checks below still apply).
-    if (state.mode !== "regenerate" &&
-        qs.some(function (q, i) { return q !== "q" + (i + 1); })) {
-      return "Qubit ids aren't contiguous (q1…q" + qs.length + "). Go to the Qubits " +
-             "step and Renumber before generating.";
+    // Scheme-conformance: null expectation (regenerate chips — their named
+    // ids are kept verbatim; hand-renamed sets; the one-shot grid preset)
+    // means any valid names pass. The dangling-pair + unplaced checks below
+    // always apply.
+    var expNames = expectedNamesOrNull();
+    if (expNames && qs.some(function (q, i) { return q !== expNames[i]; })) {
+      return "Qubit ids don't match the active naming scheme. Go to the " +
+             "Qubits step and Renumber before generating.";
     }
     var known = {};
     qs.forEach(function (q) { known[q] = true; });
@@ -930,8 +1170,28 @@
 
   function setQubitCount(n) {
     n = Math.max(0, Math.min(200, isNaN(n) ? 0 : n));
-    var qubits = [];
-    for (var i = 1; i <= n; i++) qubits.push("q" + i);
+    var qubits;
+    var scheme = state.namesTouched || state.mode === "regenerate" ||
+      (state.naming || {}).preset === "grid"
+      ? null : schemeNames(n);
+    if (scheme && !scheme.error) {
+      // A scheme expectation is active — regenerate the whole set from it
+      // (bit-identical to the historical q1…qN behavior for the default,
+      // including hole-closing on count changes).
+      qubits = scheme.names;
+    } else {
+      // Hand-renamed / grid / regenerate sets: keep existing names — append
+      // collision-free q<k> fallbacks on grow, truncate from the end on shrink.
+      qubits = state.spec.qubits.slice(0, n);
+      var used = {};
+      qubits.forEach(function (q) { used[q] = true; });
+      var k = 1;
+      while (qubits.length < n) {
+        while (used["q" + k]) k++;
+        qubits.push("q" + k);
+        used["q" + k] = true;
+      }
+    }
     state.spec.qubits = qubits;
 
     var valid = {};
@@ -1200,6 +1460,7 @@
     renderPairs();
     renderTwpas();
     syncLineTypeToggles();
+    renderNamingUi();
   }
 
   function bindQubitsStep() {
@@ -1268,6 +1529,30 @@
       archSel.addEventListener("change", function () { applyChipArch(archSel.value); });
     }
 
+    // Qubit naming scheme controls (renderNamingUi paints them from state).
+    var nmPreset = document.getElementById("gen-naming-preset");
+    var nmPrefix = document.getElementById("gen-naming-prefix");
+    var nmStart = document.getElementById("gen-naming-start");
+    var nmApply = document.getElementById("gen-naming-apply");
+    if (nmPreset) {
+      nmPreset.addEventListener("change", function () {
+        state.naming.preset = nmPreset.value;
+        renderNamingUi();
+      });
+    }
+    if (nmPrefix) {
+      nmPrefix.addEventListener("input", function () {
+        state.naming.prefix = nmPrefix.value.trim() || "q";
+      });
+    }
+    if (nmStart) {
+      nmStart.addEventListener("input", function () {
+        var v = parseInt(nmStart.value, 10);
+        if (!isNaN(v)) state.naming.start = v;
+      });
+    }
+    if (nmApply) nmApply.addEventListener("click", applyNamingScheme);
+
     bindTopoBoard();
     renderQubitsStep();
   }
@@ -1282,8 +1567,7 @@
   function syncTopoControls() {
     var btn = document.getElementById("gen-topo-renumber");
     if (!btn) return;
-    var qs = state.spec.qubits;
-    btn.hidden = !qs.some(function (q, i) { return q !== "q" + (i + 1); });
+    btn.hidden = namesConform();
   }
 
   function bindTopoBoard() {
@@ -5003,6 +5287,7 @@
         v: DRAFT_VERSION, step: state.step, env: state.env,
         spec: state.spec, allocation: state.allocation,
         pairsTouched: state.pairsTouched, wiringTouched: state.wiringTouched,
+        naming: state.naming, namesTouched: state.namesTouched,
         populateUnits: state.populateUnits,
         muxSize: state.muxSize, outputPath: state.outputPath,
         qubitFlux: state.qubitFlux, couplerFlux: state.couplerFlux,
@@ -5039,6 +5324,14 @@
     state.allocation = d.allocation || null;
     state.pairsTouched = !!d.pairsTouched;
     state.wiringTouched = !!d.wiringTouched;
+    // Naming scheme — old drafts lack it: default = the historical q1…qN.
+    var nm = (d.naming && typeof d.naming === "object") ? d.naming : {};
+    state.naming = {
+      preset: nm.preset || "one_based",
+      prefix: nm.prefix || "q",
+      start: isNaN(parseInt(nm.start, 10)) ? 1 : parseInt(nm.start, 10)
+    };
+    state.namesTouched = !!d.namesTouched;
     // Topology-board extent (build-INERT; the placements themselves live in
     // grid_location). A legacy draft lacks it -> WiringGrid.zone() re-derives a
     // default from the qubit count, so opening the board never throws/blanks.
@@ -5112,6 +5405,8 @@
     state.allocation = null;
     state.pairsTouched = false;
     state.wiringTouched = false;
+    state.naming = { preset: "one_based", prefix: "q", start: 1 };
+    state.namesTouched = false;
     state.qubitFlux = true;
     state.couplerFlux = true;
     // Reset the chip architecture + gate too — otherwise a previously-chosen
@@ -5316,7 +5611,10 @@
       spec: spec, allocation: o.allocation || null,
       outputPath: o.outputPath || "",
       pairGate: pg, chipArch: arch,
-      pairsTouched: true, wiringTouched: true
+      pairsTouched: true, wiringTouched: true,
+      // Source-chip names are authoritative — detach every scheme expectation
+      // so no gate/count-change can rename them out from under the value-merge.
+      namesTouched: true
     });
     applyChipArch(state.chipArch);            // sync qubitFlux / couplerFlux / pairGate
     state.mode = o.mode || "regenerate";
@@ -5359,7 +5657,13 @@
       setValidateDebounce: function (ms) { VALIDATE_DEBOUNCE_MS = ms; },
       czAutoOrient: czAutoOrient,
       czOrderStatus: czOrderStatus,
-      flipPairOrder: flipPairOrder
+      flipPairOrder: flipPairOrder,
+      schemeNames: schemeNames,
+      validateQubitName: validateQubitName,
+      applyNamingScheme: applyNamingScheme,
+      renameQubit: renameQubit,
+      expectedNamesOrNull: expectedNamesOrNull,
+      applyQubitIdMap: applyQubitIdMap
     }
   };
 })();

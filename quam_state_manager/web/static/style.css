@@ -6198,6 +6198,20 @@ table.gen-wiring tbody tr.pinned {
 
 /* Chip-topology board (wiring-grid.js) — place qubits + draw arbitrary edges. */
 .gen-topo { margin: 0.4rem 0 0.6rem; }
+/* Qubit naming block (step 4) — scheme presets + per-qubit rename inputs */
+.gen-naming { margin: 0.4rem 0 0.6rem; }
+.gen-naming-controls {
+    display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap;
+    margin: 0.4rem 0 0.2rem;
+}
+.gen-naming-controls label { display: flex; align-items: center; gap: 0.35rem; margin: 0; }
+.gen-naming-controls select, .gen-naming-controls input { margin: 0; width: auto; }
+.gen-qubit-name-list { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.35rem; }
+.gen-qubit-name-in {
+    width: 5.5ch !important; min-width: 4ch; margin: 0;
+    padding: 0.05rem 0.3rem; height: auto; min-height: 0; box-sizing: content-box;
+    font-family: var(--font-mono); font-size: 12.5px; text-align: center;
+}
 .gen-topo-summary { cursor: pointer; font-weight: 600; font-size: 13px; }
 .gen-topo-controls { display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; margin: 0.4rem 0 0.2rem; }
 .gen-topo-dim { width: 3.2em; }

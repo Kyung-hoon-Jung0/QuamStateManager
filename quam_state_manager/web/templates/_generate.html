@@ -136,6 +136,34 @@
           share a single RF input + output pair. 6 is typical (one MW-FEM per
           feedline).</p>
         <p class="muted" id="gen-qubit-summary">No qubits yet.</p>
+
+        {# Naming scheme: presets (q1…, q0…, board-derived grid letters, custom
+           prefix) + per-qubit inline rename. Renames remap populate values,
+           pairs and TWPA lists in one pass (applyQubitIdMap); hidden in
+           regenerate mode (names come from the source chip). #}
+        <details id="gen-naming" class="gen-naming">
+          <summary class="gen-topo-summary">Qubit naming
+            <span class="muted" id="gen-naming-caption"></span></summary>
+          <div class="gen-naming-controls">
+            <label>Scheme
+              <select id="gen-naming-preset">
+                <option value="one_based">q1, q2, q3, &hellip;</option>
+                <option value="zero_based">q0, q1, q2, &hellip;</option>
+                <option value="grid">Grid letters &mdash; qA1, qA2, qB1, &hellip; (board rows)</option>
+                <option value="custom">Custom prefix + start</option>
+              </select>
+            </label>
+            <label id="gen-naming-prefix-field" hidden>Prefix
+              <input type="text" id="gen-naming-prefix" value="q" size="5"></label>
+            <label id="gen-naming-start-field" hidden>Start
+              <input type="number" id="gen-naming-start" value="1" min="0" class="gen-topo-dim"></label>
+            <button type="button" class="outline btn-sm" id="gen-naming-apply"
+                    title="Rename every qubit to the scheme (values move with each qubit)">
+              Apply names</button>
+          </div>
+          <p class="muted" id="gen-naming-note"></p>
+          <div id="gen-qubit-name-list" class="gen-qubit-name-list"></div>
+        </details>
       </div>
 
       <div class="gen-subsection">

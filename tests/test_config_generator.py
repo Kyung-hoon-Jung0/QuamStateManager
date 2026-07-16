@@ -138,6 +138,32 @@ class TestValidateSpecErrors:
         spec["qubits"] = ["q1", "q1"]
         assert any("unique" in e for e in validate_spec(spec))
 
+    def test_qubit_id_name_rule(self):
+        # Mirrors the wizard's validateQubitName: leading lowercase 'q', then
+        # letters/digits/underscore — '-' corrupts pair-id parsing, whitespace
+        # breaks element naming, and a non-'q' prefix orphans populate values
+        # (quam_builder keys machine.qubits as 'q' + stripped index).
+        for bad in ("q-1", "Q2", "q 3", "x1", "q"):
+            spec = _valid_spec()
+            spec["qubits"] = [bad]
+            spec["qubit_pairs"] = []
+            spec["lines"] = [{"element": bad, "line": "drive", "channel": None}]
+            errs = validate_spec(spec)
+            assert any("qubits: id" in e for e in errs), f"{bad!r} not rejected"
+
+    def test_alpha_qubit_ids_valid(self):
+        # qA1 / qB2-style names (grid naming preset) pass cleanly, including
+        # as pair endpoints and line elements.
+        spec = _valid_spec()
+        spec["qubits"] = ["qA1", "qB2"]
+        spec["qubit_pairs"] = [["qA1", "qB2"]]
+        spec["lines"] = [
+            {"element": "qA1", "line": "drive", "channel": None},
+            {"element": "qB2", "line": "drive", "channel": None},
+            {"element": "qA1-qB2", "line": "coupler", "channel": None},
+        ]
+        assert not [e for e in validate_spec(spec) if "qubits: id" in e]
+
     def test_pair_references_unknown_qubit(self):
         spec = _valid_spec()
         spec["qubit_pairs"] = [["q1", "q9"]]
