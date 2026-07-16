@@ -2651,7 +2651,10 @@ window.initPathAutocomplete = function(inputEl) {
         var val = inputEl.value.trim();
         if (!val) { hide(); return; }
         timer = setTimeout(function() {
-            fetch("/browse?path=" + encodeURIComponent(val))
+            // complete=1: the autocomplete wants prefix-completions of the
+            // half-typed last segment; the folder-browser DIALOG never sends
+            // it (it gets ancestor-walk semantics instead — see /browse).
+            fetch("/browse?complete=1&path=" + encodeURIComponent(val))
                 .then(function(r) { return r.json(); })
                 .then(function(data) { show(data.dirs || []); })
                 .catch(function() { hide(); });
@@ -2815,6 +2818,10 @@ window.initPathAutocomplete = function(inputEl) {
             if (pathInput) pathInput.value = _currentPath;
         }
 
+        // Defense-in-depth: a bare drive token ("D:") is CWD-relative on
+        // Windows — normalize to the drive ROOT before it reaches the server.
+        if (/^[A-Za-z]:$/.test(path)) path = path + "\\";
+
         _browserFetch("/browse?path=" + encodeURIComponent(path))
             .then(function(data) {
                 if (seq !== _navSeq) return;     // a newer navigation won
@@ -2824,12 +2831,25 @@ window.initPathAutocomplete = function(inputEl) {
                     renderFailure(data.error);
                     return;
                 }
+                // data.path is ALWAYS the folder the server actually listed
+                // (ancestor-walk semantics for dead paths) — breadcrumbs and
+                // the selected path must mirror it, never the request.
                 _currentPath = data.path || path;
                 _lastGoodPath = _currentPath;
                 _rememberLastPath(_currentPath);
                 if (pathInput) pathInput.value = _currentPath || path;
                 renderBreadcrumbs(data.path || path);
                 renderFolderList(data);
+                if (data.missing) {
+                    // A stale Recent entry / deleted folder: we landed at the
+                    // nearest existing ancestor — say so instead of silently
+                    // showing a different folder.
+                    var note = document.createElement("div");
+                    note.className = "browser-empty browser-missing-note";
+                    note.textContent = "“" + data.missing + "” was not " +
+                        "found — showing the nearest existing folder.";
+                    list.prepend(note);
+                }
             })
             .catch(function(e) { renderFailure(e && e.message || "network"); });
     };
@@ -2862,6 +2882,21 @@ window.initPathAutocomplete = function(inputEl) {
         //                              are one navigable unit)
         var isUNC = /^\\\\/.test(pathStr);
         var isWin = isUNC || /^[A-Za-z]:/.test(pathStr) || pathStr.indexOf("\\") >= 0;
+        // POSIX absolute paths get an explicit "/" crumb right after Computer:
+        // "Computer" is the server's start listing ($HOME on POSIX), so the
+        // filesystem root needs its own truthful, clickable crumb.
+        if (!isWin && pathStr.charAt(0) === "/") {
+            var sep0 = document.createElement("span");
+            sep0.className = "breadcrumb-sep";
+            sep0.textContent = " > ";
+            container.appendChild(sep0);
+            var rootSlash = document.createElement("span");
+            rootSlash.className = "breadcrumb-item breadcrumb-link";
+            rootSlash.textContent = "/";
+            rootSlash.setAttribute("data-path", "/");
+            rootSlash.onclick = function() { navigateBrowser("/"); };
+            container.appendChild(rootSlash);
+        }
         var parts = pathStr.split(/[\\/]/).filter(function(p) { return p; });
         if (isUNC && parts.length >= 2) {
             // \\server\share is the smallest navigable UNC unit — one crumb.

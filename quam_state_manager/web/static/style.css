@@ -1316,6 +1316,12 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
 /* Failure surface (timeout / permission / IO) — coloured text + Retry/Go-back
    buttons rendered by navigateBrowser()'s renderFailure. */
 .browser-error { color: var(--color-error-text); }
+/* Stale/deleted path → landed at the nearest existing ancestor (ancestor-walk
+   in /browse) — explain it instead of silently showing a different folder. */
+.browser-missing-note {
+    color: var(--color-warning-text);
+    text-align: left; padding: 0.4rem 0.8rem; font-size: 0.85em;
+}
 #browser-list > button.btn-sm { display: block; margin: 0.25rem auto; width: auto; }
 .browser-toolbar {
     display: flex; gap: 0.5rem; align-items: center;

@@ -181,7 +181,7 @@ function selectedPath(win) { return win.document.getElementById('browser-selecte
     let crumbs = Array.prototype.map.call(
       win.document.querySelectorAll('#browser-breadcrumbs [data-path]'),
       function (c) { return c.getAttribute('data-path'); });
-    ok(JSON.stringify(crumbs) === JSON.stringify(['/home', '/home/user', '/home/user/data']),
+    ok(JSON.stringify(crumbs) === JSON.stringify(['/', '/home', '/home/user', '/home/user/data']),
       'G4: POSIX crumbs (got ' + JSON.stringify(crumbs) + ')');
 
     win.navigateBrowser('C:\\Users\\lab');
@@ -233,6 +233,71 @@ function selectedPath(win) { return win.document.getElementById('browser-selecte
     // Guard released — a new attempt POSTs again.
     win.createBrowserFolder();
     ok(mkdirCalls === 2, 'G5: guard released after completion');
+  }
+
+  // G6: dead-path navigation (stale Recent entry) — the server's
+  // ancestor-walk response renders truthful crumbs for the folder ACTUALLY
+  // listed plus an explanatory note; never a silent root-jump.
+  {
+    const win = makeWorld();
+    win._fetchImpl = function (url) {
+      const p = decodeURIComponent(url.split('path=')[1] || '');
+      if (p === '/data/old/exp1') {
+        // ancestor-walk: /data/old + /data/old/exp1 are gone → /data listed
+        return jsonResponse({ path: '/data', dirs: ['/data/current'],
+                              parent: '/', missing: '/data/old/exp1' });
+      }
+      return jsonResponse({ path: p, dirs: [], parent: '/' });
+    };
+    win.navigateBrowser('/data/old/exp1');
+    await tick();
+    ok(listText(win).indexOf('was not') >= 0 && listText(win).indexOf('/data/old/exp1') >= 0,
+      'G6: missing-note explains the landing');
+    const crumbs = Array.prototype.map.call(
+      win.document.querySelectorAll('#browser-breadcrumbs [data-path]'),
+      function (c) { return c.getAttribute('data-path'); });
+    ok(JSON.stringify(crumbs) === JSON.stringify(['/', '/data']),
+      'G6: crumbs mirror the folder actually listed (got ' + JSON.stringify(crumbs) + ')');
+    ok(selectedPath(win) === '/data', 'G6: selected path = listed folder');
+  }
+
+  // G7: POSIX paths carry an explicit "/" root crumb (Computer = server
+  // default/$HOME; "/" = the real filesystem root) — both truthful.
+  {
+    const win = makeWorld();
+    win._fetchImpl = function (url) {
+      const p = decodeURIComponent(url.split('path=')[1] || '') || '/home/u';
+      return jsonResponse({ path: p, dirs: [], parent: '' });
+    };
+    win.navigateBrowser('/home/u/work');
+    await tick();
+    const crumbs = Array.prototype.map.call(
+      win.document.querySelectorAll('#browser-breadcrumbs [data-path]'),
+      function (c) { return c.getAttribute('data-path'); });
+    ok(crumbs[0] === '/', 'G7: "/" crumb present first (got ' + JSON.stringify(crumbs) + ')');
+    ok(crumbs.indexOf('/home/u') >= 0, 'G7: mid crumb is the true absolute path');
+    // Windows drive paths get NO "/" crumb.
+    win.navigateBrowser('D:\\work\\chips');
+    await tick();
+    const wcrumbs = Array.prototype.map.call(
+      win.document.querySelectorAll('#browser-breadcrumbs [data-path]'),
+      function (c) { return c.getAttribute('data-path'); });
+    ok(wcrumbs[0] === 'D:\\', 'G7: drive crumb is D:\\ (rooted), no "/" crumb');
+  }
+
+  // G8: a bare drive token normalizes to the drive ROOT before fetching
+  // (bare "D:" is CWD-relative on Windows).
+  {
+    const win = makeWorld();
+    win._fetchImpl = function (url) {
+      const p = decodeURIComponent(url.split('path=')[1] || '');
+      return jsonResponse({ path: p, dirs: [], parent: '' });
+    };
+    win._fetchLog.length = 0;
+    win.navigateBrowser('D:');
+    await tick();
+    ok(win._fetchLog[0].indexOf(encodeURIComponent('D:\\')) >= 0,
+      'G8: bare "D:" normalized to "D:\\" (got ' + win._fetchLog[0] + ')');
   }
 
   if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }

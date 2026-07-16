@@ -78,10 +78,14 @@ def test_permission_denied_reports_error(client, tmp_path):
 
 
 def test_nonexistent_path_prefix_completes(client, tmp_path):
+    # Prefix completion is the AUTOCOMPLETE contract — it now requires
+    # ?complete=1 (the dialog gets ancestor-walk semantics instead; see
+    # TestAncestorWalkAndCompletion).
     (tmp_path / "data_2026").mkdir()
     (tmp_path / "data_2025").mkdir()
     (tmp_path / "other").mkdir()
-    r = client.get("/browse", query_string={"path": str(tmp_path / "data")})
+    r = client.get("/browse", query_string={
+        "path": str(tmp_path / "data"), "complete": "1"})
     body = r.get_json()
     assert body["path"] == str(tmp_path)
     assert len(body["dirs"]) == 2
@@ -101,3 +105,55 @@ def test_quam_state_detection(client, tmp_path):
     (tmp_path / "wiring.json").write_text("{}")
     r = client.get("/browse", query_string={"path": str(tmp_path)})
     assert r.get_json()["has_quam_state"] is True
+
+
+class TestAncestorWalkAndCompletion:
+    """The breadcrumb root-jump fix: the dialog's /browse must ALWAYS list a
+    real folder and report `path` as exactly that folder; a dead path lands
+    at its nearest existing ancestor with a `missing` marker; the prefix-
+    completion behavior survives ONLY behind ?complete=1 (autocomplete)."""
+
+    def test_dead_path_lands_at_nearest_ancestor(self, client, tmp_path):
+        keep = tmp_path / "keep"
+        keep.mkdir()
+        dead = keep / "was" / "deleted" / "deep"
+        r = client.get("/browse", query_string={"path": str(dead)})
+        body = r.get_json()
+        assert body["path"] == str(keep)          # NOT the drive/fs root
+        assert body["missing"] == str(dead)
+        assert "error" not in body
+
+    def test_file_path_lands_at_parent_with_marker(self, client, tmp_path):
+        f = tmp_path / "state.json"
+        f.write_text("{}")
+        r = client.get("/browse", query_string={"path": str(f)})
+        body = r.get_json()
+        assert body["path"] == str(tmp_path)
+        assert body["missing"] == str(f)
+
+    def test_existing_dir_has_no_missing_marker(self, client, tmp_path):
+        r = client.get("/browse", query_string={"path": str(tmp_path)})
+        assert "missing" not in r.get_json()
+
+    def test_complete_flag_keeps_prefix_completion(self, client, tmp_path):
+        (tmp_path / "data_a").mkdir()
+        (tmp_path / "data_b").mkdir()
+        (tmp_path / "other").mkdir()
+        r = client.get("/browse", query_string={
+            "path": str(tmp_path / "data"), "complete": "1"})
+        body = r.get_json()
+        assert body["path"] == str(tmp_path)
+        assert len(body["dirs"]) == 2
+        assert all("data_" in d for d in body["dirs"])
+        assert "missing" not in body
+
+    def test_dialog_prefix_like_path_walks_not_completes(self, client, tmp_path):
+        # WITHOUT complete=1 the same half-name path must NOT return
+        # completions — it lists the parent with the missing marker.
+        (tmp_path / "data_a").mkdir()
+        r = client.get("/browse", query_string={"path": str(tmp_path / "data")})
+        body = r.get_json()
+        assert body["path"] == str(tmp_path)
+        assert body["missing"] == str(tmp_path / "data")
+        assert str(tmp_path / "data_a") in body["dirs"]   # full listing
+        assert str(tmp_path / "other") not in body["dirs"]  # (doesn't exist)
