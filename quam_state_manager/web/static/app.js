@@ -2687,9 +2687,45 @@ window.initPathAutocomplete = function(inputEl) {
 
 (function() {
     var _targetInputId = null;
-    var _currentPath = "";
+    var _currentPath = "";      // ONLY ever a successfully-listed folder
+    var _lastGoodPath = "";     // "Go back" target after a failed navigation
+    var _navSeq = 0;            // monotonic token — stale responses drop
     var _RECENT_KEY = "recentFolders";
     var _RECENT_MAX = 10;
+    var _LAST_PATH_PREFIX = "quam_folder_last:";   // per-target-input memory
+    var _FETCH_TIMEOUT_MS = 8000;
+
+    // fetch with an abort timeout; resolves {ok, data} or rejects with a
+    // typed reason ("timeout" / "network" / "http <code>") so the dialog can
+    // say WHY it failed instead of hanging silently.
+    function _browserFetch(url, opts) {
+        var ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+        var timer = ctrl && setTimeout(function() { ctrl.abort(); }, _FETCH_TIMEOUT_MS);
+        var o = opts || {};
+        if (ctrl) o.signal = ctrl.signal;
+        return fetch(url, o)
+            .then(function(r) {
+                if (!r.ok) throw new Error("http " + r.status);
+                return r.json();
+            })
+            .catch(function(e) {
+                throw new Error(
+                    e && e.name === "AbortError" ? "timeout"
+                        : (e && e.message && e.message.indexOf("http ") === 0)
+                            ? e.message : "network");
+            })
+            .finally(function() { if (timer) clearTimeout(timer); });
+    }
+
+    function _rememberLastPath(path) {
+        if (!_targetInputId || !path) return;
+        try { localStorage.setItem(_LAST_PATH_PREFIX + _targetInputId, path); }
+        catch(e) { /* private mode — memory just won't persist */ }
+    }
+    function _recallLastPath(targetInputId) {
+        try { return localStorage.getItem(_LAST_PATH_PREFIX + targetInputId) || ""; }
+        catch(e) { return ""; }
+    }
 
     function _getRecentFolders() {
         try { return JSON.parse(localStorage.getItem(_RECENT_KEY) || "[]"); }
@@ -2730,27 +2766,72 @@ window.initPathAutocomplete = function(inputEl) {
         var dialog = document.getElementById("folder-browser");
         if (!dialog) return;
         var input = document.getElementById(targetInputId);
-        var startPath = (input && input.value.trim()) ? input.value.trim() : "";
+        // Start-path precedence: the input's current value → the last folder
+        // successfully browsed FOR THIS INPUT (localStorage) → server default
+        // (drive list on Windows, $HOME on POSIX). Per-input keying keeps the
+        // state-folder picker and the generate-output picker independent.
+        var startPath = (input && input.value.trim())
+            ? input.value.trim()
+            : _recallLastPath(targetInputId);
         dialog.showModal();
         _renderRecentFolders();
         navigateBrowser(startPath);
     };
 
     window.navigateBrowser = function(path) {
-        _currentPath = path;
+        var seq = ++_navSeq;    // newer navigations obsolete this one
+        var list = document.getElementById("browser-list");
         var pathInput = document.getElementById("browser-selected-path");
-        if (pathInput) pathInput.value = path;
+        if (pathInput) pathInput.value = path;   // optimistic — reverted on failure
+        if (list) list.innerHTML = '<div class="browser-empty browser-loading">Loading…</div>';
 
-        fetch("/browse?path=" + encodeURIComponent(path))
-            .then(function(r) { return r.json(); })
+        function renderFailure(reason) {
+            if (seq !== _navSeq || !list) return;
+            var msg = reason === "timeout" ? "Timed out reading the folder"
+                : reason === "network" ? "Could not reach the app"
+                : "Unable to read the folder (" + reason + ")";
+            list.innerHTML = "";
+            var row = document.createElement("div");
+            row.className = "browser-empty browser-error";
+            row.textContent = msg + ".";
+            list.appendChild(row);
+            var retry = document.createElement("button");
+            retry.type = "button";
+            retry.className = "outline btn-sm";
+            retry.textContent = "Retry";
+            retry.onclick = function() { navigateBrowser(path); };
+            list.appendChild(retry);
+            if (_lastGoodPath && _lastGoodPath !== path) {
+                var back = document.createElement("button");
+                back.type = "button";
+                back.className = "outline btn-sm";
+                back.textContent = "Go back";
+                back.onclick = function() { navigateBrowser(_lastGoodPath); };
+                list.appendChild(back);
+            }
+            // _currentPath was NOT updated — the selected path reverts to the
+            // last folder that actually listed, so Select/mkdir can't act on
+            // a folder we never reached.
+            if (pathInput) pathInput.value = _currentPath;
+        }
+
+        _browserFetch("/browse?path=" + encodeURIComponent(path))
             .then(function(data) {
+                if (seq !== _navSeq) return;     // a newer navigation won
+                if (data.error) {
+                    // Server saw the folder but couldn't read it
+                    // (permission / IO) — same failure surface.
+                    renderFailure(data.error);
+                    return;
+                }
+                _currentPath = data.path || path;
+                _lastGoodPath = _currentPath;
+                _rememberLastPath(_currentPath);
+                if (pathInput) pathInput.value = _currentPath || path;
                 renderBreadcrumbs(data.path || path);
                 renderFolderList(data);
             })
-            .catch(function() {
-                document.getElementById("browser-list").innerHTML =
-                    '<div class="browser-empty">Unable to read directory</div>';
-            });
+            .catch(function(e) { renderFailure(e && e.message || "network"); });
     };
 
     function renderBreadcrumbs(pathStr) {
@@ -2772,11 +2853,27 @@ window.initPathAutocomplete = function(inputEl) {
         rootBtn.onclick = function() { navigateBrowser(""); };
         container.appendChild(rootBtn);
 
-        var sep = /[\\/]/;
-        var parts = pathStr.split(sep).filter(function(p) { return p; });
-        var built = "";
+        // Portable crumb paths. The old builder joined every part with "\\"
+        // and dropped the leading "/", so POSIX crumbs navigated to garbage
+        // ("home\\user"). Detect the path style and rebuild each prefix in it:
+        //   POSIX     /home/user/x   → /home, /home/user, …
+        //   Drive     C:\Users\x     → C:\, C:\Users, …
+        //   UNC       \\srv\share\x  → \\srv\share, \\srv\share\x (server+share
+        //                              are one navigable unit)
+        var isUNC = /^\\\\/.test(pathStr);
+        var isWin = isUNC || /^[A-Za-z]:/.test(pathStr) || pathStr.indexOf("\\") >= 0;
+        var parts = pathStr.split(/[\\/]/).filter(function(p) { return p; });
+        if (isUNC && parts.length >= 2) {
+            // \\server\share is the smallest navigable UNC unit — one crumb.
+            parts = ["\\\\" + parts[0] + "\\" + parts[1]].concat(parts.slice(2));
+        }
+        function crumbPath(i) {
+            if (!isWin) return "/" + parts.slice(0, i + 1).join("/");
+            if (!isUNC && i === 0 && parts[0].indexOf(":") >= 0) return parts[0] + "\\";
+            return parts.slice(0, i + 1).join("\\");
+        }
         for (var i = 0; i < parts.length; i++) {
-            built += parts[i] + (i === 0 && parts[0].indexOf(":") >= 0 ? "\\" : (i < parts.length - 1 ? "\\" : ""));
+            var built = crumbPath(i);
             var arrow = document.createElement("span");
             arrow.className = "breadcrumb-sep";
             arrow.textContent = " > ";
@@ -2790,7 +2887,7 @@ window.initPathAutocomplete = function(inputEl) {
             } else {
                 crumb.className = "breadcrumb-item breadcrumb-current";
             }
-            crumb.textContent = parts[i];
+            crumb.textContent = parts[i].replace(/^\\\\/, "");
             container.appendChild(crumb);
         }
     }
@@ -2884,6 +2981,8 @@ window.initPathAutocomplete = function(inputEl) {
         }
     };
 
+    var _mkdirInFlight = false;   // double-submit guard (Enter + click race)
+
     window.createBrowserFolder = function() {
         var nameInp = document.getElementById("browser-newfolder-name");
         var err = document.getElementById("browser-newfolder-err");
@@ -2892,24 +2991,34 @@ window.initPathAutocomplete = function(inputEl) {
         if (!name) { if (err) err.textContent = "Enter a name."; return; }
         // _currentPath is "" at the Computer/drive-list root — can't mkdir there.
         if (!_currentPath) { if (err) err.textContent = "Open a folder first."; return; }
+        if (_mkdirInFlight) return;
+        _mkdirInFlight = true;
         var body = "path=" + encodeURIComponent(_currentPath) + "&name=" + encodeURIComponent(name);
-        fetch("/mkdir", {
+        _browserFetch("/mkdir", {
             method: "POST",
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
             body: body,
         })
-            .then(function(r) { return r.json(); })
             .then(function(d) {
                 if (d && d.ok) {
                     var row = document.getElementById("browser-newfolder-row");
                     if (row) row.hidden = true;
                     // Enter the new folder — it becomes the selected path, ready to Select.
                     navigateBrowser(d.path);
-                } else if (err) {
-                    err.textContent = (d && d.error) || "Could not create folder.";
+                } else {
+                    if (err) err.textContent = (d && d.error) || "Could not create folder.";
+                    // Re-list the current folder — the failure may mean our
+                    // view of it is stale (deleted/unmounted underneath us).
+                    navigateBrowser(_currentPath);
                 }
             })
-            .catch(function() { if (err) err.textContent = "Could not create folder."; });
+            .catch(function(e) {
+                if (err) {
+                    err.textContent = (e && e.message === "timeout")
+                        ? "Timed out creating the folder." : "Could not create folder.";
+                }
+            })
+            .finally(function() { _mkdirInFlight = false; });
     };
 })();
 

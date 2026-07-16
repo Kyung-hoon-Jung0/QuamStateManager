@@ -6132,7 +6132,13 @@ def _is_system_path(p: Path) -> bool:
 
 @bp.route("/browse")
 def browse_directory():
-    """Return JSON listing of directory children for folder browsing / autocomplete."""
+    """Return JSON listing of directory children for folder browsing / autocomplete.
+
+    Paths in the response are NATIVE to the server OS (``str(Path)``) — the
+    client treats both ``/`` and ``\\`` as separators (breadcrumbs). Unreadable
+    directories return an ``error`` field at HTTP 200 (the dialog renders it
+    with a Retry) — never a silent empty listing, never a 500.
+    """
     import platform
     import string as string_mod
 
@@ -6145,14 +6151,13 @@ def browse_directory():
                 for d in string_mod.ascii_uppercase
                 if Path(f"{d}:\\").exists()
             ]
-        else:
-            dirs = sorted(
-                str(c) for c in Path("/").iterdir()
-                if c.is_dir() and not c.name.startswith(".")
-            )
-        return jsonify({"path": "", "dirs": dirs, "has_quam_state": False, "parent": ""})
-
-    p = Path(raw)
+            return jsonify({"path": "", "dirs": dirs, "has_quam_state": False, "parent": ""})
+        # POSIX: an empty path lands in the user's home — a "/" root listing
+        # is rarely useful and permission-noisy. Falls through to the normal
+        # directory branch so parent/".."-navigation still walks to /.
+        p = Path.home()
+    else:
+        p = Path(raw)
 
     if _is_system_path(p):
         logger.warning("Browse attempt on protected system path: %s", raw)
@@ -6163,40 +6168,57 @@ def browse_directory():
         if not parent.is_dir():
             return jsonify({"path": raw, "dirs": [], "has_quam_state": False, "parent": ""})
         prefix = p.name.lower()
+        err = None
         try:
             dirs = sorted(
                 str(c) for c in parent.iterdir()
                 if c.is_dir() and c.name.lower().startswith(prefix) and not c.name.startswith(".")
             )
         except PermissionError:
-            dirs = []
-        return jsonify({
+            dirs, err = [], "Permission denied"
+        except OSError as exc:
+            dirs, err = [], f"Could not read folder ({exc.__class__.__name__})"
+        payload = {
             "path": str(parent),
             "dirs": dirs[:20],
             "has_quam_state": False,
             "parent": str(parent.parent),
-        })
+        }
+        if err:
+            payload["error"] = err
+        return jsonify(payload)
 
+    err = None
     try:
         children = sorted(
             str(c) for c in p.iterdir()
             if c.is_dir() and not c.name.startswith(".")
         )
     except PermissionError:
-        children = []
+        children, err = [], "Permission denied"
+    except OSError as exc:
+        children, err = [], f"Could not read folder ({exc.__class__.__name__})"
 
-    has_quam = (p / "state.json").is_file() and (p / "wiring.json").is_file()
-    has_children = _has_experiment_descendant(p)
+    # The badge probes also touch the unreadable directory — guard them the
+    # same way (a permission-denied folder must answer, not 500).
+    try:
+        has_quam = (p / "state.json").is_file() and (p / "wiring.json").is_file()
+    except OSError:
+        has_quam = False
+    has_children = False if err else _has_experiment_descendant(p)
 
     parent_str = "" if p.parent == p else str(p.parent)
 
-    return jsonify({
+    payload = {
         "path": str(p),
         "dirs": children[:50],
         "has_quam_state": has_quam,
         "has_experiment_children": has_children,
         "parent": parent_str,
-    })
+    }
+    if err:
+        payload["error"] = err
+    return jsonify(payload)
 
 
 @bp.route("/mkdir", methods=["POST"])

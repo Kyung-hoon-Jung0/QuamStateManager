@@ -4921,8 +4921,17 @@
   function bindOutputStep() {
     var out = document.getElementById("gen-output-path");
     if (out) {
-      out.addEventListener("input", function () {
-        state.outputPath = out.value.trim();
+      // "change" too: the folder browser fills .value programmatically and
+      // dispatches change (never input) — without it the mirror ran only on
+      // hand-typed paths.
+      ["input", "change"].forEach(function (ev) {
+        out.addEventListener(ev, function () {
+          state.outputPath = out.value.trim();
+          // Durable mirror — a cleared sessionStorage draft (crash, quota,
+          // tab close) used to silently lose the output folder.
+          try { localStorage.setItem("quam_gen_output_path", state.outputPath); }
+          catch (e) { /* private mode */ }
+        });
       });
     }
   }
@@ -5613,7 +5622,14 @@
       });
     }
     state.muxSize = d.muxSize || 6;
+    // Restore precedence: draft > durable localStorage mirror. (The DOM input
+    // wins over both — repaintFromState only paints state.outputPath, and
+    // captureDomFields reads the input back on every nav.)
     state.outputPath = d.outputPath || "";
+    if (!state.outputPath) {
+      try { state.outputPath = localStorage.getItem("quam_gen_output_path") || ""; }
+      catch (e) { /* private mode */ }
+    }
     // Line-type toggles — default true for backward compat with old drafts.
     state.qubitFlux = d.qubitFlux !== false;
     state.couplerFlux = d.couplerFlux !== false;
@@ -5685,6 +5701,7 @@
     state.pairGate = "cz_tunable";
     state.muxSize = 6;
     state.outputPath = "";
+    try { localStorage.removeItem("quam_gen_output_path"); } catch (e) {}
     ["gen-net-host", "gen-net-cluster", "gen-net-port",
      "gen-output-path"].forEach(function (id) {
       var el = document.getElementById(id);
@@ -5721,7 +5738,13 @@
       state.pairsTouched = false;
       state.wiringTouched = false;
       state.muxSize = 6;
+      // Fresh session: recall the last output folder (durable mirror) — a
+      // new browser session used to start with the path blank every time.
       state.outputPath = "";
+      try { state.outputPath = localStorage.getItem("quam_gen_output_path") || ""; }
+      catch (e) { /* private mode */ }
+      var outEl = document.getElementById("gen-output-path");
+      if (outEl && state.outputPath) outEl.value = state.outputPath;
     }
 
     // Bottom nav + the top header mirror share the same handlers.
