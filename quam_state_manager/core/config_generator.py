@@ -248,6 +248,22 @@ def validate_spec(spec) -> list[str]:
         if channel is not None:
             errors.extend(_validate_channel(channel, f"lines[{i}].channel"))
 
+    # -- feedline multiplex bound -------------------------------------------
+    # One MW-FEM readout in/out pair multiplexes at most 8 resonators. The
+    # wizard clamps its mux input, but a stale draft / hand-crafted spec can
+    # still carry an over-full group — block it before the build.
+    feedline_counts: dict = {}
+    for ln in lines:
+        if isinstance(ln, dict) and ln.get("line") == "resonator" and ln.get("group"):
+            g = str(ln["group"])
+            feedline_counts[g] = feedline_counts.get(g, 0) + 1
+    for g, n in sorted(feedline_counts.items()):
+        if n > 8:
+            errors.append(
+                f"lines: readout feedline '{g}' multiplexes {n} qubits — the "
+                "MW-FEM bound is 8 per feedline; lower 'qubits per readout "
+                "feedline' or split the group")
+
     # -- unrepresentable architecture --------------------------------------
     # A tunable coupler (coupler lines) with fixed-frequency qubits (no qubit
     # flux lines) cannot be built: quam_builder's CZGate plays on the qubit z

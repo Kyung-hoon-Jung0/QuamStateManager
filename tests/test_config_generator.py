@@ -151,6 +151,25 @@ class TestValidateSpecErrors:
             errs = validate_spec(spec)
             assert any("qubits: id" in e for e in errs), f"{bad!r} not rejected"
 
+    def test_feedline_mux_bound(self):
+        # One MW-FEM readout pair multiplexes at most 8 resonators — a
+        # 9-qubit feedline group must be rejected (the wizard clamps its mux
+        # input, but stale drafts / hand-crafted specs can still carry it).
+        spec = _valid_spec()
+        spec["qubits"] = [f"q{i}" for i in range(1, 10)]
+        spec["qubit_pairs"] = []
+        spec["lines"] = [
+            {"element": q, "line": "resonator", "group": "feedline1",
+             "channel": None}
+            for q in spec["qubits"]
+        ]
+        errs = validate_spec(spec)
+        assert any("multiplexes 9" in e and "bound is 8" in e for e in errs)
+        # 8 on one feedline is fine.
+        spec["qubits"] = spec["qubits"][:8]
+        spec["lines"] = spec["lines"][:8]
+        assert not [e for e in validate_spec(spec) if "feedline" in e]
+
     def test_alpha_qubit_ids_valid(self):
         # qA1 / qB2-style names (grid naming preset) pass cleanly, including
         # as pair endpoints and line elements.

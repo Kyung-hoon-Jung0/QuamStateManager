@@ -79,6 +79,17 @@
     sourcePath: null      // source chip folder (regenerate: merge values from here)
   };
 
+  // A readout feedline multiplexes at most 8 resonators on one MW-FEM
+  // in/out pair (hardware bound — was wrongly capped at 16). Every read of
+  // the mux size funnels through this clamp so a stale draft / hand-typed
+  // value can never produce an unbuildable 9+-tone feedline.
+  var MUX_MAX = 8;
+  function clampMux(m) {
+    m = parseInt(m, 10);
+    if (isNaN(m) || m < 1) return 6;
+    return Math.min(m, MUX_MAX);
+  }
+
   // chip architecture → (qubitFlux, pairGate). Single source of truth.
   var CHIP_ARCH = {
     flux_tunable_coupler:       { qubitFlux: true,  pairGate: "cz_tunable" },
@@ -1573,7 +1584,8 @@
       muxInput.addEventListener("input", function () {
         var m = parseInt(muxInput.value, 10);
         if (!isNaN(m)) {
-          state.muxSize = m;
+          state.muxSize = clampMux(m);
+          if (state.muxSize !== m) muxInput.value = state.muxSize;
           renderQubitSummary();   // live feedline-grouping confirmation
         }
       });
@@ -1755,8 +1767,7 @@
     // Readout is multiplexed: qubits in a feedline share one RF in/out pair.
     // `group` collapses them into a shared resonator line (see run_build.py).
     var muxEl = document.getElementById("gen-mux-size");
-    var muxSize = muxEl ? parseInt(muxEl.value, 10) : 6;
-    if (!muxSize || muxSize < 1) muxSize = 6;
+    var muxSize = clampMux(muxEl ? muxEl.value : 6);
     var lines = [];
     state.spec.qubits.forEach(function (q, idx) {
       if (wantResonator) {
@@ -5686,7 +5697,7 @@
     var mux = document.getElementById("gen-mux-size");
     if (mux && mux.value !== "") {
       var m = parseInt(mux.value, 10);
-      if (!isNaN(m)) state.muxSize = m;
+      if (!isNaN(m)) state.muxSize = clampMux(m);
     }
     var out = document.getElementById("gen-output-path");
     if (out) state.outputPath = out.value.trim();
@@ -5761,7 +5772,7 @@
         state.populateUnits[dim] = d.populateUnits[dim];
       });
     }
-    state.muxSize = d.muxSize || 6;
+    state.muxSize = clampMux(d.muxSize || 6);   // old drafts may carry 9–16
     // Restore precedence: draft > durable localStorage mirror. (The DOM input
     // wins over both — repaintFromState only paints state.outputPath, and
     // captureDomFields reads the input back on every nav.)

@@ -185,6 +185,14 @@ function buildTo4(win, opts) {
   const sum = win.document.getElementById('gen-qubit-summary').textContent;
   ok(/3 qubits · 2 feedlines/.test(sum),
     'L4: summary shows count + feedline grouping (got: ' + sum + ')');
+  // The readout multiplex bound is 8 per feedline — typing past it clamps.
+  setInput(win, 'gen-mux-size', '16');
+  ok(G.state.muxSize === 8, 'L4: mux clamps to the 8-per-feedline bound (got ' +
+    G.state.muxSize + ')');
+  ok(win.document.getElementById('gen-mux-size').value == 8,
+    'L4: the input snaps back to 8');
+  ok(win.document.getElementById('gen-mux-size').max === '8',
+    'L4: input max attribute is 8');
 })();
 
 // L5: step-6 reference mirrors default OPEN; an explicit collapse ("0") is
