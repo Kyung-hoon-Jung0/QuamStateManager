@@ -219,3 +219,37 @@ render functions rewriting summary text can't break it).
 Tests: `generate_step4_layout_selfcheck.cjs` (L1–L5) +
 `test_generate_step4_layout.py`; topoboard selfcheck updated (no more
 `details.open` plumbing — the board renders from the count change alone).
+
+---
+
+# r4 — Populate arrow-nav · built-in defaults · breadcrumb root-jump fix
+
+Third feedback round (2026-07-17), built in an isolated worktree while a
+parallel session worked the main checkout.
+
+**Arrow-key grid navigation (Populate).** `popGridKeydown` (one delegated
+keydown per `gen-pop-table`): → leaves a box only from the caret END, ←
+only from the START (mid-text arrows keep native caret movement); ↑/↓
+always move within the column, including the Set-all row; selects are
+never hijacked; disabled cells (absolute-mode FSP) are skipped; the target
+cell selects its text (retype-ready). Pinned by
+`generate_popnav_selfcheck.cjs` N1–N6.
+
+**Built-in "Standard defaults" preset.** `gen_presets.builtin_standard()`
+— always first in `/generate/presets`, undeletable, reserved name. Values
+(base units): x180 40 ns / **0.25** / DRAG α **1.0**, saturation 10 µs /
+0.1, readout 1000 ns / 0.1, depletion **10 µs**, ToF 28 ns, anharmonicity
+−200 MHz, CZ 100 ns / 0.1 V, CR 1.0 / 0.1 (bold = the maintainer's picks;
+the rest run_build seeds / QM conventions). Chip-specific values
+(frequencies/LO/FSP/grid/flux) are never in it. Apply flow unchanged.
+
+**Folder-browser root-jump (also State/Dataset load).** Root cause: the
+`/browse` prefix-completion branch answered a dead path with
+`path = parent` while listing completions — crumbs desynced and a stale
+Recent entry cascaded to the drive root. Now the autocomplete keeps
+completion behind `?complete=1`, and the dialog gets **ancestor-walk**
+semantics: a dead path lands at its nearest existing folder with a
+`missing` marker → warning note + truthful breadcrumbs. POSIX paths gain
+an explicit `/` root crumb; bare `D:` normalizes to `D:\` (CWD-relative
+footgun). Pinned by the browse-route ancestor-walk suite + selfcheck
+G6–G8.

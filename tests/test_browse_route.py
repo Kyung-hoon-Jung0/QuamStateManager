@@ -157,3 +157,11 @@ class TestAncestorWalkAndCompletion:
         assert body["missing"] == str(tmp_path / "data")
         assert str(tmp_path / "data_a") in body["dirs"]   # full listing
         assert str(tmp_path / "other") not in body["dirs"]  # (doesn't exist)
+
+    def test_relative_bogus_path_never_lists_cwd(self, client):
+        # A relative junk path (e.g. "Z:/x" seen by a POSIX server) must NOT
+        # ancestor-walk down to "." and expose the process CWD.
+        r = client.get("/browse", query_string={"path": "Z:/totally/bogus"})
+        body = r.get_json()
+        assert body["dirs"] == []
+        assert body["missing"] == "Z:/totally/bogus"

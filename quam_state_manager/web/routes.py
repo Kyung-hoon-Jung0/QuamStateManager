@@ -6638,6 +6638,11 @@ def browse_directory():
             return jsonify(payload)
 
         missing = raw
+        # Only ABSOLUTE paths walk: a relative bogus path (e.g. "Z:/x" on
+        # POSIX) would otherwise walk down to "." and list the process CWD.
+        if not p.is_absolute():
+            return jsonify({"path": raw, "dirs": [], "has_quam_state": False,
+                            "parent": "", "missing": missing})
         anc = p.parent
         while anc != anc.parent and not anc.is_dir():
             anc = anc.parent
