@@ -6601,29 +6601,54 @@ def browse_directory():
         return jsonify({"path": raw, "dirs": [], "has_quam_state": False, "parent": ""})
 
     if not p.is_dir():
-        parent = p.parent
-        if not parent.is_dir():
-            return jsonify({"path": raw, "dirs": [], "has_quam_state": False, "parent": ""})
-        prefix = p.name.lower()
-        err = None
-        try:
-            dirs = sorted(
-                str(c) for c in parent.iterdir()
-                if c.is_dir() and c.name.lower().startswith(prefix) and not c.name.startswith(".")
-            )
-        except PermissionError:
-            dirs, err = [], "Permission denied"
-        except OSError as exc:
-            dirs, err = [], f"Could not read folder ({exc.__class__.__name__})"
-        payload = {
-            "path": str(parent),
-            "dirs": dirs[:20],
-            "has_quam_state": False,
-            "parent": str(parent.parent),
-        }
-        if err:
-            payload["error"] = err
-        return jsonify(payload)
+        # Two consumers with different needs (the root-jump bug lived here —
+        # the response `path` MUST always be the folder actually listed, or
+        # the dialog's breadcrumbs desync and a mid-crumb click cascades to
+        # the drive root):
+        #
+        # 1. `?complete=1` — the path-input autocomplete: keep the classic
+        #    prefix-completion over the parent's entries.
+        # 2. The folder-browser DIALOG (no flag): walk up to the nearest
+        #    EXISTING ancestor, list it, and say what was missing — a stale
+        #    Recent entry or a deleted folder lands at its deepest surviving
+        #    parent with truthful breadcrumbs, never at the root.
+        if request.args.get("complete"):
+            parent = p.parent
+            if not parent.is_dir():
+                return jsonify({"path": raw, "dirs": [], "has_quam_state": False, "parent": ""})
+            prefix = p.name.lower()
+            err = None
+            try:
+                dirs = sorted(
+                    str(c) for c in parent.iterdir()
+                    if c.is_dir() and c.name.lower().startswith(prefix) and not c.name.startswith(".")
+                )
+            except PermissionError:
+                dirs, err = [], "Permission denied"
+            except OSError as exc:
+                dirs, err = [], f"Could not read folder ({exc.__class__.__name__})"
+            payload = {
+                "path": str(parent),
+                "dirs": dirs[:20],
+                "has_quam_state": False,
+                "parent": str(parent.parent),
+            }
+            if err:
+                payload["error"] = err
+            return jsonify(payload)
+
+        missing = raw
+        anc = p.parent
+        while anc != anc.parent and not anc.is_dir():
+            anc = anc.parent
+        if not anc.is_dir():
+            return jsonify({"path": raw, "dirs": [], "has_quam_state": False,
+                            "parent": "", "missing": missing})
+        p = anc
+        # fall through to the normal listing of the ancestor, carrying the
+        # `missing` marker so the dialog can explain what happened.
+    else:
+        missing = None
 
     err = None
     try:
@@ -6652,6 +6677,7 @@ def browse_directory():
         "has_quam_state": has_quam,
         "has_experiment_children": has_children,
         "parent": parent_str,
+        **({"missing": missing} if missing else {}),
     }
     if err:
         payload["error"] = err
@@ -10782,7 +10808,10 @@ def generate_presets_save():
 
 @bp.route("/generate/presets/<slug>", methods=["DELETE"])
 def generate_presets_delete(slug: str):
-    """Delete a preset (idempotent)."""
+    """Delete a preset (idempotent). The built-in one is undeletable."""
+    if slug == gen_presets.BUILTIN_SLUG:
+        return jsonify({"ok": False,
+                        "error": "The built-in preset can't be deleted."}), 400
     gen_presets.delete_preset(current_app.instance_path, slug)
     return jsonify({"ok": True})
 

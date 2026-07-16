@@ -174,5 +174,36 @@ function buildWizard(win, opts) {
   ok(rep.droppedFields.indexOf('LO_frequency') >= 0, 'P4: LO drop reported');
 })();
 
+// P5: the built-in "Standard defaults" payload (server fixture mirrored
+// here) fills a fresh chip's empty cells — the customer's "first preset".
+(function builtinDefaults() {
+  const win = makeWorld();
+  const G = buildWizard(win);
+  const builtin = { sections: {
+    pulses: { defaults: { x180_length: 40, x180_amplitude: 0.25, drag_alpha: 1.0,
+                          drag_detuning: 0, saturation_length: 10000,
+                          saturation_amplitude: 0.1 }, overrides: {} },
+    qubit: { defaults: { anharmonicity: -200e6 }, overrides: {} },
+    resonator: { defaults: { readout_length: 1000, readout_amplitude: 0.1,
+                             depletion_time: 10000, time_of_flight: 28 },
+                 overrides: {} },
+    pairs: { defaults: { cz_interaction_duration: 100, cz_amplitude: 0.1,
+                         cr_drive_amplitude: 1.0, cr_cancel_amplitude: 0.1 },
+             overrides: {} }
+  } };
+  const rep = G.QT.applyPreset(builtin, false);
+  const pl = G.state.spec.populate;
+  ok(pl.pulses.q1.x180_amplitude === 0.25, 'P5: x180 amp 0.25 filled');
+  ok(pl.pulses.q2.drag_alpha === 1.0, 'P5: DRAG alpha 1.0 filled');
+  ok(pl.resonator.q3.readout_length === 1000, 'P5: readout length filled');
+  ok(pl.resonator.q1.depletion_time === 10000, 'P5: depletion 10us filled');
+  ok(pl.qubit.q1.anharmonicity === -200e6, 'P5: anharmonicity filled');
+  ok(rep.applied > 0, 'P5: report counts applied values');
+  // fill-only-empty respected: an existing value survives a re-apply.
+  pl.pulses.q1.x180_amplitude = 0.5;
+  G.QT.applyPreset(builtin, false);
+  ok(pl.pulses.q1.x180_amplitude === 0.5, 'P5: only-empty keeps the edit');
+})();
+
 if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
 console.log('generate_presets_selfcheck: all checks passed');

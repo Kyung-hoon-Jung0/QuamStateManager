@@ -67,12 +67,15 @@ class TestModuleRoundtrip:
         assert loaded["created_at"]
 
         lst = gen_presets.list_presets(tmp_path)
-        assert len(lst) == 1
-        assert lst[0]["sections"]["pulses"] == {"defaults": 2, "overrides": 1}
+        # index 0 is always the built-in "Standard defaults" preset
+        assert len(lst) == 2
+        assert lst[0]["slug"] == gen_presets.BUILTIN_SLUG
+        assert lst[1]["sections"]["pulses"] == {"defaults": 2, "overrides": 1}
 
         assert gen_presets.delete_preset(tmp_path, "lab-defaults") is True
         assert gen_presets.delete_preset(tmp_path, "lab-defaults") is False
-        assert gen_presets.list_presets(tmp_path) == []
+        assert [p["slug"] for p in gen_presets.list_presets(tmp_path)] == [
+            gen_presets.BUILTIN_SLUG]
 
     def test_overwrite_flow_preserves_created_at(self, tmp_path):
         gen_presets.save_preset(tmp_path, "P", _sections())
@@ -111,7 +114,7 @@ class TestModuleRoundtrip:
         bad = tmp_path / "gen_presets" / "broken.json"
         bad.write_text("{not json", encoding="utf-8")
         lst = gen_presets.list_presets(tmp_path)
-        assert {p["slug"] for p in lst} == {"good", "broken"}
+        assert {p["slug"] for p in lst} == {gen_presets.BUILTIN_SLUG, "good", "broken"}
         assert [p for p in lst if p["slug"] == "broken"][0]["corrupt"] is True
         assert gen_presets.load_preset(tmp_path, "broken") is None
         assert gen_presets.delete_preset(tmp_path, "broken") is True
@@ -132,14 +135,17 @@ class TestModuleRoundtrip:
         for t in threads:
             t.join()
         assert not errs
-        assert len(gen_presets.list_presets(tmp_path)) == 8
+        assert len(gen_presets.list_presets(tmp_path)) == 9   # 8 saved + builtin
 
 
 class TestRoutes:
     def test_list_empty(self, client):
         r = client.get("/generate/presets")
         assert r.status_code == 200
-        assert r.get_json() == {"ok": True, "presets": []}
+        body = r.get_json()
+        assert body["ok"] is True
+        # a fresh instance still offers the built-in Standard defaults
+        assert [p["slug"] for p in body["presets"]] == [gen_presets.BUILTIN_SLUG]
 
     def test_save_get_delete_roundtrip(self, client):
         r = client.post("/generate/presets", json={
@@ -155,7 +161,7 @@ class TestRoutes:
         assert got["sections"]["pulses"]["overrides"]["q3"]["drag_alpha"] == 0.62
 
         r = client.get("/generate/presets")
-        assert len(r.get_json()["presets"]) == 1
+        assert len(r.get_json()["presets"]) == 2   # builtin + saved
 
         r = client.delete("/generate/presets/lab-defaults")
         assert r.get_json()["ok"] is True
@@ -192,3 +198,68 @@ class TestRoutes:
             ).read_text(encoding="utf-8")
         )
         assert f["name"] == "P"
+
+
+class TestBuiltinPreset:
+    """The built-in 'Standard defaults' preset — conventional starting values
+    (customer request: a fresh chip shouldn't start blank)."""
+
+    def test_listed_first_and_flagged(self, tmp_path):
+        gen_presets.save_preset(tmp_path, "Mine", _sections())
+        lst = gen_presets.list_presets(tmp_path)
+        assert lst[0]["slug"] == gen_presets.BUILTIN_SLUG
+        assert lst[0]["builtin"] is True
+        assert "built-in" in lst[0]["name"]
+
+    def test_payload_values(self, tmp_path):
+        p = gen_presets.load_preset(tmp_path, gen_presets.BUILTIN_SLUG)
+        pulses = p["sections"]["pulses"]["defaults"]
+        assert pulses["x180_length"] == 40          # ns — conventional pi
+        assert pulses["x180_amplitude"] == 0.25     # user-specified
+        assert pulses["drag_alpha"] == 1.0          # user-specified
+        assert pulses["saturation_length"] == 10000
+        res = p["sections"]["resonator"]["defaults"]
+        assert res["readout_length"] == 1000
+        assert res["depletion_time"] == 10000       # user-specified (10 µs)
+        assert res["time_of_flight"] == 28
+        assert p["sections"]["qubit"]["defaults"]["anharmonicity"] == -200e6
+        pairs = p["sections"]["pairs"]["defaults"]
+        assert pairs["cz_amplitude"] == 0.1 and pairs["cr_drive_amplitude"] == 1.0
+        # Never chip-specific values.
+        for sec in p["sections"].values():
+            assert "RF_freq" not in sec["defaults"]
+            assert "LO_frequency" not in sec["defaults"]
+
+    def test_payload_passes_section_whitelists(self, tmp_path):
+        # Every builtin field must be a legal preset field (same rules as
+        # user saves) — validate the sections through the saver's validator.
+        p = gen_presets.builtin_standard()
+        assert gen_presets.validate_preset("probe", p["sections"]) == []
+
+    def test_route_get(self, client):
+        r = client.get(f"/generate/presets/{gen_presets.BUILTIN_SLUG}")
+        assert r.status_code == 200
+        body = r.get_json()
+        assert body["ok"] is True and body["builtin"] is True
+        assert body["sections"]["pulses"]["defaults"]["x180_amplitude"] == 0.25
+
+    def test_delete_refused(self, client, tmp_path):
+        r = client.delete(f"/generate/presets/{gen_presets.BUILTIN_SLUG}")
+        assert r.status_code == 400
+        assert r.get_json()["ok"] is False
+        # …and it is still listed afterwards.
+        r = client.get("/generate/presets")
+        assert r.get_json()["presets"][0]["slug"] == gen_presets.BUILTIN_SLUG
+
+    def test_module_delete_noop(self, tmp_path):
+        assert gen_presets.delete_preset(tmp_path, gen_presets.BUILTIN_SLUG) is False
+
+    def test_reserved_name_rejected_on_save(self, tmp_path):
+        with pytest.raises(ValueError, match="reserved"):
+            gen_presets.save_preset(tmp_path, "Builtin Standard", _sections())
+
+    def test_reserved_name_rejected_via_route(self, client):
+        r = client.post("/generate/presets", json={
+            "name": "builtin standard", "sections": _sections()})
+        assert r.status_code == 400
+        assert "reserved" in r.get_json()["error"]
