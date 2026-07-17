@@ -97,6 +97,14 @@
             line: { width: 2 }
         };
 
+        // Statistics layer (moving average + ±σ band) beneath the data —
+        // "read like a statistics figure" (customer request). Skips short
+        // series (n < 5 finite points) automatically.
+        var color = UI_CONFIG.plotly.colorway[idx % UI_CONFIG.plotly.colorway.length];
+        var statTraces = window.trendStatTraces
+            ? window.trendStatTraces(xLabels, s.values, { color: color })
+            : [];
+
         var mini = UI_CONFIG.plotly.trendsMini;
         var layout = {
             margin: mini.margin,
@@ -108,7 +116,8 @@
             hovermode: 'x unified'
         };
 
-        _plotlyRender(el, [trace], layout, { responsive: true, displayModeBar: false });
+        _plotlyRender(el, statTraces.concat([trace]), layout,
+                      { responsive: true, displayModeBar: false });
     });
 })();
 </script>

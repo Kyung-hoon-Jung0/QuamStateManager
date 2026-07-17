@@ -498,7 +498,7 @@ html[data-font-size="large"] { --font-size-base: 17px; }
        they double as SOLID badge fills with white text (.diag-error/.diag-
        warning), so lightening them would make those white-on-pale fills vanish
        on dark. Outlined/text uses are handled per-component instead. */
-    --color-text-muted:      #9aa0a6;
+    --color-text-muted:      #b3bac2;  /* brightened from #9aa0a6 — muted text was too dim (readability feedback) */
     --color-accent:          #5b8def;
 
     /* -- Param History trigger overrides -- */
@@ -1301,6 +1301,16 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
 .browser-folder:hover { background: var(--pico-primary-focus); }
 .browser-folder.browser-up { font-style: italic; color: var(--pico-muted-color); }
 .browser-folder.is-quam { font-weight: 600; color: var(--pico-primary); }
+/* Dataset-mode highlight: run folders carrying node.json / data.json (the
+   Dataset Load picker hunts these, not quam_state folders). */
+.browser-folder.is-dataset { font-weight: 600; color: var(--color-success-text, #2e7d32); }
+/* Sidebar multi-select: tint checked run rows so the selection reads at a
+   glance; the Clear chip appears only while something is selected. */
+.tree-entry-label:has(input[name="paths"]:checked) {
+    background: color-mix(in srgb, var(--pico-primary) 12%, transparent);
+    border-radius: 4px;
+}
+.btn-compare-clear { color: var(--color-warning-text); }
 .browser-quam-badge {
     padding: 0.25rem 0.8rem;
     font-size: 0.78em; font-weight: 600;
@@ -6247,14 +6257,18 @@ table.gen-wiring tbody tr.pinned {
    naming and pair list are always visible (customer feedback). Font sizes
    run ~1px larger than the app's 13px ceiling on purpose: users reported
    the step's content wasn't inviting to read. ---- */
-.gen-band { border-top: 1px solid var(--pico-muted-border-color); padding: 0.8rem 0 0.9rem; margin-top: 0.3rem; }
+.gen-band {
+    border-top: 2px solid color-mix(in srgb, var(--pico-muted-border-color) 80%, var(--pico-color) 8%);
+    padding: 0.85rem 0 0.95rem; margin-top: 0.35rem;
+}
 .gen-band-head {
     display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap;
     margin: 0 0 0.45rem; font-size: 13.5px;
 }
 .gen-band-title {
-    font-weight: 700; font-size: 12px; letter-spacing: 0.09em;
-    text-transform: uppercase; color: var(--pico-muted-color);
+    font-weight: 800; font-size: 12.5px; letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--pico-color) 82%, transparent);
 }
 .gen-band-head .muted { font-weight: 400; }
 .gen-band-sublabel { font-weight: 600; font-size: 13.5px; }

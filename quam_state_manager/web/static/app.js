@@ -1001,6 +1001,90 @@ window.setFontSize = function(size) {
     }
 };
 
+/* ------------------------------------------------------------------ */
+/* Sidebar tree multi-select (compare checkboxes)                      */
+/* ------------------------------------------------------------------ */
+// Customer ask: select MANY runs at once to compare. File-manager
+// convention beats drag-rubber-band in a scrolling tree: SHIFT-click a
+// checkbox to select the whole range since the last click; the Compare
+// button echoes the live count and a Clear chip appears. Delegated on
+// document so htmx tree re-renders never lose the behavior.
+(function() {
+    var lastIdx = -1;
+
+    function boxes() {
+        return Array.prototype.slice.call(
+            document.querySelectorAll('#sidebar-tree input[name="paths"]'));
+    }
+
+    function syncCompareCount() {
+        var n = document.querySelectorAll(
+            '#sidebar-tree input[name="paths"]:checked').length;
+        var cmp = document.querySelector('#compare-form .btn-compare');
+        if (cmp) cmp.textContent = n > 1
+            ? 'Compare Selected (' + n + ')' : 'Compare Selected';
+        var trend = document.querySelector('#compare-form .btn-trend');
+        if (trend) trend.textContent = n > 1
+            ? 'Trend Tracker (' + n + ')' : 'Trend Tracker';
+        var clr = document.getElementById('compare-clear');
+        if (clr) clr.hidden = n === 0;
+    }
+    window.syncCompareCount = syncCompareCount;
+
+    window.compareClearSelection = function() {
+        boxes().forEach(function(b) { b.checked = false; });
+        lastIdx = -1;
+        syncCompareCount();
+    };
+
+    document.addEventListener('click', function(ev) {
+        var t = ev.target;
+        if (!t || t.name !== 'paths' || !t.closest || !t.closest('#sidebar-tree')) return;
+        var all = boxes();
+        var idx = all.indexOf(t);
+        if (ev.shiftKey && lastIdx >= 0 && idx >= 0 && lastIdx !== idx) {
+            var lo = Math.min(lastIdx, idx), hi = Math.max(lastIdx, idx);
+            for (var i = lo; i <= hi; i++) all[i].checked = t.checked;
+        }
+        lastIdx = idx;
+        syncCompareCount();
+    });
+
+    // Tree re-renders (workspace add/remove/filter) rebuild the checkboxes —
+    // re-sync the count (selections inside the swapped region are gone).
+    // Listener sits on document (always exists at eval time; the app-wide
+    // rule forbids top-level document.body listeners).
+    document.addEventListener('htmx:afterSwap', function(ev) {
+        var el = ev.target;
+        if (el && el.id === 'sidebar-tree') { lastIdx = -1; syncCompareCount(); }
+    });
+})();
+
+// Global UI scale (Settings → "UI scale"): CSS zoom on <html>, 80%–150% in
+// 10% steps — the pragmatic global-readability control given the app's many
+// hardcoded px font sizes (rem-only scaling misses them; zoom scales
+// everything). Applied live AND pre-paint on load (head inline script);
+// persisted in quam_ui_scale. step: -1 smaller, +1 larger, 0 reset.
+window.setUiScale = function(step) {
+    var cur = 1;
+    try { cur = parseFloat(localStorage.getItem("quam_ui_scale")) || 1; } catch(e) {}
+    var next = step === 0 ? 1 : Math.round((cur + step * 0.1) * 10) / 10;
+    next = Math.min(1.5, Math.max(0.8, next));
+    document.documentElement.style.zoom = (Math.abs(next - 1) > 0.001) ? next : "";
+    try { localStorage.setItem("quam_ui_scale", String(next)); } catch(e) {}
+    window.syncUiScaleLabel();
+    return next;
+};
+
+window.syncUiScaleLabel = function() {
+    var el = document.getElementById("ui-scale-value");
+    if (!el) return;
+    var cur = 1;
+    try { cur = parseFloat(localStorage.getItem("quam_ui_scale")) || 1; } catch(e) {}
+    el.textContent = Math.round(cur * 100) + "%";
+    el.classList.toggle("settings-opt-active", Math.abs(cur - 1) > 0.001);
+};
+
 window.toggleColorblindMode = function() {
     var active = document.body.classList.toggle('colorblind-mode');
     try { localStorage.setItem('quam_colorblind', active ? '1' : '0'); } catch(e) {}
@@ -2764,8 +2848,14 @@ window.initPathAutocomplete = function(inputEl) {
         }
     }
 
-    window.openFolderBrowser = function(targetInputId) {
+    var _browseKind = "";   // "" = quam-state highlighting; "dataset" = run folders
+
+    window.openFolderBrowser = function(targetInputId, kind) {
         _targetInputId = targetInputId;
+        // What the caller is hunting decides what the dialog highlights:
+        // dataset pickers mark run folders (node.json/data.json), everything
+        // else keeps the quam_state highlighting.
+        _browseKind = kind === "dataset" ? "dataset" : "";
         var dialog = document.getElementById("folder-browser");
         if (!dialog) return;
         var input = document.getElementById(targetInputId);
@@ -2822,7 +2912,8 @@ window.initPathAutocomplete = function(inputEl) {
         // Windows — normalize to the drive ROOT before it reaches the server.
         if (/^[A-Za-z]:$/.test(path)) path = path + "\\";
 
-        _browserFetch("/browse?path=" + encodeURIComponent(path))
+        _browserFetch("/browse?path=" + encodeURIComponent(path) +
+                      (_browseKind ? "&kind=" + _browseKind : ""))
             .then(function(data) {
                 if (seq !== _navSeq) return;     // a newer navigation won
                 if (data.error) {
@@ -2946,6 +3037,12 @@ window.initPathAutocomplete = function(inputEl) {
             return;
         }
 
+        // In dataset mode the server marks which children ARE dataset runs
+        // (node.json / data.json) — highlight those; in state mode keep the
+        // classic quam_state highlighting. Set-lookup for O(1) per row.
+        var dsMarks = {};
+        (data.dataset_dirs || []).forEach(function(d) { dsMarks[d] = true; });
+
         for (var i = 0; i < dirs.length; i++) {
             var row = document.createElement("div");
             row.className = "browser-folder";
@@ -2955,12 +3052,16 @@ window.initPathAutocomplete = function(inputEl) {
             var name = dirPath.split(/[\\/]/).pop() || dirPath;
             row.textContent = name;
 
-            // Highlight a CHILD only when it is itself a quam_state folder.
-            // data.has_quam_state describes the CURRENT (parent) folder, so
-            // OR-ing it here painted every child as a quam folder whenever the
-            // parent held state.json. The parent's own state is shown by the
-            // badge below, not by tinting its children.
-            if (name === "quam_state") {
+            if (_browseKind === "dataset") {
+                if (dsMarks[dirPath]) {
+                    row.classList.add("is-dataset");
+                    row.title = "Contains dataset files (node.json / data.json)";
+                }
+            } else if (name === "quam_state") {
+                // Highlight a CHILD only when it is itself a quam_state folder.
+                // data.has_quam_state describes the CURRENT (parent) folder, so
+                // OR-ing it here painted every child as a quam folder whenever
+                // the parent held state.json.
                 row.classList.add("is-quam");
             }
 
@@ -2970,17 +3071,26 @@ window.initPathAutocomplete = function(inputEl) {
             container.appendChild(row);
         }
 
-        if (data.has_quam_state) {
-            var badge = document.createElement("div");
-            badge.className = "browser-quam-badge";
-            badge.textContent = "This folder contains state.json + wiring.json";
-            container.prepend(badge);
-        }
-        if (data.has_experiment_children) {
-            var badge2 = document.createElement("div");
-            badge2.className = "browser-quam-badge";
-            badge2.textContent = "Contains experiment subfolders";
-            container.prepend(badge2);
+        if (_browseKind === "dataset") {
+            if (data.has_dataset) {
+                var dsBadge = document.createElement("div");
+                dsBadge.className = "browser-quam-badge";
+                dsBadge.textContent = "This folder contains dataset files (node.json / data.json)";
+                container.prepend(dsBadge);
+            }
+        } else {
+            if (data.has_quam_state) {
+                var badge = document.createElement("div");
+                badge.className = "browser-quam-badge";
+                badge.textContent = "This folder contains state.json + wiring.json";
+                container.prepend(badge);
+            }
+            if (data.has_experiment_children) {
+                var badge2 = document.createElement("div");
+                badge2.className = "browser-quam-badge";
+                badge2.textContent = "Contains experiment subfolders";
+                container.prepend(badge2);
+            }
         }
     }
 
@@ -8573,6 +8683,72 @@ function paramHistoryCloseDrawer() {
     drawer.innerHTML = '';
 }
 
+// ---- trend statistics (moving average + ±σ band) ---------------------
+// Customer request: history/trend charts should read like a statistics
+// figure — a rolling-mean line with a shaded standard-deviation band.
+// Centered window, edge-clamped; window auto-scales with series length.
+window.rollingStats = function(values, win) {
+    var n = values.length;
+    if (!win) win = Math.min(15, Math.max(3, Math.round(n / 6)));
+    var mean = new Array(n), std = new Array(n);
+    for (var i = 0; i < n; i++) {
+        var half = Math.floor(win / 2);
+        var lo = Math.max(0, i - half);
+        var hi = Math.min(n - 1, i + half);
+        var s = 0, c = 0;
+        for (var j = lo; j <= hi; j++) { s += values[j]; c++; }
+        var m = s / c;
+        var v = 0;
+        for (var k = lo; k <= hi; k++) { v += (values[k] - m) * (values[k] - m); }
+        mean[i] = m;
+        std[i] = c > 1 ? Math.sqrt(v / (c - 1)) : 0;
+    }
+    return { mean: mean, std: std, win: win };
+};
+
+function _hexToRgba(hex, alpha) {
+    var m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec((hex || '').trim());
+    if (!m) return 'rgba(128,128,128,' + alpha + ')';
+    var h = m[1];
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    return 'rgba(' + parseInt(h.slice(0, 2), 16) + ',' +
+        parseInt(h.slice(2, 4), 16) + ',' + parseInt(h.slice(4, 6), 16) + ',' +
+        alpha + ')';
+}
+
+// The three Plotly traces (upper band edge, lower band edge w/ fill, MA
+// line) for a finite series. Returns [] when the series is too short to
+// say anything statistical (n < 5). One legend entry toggles all three.
+window.trendStatTraces = function(x, values, opts) {
+    opts = opts || {};
+    var xs = [], ys = [];
+    for (var i = 0; i < values.length; i++) {
+        if (typeof values[i] === 'number' && isFinite(values[i])) {
+            xs.push(x[i]); ys.push(values[i]);
+        }
+    }
+    if (ys.length < 5) return [];
+    var st = window.rollingStats(ys, opts.win);
+    var color = opts.color || '#4f9cf9';
+    var upper = st.mean.map(function(m, i) { return m + st.std[i]; });
+    var lower = st.mean.map(function(m, i) { return m - st.std[i]; });
+    var group = opts.legendgroup || 'trendstats';
+    return [
+        { x: xs, y: upper, type: 'scatter', mode: 'lines',
+          line: { width: 0 }, hoverinfo: 'skip', showlegend: false,
+          legendgroup: group },
+        { x: xs, y: lower, type: 'scatter', mode: 'lines',
+          line: { width: 0 }, fill: 'tonexty',
+          fillcolor: _hexToRgba(color, 0.14),
+          hoverinfo: 'skip', showlegend: false, legendgroup: group },
+        { x: xs, y: st.mean, type: 'scatter', mode: 'lines',
+          line: { color: color, width: 2 },
+          name: 'moving avg ±σ (w=' + st.win + ')',
+          legendgroup: group,
+          hovertemplate: 'avg %{y:.6g}<extra></extra>' },
+    ];
+};
+
 function paramHistoryRenderDrawerChart(data, currentValue) {
     // Plotly is lazy-loaded; the actual newPlot below gates on requirePlotly().
     var pts = (data.values || []).filter(function(p) {
@@ -8621,6 +8797,18 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
             : '';
     };
 
+    // Statistics layer first (band renders BENEATH the trigger markers, and
+    // being the first trace pins the category-axis order to the full
+    // time-sorted series). Sorted copy — never mutate the fetched data.
+    var sorted = pts.slice().sort(function(a, b) {
+        return a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0;
+    });
+    var statTraces = window.trendStatTraces(
+        sorted.map(function(p) { return fmtTs(p.timestamp); }),
+        sorted.map(function(p) { return p.value; }),
+        { color: (getComputedStyle(document.documentElement)
+                    .getPropertyValue('--plot-colorway-1') || '#4f9cf9').trim() });
+
     var traces = triggers.map(function(t) {
         var subset = pts.filter(function(p) { return p.trigger === t; });
         // customdata = [run_id, experiment, contextLine, clickHint] for hovertemplate
@@ -8650,6 +8838,7 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
             _phRawPoints: subset,
         };
     }).filter(function(tr) { return tr.x.length > 0; });
+    traces = statTraces.concat(traces);
 
     var layout = {
         margin: {l: 50, r: 15, t: 10, b: 50},

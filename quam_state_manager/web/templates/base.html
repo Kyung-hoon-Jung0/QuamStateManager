@@ -18,6 +18,20 @@
         try { qp = new URLSearchParams(location.search).get('theme'); } catch(e) {}
         var theme = (qp === 'light' || qp === 'dark') ? qp : (saved || 'dark');
         document.documentElement.setAttribute('data-theme', theme);
+        // Readability prefs, applied BEFORE first paint (no FOUC):
+        // - quam_font_size (S/M/L rem baseline — pre-existing setting; it used
+        //   to apply only after DOMContentLoaded and flashed the default size)
+        // - quam_ui_scale (global zoom 0.8–1.5 — scales EVERYTHING including
+        //   the app's many hardcoded px font sizes; the customer's "adjust
+        //   overall fontsize throughout the program")
+        try {
+          var fs = localStorage.getItem('quam_font_size') || '';
+          if (fs) document.documentElement.setAttribute('data-font-size', fs);
+          var sc = parseFloat(localStorage.getItem('quam_ui_scale'));
+          if (isFinite(sc) && sc >= 0.8 && sc <= 1.5 && Math.abs(sc - 1) > 0.001) {
+            document.documentElement.style.zoom = sc;
+          }
+        } catch(e) {}
       })();
     </script>
     {# Render-time chip fingerprint token (topology-only). Set on every FULL page
@@ -212,6 +226,17 @@
                                 <button onclick="setFontSize('large')"  class="settings-opt" data-size="large">L <span class="muted">16px</span></button>
                             </div>
                         </div>
+                        {# Global UI scale — zooms the WHOLE app (all text incl.
+                           px-sized labels, buttons, plots). Persisted; applied
+                           pre-paint by the inline head script. #}
+                        <div class="settings-group">
+                            <small class="settings-label">UI scale <span class="muted">(whole app)</span></small>
+                            <div class="settings-options">
+                                <button onclick="setUiScale(-1)" class="settings-opt" title="Smaller (min 80%)">A&minus;</button>
+                                <button onclick="setUiScale(0)"  class="settings-opt" id="ui-scale-value" title="Reset to 100%">100%</button>
+                                <button onclick="setUiScale(1)"  class="settings-opt" title="Larger (max 150%)">A+</button>
+                            </div>
+                        </div>
                         <div class="settings-group">
                             <small class="settings-label">Theme</small>
                             <div class="settings-options">
@@ -399,7 +424,7 @@
                         <input type="text" name="folder" id="workspace-path-input"
                                placeholder="Add folder path..." size="18" autocomplete="off">
                         <button type="button" class="outline btn-sm btn-browse"
-                                onclick="openFolderBrowser('workspace-path-input')" title="Browse folders">&#128193;</button>
+                                onclick="openFolderBrowser('workspace-path-input', 'dataset')" title="Browse folders">&#128193;</button>
                     </div>
                     <button type="submit" class="btn-sm">Dataset Load</button>
                 </form>
@@ -408,6 +433,12 @@
                             hx-post="/compare" hx-target="#table-pane">Compare Selected</button>
                     <button type="submit" class="outline btn-sm btn-trend"
                             hx-post="/trend" hx-target="#table-pane">Trend Tracker</button>
+                    {# Multi-select helpers: live count lands on the Compare
+                       button; shift-click selects a range (app.js). #}
+                    <button type="button" class="outline btn-sm btn-compare-clear"
+                            id="compare-clear" hidden
+                            onclick="compareClearSelection()"
+                            title="Untick every selected run">Clear</button>
                 </form>
                 <div class="sidebar-filter">
                     <div class="ds-search-wrap">
@@ -1064,13 +1095,14 @@
                 }
                 var fs = localStorage.getItem("quam_font_size") || "";
                 if (fs) document.documentElement.setAttribute("data-font-size", fs);
-                var opts = document.querySelectorAll(".settings-opt");
+                var opts = document.querySelectorAll(".settings-opt[data-size]");
                 for (var i = 0; i < opts.length; i++) {
                     opts[i].classList.toggle(
                         "settings-opt-active",
                         (opts[i].getAttribute("data-size") || "") === fs
                     );
                 }
+                if (window.syncUiScaleLabel) window.syncUiScaleLabel();
             } catch(e) {}
         }
 
