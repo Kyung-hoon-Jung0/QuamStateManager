@@ -1,0 +1,25 @@
+{# Sidebar Projects submenu — lazy-loaded (hx-trigger="load") so base-page
+   renders never pay the ~16 TOML reads. READ-ONLY (docs/55).
+   Row click = "Open in SM" (safe; zero external writes). #}
+{% if not listing.config_exists %}
+<li><span class="muted qualibrate-subnav-note"
+          title="{{ listing.config_dir }}">no ~/.qualibrate config</span></li>
+{% else %}
+{% for p in listing.projects %}
+<li>
+    <form method="post" action="/qualibrate/open" hx-post="/qualibrate/open"
+          hx-target="#table-pane" class="qualibrate-open-form">
+        <input type="hidden" name="project" value="{{ p.name }}">
+        <button type="submit" class="qualibrate-project-row{% if p.active %} qualibrate-project-active{% endif %}"
+                title="Open in SM: load {{ p.state_path.raw or '(no state path)' }}{% if not p.state_path.exists %} — MISSING{% endif %}">
+            <span class="qualibrate-project-dot">{{ '●' if p.active else '○' }}</span>
+            <span class="qualibrate-project-name">{{ p.name }}</span>
+            {% if not p.state_path.exists %}<span class="qualibrate-project-warn" title="state_path missing or empty">&#9888;</span>{% endif %}
+            {% if p.loaded_in_sm %}<span class="qualibrate-project-loaded" title="currently loaded in the State Manager">[SM]</span>{% endif %}
+        </button>
+    </form>
+</li>
+{% else %}
+<li><span class="muted qualibrate-subnav-note">no projects yet</span></li>
+{% endfor %}
+{% endif %}

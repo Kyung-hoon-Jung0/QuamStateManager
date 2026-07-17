@@ -1,0 +1,120 @@
+{# QUAlibrate Project Config Manager (docs/55) — 100% READ-ONLY.
+   No free-text TOML editor by design: qualibrate round-trips these files
+   through tomllib/tomli_w (comments destroyed on its next write) and a typo
+   hard-errors every qualibrate process; guided overlay fixes arrive in a
+   later tier. #}
+<div class="table-header-row">
+    <h2>QUAlibrate Projects <small class="muted">({{ listing.projects | length }})</small></h2>
+</div>
+
+{# ---- top strip: active project + provenance + versions ---- #}
+<div class="qualibrate-topstrip">
+    <p>
+        <strong>Active project:</strong>
+        {% if listing.active %}<code>{{ listing.active }}</code>{% else %}<span class="muted">(none)</span>{% endif %}
+        &nbsp;·&nbsp; <strong>Config root:</strong> <code>{{ listing.config_dir }}</code>
+        <small class="muted">(resolved via {{ listing.source }})</small>
+        &nbsp;·&nbsp; <strong>Versions:</strong>
+        qualibrate v{{ listing.versions.qualibrate }} / quam v{{ listing.versions.quam }}
+        {% if listing.versions.supported %}
+        <span class="cell-good">&#10003;</span>
+        {% else %}
+        <span class="cell-bad" title="differs from the supported v{{ supported_versions.qualibrate }}/v{{ supported_versions.quam }} — SM stays read-only">&#9888; unsupported</span>
+        {% endif %}
+    </p>
+    <p class="muted">Everything on this page is read-only — QUAlibrate owns these files.
+       Clicking <em>Open in SM</em> loads a project's chip + datasets into the State
+       Manager without touching any qualibrate config.</p>
+</div>
+
+{# ---- doctor panel ---- #}
+{% if listing.doctor %}
+<details open class="detail-section qualibrate-doctor">
+    <summary class="section-header">Doctor <small class="muted">({{ listing.doctor | length }} finding{{ 's' if listing.doctor | length != 1 }})</small></summary>
+    <ul class="qualibrate-doctor-list">
+    {% for f in listing.doctor %}
+        <li class="qualibrate-doctor-{{ f.severity }}">
+            <span class="qualibrate-doctor-sev">{% if f.severity == 'error' %}&#10007;{% elif f.severity == 'warning' %}&#9888;{% else %}&#8505;{% endif %}</span>
+            {% if f.project %}<code>{{ f.project }}</code> — {% endif %}{{ f.message }}
+            {% if f.suggestion %}<br><small class="muted">&#8627; {{ f.suggestion }}</small>{% endif %}
+        </li>
+    {% endfor %}
+    </ul>
+</details>
+{% endif %}
+
+{# ---- projects table ---- #}
+<table id="qualibrate-table" class="data-table" role="grid">
+    <thead>
+        <tr>
+            <th>Project</th>
+            <th>QUAM state_path</th>
+            <th>Dataset storage</th>
+            <th>Calibration library</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    {% macro pathcell(entry) %}
+        {# raw can be None even for source='default' (e.g. calibration_library
+           has no built-in default) — never feed None to truncate #}
+        {% if entry.raw in (none, '') %}
+        <span class="muted">{% if entry.source == 'empty' %}(explicitly empty){% else %}-{% endif %}</span>
+        {% else %}
+        <span class="qualibrate-path{% if not entry.exists %} qualibrate-path-missing{% endif %}"
+              title="{{ entry.raw }}">
+            {% if entry.exists %}<span class="cell-good">&#10003;</span>{% else %}<span class="cell-bad">&#10007;</span>{% endif %}
+            <code>{{ entry.raw | truncate(58, True) }}</code>
+        </span>
+        <small class="qualibrate-src qualibrate-src-{{ entry.source }}"
+               title="{% if entry.source == 'own' %}set in this project's overlay{% elif entry.source == 'inherited' %}inherited from the root config{% elif entry.source == 'empty' %}explicit empty override{% else %}qualibrate built-in default{% endif %}">{{ entry.source }}</small>
+        {% endif %}
+    {% endmacro %}
+    {% for p in listing.projects %}
+        <tr class="clickable-row" onclick="qualibrateToggleDetail('{{ p.name }}')">
+            <td>
+                <strong>{{ '● ' if p.active }}{{ p.name }}</strong>
+                {% if p.loaded_in_sm %}<small class="qualibrate-project-loaded">[SM]</small>{% endif %}
+                {% if p.overlay_empty %}<small class="muted" title="0-byte overlay — inherits everything from the root">empty overlay</small>{% endif %}
+            </td>
+            <td>{{ pathcell(p.state_path) }}</td>
+            <td>{{ pathcell(p.storage) }}</td>
+            <td>{{ pathcell(p.calibration_library) }}</td>
+            <td>
+                <form method="post" action="/qualibrate/open" hx-post="/qualibrate/open"
+                      hx-target="#table-pane" onclick="event.stopPropagation()">
+                    <input type="hidden" name="project" value="{{ p.name }}">
+                    <button type="submit" class="btn-sm outline"
+                            {% if not p.state_path.exists %}disabled title="state_path missing — see Doctor"{% else %}title="Load this project's chip + datasets in the State Manager (writes nothing to qualibrate)"{% endif %}>
+                        Open in SM</button>
+                </form>
+            </td>
+        </tr>
+        <tr id="qualibrate-detail-{{ p.name }}" class="qualibrate-detail-row" hidden>
+            <td colspan="5">
+                <div class="qualibrate-detail-grid">
+                    <div>
+                        <h6>Project overlay <small class="muted">projects/{{ p.name }}/config.toml</small></h6>
+                        <pre class="qualibrate-toml">{{ raw_tomls.get(p.name, '(unreadable)') }}</pre>
+                    </div>
+                    <div>
+                        <h6>Root config <small class="muted">config.toml (base — overlay merges over this)</small></h6>
+                        <pre class="qualibrate-toml">{{ raw_tomls.get('__root__', '(unreadable)') }}</pre>
+                    </div>
+                </div>
+            </td>
+        </tr>
+    {% else %}
+        <tr><td colspan="5" class="muted" style="text-align:center;padding:2rem">
+            No projects found under {{ listing.config_dir }}/projects
+        </td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+
+<script>
+function qualibrateToggleDetail(name) {
+    var row = document.getElementById('qualibrate-detail-' + name);
+    if (row) row.hidden = !row.hidden;
+}
+</script>
