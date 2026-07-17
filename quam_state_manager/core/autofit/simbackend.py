@@ -173,3 +173,30 @@ def _eq(a: Any, b: Any) -> bool:
             and not isinstance(a, bool) and not isinstance(b, bool):
         return math.isclose(float(a), float(b), rel_tol=1e-9, abs_tol=0.0)
     return a == b
+
+
+class LiveSimBackend(SimBackend):
+    """SimBackend that behaves like a REAL node process against live files:
+    it RELOADS the chip state from the live folder before each run (nodes do
+    ``Quam.load()`` at start — so an engine revert genuinely changes what the
+    next attempt measures/sweeps around) and WRITES the post-run state back
+    (the node's ``machine.save()``). This is the E2E backend: the engine +
+    RealWriter + working-copy machinery operate on the same live folder,
+    exercising the full docs/56 §2f write path hardware-free."""
+
+    def __init__(self, chip: SimChip, dataset_root: Path, live_folder: Path,
+                 **kw):
+        super().__init__(chip, dataset_root, **kw)
+        self.live_folder = Path(live_folder)
+
+    def run_step(self, step, targets, params, attempt, abort):
+        from quam_state_manager.core import safe_io
+
+        state, wiring = safe_io.read_state_wiring(self.live_folder)
+        self.chip.state = state
+        self.chip.wiring = wiring
+        res = super().run_step(step, targets, params, attempt, abort)
+        if res.status == "done":
+            safe_io.write_state_wiring(self.live_folder, self.chip.state,
+                                       self.chip.wiring)
+        return res
