@@ -47,7 +47,7 @@ build_stderr.txt
 
 # Node — only for the headless JS tests (jsdom). Install once with
 # `npm install jsdom`; tests/test_generate_nav.py skips when jsdom is absent.
-node_modules/
+node_modules
 package-lock.json
 
 # Flask runtime data (per-deployment user state, history snapshots, SQLite indexes)
