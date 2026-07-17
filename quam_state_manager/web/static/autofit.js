@@ -182,7 +182,9 @@
       if (!st) return;
       renderBoard(st, active);
       renderReview(st);
-      if (!active && st.status && st.status !== "running") { renderReport(); }
+      if (!active && st.status && st.status !== "running") {
+        renderReport(st.plan_run_id || "");
+      }
     });
   }
 
@@ -245,9 +247,10 @@
     }).join("");
   }
 
-  function renderReport() {
+  function renderReport(runId) {
     var div = $("autofit-report");
-    if (!div || div.dataset.rendered === "1") return;
+    // keyed by plan_run_id so run #2's completion re-renders (never sticky)
+    if (!div || div.dataset.rendered === runId) return;
     fetchJSON("/autofit/ledger").then(function (r) {
       if (r.status !== 200 || !r.body.ok) return;
       var writes = [], reverts = [], llm = [];
@@ -266,7 +269,7 @@
           }).join("");
         }).join("");
       }
-      div.dataset.rendered = "1";
+      div.dataset.rendered = runId;
       div.innerHTML =
         "<h6>Applied (" + writes.length + ")</h6>" +
         (writes.length ? "<table class='data-table'><thead><tr><th>step</th>" +

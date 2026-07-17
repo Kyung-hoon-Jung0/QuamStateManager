@@ -110,7 +110,12 @@ def apply_rows(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
         if not apply_live:
             return WriteOutcome(ok=True, action="staged", group_id=gid,
                                 paths=paths)
-        err = _apply_live_with_one_retry(chip)
+
+        def _restage() -> str | None:
+            chip.modifier.batch_set(updates)
+            return None
+
+        err = _apply_live_with_one_retry(chip, _restage)
         if err:
             return WriteOutcome(ok=False, action="staged", group_id=gid,
                                 paths=paths, error=err)
@@ -118,22 +123,36 @@ def apply_rows(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
                             paths=paths)
 
 
-def _apply_live_with_one_retry(chip: ChipHandle) -> str | None:
-    """apply_to_live with the amendment-§8 policy: one pull+re-stage retry on
-    StaleLiveError, then give up (defer). Returns an error string or None."""
+def _apply_live_with_one_retry(chip: ChipHandle,
+                               restage: Callable[[], str | None]) -> str | None:
+    """apply_to_live with the amendment-§8 policy: ONE pull + re-stage retry
+    on StaleLiveError, then give up (defer). Returns an error string or None.
+
+    The retry is a genuine re-stage (audit E1): our own save() moved the
+    working files off the recorded sync point, so a ctx-level reconcile would
+    only latch ``live_diverged`` and re-raise. Instead: force-sync the working
+    copy FROM live (adopting the out-of-band write), reload the store, replay
+    our edits via *restage* (each caller re-applies its own rows — reverts
+    re-verify CAS against the fresh content), save, apply. All under the
+    build lock the caller already holds."""
     try:
         working_copy.apply_to_live(chip.wc)
         return None
     except working_copy.StaleLiveError:
-        logger.info("apply_to_live stale — one reconcile+retry")
+        logger.info("apply_to_live stale — one pull + re-stage retry")
     except Exception as exc:  # noqa: BLE001
         return f"apply_to_live failed: {exc}"
     try:
-        chip.reconcile()
+        working_copy.sync_from_live(chip.wc)
+        chip.store.reload()
+        err = restage()
+        if err:
+            return f"re-stage after pull refused: {err}"
+        chip.saver.save()
         working_copy.apply_to_live(chip.wc)
         return None
     except Exception as exc:  # noqa: BLE001
-        return f"apply_to_live failed after reconcile: {exc}"
+        return f"apply_to_live failed after pull+re-stage: {exc}"
 
 
 def revert_patches(chip: ChipHandle, patches: list[dict], *, apply_live: bool,
@@ -215,7 +234,23 @@ def revert_patches(chip: ChipHandle, patches: list[dict], *, apply_live: bool,
                                 paths=paths, error=f"save failed: {exc}",
                                 conflicts=conflicts)
         if apply_live:
-            err = _apply_live_with_one_retry(chip)
+            def _restage() -> str | None:
+                # after the pull the store holds the freshest live content —
+                # a revert must re-win its CAS there or refuse (never clobber)
+                with chip.store._lock:
+                    for dotted, old, expect in revertible:
+                        cur = _current_value(chip, dotted)
+                        if not _values_equal(cur, expect):
+                            return (f"CAS lost after pull at {dotted} "
+                                    f"(current={cur!r})")
+                    for dotted, old, _ in revertible:
+                        chip.modifier.set_value(dotted, old, coerce=False,
+                                                _defer_hooks=True,
+                                                group_id=gid)
+                    chip.store._clear_pointer_cache()
+                return None
+
+            err = _apply_live_with_one_retry(chip, _restage)
             if err:
                 return WriteOutcome(ok=False, action="reverted", group_id=gid,
                                     paths=paths, error=err, conflicts=conflicts)
@@ -264,7 +299,17 @@ def restore_values(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
             return WriteOutcome(ok=False, action="restored", group_id=gid,
                                 paths=paths, error=f"save failed: {exc}")
         if apply_live:
-            err = _apply_live_with_one_retry(chip)
+            def _restage() -> str | None:
+                with chip.store._lock:
+                    for r in rows:
+                        chip.modifier.set_value(r["path"], r["value"],
+                                                coerce=False,
+                                                _defer_hooks=True,
+                                                group_id=gid)
+                    chip.store._clear_pointer_cache()
+                return None
+
+            err = _apply_live_with_one_retry(chip, _restage)
             if err:
                 return WriteOutcome(ok=False, action="restored", group_id=gid,
                                     paths=paths, error=err)

@@ -1213,7 +1213,9 @@
             // count until it's resolved (the morning-after surface, §7b-F).
             var af = (state && state.autofit) || null;
             var afRunning = !!(af && af.running);
-            document.body.classList.toggle("scheduler-active", active || afRunning);
+            // a SIM plan runs in its own throwaway world — never lock the chip
+            var afLocks = afRunning && !(af && af.sim);
+            document.body.classList.toggle("scheduler-active", active || afLocks);
             var afBadge = document.getElementById("autofit-nav-badge");
             if (afBadge) {
                 if (afRunning) {
@@ -1231,7 +1233,10 @@
             }
             var badge = document.getElementById("scheduler-badge");
             if (badge) {
-                badge.hidden = !(active || paused);
+                // a real autofit plan drives the chassis step-by-step — the
+                // scheduler badge would blink every step boundary; the autofit
+                // badge is the authoritative one while a plan runs
+                badge.hidden = !(active || paused) || afRunning;
                 badge.classList.toggle("scheduler-badge-paused", paused);
                 var label = badge.querySelector(".scheduler-badge-label");
                 var count = badge.querySelector(".scheduler-badge-count");
@@ -1301,6 +1306,14 @@
             if (bar) {
                 bar.innerHTML = '<div class="status-msg status-warning">' +
                     "Editing is locked while the Scheduler is running.</div>";
+            }
+        });
+        document.body.addEventListener("autofitLocked", function () {
+            var bar = document.getElementById("status-bar");
+            if (bar) {
+                bar.innerHTML = '<div class="status-msg status-warning">' +
+                    "Locked while an Autofit plan is running — see the " +
+                    "Autofit page to pause or abort.</div>";
             }
         });
     })();

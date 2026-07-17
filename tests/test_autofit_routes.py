@@ -116,8 +116,9 @@ class TestOneButtonSimFlow:
 
 class TestGuards:
     def test_mutators_locked_while_autofit_active(self, client, monkeypatch):
+        # the guard keys on locks_chip (a REAL plan) — sim plans are exempt
         from quam_state_manager.core.autofit import engine as af_engine
-        monkeypatch.setattr(af_engine, "is_active", lambda inst: True)
+        monkeypatch.setattr(af_engine, "locks_chip", lambda inst: True)
         r = client.post("/save")
         assert r.status_code == 409
         assert r.get_json()["error"] == "autofit_running"
@@ -126,9 +127,26 @@ class TestGuards:
         assert r.status_code == 409
         r = client.post("/scheduler/queue/add", json={})
         assert r.status_code == 409
-        # reads stay live
+        # reads stay live — incl. GETs on autofit-blocked endpoints (audit R3)
         assert client.get("/scheduler/status").status_code == 200
         assert client.get("/autofit/status").status_code == 200
+        assert client.get("/scheduler/settings").status_code == 200
+        assert client.get("/scheduler/presets").status_code == 200
+
+    def test_sim_plan_never_locks_the_chip(self, client, monkeypatch):
+        from quam_state_manager.core.autofit import engine as af_engine
+
+        class FakeEng:
+            is_sim = True
+            def is_running(self):
+                return True
+        monkeypatch.setattr(af_engine, "get_engine", lambda inst: FakeEng())
+        assert af_engine.locks_chip("x") is False
+        # a sim plan blocks a SECOND autofit start (is_active) but not edits
+        assert af_engine.is_active("x") is True
+        r = client.post("/save")
+        assert r.status_code != 409 or \
+            r.get_json().get("error") != "autofit_running"
 
     def test_autofit_start_refused_while_scheduler_runs(self, client,
                                                         monkeypatch):

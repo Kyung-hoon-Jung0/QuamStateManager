@@ -12340,6 +12340,24 @@ def _scheduler_lock_guard():
     AUTOFIT plan (which drives the scheduler chassis in-process), plus the
     scheduler CONTROL endpoints themselves while autofit owns the queue.
     """
+    # Autofit first (audit R4): while a REAL plan runs, mutators + scheduler
+    # controls consistently report autofit_running even mid-step (when the
+    # chassis makes scheduler.is_active True too). Method-gated so GETs like
+    # /scheduler/settings and the presets list stay readable (audit R3). A
+    # SIM plan never locks the user's chip (locks_chip — audit R2).
+    if request.method != "GET" and request.endpoint in (
+            _SCHEDULER_MUTATOR_ENDPOINTS | _AUTOFIT_BLOCKED_SCHEDULER_ENDPOINTS):
+        from quam_state_manager.core.autofit import engine as autofit_engine
+        if autofit_engine.locks_chip(current_app.instance_path):
+            resp = make_response(jsonify({
+                "error": "autofit_running",
+                "message": "An Autofit plan is running — this action is "
+                           "locked until it finishes or is aborted "
+                           "(see the Autofit page).",
+            }), 409)
+            resp.headers["HX-Reswap"] = "none"
+            resp.headers["HX-Trigger"] = "autofitLocked"
+            return resp
     if request.endpoint in _SCHEDULER_MUTATOR_ENDPOINTS \
             and scheduler.is_active(current_app.instance_path):
         resp = make_response(jsonify({
@@ -12350,19 +12368,6 @@ def _scheduler_lock_guard():
         resp.headers["HX-Reswap"] = "none"       # don't swap an error into the page
         resp.headers["HX-Trigger"] = "schedulerLocked"
         return resp
-    if request.endpoint in (_SCHEDULER_MUTATOR_ENDPOINTS
-                            | _AUTOFIT_BLOCKED_SCHEDULER_ENDPOINTS):
-        from quam_state_manager.core.autofit import engine as autofit_engine
-        if autofit_engine.is_active(current_app.instance_path):
-            resp = make_response(jsonify({
-                "error": "autofit_running",
-                "message": "An Autofit plan is running — this action is "
-                           "locked until it finishes or is aborted "
-                           "(see the Autofit page).",
-            }), 409)
-            resp.headers["HX-Reswap"] = "none"
-            resp.headers["HX-Trigger"] = "schedulerLocked"
-            return resp
     return None
 
 
@@ -12540,6 +12545,7 @@ def _sched_state() -> dict:
             out["autofit"] = {
                 "status": st["status"],
                 "running": eng.is_running(),
+                "sim": eng.is_sim,
                 "plan": (st.get("plan") or {}).get("name"),
                 "current": st.get("current"),
                 "review_count": len(st.get("review_queue") or []),
@@ -12925,6 +12931,22 @@ def _autofit_engine_mod():
     return autofit_engine
 
 
+# Serializes /autofit/start per instance: the guards + world-prep + engine
+# claim must be one atomic unit (audits: sim-world rmtree TOCTOU, the
+# scheduler-exclusion window during real-backend prep).
+_AUTOFIT_START_LOCKS: dict[str, threading.Lock] = {}
+_AUTOFIT_START_LOCKS_GUARD = threading.Lock()
+
+
+def _autofit_start_lock(inst: str) -> threading.Lock:
+    with _AUTOFIT_START_LOCKS_GUARD:
+        lock = _AUTOFIT_START_LOCKS.get(inst)
+        if lock is None:
+            lock = threading.Lock()
+            _AUTOFIT_START_LOCKS[inst] = lock
+        return lock
+
+
 def _autofit_readiness() -> dict:
     """The plan bar's readiness strip (docs/56 §7b — preflight on page open,
     never first at ▶): chip, scheduler env, calibrations folder, LLM."""
@@ -13037,31 +13059,39 @@ def autofit_start():
     inst = _sched_inst()
     autofit_engine = _autofit_engine_mod()
     data = request.get_json(silent=True) or {}
-    if autofit_engine.is_active(inst):
-        return jsonify({"ok": False, "error": "an autofit plan is already running"}), 409
-    if scheduler.is_active(inst):
-        return jsonify({"ok": False, "error": "the Scheduler is running — "
-                        "wait for it or cancel it first"}), 409
+    start_lock = _autofit_start_lock(inst)
+    if not start_lock.acquire(blocking=False):
+        return jsonify({"ok": False,
+                        "error": "another autofit start is in progress"}), 409
     try:
-        p = _autofit_plan_from_request(data)
-    except af_plan.PlanError as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 400
-    backend_kind = (data.get("backend") or "sim").strip()
+        if autofit_engine.is_active(inst):
+            return jsonify({"ok": False,
+                            "error": "an autofit plan is already running"}), 409
+        if scheduler.is_active(inst):
+            return jsonify({"ok": False, "error": "the Scheduler is running — "
+                            "wait for it or cancel it first"}), 409
+        try:
+            p = _autofit_plan_from_request(data)
+        except af_plan.PlanError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        backend_kind = (data.get("backend") or "sim").strip()
 
-    auditor = Auditor(af_auditor.load_settings(inst))
+        auditor = Auditor(af_auditor.load_settings(inst))
 
-    if backend_kind == "sim":
-        eng = _autofit_start_sim(inst, p, auditor)
-    else:
-        eng, err, code = _autofit_start_real(inst, p, data, auditor)
-        if err:
-            return jsonify({"ok": False, **err}), code
-    try:
-        run_id = eng.start()
-    except RuntimeError as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 409
-    return jsonify({"ok": True, "plan_run_id": run_id,
-                    "backend": backend_kind})
+        if backend_kind == "sim":
+            eng = _autofit_start_sim(inst, p, auditor)
+        else:
+            eng, err, code = _autofit_start_real(inst, p, data, auditor)
+            if err:
+                return jsonify({"ok": False, **err}), code
+        try:
+            run_id = eng.start()
+        except RuntimeError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 409
+        return jsonify({"ok": True, "plan_run_id": run_id,
+                        "backend": backend_kind})
+    finally:
+        start_lock.release()
 
 
 def _autofit_start_sim(inst, p, auditor):
@@ -13112,7 +13142,7 @@ def _autofit_start_sim(inst, p, auditor):
                                   else list(qubits))
     backend = _SimIngest(chip, sim_root / "data", live, seed=7)
     return PlanEngine(inst, p, targets, backend, RealWriter(handle),
-                      auditor, autonomy=p.autonomy)
+                      auditor, autonomy=p.autonomy, is_sim=True)
 
 
 def _autofit_start_real(inst, p, data, auditor):
@@ -13173,13 +13203,14 @@ def _autofit_start_real(inst, p, data, auditor):
     build_lock = _get_quam_build_lock(folder_key)
 
     def reconcile():
+        # the CAPTURED ctx, never a call-time registry lookup — a mid-plan
+        # /load could displace the name-keyed entry and silently no-op the
+        # reconcile while the writer still holds this store/wc (audit E5)
         with app.app_context():
-            c = _find_quam_ctx_by_path(live_path)
-            if c is not None:
-                try:
-                    _reconcile_cached_quam_ctx(c["path"], c)
-                except Exception:  # noqa: BLE001
-                    logger.exception("autofit reconcile failed")
+            try:
+                _reconcile_cached_quam_ctx(ctx["path"], ctx)
+            except Exception:  # noqa: BLE001
+                logger.exception("autofit reconcile failed for %s", live_path)
 
     def rescan_and_list_runs():
         with app.app_context():

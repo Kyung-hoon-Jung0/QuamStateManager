@@ -161,36 +161,50 @@ class TestWriterEdges:
         state, _ = safe_io.read_state_wiring(live)
         assert state["qubits"]["qA1"]["f_01"] == 4_800_000_000
 
-    def test_apply_rows_survives_stale_live_with_one_reconcile(self, world):
+    def test_apply_rows_survives_stale_live_via_pull_and_restage(self, world):
+        """Audit E1: the StaleLiveError retry must be a genuine pull+re-stage
+        (a ctx reconcile would latch live_diverged and re-raise forever)."""
         chip, live, handle = world
         # an out-of-band writer (the node) touches live AFTER our sync point
         state, wiring = safe_io.read_state_wiring(live)
         state["qubits"]["qA1"]["T1"] = 1.23e-5
         safe_io.write_state_wiring(live, state, wiring)
 
-        reconciled = []
-
-        def reconcile():
-            reconciled.append(1)
-            res = working_copy.reconcile_with_live(
-                handle.wc, sync_if_clean=False)
-            # our staged edit makes the wc dirty — adopt live's sync point the
-            # way the engine's pull+re-stage would: force-sync then re-stage
-            working_copy.sync_from_live(handle.wc)
-            handle.store.reload()
-            handle.modifier.batch_set({"qubits.qA1.f_01": 5.2e9})
-            handle.saver.save()
-
-        handle.reconcile = reconcile
         out = writer.apply_rows(handle,
                                 [{"path": "qubits.qA1.f_01", "value": 5.2e9}],
                                 apply_live=True, label="t")
         assert out.ok, out.error
-        assert reconciled, "StaleLiveError retry did not reconcile"
         state, _ = safe_io.read_state_wiring(live)
         assert state["qubits"]["qA1"]["f_01"] == 5.2e9
         # the out-of-band write itself survived the pull (never clobbered)
         assert state["qubits"]["qA1"]["T1"] == 1.23e-5
+        # and a FOLLOW-UP apply works (the sync point advanced — no latch)
+        out2 = writer.apply_rows(handle,
+                                 [{"path": "qubits.qA1.T1", "value": 2e-5}],
+                                 apply_live=True, label="t2")
+        assert out2.ok, out2.error
+
+    def test_stale_revert_recas_after_pull(self, world):
+        """A revert whose CAS is invalidated BY the out-of-band write must
+        refuse after the pull, not clobber."""
+        chip, live, handle = world
+        handle.store.state["qubits"]["qA1"]["f_01"] = 5.1e9
+        handle.saver.save()
+        working_copy.apply_to_live(handle.wc)
+        # out-of-band: live moves to a THIRD value after our sync point
+        state, wiring = safe_io.read_state_wiring(live)
+        state["qubits"]["qA1"]["f_01"] = 7.7e9
+        safe_io.write_state_wiring(live, state, wiring)
+        # in-memory still thinks 5.1e9 → pre-check CAS passes; the pull then
+        # reveals 7.7e9 and the re-stage must lose its CAS
+        out = writer.revert_patches(handle,
+                                    [_patch("/quam/qubits/qA1/f_01",
+                                            5.0e9, 5.1e9)],
+                                    apply_live=True, label="t")
+        assert out.ok is False
+        assert "CAS" in (out.error or "")
+        state, _ = safe_io.read_state_wiring(live)
+        assert state["qubits"]["qA1"]["f_01"] == 7.7e9   # never clobbered
 
     def test_restore_values_is_exact_typed_and_logged(self, world):
         chip, live, handle = world

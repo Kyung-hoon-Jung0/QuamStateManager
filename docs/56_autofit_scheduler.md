@@ -171,9 +171,10 @@ gate/audit verdict → decision per (step, target):
   and continue). Target-scoped: qA1 failing never blocks qA2's chain.
 - **Autonomy knob** (per plan run): `full` = auto-apply to live (the one-button
   promise; every write still gated by G-pipeline + LLM and reverted on reject),
-  `staged` = write working copy only, apply is a human click at the end,
+  ~~`staged` = write working copy only~~ (SUPERSEDED by §7b-A — dropped),
   `review` = nothing written; report only. Default for shipped presets:
-  `full` for sim/dry contexts, `staged` the first time a real chip runs a
+  `full` for sim/dry contexts (~~staged-first-run~~ superseded by §7b-A —
+  `review` is the cautious mode now)
   plan (the UI remembers the user's last explicit choice per chip).
 
 ### 2f. The writer (`writer.py`) — the only write path
@@ -203,7 +204,7 @@ the ledger; the LLM's `reason` strings live here (audit trail), never in state.
 {
   "name": "1Q bringup", "version": 1,
   "targets": {"kind": "qubits", "names": ["qA1","qA2"]},   // or "all_active"
-  "autonomy": "staged",
+  "autonomy": "review",
   "steps": [
     {"id": "res_spec",  "node": "02_resonator_spectroscopy_wide.py", "criticality": "hard",
      "params": {"num_shots": 400}, "retry_max": 1, "gates": "default"},
@@ -281,7 +282,7 @@ shows `Autofit: step k/N · <node> · <target-progress>` while active.
    state equals ground truth within tolerance), bad-fit path (corrupted step ⇒
    revert + retry with adapted params ⇒ converges on attempt 2), exhaustion
    (defer + pre-step state intact), criticality (hard failure halts only the
-   affected target's chain), abort/pause mid-plan, autonomy staged vs full.
+   affected target's chain), abort/pause mid-plan, autonomy review vs full.
 4. **LLM auditor** — fake provider: contract round-trip, budget cap, no-number
    schema enforcement, deterministic-fail-overrides-LLM-accept invariant.
 5. **routes/UI smoke** + lock coverage (autofit active ⇒ mutators 409) +
@@ -374,13 +375,49 @@ sidebar Autofit item carries a "review N" count while unreviewed
 defers/reverts exist, so the overnight story doesn't end at a badge that
 vanished with the run.
 
+## 7c. Implementation audit round (2026-07-17, 3 lenses × adversarial verify)
+
+15 confirmed findings, all fixed in-tree except one documented deferral:
+
+- **StaleLiveError retry was a no-op** (the ctx reconcile latches
+  `live_diverged` and re-raises forever): the writer's retry is now a genuine
+  pull + re-stage — `sync_from_live → store.reload → replay the caller's own
+  rows (reverts re-win their CAS against the fresh content or refuse) → save →
+  apply` (writer.py `_apply_live_with_one_retry`).
+- **Shared-path patches** (e.g. a port `full_scale_power_dbm` alongside qubit
+  patches — real-corpus confirmed): recorded pre-plan for the review restore;
+  surfaced in the review queue when any target was rejected (they are never
+  target-attributable, so never auto-reverted).
+- **Engine claim race** (`is_running` false between registry claim and thread
+  start): a `_starting` flag holds the claim atomically.
+- **Abort leaked a queued chassis item** the user's next Scheduler ▶ would
+  run with the plan's overrides: removed on the abort path too.
+- **`staged` autonomy fully removed** (legacy plans map to `review`); default
+  autonomy is `review`.
+- **Ctx captured, never re-resolved**: the real backend's reconcile binds the
+  ctx object at plan start (a mid-plan /load can't displace it).
+- **Start serialization**: `/autofit/start` holds a per-instance lock across
+  guards + world prep + engine claim (closes the sim-world rmtree TOCTOU and
+  the scheduler-exclusion window during real-backend prep).
+- **Sim plans never lock the chip** (`locks_chip` = running ∧ ¬sim feeds the
+  guard + the `scheduler-active` body class); the guard is method-gated (GETs
+  on /scheduler/settings and the presets list stay readable), autofit-first
+  (no alternating 409 reason mid-plan), with a distinct `autofitLocked`
+  toast; the scheduler badge is suppressed while the autofit badge is
+  authoritative; the report pane re-keys on `plan_run_id` (no stale report
+  across runs); review-mode restore surfaces non-restorable add-op keys.
+- **Deferred (documented)**: G5 history-drift points are not wired into the
+  route-built engines yet (`history_points_of=None`) — G4's jump checks still
+  produce `drifted` verdicts; wiring Param-History trends into G5 is the v1.1
+  ledger-tightening item.
+
 ## 8. Key decisions record (from the 12 recon open questions)
 
 | # | decision |
 |---|---|
 | 1 | subprocess chassis; backend seam for sim (and future REST) |
 | 2 | audit inline in the engine thread between steps (serial, lock held) |
-| 3 | autonomy knob full/staged/review; full = the one-button promise, still gate-guarded + revertible; staged default on a chip's first real plan |
+| 3 | autonomy knob full/review (§7b-A dropped staged); full = the one-button promise, gate-guarded + revertible + pre-plan snapshot; review = restore-at-end |
 | 4 | autofit-owned family registry with op vocabulary; FIT_TARGET_MAP reused + parity-pinned, never mutated |
 | 5 | correction = revert + adaptive re-measure; LLM contributes failure_mode only |
 | 6 | own retry budget (per-target retry_max + plan caps), provenance distinct from outcome-rule inserts |

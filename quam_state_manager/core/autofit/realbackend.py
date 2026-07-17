@@ -85,6 +85,10 @@ class RealBackend:
 
         status, err = self._wait(item_id, abort)
         if status == "aborted":
+            # never leak the queued/cancelled item — the user's next Scheduler
+            # ▶ would otherwise run it on hardware with the plan's overrides
+            # (audit E4; _remove_item refuses to drop a still-running item)
+            self._remove_item(item_id)
             return StepRunResult(status="aborted")
 
         # --- engine-owned synchronous ingest (never trust the async hook) --

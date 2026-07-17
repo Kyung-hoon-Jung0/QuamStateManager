@@ -88,6 +88,14 @@ def is_active(instance_path) -> bool:
     return bool(eng and eng.is_running())
 
 
+def locks_chip(instance_path) -> bool:
+    """True when a RUNNING plan owns the real chip/OPX — the edit-lock and the
+    /scheduler/* two-masters guard key on this. A sim plan (its own throwaway
+    world under instance/autofit/sim) never locks the user's chip (audit R2)."""
+    eng = get_engine(instance_path)
+    return bool(eng and eng.is_running() and not eng.is_sim)
+
+
 # stat-cached persisted summary: the badge poll (every 2.5 s on every page)
 # must survive an SM restart — the review count comes off autofit_run.json
 # without re-reading it unless the file changed.
@@ -107,6 +115,7 @@ def persisted_summary(instance_path) -> dict | None:
     try:
         st = json.loads(p.read_text(encoding="utf-8"))
         out = {"status": st.get("status"), "running": False,
+               "sim": bool(st.get("is_sim")),
                "plan": (st.get("plan") or {}).get("name"),
                "current": None,
                "review_count": len(st.get("review_queue") or [])}
@@ -123,7 +132,8 @@ class PlanEngine:
                  snapshot_fn: Callable[[str], Any] | None = None,
                  history_points_of: Callable[[str, str], list[float] | None]
                  | None = None,
-                 abstain_policy: str = "defer"):
+                 abstain_policy: str = "defer",
+                 is_sim: bool = False):
         self.instance_path = str(instance_path)
         self.plan = plan
         self.targets = list(targets)
@@ -134,9 +144,11 @@ class PlanEngine:
         self.snapshot_fn = snapshot_fn or (lambda label: None)
         self.history_points_of = history_points_of
         self.abstain_policy = abstain_policy      # defer | keep | revert
+        self.is_sim = bool(is_sim)
         self.plan_run_id = "af_" + uuid.uuid4().hex[:10]
         self.abort_event = threading.Event()
         self._thread: threading.Thread | None = None
+        self._starting = False        # claim → thread-alive gap cover (audit E3)
         self._lock = threading.RLock()
         self.state: dict = {
             "plan_run_id": self.plan_run_id,
@@ -163,20 +175,31 @@ class PlanEngine:
             cur = _ENGINES.get(self.instance_path)
             if cur is not None and cur.is_running():
                 raise RuntimeError("an autofit plan is already running")
+            # claim the slot ATOMICALLY: _starting keeps is_running() True
+            # through the mkdir/persist gap before the thread is alive, so a
+            # concurrent start() can't double-claim (audit E3)
+            self._starting = True
             _ENGINES[self.instance_path] = self
-        self._ledger_dir.mkdir(parents=True, exist_ok=True)
-        self.state["status"] = "running"
-        self.state["started_at"] = _now()
-        self._persist()
-        self._thread = threading.Thread(target=self._run, daemon=True,
-                                        name=f"autofit-{self.plan_run_id}")
-        self._thread.start()
+        try:
+            self._ledger_dir.mkdir(parents=True, exist_ok=True)
+            self.state["status"] = "running"
+            self.state["is_sim"] = self.is_sim
+            self.state["started_at"] = _now()
+            self._persist()
+            self._thread = threading.Thread(target=self._run, daemon=True,
+                                            name=f"autofit-{self.plan_run_id}")
+            self._thread.start()
+        finally:
+            # the thread is alive (or start raised) — the claim flag can drop
+            self._starting = False
         return self.plan_run_id
 
     def abort(self) -> None:
         self.abort_event.set()
 
     def is_running(self) -> bool:
+        if self._starting:
+            return True
         t = self._thread
         return bool(t and t.is_alive())
 
@@ -284,9 +307,21 @@ class PlanEngine:
                          status=res.status, error=res.error,
                          run_ref=res.run_ref)
 
+            # shared-path patches (no target segment / not one of this run's
+            # targets — e.g. a port full_scale_power_dbm): record their
+            # pre-plan values for the review-mode restore, and surface them if
+            # any target gets rejected — they can't be target-attributed, so
+            # they are never auto-reverted (audit E2)
+            orphan_patches = [p for p in ((res.run or {}).get("patches") or [])
+                              if _patch_target(p) not in pending]
+            for p in orphan_patches:
+                self._record_preplan(patch_path_to_dotted(p.get("path", "")),
+                                     p.get("old"))
+
             verdicts = self._evaluate(step, res, pending)
             retry_targets: list[str] = []
             retry_mode: str | None = None
+            any_reject = False
             fam = (fam_mod.family_for(res.run["experiment_name"])
                    if res.run else None)
             for t in pending:
@@ -296,9 +331,26 @@ class PlanEngine:
                 decision = self._decide(step, t, v, res, fam, attempt)
                 self._ledger("decision", step=step.id, attempt=attempt,
                              target=t, decision=decision)
+                if decision in ("retry", "defer") and v.verdict == "fail":
+                    any_reject = True
                 if decision == "retry":
                     retry_targets.append(t)
                     retry_mode = retry_mode or v.failure_mode
+            if orphan_patches and any_reject:
+                paths = [patch_path_to_dotted(p.get("path", ""))
+                         for p in orphan_patches]
+                self._ledger("orphan_patches_flagged", step=step.id,
+                             paths=paths)
+                with self._lock:
+                    self.state["review_queue"].append({
+                        "step_id": step.id, "target": "(shared)",
+                        "reason": (f"{len(orphan_patches)} shared-path "
+                                   "patch(es) not target-attributable — left "
+                                   "as written: " + ", ".join(paths[:4])),
+                        "failure_mode": None, "reverted": False,
+                        "verdict": {"paths": paths},
+                    })
+                self._persist()
             pending = retry_targets
             if pending and fam is not None and retry_mode:
                 rule = fam.adaptations.get(retry_mode)
@@ -478,6 +530,21 @@ class PlanEngine:
         value — 'the chip ends where it started' (docs/56 §7b-A)."""
         rows = [{"path": p, "value": old} for p, old in
                 self._preplan_values.items() if old is not None]
+        # add-op patches carry no pre-plan value — they can't be restored;
+        # surface them instead of silently leaving the key behind (audit E8)
+        unrestorable = [p for p, old in self._preplan_values.items()
+                        if old is None]
+        if unrestorable:
+            with self._lock:
+                self.state["review_queue"].append({
+                    "step_id": "(plan end)", "target": "(shared)",
+                    "reason": ("review restore could not undo "
+                               f"{len(unrestorable)} added key(s): "
+                               + ", ".join(unrestorable[:4])),
+                    "failure_mode": None, "reverted": False,
+                    "verdict": {"paths": unrestorable},
+                })
+            self._persist()
         if not rows:
             return
         out = self.writer.restore_values(rows, label="plan-end restore")

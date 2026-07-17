@@ -19,7 +19,9 @@ from typing import Any
 
 _PLANS_FILE = "autofit_plans.json"
 
-VALID_AUTONOMY = ("full", "staged", "review")
+VALID_AUTONOMY = ("full", "review")   # 'staged' dropped (docs/56
+# §7b-A — nodes self-write live, a working-copy-only mode is incoherent);
+# legacy plans carrying it are mapped to 'review' in validate_plan
 VALID_CRITICALITY = ("hard", "soft")
 _ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,64}$")
 
@@ -48,7 +50,7 @@ class Plan:
     targets_kind: str              # qubits | qubit_pairs
     steps: list[Step]
     targets: list[str] = field(default_factory=list)   # [] = all active
-    autonomy: str = "staged"       # full | staged | review
+    autonomy: str = "review"       # full | review
     version: int = 1
     preset: str | None = None      # provenance: which preset seeded this plan
 
@@ -74,7 +76,9 @@ def validate_plan(raw: dict) -> Plan:
     kind = raw.get("targets_kind")
     if kind not in ("qubits", "qubit_pairs"):
         raise PlanError(f"targets_kind must be qubits|qubit_pairs, got {kind!r}")
-    autonomy = raw.get("autonomy", "staged")
+    autonomy = raw.get("autonomy", "review")
+    if autonomy == "staged":       # legacy alias (docs/56 §7b-A)
+        autonomy = "review"
     if autonomy not in VALID_AUTONOMY:
         raise PlanError(f"autonomy must be one of {VALID_AUTONOMY}, got {autonomy!r}")
     targets = raw.get("targets") or []
