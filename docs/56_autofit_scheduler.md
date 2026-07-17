@@ -1,6 +1,13 @@
 # 56 — Autofit: the one-button automatic fitting scheduler
 
-> Status: **DESIGN → build in progress** on `feat/autofit-scheduler` (off `main` @ 7d953f8).
+> Status: **v1 BUILT** on `feat/autofit-scheduler` (off `main` @ 7d953f8) —
+> core (`core/autofit/`: synth, families, gates, auditor, plan, writer,
+> engine, sim/real backends), web surface (`/autofit` page + status poll +
+> guards + sidebar badge), and the full verification ladder of docs/56 §6:
+> reader-compat goldens, the per-family corruption accuracy ledger, engine
+> state-machine + RealBackend protocol tests, E2E over the genuine
+> QuamStore/WorkingCopy/Saver write path, and the one-button flow through the
+> Flask client (sim backend). All §7b review amendments implemented.
 > Lineage: docs/40 (Scheduler — the execution spine), docs/47 (AI fit-review — the
 > evidence base + LLM doctrine), docs/50 (fit-audit — verdict machinery), the
 > outcome-rule chaining engine (`scheduler.py:782–918`), and an 8-agent recon

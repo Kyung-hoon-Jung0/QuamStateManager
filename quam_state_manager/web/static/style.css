@@ -8729,3 +8729,54 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
     color: var(--cell-ok-color, #ff7f0e); }
 .qualibrate-tray-danger { border-color: var(--cell-bad-color, #d62728);
     color: var(--cell-bad-color, #d62728); }
+
+/* ---- Autofit (docs/56) ---- */
+.autofit-readiness { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap;
+    margin: .3rem 0 .6rem; }
+.autofit-ready-chip { font-size: .74rem; padding: .1rem .5rem; border-radius: 1rem;
+    border: 1px solid var(--pico-muted-border-color); }
+.autofit-ready-chip.ok { border-color: var(--color-success-border, #2e7d32);
+    color: var(--color-success-text, #2e7d32); }
+.autofit-ready-chip.bad { border-color: var(--cell-bad-color, #d62728);
+    color: var(--cell-bad-color, #d62728); }
+.autofit-ready-chip.off { opacity: .65; }
+.autofit-ready-fix { font-size: .74rem; margin-left: auto; }
+.autofit-planbar { display: flex; gap: .8rem; align-items: flex-end; flex-wrap: wrap;
+    padding: .6rem; border: 1px solid var(--pico-muted-border-color);
+    border-radius: .4rem; margin-bottom: .8rem; }
+.autofit-planbar label { font-size: .74rem; margin: 0; display: flex;
+    flex-direction: column; gap: .15rem; }
+.autofit-planbar select { margin: 0; padding: .2rem .4rem; font-size: .82rem;
+    width: auto; min-width: 9rem; }
+.autofit-run-btn { font-weight: 700; padding: .45rem 1.1rem; }
+.autofit-board-table td { text-align: center; font-size: .95rem; width: 2.2rem; }
+.autofit-board-table td:first-child { text-align: left; width: auto;
+    font-size: .8rem; }
+.autofit-cell-pending { opacity: .35; }
+.autofit-cell-running { animation: schedPulse 1.4s ease-in-out infinite; }
+.autofit-cell-pass, .autofit-cell-applied { color: var(--color-success-text, #2e7d32); }
+.autofit-cell-corrected { color: var(--pico-primary); font-weight: 700; }
+.autofit-cell-retrying { color: var(--cell-ok-color, #ff7f0e); }
+.autofit-cell-reverted, .autofit-cell-deferred { color: var(--cell-ok-color, #ff7f0e);
+    font-weight: 700; }
+.autofit-cell-aborted { color: var(--color-text-muted); }
+.autofit-halted { text-decoration: line-through; opacity: .6; }
+.autofit-runline { font-size: .8rem; margin: .2rem 0 .4rem; }
+.autofit-run-done { color: var(--color-success-text, #2e7d32); }
+.autofit-run-failed, .autofit-run-aborted { color: var(--cell-bad-color, #d62728); }
+.autofit-review-card { border-left: 3px solid var(--cell-ok-color, #ff7f0e);
+    padding: .3rem .6rem; margin: .4rem 0; font-size: .82rem; }
+.autofit-chip { font-size: .68em; padding: 0 .35rem; border-radius: .5rem;
+    border: 1px solid var(--cell-ok-color, #ff7f0e); margin-left: .3rem; }
+.autofit-chip-rev { border-color: var(--pico-primary); }
+.autofit-verdict-line { font-size: .76rem; color: var(--color-text-muted); }
+.autofit-ok { color: var(--color-success-text, #2e7d32); }
+.autofit-warn { color: var(--cell-ok-color, #ff7f0e); }
+.autofit-bad { color: var(--cell-bad-color, #d62728); }
+.autofit-restable { margin: .4rem 0 .6rem; }
+.autofit-nav-badge { font-size: .66em; padding: 0 .4rem; border-radius: .6rem;
+    margin-left: .3rem; vertical-align: middle; }
+.autofit-nav-running { background: var(--pico-primary); color: #fff;
+    animation: schedPulse 1.4s ease-in-out infinite; }
+.autofit-nav-review { background: var(--cell-ok-color, #ff7f0e); color: #fff; }
+.autofit-cell-skipped { opacity: .5; }

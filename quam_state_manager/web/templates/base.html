@@ -70,6 +70,7 @@
     <script src="{{ asset_url('plot-theme.js') }}"></script>
     <script src="{{ asset_url('ndview.js') }}"></script>
     <script src="{{ asset_url('scheduler.js') }}"></script>
+    <script src="{{ asset_url('autofit.js') }}"></script>
     <script src="{{ asset_url('calc.js') }}"></script>
     <script src="{{ asset_url('compare-hub.js') }}"></script>
     {# C2: ts-local spans are hidden until JS localizes them (no UTC→local flash); with JS
@@ -385,6 +386,9 @@
                            {% if page == 'fit-audit' %}class="active"{% endif %}>Fit Audit</a></li>
                     <li><a href="/scheduler" hx-get="/scheduler" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
                            {% if page == 'scheduler' %}class="active"{% endif %}>Scheduler</a></li>
+                    <li><a href="/autofit" hx-get="/autofit" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           {% if page == 'autofit' %}class="active"{% endif %}>Autofit
+                           <span id="autofit-nav-badge" class="autofit-nav-badge" hidden></span></a></li>
                 </ul>
             </nav>
             <nav class="sidebar-nav">
@@ -1204,7 +1208,27 @@
             var run = (state && state.run) || {};
             var active = run.status === "running";
             var paused = run.status === "paused";
-            document.body.classList.toggle("scheduler-active", active);
+            // Autofit (docs/56): a running plan owns the same edit lock; the
+            // sidebar badge shows live progress and, afterwards, the review
+            // count until it's resolved (the morning-after surface, §7b-F).
+            var af = (state && state.autofit) || null;
+            var afRunning = !!(af && af.running);
+            document.body.classList.toggle("scheduler-active", active || afRunning);
+            var afBadge = document.getElementById("autofit-nav-badge");
+            if (afBadge) {
+                if (afRunning) {
+                    afBadge.hidden = false;
+                    afBadge.className = "autofit-nav-badge autofit-nav-running";
+                    var cur = af.current || {};
+                    afBadge.textContent = "▶ " + (cur.step_id || "running");
+                } else if (af && af.review_count > 0) {
+                    afBadge.hidden = false;
+                    afBadge.className = "autofit-nav-badge autofit-nav-review";
+                    afBadge.textContent = "review " + af.review_count;
+                } else {
+                    afBadge.hidden = true;
+                }
+            }
             var badge = document.getElementById("scheduler-badge");
             if (badge) {
                 badge.hidden = !(active || paused);

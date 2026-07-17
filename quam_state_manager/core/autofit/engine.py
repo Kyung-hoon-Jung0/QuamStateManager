@@ -88,6 +88,34 @@ def is_active(instance_path) -> bool:
     return bool(eng and eng.is_running())
 
 
+# stat-cached persisted summary: the badge poll (every 2.5 s on every page)
+# must survive an SM restart — the review count comes off autofit_run.json
+# without re-reading it unless the file changed.
+_PERSIST_CACHE: dict[str, tuple[int, dict | None]] = {}
+
+
+def persisted_summary(instance_path) -> dict | None:
+    p = Path(instance_path) / _STATE_FILE
+    try:
+        m = p.stat().st_mtime_ns
+    except OSError:
+        return None
+    key = str(p)
+    hit = _PERSIST_CACHE.get(key)
+    if hit is not None and hit[0] == m:
+        return hit[1]
+    try:
+        st = json.loads(p.read_text(encoding="utf-8"))
+        out = {"status": st.get("status"), "running": False,
+               "plan": (st.get("plan") or {}).get("name"),
+               "current": None,
+               "review_count": len(st.get("review_queue") or [])}
+    except (OSError, ValueError):
+        out = None
+    _PERSIST_CACHE[key] = (m, out)
+    return out
+
+
 class PlanEngine:
     def __init__(self, instance_path, plan: Plan, targets: list[str],
                  backend: Backend, writer: Writer, auditor: Auditor, *,
@@ -242,6 +270,15 @@ class PlanEngine:
             if res.status == "aborted" or self.abort_event.is_set():
                 for t in pending:
                     self._cell(step.id, t, "aborted")
+                return
+            if res.status == "skipped":
+                # benign non-run (dry-run refusal / no sim generator): record
+                # and move on — never a defer, never a halt
+                for t in pending:
+                    self._cell(step.id, t, "skipped",
+                               detail=res.error or "skipped")
+                self._ledger("step_skipped", step=step.id,
+                             reason=res.error)
                 return
             self._ledger("run_finished", step=step.id, attempt=attempt,
                          status=res.status, error=res.error,

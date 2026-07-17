@@ -96,6 +96,8 @@ class RealBackend:
         if status == "done":
             run = self._attribute(info_scan.name, window_start)
         self._remove_item(item_id)
+        if status == "skipped":
+            return StepRunResult(status="skipped", error=err)
         if status != "done":
             return StepRunResult(status="failed",
                                  error=err or f"item ended {status}")
@@ -129,7 +131,12 @@ class RealBackend:
                 return "failed", "item vanished from the queue"
             st = it.get("status")
             if st in ("done", "failed", "cancelled", "skipped"):
-                return st if st == "done" else "failed", it.get("error")
+                if st == "done":
+                    return "done", None
+                # the chassis' dry-run refusal is benign (docs/56 skipped
+                # semantics); failed/cancelled are real failures
+                return ("skipped" if st == "skipped" else "failed"), \
+                    it.get("error")
             run_status = state["run"].get("status")
             if st == "queued":
                 now = time.monotonic()

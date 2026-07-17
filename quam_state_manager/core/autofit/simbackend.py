@@ -39,6 +39,8 @@ FAMILY_TO_NODE: dict[str, str] = {
     "iq_blobs": "16_iq_blobs",
     "chevron_11_02": "31_chevron_11_02",
     "cz_conditional_phase": "32_cz_conditional_phase",
+    # the error-amp variant IS a conditional-phase scan (narrower window)
+    "cz_conditional_phase_error_amp": "32_cz_conditional_phase",
 }
 
 
@@ -80,8 +82,10 @@ class SimBackend:
             stem = step.node.rsplit("/", 1)[-1].rsplit(".py", 1)[0]
             node_name = stem if stem in synth.GENERATORS else None
         if node_name is None:
-            return StepRunResult(status="failed",
-                                 error=f"sim backend: no generator for step "
+            # benign: real-lab-only steps (e.g. phase compensation) have no
+            # sim generator — the demo skips them instead of failing the plan
+            return StepRunResult(status="skipped",
+                                 error=f"no sim generator for step "
                                        f"{step.id!r} (family={fam_key!r})")
         corrupt = {t: self._mode_for(step.id, t, attempt) for t in targets}
         run_id = next(self._ids)
