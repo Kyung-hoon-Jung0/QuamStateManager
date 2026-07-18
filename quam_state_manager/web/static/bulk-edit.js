@@ -116,16 +116,8 @@
         _updateTopScroll();
         _updateStickyOffset();   // band height changes with the font scale
     }
-    // ── dismissible hint (persisted) ─────────────────────────────────────────
-    var HINT_KEY = 'quam_bulk_hint_hidden';
-    function _applyHint() {
-        var panel = document.getElementById('bulk-panel'); if (!panel) return;
-        var hidden = false;
-        try { hidden = localStorage.getItem(HINT_KEY) === '1'; } catch (e) {}
-        panel.classList.toggle('bulk-hint-hidden', hidden);
-        var info = document.getElementById('bulk-hint-toggle');
-        if (info) info.setAttribute('aria-pressed', hidden ? 'false' : 'true');
-    }
+    // (r6 item 5: the dismissible boxed hint became a native <details> popover
+    //  next to Properties — no JS/persistence needed; closed by default.)
 
     // ── synced top horizontal scrollbar ──────────────────────────────────────
     function _updateTopScroll() {
@@ -763,7 +755,6 @@
             _recomputeStats();
             _setupTopScroll();
             _applyFont();
-            _applyHint();
             _updateTopScroll();
             // flag any already-out-of-band ports on load
             Array.prototype.slice.call(t.querySelectorAll('.bulk-cell[data-lo-field]')).forEach(_validateBand);
@@ -1016,11 +1007,6 @@
             var on = false; try { on = localStorage.getItem(BOLD_KEY) === '1'; } catch (e) {}
             try { localStorage.setItem(BOLD_KEY, on ? '0' : '1'); } catch (e) {}
             _applyFont();
-        },
-        toggleHint: function () {
-            var hidden = false; try { hidden = localStorage.getItem(HINT_KEY) === '1'; } catch (e) {}
-            try { localStorage.setItem(HINT_KEY, hidden ? '0' : '1'); } catch (e) {}
-            _applyHint();
         },
         showAllColumns: function () { _saveHidden(new Set()); _buildColMenu(); _applyColumnVisibility(); _recomputeStats(); },
         resetColumns: function () { try { localStorage.removeItem(HIDE_KEY); } catch (e) {} _buildColMenu(); _applyColumnVisibility(); _recomputeStats(); },

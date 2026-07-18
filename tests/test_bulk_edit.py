@@ -110,9 +110,13 @@ class TestBulkRender:
 
     def test_readability_controls_present(self, client):
         body = client.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
-        # letter-spacing slider + dismissible-hint controls
+        # letter-spacing slider + the help popover (r6 item 5: a <details>
+        # dropdown at the ⓘ left of Properties — the boxed hint is gone)
         assert 'id="bulk-ls-slider"' in body and "BulkEdit.setLetterSpacing" in body
-        assert 'id="bulk-hint-toggle"' in body and "BulkEdit.toggleHint" in body
+        assert 'id="bulk-help-pop"' in body and "bulk-help-menu" in body
+        assert 'class="bulk-hint muted"' not in body
+        # the popover sits BEFORE the Properties menu in the controls row
+        assert body.index('id="bulk-help-pop"') < body.index('id="bulk-colvis-menu"')
 
     def test_cells_use_readable_mono_no_pointer_italic(self):
         css = (Path(__file__).resolve().parent.parent

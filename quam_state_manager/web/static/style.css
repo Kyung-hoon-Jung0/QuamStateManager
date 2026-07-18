@@ -6333,6 +6333,23 @@ table.gen-wiring tbody tr.pinned {
     display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap;
     margin: 0 0 0.45rem; font-size: 13.5px;
 }
+/* Small inline action in a band header (Import port CSV…). Had NO rule at all,
+   so Pico's full-size button default applied — a huge button next to a 12.5px
+   band title (r6 review item 2). Same compact metrics as the wizard nav. */
+button.gen-mini-btn {
+    width: auto; height: auto; margin: 0;
+    padding: 0.15rem 0.6rem;
+    font-size: 12px; line-height: 1.4; font-weight: 500;
+    background: transparent;
+    color: var(--pico-primary);
+    border: 1px solid color-mix(in srgb, var(--pico-primary) 45%, transparent);
+    border-radius: 4px;
+    box-shadow: none;
+}
+button.gen-mini-btn:hover {
+    background: color-mix(in srgb, var(--pico-primary) 10%, transparent);
+    color: var(--pico-primary);
+}
 .gen-band-title {
     font-weight: 800; font-size: 12.5px; letter-spacing: 0.09em;
     text-transform: uppercase;
@@ -7537,17 +7554,15 @@ button.diag-badge { cursor: pointer; }
 .bulk-font-ctl .bulk-ls-label { font-size: 0.95em; }   /* the ↔ glyph */
 .bulk-font-ctl #bulk-ls-slider { width: 4.5rem; }       /* shorter than the size slider */
 .bulk-toolbar-spacer { flex: 1; }
-.bulk-hint { font-size: 0.8em; max-width: 64ch; margin: 0; }   /* drop Pico's <p> margin-bottom */
-/* Dismissible help text: ✕ on the hint hides it (persisted); the toolbar ⓘ button
-   brings it back. */
-.bulk-panel.bulk-hint-hidden .bulk-hint { display: none; }
-.bulk-hint-x {
-    float: right; margin: 0 0 0 .5rem; padding: 0 .25rem; line-height: 1.2;
-    border: none; background: none; cursor: pointer; color: var(--pico-muted-color);
-    font-size: 1.1em;
-}
-.bulk-hint-x:hover { color: var(--pico-color); }
+/* r6 item 5: the help lives in a <details> popover (the bulk-colvis dropdown
+   pattern) anchored at the ⓘ immediately left of Properties — no boxed hint. */
 .bulk-hint-toggle { font-size: 1em; }
+.bulk-help-pop .bulk-help-menu {
+    max-width: 46ch; min-width: 34ch;
+    padding: 0.6rem 0.8rem;
+    font-size: 0.82em; line-height: 1.5;
+    color: var(--pico-color);
+}
 .bulk-toolbar .btn-sm { margin: 0; padding: 0.15rem 0.8rem; width: auto; }
 .bulk-dirty-count { font-size: 0.82em; font-weight: 600; color: var(--color-warning-text); }
 /* A second horizontal scrollbar ABOVE the table, synced to it — so a wide table

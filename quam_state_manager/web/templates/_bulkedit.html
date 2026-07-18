@@ -6,19 +6,34 @@
            (aria-selected + tabpanel + arrow roving) wasn't implemented, so a broken-
            contract role=tablist/tab is worse than honest pressed-toggle buttons; switchPane
            keeps aria-pressed in sync. #}
+        {# r6 renames: "Live grid" → "Table View", "All values" → "Flat View".
+           data-pane keys stay "grid"/"allvalues" — JS hooks + tests bind them. #}
         <div class="bulk-segmented" role="group" aria-label="Live State Edit view">
             <button type="button" class="bulk-seg active" data-pane="grid" aria-pressed="true"
-                    title="The curated Qubits + Pairs grids — fast cross-qubit retune">Live grid</button>
+                    title="The curated Qubits + Pairs grids — fast cross-qubit retune">Table View</button>
             <button type="button" class="bulk-seg" data-pane="allvalues" aria-pressed="false"
-                    title="Edit ANY value in the chip — every leaf of state + wiring, searchable">All values</button>
+                    title="Edit ANY value in the chip — every leaf of state + wiring, searchable">Flat View</button>
         </div>
-        <button type="button" class="btn-sm outline bulk-hint-toggle" id="bulk-hint-toggle"
-                onclick="BulkEdit.toggleHint()" aria-pressed="true" title="Show/hide the help text">&#9432;</button>
     </div>
     {# ── Pane 1: the existing curated Qubits + Pairs grids (UNCHANGED) ───────── #}
     <div class="bulk-pane" data-bulk-pane="grid">
     {# Controls row (below the title): Properties · Search · Apply all · Reset · Aa. #}
     <div class="bulk-toolbar bulk-toolbar-controls">
+        {# r6 item 5: the boxed help paragraph is gone — just this ⓘ, sitting
+           immediately left of Properties, opening the same text as a popover
+           (native <details> dropdown, the bulk-colvis pattern). #}
+        <details class="bulk-colvis bulk-help-pop" id="bulk-help-pop">
+            <summary class="btn-sm outline bulk-hint-toggle" id="bulk-hint-toggle"
+                     title="How Live State Edit works">&#9432;</summary>
+            <div class="bulk-colvis-menu bulk-help-menu">
+                Edit a cell, then <b>Apply</b> its row or <b>Apply&nbsp;all</b>. Edits go to a
+                safe <b>working state</b> (your live chip is untouched) — review them in the tray,
+                then <b>apply&nbsp;to&nbsp;live</b>. A changed cell keeps a red box; hover it for
+                <i>before&nbsp;→&nbsp;after</i>. Click a column header to sort, drag its right
+                edge to resize. <span class="bulk-shared-legend">&#9888; = LO-coupled port
+                (must share a band with its peer)</span>.
+            </div>
+        </details>
         <details class="bulk-colvis">
             <summary class="btn-sm outline" title="Choose which property columns to show">&#9776; Properties</summary>
             <div class="bulk-colvis-menu" id="bulk-colvis-menu" role="menu"></div>
@@ -57,12 +72,6 @@
                    oninput="BulkEdit.setLetterSpacing(this.value)" aria-label="Cell letter spacing" title="Letter spacing (digit gap)">
         </span>
     </div>
-    <p class="bulk-hint muted"><button type="button" class="bulk-hint-x" onclick="BulkEdit.toggleHint()"
-        title="Hide this help (re-show with the ⓘ button)" aria-label="Hide help">&#10005;</button>Edit a cell, then <b>Apply</b> its row or <b>Apply&nbsp;all</b>. Edits go to a
-        safe <b>working state</b> (your live chip is untouched) — review them in the tray, then
-        <b>apply&nbsp;to&nbsp;live</b>. A changed cell keeps a red box; hover it for <i>before&nbsp;→&nbsp;after</i>.
-        Click a column header to sort, drag its right edge to resize. <span class="bulk-shared-legend">&#9888; = LO-coupled port (must share a band with its peer)</span>.</p>
-
     <div class="bulk-scroll-top" id="bulk-scroll-top" aria-hidden="true"><div id="bulk-scroll-top-inner"></div></div>
     <div class="bulk-table-wrap">
         <table class="bulk-table" id="bulk-table">
