@@ -187,9 +187,31 @@ class TestConfigDirEnv:
         monkeypatch.setenv("QUALIBRATE_CONFIG_DIR", str(tmp_path / "legacy"))
         assert qc._config_dir() == tmp_path / "official"
 
-    def test_quam_state_path_env_wins(self, tmp_path, monkeypatch):
+    def test_own_override_wins_over_runner_env(self, tmp_path, monkeypatch):
+        # QUALIBRATE_STATE_PATH is SM's own deliberate override — first always.
         monkeypatch.setenv("QUAM_STATE_PATH", str(tmp_path / "quam_env"))
-        monkeypatch.setenv("QUALIBRATE_STATE_PATH", str(tmp_path / "legacy_env"))
+        monkeypatch.setenv("QUALIBRATE_STATE_PATH", str(tmp_path / "own_env"))
+        assert qc.resolve_live_state_path() == tmp_path / "own_env"
+
+    def test_active_project_beats_inherited_runner_env(self, tmp_path, monkeypatch):
+        # r6b stale-banner fix: an SM launched from a calibration shell inherits
+        # a FROZEN QUAM_STATE_PATH; the live active-project config must win so a
+        # project switch in qualibrate propagates to the workbench watch/banner.
+        monkeypatch.delenv("QUALIBRATE_STATE_PATH", raising=False)
+        monkeypatch.setenv("QUAM_STATE_PATH", str(tmp_path / "stale_shell_env"))
+        cfg = tmp_path / "cfg"
+        _write(cfg / "config.toml", '[qualibrate]\nproject = "P2"\n')
+        _write(cfg / "projects" / "P2" / "config.toml",
+               '[quam]\nstate_path = "/proj/new_live"\n')
+        monkeypatch.setenv("QUALIBRATE_CONFIG_DIR", str(cfg))
+        monkeypatch.delenv("QUALIBRATE_CONFIG_FILE", raising=False)
+        assert qc.resolve_live_state_path() == Path("/proj/new_live")
+
+    def test_runner_env_still_the_no_config_fallback(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("QUALIBRATE_STATE_PATH", raising=False)
+        monkeypatch.setenv("QUAM_STATE_PATH", str(tmp_path / "quam_env"))
+        monkeypatch.setenv("QUALIBRATE_CONFIG_DIR", str(tmp_path / "no-such-cfg"))
+        monkeypatch.delenv("QUALIBRATE_CONFIG_FILE", raising=False)
         assert qc.resolve_live_state_path() == tmp_path / "quam_env"
 
 
