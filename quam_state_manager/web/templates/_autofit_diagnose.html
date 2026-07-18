@@ -38,8 +38,8 @@
         <td>
           {% if t.refit_code in ('drift', 'recover') and t.fresh.get('success') %}
           <button class="btn-sm outline"
-                  onclick="autofitDiagApply(this, {{ q | tojson }}, {{ row.family | tojson }}, {{ t.fresh | tojson }})"
-                  title="Apply today's re-fit value through the audited edit path (working copy; chip-token gated)">
+                  onclick="autofitDiagApply(this, {{ q | tojson }}, {{ row.family | tojson }}, {{ (t.fresh_full or t.fresh) | tojson }}, {{ (row.parameters or {}) | tojson }})"
+                  title="Preview + apply today's re-fit values through the audited edit path (working copy; chip-token gated)">
             Apply fresh &rarr;</button>
           {% elif t.refit_code == 'reject' or t.gate_verdict == 'fail' %}
           <span class="autofit-chip" title="{{ t.refit_why }}">re-measure advised</span>
@@ -49,29 +49,80 @@
     {% endfor %}
     </tbody>
   </table>
+  <div id="autofit-diag-confirm"></div>
   <p class="muted">Applies stage into the <em>working copy</em> via the same audited
-     path as every edit (undo-able, chip-identity gated); "re-measure advised" means
-     the data itself doesn't support a trustworthy number — adjust parameters and
-     re-run (the Autofit plan loop automates this on the real backend).</p>
+     path as every edit (undo-able, chip-identity gated); the confirm step lists
+     <em>every</em> row of the node's coupled update — frequency, amplitude, shared
+     feedline power — so nothing is written partially or silently. "re-measure
+     advised" means the data itself doesn't support a trustworthy number — adjust
+     parameters and re-run (the Autofit plan loop automates this on the real
+     backend).</p>
 </div>
 <script>
-function autofitDiagApply(btn, target, family, fresh) {
+function autofitDiagApply(btn, target, family, fresh, parameters) {
   var token = {{ chip_token | tojson }};
+  var box = document.getElementById("autofit-diag-confirm");
   fetch("/autofit/diagnose-rows", {
     method: "POST", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({target: target, family: family, fresh: fresh}),
+    body: JSON.stringify({target: target, family: family, fresh: fresh,
+                          parameters: parameters}),
   }).then(function (r) { return r.json(); }).then(function (d) {
     if (!d.ok || !d.rows.length) { btn.textContent = d.error || "no mapped path"; return; }
-    var updates = d.rows.map(function (r) {
-      return {dot_path: r.path, value: r.value};
+    // build the confirm panel with textContent only (never innerHTML on
+    // server-derived strings — DOM-XSS doctrine)
+    box.textContent = "";
+    var card = document.createElement("article");
+    card.className = "autofit-diag-card";
+    var h = document.createElement("strong");
+    h.textContent = "Apply " + d.rows.length + " coupled row" +
+        (d.rows.length > 1 ? "s" : "") + " for " + target + ":";
+    card.appendChild(h);
+    var ul = document.createElement("ul");
+    d.rows.forEach(function (row) {
+      var li = document.createElement("li");
+      li.textContent = (row.label || row.path) + " — " + row.path + ": " +
+          JSON.stringify(row.old_hint) + " → " + JSON.stringify(row.value);
+      ul.appendChild(li);
     });
-    return fetch("/field/edit-batch", {
-      method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({updates: updates, expect_chip: token}),
-    }).then(function (r2) {
-      btn.textContent = r2.ok ? "applied ✓" : "refused (" + r2.status + ")";
-      btn.disabled = r2.ok;
+    card.appendChild(ul);
+    var notes = [];
+    if (d.power && d.power.skipped) {
+      notes.push("power NOT applied: " + d.power.skipped);
+    }
+    (d.power && d.power.warnings || []).forEach(function (w) { notes.push(w); });
+    notes.forEach(function (n) {
+      var p = document.createElement("p");
+      p.className = "autofit-warn";
+      p.textContent = "⚠ " + n;
+      card.appendChild(p);
     });
-  }).catch(function (e) { btn.textContent = "error"; });
+    var ok = document.createElement("button");
+    ok.className = "btn-sm";
+    ok.textContent = "Confirm — apply all " + d.rows.length;
+    var no = document.createElement("button");
+    no.className = "btn-sm outline";
+    no.textContent = "Cancel";
+    no.onclick = function () { box.textContent = ""; };
+    ok.onclick = function () {
+      ok.disabled = true;
+      var updates = d.rows.map(function (row) {
+        return {dot_path: row.path, value: row.value};
+      });
+      fetch("/field/edit-batch", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({updates: updates, expect_chip: token}),
+      }).then(function (r2) {
+        btn.textContent = r2.ok ? "applied ✓" : "refused (" + r2.status + ")";
+        btn.disabled = r2.ok;
+        if (!r2.ok) { ok.disabled = false; return; }
+        box.textContent = "";
+      }).catch(function () { btn.textContent = "error"; ok.disabled = false; });
+    };
+    card.appendChild(ok);
+    card.appendChild(document.createTextNode(" "));
+    card.appendChild(no);
+    box.appendChild(card);
+    card.scrollIntoView({block: "nearest"});
+  }).catch(function () { btn.textContent = "error"; });
 }
 </script>

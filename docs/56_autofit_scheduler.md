@@ -322,6 +322,47 @@ documented as vision-mandatory. Next tier (the user's ultimate ask): the GUI
 before/after report — load a bad run, show stored vs refit figure + state
 old→new, then apply through the audited writer.
 
+## 6G. Diagnose "Apply fresh" — coupled-write policy (2026-07-19, the
+## figure-axis ≠ state-value verification — user CRITICAL)
+
+The rvp node's own update is ATOMIC across frequency + per-qubit readout
+amplitude + the SHARED feedline `full_scale_power_dbm` (+ power-preserving
+sibling-amp rescales when the FSP moves). Real-archive confirmation: #565/#599
+(LabA) + #9 (its CR campaign) patch all three kinds in one run; the identity
+`P_dbm = FSP + 20·log10(amp)` reproduces `fit_results.optimal_power` at diff
+0.0 (#599/#568), the hardened node variant records the split itself
+(`target_amplitude`/`target_full_scale_power_dbm`/`readout_line`), unfitted
+line members get `amp ×= 10^(ΔFSP/20)` (bit-exact on #599 qA6 — value 1.2056,
+the node itself writes amp > 1), #565 shows a −3 dB backoff variant, and the
+identity provably does NOT hold for qsvp (#12: constant +3.98 dB offset).
+A frequency-only apply is therefore a PARTIAL write. Policy (binding):
+
+- **Feedline is the apply unit.** `core/autofit/power_rows.py` builds the
+  coupled set: node-authored amp for the fitted qubit, the shared-port FSP
+  (resolved via the 2-hop `resonator.opx_output` pointer chase, checked
+  against the envelope's `readout_line`), and rescale rows for EVERY other
+  resonator on that line. One non-rescalable sibling (pointer-valued amp)
+  refuses the whole block — never a partial line. amp > 1 is a non-blocking
+  warning (the node writes such values). All rows go in ONE audited
+  `/field/edit-batch` (atomic rollback, chip-token gated).
+- **Node-authored numbers only.** Without `target_*` keys the split is
+  node-version-dependent (−3 dB backoff exists) — power is REFUSED with a
+  reason, never re-derived SM-side (docs/47 doctrine). qsvp never gets power
+  rows. Refusal doesn't block frequency rows; the UI shows "power NOT
+  applied: <reason>" — no SILENT partial write.
+- **Full disclosure before write.** The replay row carries `fresh_full` (the
+  whole scalar fit entry — also unbreaks ramsey's `decay→T2ramsey`) +
+  `parameters` (unbreaks `{operation}` families); the panel's Apply opens a
+  confirm card listing every row (label, path, old → new) + warnings, then
+  one batch.
+
+Pinned by `tests/test_autofit_power_rows.py`: dummy-state unit tier (rescale
+math, membership, every refusal branch) + real-archive goldens (auto-skip):
+replaying the apply over #599/#9's PRE-update state (patches[].old rewind)
+equals the node's own patch list — amp/FSP bit-exact, frequency within the
+assign-vs-increment sub-Hz class — order-independent; #568/#565 refuse;
+#12 refuses by family.
+
 ## 7. Explicit non-goals (v1)
 
 - No LLM-emitted numbers anywhere (incl. reverts, window math) — doctrinal.

@@ -123,6 +123,7 @@ def evaluate_run(run_folder: Path, out_dir: Path, *,
     row: dict[str, Any] = {
         "run": run_folder.name, "folder": str(run_folder),
         "family": fam.key if fam else None, "targets": {},
+        "parameters": params,
         "stored_figures": sorted(str(p) for p in run_folder.glob("figures.*.png")),
         "refit_figures": [], "errors": [],
     }
@@ -179,6 +180,13 @@ def evaluate_run(run_folder: Path, out_dir: Path, *,
                        (fam.value_key, "success", "optimal_power") if k in stored},
             "fresh": {k: fresh.get(k) for k in
                       (fam.value_key, "success", "optimal_power") if k in fresh},
+            # the FULL scalar fit entry — the apply path maps from this, so
+            # coupled keys (target_amplitude / target_full_scale_power_dbm /
+            # readout_line, ramsey's decay, …) survive past the compact
+            # display dict (no silent partial write; docs/56 §6G)
+            "fresh_full": {k: v for k, v in fresh.items()
+                           if isinstance(v, (int, float, bool, str))
+                           or v is None},
             "refit_code": code, "refit_why": why,
             "fix": None,
         }

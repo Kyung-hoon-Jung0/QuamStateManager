@@ -13347,8 +13347,15 @@ def dataset_autofit_diagnose_fig(uid, name):
 @bp.route("/autofit/diagnose-rows", methods=["POST"])
 def autofit_diagnose_rows():
     """Map a fresh refit result to writable state rows for the LOADED chip
-    (families registry — never invents paths; ops like ceil4 applied)."""
+    (families registry — never invents paths; ops like ceil4 applied).
+
+    For the power-coupled rvp family the row set additionally carries the
+    node-authored amplitude + shared-port FSP + feedline sibling rescales
+    (docs/56 §6G — no silent partial write); when those can't be built the
+    refusal reason rides back in ``power.skipped`` so the UI discloses that
+    the frequency-only apply leaves power uncalibrated."""
     from quam_state_manager.core.autofit import families as af_families
+    from quam_state_manager.core.autofit import power_rows as af_power
 
     data = request.get_json(silent=True) or {}
     fam = af_families.FAMILIES.get(str(data.get("family") or ""))
@@ -13368,6 +13375,13 @@ def autofit_diagnose_rows():
         rows = af_families.resolve_updates(fam, target, dict(fresh),
                                            data.get("parameters") or {},
                                            current_value_of)
+        power = None
+        if fam.key == af_power.POWER_COUPLED_FAMILY:
+            pr = af_power.coupled_power_rows(fam.key, target, dict(fresh),
+                                             store.state)
+            rows = rows + pr["rows"]
+            power = {"applied": bool(pr["rows"]), "skipped": pr["skipped"],
+                     "warnings": pr["warnings"]}
     except Exception as exc:  # noqa: BLE001
         return jsonify({"ok": False, "error": str(exc)}), 500
-    return jsonify({"ok": True, "rows": rows})
+    return jsonify({"ok": True, "rows": rows, "power": power})
