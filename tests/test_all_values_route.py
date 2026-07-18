@@ -64,7 +64,10 @@ class TestCompletenessPayload:
     def test_total_partitions_and_matches_rows(self, client):
         data = _decode(client.get("/bulk/all-values"))
         s = data["summary"]
-        assert s["total"] == len(data["rows"])
+        # v2: total counts LEAVES only; array/empty container rows are additive
+        assert len(data["rows"]) == s["total"] + s["arrays"] + s["empties"]
+        leaf_rows = [r for r in data["rows"] if r[2] not in ("array", "empty")]
+        assert s["total"] == len(leaf_rows)
         assert sum(s["by_kind"].values()) == s["total"]
         assert s["editable"] + s["readonly"] == s["total"]
         # the user's flagship leaf is an editable row
@@ -75,10 +78,15 @@ class TestCompletenessPayload:
 
     def test_every_kind_valid_and_readonly_never_modified(self, client):
         data = _decode(client.get("/bulk/all-values"))
-        for path, _disp, kind, mod in data["rows"]:
-            assert kind in ALL_KINDS
-            if kind in READONLY_KINDS:
+        for row in data["rows"]:
+            path, kind, mod = row[0], row[2], row[3]
+            assert kind in ALL_KINDS + ("array", "empty")
+            if kind in READONLY_KINDS or kind in ("array", "empty"):
                 assert mod == 0, f"{path}: read-only row must not carry a modified flag"
+            # v2 row shape: optional 5th extra dict, nothing beyond
+            assert len(row) in (4, 5)
+            if len(row) == 5:
+                assert isinstance(row[4], dict)
 
     def test_membership_and_pointers_are_readonly_kinds(self, client):
         rows = {r[0]: r[2] for r in _decode(client.get("/bulk/all-values"))["rows"]}
@@ -88,6 +96,49 @@ class TestCompletenessPayload:
         assert rows["qubits.qA1.xy.intermediate_frequency"] == "selfref"
         assert rows["qubits.qA1.resonator.confusion_matrix.0.0"] == "list"
         assert rows["qubits.qA1.__class__"] == "skip"
+
+
+class TestV2RowShape:
+    def test_container_rows_arrays_and_empties(self, client):
+        data = _decode(client.get("/bulk/all-values"))
+        rows = {r[0]: r for r in data["rows"]}
+        cm = rows["qubits.qA1.resonator.confusion_matrix"]
+        assert cm[2] == "array" and cm[1] == "[2×2]" and cm[4] == {"dims": "2×2"}
+        inner = rows["qubits.qA1.resonator.confusion_matrix.0"]
+        assert inner[2] == "array" and inner[1] == "[2]" and len(inner) == 4
+        qp = rows["qubit_pairs"]                       # empty dict — was invisible
+        assert qp[2] == "empty" and qp[1] == "{} empty"
+        assert data["summary"]["arrays"] >= 4 and data["summary"]["empties"] >= 1
+
+    def test_dangling_xref_keeps_raw_text_and_flags_d(self, client):
+        # z.opx_output chains to #/ports/analog_outputs/... which this fixture
+        # lacks → dangling: raw pointer text + d=1 (client renders read-only)
+        rows = {r[0]: r for r in _decode(client.get("/bulk/all-values"))["rows"]}
+        row = rows["qubits.qA1.z.opx_output"]
+        assert row[1] == "#/wiring/qubits/qA1/z/opx_output"
+        assert row[4]["p"] == "#/wiring/qubits/qA1/z/opx_output" and row[4]["d"] == 1
+
+    def test_scalar_ty_annotations_from_policy(self, client):
+        # /load attaches a TypePolicy (manifest None in tests → inference layer)
+        rows = {r[0]: r for r in _decode(client.get("/bulk/all-values"))["rows"]}
+        f01 = rows["qubits.qA1.f_01"]
+        assert len(f01) == 5 and f01[4]["ty"] == {"t": "number", "s": "inferred"}
+        marker = rows["qubits.qA1.xy.operations.x180_DragCosine.digital_marker"]
+        assert marker[4]["ty"] == {"t": "str", "s": "inferred"}
+        # null scalar is un-inferable → NO ty extra
+        assert len(rows["qubits.qA1.f_12"]) == 4
+
+    def test_user_assignment_overrides_inference_and_salts_etag(self, client):
+        e1 = client.get("/bulk/all-values").headers["ETag"]
+        r = client.post("/field/type-assign",
+                        data={"dot_path": "qubits.qA1.f_01", "type": "int"})
+        assert r.get_json()["ok"] is True
+        resp = client.get("/bulk/all-values", headers={"If-None-Match": e1})
+        # assignment count folds into the ETag → no stale 304 on the ty chips
+        assert resp.status_code == 200
+        assert resp.headers["ETag"] != e1
+        rows = {r[0]: r for r in _decode(resp)["rows"]}
+        assert rows["qubits.qA1.f_01"][4]["ty"] == {"t": "int", "s": "user"}
 
 
 class TestEditToLiveChain:
@@ -121,10 +172,12 @@ class TestEditToLiveChain:
 
 
 class TestServerEditabilityGate:
-    """Audit P0: the read-only safety policy (membership arrays / list-matrix elements /
-    identity keys) is enforced SERVER-SIDE on /field/edit-batch — not just in the
-    All-values client render — so a crafted/buggy POST can't mutate the dangerous leaves.
-    Pointers stay client-policy (legit surfaces write them), and a plain scalar still applies."""
+    """Audit P0: the read-only safety policy (membership arrays / identity keys) is
+    enforced SERVER-SIDE on /field/edit-batch — not just in the All-values client
+    render — so a crafted/buggy POST can't mutate the dangerous leaves. Pointers stay
+    client-policy (legit surfaces write them), and a plain scalar still applies.
+    List/matrix ELEMENTS became editable with the dot-form numeric path grammar
+    (2026-07-18) — pinned below as an applying edit, no longer a rejection."""
 
     def test_membership_array_edit_rejected_and_rolled_back(self, client):
         jb = client.post("/field/edit-batch", json={"updates": [
@@ -136,10 +189,41 @@ class TestServerEditabilityGate:
         peek = client.get("/field/peek?dot_path=active_qubit_names.0").get_json()
         assert peek["values"].get("active_qubit_names.0") in ("qA1", None)
 
-    def test_list_matrix_element_edit_rejected(self, client):
+    def test_list_matrix_element_edit_applies(self, client):
+        # Dot-form numeric segments address list elements now; the element's
+        # type is pinned by _type_coerce against the OLD element value.
         jb = client.post("/field/edit-batch", json={"updates": [
             {"dot_path": "qubits.qA1.resonator.confusion_matrix.0.0", "value": "0.5"}]}).get_json()
+        assert jb["ok"] is True and jb["results"][0]["applied"] is True
+        peek = client.get(
+            "/field/peek?dot_path=qubits.qA1.resonator.confusion_matrix.0.0").get_json()
+        assert peek["values"]["qubits.qA1.resonator.confusion_matrix.0.0"] == 0.5
+
+    def test_list_element_out_of_range_is_400_not_500(self, client):
+        jb = client.post("/field/edit-batch", json={"updates": [
+            {"dot_path": "qubits.qA1.resonator.confusion_matrix.7.7", "value": "0.5"}]}).get_json()
         assert jb["ok"] is False
+        assert jb["results"][0]["applied"] is False
+
+    def test_negative_list_index_rejected(self, client):
+        # int("-1") would silently edit the LAST element via Python negative
+        # indexing — the strict ^\d+$ gate must reject it.
+        jb = client.post("/field/edit-batch", json={"updates": [
+            {"dot_path": "qubits.qA1.resonator.confusion_matrix.0.-1", "value": "0.5"}]}).get_json()
+        assert jb["ok"] is False
+        peek = client.get(
+            "/field/peek?dot_path=qubits.qA1.resonator.confusion_matrix.0.1").get_json()
+        assert peek["values"]["qubits.qA1.resonator.confusion_matrix.0.1"] != 0.5
+
+    def test_bracket_path_shim_normalizes(self, client):
+        # Legacy bracket paths (stale bookmarks / copied pre-grammar paths)
+        # are rewritten to dot form at ingress for one release.
+        jb = client.post("/field/edit-batch", json={"updates": [
+            {"dot_path": "qubits.qA1.resonator.confusion_matrix[0][1]", "value": "0.25"}]}).get_json()
+        assert jb["ok"] is True
+        peek = client.get(
+            "/field/peek?dot_path=qubits.qA1.resonator.confusion_matrix.0.1").get_json()
+        assert peek["values"]["qubits.qA1.resonator.confusion_matrix.0.1"] == 0.25
 
     def test_identity_key_edit_rejected(self, client):
         jb = client.post("/field/edit-batch", json={"updates": [
@@ -176,8 +260,10 @@ class TestTransport:
 
     def test_etag_folds_changelog_and_changes_on_edit(self, client):
         e1 = client.get("/bulk/all-values").headers["ETag"]
-        # 3 components: chip-<mutation_seq>-<len(change_log)>
-        assert e1.strip('"').count("-") == 2
+        # v2 salt (policy attached on /load): chip-<mutation_seq>-<len(change_log)>-
+        # v2-<n_assignments>-<manifest_tag> — 6 components
+        assert "-v2-" in e1
+        assert e1.strip('"').count("-") == 5
         client.post("/field/edit-batch", json={"updates": [
             {"dot_path": "qubits.qA1.resonator.time_of_flight", "value": "284"}]})
         e2 = client.get("/bulk/all-values").headers["ETag"]
@@ -262,6 +348,21 @@ class TestStaticCoupling:
         # A5: Enter in a scalar input applies that one field
         assert "onTbodyKeydown" in js and "function applyOne" in js
         assert "'keydown', onTbodyKeydown" in js
+
+    def test_v2_surface_coupling(self):
+        # v2 markup contracts: edit-through inputs + chips + ✎ modal exist in the
+        # JS, and the pane-owned <style> (style.css is another session's file)
+        # declares the height-neutral wrappers the row grid depends on.
+        js = (_STATIC / "all-values.js").read_text(encoding="utf-8")
+        tpl = (_TPL / "_bulkedit.html").read_text(encoding="utf-8")
+        assert "function isEditableRow" in js and "data-av-edit" in js
+        assert "function openJsonModal" in js and "function showXrefHint" in js
+        assert "av-ty-chip" in js and "av-val-wrap" in js
+        # container/kind chips reachable from the filter bar
+        assert 'data-kind="kind:array"' in tpl and 'data-kind="kind:empty"' in tpl
+        assert ".av-val-wrap" in tpl and "#av-json-modal" in tpl and "#av-xref-hint" in tpl
+        # the wrap pins the 18px band so a chip can never grow the 28px row
+        assert "height: 18px" in tpl.split(".av-val-wrap", 1)[1][:120]
 
 
 def _big_state(n_qubits: int = 150) -> dict:

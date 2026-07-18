@@ -3862,6 +3862,74 @@ input.tree-edit-input {
 }
 .tree-val-error { background: var(--tree-val-error-bg); border-radius: 3px; transition: background 0.3s; }
 
+/* Explorer structural CRUD — hover row actions + inline add/delete/type panels. */
+.tree-row-actions { margin-left: 0.6em; display: inline-flex; gap: 0.15em; align-items: center; }
+.tree-act-btn {
+    all: unset; cursor: pointer; padding: 0 0.25em; border-radius: 3px;
+    color: var(--pico-muted-color); font-size: 0.85em; line-height: 1.2;
+    opacity: 0; transition: opacity 0.12s, color 0.12s;
+}
+.tree-row:hover .tree-act-btn { opacity: 0.7; }
+.tree-act-btn:hover { opacity: 1 !important; color: var(--pico-color); }
+.tree-act-del:hover { color: var(--color-error-text) !important; }
+.tree-del-confirm { font-size: 0.85em; color: var(--color-warning-text, #b45309); }
+.tree-crud-panel {
+    display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center;
+    margin: 0.25rem 0 0.35rem 1.6rem; padding: 0.4rem 0.5rem;
+    border: 1px solid var(--pico-muted-border-color); border-radius: 5px;
+}
+.tree-crud-panel input, .tree-crud-panel select {
+    margin: 0; padding: 0.1rem 0.35rem; height: 1.8em; font-size: 0.85em;
+    font-family: var(--font-mono); width: auto;
+}
+.tree-crud-key { min-width: 11em; }
+.tree-crud-val { min-width: 16em; }
+.tree-crud-err { font-size: 0.85em; color: var(--color-error-text); }
+.tree-type-panel .tree-type-opts { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+.tree-type-panel .tree-type-opts label {
+    display: inline-flex; gap: 0.25em; align-items: center; font-size: 0.85em; margin: 0;
+}
+.tree-type-panel .tree-type-opts input[type="radio"] { margin: 0; }
+.tree-type-head { flex-basis: 100%; font-size: 0.85em; }
+.tree-type-chip {
+    margin-left: 0.45em; padding: 0 0.35em; font-size: 0.75em;
+    border: 1px solid color-mix(in srgb, var(--pico-primary) 40%, transparent);
+    border-radius: 3px; color: var(--pico-primary);
+    vertical-align: middle; white-space: nowrap;
+}
+
+/* Env-match card on /diagnostics — status line + probe/deep-validate actions. */
+.diag-env-card {
+    border: 1px solid var(--pico-muted-border-color);
+    border-left: 3px solid color-mix(in srgb, var(--pico-primary) 55%, transparent);
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+    margin: 0.5rem 0 0.75rem;
+}
+.diag-env-head { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+.diag-env-actions { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.4rem; }
+.diag-env-err { color: var(--color-error-text); }
+.diag-env-progress { width: 8rem; height: 0.5rem; margin: 0; }
+.diag-env-missing { margin: 0.4rem 0 0; font-size: 0.85em; }
+
+/* Inline rejection-reason chip after a bounced edit (the red flash alone said
+   nothing). Theme rule: coloured border + text token, never *-border as text. */
+.tree-edit-err {
+    margin-left: 0.5em;
+    padding: 0 0.4em;
+    font-size: 0.85em;
+    border: 1px solid color-mix(in srgb, var(--color-error-text, #c62828) 45%, transparent);
+    border-radius: 3px;
+    color: var(--color-error-text, #c62828);
+    cursor: pointer;
+    white-space: nowrap;
+    max-width: 46em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: inline-block;
+    vertical-align: middle;
+}
+
 /* Whole-container (list/dict) JSON editor — the ✎ button on a container row + the
    inline textarea it opens. Lets a user enter a list / matrix / object at once. */
 .tree-json-edit-btn {

@@ -33,6 +33,8 @@ __all__ = [
     "ParamSpec",
     "PulseSpec",
     "PULSE_CATALOG",
+    "apply_env_overlay",
+    "env_overlay_active",
     "by_qclass",
     "resolve_qclass",
     "infer_spec",
@@ -460,6 +462,43 @@ _LEAF_ALIASES: dict[str, str] = {
 
 
 # ---------------------------------------------------------------------------
+# Env overlay (the selected environment's own pulse roster)
+# ---------------------------------------------------------------------------
+# The static tables above transcribe ONE generation of the QM stack; QM churns
+# module homes and field names between generations. The overlay is the
+# selected env's subclass walk (``probe_state_schema._dump_pulse_roster``:
+# ``{<LeafName>: {"homes": [module paths], "fields": {name: ...} | None,
+# ...}}``) layered purely ADDITIVELY over the catalog — ``_SPECS`` /
+# ``_BY_QCLASS`` are never mutated, and with no overlay installed every
+# function below is byte-identical to the static catalog (pinned by
+# ``tests/test_pulse_catalog_env_overlay.py``). Install/clear is a plain
+# reference assignment (atomic under the GIL); readers snapshot the ref once
+# per call, so a concurrent swap can never produce a torn read.
+
+_ENV_OVERLAY: dict | None = None
+
+
+def apply_env_overlay(roster: dict | None) -> None:
+    """Install the selected env's pulse roster; ``None`` (or empty) clears."""
+    global _ENV_OVERLAY
+    _ENV_OVERLAY = roster if roster else None
+
+
+def env_overlay_active() -> dict | None:
+    """The installed roster dict, or None when no overlay is active."""
+    return _ENV_OVERLAY
+
+
+def _env_home_verified(roster: dict | None, leaf: str, home: str) -> bool:
+    """True when *roster* verifiably places class *leaf* at module *home*."""
+    if not roster or not home:
+        return False
+    rec = roster.get(leaf)
+    homes = rec.get("homes") if isinstance(rec, dict) else None
+    return isinstance(homes, (list, tuple)) and home in homes
+
+
+# ---------------------------------------------------------------------------
 # Lookup
 # ---------------------------------------------------------------------------
 
@@ -468,6 +507,10 @@ def resolve_qclass(qclass: Any) -> tuple[PulseSpec | None, str | None]:
 
     how:
         "exact" — a catalog path or bare key the catalog was transcribed from.
+        "env"   — the module home is not in the catalog, but the ACTIVE env
+            overlay (:func:`apply_env_overlay`) verifiably places this class
+            leaf at that home. Same trust level as "exact" — the selected
+            environment's own introspection vouches for the path.
         "alias" — a deprecated full-path alias (DragPulse → DragGaussianPulse).
         "leaf"  — matched by class *name* only: the module path is not one the
             catalog knows (path-churned QM stack, fork, or an unrelated class
@@ -484,6 +527,15 @@ def resolve_qclass(qclass: Any) -> tuple[PulseSpec | None, str | None]:
     spec = _BY_QCLASS.get(qclass)
     if spec is not None:
         return spec, "exact"
+    roster = _ENV_OVERLAY  # snapshot once — swap-safe
+    if roster is not None and "." in qclass:
+        # env step: only a home the selected env's roster VERIFIES for this
+        # exact leaf counts — a roster that knows the leaf at a DIFFERENT
+        # home falls through to the name-only "leaf" caution below.
+        home, env_leaf = qclass.rsplit(".", 1)
+        spec = PULSE_CATALOG.get(env_leaf)
+        if spec is not None and _env_home_verified(roster, env_leaf, home):
+            return spec, "env"
     alias = _QCLASS_ALIASES.get(qclass)
     if alias is not None:
         return PULSE_CATALOG[alias], "alias"
@@ -544,6 +596,15 @@ def unmodeled_fields(spec: PulseSpec | None, body: Any) -> list[str]:
     known = {p.name for p in spec.params} | {"__class__", "length"}
     for p in spec.params:
         known.update(p.aliases)
+    roster = _ENV_OVERLAY  # snapshot once — swap-safe
+    if roster is not None:
+        # env overlay: fields the selected env's class itself declares are
+        # KNOWN even when the catalog spec predates their rename/addition —
+        # kills false "unmodeled field" cautions across generations.
+        rec = roster.get(spec.key)
+        fields = rec.get("fields") if isinstance(rec, dict) else None
+        if isinstance(fields, dict):
+            known.update(fields)
     return sorted(k for k in body if k not in known)
 
 
@@ -641,10 +702,15 @@ def chip_qclass(merged: Any, spec: PulseSpec) -> tuple[str, str]:
         # class — QM stacks scatter classes across modules (quam_builder's
         # architecture package has SNZPulse but no GaussianPulse), and a
         # guessed path that no stack defines makes Quam.load fail on the
-        # whole file. No known home ⇒ the catalog path (always importable
-        # somewhere) + the editable create-form field for the rest.
+        # whole file. "Known" = the catalog's registered homes OR a home the
+        # active env overlay verifies for this class (the selected env's own
+        # introspection is as strong as our transcription). No known home ⇒
+        # the catalog path (always importable somewhere) + the editable
+        # create-form field for the rest.
         if (ranked[0][1] * 2 > len(prefixes)
-                and candidate in _BY_QCLASS):
+                and (candidate in _BY_QCLASS
+                     or _env_home_verified(_ENV_OVERLAY, spec.key,
+                                           ranked[0][0][:-1]))):
             return candidate, "prefix"
 
     return spec.qclass, "catalog"

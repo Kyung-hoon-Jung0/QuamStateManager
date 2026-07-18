@@ -3758,7 +3758,9 @@ window.clearDetailPanelSearch = function(btnEl) {
             }
         } else {
             for (var j = 0; j < d.value.length; j++) {
-                var itemPath = d.path + "[" + j + "]";
+                // Canonical dot-form numeric segment (a.b.3) — matches the server
+                // path grammar so element edits POST directly to /field/edit.
+                var itemPath = d.path + "." + j;
                 var itemRef = (d.hasDiff && Array.isArray(d.refValue)) ? d.refValue[j] : undefined;
                 children.appendChild(_buildNode(String(j), d.value[j], itemPath, d.depth + 1, itemRef, d.hasDiff, d.valueClick));
             }
@@ -3839,11 +3841,10 @@ window.clearDetailPanelSearch = function(btnEl) {
      * _materializeChildren: object child "parent.key" and array child "parent[i]".
      */
     function _parentPath(path) {
+        // Pure dot-form paths (list elements use numeric segments now).
         if (!path) return "";
-        var br = path.lastIndexOf("[");
         var dot = path.lastIndexOf(".");
-        var cut = br > dot ? br : dot;
-        return cut <= 0 ? "" : path.slice(0, cut);
+        return dot <= 0 ? "" : path.slice(0, dot);
     }
 
     /**
@@ -3874,7 +3875,9 @@ window.clearDetailPanelSearch = function(btnEl) {
             } else if (type === "array") {
                 add(path, key, "[" + value.length + " item" + (value.length !== 1 ? "s" : "") + "]");
                 for (var j = 0; j < value.length; j++) {
-                    walk(String(j), value[j], path + "[" + j + "]");
+                    // dot-form numeric segments — must mirror _materializeChildren
+                    // or search keepPaths never match materialised element rows
+                    walk(String(j), value[j], path + "." + j);
                 }
             } else {
                 add(path, key, _formatValue(value));
@@ -4076,6 +4079,23 @@ window.clearDetailPanelSearch = function(btnEl) {
         }
     }
 
+    // Inline, dismissible error chip after a rejected edit — the red flash alone
+    // told the user NOTHING about why the server bounced the write (type errors,
+    // policy blocks, bad list index all looked identical). Auto-clears in 8s.
+    function _showEditError(anchorEl, msg) {
+        var row = anchorEl.closest ? (anchorEl.closest(".tree-row") || anchorEl) : anchorEl;
+        var old = row.querySelector(".tree-edit-err");
+        if (old) old.remove();
+        var chip = document.createElement("span");
+        chip.className = "tree-edit-err";
+        chip.textContent = "✗ " + (msg || "edit rejected");
+        chip.title = "click to dismiss";
+        chip.onclick = function() { chip.remove(); };
+        row.appendChild(chip);
+        setTimeout(function() { chip.remove(); }, 8000);
+    }
+    window._showEditError = _showEditError;
+
     function _makeValueEditable(valEl, dotPath) {
         if (valEl.querySelector("input")) return; // already editing
         var currentDisplay = valEl.textContent;
@@ -4092,6 +4112,21 @@ window.clearDetailPanelSearch = function(btnEl) {
         valEl.classList.add("tree-val-editing");
         input.focus();
         input.select();
+
+        // expected-type chip (env schema / user assignment / inference) —
+        // fetched on editor open only, never per keystroke
+        fetch("/field/peek?dot_path=" + encodeURIComponent(dotPath))
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                var e = d.expected && d.expected[dotPath];
+                if (!e || !valEl.contains(input)) return;
+                var chip = document.createElement("span");
+                chip.className = "tree-type-chip";
+                chip.textContent = e.type + " · " + e.source;
+                chip.title = (e.class_path ? e.class_path + "." + e.field + " — " : "") +
+                             (e.detail || "");
+                valEl.appendChild(chip);
+            }).catch(function () {});
 
         var committed = false;
 
@@ -4121,6 +4156,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                 if (!data.ok) {
                     valEl.classList.add("tree-val-error");
                     setTimeout(function() { valEl.classList.remove("tree-val-error"); }, 2000);
+                    _showEditError(valEl, data.error);
                     return;
                 }
                 valEl.textContent = newVal;
@@ -4391,6 +4427,303 @@ window.clearDetailPanelSearch = function(btnEl) {
         }
     };
 
+    /* ── Explorer structural CRUD + type picker ─────────────────────────
+       Hover-built row actions (＋ add child key on dicts, ✕ delete, ⚙ type
+       picker on leaves), lazily attached via ONE delegated mouseover per
+       crud-enabled container — no build cost across 10k idle rows. */
+
+    var _TYPE_CHOICES = ["infer", "int", "number", "str", "bool", "list",
+                         "matrix", "dict"];
+
+    function _attachCrudHover(container) {
+        container._crudEnabled = true;      // re-checked per hover: a re-render
+        if (container._crudHover) return;   // without crud must disable actions
+        container._crudHover = true;
+        container.addEventListener("mouseover", function (e) {
+            if (!container._crudEnabled) return;
+            var row = e.target.closest ? e.target.closest(".tree-row") : null;
+            if (!row || row.querySelector(":scope > .tree-row-actions")) return;
+            var node = row.closest(".tree-node");
+            if (!node || !node._meta || !node._meta.path) return;
+            _buildRowActions(container, node, row);
+        });
+    }
+
+    function _parentInfo(node) {
+        var pn = node.parentElement ? node.parentElement.closest(".tree-node") : null;
+        if (pn && pn._meta) return { node: pn, value: pn._value };
+        var c = node.closest(".json-tree");
+        return { node: null, value: c ? c._treeData : null };
+    }
+
+    function _mkBtn(txt, title, cls, onclick) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "tree-act-btn " + (cls || "");
+        b.textContent = txt;
+        b.title = title;
+        b.onclick = function (e) { e.stopPropagation(); onclick(b); };
+        return b;
+    }
+
+    function _buildRowActions(container, node, row) {
+        var m = node._meta, v = node._value;
+        var parent = _parentInfo(node);
+        var span = document.createElement("span");
+        span.className = "tree-row-actions";
+        var isDict = v !== null && typeof v === "object" && !Array.isArray(v);
+        var isArr = Array.isArray(v);
+        var inList = Array.isArray(parent.value);
+        var topLevel = m.depth === 0;
+        var identity = m.key === "__class__" || m.key === "id";
+        if (inList || identity) return;      // elements/identity: value-edit only
+
+        if (isDict) {
+            span.appendChild(_mkBtn("＋", "Add a key under " + (m.key || "root"),
+                "tree-act-add", function () { _openAddKey(container, node); }));
+        }
+        if (!isDict && !isArr) {
+            span.appendChild(_mkBtn("⚙", "Expected type of " + m.key,
+                "tree-act-type", function (b) { _openTypePicker(node, row, b); }));
+        }
+        if (!topLevel) {
+            span.appendChild(_mkBtn("✕", "Delete " + m.key,
+                "tree-act-del", function () { _confirmDelete(container, node, row, span); }));
+        }
+        if (span.children.length) row.appendChild(span);
+    }
+
+    function _closeCrudPanels(node) {
+        node.querySelectorAll(":scope > .tree-crud-panel").forEach(function (p) { p.remove(); });
+    }
+
+    /* -- add key ------------------------------------------------------- */
+
+    function _openAddKey(container, node) {
+        _closeCrudPanels(node);
+        var m = node._meta;
+        var panel = document.createElement("div");
+        panel.className = "tree-crud-panel";
+        var listId = "crud-keys-" + Math.abs((m.path || "").length) + "-" + Date.now();
+        panel.innerHTML =
+            '<input class="tree-crud-key" placeholder="new key" list="' + listId + '">' +
+            '<datalist id="' + listId + '"></datalist>' +
+            '<select class="tree-crud-type">' + _TYPE_CHOICES.map(function (t) {
+                return '<option value="' + t + '">' + (t === "infer" ? "type: infer" : t) + "</option>";
+            }).join("") + "</select>" +
+            '<input class="tree-crud-val" placeholder="value (JSON for lists/dicts)">' +
+            '<button type="button" class="btn-sm tree-crud-ok">Add</button>' +
+            '<button type="button" class="btn-sm outline tree-crud-cancel">Cancel</button>' +
+            '<span class="tree-crud-err"></span>';
+        var row = node.querySelector(":scope > .tree-row");
+        row.after(panel);
+        var keyIn = panel.querySelector(".tree-crud-key");
+        var typeSel = panel.querySelector(".tree-crud-type");
+        var valIn = panel.querySelector(".tree-crud-val");
+        var err = panel.querySelector(".tree-crud-err");
+        keyIn.focus();
+
+        // schema-suggested missing keys (warm manifest only) — auto-fills type
+        var suggestions = {};
+        fetch("/schema/missing-keys?scope=" + encodeURIComponent(m.path))
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (!d.ok || !d.warm) return;
+                var dl = panel.querySelector("datalist");
+                (d.missing || []).forEach(function (s) {
+                    suggestions[s.key] = s;
+                    var o = document.createElement("option");
+                    o.value = s.key;
+                    o.label = s.expected_type + (s.source_class ? " · " + s.source_class : "");
+                    dl.appendChild(o);
+                });
+            }).catch(function () {});
+        keyIn.addEventListener("change", function () {
+            var s = suggestions[keyIn.value];
+            if (!s) return;
+            var t = s.expected_type === "number" ? "number" : s.expected_type;
+            if (_TYPE_CHOICES.indexOf(t) >= 0) typeSel.value = t;
+            if (s.default !== null && s.default !== undefined && valIn.value === "") {
+                valIn.value = typeof s.default === "string" ? s.default : JSON.stringify(s.default);
+            }
+        });
+
+        function submit() {
+            var key = keyIn.value.trim();
+            if (!key) { err.textContent = "key required"; return; }
+            var body = new URLSearchParams();
+            var dotPath = (m.path ? m.path + "." : "") + key;
+            body.append("dot_path", dotPath);
+            body.append("value", valIn.value);
+            body.append("expect_type", typeSel.value);
+            body.append("expect_chip", window.__chipToken || "");
+            fetch("/field/create", { method: "POST",
+                headers: {"Content-Type": "application/x-www-form-urlencoded"},
+                body: body.toString() })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (!d.ok) { err.textContent = d.error || "create failed"; return; }
+                // pull the committed value (server truth) and rebuild this node
+                fetch("/field/peek?dot_path=" + encodeURIComponent(dotPath))
+                    .then(function (r) { return r.json(); })
+                    .then(function (p) {
+                        node._value[key] = p.values ? p.values[dotPath] : null;
+                        var fresh = _rebuildNode(node, node._value);
+                        if (fresh) {
+                            var fr = fresh.querySelector(":scope > .tree-row");
+                            if (fr) fr.classList.add("tree-row-pending");
+                            // materialise + open so the just-added key is visible
+                            var tg = fresh.querySelector(":scope > .tree-row > .tree-toggle.collapsed");
+                            if (tg) tg.click();
+                        }
+                    }).catch(function () {});
+                if (d.tray_html) { _swapPendingTray(d.tray_html); window._restoreTrayState && window._restoreTrayState(); }
+                if (window._diagChanged) window._diagChanged();
+            })
+            .catch(function () { err.textContent = "request failed"; });
+        }
+        panel.querySelector(".tree-crud-ok").onclick = submit;
+        panel.querySelector(".tree-crud-cancel").onclick = function () { panel.remove(); };
+        panel.addEventListener("keydown", function (e) {
+            if (e.key === "Enter" && e.target !== valIn) { e.preventDefault(); submit(); }
+            if (e.key === "Enter" && e.target === valIn) { e.preventDefault(); submit(); }
+            if (e.key === "Escape") panel.remove();
+        });
+    }
+
+    /* -- delete -------------------------------------------------------- */
+
+    function _countLeaves(v) {
+        if (v === null || typeof v !== "object") return 1;
+        var n = 0;
+        if (Array.isArray(v)) { return 1; }
+        Object.keys(v).forEach(function (k) { n += _countLeaves(v[k]); });
+        return n || 1;
+    }
+
+    function _confirmDelete(container, node, row, actionsSpan) {
+        var m = node._meta;
+        actionsSpan.innerHTML = "";
+        var label = document.createElement("span");
+        label.className = "tree-del-confirm";
+        label.textContent = "delete " + m.key + " (" + _countLeaves(node._value) +
+            " leaves, refs: …)? ";
+        actionsSpan.appendChild(label);
+        fetch("/field/refs?dot_path=" + encodeURIComponent(m.path))
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (d.ok) label.textContent = label.textContent.replace("refs: …",
+                    d.total + " pointer ref" + (d.total === 1 ? "" : "s"));
+            }).catch(function () {});
+        actionsSpan.appendChild(_mkBtn("Delete", "confirm", "tree-act-del", function () {
+            var body = new URLSearchParams();
+            body.append("dot_path", m.path);
+            body.append("expect_chip", window.__chipToken || "");
+            fetch("/field/delete", { method: "POST",
+                headers: {"Content-Type": "application/x-www-form-urlencoded"},
+                body: body.toString() })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (!d.ok) { _showEditError(row, d.error); actionsSpan.remove(); return; }
+                var parent = _parentInfo(node);
+                if (parent.value && typeof parent.value === "object") {
+                    delete parent.value[m.key];
+                }
+                if (parent.node) {
+                    _rebuildNode(parent.node, parent.node._value);
+                } else {
+                    node.remove();
+                }
+                if (d.dangling_refs > 0 && window.showToast) {
+                    window.showToast("Deleted — " + d.dangling_refs +
+                        " pointer(s) now dangle (see Diagnostics).", "warning");
+                }
+                if (d.tray_html) { _swapPendingTray(d.tray_html); window._restoreTrayState && window._restoreTrayState(); }
+                if (window._diagChanged) window._diagChanged();
+            })
+            .catch(function () { actionsSpan.remove(); });
+        }));
+        actionsSpan.appendChild(_mkBtn("Cancel", "keep", "", function () {
+            actionsSpan.remove();
+        }));
+    }
+
+    /* -- type picker ---------------------------------------------------- */
+
+    function _openTypePicker(node, row, anchorBtn) {
+        _closeCrudPanels(node);
+        var m = node._meta;
+        var panel = document.createElement("div");
+        panel.className = "tree-crud-panel tree-type-panel";
+        panel.innerHTML =
+            '<div class="tree-type-head muted">loading expected type…</div>' +
+            '<div class="tree-type-opts">' +
+            ["int", "number", "str", "bool", "list", "matrix", "dict"].map(function (t) {
+                return '<label><input type="radio" name="tp" value="' + t + '"> ' + t + "</label>";
+            }).join("") + "</div>" +
+            '<button type="button" class="btn-sm tree-type-assign">Assign</button>' +
+            '<button type="button" class="btn-sm outline tree-type-clear">Clear override</button>' +
+            '<button type="button" class="btn-sm outline tree-type-close">Close</button>' +
+            '<span class="tree-crud-err"></span>';
+        row.after(panel);
+        var head = panel.querySelector(".tree-type-head");
+        var err = panel.querySelector(".tree-crud-err");
+        fetch("/field/peek?dot_path=" + encodeURIComponent(m.path))
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                var e = d.expected && d.expected[m.path];
+                if (!e) { head.textContent = "no expected type — assign one to make this key type-safe"; return; }
+                head.textContent = "expected: " + e.type + " · " + e.source +
+                    (e.class_path ? " (" + e.class_path.split(".").pop() + "." + e.field + ")" : "") +
+                    (e.detail ? " — " + e.detail : "");
+            }).catch(function () { head.textContent = "expected type unavailable"; });
+
+        function post(override) {
+            var sel = panel.querySelector('input[name="tp"]:checked');
+            if (!sel) { err.textContent = "pick a type"; return; }
+            var body = new URLSearchParams();
+            body.append("dot_path", m.path);
+            body.append("type", sel.value);
+            if (override) body.append("override_env", "1");
+            body.append("expect_chip", window.__chipToken || "");
+            fetch("/field/type-assign", { method: "POST",
+                headers: {"Content-Type": "application/x-www-form-urlencoded"},
+                body: body.toString() })
+            .then(function (r) { return r.json().then(function (d) { return {s: r.status, d: d}; }); })
+            .then(function (res) {
+                if (res.s === 409 && res.d.error_kind === "env_conflict") {
+                    if (window.confirm("The env schema types this key as " +
+                            (res.d.env_type && res.d.env_type.type) +
+                            ". Override it with " + sel.value + "?")) post(true);
+                    return;
+                }
+                if (!res.d.ok) { err.textContent = res.d.error || "assign failed"; return; }
+                if (res.d.warning && window.showToast) window.showToast(res.d.warning, "warning");
+                panel.remove();
+                if (window.showToast) window.showToast("Type assigned: " + sel.value, "success");
+            })
+            .catch(function () { err.textContent = "request failed"; });
+        }
+        panel.querySelector(".tree-type-assign").onclick = function () { post(false); };
+        panel.querySelector(".tree-type-clear").onclick = function () {
+            var body = new URLSearchParams();
+            body.append("dot_path", m.path);
+            fetch("/field/type-unassign", { method: "POST",
+                headers: {"Content-Type": "application/x-www-form-urlencoded"},
+                body: body.toString() })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                panel.remove();
+                if (window.showToast) window.showToast(
+                    d.removed ? "Override cleared" : "No override was set", "info");
+            }).catch(function () {});
+        };
+        panel.querySelector(".tree-type-close").onclick = function () { panel.remove(); };
+        panel.addEventListener("keydown", function (e) {
+            if (e.key === "Escape") panel.remove();
+        });
+    }
+
     window.renderJsonTree = function(containerId, data, options) {
         var container = document.getElementById(containerId);
         if (!container) return;
@@ -4423,6 +4756,12 @@ window.clearDetailPanelSearch = function(btnEl) {
         container._treeData = data;
         container._flatIndex = null;
         container._lastSearchQuery = undefined;
+
+        // Explorer trees opt into structural CRUD (add/delete key, type
+        // picker) — never the read-only copy/diff trees. The flag is
+        // re-stamped on EVERY render so a non-crud re-render disables it.
+        container._crudEnabled = false;
+        if (options.crud) _attachCrudHover(container);
 
         if (defaultDepth >= 99) {
             _expandAll(container);
@@ -4648,7 +4987,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             } else if (allArrays) {
                 var maxLen = _maxArrayLen(defined);
                 for (var j = 0; j < maxLen; j++) {
-                    var itemPath = path + "[" + j + "]";
+                    var itemPath = path + "." + j;   // dot-form numeric segments everywhere
                     var itemValues = values.map(function(v) {
                         return Array.isArray(v) && j < v.length ? v[j] : undefined;
                     });
@@ -10114,6 +10453,34 @@ document.addEventListener('click', function(evt) {
     var _liveDiffDone = {};    // dot_path -> 1 once accepted/rejected this session
     var _liveDiffRemaining = 0;
 
+    // Scope-local deep equality. This IIFE had NO _deepEqual in scope — the two
+    // definitions live inside the tree-renderer IIFEs — so _collectDiffPairs
+    // threw ReferenceError on every live-diff toggle, caught by the recover
+    // handler as a permanent "Could not render the live diff." (latent since
+    // the first commit; exposed by explorer_paths_selfcheck.cjs).
+    function _deepEqual(a, b) {
+        if (a === b) return true;
+        if (a === null || b === null) return false;
+        if (typeof a !== typeof b) return false;
+        if (typeof a !== "object") return false;
+        var isArrA = Array.isArray(a), isArrB = Array.isArray(b);
+        if (isArrA !== isArrB) return false;
+        if (isArrA) {
+            if (a.length !== b.length) return false;
+            for (var i = 0; i < a.length; i++) {
+                if (!_deepEqual(a[i], b[i])) return false;
+            }
+            return true;
+        }
+        var keysA = Object.keys(a), keysB = Object.keys(b);
+        if (keysA.length !== keysB.length) return false;
+        for (var k = 0; k < keysA.length; k++) {
+            if (!(keysA[k] in b)) return false;
+            if (!_deepEqual(a[keysA[k]], b[keysA[k]])) return false;
+        }
+        return true;
+    }
+
     // Walk working `val` vs live `ref`, collecting the dot-path + live value of
     // every differing leaf (or a whole added/removed/type-changed node).
     function _collectDiffPairs(val, ref, base, out) {
@@ -10122,8 +10489,15 @@ document.addEventListener('click', function(evt) {
         var rObj = ref && typeof ref === "object";
         if (vObj && rObj && Array.isArray(val) === Array.isArray(ref)) {
             if (Array.isArray(val)) {
-                var n = Math.max(val.length, ref.length);
-                for (var i = 0; i < n; i++) _collectDiffPairs(val[i], ref[i], base + "[" + i + "]", out);
+                if (val.length !== ref.length) {
+                    // Length change = structural: one whole-array entry (per-element
+                    // accepts would need create/delete-on-list semantics).
+                    out.push({ dot_path: base, value: ref });
+                    return;
+                }
+                // Equal lengths: per-element dot-form entries (a.b.3) — directly
+                // acceptable through /field/edit-batch's element grammar.
+                for (var i = 0; i < val.length; i++) _collectDiffPairs(val[i], ref[i], base + "." + i, out);
             } else {
                 var seen = {}, k;
                 for (k in val) if (Object.prototype.hasOwnProperty.call(val, k)) seen[k] = 1;
@@ -10137,13 +10511,14 @@ document.addEventListener('click', function(evt) {
         }
     }
 
-    // "a.b[2].c" -> ["a","a.b","a.b[2]","a.b[2].c"] (each ancestor's data-path).
+    // "a.b.2.c" -> ["a","a.b","a.b.2","a.b.2.c"] (each ancestor's data-path).
+    // Paths are pure dot-form now (list elements use numeric segments), so a
+    // plain split accumulation is exact.
     function _ancestorPaths(dotPath) {
-        var parts = dotPath.match(/[^.\[]+|\[\d+\]/g) || [];
+        var parts = dotPath.split(".");
         var out = [], cur = "";
         for (var i = 0; i < parts.length; i++) {
-            var p = parts[i];
-            cur = (p.charAt(0) === "[") ? cur + p : (cur ? cur + "." + p : p);
+            cur = cur ? cur + "." + parts[i] : parts[i];
             out.push(cur);
         }
         return out;
@@ -10242,6 +10617,10 @@ document.addEventListener('click', function(evt) {
         if (dotPath) _liveDiffDone[dotPath] = 1;
         _bumpLiveDiffCount(-1);
     }
+
+    // Test hooks (jsdom selfchecks pin the dot-form path grammar through these).
+    window._collectDiffPairs = _collectDiffPairs;
+    window._ancestorPaths = _ancestorPaths;
 
     // The tree's own inline value-editor (_makeValueEditable, a different scope)
     // calls this after the user types a new value into a field that is part of
@@ -10372,25 +10751,27 @@ document.addEventListener('click', function(evt) {
         });
     };
 
-    // Accept every remaining incoming change in ONE atomic batch.
+    // Accept every remaining incoming change in ONE request, applied per-row
+    // (independent mode): one drifted/rejected value must not roll back the
+    // hundreds of accepted ones.
     window.explorerAcceptAll = function() {
         var pairs = _liveDiffState.concat(_liveDiffWiring).filter(function(p) {
             return !_liveDiffDone[p.dot_path];
         });
         if (!pairs.length) { window.showToast("Nothing left to accept.", "info"); return; }
         var updates = pairs.map(function(p) { return { dot_path: p.dot_path, value: p.value }; });
-        // Defensive-parse + bounded retry: a burst no longer dead-ends in an ambiguous
-        // "network error"; the server batch is atomic, so a failure means NOTHING applied.
+        // Defensive-parse + bounded retry: a burst no longer dead-ends in an
+        // ambiguous "network error".
         _liveFetchJson("/field/edit-batch", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ updates: updates })
+            body: JSON.stringify({ updates: updates, independent: true })
         }).then(function (res) {
             var d = res.data;
-            if (!res.ok || !d) {
+            if (!res.ok && !(d && d.results)) {
                 window.showToast(res.transient
-                    ? "Live chip is busy — no changes applied (atomic rollback). Try Accept all again."
-                    : "Accept all failed — no changes applied (atomic rollback).", "warning");
+                    ? "Live chip is busy — nothing applied. Try Accept all again."
+                    : "Accept all failed — nothing applied.", "warning");
                 if (d && d.tray_html) {
                     _swapPendingTray(d.tray_html);
                     window._restoreTrayState && window._restoreTrayState();
@@ -10401,10 +10782,24 @@ document.addEventListener('click', function(evt) {
                 _swapPendingTray(d.tray_html);
                 window._restoreTrayState && window._restoreTrayState();
             }
+            var failed = (d.results || []).filter(function(r) { return !r.applied; });
+            if (!failed.length) {
+                window.showToast(
+                    "Accepted " + updates.length + " value" + (updates.length === 1 ? "" : "s") +
+                    " into the working state — review the tray, then Apply to live.", "success");
+                window.explorerLiveDiff(false);  // exit diff (soft-refresh shows pending values)
+                return;
+            }
+            var okCount = updates.length - failed.length;
             window.showToast(
-                "Accepted " + updates.length + " value" + (updates.length === 1 ? "" : "s") +
-                " into the working state — review the tray, then Apply to live.", "success");
-            window.explorerLiveDiff(false);  // exit diff (soft-refresh shows pending values)
+                "Accepted " + okCount + " of " + updates.length + " — " + failed.length +
+                " rejected (first: " + (failed[0].error || "edit rejected") +
+                "). The remaining rows stay marked below.", "warning");
+            // Re-render the overlay: applied rows vanish (working copy now matches
+            // live there); rejected rows keep their incoming markers for per-row
+            // handling.
+            window.explorerLiveDiff(false);
+            window.explorerLiveDiff(true);
         });
     };
 

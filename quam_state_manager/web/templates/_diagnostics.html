@@ -13,6 +13,8 @@
 
 {% if diag_catalog %}{% include '_diagnostics_checks.html' %}{% endif %}
 
+{% if env_card is defined and env_card %}{% include '_diagnostics_env.html' %}{% endif %}
+
 {% if not has_config %}
 <p class="muted diag-hint">
   Config reference checks run once you generate a config in the

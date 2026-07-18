@@ -43,8 +43,8 @@
     var stateData = {{ state_json | script_json }};
     var wiringData = {{ wiring_json | script_json }};
 
-    renderJsonTree("explorer-tree-state", stateData, { defaultDepth: 1 });
-    renderJsonTree("explorer-tree-wiring", wiringData, { defaultDepth: 1 });
+    renderJsonTree("explorer-tree-state", stateData, { defaultDepth: 1, crud: true });
+    renderJsonTree("explorer-tree-wiring", wiringData, { defaultDepth: 1, crud: true });
 
     window._activeTreeId = function() {
         var stateEl = document.getElementById("explorer-tree-state");

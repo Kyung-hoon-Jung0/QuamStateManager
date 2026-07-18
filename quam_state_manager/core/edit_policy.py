@@ -8,8 +8,11 @@ these functions):
 * ``resolve_edit_path`` — follow a pointer-valued leaf to its resolved literal
   target so a numeric edit writes the number THERE (value-mode) instead of
   replacing the pointer with a stringified number (wrong JSON type, severed link).
-* ``editability_reason`` — the durable read-only policy: chip-membership arrays,
-  identity/type keys, and list/matrix ELEMENTS are not directly editable.
+* ``editability_reason`` — the durable read-only policy: chip-membership arrays
+  and identity/type keys are not directly editable. (List/matrix ELEMENTS became
+  editable with the dot-form numeric path grammar — ``confusion_matrix.0.1`` —
+  the modifier pins the element's type via ``_type_coerce`` against the old
+  element value, and the type-policy layer enforces the schema type when known.)
 
 Kept in core (not web) so the CLI can import them without pulling in Flask.
 """
@@ -71,16 +74,17 @@ def _container_at(merged: Any, segs: list[str]) -> Any:
 
 
 def editability_reason(store: Any, target_path: str) -> str | None:
-    """The durable read-only safety policy — chip-membership arrays (active_*),
-    identity/type keys (__class__/id/digital_marker), and list/matrix ELEMENTS are
-    not directly editable. Returns a rejection reason for a non-editable resolved
-    target, else None.
+    """The durable read-only safety policy — chip-membership arrays (active_*)
+    and identity/type keys (__class__/id) are not directly editable. Returns a
+    rejection reason for a non-editable resolved target, else None.
 
     Deliberately does NOT reject POINTERS here: the bulk grid edits pointer-aliases
     in value-mode (they resolve THROUGH to a scalar target) and the Explorer
-    live-diff accept legitimately writes a pointer string. The list check uses the
-    ACTUAL parent container being a Python list, so ``ports.*.<num>.*`` number-keyed
-    DICT leaves stay editable.
+    live-diff accept legitimately writes a pointer string. List/matrix ELEMENTS
+    are editable (dot-form numeric segments; the modifier's structural traversal
+    distinguishes true list indices from ``ports.*.<num>.*`` number-keyed DICT
+    keys). ``digital_marker`` is a real per-pulse value (null / "ON" / pointer on
+    real chips), not an identity key — it is editable.
     """
     from quam_state_manager.core.leaf_classify import MEMBERSHIP_TOPS, SKIP_LEAVES
     segs = target_path.split(".")
@@ -90,6 +94,4 @@ def editability_reason(store: Any, target_path: str) -> str | None:
         return "chip-membership array — edit via the chip add/remove controls, not here"
     if segs[-1] in SKIP_LEAVES:
         return "identity / type key — read-only"
-    if len(segs) >= 2 and isinstance(_container_at(store.merged, segs[:-1]), list):
-        return "list / matrix element — edit the whole array in the inspector"
     return None

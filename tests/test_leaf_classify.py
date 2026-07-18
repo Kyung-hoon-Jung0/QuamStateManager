@@ -28,7 +28,14 @@ class TestClassifyLeaf:
     def test_identity_and_type_keys_skip(self):
         assert classify_leaf("qubits", "__class__", "quam.components.Transmon", False) == KIND_SKIP
         assert classify_leaf("qubits", "id", "qA1", False) == KIND_SKIP
-        assert classify_leaf("qubits", "digital_marker", "ON", False) == KIND_SKIP
+
+    def test_digital_marker_is_a_real_value_not_identity(self):
+        # Moved OUT of SKIP_LEAVES (2026-07-18): real chips carry null / "ON" /
+        # pointer digital_markers — it classifies by value and is editable.
+        assert classify_leaf("qubits", "digital_marker", "ON", False) == KIND_SCALAR
+        assert classify_leaf("qubits", "digital_marker", None, False) == KIND_SCALAR
+        assert classify_leaf("qubits", "digital_marker",
+                             "#../x180_DragCosine/digital_marker", False) == KIND_XREF
 
     def test_cross_ref_pointer_is_xref(self):
         assert classify_leaf("qubits", "opx_output", "#/wiring/qubits/qA1/z/opx_output", False) == KIND_XREF

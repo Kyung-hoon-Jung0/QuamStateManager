@@ -1,9 +1,16 @@
 /* All values — the completeness tab of Live State Edit.
  *
  * Renders EVERY leaf of merged state+wiring (server: GET /bulk/all-values, gzipped)
- * as a flat, default-collapsed, entity-grouped, virtual-scrolled list. Only plain
- * scalars are editable; cross-ref pointers / self-refs / list elements / membership
- * arrays / identity keys are read-only (the server classifies; we only render).
+ * as a flat, default-collapsed, entity-grouped, virtual-scrolled list. Editable in
+ * v2: plain scalars, list/matrix elements (dot-form numeric paths) and RESOLVABLE
+ * cross-ref pointers (the server sends the resolved value; /field/edit-batch
+ * resolves the write path, so the input edits THROUGH the pointer — a focus
+ * fetches /field/peek once for a "writes to … · shared by …" hint). Self-refs /
+ * membership arrays / identity keys / DANGLING pointers stay read-only. v2 also
+ * renders container rows: arrays ([N] / [R×C]) and empty dicts/lists, each with a
+ * ✎ JSON modal that commits the PARSED value (non-string values skip server-side
+ * re-parse). Rows are [path, display, kind, modified, extra?]; extra carries
+ * {p,d} (xref), {dims} (uniform matrix), {ty:{t,s}} (expected-type chip).
  *
  * Forked from dataset-virtual.js (the proven scroller) + pair-edit.js (path-model
  * dirty + atomic apply), HARDENED for a body that holds <input>s:
@@ -32,7 +39,7 @@
     function lsSet(k, v) { try { window.localStorage.setItem(k, v); } catch (e) { } }
 
     var state = {
-        rows: [],            // [path, display, kind, modified]  (+ lazy ._s haystack)
+        rows: [],            // [path, display, kind, modified, extra?]  (+ lazy ._s haystack)
         groups: [],          // {idx,key,label,leafIdxs,editableCount,count,expanded,userExpanded,matchCount}
         rowGroup: [],        // rowIdx -> groupIdx
         rowsByPath: null,    // Map path -> rowIdx (O(dirty) apply reconcile)
@@ -52,16 +59,30 @@
         lastFirst: -1,
         lastLast: -1,
         asserted: false,
-        applying: false
+        applying: false,
+        xrefHints: new Map()  // path -> null (in flight) | hint text; one peek per path per model
     };
 
+    // Read-only render metadata. v2: 'xref' here is the DANGLING branch only —
+    // resolvable pointers render as edit-through inputs; 'list' elements are
+    // editable; 'array'/'empty' container rows carry the ✎ JSON-modal button.
     var RO = {
-        xref: { glyph: '↗', cls: 'av-xref', title: 'cross-reference pointer — read-only; open the owning entity to re-link' },
+        xref: { glyph: '↗', cls: 'av-xref', title: 'dangling pointer — target missing; raw text shown, read-only' },
         selfref: { glyph: '⟳', cls: 'av-selfref', title: 'config-time self-reference (resolved by generate_config) — read-only' },
-        list: { glyph: '▦', cls: 'av-list', title: 'list / matrix element — edit the whole array in the inspector' },
         membership: { glyph: '⚠', cls: 'av-membership', title: 'chip-membership array — edit via the chip add/remove controls, not here' },
         skip: { glyph: '', cls: 'av-skip', title: 'identity / type — not editable' }
     };
+    var CONTAINER = {
+        array: { glyph: '▦', cls: 'av-array', title: 'array — ✎ edits the whole JSON value' },
+        empty: { glyph: '∅', cls: 'av-empty', title: 'empty container — ✎ to fill it with JSON' }
+    };
+
+    // Editable-input row kinds: scalar, list element, resolvable (non-dangling) xref.
+    function isEditableRow(row) {
+        var k = row[2];
+        return k === 'scalar' || k === 'list'
+            || (k === 'xref' && !(row[4] && row[4].d));
+    }
 
     function esc(s) {
         if (s === null || s === undefined) return '';
@@ -91,6 +112,7 @@
         state.groups = [];
         state.rowGroup = new Array(rows.length);
         state.rowsByPath = new Map();
+        state.xrefHints = new Map();   // fresh model → re-peek (resolutions may have moved)
         var gmap = {};
         for (var r = 0; r < rows.length; r++) {
             var path = rows[r][0];
@@ -104,7 +126,7 @@
                 state.groups.push(g);
             }
             g.leafIdxs.push(r);
-            if (rows[r][2] === 'scalar') g.editableCount++;
+            if (isEditableRow(rows[r])) g.editableCount++;
             state.rowGroup[r] = g.idx;
         }
     }
@@ -147,32 +169,64 @@
         return null;
     }
 
+    // Expected-type chip (extra.ty from the server's type policy) — inline inside
+    // the 18px value band (never a 4th grid child: the td grid is 3 columns and an
+    // extra child would wrap to a new grid ROW and break the 28px height).
+    function tyChipHtml(extra) {
+        if (!extra || !extra.ty) return '';
+        var t = extra.ty.t || '', s = extra.ty.s || '';
+        return '<span class="av-ty-chip" title="expected type: ' + esc(t)
+            + ' · source: ' + esc(s) + '">'
+            + esc(t) + '·' + esc(s === 'inferred' ? 'inf' : s) + '</span>';
+    }
+
+    function deepLinkHtml(path) {
+        var dl = deepLink(path);
+        if (!dl) return '';
+        return ' <a class="av-link" href="#" data-av-link="' + esc(dl.url)
+            + '" title="Open ' + esc(dl.name) + ' inspector">↗</a>';
+    }
+
     function leafRowHtml(r) {
         var row = state.rows[r];
-        var path = row[0], disp = row[1], kind = row[2], mod = row[3];
+        var path = row[0], disp = row[1], kind = row[2], mod = row[3], extra = row[4];
         var pe = esc(path);
-        if (kind === 'scalar') {
+        if (isEditableRow(row)) {
             var d = state.dirty.get(path);
             var val = d ? d.value : disp;
-            var cls = 'av-leaf av-scalar' + (d ? ' av-row-dirty' : '') + (mod ? ' av-row-mod' : '');
+            var cls = 'av-leaf av-' + kind + (d ? ' av-row-dirty' : '') + (mod ? ' av-row-mod' : '');
+            var glyph = '', gtitle = mod ? 'edited — not yet applied to live' : '';
+            if (!mod && kind === 'xref') { glyph = '↗'; gtitle = 'pointer — edits write through to the target (focus for details)'; }
+            else if (!mod && kind === 'list') { glyph = '▦'; gtitle = 'list / matrix element'; }
+            // input + link + chip live inside ONE wrap span (3rd grid child stays single)
             return '<tr class="' + cls + '"><td>'
-                + '<span class="av-gutter"' + (mod ? ' title="edited — not yet applied to live"' : '') + '>' + (mod ? '•' : '') + '</span>'
+                + '<span class="av-gutter' + (kind === 'xref' ? ' av-xref-g' : '') + '"'
+                + (gtitle ? ' title="' + esc(gtitle) + '"' : '') + '>' + (mod ? '•' : glyph) + '</span>'
                 + '<span class="av-cell-path" title="' + pe + '">' + pe + '</span>'
+                + '<span class="av-val-wrap">'
                 + '<input class="av-input" type="text" spellcheck="false" autocomplete="off"'
                 + ' data-dot-path="' + pe + '" value="' + esc(val) + '">'
+                + (kind === 'xref' || kind === 'list' ? deepLinkHtml(path) : '')
+                + tyChipHtml(extra)
+                + '</span></td></tr>';
+        }
+        if (kind === 'array' || kind === 'empty') {
+            var cmeta = CONTAINER[kind];
+            var ctitle = cmeta.title + (extra && extra.dims ? ' (' + extra.dims + ' matrix)' : '');
+            return '<tr class="av-leaf ' + cmeta.cls + (mod ? ' av-row-mod' : '') + '"><td>'
+                + '<span class="av-gutter ' + cmeta.cls + '-g" title="' + esc(ctitle) + '">' + cmeta.glyph + '</span>'
+                + '<span class="av-cell-path" title="' + pe + '">' + pe + '</span>'
+                + '<span class="av-cell-val" title="' + esc(disp) + '">' + esc(disp)
+                + ' <button type="button" class="av-edit-btn" data-av-edit="' + pe
+                + '" title="Edit as JSON (Ctrl+Enter saves, Esc cancels)">✎</button></span>'
                 + '</td></tr>';
         }
         var meta = RO[kind] || RO.skip;
-        var link = '';
-        if (kind === 'xref' || kind === 'list') {
-            var dl = deepLink(path);
-            if (dl) link = ' <a class="av-link" href="#" data-av-link="' + esc(dl.url)
-                + '" title="Open ' + esc(dl.name) + ' inspector">↗</a>';
-        }
+        var link = (kind === 'xref') ? deepLinkHtml(path) : '';
         return '<tr class="av-leaf ' + meta.cls + '"><td>'
             + '<span class="av-gutter ' + meta.cls + '-g" title="' + esc(meta.title) + '">' + meta.glyph + '</span>'
             + '<span class="av-cell-path" title="' + pe + '">' + pe + '</span>'
-            + '<span class="av-cell-val" title="' + esc(disp) + '">' + esc(disp) + link + '</span>'
+            + '<span class="av-cell-val" title="' + esc(disp) + '">' + esc(disp) + link + tyChipHtml(extra) + '</span>'
             + '</td></tr>';
     }
 
@@ -213,6 +267,7 @@
             try { selS = cur.selectionStart; selE = cur.selectionEnd; } catch (e) { }
         }
 
+        hideXrefHint();               // fixed-position hint would drift on any repaint
         state.lastFirst = first; state.lastLast = last;
         var topPad = first * ROW_HEIGHT;
         var bottomPad = Math.max(0, (total - last)) * ROW_HEIGHT;
@@ -259,8 +314,153 @@
             if (window.htmx) window.htmx.ajax('GET', url, { source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML' });
             return;
         }
+        var edit = e.target.closest ? e.target.closest('[data-av-edit]') : null;
+        if (edit) { openJsonModal(edit.getAttribute('data-av-edit')); return; }
         var grow = e.target.closest ? e.target.closest('.av-group-row') : null;
         if (grow) { toggleGroup(parseInt(grow.getAttribute('data-g'), 10)); }
+    }
+
+    // ── xref edit-through hint (fixed-position overlay — NEVER a table row, so
+    //    the 28px virtual-scroll index math is untouched) ────────────────────────
+    function hideXrefHint() {
+        var el = document.getElementById('av-xref-hint');
+        if (el && el.parentNode) el.parentNode.removeChild(el);
+    }
+    function paintXrefHint(inputEl, text) {
+        if (!text || !inputEl || !inputEl.isConnected) return;
+        hideXrefHint();
+        var el = document.createElement('div');
+        el.id = 'av-xref-hint';
+        el.textContent = text;
+        var rect = inputEl.getBoundingClientRect();
+        el.style.left = rect.left + 'px';
+        el.style.top = (rect.bottom + 2) + 'px';
+        document.body.appendChild(el);
+    }
+    // One /field/peek per path per model: the resolved block tells the user WHERE
+    // the edit lands ("writes to <resolved_path>") and which siblings alias it.
+    function showXrefHint(inputEl, path) {
+        var cached = state.xrefHints.get(path);
+        if (cached === null) return;                    // fetch already in flight
+        if (cached !== undefined) { paintXrefHint(inputEl, cached); return; }
+        state.xrefHints.set(path, null);
+        fetch('/field/peek?dot_path=' + encodeURIComponent(path))
+            .then(function (r) { return r.json(); })
+            .then(function (jb) {
+                var ft = jb && jb.resolved ? jb.resolved[path] : null;
+                var text = '';
+                if (ft && ft.resolved_path && ft.resolved_path !== path) {
+                    text = 'writes to ' + ft.resolved_path;
+                    if (ft.shared_by && ft.shared_by.length) text += ' · shared by ' + ft.shared_by.join(', ');
+                }
+                state.xrefHints.set(path, text);
+                if (state.editingPath === path) paintXrefHint(inputEl, text);
+            })
+            .catch(function () { state.xrefHints.delete(path); });   // transient → retry next focus
+    }
+
+    // ── ✎ whole-value JSON modal (array + empty-container rows) ────────────────
+    function closeJsonModal() {
+        var ov = document.getElementById('av-json-modal');
+        if (ov && ov.parentNode) ov.parentNode.removeChild(ov);
+    }
+    function openJsonModal(path) {
+        closeJsonModal();
+        var ov = document.createElement('div');
+        ov.id = 'av-json-modal';
+        ov.innerHTML = '<div class="av-modal-card" role="dialog" aria-modal="true" aria-label="Edit JSON value">'
+            + '<div class="av-modal-head"><span class="av-modal-path" title="' + esc(path) + '">' + esc(path) + '</span>'
+            + '<span class="muted av-modal-keys">Ctrl+Enter save · Esc cancel</span></div>'
+            + '<textarea class="av-modal-ta" spellcheck="false" aria-label="JSON value"></textarea>'
+            + '<div class="av-modal-err" hidden></div>'
+            + '<div class="av-modal-actions">'
+            + '<button type="button" class="btn-sm" data-av-save>Save</button>'
+            + '<button type="button" class="btn-sm outline" data-av-cancel>Cancel</button>'
+            + '</div></div>';
+        document.body.appendChild(ov);
+        var ta = ov.querySelector('.av-modal-ta');
+        function showErr(msg) {
+            var e2 = ov.querySelector('.av-modal-err');
+            e2.textContent = msg; e2.hidden = false;
+        }
+        // Prefill from the RAW value (peek `values`) — the row display ([2×2]) is
+        // a summary, not the data.
+        fetch('/field/peek?dot_path=' + encodeURIComponent(path))
+            .then(function (r) { return r.json(); })
+            .then(function (jb) {
+                var v = jb && jb.values ? jb.values[path] : undefined;
+                ta.value = JSON.stringify(v === undefined ? null : v, null, 2);
+                ta.focus();
+            })
+            .catch(function (err) { showErr('Could not load current value: ' + err); ta.focus(); });
+        function save() {
+            var parsed;
+            try { parsed = JSON.parse(ta.value); }
+            catch (ex) { showErr('Invalid JSON: ' + ex.message); return; }
+            // PARSED value in the JSON body — edit-batch skips re-parse for
+            // non-string values, so the container commits typed-correctly.
+            fetch('/field/edit-batch', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ updates: [{ dot_path: path, value: parsed }], expect_chip: window.__chipToken || '' })
+            }).then(function (r) { return r.json(); }).then(function (jb) {
+                if (!jb || !jb.ok) {
+                    showErr((jb && jb.results && jb.results[0] && jb.results[0].error)
+                        || (jb && jb.error) || 'Apply failed');
+                    return;
+                }
+                containerSaved(path, parsed, jb);
+                closeJsonModal();
+            }).catch(function (ex) { showErr('Apply failed: ' + ex); });
+        }
+        ov.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeJsonModal(); }
+            else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); }
+        });
+        ov.addEventListener('mousedown', function (e) { if (e.target === ov) closeJsonModal(); });
+        ov.querySelector('[data-av-save]').addEventListener('click', save);
+        ov.querySelector('[data-av-cancel]').addEventListener('click', closeJsonModal);
+    }
+    // Local display mirror of core/all_values container formatting: enough to
+    // repaint THIS row honestly until the next re-pull (state.etag is dropped —
+    // a container edit can add/remove leaf rows, only the server can re-derive).
+    function containerDisplay(v) {
+        if (Array.isArray(v)) {
+            if (!v.length) return { disp: '[] empty', kind: 'empty', dims: null };
+            var cols = null, uniform = true;
+            for (var i = 0; i < v.length; i++) {
+                if (!Array.isArray(v[i])) { uniform = false; break; }
+                if (cols === null) cols = v[i].length;
+                else if (v[i].length !== cols) { uniform = false; break; }
+            }
+            if (uniform && cols !== null) {
+                var dims = v.length + '×' + cols;
+                return { disp: '[' + dims + ']', kind: 'array', dims: dims };
+            }
+            return { disp: '[' + v.length + ']', kind: 'array', dims: null };
+        }
+        if (v && typeof v === 'object') {
+            var n = Object.keys(v).length;
+            return n ? { disp: '{…} ' + n + ' key' + (n === 1 ? '' : 's'), kind: 'empty', dims: null }
+                : { disp: '{} empty', kind: 'empty', dims: null };
+        }
+        return { disp: String(v === null ? '' : v), kind: 'empty', dims: null };
+    }
+    function containerSaved(path, parsed, jb) {
+        var r = state.rowsByPath.get(path);
+        if (r != null) {
+            var row = state.rows[r];
+            var cd = containerDisplay(parsed);
+            row[1] = cd.disp; row[2] = cd.kind; row[3] = 1; row._s = null;
+            if (cd.dims) row[4] = { dims: cd.dims };
+            else if (row[4] && row[4].dims) row.length = 4;   // extra held only dims
+        }
+        state.etag = null;   // structure may have changed → next activation re-pulls rows
+        if (jb.tray_html && window._swapPendingTray) {
+            window._bulkSelfEdit = true; window._swapPendingTray(jb.tray_html); window._bulkSelfEdit = false;
+        }
+        if (window._diagChanged) window._diagChanged();
+        state.lastFirst = -1; renderWindow(true);
+        toast('Applied to the working state — review in the tray, then apply to live.');
     }
 
     function onTbodyInput(e) {
@@ -277,12 +477,17 @@
     }
 
     function onTbodyFocusIn(e) {
-        if (e.target.classList && e.target.classList.contains('av-input'))
-            state.editingPath = e.target.getAttribute('data-dot-path');
+        if (e.target.classList && e.target.classList.contains('av-input')) {
+            var p = e.target.getAttribute('data-dot-path');
+            state.editingPath = p;
+            var r = state.rowsByPath.get(p);
+            if (r != null && state.rows[r][2] === 'xref') showXrefHint(e.target, p);
+        }
     }
     function onTbodyFocusOut(e) {
         if (e.target.classList && e.target.classList.contains('av-input')) {
             state.editingPath = null;
+            hideXrefHint();
             // Tab / click-away COMMITS (like Enter). applyOne no-ops when the path
             // isn't dirty (unchanged value) or while an apply is already in flight.
             // BUT a click on the Apply-all / Apply-to-live / Reset toolbar buttons must
@@ -323,7 +528,7 @@
         if (tk.k === 'kind') return row[2] === tk.v;
         if (tk.k === 'is') {
             if (tk.v === 'modified') return row[3] === 1 || state.dirty.has(row[0]);
-            if (tk.v === 'editable') return row[2] === 'scalar';
+            if (tk.v === 'editable') return isEditableRow(row);
             return true;
         }
         return haystack(r).indexOf(tk.v) >= 0;
@@ -527,7 +732,9 @@
         if (!el || !state.summary) return;
         var s = state.summary;
         el.textContent = s.total.toLocaleString() + ' leaves · '
-            + s.editable.toLocaleString() + ' editable · ' + s.readonly.toLocaleString() + ' read-only';
+            + s.editable.toLocaleString() + ' editable · ' + s.readonly.toLocaleString() + ' read-only'
+            + (s.arrays ? ' · ' + s.arrays.toLocaleString() + ' arrays' : '')
+            + (s.empties ? ' · ' + s.empties.toLocaleString() + ' empty' : '');
     }
     function applyPayload(data, keepDirty) {
         // keepDirty (audit P1): a re-pull while the user holds unapplied edits must NOT
@@ -625,7 +832,9 @@
         state.asserted = false;                      // re-assert ROW_HEIGHT on the new DOM
         applyFont();                                 // re-apply the persisted font/spacing to this fresh scroller
 
-        scrollEl.addEventListener('scroll', function () { scheduleRender(); }, { passive: true });
+        // hideXrefHint on the raw scroll event too: renderWindow early-returns on a
+        // same-window scroll, but the fixed-position hint has already drifted.
+        scrollEl.addEventListener('scroll', function () { hideXrefHint(); scheduleRender(); }, { passive: true });
         tbody.addEventListener('click', onTbodyClick);
         tbody.addEventListener('input', onTbodyInput);
         tbody.addEventListener('focusin', onTbodyFocusIn);

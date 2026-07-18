@@ -275,12 +275,59 @@
             <button type="button" class="av-chip" data-kind="is:editable">Editable</button>
             <button type="button" class="av-chip" data-kind="kind:xref">Pointers</button>
             <button type="button" class="av-chip" data-kind="kind:list">Lists</button>
+            <button type="button" class="av-chip" data-kind="kind:array">Arrays</button>
+            <button type="button" class="av-chip" data-kind="kind:empty">Empty</button>
             <button type="button" class="av-chip" data-kind="kind:membership">Membership</button>
             <button type="button" class="av-chip" data-kind="is:modified">Modified</button>
         </div>
-        <p class="bulk-hint muted av-help">Every leaf of <b>state + wiring</b> is here. Editable scalars take input
-            (Apply goes to the safe <b>working state</b>); pointer links (↗), list/matrix (▦), self-refs (⟳) and
-            chip-membership (⚠) arrays are <b>read-only</b> by design. Click a group to expand; search to jump anywhere.</p>
+        <p class="bulk-hint muted av-help">Every leaf of <b>state + wiring</b> is here. Scalars, list/matrix
+            elements (▦) and resolvable pointers (↗ — edits write <b>through</b> to the target; focus shows where)
+            take input; arrays and empty containers edit whole via ✎ (JSON). Apply goes to the safe
+            <b>working state</b>. Self-refs (⟳), chip-membership (⚠) arrays and dangling pointers are
+            <b>read-only</b> by design. Click a group to expand; search to jump anywhere.</p>
+        {# All-values v2 styles live HERE (pane-owned; style.css belongs to the grid
+           session). Everything is height-neutral: chips/buttons sit inside the 18px
+           text band of the 3-column row grid; the hint + modal are fixed-position
+           overlays outside the table flow — ROW_HEIGHT=28 and the virtual-scroll
+           index math are untouched. #}
+        <style>
+        .av-val-wrap { display: flex; align-items: center; gap: 4px; min-width: 0; height: 18px; }
+        .av-val-wrap .av-input { width: 0; flex: 1 1 auto; }
+        .av-val-wrap .av-link { flex: none; margin-left: 0; }
+        .av-ty-chip { flex: none; max-width: 96px; overflow: hidden; text-overflow: ellipsis;
+            white-space: nowrap; font-size: 10px; line-height: 14px; padding: 0 4px;
+            border-radius: 7px; color: var(--pico-muted-color);
+            border: 1px solid var(--pico-muted-border-color); }
+        .av-cell-val .av-ty-chip { display: inline-block; vertical-align: baseline; margin-left: .3rem; }
+        .av-table-virtual button.av-edit-btn { display: inline-block; width: auto; height: 18px;
+            line-height: 16px; margin: 0; padding: 0 5px; font-size: 11px;
+            border: 1px solid var(--pico-muted-border-color); border-radius: 3px;
+            background: transparent; color: var(--pico-muted-color); cursor: pointer; }
+        .av-table-virtual button.av-edit-btn:hover { color: var(--pico-primary); border-color: var(--pico-primary); }
+        .av-array-g, .av-empty-g { color: var(--pico-muted-color); }
+        .av-array .av-cell-val, .av-empty .av-cell-val { font-style: italic; }
+        #av-xref-hint { position: fixed; z-index: 220; max-width: 46rem; overflow: hidden;
+            text-overflow: ellipsis; white-space: nowrap; padding: 2px 8px; border-radius: 4px;
+            background: var(--pico-card-background-color);
+            border: 1px solid var(--pico-muted-border-color); color: var(--pico-muted-color);
+            font: 11px var(--font-mono); pointer-events: none; }
+        #av-json-modal { position: fixed; inset: 0; z-index: 240; background: rgba(0,0,0,.35);
+            display: flex; align-items: center; justify-content: center; }
+        #av-json-modal .av-modal-card { width: min(44rem, 92vw);
+            background: var(--pico-card-background-color);
+            border: 1px solid var(--pico-muted-border-color); border-radius: 6px;
+            padding: .8rem; display: flex; flex-direction: column; gap: .5rem; }
+        #av-json-modal .av-modal-head { display: flex; justify-content: space-between;
+            gap: .6rem; align-items: baseline; min-width: 0; }
+        #av-json-modal .av-modal-path { font-family: var(--font-mono); font-size: 12.5px;
+            font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        #av-json-modal .av-modal-keys { font-size: 11px; white-space: nowrap; }
+        #av-json-modal textarea.av-modal-ta { width: 100%; min-height: 12rem; max-height: 50vh;
+            resize: vertical; margin: 0; font-family: var(--font-mono); font-size: 12.5px; }
+        #av-json-modal .av-modal-err { color: var(--color-error-text, #c0392b);
+            font-size: 12px; white-space: pre-wrap; }
+        #av-json-modal .av-modal-actions { display: flex; gap: .5rem; justify-content: flex-end; }
+        </style>
         <div class="av-scroll" id="av-scroll">
             <table class="av-table-virtual" id="av-table">
                 <colgroup><col style="width:100%"></colgroup>

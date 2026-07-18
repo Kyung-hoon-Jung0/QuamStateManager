@@ -28,7 +28,10 @@ from typing import Any
 from quam_state_manager.core.pointer_resolver import is_pointer, is_self_ref
 
 # Structural / identity leaves — shown read-only, never an editable input.
-SKIP_LEAVES = frozenset({"__class__", "id", "digital_marker"})
+# ``digital_marker`` was moved OUT (2026-07-18): it is a real per-pulse value
+# (null / "ON" / a pointer on real chips), not an identity key — it classifies
+# by its value like any other leaf and is editable.
+SKIP_LEAVES = frozenset({"__class__", "id"})
 
 # Chip-membership arrays — read-only with a warning badge (user decision,
 # 2026-06-19): editing them re-scopes what generate_config + every downstream

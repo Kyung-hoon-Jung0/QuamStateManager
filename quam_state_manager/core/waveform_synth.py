@@ -35,6 +35,7 @@ from scipy.signal.windows import gaussian as _gaussian_window
 from quam_state_manager.core.pulse_catalog import (
     PULSE_CATALOG,
     PulseSpec,
+    env_overlay_active,
     infer_spec_ex,
     inferred_length,
     resolve_qclass,
@@ -515,6 +516,27 @@ def _coerce_param(spec_param, value):
     return value
 
 
+def _mark_schema_known(payload: dict, qclass: Any) -> dict:
+    """Env-roster grace note on unknown-class error payloads.
+
+    The catalog has no spec for this class, so a preview is impossible — but
+    when the ACTIVE env overlay (``pulse_catalog.apply_env_overlay``) knows
+    the class *leaf*, the selected environment can load it: soften the error
+    and add ``schema_known: True`` so the UI can render an informed state
+    instead of "unrecognized". Purely additive — no overlay (the default) ⇒
+    the payload is byte-identical to the pre-overlay behavior (no key).
+    """
+    roster = env_overlay_active()  # snapshot once — swap-safe
+    if roster and isinstance(qclass, str) and qclass:
+        leaf = qclass.rsplit(".", 1)[-1]
+        if leaf in roster:
+            payload["schema_known"] = True
+            payload["error"] = (
+                f"pulse class {leaf!r} is recognized by the selected"
+                " environment — preview unavailable for this class")
+    return payload
+
+
 def _payload_error(error: str, *, spec_key: str | None = None,
                    param_errors: dict | None = None,
                    class_match: str | None = None,
@@ -556,8 +578,8 @@ def synthesize(qclass_or_key: str, params: dict[str, Any], *,
     if class_match is not None:
         how = class_match
     if spec is None:
-        return _payload_error(
-            f"no synthesizer for pulse class {qclass_or_key!r}")
+        return _mark_schema_known(_payload_error(
+            f"no synthesizer for pulse class {qclass_or_key!r}"), qclass_or_key)
 
     warnings: list[str] = []
     param_errors: dict[str, str] = {}
@@ -798,9 +820,9 @@ def synth_for_operation(store, op_path: str, *,
     qclass = snapshot.get("__class__")
     spec, how = infer_spec_ex(snapshot, context_slot=context_slot)
     if spec is None:
-        payload = _payload_error(
+        payload = _mark_schema_known(_payload_error(
             f"unrecognized pulse class {qclass!r}" if qclass
-            else "pulse has no __class__ and no recognizable context")
+            else "pulse has no __class__ and no recognizable context"), qclass)
         payload.update({"path": op_path, "alias_of": alias_of,
                         "pointer_fields": pointer_fields,
                         "resolved_params": resolved_params,

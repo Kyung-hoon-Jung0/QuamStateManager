@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import copy
 import logging
+import math
+import re
 from collections.abc import Iterator
 from datetime import datetime, timezone
 from typing import Any
@@ -33,14 +35,20 @@ class Modifier:
     # ------------------------------------------------------------------
 
     def set_value(self, dot_path: str, new_value: Any, *, _defer_hooks: bool = False,
-                  coerce: bool = True, group_id: str | None = None) -> ChangeEntry:
+                  coerce: bool = True, group_id: str | None = None,
+                  enforce: bool = True) -> ChangeEntry:
         """Set a single value by dot-path in the merged (and source) dict.
 
         Steps:
           1. Navigate to parent dict + leaf key.
           2. Read old value.
-          3. Type-coerce new_value to match old value's type (type-check only,
-             no range validation -- researchers know their values).
+          3. Type-check: when the store carries a ``type_policy`` and the
+             key's expected type is KNOWN (env schema or user assignment),
+             judge the value against it — a mismatch raises
+             :class:`~core.type_policy.TypeMismatchError` (a ``TypeError``).
+             Pointer strings and ``None`` always bypass. Otherwise fall back
+             to the old-value coercion (type-check only, no range validation
+             -- researchers know their values).
           4. Write into both the source dict (state or wiring) AND merged.
           5. Record a ChangeEntry.
           6. Unless ``_defer_hooks`` is True, clear the pointer cache and
@@ -49,23 +57,31 @@ class Modifier:
         If the field holds a ``#/`` pointer string, the pointer itself is
         updated -- we never chase to the resolved target.
 
-        ``coerce=False`` skips the type-coercion step. This is for the rare,
-        deliberate type *change* — e.g. converting a literal
+        ``coerce=False`` skips the old-value coercion step. This is for the
+        rare, deliberate type *change* — e.g. converting a literal
         ``downconverter_frequency`` float into a ``#/`` JSON pointer to its
         paired output's ``upconverter_frequency`` (a float→pointer-string
         change the coercer would otherwise reject).
+
+        ``enforce=False`` skips the type-policy gate too. ONLY for the
+        pull-replay (previously-accepted values replayed verbatim — blocking
+        mid-replay would be data loss) and the Pulses literal mode (the
+        explicit, audited type-CHANGE surface). ``enforce`` is orthogonal to
+        ``coerce``; one ack never collapses two gates.
         """
         with self.store._lock:
             parent_merged, leaf_key = _navigate_to_parent(self.store.merged, dot_path)
-            old_value = parent_merged[leaf_key]
+            lk = _key_for(parent_merged, leaf_key, dot_path)
+            old_value = parent_merged[lk]
 
-            coerced = _type_coerce(old_value, new_value) if coerce else new_value
+            coerced = self._checked_value(dot_path, old_value, new_value,
+                                          coerce=coerce, enforce=enforce)
 
             source_file = self.store.source_file_for(dot_path)
             source_dict = self.store.wiring if source_file == "wiring" else self.store.state
             _write_to_nested(source_dict, dot_path, coerced)
 
-            parent_merged[leaf_key] = coerced
+            parent_merged[lk] = coerced
 
             entry = ChangeEntry(
                 dot_path=dot_path,
@@ -85,18 +101,52 @@ class Modifier:
             logger.info("set_value %s: %r -> %r (%s)", dot_path, old_value, coerced, source_file)
             return entry
 
+    def _checked_value(self, dot_path: str, old_value: Any, new_value: Any, *,
+                       coerce: bool, enforce: bool) -> Any:
+        """The type gate every single-value write passes through.
+
+        Pointer strings and None ALWAYS pass verbatim. When an ENFORCED
+        expected type is known (env schema / user assignment) and ``enforce``,
+        the policy judges (raising on mismatch) and applies only the
+        old-value numeric reconciliation. Otherwise: today's ``_type_coerce``
+        iff ``coerce`` — byte-identical legacy behavior (empty-policy golden).
+        """
+        if isinstance(new_value, str) and new_value.startswith(("#/", "#./", "#../")):
+            return new_value
+        if new_value is None:
+            return new_value
+        policy = getattr(self.store, "type_policy", None)
+        if policy is not None and enforce:
+            try:
+                expected = policy.expected_for(self.store.merged, dot_path,
+                                               infer=False)
+            except Exception:  # noqa: BLE001 — a policy bug must never brick edits
+                logger.warning("type-policy resolution failed for %s", dot_path,
+                               exc_info=True)
+                expected = None
+            if expected is not None and expected.enforced:
+                return policy.check(expected, new_value, path=dot_path,
+                                    old_value=old_value)
+        return _type_coerce(old_value, new_value) if coerce else new_value
+
     # ------------------------------------------------------------------
     # Create (new key / subtree)
     # ------------------------------------------------------------------
 
     def create_subtree(self, dot_path: str, value: Any, *,
-                       group_id: str | None = None) -> ChangeEntry:
+                       group_id: str | None = None,
+                       enforce: bool = True) -> ChangeEntry:
         """Create a brand-new key (or subtree) at *dot_path*.
 
         The parent path must already exist; *dot_path* itself must NOT exist
         (else KeyError, to prevent silent overwrites).  *value* may be a
         scalar, list, or nested dict -- the whole subtree is inserted in
         one shot.
+
+        When the store carries a ``type_policy``, every scalar leaf of the
+        new subtree is checked against its expected type (embedded
+        ``__class__`` dicts anchor, so a created pulse's fields are
+        env-checked immediately); ``enforce=False`` skips (pull-replay).
 
         One :class:`ChangeEntry` is logged for the whole creation with
         ``created=True``; undoing it deletes the new key entirely (no orphan
@@ -107,6 +157,11 @@ class Modifier:
             keys = dot_path.split(".")
             if not keys or not all(keys):
                 raise ValueError(f"Invalid dot_path: {dot_path!r}")
+
+            policy = getattr(self.store, "type_policy", None)
+            if policy is not None and enforce:
+                policy.check_subtree(self.store.merged, dot_path, value)
+
             leaf_key = keys[-1]
             parent_keys = keys[:-1]
 
@@ -224,6 +279,11 @@ class Modifier:
             raise ValueError("rename: old and new paths are identical")
         with self.store._lock:
             current = _navigate_to_parent(self.store.merged, old_path)
+            if isinstance(current[0], list):
+                raise ValueError(
+                    f"rename of a list element is not supported ({old_path!r}) — "
+                    "edit the whole array instead"
+                )
             value = current[0][current[1]]
             payload = copy.deepcopy(value) if new_value is None else new_value
 
@@ -502,7 +562,7 @@ class Modifier:
                         leaf_path, leaf_value, source_file=entry.source_file)
         else:
             parent_merged, leaf_key = _navigate_to_parent(self.store.merged, entry.dot_path)
-            parent_merged[leaf_key] = entry.old_value
+            parent_merged[_key_for(parent_merged, leaf_key, entry.dot_path)] = entry.old_value
 
             source_dict = self.store.wiring if entry.source_file == "wiring" else self.store.state
             _write_to_nested(source_dict, entry.dot_path, entry.old_value)
@@ -520,6 +580,32 @@ class Modifier:
 # ======================================================================
 
 
+_INDEX_RE = re.compile(r"\d+")
+
+
+def _list_index(key: str, dot_path: str) -> int:
+    """Strict non-negative list index from a dot-path segment.
+
+    Rejects ``-1``/``+3``/``0x2``-style segments that ``int()`` would accept —
+    Python's negative indexing would otherwise silently edit the WRONG element
+    (a stale bookmark or off-by-one livediff path writing the last matrix cell).
+    """
+    if not _INDEX_RE.fullmatch(key):
+        raise KeyError(f"Cannot index list with {key!r} at {dot_path!r}")
+    return int(key)
+
+
+def _key_for(parent: Any, leaf_key: str, dot_path: str):
+    """The concrete subscript for *parent*: int index for lists, key for dicts.
+
+    Number-keyed DICTS (``ports.mw_outputs.con1.1.2``) keep the string key —
+    only an actual JSON list gets an integer index.
+    """
+    if isinstance(parent, list):
+        return _list_index(leaf_key, dot_path)
+    return leaf_key
+
+
 def _navigate_to_parent(root: dict, dot_path: str) -> tuple[dict, str]:
     """Walk a nested dict by dot-path, returning (parent_dict, leaf_key).
 
@@ -534,8 +620,8 @@ def _navigate_to_parent(root: dict, dot_path: str) -> tuple[dict, str]:
             current = current[key]
         elif isinstance(current, list):
             try:
-                current = current[int(key)]
-            except (ValueError, IndexError) as exc:
+                current = current[_list_index(key, dot_path)]
+            except IndexError as exc:
                 raise KeyError(f"Cannot index list with {key!r} at {dot_path!r}") from exc
         else:
             raise KeyError(f"Cannot traverse into {type(current).__name__} at {key!r} in {dot_path!r}")
@@ -547,9 +633,8 @@ def _navigate_to_parent(root: dict, dot_path: str) -> tuple[dict, str]:
         return current, leaf_key
     elif isinstance(current, list):
         try:
-            idx = int(leaf_key)
-            _ = current[idx]
-        except (ValueError, IndexError) as exc:
+            _ = current[_list_index(leaf_key, dot_path)]
+        except IndexError as exc:
             raise KeyError(f"Cannot index list with {leaf_key!r} at {dot_path!r}") from exc
         return current, leaf_key  # type: ignore[return-value]
     else:
@@ -617,7 +702,7 @@ def _write_to_nested(root: dict, dot_path: str, value: Any) -> None:
         if isinstance(current, dict):
             current = current[key]
         elif isinstance(current, list):
-            current = current[int(key)]
+            current = current[_list_index(key, dot_path)]
         else:
             return
 
@@ -625,7 +710,7 @@ def _write_to_nested(root: dict, dot_path: str, value: Any) -> None:
     if isinstance(current, dict):
         current[leaf] = value
     elif isinstance(current, list):
-        current[int(leaf)] = value
+        current[_list_index(leaf, dot_path)] = value
 
 
 def _type_coerce(old_value: Any, new_value: Any) -> Any:
@@ -676,6 +761,10 @@ def _type_coerce(old_value: Any, new_value: Any) -> Any:
             as_float = float(new_value)
         except (ValueError, TypeError) as exc:
             raise TypeError(f"Cannot coerce {new_value!r} to int (old value was {old_value!r})") from exc
+        if not math.isfinite(as_float):
+            # json.dump would emit a literal Infinity/NaN token — invalid strict
+            # JSON that breaks every non-Python consumer of state.json.
+            raise TypeError(f"Non-finite value {new_value!r} cannot be stored in state.json")
         # A non-integral edit to an int field must NOT silently truncate
         # (e.g. amplitude stored as int 1, edited to 0.3 → int(0.3)==0, a
         # silent data-loss + a manufactured working-copy divergence). Keep
@@ -686,9 +775,12 @@ def _type_coerce(old_value: Any, new_value: Any) -> Any:
 
     if isinstance(old_value, float):
         try:
-            return float(new_value)
+            as_float = float(new_value)
         except (ValueError, TypeError) as exc:
             raise TypeError(f"Cannot coerce {new_value!r} to float (old value was {old_value!r})") from exc
+        if not math.isfinite(as_float):
+            raise TypeError(f"Non-finite value {new_value!r} cannot be stored in state.json")
+        return as_float
 
     if isinstance(old_value, str):
         return str(new_value)
