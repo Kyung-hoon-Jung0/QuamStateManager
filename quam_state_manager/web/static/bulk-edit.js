@@ -20,8 +20,11 @@
     var HIDE_KEY = 'quam_bulk_hidden_cols';
     var SEARCH_KEY = 'quam_bulk_search';   // persist the search/filter box across visits
     var FREQSYNC_KEY = 'quam_bulk_freqsync';   // 🔗 mirror f_01↔RF on edit (default on)
-    var COLS = [];                 // column model from the server: {key,label,section,unit,default_on}
+    var DYNCOLS_KEY = 'quam_bulk_dyncols'; // enabled dynamic-column keys (r6 item 4)
+    var COLS = [];                 // column model from the server: {key,label,section,unit,default_on[,dyn]}
     var BANDS = {};                // {"1":[lo,hi], ...} MW-FEM band ranges (from server)
+    var DYN = [];                  // FULL dynamic model: {key,label,section,unit,kind}
+    var _dynHintKeys = [];         // dyn keys matching the current search but not enabled
     var sortKey = null, sortDir = 1;
 
     // f_01 ↔ RF_frequency column pairs (same row = same qubit). RF_frequency is the
@@ -76,6 +79,50 @@
         });
         applySearch();   // re-evaluate the search against the new column set
         _updateTopScroll();
+    }
+
+    // ── dynamic columns (r6 item 4): persisted enabled set + /bulk patching ──
+    // The enabled dyn-column keys live in localStorage and ride EVERY /bulk GET
+    // via a document-level configRequest listener (the pulses-page filter-
+    // persistence precedent) — so htmx pane reloads, cross-surface refreshes
+    // and sidebar nav all keep the opted-in columns without threading dyncols
+    // through each caller. ONLY the exact /bulk path is patched (never
+    // /bulk/all-values), and the param is stripped+set so no duplicate appends.
+    function _dynEnabled() {
+        try {
+            var a = JSON.parse(localStorage.getItem(DYNCOLS_KEY) || '[]');
+            return Array.isArray(a) ? a : [];
+        } catch (e) { return []; }
+    }
+    function _saveDynEnabled(arr) {
+        try { localStorage.setItem(DYNCOLS_KEY, JSON.stringify(arr)); } catch (e) {}
+    }
+    function _bulkSetQueryParam(path, key, value) {
+        var qIdx = path.indexOf('?');
+        var base = qIdx >= 0 ? path.slice(0, qIdx) : path;
+        var qs = qIdx >= 0 ? path.slice(qIdx + 1) : '';
+        var parts = qs ? qs.split('&').filter(function (p) {
+            return p && decodeURIComponent(p.split('=')[0]) !== key;
+        }) : [];
+        if (value !== null && value !== undefined && value !== '') {
+            parts.push(encodeURIComponent(key) + '=' + encodeURIComponent(value));
+        }
+        return base + (parts.length ? '?' + parts.join('&') : '');
+    }
+    if (!window._bulkDynColsCfgBound) {
+        window._bulkDynColsCfgBound = true;
+        document.addEventListener('htmx:configRequest', function (evt) {
+            var p = evt.detail && evt.detail.path;
+            if (typeof p !== 'string' || p.split('?')[0] !== '/bulk') return;
+            var keys = _dynEnabled();
+            evt.detail.path = _bulkSetQueryParam(p, 'dyncols', keys.length ? keys.join(',') : '');
+            if (evt.detail.parameters) delete evt.detail.parameters['dyncols'];
+        });
+    }
+    // Re-GET /bulk into the table pane — the same idiom the cross-surface
+    // state-changed listener uses; configRequest re-attaches dyncols.
+    function _reloadPane() {
+        if (window.htmx) htmx.ajax('GET', '/bulk', { target: '#table-pane', swap: 'innerHTML' });
     }
 
     // ── user font size + weight + letter-spacing (persisted; applied globally) ─
@@ -170,6 +217,7 @@
         var bySection = {};
         var order = [];
         COLS.forEach(function (c) {
+            if (c.dyn) return;   // enabled dynamic columns live in the groups below
             if (!bySection[c.section]) { bySection[c.section] = []; order.push(c.section); }
             bySection[c.section].push(c);
         });
@@ -184,6 +232,40 @@
                     (on ? ' checked' : '') + '> ' + _esc(c.label) + (c.unit ? ' <span class="unit muted">(' + _esc(c.unit) + ')</span>' : '') + '</label>';
             });
         });
+        // r6 item 4: the FULL derived model as collapsible per-section groups.
+        // A checkbox toggles the key in quam_bulk_dyncols and re-GETs the pane
+        // (the server renders only requested dyn columns — nothing to hide/show
+        // locally). Groups with an enabled column start open.
+        if (DYN.length) {
+            var en = {};
+            _dynEnabled().forEach(function (k) { en[k] = true; });
+            var dynBySec = {}, dynOrder = [], dynNotes = [];
+            DYN.forEach(function (c) {
+                if (c.kind === 'note') { dynNotes.push(c); return; }
+                if (!dynBySec[c.section]) { dynBySec[c.section] = []; dynOrder.push(c.section); }
+                dynBySec[c.section].push(c);
+            });
+            html += '<div class="bulk-colvis-sec bulk-colvis-dyn-head">All properties (derived from this chip)</div>';
+            dynOrder.forEach(function (sec) {
+                var cs = dynBySec[sec];
+                var nOn = cs.filter(function (c) { return en[c.key]; }).length;
+                html += '<details class="bulk-colvis-dyn"' + (nOn ? ' open' : '') +
+                    '><summary>' + _esc(sec) + ' <span class="muted">(' +
+                    (nOn ? nOn + ' of ' : '') + cs.length + ')</span></summary>';
+                cs.forEach(function (c) {
+                    html += '<label class="bulk-colvis-item"><input type="checkbox" data-dyn-toggle="' + _esc(c.key) + '"' +
+                        (en[c.key] ? ' checked' : '') + '> ' + _esc(c.label) +
+                        (c.unit ? ' <span class="unit muted">(' + _esc(c.unit) + ')</span>' : '') +
+                        (c.kind === 'listedit' ? ' <span class="muted" title="list — edited as JSON">▦</span>'
+                            : (c.kind === 'runtime' ? ' <span class="muted" title="runtime — read-only">⟳</span>' : '')) +
+                        '</label>';
+                });
+                html += '</details>';
+            });
+            dynNotes.forEach(function (c) {
+                html += '<div class="bulk-colvis-note muted">' + _esc(c.label) + '</div>';
+            });
+        }
         menu.innerHTML = html;
         menu.querySelectorAll('[data-col-toggle]').forEach(function (cb) {
             cb.addEventListener('change', function () {
@@ -193,6 +275,15 @@
                 _saveHidden(hide);
                 _applyColumnVisibility();
                 _recomputeStats();
+            });
+        });
+        menu.querySelectorAll('[data-dyn-toggle]').forEach(function (cb) {
+            cb.addEventListener('change', function () {
+                var k = cb.getAttribute('data-dyn-toggle');
+                var arr = _dynEnabled().filter(function (x) { return x !== k; });
+                if (cb.checked) arr.push(k);
+                _saveDynEnabled(arr);
+                _reloadPane();
             });
         });
     }
@@ -279,6 +370,29 @@
         });
         var cnt = document.getElementById('bulk-search-count');
         if (cnt) cnt.textContent = q ? (shown + ' of ' + rows.length) : '';
+        // r6 item 4: the search also scans the NOT-ENABLED dynamic columns
+        // (label/key/section, AND over tokens) — "searching exponential_filter
+        // finds nothing" becomes an actionable "1 hidden column matches — Show".
+        var hint = document.getElementById('bulk-dyncol-hint');
+        if (hint) {
+            _dynHintKeys = [];
+            if (q.length >= 2 && DYN.length) {
+                var en = {};
+                _dynEnabled().forEach(function (k) { en[k] = true; });
+                DYN.forEach(function (c) {
+                    if (c.kind === 'note' || en[c.key]) return;
+                    var hay = (c.label + ' ' + c.key + ' ' + c.section).toLowerCase();
+                    if (tokens.every(function (tok) { return hay.indexOf(tok) >= 0; })) {
+                        _dynHintKeys.push(c.key);
+                    }
+                });
+            }
+            hint.hidden = !_dynHintKeys.length;
+            if (_dynHintKeys.length) {
+                hint.textContent = _dynHintKeys.length + ' hidden column' +
+                    (_dynHintKeys.length === 1 ? '' : 's') + ' match — Show';
+            }
+        }
         _updateGroupHeader();   // re-span the group band over what's now visible
     }
 
@@ -737,12 +851,13 @@
     }
 
     var BulkEdit = {
-        mount: function (columns, bandMeta) {
+        mount: function (columns, bandMeta, dynModel) {
             if (Array.isArray(columns)) COLS = columns;
             // An HTMX swap re-renders the tbody in server (default) order, so the
             // old sort no longer applies — clear it (the fresh header has no caret).
             sortKey = null; sortDir = 1;
             if (bandMeta && bandMeta.bands) BANDS = bandMeta.bands;
+            DYN = Array.isArray(dynModel) ? dynModel : [];
             var t = table();
             if (!t) return;
             // Restore the persisted search/filter before applySearch runs below.
@@ -994,6 +1109,124 @@
             });
             _rows().forEach(_refreshRow);
             _refreshGlobal();
+        },
+
+        // r6 item 4: enable every dynamic column the current search matched
+        // (the "N hidden columns match — Show" chip) and re-render the pane.
+        showMatchedDynCols: function () {
+            if (!_dynHintKeys.length) return;
+            var arr = _dynEnabled();
+            _dynHintKeys.forEach(function (k) { if (arr.indexOf(k) < 0) arr.push(k); });
+            _saveDynEnabled(arr);
+            _reloadPane();
+        },
+
+        // r6 item 4: whole-value JSON editor for list cells (qubit-grid listedit
+        // previews AND the pair grid's ▦ badges). Prefills from /field/peek's RAW
+        // value, saves the PARSED value through the same atomic /field/edit-batch
+        // path (non-string values skip server-side re-parse, so the list commits
+        // typed-correctly); client parse errors + server 400s render inline.
+        openJsonCell: function (path, btn) {
+            var old = document.getElementById('bulk-json-modal');
+            if (old && old.parentNode) old.parentNode.removeChild(old);
+            var ov = document.createElement('div');
+            ov.id = 'bulk-json-modal';
+            ov.innerHTML = '<div class="bulk-json-card" role="dialog" aria-modal="true" aria-label="Edit JSON value">'
+                + '<div class="bulk-json-head"><span class="bulk-json-path" title="' + _esc(path) + '">' + _esc(path) + '</span>'
+                + '<span class="muted bulk-json-keys">Ctrl+Enter save · Esc cancel</span></div>'
+                + '<textarea class="bulk-json-ta" spellcheck="false" aria-label="JSON value"></textarea>'
+                + '<div class="bulk-json-err" hidden></div>'
+                + '<div class="bulk-json-actions">'
+                + '<button type="button" class="btn-sm" data-bulk-json-save>Save</button>'
+                + '<button type="button" class="btn-sm outline" data-bulk-json-cancel>Cancel</button>'
+                + '</div></div>';
+            document.body.appendChild(ov);
+            var ta = ov.querySelector('.bulk-json-ta');
+            function close() { if (ov.parentNode) ov.parentNode.removeChild(ov); }
+            function showErr(msg) {
+                var el = ov.querySelector('.bulk-json-err');
+                el.textContent = msg; el.hidden = false;
+            }
+            // Prefill from the RAW stored value (peek `values`) — the rendered
+            // preview/badge is a summary, not the data. A port-alias path
+            // (qubits.*.z.opx_output.exponential_filter) is NOT raw-navigable
+            // (the io key is a pointer string), so fall back to peeking the
+            // RESOLVED path; the save still posts the alias (edit-batch
+            // re-resolves it server-side).
+            function prefill(v) {
+                ta.value = JSON.stringify(v === undefined ? null : v, null, 2);
+                ta.focus();
+            }
+            fetch('/field/peek?dot_path=' + encodeURIComponent(path))
+                .then(function (r) { return r.json(); })
+                .then(function (jb) {
+                    var v = jb && jb.values ? jb.values[path] : undefined;
+                    var ft = jb && jb.resolved ? jb.resolved[path] : null;
+                    if ((v === undefined || v === null) && ft && ft.resolved_path
+                            && ft.resolved_path !== path) {
+                        return fetch('/field/peek?dot_path=' + encodeURIComponent(ft.resolved_path))
+                            .then(function (r2) { return r2.json(); })
+                            .then(function (jb2) {
+                                prefill(jb2 && jb2.values ? jb2.values[ft.resolved_path] : undefined);
+                            });
+                    }
+                    prefill(v);
+                })
+                .catch(function (err) { showErr('Could not load current value: ' + err); ta.focus(); });
+            function save() {
+                var parsed;
+                try { parsed = JSON.parse(ta.value); }
+                catch (ex) { showErr('Invalid JSON: ' + ex.message); return; }
+                fetch('/field/edit-batch', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ updates: [{ dot_path: path, value: parsed }],
+                                           expect_chip: window.__chipToken || '' })
+                }).then(function (r) { return r.json(); }).then(function (jb) {
+                    if (!jb || !jb.ok) {
+                        showErr((jb && jb.results && jb.results[0] && jb.results[0].error)
+                            || (jb && jb.error) || 'Apply failed');
+                        return;
+                    }
+                    // Refresh the cell in place until the next pane render: the
+                    // qubit-grid preview span gets new truncated JSON + the red
+                    // committed marker; a pair-grid ▦ badge re-derives its dims.
+                    var td = btn && btn.closest ? btn.closest('td') : null;
+                    var s;
+                    try { s = JSON.stringify(parsed); } catch (e2) { s = String(parsed); }
+                    var prev = td && td.querySelector('.bulk-cell-list');
+                    if (prev) {
+                        prev.textContent = s.length > 24 ? s.slice(0, 24) + '…' : s;
+                        prev.classList.add('bulk-cell-modified');
+                    } else {
+                        var inp = td && td.querySelector('input.bulk-cell');
+                        if (inp) {
+                            var badge = '';
+                            if (Array.isArray(parsed)) {
+                                var mat = parsed.length && parsed.every(function (r2) { return Array.isArray(r2); });
+                                badge = mat ? ('▦ ' + parsed.length + '×' + (parsed[0] ? parsed[0].length : 0))
+                                    : ('[ ' + parsed.length + ' ]');
+                            }
+                            inp.value = badge;
+                            inp.setAttribute('data-orig', badge);   // committed, not dirty
+                            inp.classList.add('bulk-cell-modified');
+                        }
+                    }
+                    if (jb.tray_html && window._swapPendingTray) {
+                        window._bulkSelfEdit = true;            // suppress our own refresh
+                        window._swapPendingTray(jb.tray_html);
+                        window._bulkSelfEdit = false;
+                    }
+                    if (window._diagChanged) window._diagChanged();
+                    close();
+                }).catch(function (ex) { showErr('Apply failed: ' + ex); });
+            }
+            ov.addEventListener('keydown', function (e) {
+                if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+                else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); }
+            });
+            ov.addEventListener('mousedown', function (e) { if (e.target === ov) close(); });
+            ov.querySelector('[data-bulk-json-save]').addEventListener('click', save);
+            ov.querySelector('[data-bulk-json-cancel]').addEventListener('click', close);
         },
 
         sort: sort,

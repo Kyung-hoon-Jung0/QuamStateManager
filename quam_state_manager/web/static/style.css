@@ -7755,6 +7755,78 @@ button.diag-badge { cursor: pointer; }
 .bulk-search-wrap .bulk-search { margin-bottom: 0; }
 .bulk-search-count { font-size: 0.78em; }
 
+/* ── r6 item 4: dynamic (derived) columns — list cells, JSON modal, hint ── */
+/* List-value preview cell: mono + muted + ellipsed; the ✎ shows on row hover. */
+.bulk-cell-list {
+    display: inline-block; max-width: 15rem; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; vertical-align: middle; cursor: default;
+    font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+    font-size: calc(0.86rem * var(--bulk-fs, 1));
+    color: var(--pico-muted-color); padding: 0 3px;
+}
+.bulk-cell-list.bulk-cell-modified {
+    color: var(--pico-color); border: 1.5px solid var(--color-error-text); border-radius: 3px;
+    background: color-mix(in srgb, var(--color-error-text) 12%, transparent);
+}
+.bulk-list-edit {
+    all: unset; cursor: pointer; margin-left: 0.15rem; padding: 0 0.2em; border-radius: 3px;
+    color: var(--pico-muted-color); font-size: 0.9em; line-height: 1;
+    opacity: 0; transition: opacity 0.12s, color 0.12s;
+}
+.bulk-td:hover .bulk-list-edit, .bulk-list-edit:focus-visible { opacity: 0.85; }
+.bulk-list-edit:hover { opacity: 1; color: var(--pico-primary); }
+/* "N hidden columns match — Show" chip next to the search count. Warning-TEXT
+   token as text + warning-border as border (the theme rule: coloured text via
+   *-text tokens, never a bg token reused as text). */
+.bulk-dyncol-hint {
+    width: auto; margin: 0; padding: 0 0.55rem; font-size: 0.76em; line-height: 1.7;
+    white-space: nowrap; cursor: pointer; border-radius: 999px;
+    background: transparent; color: var(--color-warning-text);
+    border: 1px solid var(--color-warning-border);
+}
+.bulk-dyncol-hint:hover { background: var(--color-warning-bg); }
+/* Collapsible per-section dynamic groups appended to the Properties menu. */
+.bulk-colvis-dyn { margin: 0; }
+.bulk-colvis-dyn > summary {
+    list-style: none; cursor: pointer; padding: 2px; font-size: 0.8em; font-weight: 600;
+}
+.bulk-colvis-dyn > summary::-webkit-details-marker { display: none; }
+.bulk-colvis-dyn > summary::before { content: "▸ "; color: var(--pico-muted-color); }
+.bulk-colvis-dyn[open] > summary::before { content: "▾ "; }
+.bulk-colvis-dyn .bulk-colvis-item { margin-left: 0.9rem; }
+.bulk-colvis-dyn-head {
+    margin-top: 8px; border-top: 1px solid var(--pico-muted-border-color); padding-top: 6px;
+}
+.bulk-colvis-note { font-size: 0.75em; padding: 2px; }
+/* Whole-value JSON editor modal (the ✎ on a list cell) — same visual language
+   as the All-values ✎ modal (#av-json-modal) / .tree-json-editor. */
+#bulk-json-modal {
+    position: fixed; inset: 0; z-index: 240; background: rgba(0, 0, 0, 0.35);
+    display: flex; align-items: center; justify-content: center;
+}
+#bulk-json-modal .bulk-json-card {
+    width: min(44rem, 92vw); background: var(--pico-card-background-color);
+    border: 1px solid var(--pico-muted-border-color); border-radius: 6px;
+    padding: 0.8rem; display: flex; flex-direction: column; gap: 0.5rem;
+}
+#bulk-json-modal .bulk-json-head {
+    display: flex; justify-content: space-between; gap: 0.6rem;
+    align-items: baseline; min-width: 0;
+}
+#bulk-json-modal .bulk-json-path {
+    font-family: var(--font-mono); font-size: 12.5px; font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#bulk-json-modal .bulk-json-keys { font-size: 11px; white-space: nowrap; }
+#bulk-json-modal textarea.bulk-json-ta {
+    width: 100%; min-height: 12rem; max-height: 50vh; resize: vertical; margin: 0;
+    font-family: var(--font-mono); font-size: 12.5px; white-space: pre; tab-size: 2;
+}
+#bulk-json-modal .bulk-json-err {
+    color: var(--color-error-text, #c0392b); font-size: 12px; white-space: pre-wrap;
+}
+#bulk-json-modal .bulk-json-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
+
 /* ── Chip report-card export dropdown (Chip Status health header) ──── */
 .topo-report-export { position: relative; display: inline-block; }
 .topo-report-export > summary { list-style: none; cursor: pointer; display: inline-block; margin: 0; }

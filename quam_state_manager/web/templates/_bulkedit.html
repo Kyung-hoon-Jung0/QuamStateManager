@@ -43,6 +43,11 @@
                    placeholder="Search columns, qubits, numbers…" autocomplete="off"
                    aria-label="Filter by column name, qubit id, or value">
             <span class="bulk-search-count muted" id="bulk-search-count" aria-live="polite"></span>
+            {# r6 item 4: searching a property that exists on the chip but isn't a
+               visible column (a dynamic column not yet enabled) offers to show it. #}
+            <button type="button" class="bulk-dyncol-hint" id="bulk-dyncol-hint" hidden
+                    onclick="BulkEdit.showMatchedDynCols()"
+                    title="Hidden chip properties match your search — click to enable those columns"></button>
         </span>
         <span class="bulk-band-warn" id="bulk-band-warn" aria-live="polite" hidden></span>
         <span class="bulk-dirty-count" id="bulk-dirty-count" aria-live="polite"></span>
@@ -105,8 +110,24 @@
                     <th class="bulk-rowhead" scope="row" data-col-key="__id__">{{ row.id }}</th>
                     {% for cell in row.cells %}
                     {% set col = columns[loop.index0] %}
-                    <td class="bulk-td{% if not col.default_on %} bulk-col-hidden{% endif %}{% if col.group_start %} bulk-col-group-start{% endif %}{% if cell.is_pointer %} bulk-td-pointer{% endif %}{% if cell.lo and cell.lo.peer_qubit %} bulk-td-lo{% endif %}"
+                    <td class="bulk-td{% if not col.default_on %} bulk-col-hidden{% endif %}{% if col.group_start %} bulk-col-group-start{% endif %}{% if cell.is_pointer %} bulk-td-pointer{% endif %}{% if cell.lo and cell.lo.peer_qubit %} bulk-td-lo{% endif %}{% if cell.kind in ('listedit', 'runtime') %} bulk-td-ro{% endif %}"
                         data-col-key="{{ col.key }}">
+                        {% if cell.kind == 'listedit' %}
+                        {# r6 item 4: a real LIST value — compact JSON preview + the ✎
+                           whole-value JSON editor (NOT a text input; the scalar
+                           coercer can't take a list). #}
+                        <span class="bulk-cell-list{% if cell.modified %} bulk-cell-modified{% endif %}"
+                              data-path="{{ cell.dot_path }}"
+                              title="{{ cell.dot_path }} — list value; ✎ edits the whole JSON">{{ cell.display }}</span>
+                        <button type="button" class="bulk-list-edit"
+                                title="Edit as JSON (Ctrl+Enter saves, Esc cancels)"
+                                onclick="BulkEdit.openJsonCell('{{ cell.dot_path }}', this)">&#9998;</button>
+                        {% elif cell.kind == 'runtime' %}
+                        <input type="text" class="bulk-cell bulk-cell-ro bulk-cell-runtime"
+                               value="{{ cell.display }}" size="{{ col.maxlen }}" readonly tabindex="-1"
+                               data-dot-path="{{ cell.dot_path }}" data-resolved="{{ cell.resolved_path }}" data-orig="{{ cell.display }}"
+                               title="{{ cell.dot_path }} — computed at runtime (read-only)">
+                        {% else %}
                         <input type="text"
                                class="bulk-cell{% if cell.modified %} bulk-cell-modified{% endif %}"
                                value="{{ cell.display }}"
@@ -123,6 +144,7 @@
                         {% if cell.lo and cell.lo.peer_qubit %}<span class="bulk-shared" title="Shares the LO with {{ cell.lo.peer_qubit }} (band {{ cell.lo.peer_band }}) — LO-coupled ports must use the same band (bands 1 & 3 compatible; band 2 only with band 2)">&#9888;</span>{% elif cell.is_pointer %}<span class="bulk-ptr" title="JSON pointer — editing writes the resolved target">&#8599;</span>{% endif %}
                         <span class="bulk-band-msg" hidden></span>
                         <span class="bulk-ba" aria-hidden="true"><span class="bulk-ba-old">{{ cell.old_display }}</span> &rarr; <span class="bulk-ba-new"></span></span>
+                        {% endif %}
                     </td>
                     {% endfor %}
                     <td class="bulk-apply-col">
@@ -205,6 +227,11 @@
                         <a class="bulk-ro-link" href="#" tabindex="-1"
                            onclick="return BulkPairEdit.openPair('{{ row.id }}')"
                            title="Open {{ row.id }} in the inspector to edit this list">&#8599;</a>
+                        {# r6 item 4: list cells are now also editable in place via
+                           the shared whole-value JSON editor (same edit-batch path). #}
+                        <button type="button" class="bulk-list-edit"
+                                title="Edit as JSON (Ctrl+Enter saves, Esc cancels)"
+                                onclick="BulkEdit.openJsonCell('{{ cell.dot_path }}', this)">&#9998;</button>
                         {% elif cell.kind in ('runtime', 'missing') %}
                         <input type="text" class="bulk-cell bulk-cell-ro{% if cell.kind == 'runtime' %} bulk-cell-runtime{% endif %}"
                                value="{{ cell.display }}" size="{{ col.maxlen }}" readonly tabindex="-1"
@@ -350,7 +377,7 @@
 </div>
 
 <script>
-    if (window.BulkEdit && BulkEdit.mount) BulkEdit.mount({{ columns | script_json }}, {{ band_meta | script_json }});
+    if (window.BulkEdit && BulkEdit.mount) BulkEdit.mount({{ columns | script_json }}, {{ band_meta | script_json }}, {{ (dyn_cols or []) | script_json }});
     {% if pair_rows %}
     if (window.BulkPairEdit && BulkPairEdit.mount) BulkPairEdit.mount({{ pair_columns | script_json }});
     {% endif %}

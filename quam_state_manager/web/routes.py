@@ -156,6 +156,14 @@ def _build_bulk_cell(merged: dict, alias: str, modified: dict,
     resolvable = bool(ft.get("resolvable"))
     resolved = ft.get("resolved_path") or alias
     val = ft.get("resolved_value") if resolvable else None
+    # resolved_value is scalar-nulled for containers, so a real LIST leaf reads
+    # as null — one cheap walk (only on the resolvable-but-null case) detects it
+    # for the ✎ list-cell swap.
+    is_list = False
+    if resolvable and val is None:
+        from quam_state_manager.core.pointer_path import _walk as _walk_abs
+        found, node = _walk_abs(merged, resolved.split("."))
+        is_list = bool(found) and isinstance(node, list)
     p = mw_fem.port_of_resolved(resolved)
     if p:
         kind, con, fem, port, field = p
@@ -175,6 +183,9 @@ def _build_bulk_cell(merged: dict, alias: str, modified: dict,
         "linkable": resolvable,
         "modified": resolved in modified,
         "old_display": _bulk_display(modified.get(resolved)),
+        # a resolved LIST can't be a text input — the caller swaps in the ✎
+        # JSON-preview cell (dynamic listedit columns; curated defensively)
+        "is_list": is_list,
         "_port": p,
     }
 
@@ -2268,11 +2279,31 @@ def bulk_edit():
         return render_template("_empty_state.html", page="live state editing")
 
     from quam_state_manager.core import mw_fem
+    from quam_state_manager.core.qubit_columns import derive_qubit_columns
+
+    # Dynamic (derived) columns — full coverage of every qubit leaf (r6 item 4).
+    # The FULL model ships to the client (Properties menu + search hint); only
+    # the explicitly requested keys (?dyncols=, persisted client-side in
+    # quam_bulk_dyncols) become rendered columns, so the daily /bulk load with
+    # none enabled renders the curated spec exactly as before. Stale/unknown
+    # keys are silently ignored (the chip may have changed under a saved set).
+    dyn_model, _curated = derive_qubit_columns(store)
+    _dyn_requested = [k for k in (request.args.get("dyncols") or "").split(",") if k]
+    _dyn_by_key = {c["key"]: c for c in dyn_model if c.get("kind") != "note"}
+    specs: list[dict[str, Any]] = list(_BULK_COLUMNS_SPEC) + [
+        {"section": c["section"], "key": c["key"], "label": c["label"],
+         "tmpl": c["tmpl"], "unit": c["unit"],
+         # explicitly requested ⇒ visible now (the client colvis default would
+         # otherwise hide a default_on=False column the user just opted into)
+         "default_on": True, "kind": c["kind"], "dyn": True}
+        for c in (_dyn_by_key[k] for k in _dyn_requested if k in _dyn_by_key)
+    ]
 
     columns = [
         {"key": c["key"], "label": c["label"], "section": c["section"],
-         "unit": c.get("unit", ""), "default_on": c.get("default_on", True)}
-        for c in _BULK_COLUMNS_SPEC
+         "unit": c.get("unit", ""), "default_on": c.get("default_on", True),
+         "dyn": bool(c.get("dyn"))}
+        for c in specs
     ]
     modified = _modified_map()
 
@@ -2285,11 +2316,23 @@ def bulk_edit():
         # First pass: resolve every cell once through QUAM pointers (qubit fields
         # and the state→wiring→ports.* port chain by ONE path). The shared
         # _build_bulk_cell flags shared ports (a port dict backing >1 qubit).
+        # Dynamic runtime/list columns get their read-only cell variants; a
+        # curated column that (defensively) resolves to a list gets one too.
         grid: dict[str, list[dict[str, Any]]] = {}
         for qid in qids:
-            grid[qid] = [_build_bulk_cell(merged, spec["tmpl"].format(name=qid),
-                                          modified, port_info, qid)
-                         for spec in _BULK_COLUMNS_SPEC]
+            cells: list[dict[str, Any]] = []
+            for spec in specs:
+                path = spec["tmpl"].format(name=qid)
+                kind = spec.get("kind", "edit")
+                if kind == "runtime":
+                    cells.append(_runtime_pair_cell(merged, path))
+                    continue
+                cell = _build_bulk_cell(merged, path, modified, port_info, qid)
+                if kind == "listedit" or cell.get("is_list"):
+                    cells.append(_list_json_cell(merged, path, modified))
+                else:
+                    cells.append(cell)
+            grid[qid] = cells
 
     # Dead-CHANNEL column pruning: drop a column whose channel component (the
     # first path segment under the qubit, e.g. ``z``) is structurally absent
@@ -2306,14 +2349,14 @@ def bulk_edit():
             return segs[2] if len(segs) > 3 else None
 
         _chan_present = {}
-        for spec in _BULK_COLUMNS_SPEC:
+        for spec in specs:
             head = _channel_head(spec)
             if head is None or head in _chan_present:
                 continue
             _chan_present[head] = any(
                 isinstance((merged.get("qubits", {}).get(qid) or {}).get(head), dict)
                 for qid in qids)
-        keep = [i for i, spec in enumerate(_BULK_COLUMNS_SPEC)
+        keep = [i for i, spec in enumerate(specs)
                 if _chan_present.get(_channel_head(spec), True)]
         if len(keep) < len(columns):
             columns = [columns[i] for i in keep]
@@ -2338,9 +2381,18 @@ def bulk_edit():
     pair_columns, pair_groups, pair_rows = _pair_bulk_grid(store, modified)
 
     band_meta = {"bands": {str(b): list(r) for b, r in mw_fem.BANDS.items()}}
+    # Client model for the Properties menu + search hint: key/label/section/
+    # unit/kind only — never the per-qubit tmpl values (the server re-derives
+    # cells from ?dyncols; the client only needs identity + display metadata).
+    dyn_cols = [
+        {"key": c["key"], "label": c["label"], "section": c["section"],
+         "unit": c.get("unit", ""), "kind": c.get("kind", "edit")}
+        for c in dyn_model
+    ]
     template = "_bulkedit.html" if _is_htmx() else "bulkedit.html"
     return render_template(template, **_ctx(page="bulk", columns=columns, rows=rows,
                                             column_groups=column_groups, band_meta=band_meta,
+                                            dyn_cols=dyn_cols,
                                             pair_columns=pair_columns, pair_groups=pair_groups,
                                             pair_rows=pair_rows))
 
@@ -2450,8 +2502,10 @@ def _runtime_pair_cell(merged: dict, path: str) -> dict[str, Any]:
     val = ft.get("resolved_value")
     # inferred_* self-refs point at a property QUAM computes at config time (not in
     # the JSON), so they don't resolve to a stored number — show a clean ⟳ marker
-    # rather than the raw pointer. A self-ref that DOES resolve shows its value.
-    if not ft.get("resolvable") or is_pointer(val):
+    # rather than the raw pointer. A self-ref that DOES resolve to a scalar shows
+    # its value; an alias to a whole structure (operations.x180 → the pulse dict;
+    # resolved_value scalar-nulls containers) shows ⟳ too, not a blank cell.
+    if not ft.get("resolvable") or is_pointer(val) or val is None:
         display = "⟳"
     else:
         display = _bulk_display(val)
@@ -2462,11 +2516,16 @@ def _runtime_pair_cell(merged: dict, path: str) -> dict[str, Any]:
 
 
 def _list_pair_cell(merged: dict, pair_id: str, path: str) -> dict[str, Any]:
-    """A read-only badge cell for a list leaf (confusion matrix, etc.) that
-    deep-links to the pair inspector — the scalar coercer can't edit a list."""
-    from quam_state_manager.core.pointer_path import resolve_field_target
+    """A badge cell for a list leaf (confusion matrix, etc.) that deep-links to
+    the pair inspector; the ✎ opens the whole-value JSON editor (r6 item 4)."""
+    from quam_state_manager.core.pointer_path import _walk as _walk_abs, resolve_field_target
     try:
-        val = resolve_field_target(merged, path).get("resolved_value")
+        ft = resolve_field_target(merged, path)
+        # resolved_value is scalar-nulled for containers — fetch the real list
+        # (the ▦ dims badge rendered empty off resolved_value).
+        found, val = _walk_abs(merged, (ft.get("resolved_path") or path).split("."))
+        if not found or not ft.get("resolvable"):
+            val = None
     except Exception:
         val = None
     if isinstance(val, list) and val and all(isinstance(r, list) for r in val):
@@ -2479,6 +2538,34 @@ def _list_pair_cell(merged: dict, pair_id: str, path: str) -> dict[str, Any]:
             "is_pointer": False, "missing": val is None, "linkable": False,
             "modified": False, "old_display": "", "editable": False,
             "kind": "list", "pair_id": pair_id}
+
+
+def _list_json_cell(merged: dict, path: str, modified: dict) -> dict[str, Any]:
+    """A qubit-grid cell for a real LIST value (confusion matrix, filter taps):
+    compact JSON preview + the ✎ button that opens the client's JSON editor.
+    Commits ride the SAME atomic /field/edit-batch path — the popup posts the
+    whole parsed list in the JSON body, so no string round-trip."""
+    from quam_state_manager.core.pointer_path import _walk as _walk_abs, resolve_field_target
+    try:
+        ft = resolve_field_target(merged, path)
+    except Exception:
+        ft = {}
+    resolved = ft.get("resolved_path") or path
+    # resolved_value is scalar-nulled for containers — fetch the real list.
+    val = None
+    if ft.get("resolvable"):
+        found, node = _walk_abs(merged, resolved.split("."))
+        val = node if found else None
+    try:
+        preview = json.dumps(val, separators=(",", ":")) if val is not None else ""
+    except (TypeError, ValueError):
+        preview = str(val)
+    if len(preview) > 24:
+        preview = preview[:24] + "…"
+    return {"dot_path": path, "resolved_path": resolved, "display": preview,
+            "is_pointer": bool(ft.get("is_pointer")), "missing": val is None,
+            "linkable": False, "modified": resolved in modified,
+            "old_display": "", "editable": False, "kind": "listedit"}
 
 
 def _pair_bulk_grid(store: QuamStore, modified: dict

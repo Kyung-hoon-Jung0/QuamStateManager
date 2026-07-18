@@ -301,6 +301,138 @@ class TestBulkLinkable:
         assert rs == rb == "ports.mw_inputs.con1.1.1"
 
 
+class TestBulkDynCols:
+    """r6 item 4 — Table View full coverage: the derived (dynamic) column model.
+
+    Baseline /bulk must render EXACTLY the curated columns (unchanged); the full
+    dynamic model ships as JSON for the Properties menu + search hint; only
+    ``?dyncols=<keys>`` turns model entries into rendered columns; list values
+    render the ✎ JSON-preview cell (never a text input); the pair grid's list
+    badge now carries the same ✎."""
+
+    @pytest.fixture
+    def dyn_client(self, tmp_path: Path):
+        def _q(qid):
+            return {
+                "id": qid, "f_01": 6.25e9,
+                "xy": {"RF_frequency": 6.25e9,
+                       "operations": {"x180": "#./x180_DragCosine",
+                                      "x180_DragCosine": {"amplitude": 0.11, "alpha": -1.0}}},
+                "resonator": {"f_01": 7.6e9,
+                              "confusion_matrix": [[0.98, 0.02], [0.03, 0.97]],
+                              "operations": {"readout": {"amplitude": 0.04}}},
+                "z": {"joint_offset": 0.05,
+                      "opx_output": "#/wiring/qubits/%s/z/opx_output" % qid},
+            }
+        state = {
+            "qubits": {"qA1": _q("qA1"), "qA2": _q("qA2")},
+            "qubit_pairs": {"qA2-qA1": {
+                "id": "qA2-qA1", "detuning": 1.0e6,
+                "confusion": [[0.99, 0.01], [0.02, 0.98]],
+            }},
+            "ports": {"analog_outputs": {"con1": {"2": {"1": {
+                "offset": 0.0, "exponential_filter": [[0.8, 120.0]],
+                "feedback_gain": 0.02,
+                "upconverters": {"1": {"frequency": 4.3e9}}}}}}},
+        }
+        wiring = {"wiring": {"qubits": {
+            "qA1": {"z": {"opx_output": "#/ports/analog_outputs/con1/2/1"}},
+            "qA2": {"z": {"opx_output": "#/ports/analog_outputs/con1/2/1"}}}},
+            "network": {"host": "1.1.1.1"}}
+        (tmp_path / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        (tmp_path / "wiring.json").write_text(json.dumps(wiring), encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(tmp_path)})
+        return c
+
+    @staticmethod
+    def _listedit_key(body: str, label: str) -> str:
+        # the dyn model JSON ships dicts in key/label/section/unit/kind order
+        m = re.search(r'\{"key":"(dyn__[^"]+)","label":"[^"]*%s[^"]*","section":"[^"]*",'
+                      r'"unit":"[^"]*","kind":"listedit"\}' % re.escape(label), body)
+        assert m, f"no listedit model entry labelled {label!r}"
+        return m.group(1)
+
+    def test_baseline_renders_exactly_the_curated_columns(self, dyn_client):
+        from quam_state_manager.core.param_specs import _BULK_COLUMNS_SPEC
+        body = dyn_client.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
+        rendered = set(re.findall(r'<th[^>]*data-col-key="([^"]+)"', body)) - {"__id__"}
+        curated = {c["key"] for c in _BULK_COLUMNS_SPEC}
+        # no dynamic column headers without ?dyncols= (the pair grid contributes
+        # its own derived keys, so compare against the QUBIT table's thead only)
+        qubit_thead = body.split('id="bulk-pair-table"')[0]
+        q_rendered = set(re.findall(r'<th[^>]*data-col-key="([^"]+)"', qubit_thead)) - {"__id__"}
+        assert q_rendered <= curated
+        assert not any(k.startswith("dyn__") for k in rendered)
+
+    def test_dynamic_model_json_ships_in_the_page(self, dyn_client):
+        body = dyn_client.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
+        # confusion_matrix (list) + the port's exponential_filter (list through
+        # the pointer chain) are both in the model; upconverters never
+        self._listedit_key(body, "confusion_matrix")
+        self._listedit_key(body, "exponential_filter")
+        assert "upconverters" not in body
+        # curated templates are deduped: no dyn entry for the curated z offset
+        assert not re.search(r'"key":"dyn__z_opx_output_offset"', body)
+
+    def test_dyncols_renders_the_list_preview_cell(self, dyn_client):
+        base = dyn_client.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
+        key = self._listedit_key(base, "confusion_matrix")
+        body = dyn_client.get(f"/bulk?dyncols={key}",
+                              headers={"HX-Request": "true"}).get_data(as_text=True)
+        th = re.search(rf'<th[^>]*data-col-key="{key}"[^>]*>', body)
+        assert th and "bulk-col-hidden" not in th.group(0), "requested dyn column is visible"
+        row = re.search(r'data-qubit="qA1"(.*?)</tr>', body, re.S).group(1)
+        cell = re.search(r'<span class="bulk-cell-list[^"]*"[^>]*>', row)
+        assert cell, "list value renders the preview cell, not a text input"
+        assert 'data-path="qubits.qA1.resonator.confusion_matrix"' in cell.group(0)
+        assert "BulkEdit.openJsonCell('qubits.qA1.resonator.confusion_matrix'" in row
+        assert "✎" in row
+        # truncated JSON preview, never the whole matrix
+        prev = re.search(r'<span class="bulk-cell-list[^"]*"[^>]*>([^<]*)</span>', row).group(1)
+        assert prev.startswith("[[0.98") and prev.endswith("…")
+        # NOT an editable input for this path
+        assert not re.search(
+            r'<input[^>]*data-dot-path="qubits.qA1.resonator.confusion_matrix"', row)
+
+    def test_dyncols_scalar_column_is_a_normal_editable_cell(self, dyn_client):
+        base = dyn_client.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
+        m = re.search(r'\{"key":"(dyn__[^"]+)","label":"[^"]*feedback_gain[^"]*",', base)
+        assert m
+        body = dyn_client.get(f"/bulk?dyncols={m.group(1)}",
+                              headers={"HX-Request": "true"}).get_data(as_text=True)
+        cell = re.search(r'<input[^>]*data-dot-path="qubits.qA1.z.opx_output.feedback_gain"[^>]*>', body)
+        assert cell and "readonly" not in cell.group(0)
+
+    def test_stale_dyncols_keys_silently_ignored(self, dyn_client):
+        r = dyn_client.get("/bulk?dyncols=dyn__nope,also_bad,",
+                           headers={"HX-Request": "true"})
+        assert r.status_code == 200
+        body = r.get_data(as_text=True)
+        qubit_thead = body.split('id="bulk-pair-table"')[0]
+        assert 'data-col-key="dyn__' not in qubit_thead
+
+    def test_pair_list_badge_carries_the_json_edit_button(self, dyn_client):
+        body = dyn_client.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
+        pair_html = body.split('id="bulk-pair-table"')[1]
+        assert "BulkEdit.openJsonCell('qubit_pairs.qA2-qA1.confusion'" in pair_html
+        assert 'class="bulk-list-edit"' in pair_html
+        # the ▦ badge + inspector deep-link stay
+        assert "▦ 2×2" in pair_html and "bulk-ro-link" in pair_html
+
+    def test_whole_list_round_trips_through_edit_batch_json_body(self, dyn_client):
+        # the ✎ modal posts the PARSED list (no string round-trip)
+        new = [[0.9, 0.1], [0.1, 0.9]]
+        jb = dyn_client.post("/field/edit-batch", json={"updates": [
+            {"dot_path": "qubits.qA1.resonator.confusion_matrix", "value": new},
+        ]}).get_json()
+        assert jb["ok"] is True and jb["results"][0]["applied"] is True
+        peek = dyn_client.get(
+            "/field/peek?dot_path=qubits.qA1.resonator.confusion_matrix").get_json()
+        assert peek["values"]["qubits.qA1.resonator.confusion_matrix"] == new
+
+
 class TestBulkApply:
     def _paths(self, client, qid):
         body = client.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
