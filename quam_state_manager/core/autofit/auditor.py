@@ -4,17 +4,25 @@ The model's ONLY job is a discrete trust verdict on a fit the deterministic
 gates marked *suspect*. The contract is structurally number-free:
 
     {"verdict": "accept" | "reject" | "abstain",
-     "failure_mode": "wrong_peak" | "no_signal" | "noisy" | "drifted" | null,
-     "reason": "<one sentence>"}
+     "failure_mode": "wrong_peak" | "no_signal" | "noisy" | "drifted"
+                     | "feature_present_fit_failed" | null,
+     "reason": "<one sentence>",
+     "feature_visible": true | false | null,      # v2 in-loop vision hints
+     "direction": "left" | "right" | null}        # (qualitative, never numbers)
 
 * The schema has NO numeric field. If a model volunteers a corrected value it
   is discarded and logged — no code path carries it anywhere (docs/47: an
   acceptance criterion, not a config toggle).
 * ``failure_mode`` is qualitative and only selects the family's deterministic
-  adaptation rule for the re-measure retry; it never parameterizes math.
-* The auditor sees ONLY gate-suspect targets. Deterministic hard-fails are
-  never submitted (an LLM accept must not be able to override G3 — one ack
-  never collapses two gates).
+  adaptation rule for the re-measure retry; it never parameterizes math. The
+  v2 hints are the same class: ``feature_visible`` splits a failed fit into
+  the step-refine vs the widen/seed ladder, ``direction`` picks WHICH way a
+  seed-shift rung looks — magnitudes stay window math (docs/56 v2 rail ①).
+* The auditor sees gate-SUSPECT targets (trust verdicts) and — v2, families
+  with no deterministic raw-data localizer only — node-FAILED targets for a
+  presence reading. A presence reading refines the failure_mode of an
+  already-failed verdict; it can never turn a deterministic fail into a pass
+  (one ack never collapses two gates).
 * Providers: ``anthropic`` (Messages API vision), ``openai_compat``
   (``/v1/chat/completions`` — Ollama/gateways), ``fake`` (deterministic, for
   tests), ``off``. stdlib urllib only — no new dependency, key is BYO and
@@ -35,7 +43,9 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 VERDICTS = ("accept", "reject", "abstain")
-FAILURE_MODES = ("wrong_peak", "no_signal", "noisy", "drifted")
+FAILURE_MODES = ("wrong_peak", "no_signal", "noisy", "drifted",
+                 "feature_present_fit_failed")
+DIRECTIONS = ("left", "right")
 
 _SETTINGS_FILE = "autofit_ai.json"
 _DEFAULTS = {
@@ -80,12 +90,16 @@ class AuditVerdict:
     provider: str = ""
     model: str = ""
     discarded_numeric: bool = False    # the model tried to emit a number
+    feature_visible: bool | None = None   # v2 presence hint (bool, no numbers)
+    direction: str | None = None          # v2 seed direction: left | right
 
     def as_dict(self) -> dict:
         return {"verdict": self.verdict, "failure_mode": self.failure_mode,
                 "reason": self.reason, "provider": self.provider,
                 "model": self.model,
-                "discarded_numeric": self.discarded_numeric}
+                "discarded_numeric": self.discarded_numeric,
+                "feature_visible": self.feature_visible,
+                "direction": self.direction}
 
 
 _ABSTAIN = AuditVerdict(verdict="abstain", reason="auditor unavailable")
@@ -101,16 +115,25 @@ looking at the figure and the numeric context. You NEVER estimate, correct, \
 or emit any numeric value — the calibration number always comes from the \
 experiment's own fitter. Respond with EXACTLY one JSON object:
 {"verdict": "accept"|"reject"|"abstain", "failure_mode": \
-"wrong_peak"|"no_signal"|"noisy"|"drifted"|null, "reason": "<one sentence>"}
+"wrong_peak"|"no_signal"|"noisy"|"drifted"|"feature_present_fit_failed"|null, \
+"reason": "<one sentence>", "feature_visible": true|false|null, \
+"direction": "left"|"right"|null}
 accept = the claimed fit is consistent with the data shown.
 reject = the fit is clearly wrong (locked a sidelobe, no real feature, …).
-abstain = you cannot tell. When uncertain, abstain — never guess accept."""
+abstain = you cannot tell. When uncertain, abstain — never guess accept.
+feature_visible = whether a genuine spectroscopic feature (peak/dip/fringe) \
+is visible ANYWHERE in the figure, regardless of what the fit claims; null \
+if unsure. direction = when the data suggests the true feature lies OUTSIDE \
+the swept window, which side (left = below the axis range, right = above); \
+null otherwise. These are qualitative hints only — never report a position."""
 
 
 def build_bundle(*, family_label: str, target: str, fit_entry: dict,
                  gate_reasons: list[str], sweep_note: str = "",
-                 figure_path: Path | None = None) -> dict:
-    """The provider-agnostic audit request: numeric context + optional PNG."""
+                 figure_path: Path | None = None, ask: str = "judge") -> dict:
+    """The provider-agnostic audit request: numeric context + optional PNG.
+    ``ask``: ``judge`` (trust verdict on a suspect fit) | ``presence`` (the
+    fit FAILED — report only feature_visible/direction, docs/56 v2)."""
     ctx = {
         "family": family_label,
         "target": target,
@@ -118,7 +141,14 @@ def build_bundle(*, family_label: str, target: str, fit_entry: dict,
                         if isinstance(v, (int, float, bool, str))},
         "deterministic_gate_concerns": gate_reasons,
         "sweep": sweep_note,
+        "ask": ask,
     }
+    if ask == "presence":
+        ctx["note"] = ("The node's own fit FAILED for this target — there is "
+                       "no claim to judge. Report feature_visible (is a real "
+                       "feature anywhere in the figure?) and direction (if "
+                       "the data suggests it lies outside the swept window). "
+                       "Use verdict=abstain.")
     image_b64 = None
     if figure_path is not None:
         try:
@@ -146,14 +176,23 @@ def _parse_verdict(text: str, provider: str, model: str) -> AuditVerdict:
     fm = obj.get("failure_mode")
     if fm not in FAILURE_MODES:
         fm = None
+    fv = obj.get("feature_visible")
+    if not isinstance(fv, bool):
+        fv = None
+    direction = obj.get("direction")
+    if direction not in DIRECTIONS:
+        direction = None
     # numeric-emission guard: any extra numeric field is discarded + flagged
+    # (feature_visible/direction are bool/enum — structurally number-free)
     discarded = any(isinstance(v, (int, float)) and not isinstance(v, bool)
                     for k, v in obj.items()
-                    if k not in ("verdict", "failure_mode", "reason"))
+                    if k not in ("verdict", "failure_mode", "reason",
+                                 "feature_visible", "direction"))
     return AuditVerdict(verdict=verdict, failure_mode=fm,
                         reason=str(obj.get("reason") or "")[:500],
                         provider=provider, model=model,
-                        discarded_numeric=discarded)
+                        discarded_numeric=discarded,
+                        feature_visible=fv, direction=direction)
 
 
 # ---------------------------------------------------------------------------

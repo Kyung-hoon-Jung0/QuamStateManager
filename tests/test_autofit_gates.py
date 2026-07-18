@@ -174,8 +174,14 @@ class TestCorruptionLedger:
         else:  # pragma: no cover
             raise AssertionError(expected)
 
-    def test_node_failed_targets_hard_fail(self, tmp_path):
+    def test_node_failed_splits_by_raw_data_presence(self, tmp_path):
+        """v2 (docs/56, LOOP_STUDY #194 class): a node-declared failure is no
+        longer opaque — clean raw with a visible peak reclassifies to
+        feature_present_fit_failed (retryable: refine the step), a suppressed
+        window to no_signal (retryable: the widen/drive/seed ladder), and only
+        unavailable data stays node_failed (defer)."""
         chip = _mk_chip()
+        # (a) feature clearly present in the raw data, fit failed
         sr = synth.synth_run("08_qubit_spectroscopy", chip, ["qA1"], tmp_path,
                              900, seed=31)
         run = {"fit_results": {"qA1": dict(sr.fit_results["qA1"],
@@ -183,7 +189,32 @@ class TestCorruptionLedger:
                "outcomes": {"qA1": "failed"}, "parameters": {},
                "folder_path": sr.folder}
         v = _evaluate(sr, chip, run=run)["qA1"]
-        assert v.verdict == "fail" and v.failure_mode == "node_failed"
+        assert v.verdict == "fail"
+        assert v.failure_mode == "feature_present_fit_failed"
+        assert v.feature_present is True
+        # (b) window genuinely empty (no_signal corruption suppresses the
+        # feature), fit failed → the no_feature ladder
+        sr2 = synth.synth_run("08_qubit_spectroscopy", chip, ["qA1"],
+                              tmp_path / "b", 902, seed=31,
+                              corrupt="no_signal")
+        run2 = {"fit_results": {"qA1": dict(sr2.fit_results["qA1"],
+                                            success=False)},
+                "outcomes": {"qA1": "failed"}, "parameters": {},
+                "folder_path": sr2.folder}
+        v2 = _evaluate(sr2, chip, run=run2)["qA1"]
+        assert v2.verdict == "fail"
+        assert v2.failure_mode == "no_signal"
+        assert v2.feature_present is False
+        # (c) raw data unavailable → stays the opaque node_failed (defer)
+        sr3 = synth.synth_run("08_qubit_spectroscopy", chip, ["qA1"],
+                              tmp_path / "c", 903, seed=31)
+        (sr3.folder / "ds_raw.h5").unlink()
+        run3 = {"fit_results": {"qA1": dict(sr3.fit_results["qA1"],
+                                            success=False)},
+                "outcomes": {"qA1": "failed"}, "parameters": {},
+                "folder_path": sr3.folder}
+        v3 = _evaluate(sr3, chip, run=run3)["qA1"]
+        assert v3.verdict == "fail" and v3.failure_mode == "node_failed"
 
     def test_missing_ds_raw_is_never_silently_accepted(self, tmp_path):
         chip = _mk_chip()

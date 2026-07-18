@@ -363,6 +363,62 @@ equals the node's own patch list — amp/FSP bit-exact, frequency within the
 assign-vs-increment sub-Hz class — order-independent; #568/#565 refuse;
 #12 refuses by family.
 
+## 6V. v2 judgment loop — the human escalation vocabulary (2026-07-19)
+
+The archive's operator loops (local LOOP_STUDY: cases A #575→#578→#579,
+B #559→…→#592, C #193→#194×3→#595) define the atoms a machine loop needs and
+v1 lacked. Implemented:
+
+- **`feature_present_fit_failed`** (the #194 class): G1's node-failure is no
+  longer opaque — a claim-free PRESENCE probe over ds_raw splits it into
+  feature-visible-fit-died (→ step-refine ladder: step ×0.5 + shots ×2, then
+  the dense-wide-half-amp rung) vs provably-empty-window (→ the no_feature
+  ladder) vs data-unavailable (stays `node_failed`, defer). For the 2-D
+  vs_power families (no deterministic localizer) the same split comes from
+  the vision presence reading (below).
+- **Adaptation LADDERS** (`families.Rung`, `rungs_for`): an adaptations
+  entry may now be a rung list walked one rung per USE of that failure mode
+  (legacy bare callables unchanged — single rung, v1 compounding).
+  no_feature ladder: widen ×2 → drive up (`_power_up`: max_power_dbm +10
+  capped +10, max_amp ×2 capped 1.0, operation_amplitude_factor ×4 — only
+  knobs the plan exposes) → **seed-shift** → **escalate** (qubit families →
+  re-cal readout: `qubit_spectroscopy`→`resonator_spectroscopy`,
+  `qsvp`→`rvp`) → defer.
+- **Scan seeds** (the 3 rails): magnitude = window math (±0.75 × span, sign
+  from edge evidence `gates._edge_hint` or the vision hint — a hint-less
+  seed is SKIPPED, blind shifts are guesses); write via the audited
+  `writer.apply_rows` + `seed_write` ledger event + pre-plan record; restored
+  on terminal failure via CAS revert (`seed_restored`), consumed silently by
+  success (the node's own write supersedes).
+- **`verify_wide`** (case A's recover-then-verify): a pass on a retry whose
+  earlier failures were window-class inserts a one-shot ×4-span step
+  (`<id>__verify_wide`, retry_max 0) at the queue front. Verify pass ⇒ the
+  wide value stands; verify fail ⇒ the verify run's own patches AND the
+  discovered write are reverted (CAS chain), the original cell demoted to
+  the review queue — an unverified discovery is never adopted.
+- **Engine work queue**: the frozen step list became a deque; runtime steps
+  carry `only_targets` / `verify_of` / `inserted_by` (engine-synthesized
+  only — validate_plan never accepts them). Escalation inserts
+  `<id>__recal` (family-resolved via the plan-build scan candidates — the
+  `resolve_node` hook in routes; sim maps by family) + `<id>__retry`
+  (remaining budget, no re-escalation). `RealBackend` resolves inserted
+  steps by verify_of/base-id/engine-resolved path fallback.
+- **In-loop vision hints**: the auditor contract gains `feature_visible:
+  bool|null` + `direction: left|right|null` (type-guarded — still
+  structurally number-free; the numeric-discard guard pins them). Suspects:
+  direction rides into the seed rung. Node-failed 2-D targets get a
+  `presence` reading that only ever REFINES the failure mode of an
+  already-failed verdict — it can never un-fail one.
+
+Ledger vocabulary grew: `params_adapted{rung}`, `seed_write`,
+`seed_restored`, `seed_skipped`, `verify_wide_inserted`,
+`verify_failed_original_reverted`, `escalation_inserted`,
+`escalation_blocked`; the /autofit report renders them as "Loop actions".
+Pinned by `tests/test_autofit_v2_loop.py` (13) + the reworked
+`test_node_failed_splits_by_raw_data_presence` 3-class gate test. The sim
+scenario tier (out-of-window / undersampling / visibility-collapse
+closed-loop convergence) is the next tranche.
+
 ## 7. Explicit non-goals (v1)
 
 - No LLM-emitted numbers anywhere (incl. reverts, window math) — doctrinal.

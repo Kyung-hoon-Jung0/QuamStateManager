@@ -13244,8 +13244,23 @@ def _autofit_start_real(inst, p, data, auditor):
         store = ctx["store"]
         targets = list(store.qubit_pair_names if p.targets_kind == "qubit_pairs"
                        else store.qubit_names)
+
+    def resolve_node_for(fam_key):
+        # runtime escalation re-cal steps (docs/56 v2): resolve the family
+        # against the SAME scanned candidate list the plan build used — the
+        # engine only ever receives scan-derived paths
+        try:
+            fake = af_plan.Plan(name="escalation", targets_kind=p.targets_kind,
+                                steps=[af_plan.Step(id="x", family=fam_key)])
+            ent = af_plan.resolve_steps(fake, files).get("x") or {}
+            return ent.get("path")
+        except Exception:  # noqa: BLE001
+            logger.exception("escalation node resolve failed")
+            return None
+
     eng = PlanEngine(inst, p, targets, backend, RealWriter(handle), auditor,
-                     autonomy=p.autonomy, snapshot_fn=snapshot)
+                     autonomy=p.autonomy, snapshot_fn=snapshot,
+                     resolve_node=resolve_node_for)
     return eng, None, 200
 
 

@@ -8,7 +8,17 @@ routes ``suspect`` to the LLM auditor (when enabled) and maps the final
 verdict to a decision.
 
 Failure modes: ``node_failed | no_signal | wrong_peak | noisy | out_of_band |
-drifted | unverifiable``.
+drifted | unverifiable | feature_present_fit_failed``.
+
+v2 (docs/56, LOOP_STUDY): a node-declared failure is no longer opaque — when
+the family has a raw-data localizer, a claim-free PRESENCE probe over ds_raw
+splits it into ``feature_present_fit_failed`` (the archive's #194 class: dip
+clearly visible, fit died — prescription: refine the step) vs ``no_signal``
+(genuinely empty window — prescription: the widen/drive/seed ladder), keeping
+``node_failed`` only when the data itself is unavailable. On an empty window
+the probe also derives a qualitative ``direction_hint`` from window-edge
+evidence (a truncated feature tail) — it selects WHICH way a seed-shift rung
+looks, never a number.
 """
 from __future__ import annotations
 
@@ -43,11 +53,16 @@ class GateVerdict:
     failure_mode: str | None = None
     reasons: list[str] = field(default_factory=list)
     checks: dict[str, str] = field(default_factory=dict)   # gate -> ok/... (ledger)
+    # v2 qualitative signals (never numbers): raw-data feature presence under
+    # a failed fit, and the window-edge direction hint for a seed-shift rung
+    feature_present: bool | None = None
+    direction_hint: str | None = None   # left | right | None
 
     def as_dict(self) -> dict:
         return {"target": self.target, "verdict": self.verdict,
                 "failure_mode": self.failure_mode, "reasons": self.reasons,
-                "checks": self.checks}
+                "checks": self.checks, "feature_present": self.feature_present,
+                "direction_hint": self.direction_hint}
 
 
 def _attr(run, key, default=None):
@@ -171,6 +186,59 @@ def _feature_check(raw_path: Path, fc: FeatureCheck, target: str, kind: str,
     return "ok", f"claim within {tol:.3g} of the data {fc.mode} (z={z:.1f})"
 
 
+def _edge_hint(y: np.ndarray, mode: str) -> str | None:
+    """Direction hint from window-edge evidence: when the trace's extremum
+    sits in the OUTER 15% of the window with mild significance (a truncated
+    feature tail poking in), the feature likely continues past that edge.
+    Qualitative only — it picks which way a seed-shift looks."""
+    if y.size < 20:
+        return None
+    med = float(np.median(y))
+    noise = float(np.median(np.abs(np.diff(y)))) * 1.4826 / math.sqrt(2) + 1e-30
+    idx = int(np.argmax(y)) if mode == "peak" else int(np.argmin(y))
+    z = abs(float(y[idx]) - med) / noise
+    if z < 2.5:
+        return None
+    edge = int(round(y.size * 0.15))
+    if idx < edge:
+        return "left"
+    if idx >= y.size - edge:
+        return "right"
+    return None
+
+
+def _presence_probe(raw_path: Path, fc: FeatureCheck, target: str, kind: str,
+                    ) -> tuple[bool | None, str, str | None]:
+    """Claim-free feature presence over ds_raw (for node-declared failures):
+    (present, detail, direction_hint). ``present=None`` = unverifiable."""
+    got = _read_target_trace(raw_path, fc, target, kind)
+    if isinstance(got, str):
+        return None, got, None
+    _axis, y = got
+    if fc.mode == "span":
+        if y.size < 24:
+            return None, "trace too short for a presence probe", None
+        y0 = y - float(np.mean(y))
+        psd = np.abs(np.fft.rfft(y0)) ** 2 / y0.size
+        psd = psd[1:]
+        ratio = float(np.max(psd)) / (float(np.median(psd)) + 1e-30)
+        if ratio >= _SPECTRAL_RATIO_MIN:
+            return True, (f"coherent structure present despite the failed fit "
+                          f"(spectral peak/median {ratio:.0f})"), None
+        return False, (f"no coherent structure (spectral peak/median "
+                       f"{ratio:.0f})"), None
+    med = float(np.median(y))
+    noise = float(np.median(np.abs(np.diff(y)))) * 1.4826 / math.sqrt(2) + 1e-30
+    idx = int(np.argmax(y)) if fc.mode == "peak" else int(np.argmin(y))
+    z = abs(float(y[idx]) - med) / noise
+    if z >= _FEATURE_Z_MIN:
+        return True, (f"a clear {fc.mode} is visible in the window "
+                      f"(prominence z={z:.1f}) — the failure is the FIT, "
+                      "not the experiment"), None
+    return False, f"window is featureless (prominence z={z:.1f})", \
+        _edge_hint(y, fc.mode)
+
+
 # ---------------------------------------------------------------------------
 # The pipeline
 # ---------------------------------------------------------------------------
@@ -193,6 +261,32 @@ def evaluate_target(run, fam: Family, target: str, *,
         v.verdict, v.failure_mode = "fail", "node_failed"
         v.checks["G1_node_outcome"] = "fail"
         v.reasons.append("the node's own analysis marked this target failed")
+        # v2: split the opaque node failure by what the RAW DATA says —
+        # feature visible ⇒ the fit died, not the experiment (#194 class,
+        # step-refine ladder); provably empty window ⇒ no_signal ladder;
+        # data unavailable ⇒ stays node_failed (defer)
+        if fam.feature_check is not None:
+            folder = _attr(run, "folder_path", None)
+            raw = Path(folder) / "ds_raw.h5" if folder else None
+            if raw is not None and raw.exists():
+                present, detail, hint = _presence_probe(
+                    raw, fam.feature_check, target, fam.kind)
+                v.feature_present = present
+                if present is True:
+                    v.failure_mode = "feature_present_fit_failed"
+                    v.checks["G1_presence"] = "feature_present"
+                    v.reasons.append(detail)
+                elif present is False:
+                    v.failure_mode = "no_signal"
+                    v.direction_hint = hint
+                    v.checks["G1_presence"] = "no_feature"
+                    v.reasons.append(detail)
+                    if hint:
+                        v.reasons.append(f"edge evidence suggests the feature "
+                                         f"lies to the {hint}")
+                else:
+                    v.checks["G1_presence"] = "unverifiable"
+                    v.reasons.append(detail)
         return v
     v.checks["G1_node_outcome"] = "ok"
 
@@ -263,6 +357,16 @@ def evaluate_target(run, fam: Family, target: str, *,
             if status in ("no_signal", "wrong_peak", "out_of_band"):
                 v.verdict, v.failure_mode = "fail", status
                 v.reasons.append(detail)
+                if status == "no_signal":
+                    # empty window: derive the seed-shift direction hint from
+                    # edge evidence (a truncated feature tail)
+                    present, _d, hint = _presence_probe(
+                        raw, fam.feature_check, target, fam.kind)
+                    v.feature_present = present
+                    v.direction_hint = hint
+                    if hint:
+                        v.reasons.append(f"edge evidence suggests the feature "
+                                         f"lies to the {hint}")
                 return v
             if status == "unverifiable":
                 suspects.append(("unverifiable", detail))

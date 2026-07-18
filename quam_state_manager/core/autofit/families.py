@@ -77,6 +77,35 @@ class Plausibility:
                                         # node may have already applied itself)
 
 
+@dataclass(frozen=True)
+class Rung:
+    """One rung of an adaptation ladder (docs/56 v2 — the human escalation
+    vocabulary reconstructed from the real archive's operator loops).
+
+    kinds:
+      ``params``     — ``rule(params) → overrides`` (the v1 model)
+      ``seed_shift`` — deterministic sweep-window relocation via an audited,
+                       ledgered state write (rail ①: the shift magnitude is
+                       window math over the family's span param; the DIRECTION
+                       may come from a qualitative hint — edge evidence or
+                       vision — never a number). The engine restores the seed
+                       from its recorded pre-values if the step still fails
+                       (rail ③); a success is overwritten by the node itself.
+      ``escalate``   — insert a prerequisite family step (cross-node re-cal:
+                       e.g. qubit visibility restored by re-centering readout)
+                       before re-running this one.
+    """
+    kind: str = "params"
+    rule: Callable[[dict], dict] | None = None
+    seed_paths: tuple[str, ...] = ()      # dot templates ({q}/{pair}) to shift
+    span_param: str = "frequency_span_in_mhz"
+    span_default: float = 60.0
+    shift_frac: float = 0.75              # |shift| = shift_frac × span
+    escalate_family: str | None = None
+    escalate_params: dict | None = None
+    note: str = ""
+
+
 @dataclass
 class Family:
     key: str                    # normalized family key
@@ -87,11 +116,35 @@ class Family:
     plausibility: list[Plausibility] = field(default_factory=list)
     feature_check: FeatureCheck | None = None
     updates: list[UpdateSpec] = field(default_factory=list)
-    adaptations: dict[str, Callable[[dict], dict]] = field(default_factory=dict)
+    # failure_mode → rule | [rung, …] — a bare callable is the v1 single
+    # params rule (re-applied every retry); a list is a LADDER walked one
+    # rung per use of that failure mode (rung index clamps at the end)
+    adaptations: dict[str, Any] = field(default_factory=dict)
     # cross-metric consistency checks: fit_entry -> failure reason | None.
     # Run in G2; a hit is a suspect(wrong_peak) — internally-inconsistent fits.
     consistency_checks: list[Callable[[dict], str | None]] = field(
         default_factory=list)
+    # post-discovery wide verification (docs/56 v2 — LOOP_STUDY case A's
+    # "recover-then-verify"): after a target passes on a RETRY attempt whose
+    # earlier failures were window-class (no_signal/wrong_peak/
+    # feature_present_fit_failed), the engine inserts a one-shot wide scan
+    # of the same family before trusting the discovery.
+    verify_wide: dict | None = None
+
+
+def rungs_for(fam: "Family", mode: str) -> list[Rung]:
+    """Normalize an adaptations entry to its rung ladder. Legacy bare
+    callables become a single params rung (re-applied every retry — the v1
+    compounding behavior, unchanged)."""
+    spec = (fam.adaptations or {}).get(mode)
+    if spec is None:
+        return []
+    if callable(spec):
+        return [Rung(kind="params", rule=spec)]
+    out: list[Rung] = []
+    for r in spec:
+        out.append(Rung(kind="params", rule=r) if callable(r) else r)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +179,39 @@ def _spec_wrong_peak(params: dict) -> dict:
             "operation_amplitude_factor": amp / 2.0}
 
 
+def _step_refine(params: dict) -> dict:
+    """feature_present_fit_failed: the archive's #194 class — a dip clearly
+    visible in the window but the fit died on a too-coarse grid (step 0.05→0.5
+    undersampled the linewidth; the operator burned 3 drive-strength attempts
+    before densifying). The machine prescription, first try: HALVE the step,
+    double the shots, keep the window."""
+    span = float(params.get("frequency_span_in_mhz", 60.0))
+    step = float(params.get("frequency_step_in_mhz", span / 300.0))
+    return {"frequency_step_in_mhz": step / 2.0,
+            "num_shots": int(float(params.get("num_shots", 400)) * 2)}
+
+
+def _power_up(params: dict) -> dict:
+    """no_feature ladder rung 2 — 'drive harder' (LOOP_STUDY case B: after a
+    widen didn't surface the dip, the operator raised max_power −25→+5 and
+    amp ×2.5). Only turns knobs the plan actually exposes (never invents a
+    power axis on a node without one); magnitudes are fixed grid moves."""
+    out: dict = {"num_shots": int(float(params.get("num_shots", 400)) * 2)}
+    if "max_power_dbm" in params:
+        out["max_power_dbm"] = min(float(params["max_power_dbm"]) + 10.0, 10.0)
+    if "max_amp" in params:
+        out["max_amp"] = min(float(params["max_amp"]) * 2.0, 1.0)
+    if "operation_amplitude_factor" in params:
+        out["operation_amplitude_factor"] = \
+            float(params["operation_amplitude_factor"]) * 4.0
+    return out
+
+
+# seed-shift path sets (the sweep center each family is pinned to)
+_XY_SEED = ("qubits.{q}.f_01", "qubits.{q}.xy.RF_frequency")
+_RES_SEED = ("qubits.{q}.resonator.f_01", "qubits.{q}.resonator.RF_frequency")
+
+
 # ---------------------------------------------------------------------------
 # The registry
 # ---------------------------------------------------------------------------
@@ -156,9 +242,19 @@ _register(Family(
                         label="Resonator frequency"),
              UpdateSpec("frequency", "qubits.{q}.resonator.RF_frequency",
                         label="Resonator RF frequency")],
-    adaptations={"no_signal": _widen_span(2.0, 60.0), "noisy": _more_shots,
-                 "wrong_peak": _spec_wrong_peak,
-                 "out_of_band": _widen_span(2.0, 60.0)},
+    adaptations={
+        # no_feature ladder (LOOP_STUDY): widen → drive/average up → seed-
+        # shift the state-pinned window (direction from edge evidence or a
+        # vision hint; magnitude = window math)
+        "no_signal": [_widen_span(2.0, 60.0), _more_shots,
+                      Rung(kind="seed_shift", seed_paths=_RES_SEED,
+                           span_default=60.0)],
+        "noisy": _more_shots,
+        "wrong_peak": _spec_wrong_peak,
+        "feature_present_fit_failed": [_step_refine, _spec_wrong_peak],
+        "out_of_band": _widen_span(2.0, 60.0)},
+    verify_wide={"span_param": "frequency_span_in_mhz", "factor": 4.0,
+                 "span_default": 60.0},
 ))
 
 _register(Family(
@@ -176,9 +272,22 @@ _register(Family(
     updates=[UpdateSpec("frequency", "qubits.{q}.f_01", label="Qubit f_01"),
              UpdateSpec("frequency", "qubits.{q}.xy.RF_frequency",
                         label="XY RF frequency")],
-    adaptations={"no_signal": _widen_span(2.0, 100.0), "noisy": _more_shots,
-                 "wrong_peak": _spec_wrong_peak,
-                 "out_of_band": _widen_span(2.0, 100.0)},
+    adaptations={
+        # ladder rung 4 = cross-node escalation (LOOP_STUDY case A: qubit
+        # visibility came back only after the READOUT was re-calibrated —
+        # a same-node knob can't fix a mis-centered readout)
+        "no_signal": [_widen_span(2.0, 100.0), _power_up,
+                      Rung(kind="seed_shift", seed_paths=_XY_SEED,
+                           span_default=100.0),
+                      Rung(kind="escalate",
+                           escalate_family="resonator_spectroscopy",
+                           note="re-center readout, then retry")],
+        "noisy": _more_shots,
+        "wrong_peak": _spec_wrong_peak,
+        "feature_present_fit_failed": [_step_refine, _spec_wrong_peak],
+        "out_of_band": _widen_span(2.0, 100.0)},
+    verify_wide={"span_param": "frequency_span_in_mhz", "factor": 4.0,
+                 "span_default": 100.0},
 ))
 
 _register(Family(
@@ -272,6 +381,7 @@ _register(Family(
                         label="Readout RF frequency")],
     adaptations={"no_signal": _widen_span(2.0, 20.0), "noisy": _more_shots,
                  "wrong_peak": _spec_wrong_peak,
+                 "feature_present_fit_failed": [_step_refine, _spec_wrong_peak],
                  "out_of_band": _widen_span(2.0, 20.0)},
 ))
 
@@ -369,8 +479,17 @@ _register(Family(
              UpdateSpec("resonator_frequency",
                         "qubits.{q}.resonator.RF_frequency",
                         label="Resonator RF frequency")],
-    adaptations={"noisy": _more_shots, "no_signal": _widen_span(2.0, 30.0),
-                 "out_of_band": _widen_span(2.0, 30.0)},
+    adaptations={
+        "noisy": _more_shots,
+        # LOOP_STUDY case B: widen-on-fail → drive harder (max_power/max_amp
+        # are this node's real knobs) → seed-shift the resonator window
+        "no_signal": [_widen_span(2.0, 30.0), _power_up,
+                      Rung(kind="seed_shift", seed_paths=_RES_SEED,
+                           span_default=30.0)],
+        "feature_present_fit_failed": [_step_refine, _spec_wrong_peak],
+        "out_of_band": _widen_span(2.0, 30.0)},
+    verify_wide={"span_param": "frequency_span_in_mhz", "factor": 4.0,
+                 "span_default": 15.0},
 ))
 
 _register(Family(
@@ -386,10 +505,22 @@ _register(Family(
     updates=[UpdateSpec("frequency", "qubits.{q}.f_01", label="Qubit f_01"),
              UpdateSpec("frequency", "qubits.{q}.xy.RF_frequency",
                         label="XY RF frequency")],
-    adaptations={"noisy": _more_shots,
-                 "no_signal": _widen_span(2.0, 10.0),
-                 "wrong_peak": _spec_wrong_peak,
-                 "out_of_band": _widen_span(2.0, 10.0)},
+    adaptations={
+        "noisy": _more_shots,
+        # case A's full ladder incl. the cross-node rung: #578's feature came
+        # back after ANOTHER node fixed readout fullscale — same-node knobs
+        # alone provably weren't the cause
+        "no_signal": [_widen_span(2.0, 10.0), _power_up,
+                      Rung(kind="seed_shift", seed_paths=_XY_SEED,
+                           span_default=10.0),
+                      Rung(kind="escalate",
+                           escalate_family="resonator_spectroscopy_vs_power",
+                           note="re-calibrate readout power, then retry")],
+        "wrong_peak": _spec_wrong_peak,
+        "feature_present_fit_failed": [_step_refine, _spec_wrong_peak],
+        "out_of_band": _widen_span(2.0, 10.0)},
+    verify_wide={"span_param": "frequency_span_in_mhz", "factor": 4.0,
+                 "span_default": 10.0},
 ))
 
 

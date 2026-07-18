@@ -28,6 +28,7 @@ import logging
 import threading
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,6 +44,12 @@ from quam_state_manager.core.autofit.synth import patch_path_to_dotted
 logger = logging.getLogger(__name__)
 
 _STATE_FILE = "autofit_run.json"
+
+# failure modes that mean "the sweep window / sampling missed the physics" —
+# a pass on a LATER attempt of the same step is a *discovery* that earns the
+# post-discovery wide verification (docs/56 v2, LOOP_STUDY case A)
+_WINDOW_MODES = ("no_signal", "wrong_peak", "feature_present_fit_failed",
+                 "out_of_band")
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +140,8 @@ class PlanEngine:
                  history_points_of: Callable[[str, str], list[float] | None]
                  | None = None,
                  abstain_policy: str = "defer",
-                 is_sim: bool = False):
+                 is_sim: bool = False,
+                 resolve_node: Callable[[str], str | None] | None = None):
         self.instance_path = str(instance_path)
         self.plan = plan
         self.targets = list(targets)
@@ -145,6 +153,9 @@ class PlanEngine:
         self.history_points_of = history_points_of
         self.abstain_policy = abstain_policy      # defer | keep | revert
         self.is_sim = bool(is_sim)
+        # family key → node file for runtime-inserted escalation steps (the
+        # web layer passes the calibrations-folder resolver; sim maps by family)
+        self.resolve_node = resolve_node
         self.plan_run_id = "af_" + uuid.uuid4().hex[:10]
         self.abort_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -167,6 +178,13 @@ class PlanEngine:
                             / self.plan_run_id)
         # first-touched pre-plan values for the review-mode end restore
         self._preplan_values: dict[str, Any] = {}
+        # (step_id, target) → synthesized replace-patches for an outstanding
+        # scan seed: restored on terminal failure, consumed on success
+        # (docs/56 v2 rail ③ — the node's own write supersedes a good seed)
+        self._seeds: dict[tuple[str, str], list[dict]] = {}
+        # (step_id, target) → {"patches": [...]}: a value DISCOVERED on a
+        # retry after window-class failures, pending wide verification
+        self._discoveries: dict[tuple[str, str], dict] = {}
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -247,14 +265,23 @@ class PlanEngine:
                 self.snapshot_fn(f"autofit pre-plan ({self.plan.name})")
             except Exception:  # noqa: BLE001
                 logger.exception("pre-plan snapshot failed (continuing)")
-            for step in [s for s in self.plan.steps if s.enabled]:
+            # a WORK QUEUE, not a frozen list: v2 rungs insert steps at run
+            # time (wide verification after a discovery, cross-node re-cal
+            # before a retry) — docs/56 v2
+            queue: deque[Step] = deque(s for s in self.plan.steps if s.enabled)
+            while queue:
                 if self.abort_event.is_set():
                     break
+                step = queue.popleft()
                 alive = [t for t in self.targets
                          if t not in self.state["halted"]]
                 if not alive:
                     break
-                self._run_step(step, alive)
+                if step.only_targets:
+                    alive = [t for t in alive if t in step.only_targets]
+                    if not alive:
+                        continue        # its targets halted — skip, not end
+                self._run_step(step, alive, queue)
             if self.autonomy == "review" and not self.abort_event.is_set():
                 self._end_restore()
             with self._lock:
@@ -274,10 +301,19 @@ class PlanEngine:
         finally:
             self._persist()
 
-    def _run_step(self, step: Step, alive: list[str]) -> None:
+    def _run_step(self, step: Step, alive: list[str],
+                  queue: deque[Step] | None = None) -> None:
         pending = list(alive)
         attempt = 0
         params = dict(step.params)
+        # per-failure-mode ladder position (a mode's rung advances each time
+        # THAT mode drives an adaptation, independent of other modes)
+        mode_counts: dict[str, int] = {}
+        # targets whose earlier attempts failed window-class → a later pass
+        # is a DISCOVERY (wide verification due)
+        window_failures: set[str] = set()
+        discovered: set[str] = set()
+        fam = None      # last attempt's family (post-loop verify gate)
         while pending and attempt <= step.retry_max \
                 and not self.abort_event.is_set():
             with self._lock:
@@ -336,6 +372,16 @@ class PlanEngine:
                 if decision == "retry":
                     retry_targets.append(t)
                     retry_mode = retry_mode or v.failure_mode
+                    if v.failure_mode in _WINDOW_MODES:
+                        window_failures.add(t)
+                elif decision in ("keep", "applied") and attempt > 0 \
+                        and t in window_failures:
+                    # a window-class failure chain that CONVERGED — record the
+                    # discovery (its patches back the verify-fail revert)
+                    discovered.add(t)
+                    tp = [p for p in ((res.run or {}).get("patches") or [])
+                          if _patch_target(p) == t]
+                    self._discoveries[(step.id, t)] = {"patches": tp}
             if orphan_patches and any_reject:
                 paths = [patch_path_to_dotted(p.get("path", ""))
                          for p in orphan_patches]
@@ -353,16 +399,153 @@ class PlanEngine:
                 self._persist()
             pending = retry_targets
             if pending and fam is not None and retry_mode:
-                rule = fam.adaptations.get(retry_mode)
-                if rule is not None:
-                    try:
-                        overrides = rule(params)
-                        params = {**params, **overrides}
-                        self._ledger("params_adapted", step=step.id,
-                                     mode=retry_mode, overrides=overrides)
-                    except Exception:  # noqa: BLE001
-                        logger.exception("adaptation rule failed")
+                params, escalated = self._adapt(
+                    step, fam, retry_mode, params, mode_counts, pending,
+                    verdicts, attempt, queue)
+                if escalated:
+                    # the retry continues AFTER the inserted re-cal step —
+                    # this step's loop ends here (cells stay 'retrying')
+                    return
             attempt += 1
+
+        # post-discovery wide verification (LOOP_STUDY case A: the operator
+        # verified a recovered peak with a broad survey before trusting it).
+        # ``fam`` is the last attempt's family (always bound: the loop runs
+        # at least once and early exits return before reaching here).
+        vw = getattr(fam, "verify_wide", None) if fam is not None else None
+        if discovered and vw and queue is not None and not step.verify_of \
+                and step.inserted_by != "verify_wide":
+            span_param = vw.get("span_param", "frequency_span_in_mhz")
+            span = float(params.get(span_param, vw.get("span_default", 60.0)))
+            vparams = {**params, span_param: span * float(vw.get("factor", 4.0))}
+            vstep = Step(id=f"{step.id}__verify_wide", node=step.node,
+                         family=step.family,
+                         label=f"wide verification of {step.id}",
+                         params=vparams, retry_max=0,
+                         criticality=step.criticality,
+                         only_targets=tuple(sorted(discovered)),
+                         verify_of=step.id, inserted_by="verify_wide")
+            queue.appendleft(vstep)
+            self._ledger("verify_wide_inserted", step=step.id,
+                         targets=sorted(discovered), params=vparams)
+
+    # ---- adaptation ladder (docs/56 v2) ----------------------------------
+
+    def _adapt(self, step: Step, fam, mode: str, params: dict,
+               mode_counts: dict[str, int], pending: list[str],
+               verdicts: dict, attempt: int,
+               queue: deque[Step] | None) -> tuple[dict, bool]:
+        """Walk one rung of the failure mode's ladder. Returns
+        ``(new_params, escalated)`` — escalated=True means a re-cal step +
+        this step's continuation were queued and the caller must stop."""
+        rungs = fam_mod.rungs_for(fam, mode)
+        if not rungs:
+            return params, False
+        idx = mode_counts.get(mode, 0)
+        mode_counts[mode] = idx + 1
+        rung = rungs[min(idx, len(rungs) - 1)]
+
+        if rung.kind == "params" and rung.rule is not None:
+            try:
+                overrides = rung.rule(params)
+                params = {**params, **overrides}
+                self._ledger("params_adapted", step=step.id, mode=mode,
+                             rung=idx, overrides=overrides)
+            except Exception:  # noqa: BLE001
+                logger.exception("adaptation rule failed")
+            return params, False
+
+        if rung.kind == "seed_shift":
+            for t in pending:
+                v = verdicts.get(t)
+                direction = getattr(v, "direction_hint", None) if v else None
+                if direction not in ("left", "right"):
+                    # no qualitative evidence — a blind shift is a guess, and
+                    # guesses are what this whole design forbids
+                    self._ledger("seed_skipped", step=step.id, target=t,
+                                 reason="no direction evidence (edge/vision)")
+                    continue
+                self._seed_shift(step, rung, t, params, direction)
+            return params, False
+
+        if rung.kind == "escalate" and rung.escalate_family:
+            if step.inserted_by == "escalation" or queue is None:
+                self._ledger("escalation_blocked", step=step.id,
+                             reason="already an escalation continuation")
+                return params, False
+            node_file = ""
+            if self.resolve_node is not None:
+                try:
+                    node_file = self.resolve_node(rung.escalate_family) or ""
+                except Exception:  # noqa: BLE001
+                    logger.exception("escalation node resolve failed")
+            recal = Step(id=f"{step.id}__recal", node=node_file,
+                         family=rung.escalate_family,
+                         label=rung.note or f"re-cal for {step.id}",
+                         params=dict(rung.escalate_params or {}),
+                         retry_max=1, criticality="soft",
+                         only_targets=tuple(pending),
+                         inserted_by="escalation")
+            cont = Step(id=f"{step.id}__retry", node=step.node,
+                        family=step.family,
+                        label=f"{step.label or step.id} (after re-cal)",
+                        params=dict(params), retry_max=1,
+                        criticality=step.criticality,
+                        only_targets=tuple(pending),
+                        inserted_by="escalation")
+            queue.appendleft(cont)
+            queue.appendleft(recal)
+            self._ledger("escalation_inserted", step=step.id,
+                         recal_family=rung.escalate_family,
+                         targets=list(pending), note=rung.note)
+            for t in pending:
+                self._cell(step.id, t, "retrying",
+                           detail=f"escalation: {rung.note or rung.escalate_family}")
+            return params, True
+
+        return params, False
+
+    def _seed_shift(self, step: Step, rung, target: str, params: dict,
+                    direction: str) -> bool:
+        """Scan-seed write (docs/56 v2 rails): magnitude = window math over
+        the family's span param (never an LLM number), write via the audited
+        writer + ledger, pre-values recorded for the failure restore."""
+        span_hz = float(params.get(rung.span_param, rung.span_default)) * 1e6
+        delta = span_hz * rung.shift_frac * (1.0 if direction == "right" else -1.0)
+        rows = []
+        for tmpl in rung.seed_paths:
+            path = tmpl.replace("{q}", target).replace("{pair}", target)
+            try:
+                cur = self.writer.current_value_of(path)
+            except Exception:  # noqa: BLE001
+                cur = None
+            if not isinstance(cur, (int, float)) or isinstance(cur, bool):
+                self._ledger("seed_skipped", step=step.id, target=target,
+                             reason=f"{path} not a literal number")
+                return False
+            rows.append({"path": path, "value": cur + delta, "old_hint": cur,
+                         "label": "scan seed", "op": "assign"})
+        for r in rows:
+            self._record_preplan(r["path"], r["old_hint"])
+        out = self.writer.apply_rows(rows, label=f"{step.id}:{target}:seed")
+        self._ledger("seed_write", step=step.id, target=target,
+                     direction=direction, delta_hz=delta, **out)
+        if out.get("ok"):
+            self._seeds[(step.id, target)] = [
+                {"path": r["path"], "op": "replace", "old": r["old_hint"],
+                 "value": r["value"]} for r in rows]
+            return True
+        return False
+
+    def _restore_seed(self, step_id: str, target: str) -> None:
+        """Terminal failure with an outstanding seed: put the window back
+        (CAS — if anything else moved the value since, defer, never clobber)."""
+        patches = self._seeds.pop((step_id, target), None)
+        if not patches:
+            return
+        out = self.writer.revert_patches(patches,
+                                         label=f"{step_id}:{target}:seed-restore")
+        self._ledger("seed_restored", step=step_id, target=target, **out)
 
     # ---- evaluation ------------------------------------------------------
 
@@ -404,29 +587,56 @@ class PlanEngine:
             pre_update_value_of=pre_update,
             history_points_of=hp)
 
-        # LLM audit on suspects only (never on deterministic fails — one ack
-        # never collapses two gates)
+        # LLM rounds. (1) judge audit on SUSPECTS only — an accept can never
+        # override a deterministic fail (one ack never collapses two gates).
+        # (2) v2 presence reading on node-FAILED targets of families with NO
+        # deterministic raw-data localizer (the 2-D vs_power class): vision
+        # refines WHICH failure ladder applies (fit-died vs empty-window) —
+        # the verdict stays a fail either way.
         for t, v in verdicts.items():
-            if v.verdict != "suspect" or not self.auditor.enabled:
-                continue
+            if not self.auditor.enabled:
+                break
             entry = (run.get("fit_results") or {}).get(t) or {}
             figure = _first_figure(run)
-            bundle = build_bundle(family_label=fam.label, target=t,
-                                  fit_entry=entry, gate_reasons=v.reasons,
-                                  figure_path=figure)
-            av = self.auditor.audit(bundle)
-            with self._lock:
-                self.state["llm_calls"] = self.auditor.calls_made
-            self._ledger("llm_verdict", step=step.id, target=t,
-                         **av.as_dict())
-            if av.verdict == "accept":
-                v.verdict = "pass"
-                v.reasons.append(f"LLM accept: {av.reason}")
-            elif av.verdict == "reject":
-                v.verdict = "fail"
-                v.failure_mode = av.failure_mode or v.failure_mode or "noisy"
-                v.reasons.append(f"LLM reject: {av.reason}")
-            # abstain → stays suspect; policy resolves below
+            if v.verdict == "suspect":
+                bundle = build_bundle(family_label=fam.label, target=t,
+                                      fit_entry=entry, gate_reasons=v.reasons,
+                                      figure_path=figure)
+                av = self.auditor.audit(bundle)
+                with self._lock:
+                    self.state["llm_calls"] = self.auditor.calls_made
+                self._ledger("llm_verdict", step=step.id, target=t,
+                             **av.as_dict())
+                if av.verdict == "accept":
+                    v.verdict = "pass"
+                    v.reasons.append(f"LLM accept: {av.reason}")
+                elif av.verdict == "reject":
+                    v.verdict = "fail"
+                    v.failure_mode = av.failure_mode or v.failure_mode or "noisy"
+                    v.reasons.append(f"LLM reject: {av.reason}")
+                # abstain → stays suspect; policy resolves below
+                if v.direction_hint is None and av.direction:
+                    v.direction_hint = av.direction
+            elif v.verdict == "fail" and v.failure_mode == "node_failed" \
+                    and fam.feature_check is None:
+                bundle = build_bundle(family_label=fam.label, target=t,
+                                      fit_entry=entry, gate_reasons=v.reasons,
+                                      figure_path=figure, ask="presence")
+                av = self.auditor.audit(bundle)
+                with self._lock:
+                    self.state["llm_calls"] = self.auditor.calls_made
+                self._ledger("llm_verdict", step=step.id, target=t,
+                             **av.as_dict())
+                if av.feature_visible is True:
+                    v.failure_mode = "feature_present_fit_failed"
+                    v.feature_present = True
+                    v.reasons.append(f"vision: feature visible — {av.reason}")
+                elif av.feature_visible is False:
+                    v.failure_mode = "no_signal"
+                    v.feature_present = False
+                    v.direction_hint = av.direction
+                    v.reasons.append(f"vision: window empty — {av.reason}")
+                # null → stays node_failed (defer)
         return verdicts
 
     # ---- decision + writes ------------------------------------------------
@@ -446,6 +656,12 @@ class PlanEngine:
                          "revert": "fail"}.get(self.abstain_policy, "defer")
 
         if effective == "pass":
+            # an outstanding scan seed is consumed by success — the node's own
+            # write supersedes it (rail ③: seeds auto-expire, never linger)
+            self._seeds.pop((step.id, target), None)
+            if step.verify_of:
+                # wide verification PASSED — the discovery stands
+                self._discoveries.pop((step.verify_of, target), None)
             if target_patches:
                 self._cell(step.id, target,
                            "corrected" if attempt > 0 else "pass",
@@ -486,6 +702,21 @@ class PlanEngine:
                 self._cell(step.id, target, "retrying",
                            detail=f"{v.failure_mode}: {'; '.join(v.reasons[:1])}")
                 return "retry"
+            # terminal failure: an outstanding seed goes back to its pre value
+            # (after the node-patch revert above restored the seeded state)
+            self._restore_seed(step.id, target)
+            if step.verify_of:
+                # the wide verification REFUTED the discovery — revert the
+                # discovered write too (its patches' values are current again
+                # after this verify run's own revert), and flag the original
+                orig = self._discoveries.pop((step.verify_of, target), None)
+                if orig and orig.get("patches"):
+                    out2 = self.writer.revert_patches(
+                        orig["patches"], label=f"{step.id}:{target}:verify-fail")
+                    self._ledger("verify_failed_original_reverted",
+                                 step=step.verify_of, target=target, **out2)
+                self._cell(step.verify_of, target, "deferred",
+                           detail="wide verification failed — discovery reverted")
             self._defer(step, target,
                         f"{v.failure_mode}: {'; '.join(v.reasons[:2])}", v,
                         reverted=bool(target_patches))
@@ -497,7 +728,10 @@ class PlanEngine:
                              reason=v.failure_mode)
             return "defer"
 
-        # defer (abstain policy / unverifiable)
+        # defer (abstain policy / unverifiable) — the node's write is KEPT for
+        # review; an outstanding seed was overwritten by it (record dropped,
+        # pre-plan values still back the review-mode restore)
+        self._seeds.pop((step.id, target), None)
         self._defer(step, target, "; ".join(v.reasons[:2]) or "unverifiable", v)
         return "defer"
 

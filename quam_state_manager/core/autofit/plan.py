@@ -39,9 +39,16 @@ class Step:
     retry_max: int = 1
     criticality: str = "hard"      # hard: failure halts THIS target's chain
     enabled: bool = True
+    # -- v2 runtime-inserted steps (never user-authored; validate_plan does
+    # not accept them from raw plans — the engine synthesizes them) ---------
+    only_targets: tuple = ()       # restrict to these targets (verify/retry)
+    verify_of: str = ""            # this step wide-verifies that step's find
+    inserted_by: str = ""          # "" | verify_wide | escalation
 
     def as_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        d["only_targets"] = list(self.only_targets)
+        return d
 
 
 @dataclass

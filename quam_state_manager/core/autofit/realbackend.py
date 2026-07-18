@@ -63,6 +63,17 @@ class RealBackend:
                  attempt: int, abort: threading.Event) -> StepRunResult:
         inst = self.adapter.instance_path
         source = self.resolved_files.get(step.id)
+        # v2 runtime-inserted steps (docs/56 v2) aren't in the plan-start map:
+        # a wide verification / escalation continuation re-runs the ORIGINAL
+        # step's file; an escalation re-cal carries the engine-resolved path
+        # (scan-candidate-derived, never client input) in step.node.
+        if not source and step.verify_of:
+            source = self.resolved_files.get(step.verify_of)
+        if not source and step.inserted_by == "escalation":
+            source = self.resolved_files.get(step.id.rsplit("__", 1)[0])
+        if not source and step.inserted_by and step.node \
+                and Path(step.node).is_file():
+            source = step.node
         if not source:
             return StepRunResult(status="failed",
                                  error=f"step {step.id!r}: no resolved node file")

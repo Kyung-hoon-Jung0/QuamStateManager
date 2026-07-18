@@ -253,11 +253,29 @@
     if (!div || div.dataset.rendered === runId) return;
     fetchJSON("/autofit/ledger").then(function (r) {
       if (r.status !== 200 || !r.body.ok) return;
-      var writes = [], reverts = [], llm = [];
+      var writes = [], reverts = [], llm = [], loop = [];
       (r.body.events || []).forEach(function (e) {
         if (e.event === "write_applied" && e.ok) writes.push(e);
         if (e.event === "revert_applied" && e.ok) reverts.push(e);
         if (e.event === "llm_verdict") llm.push(e);
+        // v2 judgment-loop actions (docs/56 v2): one line each
+        if (e.event === "params_adapted")
+          loop.push(esc(e.step) + ": adapted (" + esc(e.mode) +
+            (e.rung !== undefined ? ", rung " + esc(e.rung) : "") + ")");
+        if (e.event === "seed_write" && e.ok)
+          loop.push(esc(e.step) + "/" + esc(e.target) + ": scan seed → " +
+            esc(e.direction));
+        if (e.event === "seed_restored" && e.ok)
+          loop.push(esc(e.step) + "/" + esc(e.target) + ": seed restored");
+        if (e.event === "verify_wide_inserted")
+          loop.push(esc(e.step) + ": wide verification queued (" +
+            esc((e.targets || []).join(", ")) + ")");
+        if (e.event === "verify_failed_original_reverted")
+          loop.push(esc(e.step) + "/" + esc(e.target) +
+            ": wide verification FAILED — discovery reverted");
+        if (e.event === "escalation_inserted")
+          loop.push(esc(e.step) + ": escalation → " + esc(e.recal_family) +
+            " (" + esc(e.note || "") + ")");
       });
       function pathRows(evts) {
         return evts.map(function (e) {
@@ -278,6 +296,10 @@
         "<h6>Reverted (" + reverts.length + ")</h6>" +
         (reverts.length ? "<table class='data-table'><tbody>" +
           pathRows(reverts) + "</tbody></table>" : '<p class="muted">none</p>') +
+        "<h6>Loop actions (" + loop.length + ")</h6>" +
+        (loop.length ? loop.map(function (line) {
+          return '<div class="autofit-verdict-line">· ' + line + "</div>";
+        }).join("") : '<p class="muted">none (no retries needed)</p>') +
         "<h6>LLM verdicts (" + llm.length + ")</h6>" +
         (llm.length ? llm.map(function (e) {
           return '<div class="autofit-verdict-line">' + esc(e.target) + ": " +
