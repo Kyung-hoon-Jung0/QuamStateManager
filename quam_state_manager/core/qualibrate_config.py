@@ -12,10 +12,13 @@ Resolution order (first hit wins):
      the State Manager runs somewhere the config's native paths don't
      resolve, e.g. a WSL dev box reading a Windows config). Setting SM's
      dedicated variable is always deliberate, so it stays first.
-  2. The **active project's** per-project config:
-     ``<cfg>/config.toml`` → ``[qualibrate] project`` → then
-     ``<cfg>/projects/<project>/config.toml`` → ``[quam] state_path``.
-     The config is re-read LIVE on every poll, so switching the active
+  2. The **active project's EFFECTIVE config** — the same global⊕overlay
+     deep-merge qualibrate performs: ``<cfg>/config.toml`` →
+     ``[qualibrate] project`` → ``effective_config(project)`` →
+     ``[quam] state_path``. A pure-inheritor overlay takes the GLOBAL
+     value (real configs keep state_path global-side); an explicit
+     ``state_path = ""`` means "this project has none" (resolves None,
+     no fallback). Re-read LIVE on every poll, so switching the active
      project in qualibrate propagates immediately.
   3. ``QUAM_STATE_PATH`` env — quam's RUNNER variable. Demoted below the
      config (r6b fix): calibration shells export it routinely, so an SM
@@ -92,18 +95,26 @@ def resolve_live_state_path() -> Path | None:
     cfg_dir = _config_dir()
     global_cfg = _load_toml(cfg_dir / "config.toml")
 
-    # The ACTIVE project's config is live truth: re-read every call, so a
-    # project switch in qualibrate propagates to the watch/banner instantly.
+    # The ACTIVE project's EFFECTIVE config is live truth — the same
+    # global⊕overlay deep-merge qualibrate itself performs (docs/55): a
+    # pure-inheritor overlay takes the GLOBAL [quam] state_path, and
+    # `state_path = ""` is an explicit "this project has none" override.
+    # Re-read every call, so a project switch propagates to the watch/banner
+    # instantly. (The first r6b fix walked only the overlay, missing the
+    # inheritance case — the real user config keeps state_path global-side.)
     project = (global_cfg.get("qualibrate") or {}).get("project")
     if project:
-        proj_cfg = _load_toml(cfg_dir / "projects" / str(project) / "config.toml")
-        state_path = (proj_cfg.get("quam") or {}).get("state_path")
-        if state_path:
-            return Path(state_path)
+        eff = effective_config(str(project), root_cfg=global_cfg, cfg_dir=cfg_dir)
+        quam_cfg = eff.get("quam") or {}
+        if "state_path" in quam_cfg:
+            sp = quam_cfg.get("state_path")
+            if isinstance(sp, str) and sp:
+                return Path(sp)
+            return None            # explicit "" — the project truly has none
 
     # QUAM_STATE_PATH (quam's serialiser variable, JSONSerialiser._get_state_path)
-    # sits BELOW the project config: it configures the RUNNER process, and an SM
-    # launched from a calibration shell inherits a frozen snapshot that goes
+    # sits BELOW the effective config: it configures the RUNNER process, and an
+    # SM launched from a calibration shell inherits a frozen snapshot that goes
     # stale on every project switch (the r6b stale-banner bug). Fallback only.
     env = os.environ.get("QUAM_STATE_PATH")
     if env:
