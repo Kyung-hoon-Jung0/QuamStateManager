@@ -10,7 +10,11 @@ from pathlib import Path
 
 import pytest
 
-from quam_state_manager.core.regen_merge import graft_twpa_wiring, merge_states
+from quam_state_manager.core.regen_merge import (
+    graft_twpa_wiring,
+    merge_states,
+    reconcile_twpa_ids,
+)
 
 
 def test_tier1_carries_calibrated_value_over_default():
@@ -199,3 +203,59 @@ def test_real_chip_zero_residual_loss():
     assert r.stats.carried > 500          # core calibration carried
     assert r.stats.grafted > 50           # user-added CZ variants grafted
     assert r.stats.dangling_grafts == []
+
+
+# ---------------------------------------------------------------------------
+# TWPA id reconciliation (review-r6: builder-generation id drift twpaA ⇄ A)
+# ---------------------------------------------------------------------------
+
+def _mismatch_fixture():
+    old_state = {"twpas": {"twpaA": {"pump": {"opx_output": "#/wiring/twpas/twpaA/pump/opx_output"},
+                                     "pump_frequency": 8.4e9}},
+                 "active_twpa_names": ["twpaA"]}
+    new_state = {"twpas": {"A": {"pump": {"opx_output": "#/wiring/twpas/A/p/opx_output"},
+                                 "pump_frequency": None}},
+                 "active_twpa_names": ["A"]}
+    new_wiring = {"wiring": {"twpas": {"A": {"p": {"opx_output": "#/ports/mw_outputs/con1/1/8"}}}}}
+    return old_state, new_state, new_wiring
+
+
+def test_reconcile_twpa_ids_renames_new_onto_old():
+    old_state, new_state, new_wiring = _mismatch_fixture()
+    mapping = reconcile_twpa_ids(new_state, new_wiring, old_state)
+    assert mapping == {"A": "twpaA"}
+    # state + wiring keys renamed; internal pointers rewritten; membership too
+    assert set(new_state["twpas"]) == {"twpaA"}
+    assert new_state["twpas"]["twpaA"]["pump"]["opx_output"] == \
+        "#/wiring/twpas/twpaA/p/opx_output"
+    assert set(new_wiring["wiring"]["twpas"]) == {"twpaA"}
+    assert new_state["active_twpa_names"] == ["twpaA"]
+
+
+def test_reconcile_then_merge_no_zombie_no_dangling():
+    old_state, new_state, new_wiring = _mismatch_fixture()
+    reconcile_twpa_ids(new_state, new_wiring, old_state)
+    result = merge_states(old_state, new_state)
+    # ONE twpa (no zombie 'A'), old calibration carried onto the new structure
+    assert set(result.merged["twpas"]) == {"twpaA"}
+    assert result.merged["twpas"]["twpaA"]["pump_frequency"] == 8.4e9
+    assert not any(p.startswith("twpas.") for p in result.stats.dangling_grafts)
+
+
+def test_reconcile_identity_is_noop():
+    # builder kept the full ids (the qualang_tools f"twpa{id}" round-trip) —
+    # nothing renamed, nothing rewritten
+    old_state = {"twpas": {"twpaA": {"pump_frequency": 1.0}}}
+    new_state = {"twpas": {"twpaA": {"pump": {"opx_output": "#/wiring/twpas/twpaA/p/opx_output"}}}}
+    new_wiring = {"wiring": {"twpas": {"twpaA": {"p": {"opx_output": "#/ports/mw_outputs/con1/1/8"}}}}}
+    before = json.dumps([new_state, new_wiring], sort_keys=True)
+    assert reconcile_twpa_ids(new_state, new_wiring, old_state) == {}
+    assert json.dumps([new_state, new_wiring], sort_keys=True) == before
+
+
+def test_reconcile_never_clobbers_an_existing_new_id():
+    # pathological: NEW carries BOTH 'A' and 'twpaA' — renaming would clobber
+    old_state = {"twpas": {"twpaA": {}}}
+    new_state = {"twpas": {"A": {}, "twpaA": {}}}
+    assert reconcile_twpa_ids(new_state, {"wiring": {}}, old_state) == {}
+    assert set(new_state["twpas"]) == {"A", "twpaA"}

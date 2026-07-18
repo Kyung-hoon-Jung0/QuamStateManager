@@ -1987,6 +1987,24 @@
         }
       });
     }
+    // TWPA lines must survive every re-derive: this rebuild used to emit only
+    // qubit/pair lines, silently WIPING the reconstructed twpa_pump pins on the
+    // first count/rename/gate edit — a re-generated chip then built without its
+    // TWPAs (review-r6 report). One pump line per TWPA (MW hardware only);
+    // isolation only where a pin exists (reconstruct emits it when the source
+    // wiring had an isolation port).
+    if (mw) {
+      (state.spec.twpas || []).forEach(function (tw) {
+        var tid = (tw && typeof tw === "object") ? tw.id : tw;
+        if (!tid) return;
+        lines.push({ element: tid, line: "twpa_pump",
+                     channel: pinned[tid + "|twpa_pump"] || null });
+        if (pinned[tid + "|twpa_isolation"]) {
+          lines.push({ element: tid, line: "twpa_isolation",
+                       channel: pinned[tid + "|twpa_isolation"] });
+        }
+      });
+    }
     state.spec.lines = lines;
     // CR drive port mode (docs/54): 'shared_xy' = the customer's dual-
     // upconverter layout (CR/ZZ ride the control's xy port, LO 2).
@@ -6354,6 +6372,16 @@
     // stale/Generate draft so (a) it can't interfere here and (b) this named,
     // non-contiguous spec never lingers as a draft for a later plain Generate.
     try { sessionStorage.removeItem(DRAFT_KEY); } catch (e) {}
+    // Normalize TWPAs to the wizard's object shape. Old exact-spec sidecars
+    // (and the pre-fix reconstructor) carry bare id strings; the step-4 rows
+    // bind twpa.id, so strings rendered as broken empty rows and edits
+    // silently no-op'd on the primitives (review-r6 TWPA-loss report).
+    if (spec && spec.twpas) {
+      spec.twpas = spec.twpas.map(function (t) {
+        return (t && typeof t === "object") ? t
+             : { id: String(t), qubits: [] };
+      });
+    }
     var pg = (spec && spec.pair_gate) || "cz_tunable";
     var arch = pg === "cr" ? "fixed_frequency"
              : pg === "cz_fixed" ? "flux_tunable_fixed_coupler"

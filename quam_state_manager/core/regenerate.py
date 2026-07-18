@@ -85,6 +85,13 @@ def run_regenerate(
         outcome["error"] = f"could not read state for merge: {exc}"
         return outcome
 
+    # Builder-generation id drift (twpaA ⇄ A) would leave a zombie NEW TWPA
+    # beside the grafted OLD one — rename the NEW ids onto the OLD chip's
+    # BEFORE the merge so tier-1 carry matches naturally (pair-id precedent).
+    twpa_renames = regen_merge.reconcile_twpa_ids(new_state, new_wiring, old_state)
+    if twpa_renames:
+        safe_io.atomic_write_json(out_dir / "wiring.json", new_wiring)
+
     result = regen_merge.merge_states(old_state, new_state)
 
     # TWPAs are grafted back at the state level but the builder made no TWPA

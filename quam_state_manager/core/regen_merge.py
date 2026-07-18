@@ -305,6 +305,70 @@ def _prune_redundant_graft_ops(merged: dict, dangling: list[str]) -> tuple[list[
     return sorted(prunable), remaining
 
 
+def _norm_twpa_id(tid: str) -> str:
+    """``twpaA``/``twpa1`` and ``A``/``1`` are the same TWPA across builder
+    generations (qualang_tools renders elements as ``f"twpa{id}"``, so
+    run_build strips the redundant prefix before add_twpa_lines)."""
+    return tid[4:] if tid.lower().startswith("twpa") and len(tid) > 4 else tid
+
+
+def reconcile_twpa_ids(new_state: dict, new_wiring: dict,
+                       old_state: dict) -> dict[str, str]:
+    """Rename the NEW build's TWPA ids onto the OLD chip's when they differ
+    only by the ``twpa`` prefix (a builder generation that does NOT re-prepend
+    the prefix would otherwise leave a zombie ``twpas.A`` beside the grafted
+    ``twpas.twpaA`` — dangling wiring pointers, double entries). Mirrors the
+    pair-id reconciliation. Rewrites the state/wiring keys AND every internal
+    ``#/twpas/<id>/…`` / ``#/wiring/twpas/<id>/…`` pointer plus
+    ``active_twpa_names`` entries. Mutates in place; returns the applied
+    ``{new_id: old_id}`` map (empty = ids already agree, the common case)."""
+    new_t = new_state.get("twpas")
+    old_ids = list((old_state.get("twpas") or {}).keys())
+    if not isinstance(new_t, dict) or not new_t or not old_ids:
+        return {}
+    by_norm = {_norm_twpa_id(o).lower(): o for o in old_ids}
+    mapping = {}
+    for nid in list(new_t.keys()):
+        oid = by_norm.get(_norm_twpa_id(nid).lower())
+        if oid and oid != nid and oid not in new_t:
+            mapping[nid] = oid
+    if not mapping:
+        return {}
+
+    for nid, oid in mapping.items():
+        new_t[oid] = new_t.pop(nid)
+    wt = (new_wiring.get("wiring") or {}).get("twpas")
+    if isinstance(wt, dict):
+        for nid, oid in mapping.items():
+            if nid in wt and oid not in wt:
+                wt[oid] = wt.pop(nid)
+    names = new_state.get("active_twpa_names")
+    if isinstance(names, list):
+        new_state["active_twpa_names"] = [mapping.get(n, n) for n in names]
+
+    prefixes = {}
+    for nid, oid in mapping.items():
+        prefixes[f"#/twpas/{nid}/"] = f"#/twpas/{oid}/"
+        prefixes[f"#/wiring/twpas/{nid}/"] = f"#/wiring/twpas/{oid}/"
+
+    def rewrite(node):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                node[k] = rewrite(v)
+            return node
+        if isinstance(node, list):
+            return [rewrite(v) for v in node]
+        if isinstance(node, str):
+            for np, op in prefixes.items():
+                if node.startswith(np):
+                    return op + node[len(np):]
+        return node
+
+    rewrite(new_state)
+    rewrite(new_wiring)
+    return mapping
+
+
 def graft_twpa_wiring(merged_state: dict, old_state: dict,
                       old_wiring: dict, new_wiring: dict) -> int:
     """Carry a preserved TWPA's wiring + ports from OLD into the rebuilt config.
