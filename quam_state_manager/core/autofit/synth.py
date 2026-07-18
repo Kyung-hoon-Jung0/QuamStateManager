@@ -278,7 +278,9 @@ def _spec_family(chip: SimChip, targets: list[str], params: dict, corrupt_for,
     span = float(params.get("frequency_span_in_mhz", 60.0)) * 1e6
     step = float(params.get("frequency_step_in_mhz", span / 300 / 1e6)) * 1e6
     shots = float(params.get("num_shots", params.get("num_averages", 400)))
-    n = max(int(round(span / step)), 40)
+    # floor 8 (was 40): a coarse frequency_step must actually COARSEN the grid
+    # or the undersampling scenario (docs/56 v2, LOOP_STUDY case C) can't exist
+    n = max(int(round(span / step)), 8)
     detuning = np.linspace(-span / 2, span / 2, n).astype(np.int64 if span > 1e3 else float)
 
     is_dip = kind == "resonator"
@@ -294,7 +296,29 @@ def _spec_family(chip: SimChip, targets: list[str], params: dict, corrupt_for,
 
         sig = np.zeros(n)
         in_window = freqs.min() <= truth <= freqs.max()
-        amp = 1.0
+        if is_dip:
+            amp = 1.0
+        else:
+            # qubit-line visibility is PHYSICAL, not constant (docs/56 v2
+            # scenario c): contrast scales with the drive actually applied
+            # (saturation amp × the node's amplitude factor) AND with how
+            # well the READOUT is centered — a badly mis-calibrated resonator
+            # entry kills qubit-spec SNR at any span, and only re-running the
+            # resonator node (cross-node escalation, LOOP_STUDY case A)
+            # restores it. State is read live, so a re-cal genuinely helps.
+            try:
+                sat = float(chip.get(
+                    f"qubits.{q}.xy.operations.saturation.amplitude"))
+            except (KeyError, TypeError, ValueError):
+                sat = 0.05
+            ampf = float(params.get("operation_amplitude_factor", 1.0))
+            drive_v = min(1.0, max(0.0, (sat * ampf) / 0.05))
+            try:
+                res_rf = float(chip.get(f"qubits.{q}.resonator.RF_frequency"))
+            except (KeyError, TypeError, ValueError):
+                res_rf = t.f_res
+            readout_v = 1.0 / (1.0 + ((res_rf - t.f_res) / t.res_fwhm) ** 2)
+            amp = drive_v * readout_v
         if corrupt != "no_signal" and in_window:
             sig += amp * _lorentzian(freqs, truth, fwhm)
         # resonator G3 tolerance is deliberately wide (rotated-S21 channel) —
@@ -307,7 +331,21 @@ def _spec_family(chip: SimChip, targets: list[str], params: dict, corrupt_for,
         y = base + _noise(rng, n, noise_scale, shots)
 
         # ---- the sim node's CLAIM -------------------------------------
-        if corrupt == "wrong_peak":
+        # honest-miss physics (docs/56 v2): an UNCORRUPTED run whose window
+        # missed the feature, whose grid undersampled the linewidth, or whose
+        # visibility collapsed reports an honest FAILED fit (success=False,
+        # low r2) — never the old magically-correct claim. The raw data stays
+        # truthful (empty window / coarse-but-visible feature), which is
+        # exactly what the presence probe + ladders key on.
+        eff_step = span / max(n - 1, 1)
+        honest_miss = corrupt is None and (
+            not in_window or eff_step > fwhm * 0.6 or amp < 0.12)
+        if honest_miss:
+            claimed = float(freqs[int(np.argmax(y)) if not is_dip
+                                  else int(np.argmin(y))])
+            r2 = float(np.clip(rng.normal(0.2, 0.05), 0, 1))
+            success = False
+        elif corrupt == "wrong_peak":
             claimed, r2, success = side_pos, 0.90, True
         elif corrupt == "no_signal":
             # dishonest gate: invents a value off noise, reports a good r2
@@ -336,7 +374,7 @@ def _spec_family(chip: SimChip, targets: list[str], params: dict, corrupt_for,
                         (f"qubits.{q}.resonator.RF_frequency", claimed)]
         else:
             entry.update({
-                "contrast": (0.02 if corrupt == "no_signal"
+                "contrast": (0.02 if (corrupt == "no_signal" or honest_miss)
                              else float(np.clip(rng.normal(0.55, 0.05), 0, 1))),
                 "iw_angle": t.iw_angle + float(rng.normal(0, 0.03)),
                 "saturation_amp": 0.02, "x180_amp": t.x180_amp * 1.1,

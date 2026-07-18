@@ -415,9 +415,38 @@ Ledger vocabulary grew: `params_adapted{rung}`, `seed_write`,
 `verify_failed_original_reverted`, `escalation_inserted`,
 `escalation_blocked`; the /autofit report renders them as "Loop actions".
 Pinned by `tests/test_autofit_v2_loop.py` (13) + the reworked
-`test_node_failed_splits_by_raw_data_presence` 3-class gate test. The sim
-scenario tier (out-of-window / undersampling / visibility-collapse
-closed-loop convergence) is the next tranche.
+`test_node_failed_splits_by_raw_data_presence` 3-class gate test.
+
+**Scenario tier — closed-loop convergence E2E**
+(`tests/test_autofit_scenarios.py`, the only re-runnable verification ground
+for the full "measure → judge → adapt → re-measure → converge" loop). The
+sim got HONEST physics for it: an uncorrupted `_spec_family` run whose
+window / grid / visibility missed the feature now reports a FAILED fit with
+truthful raw data (never the old magically-correct claim); the qubit branch's
+contrast is physical — `drive_v` (saturation amp × amplitude factor) ×
+`readout_v` (Lorentzian in the resonator-state mis-centering, read LIVE so a
+re-cal genuinely helps); the 40-point grid floor dropped to 8 so a coarse
+step actually coarsens. Six scenarios, all engine-E2E to convergence:
+(a) out-of-window → honest miss (`G1_presence: no_feature`) → widen rung →
+discovery → wide verification → adopted; (a′) peak just past the edge → the
+truncated tail's 2-bin-supported, dominance-gated edge hint fires a scan
+seed (−0.75·span, window math) → found, seed consumed by the node's write;
+(b) undersampling (case C, #194): coarse grid + visible peak →
+`feature_present_fit_failed` on the raw data → step-refine on the FIRST
+retry (the human burned 3 drive attempts + a day); (c) visibility collapse
+(case A): readout 20 MHz off kills qubit-spec at any span/power → ladder
+walks widen/power/seed-skipped → cross-node escalation re-runs the resonator
+node → readout re-centered → continuation finds the qubit; (c′) budget too
+small to reach the escalate rung ⇒ honest defer, state intact; (v) in-loop
+vision: a no-localizer family's opaque failure + FakeProvider presence
+reading (`feature_visible`/`direction`) selects the ladder and the seed
+direction — and never un-fails a verdict. A physically instructive nuance
+surfaced en route: at 10 MHz readout offset the compounding shots eventually
+raise the residual peak past the presence bar and the loop re-routes into
+step-refine — sensible behavior; case (c) is the DEEP collapse where only
+the re-cal works. `gates._edge_hint` is spike-hardened (adjacent-pair
+smoothing + 1.3× interior-dominance — flat noise's smoothed max otherwise
+hints a direction ~30% of the time).
 
 ## 7. Explicit non-goals (v1)
 

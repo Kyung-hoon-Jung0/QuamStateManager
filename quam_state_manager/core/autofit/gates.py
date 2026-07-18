@@ -190,21 +190,32 @@ def _edge_hint(y: np.ndarray, mode: str) -> str | None:
     """Direction hint from window-edge evidence: when the trace's extremum
     sits in the OUTER 15% of the window with mild significance (a truncated
     feature tail poking in), the feature likely continues past that edge.
-    Qualitative only — it picks which way a seed-shift looks."""
+    Qualitative only — it picks which way a seed-shift looks.
+
+    2-bin support: a genuine tail is a COHERENT elevation spanning adjacent
+    bins, while a lone point-noise spike (whose extremum z runs ~3 on a
+    300-bin trace — above any usable bar) has a flat neighbor. Requiring the
+    extremum AND its best neighbor to average past the bar rejects the spike
+    without losing real tails."""
     if y.size < 20:
         return None
     med = float(np.median(y))
     noise = float(np.median(np.abs(np.diff(y)))) * 1.4826 / math.sqrt(2) + 1e-30
-    idx = int(np.argmax(y)) if mode == "peak" else int(np.argmin(y))
-    z = abs(float(y[idx]) - med) / noise
-    if z < 2.5:
+    dev = (y - med) if mode == "peak" else (med - y)
+    sm = (dev[:-1] + dev[1:]) / 2.0          # adjacent-pair support
+    edge = max(int(round(sm.size * 0.15)), 1)
+    left = float(np.max(sm[:edge]))
+    right = float(np.max(sm[-edge:]))
+    interior = float(np.max(sm[edge:-edge])) if sm.size > 2 * edge else 0.0
+    best, side = (left, "left") if left >= right else (right, "right")
+    if best / noise < 2.5:
         return None
-    edge = int(round(y.size * 0.15))
-    if idx < edge:
-        return "left"
-    if idx >= y.size - edge:
-        return "right"
-    return None
+    # dominance: the edge elevation must clearly beat the interior's best
+    # smoothed excursion, or flat noise (whose smoothed max lands anywhere)
+    # would hint a direction ~30% of the time
+    if interior > 0 and best < 1.3 * interior:
+        return None
+    return side
 
 
 def _presence_probe(raw_path: Path, fc: FeatureCheck, target: str, kind: str,
