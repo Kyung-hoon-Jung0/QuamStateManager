@@ -13281,3 +13281,93 @@ def autofit_ledger():
     except (OSError, ValueError):
         return jsonify({"ok": False, "error": "ledger unreadable"}), 404
     return jsonify({"ok": True, "run": run_id, "events": events})
+
+
+# ---- Autofit GUI diagnose (docs/56 §6R → GUI tier) -----------------------
+
+@bp.route("/dataset/<uid>/autofit-diagnose", methods=["POST"])
+def dataset_autofit_diagnose(uid):
+    """Before/after diagnosis panel for one saved run: gate verdicts +
+    node-faithful refit/replot + stored-vs-fresh values. Read-only over the
+    archive; applies go through the audited /field/edit-batch path."""
+    from quam_state_manager.core.autofit import replay as af_replay
+
+    resolved = _resolve_run(uid)
+    if not resolved:
+        return render_template("_status.html", message="run not found",
+                               level="error"), 404
+    ds, run_id, _label = resolved
+    run = ds.get_run(run_id)
+    if not run:
+        # mirror dataset_detail's brand-new-run fallback: one rescan, retry
+        try:
+            ds.rescan_if_stale()
+            run = ds.get_run(run_id)
+        except Exception:  # noqa: BLE001
+            run = None
+    if not run:
+        return render_template("_status.html", message="run not found",
+                               level="error"), 404
+    folder = Path(run.get("folder_path") if isinstance(run, dict)
+                  else run.folder_path)
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", uid)
+    out_dir = Path(current_app.instance_path) / "autofit" / "diagnose" / safe
+    try:
+        row = af_replay.evaluate_run(folder, out_dir, fix="none")
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("autofit diagnose failed")
+        return render_template("_status.html",
+                               message=f"diagnose failed: {exc}",
+                               level="error"), 500
+    # refit figures are served by token = filename under the diagnose dir.
+    # The runner may return WINDOWS paths (the QM env is a .exe) — normalize
+    # separators before taking the basename, else POSIX Path.name keeps the
+    # whole UNC string.
+    refit_figs = [Path(str(f).replace("\\", "/")).name
+                  for f in row.get("refit_figures") or []]
+    return render_template("_autofit_diagnose.html", uid=uid, row=row,
+                           safe_uid=safe, refit_figs=refit_figs,
+                           chip_token=_active_chip_token() or "")
+
+
+@bp.route("/dataset/<uid>/autofit-diagnose-fig/<name>")
+def dataset_autofit_diagnose_fig(uid, name):
+    """Serve a refit figure from the diagnose out dir (path-contained)."""
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", uid)
+    base = (Path(current_app.instance_path) / "autofit" / "diagnose"
+            / safe).resolve()
+    target = (base / name).resolve()
+    if not str(target).startswith(str(base)) or not target.is_file() \
+            or target.suffix != ".png":
+        return "not found", 404
+    from flask import send_file
+    return send_file(target, mimetype="image/png")
+
+
+@bp.route("/autofit/diagnose-rows", methods=["POST"])
+def autofit_diagnose_rows():
+    """Map a fresh refit result to writable state rows for the LOADED chip
+    (families registry — never invents paths; ops like ceil4 applied)."""
+    from quam_state_manager.core.autofit import families as af_families
+
+    data = request.get_json(silent=True) or {}
+    fam = af_families.FAMILIES.get(str(data.get("family") or ""))
+    target = str(data.get("target") or "")
+    fresh = data.get("fresh") or {}
+    store = _store()
+    if fam is None or not target or store is None:
+        return jsonify({"ok": False, "error": "no family/target/chip"}), 400
+
+    def current_value_of(dotted):
+        node = store.state
+        for part in dotted.split("."):
+            node = node[part]
+        return node
+
+    try:
+        rows = af_families.resolve_updates(fam, target, dict(fresh),
+                                           data.get("parameters") or {},
+                                           current_value_of)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    return jsonify({"ok": True, "rows": rows})

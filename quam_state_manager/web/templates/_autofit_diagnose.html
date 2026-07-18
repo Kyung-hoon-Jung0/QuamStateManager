@@ -1,0 +1,77 @@
+{# Autofit diagnose panel — before/after for one saved run (docs/56 GUI tier).
+   Stored figure vs node-faithful refit figure, verdict chain, value rows with
+   an audited Apply (existing /field/edit-batch, chip-token gated), and the
+   re-measure proposal when the verdict says the data can't be trusted. #}
+<div class="autofit-diag">
+  {% if row.errors %}<p class="autofit-bad">{{ row.errors | join('; ') }}</p>{% endif %}
+  <div class="autofit-diag-figs">
+    <div>
+      <h6>Before — stored fit (the node's own figure)</h6>
+      {% for f in row.stored_figures %}
+      <img src="/dataset/{{ uid }}/fig/{{ f.rsplit('/', 1)[-1].replace('figures.', '').replace('.png','') }}" alt="stored figure" loading="lazy">
+      {% else %}<p class="muted">no stored figure</p>{% endfor %}
+    </div>
+    <div>
+      <h6>After — today's analysis, re-fit on the same frozen data</h6>
+      {% for name in refit_figs %}
+      <img src="/dataset/{{ uid }}/autofit-diagnose-fig/{{ name }}" alt="refit figure" loading="lazy">
+      {% else %}<p class="muted">refit figure unavailable
+        {%- if row.refit_errors %} ({{ row.refit_errors | join(', ') }}){% endif %}</p>{% endfor %}
+    </div>
+  </div>
+
+  <table class="data-table">
+    <thead><tr><th>target</th><th>gate</th><th>refit oracle</th>
+      <th>stored</th><th>fresh</th><th></th></tr></thead>
+    <tbody>
+    {% for q, t in row.targets.items() %}
+      {% set sv = t.stored.values() | select('number') | first %}
+      {% set fv = t.fresh.values() | select('number') | first %}
+      <tr>
+        <td><strong>{{ q }}</strong></td>
+        <td class="autofit-{{ 'ok' if t.gate_verdict == 'pass' else 'warn' if t.gate_verdict == 'suspect' else 'bad' }}"
+            title="{{ t.gate_reasons | join('; ') }}">{{ t.gate_verdict }}{% if t.gate_mode %} ({{ t.gate_mode }}){% endif %}</td>
+        <td class="autofit-{{ 'ok' if t.refit_code == 'agrees' else 'warn' }}"
+            title="{{ t.refit_why }}">{{ t.refit_code }}</td>
+        <td>{{ t.stored }}</td>
+        <td>{{ t.fresh }}</td>
+        <td>
+          {% if t.refit_code in ('drift', 'recover') and t.fresh.get('success') %}
+          <button class="btn-sm outline"
+                  onclick="autofitDiagApply(this, {{ q | tojson }}, {{ row.family | tojson }}, {{ t.fresh | tojson }})"
+                  title="Apply today's re-fit value through the audited edit path (working copy; chip-token gated)">
+            Apply fresh &rarr;</button>
+          {% elif t.refit_code == 'reject' or t.gate_verdict == 'fail' %}
+          <span class="autofit-chip" title="{{ t.refit_why }}">re-measure advised</span>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">Applies stage into the <em>working copy</em> via the same audited
+     path as every edit (undo-able, chip-identity gated); "re-measure advised" means
+     the data itself doesn't support a trustworthy number — adjust parameters and
+     re-run (the Autofit plan loop automates this on the real backend).</p>
+</div>
+<script>
+function autofitDiagApply(btn, target, family, fresh) {
+  var token = {{ chip_token | tojson }};
+  fetch("/autofit/diagnose-rows", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({target: target, family: family, fresh: fresh}),
+  }).then(function (r) { return r.json(); }).then(function (d) {
+    if (!d.ok || !d.rows.length) { btn.textContent = d.error || "no mapped path"; return; }
+    var updates = d.rows.map(function (r) {
+      return {dot_path: r.path, value: r.value};
+    });
+    return fetch("/field/edit-batch", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({updates: updates, expect_chip: token}),
+    }).then(function (r2) {
+      btn.textContent = r2.ok ? "applied ✓" : "refused (" + r2.status + ")";
+      btn.disabled = r2.ok;
+    });
+  }).catch(function (e) { btn.textContent = "error"; });
+}
+</script>
