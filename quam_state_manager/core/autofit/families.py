@@ -353,8 +353,50 @@ _register(Family(
 ))
 
 
+_register(Family(
+    key="resonator_spectroscopy_vs_power",
+    label="Resonator spectroscopy vs power",
+    kind="qubits",
+    value_key="resonator_frequency",
+    # the docs/47 "genuinely hard family" (dressed/bare branch, rotated S21):
+    # NO raw-data localizer — G1/G4 + node-faithful refit + vision carry it
+    metric_gates=[],
+    plausibility=[Plausibility("resonator_frequency", lo=2e9, hi=15e9,
+                               max_abs_jump=50e6,
+                               state_path="qubits.{q}.resonator.f_01")],
+    updates=[UpdateSpec("resonator_frequency", "qubits.{q}.resonator.f_01",
+                        label="Resonator frequency"),
+             UpdateSpec("resonator_frequency",
+                        "qubits.{q}.resonator.RF_frequency",
+                        label="Resonator RF frequency")],
+    adaptations={"noisy": _more_shots, "no_signal": _widen_span(2.0, 30.0),
+                 "out_of_band": _widen_span(2.0, 30.0)},
+))
+
+_register(Family(
+    key="qubit_spectroscopy_vs_power",
+    label="Qubit spectroscopy vs power",
+    kind="qubits",
+    value_key="frequency",
+    # 2-D power sweep — vision's domain (a self-consistent noise fit fools a
+    # replay; the real-archive #575 case is the canonical example)
+    metric_gates=[],
+    plausibility=[Plausibility("frequency", lo=1e9, hi=12e9, max_abs_jump=100e6,
+                               state_path="qubits.{q}.f_01")],
+    updates=[UpdateSpec("frequency", "qubits.{q}.f_01", label="Qubit f_01"),
+             UpdateSpec("frequency", "qubits.{q}.xy.RF_frequency",
+                        label="XY RF frequency")],
+    adaptations={"noisy": _more_shots,
+                 "no_signal": _widen_span(2.0, 10.0),
+                 "wrong_peak": _spec_wrong_peak,
+                 "out_of_band": _widen_span(2.0, 10.0)},
+))
+
+
 # aliases seen in real archives (graph-prefixed, lab-suffixed, _new variants)
 _ALIASES = {
+    "resonator_spectroscopy_vs_power_iq": "resonator_spectroscopy_vs_power",
+    "qubit_spectroscopy_vs_power_adaptive": "qubit_spectroscopy_vs_power",
     "resonator_spectroscopy_single": "resonator_spectroscopy",
     "resonator_spectroscopy_wide": "resonator_spectroscopy",
     "qubit_spectroscopy_new": "qubit_spectroscopy",

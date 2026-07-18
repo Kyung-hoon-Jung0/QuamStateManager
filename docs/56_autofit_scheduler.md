@@ -288,6 +288,40 @@ shows `Autofit: step k/N · <node> · <target-progress>` while active.
 5. **routes/UI smoke** + lock coverage (autofit active ⇒ mutators 409) +
    ledger/report rendering; full suite green.
 
+## 6R. Real-archive replay validation (2026-07-18)
+
+The offline tier the sim corpus can't provide: 12 saved runs / 45 (run,qubit)
+verdicts from a real lab archive (LabA + its CR campaign), families
+`resonator_spectroscopy_vs_power` + `qubit_spectroscopy_vs_power` (the two
+docs/47 "hard" 2-D families), replayed hardware-free through
+`core/autofit/replay.py` + `generator/run_autofit_replay.py` (node-faithful
+re-fit + re-plot in the lab's own QM env; the archive is never written — all
+fixes land in per-run sandboxes).
+
+Results (full matrix + figures in the local, uncommitted report):
+- **G1**: 9/9 node-declared failures hard-failed; 3 of them *recover* under
+  today's analysis (the old gate discarded valid data — the docs/50 class).
+- **Clean chains**: 20/20 pass|agrees — zero false alarms.
+- **Mined suspects (3)**: one caught by the refit oracle as `reject`
+  (stored-success data today's own gate refuses; vision confirms the claim
+  sits on noise ~8.5 MHz off a clearly visible dip), one caught as `drift`
+  (+3.2 MHz punch-through pick, and it was PATCHED into state — the revert
+  demo), and one **refit-blind** (a self-consistent noise fit the replay
+  AGREES with — only the figure exposes the empty window; the canonical
+  proof that the vision auditor is mandatory, exactly as designed in §1).
+- **Vision adjudication also cleared a mined false-positive** (a genuine
+  qubit move between sessions, not a bad fit) — jump-mining alone
+  over-flags; judge-only vision resolves both directions.
+- Marginal-SNR rvp runs surface as tightened-gate `reject`s (review-queue
+  material, values never clobbered) — the dressed/bare branch ambiguity
+  docs/47 predicted.
+
+Pinned by `tests/test_autofit_replay_real.py` (auto-skips off the
+workstation): the clean anchor passes+agrees; the refit-blind bad anchor is
+documented as vision-mandatory. Next tier (the user's ultimate ask): the GUI
+before/after report — load a bad run, show stored vs refit figure + state
+old→new, then apply through the audited writer.
+
 ## 7. Explicit non-goals (v1)
 
 - No LLM-emitted numbers anywhere (incl. reverts, window math) — doctrinal.

@@ -57,3 +57,4 @@ instance.bak.*/
 # OS
 .DS_Store
 Thumbs.db
+_replay_report_local/
