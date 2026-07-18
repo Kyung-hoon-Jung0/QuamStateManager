@@ -121,6 +121,35 @@ function makeWorld() {
     ok(win.localStorage.getItem('quam_ui_scale') === '0.8', 'R3: clamps at 80%');
   }
 
+  // R3b (r6 item 3): explorerSetScale — Explorer-only zoom on the two tree
+  // containers, clamped + persisted + slider/preset sync; stacks with the
+  // global scale (independent storage keys).
+  {
+    const win = makeWorld();
+    ['explorer-tree-state', 'explorer-tree-wiring'].forEach(function (id) {
+      var d = win.document.createElement('div'); d.id = id;
+      win.document.body.appendChild(d);
+    });
+    var slider = win.document.createElement('input');
+    slider.id = 'explorer-scale-slider'; slider.type = 'range'; slider.value = '1';
+    win.document.body.appendChild(slider);
+    ok(win.explorerSetScale(1.25) === 1.25, 'R3b: set 125%');
+    ok(win.document.getElementById('explorer-tree-state').style.zoom == 1.25 &&
+       win.document.getElementById('explorer-tree-wiring').style.zoom == 1.25,
+      'R3b: both trees zoomed');
+    ok(win.localStorage.getItem('quam_explorer_scale') === '1.25', 'R3b: persisted');
+    ok(parseFloat(slider.value) === 1.25, 'R3b: slider synced');
+    ok(win.explorerSetScale(9) === 1.7 && win.explorerSetScale(0.1) === 0.75,
+      'R3b: clamps to 0.75–1.7');
+    win.explorerSetScale(1);
+    ok(win.document.getElementById('explorer-tree-state').style.zoom === '',
+      'R3b: zoom cleared at 100%');
+    ok(win.localStorage.getItem('quam_ui_scale') === null ||
+       win.localStorage.getItem('quam_ui_scale') === undefined ||
+       win.localStorage.getItem('quam_ui_scale') !== '1.25',
+      'R3b: independent of the global scale key');
+  }
+
   // R4: sidebar multi-select — shift-click range, live count, clear.
   {
     const win = makeWorld();

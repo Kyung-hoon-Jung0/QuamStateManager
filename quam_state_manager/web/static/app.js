@@ -1085,6 +1085,32 @@ window.syncUiScaleLabel = function() {
     el.classList.toggle("settings-opt-active", Math.abs(cur - 1) > 0.001);
 };
 
+// Explorer-only scale (r6 item 3): zooms JUST the two tree containers —
+// fonts + toggles + icons + spacing coherently — and MULTIPLIES with the
+// global quam_ui_scale zoom on <html>. Persisted; no restart.
+window.explorerSetScale = function(scale) {
+    var s = Math.min(1.7, Math.max(0.75, parseFloat(scale) || 1));
+    try { localStorage.setItem("quam_explorer_scale", String(s)); } catch(e) {}
+    window.explorerApplyScale();
+    return s;
+};
+
+window.explorerApplyScale = function() {
+    var s = 1;
+    try { s = parseFloat(localStorage.getItem("quam_explorer_scale")) || 1; } catch(e) {}
+    ["explorer-tree-state", "explorer-tree-wiring"].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.style.zoom = (Math.abs(s - 1) > 0.001) ? s : "";
+    });
+    var slider = document.getElementById("explorer-scale-slider");
+    if (slider && Math.abs(parseFloat(slider.value) - s) > 0.001) slider.value = s;
+    var presets = document.querySelectorAll(".tree-scale-preset");
+    for (var i = 0; i < presets.length; i++) {
+        presets[i].classList.toggle("active",
+            Math.abs(parseFloat(presets[i].getAttribute("data-sc")) - s) < 0.001);
+    }
+};
+
 window.toggleColorblindMode = function() {
     var active = document.body.classList.toggle('colorblind-mode');
     try { localStorage.setItem('quam_colorblind', active ? '1' : '0'); } catch(e) {}

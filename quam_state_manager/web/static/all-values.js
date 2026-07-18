@@ -14,7 +14,10 @@
  *
  * Forked from dataset-virtual.js (the proven scroller) + pair-edit.js (path-model
  * dirty + atomic apply), HARDENED for a body that holds <input>s:
- *  - ROW_HEIGHT (28) MUST equal the CSS `.av-table-virtual tbody tr {height:28px}`.
+ *  - ROW_HEIGHT MUST equal the rendered row height. Base is 28px; the r6
+ *    row-spacing slider scales BOTH sides through one source of truth
+ *    (JS ROW_HEIGHT + the --av-rh CSS var the tr height reads), so the
+ *    virtual-scroll index math can never desync from the paint.
  *  - dirty is keyed by dot_path (a Map), never the DOM — so an edit to a row that
  *    scrolls out of the window or whose group collapses SURVIVES Apply (the input
  *    node is destroyed on rebuild but repainted from the dirty entry).
@@ -28,7 +31,8 @@
 (function () {
     'use strict';
 
-    var ROW_HEIGHT = 28;     // === CSS .av-table-virtual tbody tr { height:28px }
+    var BASE_ROW_HEIGHT = 28;            // the design row at spacing 1.0
+    var ROW_HEIGHT = 28;     // === CSS .av-table-virtual tbody tr { height:var(--av-rh,28px) }
     var OVERSCAN = 8;
     var DEBOUNCE = 80;       // ms; the filter itself is <4ms at 15k
     var CHUNK = 2000;        // edits per atomic /field/edit-batch POST
@@ -806,11 +810,24 @@
         var ls = parseFloat(lsGet('quam_av_ls')); if (isNaN(ls)) ls = 0;   // corrupt quam_av_fs can't drift the 28px row
         if (ls < 0) ls = 0; else if (ls > 0.12) ls = 0.12;
         var bold = lsGet('quam_av_bold') === '1';
+        // r6 row spacing: ONE source of truth for both sides of the parity —
+        // the JS scroller math (ROW_HEIGHT) and the CSS row height (--av-rh)
+        // derive from the same clamped factor, so they cannot drift.
+        var rf = parseFloat(lsGet('quam_av_rowheight')); if (!rf || isNaN(rf)) rf = 1;
+        if (rf < 1) rf = 1; else if (rf > 1.6) rf = 1.6;
+        var rh = Math.round(BASE_ROW_HEIGHT * rf);
+        if (rh !== ROW_HEIGHT) {
+            ROW_HEIGHT = rh;
+            state.lastFirst = -1; state.lastLast = -1;   // force a repaint window
+            state.asserted = false;                       // re-assert parity on new DOM
+        }
+        sc.style.setProperty('--av-rh', rh + 'px');
         sc.style.setProperty('--av-fs', String(fs));
         sc.style.setProperty('--av-ls', ls + 'em');
         sc.classList.toggle('av-bold', bold);
         var fsS = document.getElementById('av-font-slider'); if (fsS) fsS.value = fs;
         var lsS = document.getElementById('av-ls-slider'); if (lsS) lsS.value = ls;
+        var rhS = document.getElementById('av-rh-slider'); if (rhS) rhS.value = rf;
         var presets = document.querySelectorAll('.av-font-preset');
         for (var i = 0; i < presets.length; i++)
             presets[i].classList.toggle('active', parseFloat(presets[i].getAttribute('data-fs')) === fs);
@@ -939,6 +956,13 @@
         setup: setup, switchPane: switchPane, _state: state,
         setFont: function (s) { lsSet('quam_av_fs', String(s)); applyFont(); },
         setLetterSpacing: function (s) { lsSet('quam_av_ls', String(s)); applyFont(); },
-        toggleBold: function () { lsSet('quam_av_bold', lsGet('quam_av_bold') === '1' ? '0' : '1'); applyFont(); }
+        toggleBold: function () { lsSet('quam_av_bold', lsGet('quam_av_bold') === '1' ? '0' : '1'); applyFont(); },
+        // r6 4-1: mouse-adjustable row spacing (28px × 1.0–1.6). applyFont
+        // moves ROW_HEIGHT + --av-rh together and forces a repaint window.
+        setRowSpacing: function (f) {
+            lsSet('quam_av_rowheight', String(f));
+            applyFont();
+            renderWindow(true);
+        }
     };
 })();

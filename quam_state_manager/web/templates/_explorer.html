@@ -27,6 +27,19 @@
             onclick="explorerLiveDiff()"
             title="Compare the working state against Qualibrate's live state — show what changed (before &rarr; after) and accept per field">
         &#8644; Live diff</button>
+    {# r6 item 3: Explorer-only scale — zooms the trees (fonts + toggles +
+       icons + spacing coherently), multiplying with the global UI scale. #}
+    <span class="tree-scale-ctl" title="Explorer size — scales the whole tree (stacks with the global UI scale in Settings)">
+        <span class="tree-scale-label">Aa</span>
+        <button type="button" class="btn-xs outline tree-scale-preset" data-sc="0.85"
+                onclick="explorerSetScale(0.85)" title="Small">S</button>
+        <button type="button" class="btn-xs outline tree-scale-preset" data-sc="1"
+                onclick="explorerSetScale(1)" title="Medium">M</button>
+        <button type="button" class="btn-xs outline tree-scale-preset" data-sc="1.25"
+                onclick="explorerSetScale(1.25)" title="Large">L</button>
+        <input type="range" id="explorer-scale-slider" min="0.75" max="1.7" step="0.05" value="1"
+               oninput="explorerSetScale(this.value)" aria-label="Explorer size" title="Explorer size">
+    </span>
 </div>
 
 <div id="explorer-livediff-bar" class="livediff-bar" hidden>
@@ -45,6 +58,7 @@
 
     renderJsonTree("explorer-tree-state", stateData, { defaultDepth: 1, crud: true });
     renderJsonTree("explorer-tree-wiring", wiringData, { defaultDepth: 1, crud: true });
+    if (window.explorerApplyScale) window.explorerApplyScale();   // persisted size
 
     window._activeTreeId = function() {
         var stateEl = document.getElementById("explorer-tree-state");

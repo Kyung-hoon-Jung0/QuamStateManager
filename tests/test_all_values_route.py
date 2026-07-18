@@ -302,12 +302,18 @@ class TestStaticCoupling:
     zero-height/overlap bug-class is purely a drift between these constants."""
 
     def test_row_height_js_matches_css(self):
+        # r6 4-1: adjustable row spacing — the parity is BY CONSTRUCTION now:
+        # applyFont derives ROW_HEIGHT and the --av-rh CSS var from one clamped
+        # factor over the same 28px base. Pin base + the var-reading CSS rule +
+        # the single-source derivation.
         js = (_STATIC / "all-values.js").read_text(encoding="utf-8")
         css = (_STATIC / "style.css").read_text(encoding="utf-8")
-        assert "var ROW_HEIGHT = 28;" in js, "all-values.js ROW_HEIGHT must be 28"
-        # the CSS rule the JS math depends on (whitespace-tolerant)
-        assert re.search(r"\.av-table-virtual tbody tr\s*\{\s*height:\s*28px", css), \
-            "CSS .av-table-virtual tbody tr must be height:28px to match ROW_HEIGHT"
+        assert "var BASE_ROW_HEIGHT = 28;" in js
+        assert "Math.round(BASE_ROW_HEIGHT * rf)" in js
+        assert "setProperty('--av-rh', rh + 'px')" in js
+        assert re.search(
+            r"\.av-table-virtual tbody tr\s*\{\s*height:\s*var\(--av-rh,\s*28px\)", css), \
+            "CSS row height must read the --av-rh var (28px base) the JS sets"
 
     def test_scroll_uses_contain_content_not_strict(self):
         css = (_STATIC / "style.css").read_text(encoding="utf-8")

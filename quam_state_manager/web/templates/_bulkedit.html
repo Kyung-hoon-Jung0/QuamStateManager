@@ -265,6 +265,8 @@
                     <button type="button" class="btn-xs outline av-bold-toggle" id="av-bold" onclick="AllValues.toggleBold()" aria-pressed="false" title="Bold values">B</button>
                     <span class="av-font-label" title="Letter spacing">↔</span>
                     <input type="range" id="av-ls-slider" min="0" max="0.12" step="0.02" value="0" oninput="AllValues.setLetterSpacing(this.value)" aria-label="Letter spacing" title="Letter spacing">
+                    <span class="av-font-label" title="Row spacing">↕</span>
+                    <input type="range" id="av-rh-slider" min="1" max="1.6" step="0.05" value="1" oninput="AllValues.setRowSpacing(this.value)" aria-label="Row spacing" title="Row spacing (row height)">
                 </span>
                 <button type="button" class="btn-xs outline" id="av-expand-all" title="Expand every group">Expand all</button>
                 <button type="button" class="btn-xs outline" id="av-collapse-all" title="Collapse every group">Collapse all</button>
