@@ -822,6 +822,12 @@
             state.asserted = false;                       // re-assert parity on new DOM
         }
         sc.style.setProperty('--av-rh', rh + 'px');
+        // r6b: value-column width (the path|value boundary), mouse-dragged via
+        // the .av-col-resizer overlay; header + rows read the same var.
+        var vw = parseFloat(lsGet('quam_av_valw')); if (!vw || isNaN(vw)) vw = 240;
+        if (vw < 120) vw = 120; else if (vw > 640) vw = 640;
+        sc.style.setProperty('--av-val-w', vw + 'px');
+        positionColResizer();
         sc.style.setProperty('--av-fs', String(fs));
         sc.style.setProperty('--av-ls', ls + 'em');
         sc.classList.toggle('av-bold', bold);
@@ -833,6 +839,59 @@
             presets[i].classList.toggle('active', parseFloat(presets[i].getAttribute('data-fs')) === fs);
         var b = document.getElementById('av-bold');
         if (b) { b.classList.toggle('active', bold); b.setAttribute('aria-pressed', bold ? 'true' : 'false'); }
+    }
+
+    // r6b: mouse column-resize for the path|value boundary. The overlay strip
+    // lives in the scroll container's PARENT (so it doesn't scroll away),
+    // centered on the boundary = value-width + native scrollbar width from the
+    // right edge. Drag writes quam_av_valw; applyFont re-applies + repositions.
+    function positionColResizer() {
+        var sc = state.scrollEl, rz = state._colResizer;
+        if (!sc || !rz || !rz.isConnected) return;
+        var vw = parseFloat(sc.style.getPropertyValue('--av-val-w')) || 240;
+        var sbw = sc.offsetWidth - sc.clientWidth;      // vertical scrollbar width
+        rz.style.right = (vw + sbw - 3) + 'px';
+    }
+
+    function ensureColResizer() {
+        var sc = state.scrollEl;
+        if (!sc || !sc.parentNode) return;
+        if (state._colResizer && state._colResizer.isConnected
+            && state._colResizer.parentNode === sc.parentNode) return;
+        var parent = sc.parentNode;
+        try {
+            if (getComputedStyle(parent).position === 'static') parent.style.position = 'relative';
+        } catch (e) { parent.style.position = 'relative'; }
+        var rz = document.createElement('div');
+        rz.className = 'av-col-resizer';
+        rz.title = 'Drag to resize the value column (double-click resets)';
+        rz.addEventListener('mousedown', function (e) {
+            e.preventDefault();
+            rz.classList.add('dragging');
+            var sbw = sc.offsetWidth - sc.clientWidth;
+            var rect = sc.getBoundingClientRect();
+            function move(ev) {
+                var vw = Math.round(rect.right - sbw - ev.clientX);
+                if (vw < 120) vw = 120; else if (vw > 640) vw = 640;
+                sc.style.setProperty('--av-val-w', vw + 'px');
+                positionColResizer();
+            }
+            function up() {
+                rz.classList.remove('dragging');
+                document.removeEventListener('mousemove', move);
+                document.removeEventListener('mouseup', up);
+                var vw = parseFloat(sc.style.getPropertyValue('--av-val-w')) || 240;
+                lsSet('quam_av_valw', String(vw));
+            }
+            document.addEventListener('mousemove', move);
+            document.addEventListener('mouseup', up);
+        });
+        rz.addEventListener('dblclick', function () {
+            lsSet('quam_av_valw', '240');
+            applyFont();
+        });
+        parent.appendChild(rz);
+        state._colResizer = rz;
     }
 
     function wireDom() {
@@ -847,6 +906,7 @@
         state.scrollEl = scrollEl;
         state.lastFirst = -1; state.lastLast = -1;
         state.asserted = false;                      // re-assert ROW_HEIGHT on the new DOM
+        ensureColResizer();                          // r6b: (re)mount the column-resize strip
         applyFont();                                 // re-apply the persisted font/spacing to this fresh scroller
 
         // hideXrefHint on the raw scroll event too: renderWindow early-returns on a
