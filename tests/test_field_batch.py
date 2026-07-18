@@ -104,7 +104,8 @@ class TestFieldPeek:
     def test_no_paths_returns_empty_values(self, client):
         resp = client.get("/field/peek")
         body = resp.get_json()
-        assert body == {"ok": True, "values": {}, "errors": {}, "resolved": {}}
+        assert body == {"ok": True, "values": {}, "errors": {}, "resolved": {},
+                        "expected": {}}   # `expected` = the type-policy block
 
     def test_no_active_context_returns_400(self, tmp_path):
         app = create_app(testing=True, instance_path=str(tmp_path / "_app_instance"))
