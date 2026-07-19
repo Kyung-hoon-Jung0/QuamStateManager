@@ -325,10 +325,11 @@ class DatasetStore:
         self._scan_lock = threading.RLock()
         self._last_mtime: float = 0.0
         # Per-folder fingerprint cache for incremental rescans.
-        # path → (folder_mtime, node_mtime, data_mtime, run_id)
-        # On rescan we re-parse only folders whose mtimes changed; identical
-        # folders are skipped, vanished folders drop their run_id from runs.
-        self._folder_fp: dict[Path, tuple[float, float, float, int]] = {}
+        # path → (folder_fp, node_fp, data_fp, run_id) where each component is
+        # a (st_mtime_ns, st_size) tuple (see ``_stat_fp``). On rescan we
+        # re-parse only folders whose fingerprints changed; identical folders
+        # are skipped, vanished folders drop their run_id from runs.
+        self._folder_fp: dict[Path, tuple[tuple, tuple, tuple, int]] = {}
         # Per-date-dir fingerprint cache (B27). date_path → (date_mtime, run_paths).
         # A run folder can only be added to / removed from a date dir by moving
         # the date dir's own mtime, so a date dir whose mtime is unchanged since
@@ -394,6 +395,23 @@ class DatasetStore:
             return path.stat().st_mtime
         except OSError:
             return 0.0
+
+    @staticmethod
+    def _stat_fp(path: Path) -> tuple:
+        """(st_mtime_ns, st_size) fingerprint of one run-folder component.
+
+        Size rides along with the mtime so a same-tick in-place rewrite —
+        FAT/SMB mounts have coarse (1–2 s) mtime clocks, so a fit-result
+        writeback can land inside the same tick as the original write — still
+        changes the fingerprint. (None, None) for absent/unreadable files, so
+        a file appearing/vanishing changes the fingerprint just like a rewrite
+        does. Mirrors ``interactive_plots.registry._bundle_fingerprint``.
+        """
+        try:
+            st = path.stat()
+            return (st.st_mtime_ns, st.st_size)
+        except OSError:
+            return (None, None)
 
     def _parse_run_folder(
         self, run_entry: Path, date_str: str, run_id: int, time_str: str, experiment_name: str
@@ -533,7 +551,7 @@ class DatasetStore:
         # their runs from the fingerprint caches. Only date dirs whose mtime
         # actually moved are walked. This keeps a steady-state poll on a
         # 10⁴-run workspace at O(date dirs) stats instead of O(runs).
-        to_parse: list[tuple[Path, str, int, str, str, float, float, float]] = []
+        to_parse: list[tuple[Path, str, int, str, str, tuple, tuple, tuple]] = []
         fresh_date_fp: dict[Path, tuple[float, frozenset[Path]]] = {}
         for date_entry in sorted(root.iterdir()):
             if not date_entry.is_dir():
@@ -589,16 +607,16 @@ class DatasetStore:
                 seen_paths.add(run_entry)
                 date_run_paths.add(run_entry)
 
-                folder_mt = self._stat_mtime(run_entry)
-                node_mt = self._stat_mtime(run_entry / "node.json")
-                data_mt = self._stat_mtime(run_entry / "data.json")
+                folder_fp = self._stat_fp(run_entry)
+                node_fp = self._stat_fp(run_entry / "node.json")
+                data_fp = self._stat_fp(run_entry / "data.json")
 
                 cached = self._folder_fp.get(run_entry)
                 if (
                     cached is not None
-                    and cached[0] == folder_mt
-                    and cached[1] == node_mt
-                    and cached[2] == data_mt
+                    and cached[0] == folder_fp
+                    and cached[1] == node_fp
+                    and cached[2] == data_fp
                     and cached[3] == run_id
                     and run_id in self.runs
                 ):
@@ -607,7 +625,7 @@ class DatasetStore:
 
                 to_parse.append((
                     run_entry, date_str, run_id, time_str, experiment_name,
-                    folder_mt, node_mt, data_mt,
+                    folder_fp, node_fp, data_fp,
                 ))
             # Record the date dir's mtime + run-path set so the next scan can
             # skip it if untouched. Only safe to short-circuit once all its
@@ -625,7 +643,7 @@ class DatasetStore:
             workers = min(_SCAN_PARSE_WORKERS, len(to_parse))
 
             def _parse_one(task):
-                run_entry, date_str, run_id, time_str, experiment_name, *_mts = task
+                run_entry, date_str, run_id, time_str, experiment_name, *_fps = task
                 return run_id, self._parse_run_folder(
                     run_entry, date_str, run_id, time_str, experiment_name,
                 )
@@ -636,12 +654,12 @@ class DatasetStore:
             # Serialise writebacks so we don't race on self.runs /
             # self._data_json_cache / self._folder_fp.
             for (run_entry, _date_str, run_id, _time_str, _exp_name,
-                 folder_mt, node_mt, data_mt), (_rid, run_info) in zip(to_parse, results):
+                 folder_fp, node_fp, data_fp), (_rid, run_info) in zip(to_parse, results):
                 if run_info is None:
                     continue
                 run_info.last_parsed = now
                 self.runs[run_id] = run_info
-                self._folder_fp[run_entry] = (folder_mt, node_mt, data_mt, run_id)
+                self._folder_fp[run_entry] = (folder_fp, node_fp, data_fp, run_id)
                 parsed += 1
 
         # Drop runs whose folders vanished
@@ -727,16 +745,24 @@ class DatasetStore:
     def force_rescan(self) -> None:
         """Unconditional rescan for the user's explicit Rescan button.
 
-        Bypasses BOTH the mtime gate (rescan_if_stale short-circuits when no
-        date-dir mtime moved) AND the B27 date-dir fingerprint short-circuit, so
-        an in-place node.json/data.json rewrite — a fit-result writeback that
-        never bumped a date-dir mtime — is actually picked up. The per-run
-        (folder, node, data) mtime fingerprint in ``_scan`` still avoids
-        re-parsing genuinely-unchanged runs, so this stays cheap on big
-        workspaces while honouring the button's "check now" intent.
+        Bypasses the mtime gate (rescan_if_stale short-circuits when no
+        date-dir mtime moved), the B27 date-dir fingerprint short-circuit, AND
+        the per-run (folder, node, data) fingerprint reuse, so an in-place
+        node.json/data.json rewrite — a fit-result writeback that never bumped
+        a date-dir mtime, or a same-tick same-size rewrite the fingerprint
+        can't see on a coarse-clock FAT/SMB mount — is actually picked up.
+        The button means "check now"; a full re-parse is the acceptable price.
         """
         with self._scan_lock:
             self._date_fp = {}   # drop the B27 date-dir skip → re-walk every date
+            # Poison (don't clear!) the per-run fingerprints: a ``None``
+            # component can never equal a real ``_stat_fp`` 2-tuple, so every
+            # run re-parses — while the KEYS survive so ``_scan``'s
+            # vanished-run detection (which walks ``_folder_fp``) still drops
+            # runs whose folders were deleted since the last scan.
+            self._folder_fp = {
+                p: (None, None, None, fp[3]) for p, fp in self._folder_fp.items()
+            }
             self._scan()
             self._load_tags()
 

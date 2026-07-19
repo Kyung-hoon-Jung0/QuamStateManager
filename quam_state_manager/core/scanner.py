@@ -12,7 +12,6 @@ import logging
 import os
 import re
 import threading
-import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -27,6 +26,7 @@ from quam_state_manager.core.loader import QuamStore
 # turns a 10⁴-folder cold scan from a ~15-30 s UI freeze into seconds.
 # Workers cap is generous: file I/O scales with parallelism even past
 # CPU count.
+_SCAN_DIR_CAP = 50_000   # discovery walk bound: cycles are inode-guarded, scope is not
 _SCAN_PARSE_WORKERS = min(32, (os.cpu_count() or 4) * 4)
 
 logger = logging.getLogger(__name__)
@@ -170,7 +170,11 @@ class Workspace:
         # lets a cache hit detect an out-of-band file replacement with two
         # os.stat calls and reload instead of serving stale content.
         self._loaded_store_mtimes: dict[Path, tuple[float, float] | None] = {}
-        self._scan_times: dict[str, float] = {}  # root path str → Unix timestamp of last scan
+        # root path str → max root/immediate-subdir mtime OBSERVED at last scan.
+        # Staleness compares this mtime-to-mtime (see _is_root_stale), never
+        # against local time.time(): a clock-skewed network mount would freeze
+        # (server behind) or thrash (server ahead) the sidebar otherwise.
+        self._scan_times: dict[str, float] = {}
         self._version = 0  # bumped on any tree change; drives the sidebar's version-gated refresh
 
     @property
@@ -190,12 +194,21 @@ class Workspace:
 
         Returns the list of discovered ExperimentEntry objects.
         """
-        path = Path(path).resolve()
+        # expanduser BEFORE resolve: a literal "~/data" otherwise becomes
+        # $CWD/~/data, gets persisted to workspace_roots.json, and fails on
+        # every later session.
+        path = Path(path).expanduser().resolve()
         with self._lock:
-            if path in self.root_folders:
-                logger.warning("Root folder already added: %s", path)
-                return self._entries_for_root(path)
+            existing = self._find_registered_root(path)
+            if existing is not None:
+                logger.warning("Root folder already added: %s", existing)
+                return self._entries_for_root(existing)
 
+            # Sample the staleness probe BEFORE the walk (same reasoning as
+            # DatasetStore's pre-walk cursor): a folder landing mid-scan bumps
+            # an mtime above this value, so the next rescan_if_stale catches it
+            # instead of swallowing it as already-seen.
+            pre_scan_probe = _root_mtime_probe(path)
             self.root_folders.append(path)
             entries = _scan_root(path)
             groups = _group_by_date(entries)
@@ -205,7 +218,9 @@ class Workspace:
             # during iteration raises 'dict changed size'. A single attribute rebind is
             # atomic, so a concurrent reader keeps iterating the OLD dict unharmed.
             self.tree = {**self.tree, str(path): groups}
-            self._scan_times[str(path)] = time.time()
+            self._scan_times[str(path)] = (
+                pre_scan_probe if pre_scan_probe is not None else 0.0
+            )
             for entry in entries:
                 self._entries_by_path[entry.quam_state_path.resolve()] = entry
 
@@ -213,14 +228,39 @@ class Workspace:
             logger.info("Scanned %s: found %d quam_state folders", path, len(entries))
             return entries
 
+    def _find_registered_root(self, path: Path) -> Path | None:
+        """The already-registered root that IS *path* — exact match, or same
+        ``(st_dev, st_ino)`` when both exist. On a case-insensitive FS (macOS
+        default), two case-variant spellings of ONE folder would otherwise
+        register as two roots: duplicate entries, and downstream two separate
+        per-root caches/locks for one physical directory (last-writer-wins).
+        Exact-path dedup stays as the fallback for missing/unstatable paths.
+        Caller holds ``self._lock``."""
+        if path in self.root_folders:
+            return path
+        try:
+            st = os.stat(path)
+            key = (st.st_dev, st.st_ino)
+        except OSError:
+            return None
+        for existing in self.root_folders:
+            try:
+                est = os.stat(existing)
+            except OSError:
+                continue
+            if (est.st_dev, est.st_ino) == key:
+                return existing
+        return None
+
     def remove_root(self, path: str | Path) -> None:
         """Remove a root folder and evict all its cached stores."""
-        path = Path(path).resolve()
+        path = Path(path).expanduser().resolve()
         with self._lock:
-            if path not in self.root_folders:
+            registered = self._find_registered_root(path)
+            if registered is None:
                 return
-            self.root_folders.remove(path)
-            key = str(path)
+            self.root_folders.remove(registered)
+            key = str(registered)
             removed_entries = []
             for group in self.tree.get(key, []):
                 removed_entries.extend(group.entries)
@@ -260,17 +300,20 @@ class Workspace:
         return rescanned
 
     def _is_root_stale(self, root: Path) -> bool:
-        """Return True if the root dir or any immediate subdir has been modified since last scan."""
-        last = self._scan_times.get(str(root), 0.0)
-        try:
-            if root.stat().st_mtime > last:
-                return True
-            for child in root.iterdir():
-                if child.is_dir() and child.stat().st_mtime > last:
-                    return True
-        except OSError:
-            pass
-        return False
+        """True if the observed root/subdir mtimes moved since the last scan.
+
+        Compares the CURRENT max root/immediate-subdir mtime against the one
+        observed at scan time — mtime-to-mtime, never against this machine's
+        ``time.time()`` (mirrors DatasetStore's ``_current_mtime`` design). A
+        network mount whose server clock runs behind ours would otherwise
+        never look stale (new-run mtimes forever below our wall clock); one
+        running ahead would look stale on every poll and thrash full rescans.
+        """
+        cur = _root_mtime_probe(root)
+        if cur is None:
+            return False   # transiently unreadable — keep the current tree
+        last = self._scan_times.get(str(root))
+        return last is None or cur != last
 
     # ------------------------------------------------------------------
     # Entry lookup
@@ -399,6 +442,30 @@ class Workspace:
 # ======================================================================
 
 
+def _root_mtime_probe(root: Path) -> float | None:
+    """Newest mtime of *root* + its immediate subdirs, as observed right now.
+
+    Stored per-root at scan time and compared mtime-to-mtime by
+    :meth:`Workspace._is_root_stale`, so staleness detection is immune to
+    clock skew between this machine and a network mount's server. ``None``
+    when the root itself is unreadable (transient blip ≠ stale).
+    """
+    try:
+        best = root.stat().st_mtime
+        for child in root.iterdir():
+            if not child.is_dir():
+                continue
+            try:
+                mt = child.stat().st_mtime
+            except OSError:
+                continue
+            if mt > best:
+                best = mt
+        return best
+    except OSError:
+        return None
+
+
 def _scan_root(root: Path) -> list[ExperimentEntry]:
     """Recursively find all quam_state folders under *root* and parse metadata.
 
@@ -408,11 +475,14 @@ def _scan_root(root: Path) -> list[ExperimentEntry]:
        ``quam_state`` folder under *root*. This is cheap — directory
        iteration only, no per-file I/O beyond ``state.json`` +
        ``wiring.json`` existence checks via ``_is_quam_state_folder``.
-       ``followlinks=False`` is pinned explicitly (Phase 5 §4.3): without
-       it, a future maintainer flipping the default could let an NTFS
-       junction or symlink loop hang the scanner. We also reject any
-       resolved path that escapes *root* — defence against junctions
-       (which ``os.walk`` follows regardless of ``followlinks``).
+       ``followlinks=True``: symlinked date/run archives are normal on
+       POSIX and DatasetStore's ``iterdir``-based walk already follows
+       them — ``followlinks=False`` silently hid the same folders from
+       the workspace sidebar. Loop safety (the reason links used to be
+       pinned off, Phase 5 §4.3) now comes from a visited set keyed on
+       each dir's resolved ``(st_dev, st_ino)``: a symlink or NTFS
+       junction cycle terminates at its first revisit, and two paths
+       reaching one physical dir are discovered only once.
     2. Parse (``ThreadPoolExecutor``) reads ``node.json`` per folder in
        parallel. Per-folder cost is dominated by ``safe_io.read_json``;
        fanning across ~32 workers turns a 10⁴-folder cold scan from a
@@ -421,28 +491,29 @@ def _scan_root(root: Path) -> list[ExperimentEntry]:
     if _is_quam_state_folder(root):
         return [_make_standalone_entry(root)]
 
-    try:
-        root_resolved = root.resolve()
-    except OSError:
-        return []
-
     # Discovery pass.
     candidates: list[Path] = []
-    for dirpath, dirnames, _filenames in os.walk(root, followlinks=False):
+    visited: set[tuple[int, int]] = set()
+    for dirpath, dirnames, _filenames in os.walk(root, followlinks=True):
+        if len(visited) >= _SCAN_DIR_CAP:
+            # The inode guard stops CYCLES, not scope — a symlink escaping to a
+            # huge tree (/, $HOME) would otherwise walk the whole filesystem.
+            logger.warning(
+                "workspace scan of %s stopped at %d directories — a symlink may "
+                "point at a very large tree; %d quam_state folders found so far",
+                root, _SCAN_DIR_CAP, len(candidates))
+            break
         dp = Path(dirpath)
-        # Containment guard: an NTFS junction (Windows) that points
-        # outside the root would otherwise be followed by os.walk
-        # because junctions aren't symlinks. Resolving once per dir
-        # and checking ancestry is cheap (~1 ms/folder) and stops a
-        # crafted junction loop from hanging the scanner.
         try:
-            dp_resolved = dp.resolve()
+            st = os.stat(dirpath)   # follows symlinks → the physical dir's identity
         except OSError:
             dirnames.clear()
             continue
-        if dp_resolved != root_resolved and root_resolved not in dp_resolved.parents:
-            dirnames.clear()
+        key = (st.st_dev, st.st_ino)
+        if key in visited:
+            dirnames.clear()   # cycle / duplicate route to a dir already walked
             continue
+        visited.add(key)
         if dp.name == "quam_state" and _is_quam_state_folder(dp):
             candidates.append(dp)
             dirnames.clear()

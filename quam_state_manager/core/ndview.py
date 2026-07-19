@@ -76,7 +76,9 @@ _NC_PLACEHOLDER = b"This is a netCDF dimension but not a netCDF variable"
 # stream copies, not pairs).
 _IQ_SUFFIXES = ("", "g", "e", "f")
 
-_ALLOWED_H5_SUFFIX = ".h5"
+# Case-insensitive (macOS default FS preserves but ignores case; tools emit
+# .H5/.HDF5 too) and .hdf5 included — aligns with dataset._resolve_fit_ref.
+_ALLOWED_H5_SUFFIXES = (".h5", ".hdf5")
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -737,6 +739,6 @@ def list_h5_files(run_folder: Path) -> list[str]:
     old ds_raw/ds_fit whitelist hid ds_proc/ds_survey files entirely."""
     try:
         return sorted(p.name for p in run_folder.iterdir()
-                      if p.suffix == _ALLOWED_H5_SUFFIX and p.is_file())
+                      if p.suffix.lower() in _ALLOWED_H5_SUFFIXES and p.is_file())
     except OSError:
         return []

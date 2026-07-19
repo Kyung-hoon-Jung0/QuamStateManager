@@ -7,6 +7,8 @@ experiment data folders from the examplechip repository.
 from __future__ import annotations
 
 import json
+import os
+import time
 from pathlib import Path
 
 import pytest
@@ -668,3 +670,189 @@ class TestScannerParallel:
             f"parallel scan took {elapsed:.2f}s for 16 entries x 40ms = "
             f"640ms serial; parallel should be well under 300ms"
         )
+
+
+# ---------------------------------------------------------------------------
+# Cross-platform audit: clock-skew-immune staleness, ~-expansion + inode
+# dedup of roots, symlinked archive discovery + cycle termination
+# ---------------------------------------------------------------------------
+
+
+def _make_exp(date_dir: Path, run_id: int, name: str = "ramsey",
+              timestamp: str = "2026-02-19T01:00:00+09:00") -> Path:
+    """One synthetic experiment folder (quam_state + node.json) under *date_dir*."""
+    exp = date_dir / f"#{run_id}_{name}_010000"
+    exp.mkdir(parents=True)
+    _make_quam_state(exp / "quam_state")
+    _make_node_json(exp, run_id=run_id, name=name, timestamp=timestamp)
+    return exp
+
+
+def _utime_tree(root: Path, ts: float) -> None:
+    """Stamp *root* and everything under it with one mtime (a 'server clock')."""
+    for p in [root, *root.rglob("*")]:
+        os.utime(p, (ts, ts))
+
+
+class TestClockSkewImmuneStaleness:
+    """_is_root_stale must compare the stored observed mtime to the current
+    observed mtime — never a child mtime to the local time.time() sampled at
+    scan. A network mount whose server clock runs behind ours would freeze
+    (new runs invisible forever); one running ahead would thrash a full
+    rescan on every poll."""
+
+    def test_server_clock_behind_still_detects_new_run(self, tmp_path, monkeypatch):
+        root = tmp_path / "mount"
+        _make_exp(root / "2026-02-19", 1)
+        past = 1_000_000_000.0            # ~2001 — deep in OUR past
+        _utime_tree(root, past)
+
+        ws = Workspace()
+        ws.add_root(root)
+        assert len(ws.all_entries) == 1
+
+        # New run lands; the file server stamps it 60 s later — still far
+        # below this machine's wall clock. Freeze the local clock at an
+        # absurd value to prove the staleness gate never consults it.
+        _make_exp(root / "2026-02-19", 2, name="t1")
+        _utime_tree(root, past + 60)
+        monkeypatch.setattr(time, "time", lambda: 9e12)
+
+        assert ws._is_root_stale(root) is True
+        assert ws.rescan_if_stale() is True
+        assert len(ws.all_entries) == 2
+
+    def test_server_clock_ahead_does_not_thrash(self, tmp_path, monkeypatch):
+        root = tmp_path / "mount"
+        _make_exp(root / "2026-02-19", 1)
+        future = time.time() + 10 * 365 * 24 * 3600   # server 10 years ahead
+        _utime_tree(root, future)
+
+        ws = Workspace()
+        ws.add_root(root)
+        version = ws.version
+        monkeypatch.setattr(time, "time", lambda: 0.0)
+
+        # Nothing changed on disk: future-stamped mtimes must NOT look stale
+        # (the old wall-clock comparison rescanned on every poll here).
+        assert ws._is_root_stale(root) is False
+        assert ws.rescan_if_stale() is False
+        assert ws.version == version
+
+
+class TestRootNormalizationAndDedup:
+    def test_add_root_expands_tilde(self, tmp_path, monkeypatch):
+        """A literal '~/data' used to resolve to $CWD/~/data, get persisted,
+        and fail every later session."""
+        home = tmp_path / "home"
+        data = home / "data"
+        _make_exp(data / "2026-02-19", 1)
+        monkeypatch.setenv("HOME", str(home))          # Path.expanduser (POSIX)
+        monkeypatch.setenv("USERPROFILE", str(home))   # …and Windows
+
+        ws = Workspace()
+        entries = ws.add_root("~/data")
+        assert len(entries) == 1
+        assert ws.root_folders == [data.resolve()]
+        assert all("~" not in str(r) for r in ws.root_folders)
+        # remove accepts the same spelling
+        ws.remove_root("~/data")
+        assert ws.root_folders == []
+
+    def test_add_root_dedups_same_inode_spellings(self, tmp_path, monkeypatch):
+        """macOS's default FS is case-insensitive/case-preserving: 'Data' and
+        'data' are ONE physical directory under two resolved spellings.
+        Registering both used to duplicate every run (and give downstream
+        consumers two separate caches/locks for one folder). Simulated here
+        by forcing os.stat to report one (st_dev, st_ino) for both paths."""
+        a = tmp_path / "ChipData"
+        _make_exp(a / "2026-02-19", 1)
+        b = tmp_path / "chipdata"
+        b.mkdir()
+
+        real_stat = os.stat
+        a_res, b_res = str(a.resolve()), str(b.resolve())
+
+        def same_inode_stat(path, *args, **kwargs):
+            if str(path) == b_res:
+                return real_stat(a_res, *args, **kwargs)
+            return real_stat(path, *args, **kwargs)
+
+        monkeypatch.setattr(os, "stat", same_inode_stat)
+
+        ws = Workspace()
+        ws.add_root(a)
+        entries = ws.add_root(b)          # variant spelling, same physical dir
+        assert len(ws.root_folders) == 1  # NOT registered twice
+        assert len(entries) == 1          # the existing root's entries returned
+
+        ws.remove_root(b)                 # removing via the variant works too
+        assert ws.root_folders == []
+
+    def test_add_root_missing_path_still_exact_dedups(self, tmp_path):
+        """Inode dedup needs a stat; a missing path falls back to exact-path
+        dedup and never raises."""
+        ghost = tmp_path / "not_there"
+        ws = Workspace()
+        ws.add_root(ghost)
+        ws.add_root(ghost)
+        assert ws.root_folders == [ghost.resolve()]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink semantics")
+class TestSymlinkDiscovery:
+    def test_symlinked_date_dir_is_discovered(self, tmp_path):
+        """DatasetStore's iterdir-based walk follows symlinks; the workspace
+        scanner (os.walk followlinks=False) silently hid the same archive —
+        symlinked date/run dirs are normal POSIX archive practice."""
+        archive = tmp_path / "cold_archive" / "2026-02-19"
+        _make_exp(archive, 7)
+        root = tmp_path / "workspace_root"
+        root.mkdir()
+        (root / "2026-02-19").symlink_to(archive, target_is_directory=True)
+
+        entries = _scan_root(root)
+        assert [e.run_id for e in entries] == [7]
+
+    def test_symlink_cycle_terminates(self, tmp_path):
+        """A symlink back to an ancestor must terminate (inode visited-set),
+        and the real content is still discovered exactly once."""
+        root = tmp_path / "root"
+        _make_exp(root / "2026-02-19", 1)
+        (root / "loop").symlink_to(root, target_is_directory=True)
+
+        entries = _scan_root(root)
+        assert [e.run_id for e in entries] == [1]
+
+    def test_two_routes_to_one_dir_discover_once(self, tmp_path):
+        """A second (non-cyclic) symlink route to an already-walked dir is
+        pruned by the visited set — no duplicate entries."""
+        root = tmp_path / "root"
+        real_date = root / "2026-02-19"
+        _make_exp(real_date, 1)
+        (root / "alias").symlink_to(real_date, target_is_directory=True)
+
+        entries = _scan_root(root)
+        assert [e.run_id for e in entries] == [1]
+
+
+def test_scan_dir_cap_bounds_runaway_symlink_walks(tmp_path, monkeypatch, caplog):
+    # The inode visited-set stops cycles, not SCOPE: a symlink at the workspace
+    # root pointing into a huge foreign tree must not walk it unboundedly.
+    from quam_state_manager.core import scanner as sc
+    big = tmp_path / "big"
+    for i in range(30):
+        (big / f"d{i}" / "sub").mkdir(parents=True)
+    root = tmp_path / "ws"
+    root.mkdir()
+    (root / "quam_state").mkdir()
+    (root / "quam_state" / "state.json").write_text("{}", encoding="utf-8")
+    (root / "quam_state" / "wiring.json").write_text("{}", encoding="utf-8")
+    (root / "link_to_big").symlink_to(big)
+    monkeypatch.setattr(sc, "_SCAN_DIR_CAP", 10)
+    import logging
+    with caplog.at_level(logging.WARNING):
+        entries = sc._scan_root(root)
+    assert any("stopped at" in r.message for r in caplog.records)
+    # the walk terminated early instead of visiting all ~60 big-tree dirs
+    assert len(entries) <= 1

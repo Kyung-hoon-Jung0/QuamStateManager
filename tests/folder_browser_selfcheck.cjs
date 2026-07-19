@@ -32,6 +32,7 @@ const DIALOG = `
   <input id="target-a"><input id="target-b">
   <dialog id="folder-browser">
     <input type="text" id="browser-selected-path" readonly>
+    <button id="browser-select-btn">Select</button>
     <div id="browser-newfolder-row" hidden>
       <input type="text" id="browser-newfolder-name">
       <span id="browser-newfolder-err"></span>
@@ -298,6 +299,86 @@ function selectedPath(win) { return win.document.getElementById('browser-selecte
     await tick();
     ok(win._fetchLog[0].indexOf(encodeURIComponent('D:\\')) >= 0,
       'G8: bare "D:" normalized to "D:\\" (got ' + win._fetchLog[0] + ')');
+  }
+
+  // G9: a POSIX path with a backslash INSIDE a folder name — "\" is a legal
+  // filename char on POSIX; style classification is by the LEADING pattern
+  // only (the old `indexOf("\\")` check flipped the whole path to Windows
+  // splitting and every crumb click navigated to garbage).
+  {
+    const win = makeWorld();
+    win._fetchImpl = function (url) {
+      const p = decodeURIComponent(url.split('path=')[1] || '');
+      if (p === '/data/back\\slash') {
+        return jsonResponse({ path: '/data/back\\slash',
+                              dirs: ['/data/back\\slash/child'], parent: '/data' });
+      }
+      return jsonResponse({ path: p, dirs: ['/data/back\\slash'], parent: '/' });
+    };
+    win.navigateBrowser('/data');
+    await tick();
+    const rows = win.document.querySelectorAll(
+      '#browser-list .browser-folder:not(.browser-up)');
+    ok(rows.length === 1 && rows[0].textContent === 'back\\slash',
+      'G9: row label keeps the backslash name (got "' +
+        (rows[0] && rows[0].textContent) + '")');
+    win.navigateBrowser('/data/back\\slash');
+    await tick();
+    const crumbs = Array.prototype.map.call(
+      win.document.querySelectorAll('#browser-breadcrumbs [data-path]'),
+      function (c) { return c.getAttribute('data-path'); });
+    ok(JSON.stringify(crumbs) === JSON.stringify(['/', '/data', '/data/back\\slash']),
+      'G9: crumbs split on "/" only for POSIX paths (got ' + JSON.stringify(crumbs) + ')');
+    const rows2 = win.document.querySelectorAll(
+      '#browser-list .browser-folder:not(.browser-up)');
+    ok(rows2.length === 1 && rows2[0].textContent === 'child',
+      'G9: child row label (got "' + (rows2[0] && rows2[0].textContent) + '")');
+  }
+
+  // G10: a capped listing renders a muted "showing first N of M" note.
+  {
+    const win = makeWorld();
+    win._fetchImpl = function () {
+      return jsonResponse({ path: '/big', dirs: ['/big/a', '/big/b'], parent: '/',
+                            truncated: true, total: 999 });
+    };
+    win.navigateBrowser('/big');
+    await tick();
+    ok(listText(win).indexOf('of 999') >= 0 && listText(win).indexOf('narrow') >= 0,
+      'G10: truncated note rendered (got "' + listText(win) + '")');
+    const note = win.document.querySelector('#browser-list .browser-truncated-note');
+    ok(!!note, 'G10: note carries the muted class');
+  }
+
+  // G11: dead-end response (relative junk / no surviving ancestor — the
+  // server echoes path === missing with nothing listed): the dead path must
+  // NOT be remembered as last-good and Select must disable; a following
+  // good navigation re-enables it.
+  {
+    const win = makeWorld();
+    win._fetchImpl = function (url) {
+      const p = decodeURIComponent(url.split('path=')[1] || '');
+      if (p === 'Z:/junk') {
+        return jsonResponse({ path: 'Z:/junk', dirs: [], parent: '',
+                              missing: 'Z:/junk', has_quam_state: false });
+      }
+      return jsonResponse({ path: p || '/home/u', dirs: [], parent: '',
+                            has_quam_state: false });
+    };
+    win.openFolderBrowser('target-a');
+    await tick();
+    ok(win.localStorage.getItem('quam_folder_last:target-a') === '/home/u',
+      'G11: good path seeded');
+    win.navigateBrowser('Z:/junk');
+    await tick();
+    const selBtn = win.document.getElementById('browser-select-btn');
+    ok(selBtn.disabled === true, 'G11: Select disabled on a dead-end path');
+    ok(win.localStorage.getItem('quam_folder_last:target-a') === '/home/u',
+      'G11: dead path NOT remembered (got "' +
+        win.localStorage.getItem('quam_folder_last:target-a') + '")');
+    win.navigateBrowser('/home/u');
+    await tick();
+    ok(selBtn.disabled === false, 'G11: Select re-enabled after a good listing');
   }
 
   if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }

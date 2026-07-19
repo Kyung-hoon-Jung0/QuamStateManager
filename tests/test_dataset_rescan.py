@@ -110,8 +110,8 @@ def test_untouched_date_dirs_are_not_rewalked(tmp_path, monkeypatch):
     assert len(store.runs) == 6
 
     # Count per-run stat calls (folder/node/data) by run-folder path. The
-    # short-circuited date dirs never call _stat_mtime on their child runs.
-    real_stat = DatasetStore._stat_mtime
+    # short-circuited date dirs never call _stat_fp on their child runs.
+    real_stat = DatasetStore._stat_fp
     stat_counts: dict[Path, int] = {}
 
     def _counting_stat(p):
@@ -122,7 +122,7 @@ def test_untouched_date_dirs_are_not_rewalked(tmp_path, monkeypatch):
             stat_counts[run_dir] = stat_counts.get(run_dir, 0) + 1
         return real_stat(p)
 
-    monkeypatch.setattr(DatasetStore, "_stat_mtime", staticmethod(_counting_stat))
+    monkeypatch.setattr(DatasetStore, "_stat_fp", staticmethod(_counting_stat))
 
     # Touch only one new run inside ONE date dir.
     _seed_run(root, 99, date="2026-05-03", hhmmss="030000")
@@ -151,7 +151,7 @@ def test_unchanged_workspace_serves_all_from_cache(tmp_path, monkeypatch):
     _seed_run(root, 2, date="2026-05-02")
     store = DatasetStore(root)
 
-    real_stat = DatasetStore._stat_mtime
+    real_stat = DatasetStore._stat_fp
     run_stats: list[Path] = []
 
     def _counting_stat(p):
@@ -160,7 +160,7 @@ def test_unchanged_workspace_serves_all_from_cache(tmp_path, monkeypatch):
             run_stats.append(run_dir)
         return real_stat(p)
 
-    monkeypatch.setattr(DatasetStore, "_stat_mtime", staticmethod(_counting_stat))
+    monkeypatch.setattr(DatasetStore, "_stat_fp", staticmethod(_counting_stat))
 
     # No mtime change at all → rescan_if_stale returns early (gate fails)
     # OR, if forced, the date-dir short-circuit skips all run stats.
@@ -168,3 +168,78 @@ def test_unchanged_workspace_serves_all_from_cache(tmp_path, monkeypatch):
     store._scan()  # force a full scan to exercise the short-circuit path
     assert run_stats == []  # nothing re-stated; all date dirs unchanged
     assert set(store.runs.keys()) == {1, 2}
+
+
+# ---------------------------------------------------------------------------
+# Size-aware run fingerprints + force_rescan fingerprint drop (cross-platform
+# audit): FAT/SMB mounts have coarse (1-2 s) mtime clocks, so an in-place
+# node/data rewrite can land on the SAME tick as the original write. The
+# fingerprint must carry st_size, and the explicit Rescan button must not
+# trust the fingerprint cache at all.
+# ---------------------------------------------------------------------------
+
+
+def _rewrite_preserving_mtime(path: Path, text: str) -> None:
+    """In-place rewrite that restores the file's exact mtime (ns) — the
+    coarse-clock same-tick rewrite, made deterministic."""
+    st = path.stat()
+    path.write_text(text, encoding="utf-8")
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
+
+
+def test_same_mtime_different_size_rewrite_is_detected(tmp_path):
+    root = tmp_path / "data"
+    run = _seed_run(root, 1, date="2026-05-01", t1=8.0e-6)
+    store = DatasetStore(root)
+    assert store.runs[1].fit_results["q1"]["T1"] == pytest.approx(8.0e-6)
+
+    data_path = run / "data.json"
+    new_body = json.dumps({"fit_results": {"q1": {"T1": 9.25e-6}}})
+    assert len(new_body.encode()) != data_path.stat().st_size
+    _rewrite_preserving_mtime(data_path, new_body)   # same mtime_ns, new size
+
+    # Make the date dir walk (B27 would otherwise skip it) — the per-run
+    # fingerprint alone decides whether the rewrite is seen.
+    _bump_mtime(root / "2026-05-01", store._last_mtime + 10)
+    _bump_mtime(root, store._last_mtime + 10)
+    store.rescan_if_stale()
+    assert store.runs[1].fit_results["q1"]["T1"] == pytest.approx(9.25e-6)
+
+
+def test_force_rescan_reparses_same_stat_rewrite(tmp_path):
+    """A same-mtime SAME-SIZE rewrite is invisible even to the size-aware
+    fingerprint — the Rescan button (force_rescan) must drop the per-run
+    fingerprints so the truth is re-read from disk."""
+    root = tmp_path / "data"
+    run = _seed_run(root, 1, date="2026-05-01", t1=8.25e-6)
+    store = DatasetStore(root)
+    data_path = run / "data.json"
+
+    old_size = data_path.stat().st_size
+    new_body = json.dumps({"fit_results": {"q1": {"T1": 9.75e-6}}})  # same repr width
+    _rewrite_preserving_mtime(data_path, new_body)
+    assert data_path.stat().st_size == old_size      # truly indistinguishable
+
+    # No mtime anywhere moved → the polling gate is (correctly) blind…
+    assert store.rescan_if_stale() is False
+    assert store.runs[1].fit_results["q1"]["T1"] == pytest.approx(8.25e-6)
+    # …but the user's explicit "check now" re-parses everything.
+    store.force_rescan()
+    assert store.runs[1].fit_results["q1"]["T1"] == pytest.approx(9.75e-6)
+
+
+def test_force_rescan_still_drops_vanished_runs(tmp_path):
+    """force_rescan POISONS the fingerprints instead of clearing them: the
+    keys feed _scan's vanished-run detection, so clearing would leave ghost
+    rows for run folders deleted since the last scan."""
+    import shutil
+
+    root = tmp_path / "data"
+    _seed_run(root, 1, date="2026-05-01", hhmmss="010000")
+    r2 = _seed_run(root, 2, date="2026-05-01", hhmmss="020000")
+    store = DatasetStore(root)
+    assert set(store.runs.keys()) == {1, 2}
+
+    shutil.rmtree(r2)
+    store.force_rescan()
+    assert set(store.runs.keys()) == {1}

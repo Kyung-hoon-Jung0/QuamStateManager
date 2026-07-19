@@ -273,12 +273,37 @@ def _replace_file_windows(replacement: Path, replaced: Path) -> None:
         raise ctypes.WinError(ctypes.get_last_error())
 
 
+def _fsync_dir(path: Path) -> None:
+    """Best-effort fsync of a directory (POSIX only).
+
+    ``os.replace`` is atomic but NOT durable until the parent directory's
+    metadata hits the platter — a power cut right after apply-to-live could
+    silently lose the rename (the old content, or nothing, reappears on
+    reboot). Windows' ``ReplaceFileW`` is already durable, so this is a no-op
+    there. Failures are swallowed: durability is best-effort, never worth
+    failing an otherwise-complete write over.
+    """
+    if _IS_WINDOWS:
+        return
+    try:
+        fd = os.open(str(path), os.O_DIRECTORY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
 def _replace_into_place(tmp: Path, dst: Path) -> None:
     """Atomically move *tmp* onto *dst*, retrying transient failures.
 
     On Windows, when *dst* already exists, ``ReplaceFileW`` is used so the
     write succeeds even while a reader holds *dst* open.  Otherwise (POSIX,
-    or first-time creation) ``os.replace`` is used.
+    or first-time creation) ``os.replace`` is used, followed by a
+    best-effort parent-dir fsync so the rename survives power loss.
     """
     last_exc: Exception | None = None
     for attempt in range(_WRITE_ATTEMPTS):
@@ -287,6 +312,7 @@ def _replace_into_place(tmp: Path, dst: Path) -> None:
                 _replace_file_windows(tmp, dst)
             else:
                 os.replace(str(tmp), str(dst))
+                _fsync_dir(dst.parent)
             return
         except OSError as exc:
             last_exc = exc

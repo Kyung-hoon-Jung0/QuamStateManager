@@ -115,8 +115,26 @@ class TestPathHelpers:
         d = tmp_path / "Chip"
         d.mkdir()
         assert scheduler.paths_equal(str(d), str(d))
-        assert scheduler.paths_equal(str(d).upper(), str(d))  # casefold
+        assert scheduler.paths_equal(str(d) + "/", str(d / "."))  # spelling variants
         assert not scheduler.paths_equal(str(d), str(tmp_path / "other"))
+
+    def test_paths_equal_case_folds_per_os(self, tmp_path, monkeypatch):
+        # fs_key semantics: case-folded only on case-insensitive-default hosts.
+        import os
+        import sys
+        d = tmp_path / "Chip"
+        d.mkdir()
+        if os.name == "nt" or sys.platform == "darwin":
+            assert scheduler.paths_equal(str(d).upper(), str(d))
+        else:
+            # Linux: case-twin spellings are DISTINCT dirs — the old
+            # unconditional lower() falsely equated them.
+            twin = tmp_path / "CHIP"
+            twin.mkdir()
+            assert not scheduler.paths_equal(str(twin), str(d))
+            # …but a simulated case-insensitive host folds them
+            monkeypatch.setattr(sys, "platform", "darwin")
+            assert scheduler.paths_equal(str(twin), str(d))
 
     def test_folder_under_install(self, tmp_path):
         inst = tmp_path / "superconducting"
@@ -126,6 +144,30 @@ class TestPathHelpers:
         assert scheduler.folder_under_install(str(inst), str(inst)) is True
         assert scheduler.folder_under_install(str(cal), str(tmp_path / "elsewhere")) is False
         assert scheduler.folder_under_install(str(cal), None) is None
+
+    def test_folder_under_install_linux_case_twin_not_contained(self, tmp_path):
+        # Distinct case-variant install dirs on a case-sensitive FS: a child
+        # of "Install" is NOT under "install" (old lowered startswith said yes).
+        import os
+        import sys
+        if os.name == "nt" or sys.platform == "darwin":
+            pytest.skip("case-insensitive-default filesystem")
+        cal = tmp_path / "Install" / "calibrations"
+        cal.mkdir(parents=True)
+        twin = tmp_path / "install"
+        twin.mkdir()
+        assert scheduler.folder_under_install(str(cal), str(twin)) is False
+
+    def test_folder_under_install_backslash_in_posix_name(self, tmp_path):
+        # A backslash inside a POSIX dir name is NOT a separator; the old
+        # separator sniff broke real containment on such installs.
+        import os
+        if os.name == "nt":
+            pytest.skip("backslash is a separator on Windows")
+        inst = tmp_path / "install\\dir"
+        cal = inst / "calibrations"
+        cal.mkdir(parents=True)
+        assert scheduler.folder_under_install(str(cal), str(inst)) is True
 
     def test_storage_registered(self, tmp_path):
         ds = tmp_path / "dataset" / "LabA" / "LabA_1Q"

@@ -4,7 +4,12 @@ one SM has open? (gates the workbench nudge; kills the silent no-op)."""
 from __future__ import annotations
 
 import json
+import os
+import sys
+import unicodedata
 from pathlib import Path
+
+import pytest
 
 from quam_state_manager.core import path_match as pm
 
@@ -82,3 +87,62 @@ def test_chip_label_falls_back_for_generic_state_dir(tmp_path):
     # <chip>/quam_state/state.json  ->  the parent chip name
     chip = _chip(tmp_path / "Soprano" / "quam_state", ["q1"])
     assert pm.chip_label(chip) == "Soprano"
+
+
+# ---------------------------------------------------------------------------
+# fs_key — the canonical string identity for hashing/keying (per-OS fold)
+# ---------------------------------------------------------------------------
+
+def test_fs_key_resolves_spelling_variants(tmp_path):
+    d = tmp_path / "chip"
+    d.mkdir()
+    # trailing slash / "." segments / relative-through resolve to one key
+    assert pm.fs_key(str(d) + "/") == pm.fs_key(d)
+    assert pm.fs_key(d / ".") == pm.fs_key(d)
+    assert pm.fs_key(tmp_path / "other" / ".." / "chip") == pm.fs_key(d)
+
+
+def test_fs_key_resolves_symlink_spelling(tmp_path):
+    real = tmp_path / "real"
+    real.mkdir()
+    alias = tmp_path / "alias"
+    try:
+        alias.symlink_to(real)
+    except OSError:                     # unprivileged Windows
+        pytest.skip("symlinks unavailable")
+    assert pm.fs_key(alias) == pm.fs_key(real)
+
+
+def test_fs_key_nfc_folds_unicode(tmp_path):
+    # macOS hands back NFD-decomposed names; both spellings must key together.
+    d = tmp_path / "café"          # NFC
+    nfd = unicodedata.normalize("NFD", str(d))
+    assert nfd != str(d)                # the spellings really differ byte-wise
+    assert pm.fs_key(nfd) == pm.fs_key(str(d))
+
+
+# The platform-conditional fold is tested by patching path_match's OWN os/sys
+# references: patching the real os.name to "nt" would break pathlib itself on
+# POSIX (Path.__new__ dispatches WindowsPath on os.name).
+
+def test_fs_key_no_case_fold_on_case_sensitive_hosts(monkeypatch):
+    # Linux: case-variant paths are DISTINCT dirs — folding them aliased two
+    # chips onto one working copy (the proven data-loss class).
+    from types import SimpleNamespace
+    monkeypatch.setattr(pm, "os", SimpleNamespace(name="posix", path=os.path))
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert pm.fs_key("/A/B") != pm.fs_key("/a/b")
+
+
+def test_fs_key_case_folds_on_windows(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(pm, "os", SimpleNamespace(name="nt", path=os.path))
+    assert pm.fs_key("/A/B") == pm.fs_key("/a/b")
+
+
+def test_fs_key_case_folds_on_mac(monkeypatch):
+    # normcase is the IDENTITY on mac — fs_key must fold explicitly there.
+    from types import SimpleNamespace
+    monkeypatch.setattr(pm, "os", SimpleNamespace(name="posix", path=os.path))
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert pm.fs_key("/A/B") == pm.fs_key("/a/b")

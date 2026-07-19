@@ -18,6 +18,8 @@ Pure: reads the state files for fingerprinting; no Flask.
 from __future__ import annotations
 
 import os
+import sys
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +52,34 @@ def same_folder(a: str | Path, b: str | Path) -> bool:
         return os.path.normcase(str(pa.resolve())) == os.path.normcase(str(pb.resolve()))
     except OSError:
         return os.path.normcase(str(pa)) == os.path.normcase(str(pb))
+
+
+def fs_key(path: str | Path) -> str:
+    """Canonical string identity of a folder for HASHING/KEYING (same OS).
+
+    :func:`same_folder` is the pairwise ground truth, but dict keys, digests
+    and lock registries need one deterministic string per folder:
+
+    * ``Path.resolve()`` — absolute, symlink-free.  POSIX ``resolve()`` does
+      NOT case-canonicalize, so case identity must be handled explicitly;
+    * NFC unicode fold — macOS hands back NFD-decomposed names, so one folder
+      can round-trip with two byte spellings;
+    * lower-case ONLY where the default filesystem is case-insensitive
+      (Windows, macOS).  ``os.path.normcase`` alone is wrong on macOS (it is
+      the identity there — case-variant spellings of one folder would key
+      apart), and lowering unconditionally is wrong on Linux: two *distinct*
+      case-variant dirs keyed together, so they shared one working copy and
+      ``apply_to_live`` wrote the WRONG live folder (proven data-loss class).
+    """
+    p = Path(path)
+    try:
+        s = str(p.resolve())
+    except OSError:     # resolve failed (exotic mount / malformed drive spec)
+        s = str(p)
+    s = unicodedata.normalize("NFC", s)
+    if os.name == "nt" or sys.platform == "darwin":
+        s = s.lower()
+    return s
 
 
 def verdict(qb_path: str | Path | None, sm_path: str | Path | None,

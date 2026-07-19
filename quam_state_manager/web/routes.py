@@ -58,6 +58,7 @@ from quam_state_manager.core import (
     diagnostics,
     gen_presets,
     node_scan,
+    path_match,
     regenerate,
     safe_io,
     scheduler,
@@ -489,7 +490,9 @@ def _refresh_live_diverged(ctx) -> None:
     # render and must never WAIT on a lock another request could hold while waiting
     # on store._lock (which would invert _reconcile_cached_quam_ctx's order). It
     # also sidesteps reading a half-written sync point mid-reconcile.
-    lock = _get_quam_build_lock(ctx["path"])
+    # fs_key: the same key _activate_quam serialises builds by — a spelling
+    # variant must not acquire a DIFFERENT lock for the same working folder.
+    lock = _get_quam_build_lock(path_match.fs_key(ctx["path"]))
     if not lock.acquire(blocking=False):
         return
     try:
@@ -549,7 +552,10 @@ def _active_wc_lock(ctx: dict | None = None) -> threading.RLock:
     """
     if ctx is None:
         ctx = _active_ctx()
-    return _get_quam_build_lock((ctx or {}).get("path") or "")
+    p = (ctx or {}).get("path") or ""
+    # fs_key so this hands back the SAME lock _activate_quam keys builds by;
+    # the empty-path sentinel must stay "" (fs_key("") would resolve to cwd).
+    return _get_quam_build_lock(path_match.fs_key(p) if p else "")
 
 
 # Working copies are created one per loaded folder and (by design) never
@@ -792,8 +798,13 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> None:
     expensive build happens OUTSIDE the lock. A racing second request
     that beats us to the insert wins; the loser discards its build.
     """
-    folder = Path(folder_path)
-    key = str(folder)
+    folder = Path(folder_path).resolve()
+    # Cache + build-lock key = the per-OS canonical folder identity
+    # (path_match.fs_key). A symlink or case-variant spelling of ONE folder
+    # used to mint TWO contexts and TWO build locks over one working folder —
+    # voiding every serialisation guarantee on it. _active_wc_lock /
+    # _refresh_live_diverged derive the SAME key from ctx["path"].
+    key = path_match.fs_key(folder)
     ctx_name = folder.parent.name
 
     # A dataset run's frozen quam_state is read-only no matter which route
@@ -867,7 +878,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> None:
                                    exc_info=True)
             ctx = {
                 "type": "quam",
-                "path": str(folder),        # the LIVE folder — context identity
+                "path": str(folder),        # the LIVE folder (resolved) — context identity
                 "live_path": str(folder),   # explicit alias for sync/apply routes
                 "origin": origin,           # "live" | "dataset_archive" (read-only)
                 "working_copy": wc,
@@ -2022,20 +2033,14 @@ def _qualibrate_listing() -> dict:
     # private working copy under instance/, which never matches a config path.
     ctx = _active_ctx()
     loaded = (ctx or {}).get("live_path")
-    loaded_resolved = None
-    if loaded:
-        try:
-            loaded_resolved = str(Path(loaded).resolve())
-        except OSError:
-            loaded_resolved = str(loaded)
     for p in listing["projects"]:
         native = p["state_path"]["native"]
-        try:
-            p["loaded_in_sm"] = bool(
-                loaded_resolved and native
-                and str(Path(native).resolve()) == loaded_resolved)
-        except OSError:
-            p["loaded_in_sm"] = False
+        # samefile-grounded (path_match.same_folder) — resolve()-equality
+        # false-negatives on case-variant spellings of ONE folder on
+        # case-insensitive hosts (POSIX resolve doesn't case-canonicalize).
+        # Either side may be None.
+        p["loaded_in_sm"] = bool(
+            loaded and native and path_match.same_folder(native, loaded))
     return listing
 
 
@@ -2057,10 +2062,9 @@ def _qualibrate_tray_badge() -> dict | None:
     ctx = _active_ctx()
     live = (ctx or {}).get("live_path")
     if live and st.get("state_native") and st.get("state_exists"):
-        try:
-            match = Path(live).resolve() == Path(st["state_native"]).resolve()
-        except OSError:
-            match = None
+        # samefile-grounded — resolve()-equality false-ambered on case-variant
+        # spellings of one folder on case-insensitive (macOS/Windows) hosts.
+        match = path_match.same_folder(live, st["state_native"])
     return {"project": st["active"], "dangling": not st["state_exists"],
             "match": match}
 
@@ -7200,7 +7204,11 @@ def workspace_remove():
             data = _load_session()
             excluded = data.get("workspace_excluded", [])
             abs_path = str(Path(folder).resolve())
-            if abs_path not in excluded:
+            # Membership via fs_key on BOTH sides — a case-variant / NFD
+            # spelling of an already-excluded folder must not append a second
+            # entry (stored spelling stays the resolved path, for display).
+            if path_match.fs_key(abs_path) not in {
+                    path_match.fs_key(e) for e in excluded}:
                 excluded.append(abs_path)
                 data["workspace_excluded"] = excluded
                 _save_session_raising(data)
@@ -7338,18 +7346,34 @@ def _has_experiment_descendant(root: Path, max_depth: int = 4) -> bool:
     return False
 
 
-def _is_system_path(p: Path) -> bool:
-    """Check if path points to a protected system directory (Windows only)."""
+def _is_system_path(p: Path, for_mkdir: bool = False) -> bool:
+    """Check if path points to a protected system directory.
+
+    Prefix matching is by whole path COMPONENTS (``Path.parts``) — the old
+    ``str.startswith`` check also blocked innocent siblings like
+    ``C:\\Windows_backup``. POSIX gets its own block list; ``/`` itself is
+    additionally protected from mkdir (browsing the root stays allowed).
+    """
     import platform
-    if platform.system() != "Windows":
-        return False
     try:
-        resolved = str(p.resolve()).lower()
+        resolved = p.resolve()
     except OSError:
         return True
-    blocked = ["c:\\windows", "c:\\program files", "c:\\program files (x86)",
-               "c:\\programdata", "c:\\$recycle.bin"]
-    return any(resolved.startswith(b) for b in blocked)
+    if platform.system() == "Windows":
+        parts = tuple(part.casefold() for part in resolved.parts)
+        blocked = [
+            ("c:\\", "windows"),
+            ("c:\\", "program files"),
+            ("c:\\", "program files (x86)"),
+            ("c:\\", "programdata"),
+            ("c:\\", "$recycle.bin"),
+        ]
+    else:
+        parts = resolved.parts
+        if for_mkdir and parts == ("/",):
+            return True
+        blocked = [("/", "proc"), ("/", "sys"), ("/", "dev"), ("/", "etc")]
+    return any(parts[:len(b)] == b for b in blocked)
 
 
 @bp.route("/browse")
@@ -7377,15 +7401,35 @@ def browse_directory():
         # POSIX: an empty path lands in the user's home — a "/" root listing
         # is rarely useful and permission-noisy. Falls through to the normal
         # directory branch so parent/".."-navigation still walks to /.
-        p = Path.home()
+        # Path.home() raises RuntimeError when HOME is unset (stripped-env
+        # service launches) — degrade to the filesystem root, never a 500.
+        try:
+            p = Path.home()
+        except RuntimeError:
+            p = Path("/")
     else:
-        p = Path(raw)
+        # "~"-forms come from hand-typed paths and replayed localStorage —
+        # expand them server-side (audit: "~/x" was treated as a RELATIVE
+        # path whose first segment is literally "~").
+        try:
+            p = Path(raw).expanduser()
+        except RuntimeError:            # "~" with no resolvable home
+            p = Path(raw)
+
+    def _isdir(d: Path) -> bool:
+        # Path.is_dir() PROPAGATES PermissionError (only ENOENT-class errnos
+        # are swallowed) — a path under a non-traversable dir must classify
+        # as missing (→ the ancestor-walk / empty branches), never a 500.
+        try:
+            return d.is_dir()
+        except OSError:
+            return False
 
     if _is_system_path(p):
         logger.warning("Browse attempt on protected system path: %s", raw)
         return jsonify({"path": raw, "dirs": [], "has_quam_state": False, "parent": ""})
 
-    if not p.is_dir():
+    if not _isdir(p):
         # Two consumers with different needs (the root-jump bug lived here —
         # the response `path` MUST always be the folder actually listed, or
         # the dialog's breadcrumbs desync and a mid-crumb click cascades to
@@ -7398,15 +7442,23 @@ def browse_directory():
         #    Recent entry or a deleted folder lands at its deepest surviving
         #    parent with truthful breadcrumbs, never at the root.
         if request.args.get("complete"):
+            # Absolute-only, like the dialog branch below — a relative input
+            # used to list the APP's CWD and return bare relative suggestions.
+            if not p.is_absolute():
+                return jsonify({"path": raw, "dirs": [], "has_quam_state": False, "parent": ""})
             parent = p.parent
-            if not parent.is_dir():
+            if not _isdir(parent):
                 return jsonify({"path": raw, "dirs": [], "has_quam_state": False, "parent": ""})
             prefix = p.name.lower()
             err = None
             try:
                 dirs = sorted(
-                    str(c) for c in parent.iterdir()
-                    if c.is_dir() and c.name.lower().startswith(prefix) and not c.name.startswith(".")
+                    (str(c) for c in parent.iterdir()
+                     if c.is_dir() and c.name.lower().startswith(prefix)
+                     # Dot-dirs surface only when the TYPED segment starts with
+                     # "." (…/.qual → ~/.qualibrate) — otherwise stay hidden.
+                     and (prefix.startswith(".") or not c.name.startswith("."))),
+                    key=str.casefold,   # display order only — paths untouched
                 )
             except PermissionError:
                 dirs, err = [], "Permission denied"
@@ -7429,9 +7481,9 @@ def browse_directory():
             return jsonify({"path": raw, "dirs": [], "has_quam_state": False,
                             "parent": "", "missing": missing})
         anc = p.parent
-        while anc != anc.parent and not anc.is_dir():
+        while anc != anc.parent and not _isdir(anc):
             anc = anc.parent
-        if not anc.is_dir():
+        if not _isdir(anc):
             return jsonify({"path": raw, "dirs": [], "has_quam_state": False,
                             "parent": "", "missing": missing})
         p = anc
@@ -7443,8 +7495,9 @@ def browse_directory():
     err = None
     try:
         children = sorted(
-            str(c) for c in p.iterdir()
-            if c.is_dir() and not c.name.startswith(".")
+            (str(c) for c in p.iterdir()
+             if c.is_dir() and not c.name.startswith(".")),
+            key=str.casefold,   # display order only — paths untouched
         )
     except PermissionError:
         children, err = [], "Permission denied"
@@ -7461,14 +7514,19 @@ def browse_directory():
 
     parent_str = "" if p.parent == p else str(p.parent)
 
+    cap = 400   # dialog cap — the old silent 50 hid most of big lab archives
     payload = {
         "path": str(p),
-        "dirs": children[:50],
+        "dirs": children[:cap],
         "has_quam_state": has_quam,
         "has_experiment_children": has_children,
         "parent": parent_str,
         **({"missing": missing} if missing else {}),
     }
+    if len(children) > cap:
+        # Honest capping — the client renders a "showing first N of M" note.
+        payload["truncated"] = True
+        payload["total"] = len(children)
 
     # kind=dataset (the Dataset-load / workspace-add pickers): mark which
     # children are dataset RUN folders (node.json / data.json — the same
@@ -7497,12 +7555,20 @@ def browse_directory():
     return jsonify(payload)
 
 
+_WIN_RESERVED_NAMES = frozenset(
+    ["CON", "PRN", "AUX", "NUL"]
+    + [f"COM{i}" for i in range(1, 10)]
+    + [f"LPT{i}" for i in range(1, 10)]
+)
+
+
 @bp.route("/mkdir", methods=["POST"])
 def make_directory():
     """Create a new subfolder inside an existing directory — the folder browser's
     'New folder' action. Same anti-traversal / system-path guards as ``/browse``;
-    the name is sanitized (non-empty, no path separators, not ``.``/``..``). Mutation
-    is origin-CSRF-gated by ``_csrf_origin_check`` (no token needed)."""
+    the name is sanitized (non-empty, no path separators, not ``.``/``..``, and
+    PORTABLE: creatable on every OS the workspace may move to). Mutation is
+    origin-CSRF-gated by ``_csrf_origin_check`` (no token needed)."""
     parent_raw = (request.form.get("path") or "").strip()
     name = (request.form.get("name") or "").strip()
     if not parent_raw:
@@ -7510,16 +7576,45 @@ def make_directory():
     if (not name or name in (".", "..") or "\0" in name
             or "/" in name or "\\" in name):
         return jsonify({"ok": False, "error": "Invalid folder name"}), 400
+    # Portable-folder policy (enforced on ALL OSes): a name Windows can't
+    # represent would strand the folder the day the workspace moves to a
+    # Windows machine — reject it up front, saying why.
+    if any(ch in name for ch in '<>:"|?*'):
+        return jsonify({"ok": False, "error":
+                        'Folder name contains <>:"|?* — not allowed on '
+                        "Windows, so the folder would not be portable"}), 400
+    if name.endswith(".") or name.endswith(" "):
+        return jsonify({"ok": False, "error":
+                        "Folder name ends with a dot or space — Windows "
+                        "silently strips these, so the folder would not be "
+                        "portable"}), 400
+    if name.split(".", 1)[0].upper() in _WIN_RESERVED_NAMES:
+        return jsonify({"ok": False, "error":
+                        f"'{name}' is a reserved device name on Windows "
+                        "(CON, PRN, AUX, NUL, COM1-9, LPT1-9), so the folder "
+                        "would not be portable"}), 400
 
-    parent = Path(parent_raw)
-    if not parent.is_dir():
+    try:
+        parent = Path(parent_raw).expanduser()
+    except RuntimeError:                # "~" with no resolvable home
+        parent = Path(parent_raw)
+    if not parent.is_absolute():
+        # A relative parent resolved against the APP's CWD (audit: created
+        # stray folders under the server's working directory).
+        return jsonify({"ok": False,
+                        "error": "Parent folder must be an absolute path"}), 400
+    try:
+        parent_ok = parent.is_dir()
+    except OSError:                     # stat under a non-traversable dir
+        parent_ok = False
+    if not parent_ok:
         return jsonify({"ok": False, "error": "Parent folder does not exist"}), 400
-    if _is_system_path(parent):
+    if _is_system_path(parent, for_mkdir=True):
         logger.warning("mkdir rejected on protected system path: %s", parent_raw)
         return jsonify({"ok": False, "error": "Protected system path"}), 403
 
     new = parent / name
-    if _is_system_path(new):
+    if _is_system_path(new, for_mkdir=True):
         return jsonify({"ok": False, "error": "Protected system path"}), 403
     try:
         new.mkdir(parents=False, exist_ok=True)
@@ -8286,7 +8381,9 @@ def _hub_working_lookup(ctx_path: str):
     then the contexts registry (covers contexts registered without passing
     through the cache, e.g. in tests)."""
     with _quam_cache_lock:
-        cached = _quam_cache.get(ctx_path)
+        # The cache is keyed by fs_key (see _activate_quam); the ref carries
+        # the ctx["path"] spelling, so derive the same key here.
+        cached = _quam_cache.get(path_match.fs_key(ctx_path) if ctx_path else "")
     if cached is not None:
         return cached.get("store")
     for ctx in current_app.config.get("contexts", {}).values():
@@ -10047,11 +10144,17 @@ def _maybe_auto_add_workspace_root(quam_state_path: str | Path) -> None:
     if chip_folder is None or not chip_folder.is_dir():
         return
     chip_str = str(chip_folder.resolve())
+    # Membership via fs_key on BOTH sides — a case-variant spelling of an
+    # already-registered root (or of an excluded folder) must not re-add it
+    # on case-insensitive-default hosts. Roots are still STORED as the
+    # resolved (unfolded) path.
+    chip_key = path_match.fs_key(chip_folder)
     ws = _ws()
-    if any(str(Path(r).resolve()) == chip_str for r in ws.root_folders):
+    if any(path_match.fs_key(r) == chip_key for r in ws.root_folders):
         return
-    excluded = set(_load_session().get("workspace_excluded", []))
-    if chip_str in excluded:
+    excluded = {path_match.fs_key(e)
+                for e in _load_session().get("workspace_excluded", [])}
+    if chip_key in excluded:
         return
     try:
         ws.add_root(chip_str)
@@ -10075,8 +10178,10 @@ def _rehydrate_workspace_from_recents() -> None:
     if not recents:
         return
     ws = _ws()
-    existing = {str(Path(r).resolve()) for r in ws.root_folders}
-    excluded = set(data.get("workspace_excluded", []))
+    # fs_key on both sides — see _maybe_auto_add_workspace_root.
+    existing = {path_match.fs_key(r) for r in ws.root_folders}
+    excluded = {path_match.fs_key(e)
+                for e in data.get("workspace_excluded", [])}
     added: list[str] = []
     for rp in recents:
         try:
@@ -10087,10 +10192,11 @@ def _rehydrate_workspace_from_recents() -> None:
             if chip_folder is None or not chip_folder.is_dir():
                 continue
             chip_str = str(chip_folder.resolve())
-            if chip_str in existing or chip_str in excluded:
+            chip_key = path_match.fs_key(chip_folder)
+            if chip_key in existing or chip_key in excluded:
                 continue
             ws.add_root(chip_str)
-            existing.add(chip_str)
+            existing.add(chip_key)
             added.append(chip_str)
         except Exception:
             continue
@@ -11289,7 +11395,12 @@ def dataset_bookmark(uid):
     if not resolved:
         return jsonify({"error": "No dataset loaded"}), 400
     ds, run_id, _ = resolved
-    new_state = ds.toggle_bookmark(run_id)
+    try:
+        new_state = ds.toggle_bookmark(run_id)
+    except OSError as exc:
+        # The store already rolled back the in-memory toggle; the disk write
+        # failed (read-only archive / permissions) — a 400, not a 500.
+        return jsonify({"error": f"dataset folder is read-only ({exc})"}), 400
     run = ds.runs.get(run_id)
     tags = list(run.tags) if run else []
     return jsonify({"bookmarked": new_state, "tags": tags, "run_id": run_id, "uid": uid})
@@ -11305,7 +11416,12 @@ def dataset_add_tag(uid):
     tag = request.json.get("tag", "").strip() if request.is_json else request.form.get("tag", "").strip()
     if not tag:
         return jsonify({"error": "No tag specified"}), 400
-    tags = ds.add_tag(run_id, tag)
+    try:
+        tags = ds.add_tag(run_id, tag)
+    except OSError as exc:
+        # In-memory change already rolled back by the store (docs: _tags_lock
+        # rollback contract) — surface the read-only folder as a 400.
+        return jsonify({"error": f"dataset folder is read-only ({exc})"}), 400
     return jsonify({"tags": tags, "run_id": run_id, "uid": uid})
 
 
@@ -11319,7 +11435,10 @@ def dataset_remove_tag(uid):
     tag = request.json.get("tag", "").strip() if request.is_json else ""
     if not tag:
         return jsonify({"error": "No tag specified"}), 400
-    tags = ds.remove_tag(run_id, tag)
+    try:
+        tags = ds.remove_tag(run_id, tag)
+    except OSError as exc:
+        return jsonify({"error": f"dataset folder is read-only ({exc})"}), 400
     return jsonify({"tags": tags, "run_id": run_id, "uid": uid})
 
 
@@ -11514,7 +11633,10 @@ def dataset_set_note(uid):
         return jsonify({"error": "No dataset loaded"}), 400
     ds, run_id, _ = resolved
     note = request.json.get("note", "") if request.is_json else request.form.get("note", "")
-    ds.set_note(run_id, note)
+    try:
+        ds.set_note(run_id, note)
+    except OSError as exc:
+        return jsonify({"error": f"dataset folder is read-only ({exc})"}), 400
     return jsonify({"note": note, "run_id": run_id, "uid": uid})
 
 
@@ -11666,6 +11788,21 @@ def generate_select_env():
                       "(e.g. /path/to/.venv/bin/python or "
                       r"C:\path\to\venv\Scripts\python.exe)."),
         }), 400
+    # A Windows interpreter selected from a POSIX app can't open the POSIX
+    # /tmp work paths every subprocess bridge hands it — the failure mode is
+    # a silent "produced no _result.json" on every later build. The ONE
+    # documented, supported bridge is WSL driving a /mnt/<drive> Windows
+    # conda env, so allow exactly that.
+    if os.name != "nt" and python_path.lower().endswith(".exe"):
+        if not (python_path.startswith("/mnt/")
+                and config_generator.running_under_wsl()):
+            return jsonify({
+                "ok": False,
+                "error": ("That's a Windows interpreter (.exe) — it can't read "
+                          "this app's POSIX work files, so every build would "
+                          "fail with 'produced no _result.json'. Pick the "
+                          "env's bin/python instead."),
+            }), 400
     config_generator.set_selected_env(current_app.instance_path, python_path)
     # The pulse-roster overlay belongs to the PREVIOUS env — clear it now; the
     # warm below re-applies the new env's roster when its probe lands.
@@ -11759,6 +11896,22 @@ def generate_allocate():
     return jsonify(outcome)
 
 
+def _ingest_abs_path(raw: str) -> tuple[str, str | None]:
+    """Normalize a user-supplied folder path from a build request: expand ``~``
+    and require an ABSOLUTE result. Returns ``(path, error)``. Audit-proven
+    failure modes this closes: ``~/chips`` built into a literal ``./~`` dir,
+    and a Windows path replayed from localStorage onto a POSIX server
+    silently built into ``$CWD/D:\\builds``."""
+    try:
+        p = Path(raw).expanduser()
+    except RuntimeError:                # "~" with no resolvable home
+        p = Path(raw)
+    if not p.is_absolute():
+        return raw, ("not an absolute path — use an absolute path, "
+                     "e.g. /Users/you/chips/out")
+    return str(p), None
+
+
 def _build_output_guard(output_path: str) -> dict | None:
     """A needs_confirm payload if building into *output_path* would clobber an
     existing chip or ingest stray JSON, else None. Two hazards: (1) an EXISTING chip
@@ -11808,6 +11961,14 @@ def generate_build():
         return jsonify({"ok": False, "errors": errors}), 400
     if not output_path:
         return jsonify({"ok": False, "error": "No output folder given."}), 400
+    output_path, path_err = _ingest_abs_path(output_path)
+    if path_err:
+        return jsonify({"ok": False, "error": f"Output folder: {path_err}"}), 400
+    if scripts_dir:
+        scripts_dir, path_err = _ingest_abs_path(scripts_dir)
+        if path_err:
+            return jsonify({"ok": False,
+                            "error": f"Scripts folder: {path_err}"}), 400
 
     python_path = config_generator.get_selected_env(current_app.instance_path)
     if not python_path:
@@ -11932,7 +12093,19 @@ def regenerate_build():
         return jsonify({"ok": False, "error": "No output folder given."}), 400
     if not source_folder:
         return jsonify({"ok": False, "error": "No source chip to merge from."}), 400
-    if Path(output_path).resolve() == Path(source_folder).resolve():
+    output_path, path_err = _ingest_abs_path(output_path)
+    if path_err:
+        return jsonify({"ok": False, "error": f"Output folder: {path_err}"}), 400
+    source_folder, path_err = _ingest_abs_path(source_folder)
+    if path_err:
+        return jsonify({"ok": False, "error": f"Source folder: {path_err}"}), 400
+    out_p, src_p = Path(output_path), Path(source_folder)
+    # samefile-grounded when the output EXISTS — a case-variant spelling on a
+    # case-insensitive FS bypasses resolve()-equality and the rebuild would
+    # write INTO the source chip (calibrations silently lost). resolve()
+    # equality stays as the cheap check for a not-yet-existing output.
+    if (path_match.same_folder(out_p, src_p) if out_p.exists()
+            else out_p.resolve() == src_p.resolve()):
         return jsonify({
             "ok": False,
             "error": "Output folder must differ from the source chip folder.",
@@ -11987,8 +12160,9 @@ _PREVIEW_SEED_TTL_S = 900.0  # 15 min; wizard build→load is usually seconds
 
 
 def _seed_key(folder) -> str:
-    s = str(Path(folder).resolve())
-    return s.lower() if os.name == "nt" else s  # match working_copy.key_for
+    # per-OS canonical folder identity — the same normalization
+    # working_copy.key_for hashes (case-folded only on Windows/macOS).
+    return path_match.fs_key(folder)
 
 
 def _stash_preview_seed(folder, files_hash: str, config, meta: dict) -> None:

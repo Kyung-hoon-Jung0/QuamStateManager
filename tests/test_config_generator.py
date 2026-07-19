@@ -391,6 +391,14 @@ class TestLineTypeFlexibility:
 
 
 class TestEnvDiscovery:
+    @pytest.fixture(autouse=True)
+    def _no_local_environments_txt(self, monkeypatch):
+        """Pin the ~/.conda/environments.txt channel empty by default so these
+        tests never see the developer machine's real registry; the dedicated
+        tests below monkeypatch a tmp HOME instead."""
+        monkeypatch.setattr(
+            config_generator, "_envs_from_environments_txt", lambda: [])
+
     def test_discover_envs_parses_conda_json(self, monkeypatch):
         monkeypatch.setattr(config_generator, "find_conda_executable", lambda: "conda")
         fake_json = json.dumps({"envs": [
@@ -419,6 +427,90 @@ class TestEnvDiscovery:
             lambda args, timeout=60: (1, "", "boom"),
         )
         assert discover_envs() == []
+
+
+class TestEnvironmentsTxtDiscovery:
+    """~/.conda/environments.txt is conda's own dialect-free env registry —
+    one absolute path per line, maintained on every OS. It needs no ``conda``
+    executable at all, which is the ONLY channel that works for a
+    Finder-launched .app running under launchd's minimal PATH."""
+
+    def _home_with_txt(self, tmp_path, monkeypatch, lines: str):
+        home = tmp_path / "home"
+        (home / ".conda").mkdir(parents=True)
+        (home / ".conda" / "environments.txt").write_text(lines, encoding="utf-8")
+        monkeypatch.setenv("HOME", str(home))          # Path.home() (POSIX)
+        monkeypatch.setenv("USERPROFILE", str(home))   # …and Windows
+        return home
+
+    def test_environments_txt_found_without_conda(self, monkeypatch, tmp_path):
+        env_a = tmp_path / "envs" / "labA"
+        (env_a / "bin").mkdir(parents=True)
+        (env_a / "bin" / "python").write_text("", encoding="utf-8")
+        # blank line + duplicate + surrounding whitespace all tolerated
+        self._home_with_txt(tmp_path, monkeypatch,
+                            f"{env_a}\n\n  {env_a}  \n")
+        monkeypatch.setattr(config_generator, "find_conda_executable", lambda: None)
+
+        envs = discover_envs()
+        assert [e["name"] for e in envs] == ["labA"]
+        assert envs[0]["path"] == str(env_a)
+        assert envs[0]["python"] == str(env_a / "bin" / "python")
+
+    def test_environments_txt_merges_and_dedupes_with_conda_json(
+            self, monkeypatch, tmp_path):
+        env_a = tmp_path / "envs" / "shared"
+        env_b = tmp_path / "envs" / "txt_only"
+        for e in (env_a, env_b):
+            e.mkdir(parents=True)
+        self._home_with_txt(tmp_path, monkeypatch, f"{env_a}\n{env_b}\n")
+        monkeypatch.setattr(config_generator, "find_conda_executable", lambda: "conda")
+        monkeypatch.setattr(
+            config_generator, "_run_command",
+            lambda args, timeout=60: (0, json.dumps({"envs": [str(env_a)]}), ""),
+        )
+
+        envs = discover_envs()
+        assert [e["name"] for e in envs] == ["shared", "txt_only"]  # no dupe
+
+    def test_environments_txt_missing_is_empty(self, monkeypatch, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+        assert config_generator._envs_from_environments_txt() == []
+
+
+class TestRunningUnderWsl:
+    """WSL detection reads /proc/version — the one documented bridge that
+    makes a Windows .exe interpreter legitimate from a POSIX app."""
+
+    def _patch_proc_version(self, monkeypatch, behaviour):
+        real_read = Path.read_text
+
+        def fake_read(self, *args, **kwargs):
+            if str(self) == "/proc/version":
+                return behaviour()
+            return real_read(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", fake_read)
+
+    def test_true_on_microsoft_kernel(self, monkeypatch):
+        self._patch_proc_version(
+            monkeypatch,
+            lambda: "Linux version 5.15.167.4-Microsoft-standard-WSL2 (gcc ...)")
+        assert config_generator.running_under_wsl() is True
+
+    def test_false_on_plain_linux(self, monkeypatch):
+        self._patch_proc_version(
+            monkeypatch, lambda: "Linux version 6.8.0-45-generic (buildd@lcy02)")
+        assert config_generator.running_under_wsl() is False
+
+    def test_false_when_proc_version_unreadable(self, monkeypatch):
+        def _raise():
+            raise OSError("no /proc here")
+        self._patch_proc_version(monkeypatch, _raise)
+        assert config_generator.running_under_wsl() is False
 
 
 class TestProbeEnv:

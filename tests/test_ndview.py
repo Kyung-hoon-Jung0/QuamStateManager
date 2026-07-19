@@ -248,3 +248,18 @@ class TestCorpusInvariants:
                     s = json.dumps(cube)
                     assert "NaN" not in s and "Infinity" not in s
         assert checked > 50, f"corpus too small ({checked}) — archive layout changed?"
+
+
+class TestH5SuffixMatching:
+    def test_list_h5_files_case_insensitive_and_hdf5(self, tmp_path):
+        """.H5/.HDF5 spellings are normal on macOS (case-preserving FS) and
+        .hdf5 aligns with dataset._resolve_fit_ref — the old exact ".h5"
+        match silently hid such files from the Data tab."""
+        (tmp_path / "DS_RAW.H5").write_bytes(b"")
+        (tmp_path / "ds_proc.hdf5").write_bytes(b"")
+        (tmp_path / "ds_fit.h5").write_bytes(b"")
+        (tmp_path / "notes.txt").write_text("x", encoding="utf-8")
+        (tmp_path / "sub.h5dir").mkdir()   # directory — never listed
+        assert ndview.list_h5_files(tmp_path) == [
+            "DS_RAW.H5", "ds_fit.h5", "ds_proc.hdf5",
+        ]

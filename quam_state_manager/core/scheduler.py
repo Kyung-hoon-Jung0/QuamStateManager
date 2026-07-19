@@ -35,7 +35,14 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from quam_state_manager.core import config_generator, history, node_inject, node_scan, safe_io
+from quam_state_manager.core import (
+    config_generator,
+    history,
+    node_inject,
+    node_scan,
+    path_match,
+    safe_io,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -279,17 +286,16 @@ def find_dataset_roots(storage_location) -> list[str]:
 # ----------------------------------------------------------------------
 
 def norm_path(p) -> str | None:
-    """Canonical comparison form for a folder path (resolve + casefold).
+    """Canonical comparison form for a folder path (per-OS identity).
 
-    Matches ``working_copy.key_for`` normalization — Windows is case-folding, so
-    we lower-case before comparing. Returns ``None`` for a falsy path.
+    Delegates to :func:`path_match.fs_key` — case-folded ONLY on hosts whose
+    default filesystem is case-insensitive (Windows/macOS); the old
+    unconditional ``.lower()`` falsely equated distinct case-variant folders
+    on Linux. Returns ``None`` for a falsy path.
     """
     if not p:
         return None
-    try:
-        return str(Path(p).resolve()).lower()
-    except OSError:
-        return str(p).lower()
+    return path_match.fs_key(p)
 
 
 def paths_equal(a, b) -> bool:
@@ -313,10 +319,11 @@ def folder_under_install(calibrations_folder, install_path) -> bool | None:
         return False
     if paths_equal(cal, inst):
         return True
-    # casefolded ancestor check (Windows)
-    inst_s = str(inst).lower()
-    cal_s = str(cal).lower()
-    return cal_s == inst_s or cal_s.startswith(inst_s.rstrip("\\/") + ("\\" if "\\" in inst_s else "/"))
+    # Ancestor check on the RESOLVED Paths — the old separator-sniffed
+    # ``startswith`` falsely equated Linux case-twins (both sides lowered)
+    # and mis-sniffed a backslash inside a POSIX dir name as a separator.
+    # Path comparison is per-OS (case-folded on Windows).
+    return cal.is_relative_to(inst)
 
 
 def align_folders(open_chip_folder, target_folder) -> str:
@@ -335,14 +342,26 @@ def storage_registered(dataset_roots, workspace_roots) -> bool:
     """
     if not dataset_roots:
         return False
-    norm_ws = [n for n in (norm_path(r) for r in (workspace_roots or [])) if n]
+    ws_paths = []
+    for r in (workspace_roots or []):
+        if not r:
+            continue
+        try:
+            ws_paths.append(Path(r).resolve())
+        except OSError:
+            continue
     for ds in dataset_roots:
-        nds = norm_path(ds)
-        if nds is None:
+        if not ds:
             return False
+        try:
+            dsp = Path(ds).resolve()
+        except OSError:
+            return False
+        # Equality via fs_key (per-OS case fold); ancestry via is_relative_to
+        # on resolved Paths — the old separator-sniffed startswith falsely
+        # matched Linux case-twins and backslash-bearing POSIX names.
         covered = any(
-            nds == w or nds.startswith(w.rstrip("\\/") + ("\\" if "\\" in w else "/"))
-            for w in norm_ws
+            paths_equal(dsp, w) or dsp.is_relative_to(w) for w in ws_paths
         )
         if not covered:
             return False

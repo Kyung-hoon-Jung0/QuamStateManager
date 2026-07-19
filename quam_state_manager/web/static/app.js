@@ -2932,6 +2932,8 @@ window.initPathAutocomplete = function(inputEl) {
             // last folder that actually listed, so Select/mkdir can't act on
             // a folder we never reached.
             if (pathInput) pathInput.value = _currentPath;
+            var failSelBtn = document.getElementById("browser-select-btn");
+            if (failSelBtn) failSelBtn.disabled = false;   // value is a good path again
         }
 
         // Defense-in-depth: a bare drive token ("D:") is CWD-relative on
@@ -2951,10 +2953,23 @@ window.initPathAutocomplete = function(inputEl) {
                 // data.path is ALWAYS the folder the server actually listed
                 // (ancestor-walk semantics for dead paths) — breadcrumbs and
                 // the selected path must mirror it, never the request.
-                _currentPath = data.path || path;
-                _lastGoodPath = _currentPath;
-                _rememberLastPath(_currentPath);
-                if (pathInput) pathInput.value = _currentPath || path;
+                // EXCEPT a dead-end response (relative junk / no surviving
+                // ancestor): the server echoes the request back (path ===
+                // missing, nothing listed). That is NOT a browsable folder —
+                // never remember it as last-good, and Select must not offer
+                // a folder that does not exist.
+                var deadEnd = !!data.missing && data.missing === data.path;
+                if (!deadEnd) {
+                    _currentPath = data.path || path;
+                    _lastGoodPath = _currentPath;
+                    _rememberLastPath(_currentPath);
+                }
+                var selBtn = document.getElementById("browser-select-btn");
+                if (selBtn) selBtn.disabled = deadEnd;
+                if (pathInput) {
+                    pathInput.value = deadEnd ? (data.path || path)
+                                              : (_currentPath || path);
+                }
                 renderBreadcrumbs(data.path || path);
                 renderFolderList(data);
                 if (data.missing) {
@@ -2998,7 +3013,11 @@ window.initPathAutocomplete = function(inputEl) {
         //   UNC       \\srv\share\x  → \\srv\share, \\srv\share\x (server+share
         //                              are one navigable unit)
         var isUNC = /^\\\\/.test(pathStr);
-        var isWin = isUNC || /^[A-Za-z]:/.test(pathStr) || pathStr.indexOf("\\") >= 0;
+        // Style from the LEADING pattern ONLY ("C:…" / "\\\\server") — a POSIX
+        // path containing a backslash inside a FILENAME used to flip the whole
+        // path to Windows splitting, corrupting every crumb (each click
+        // navigated to garbage).
+        var isWin = isUNC || /^[A-Za-z]:/.test(pathStr);
         // POSIX absolute paths get an explicit "/" crumb right after Computer:
         // "Computer" is the server's start listing ($HOME on POSIX), so the
         // filesystem root needs its own truthful, clickable crumb.
@@ -3014,7 +3033,10 @@ window.initPathAutocomplete = function(inputEl) {
             rootSlash.onclick = function() { navigateBrowser("/"); };
             container.appendChild(rootSlash);
         }
-        var parts = pathStr.split(/[\\/]/).filter(function(p) { return p; });
+        // POSIX-classified paths split on "/" ALONE — "\" is a legal filename
+        // character there, never a separator.
+        var parts = (isWin ? pathStr.split(/[\\/]/) : pathStr.split("/"))
+            .filter(function(p) { return p; });
         if (isUNC && parts.length >= 2) {
             // \\server\share is the smallest navigable UNC unit — one crumb.
             parts = ["\\\\" + parts[0] + "\\" + parts[1]].concat(parts.slice(2));
@@ -3075,7 +3097,11 @@ window.initPathAutocomplete = function(inputEl) {
             row.setAttribute("data-path", dirs[i]);
 
             var dirPath = dirs[i];
-            var name = dirPath.split(/[\\/]/).pop() || dirPath;
+            // Same LEADING-pattern style classification as the breadcrumbs —
+            // a POSIX folder name containing "\" must not be chopped at it.
+            var isWinChild = /^[A-Za-z]:/.test(dirPath) || /^\\\\/.test(dirPath);
+            var name = (isWinChild ? dirPath.split(/[\\/]/) : dirPath.split("/"))
+                .filter(function(s) { return s; }).pop() || dirPath;
             row.textContent = name;
 
             if (_browseKind === "dataset") {
@@ -3095,6 +3121,16 @@ window.initPathAutocomplete = function(inputEl) {
                 navigateBrowser(this.getAttribute("data-path"));
             };
             container.appendChild(row);
+        }
+
+        if (data.truncated) {
+            // The server capped the listing — say so instead of silently
+            // hiding the rest of a big archive.
+            var trunc = document.createElement("div");
+            trunc.className = "browser-empty browser-truncated-note";
+            trunc.textContent = "Showing first " + dirs.length + " of " +
+                (data.total || dirs.length) + " folders — type a path to narrow.";
+            container.appendChild(trunc);
         }
 
         if (_browseKind === "dataset") {
@@ -9936,7 +9972,10 @@ document.addEventListener('click', function(evt) {
     }
 
     function _shortLabel(path) {
-        var parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
+        // Display-only: split by the path's LEADING style — a POSIX folder
+        // name containing "\" must not be chopped at it.
+        var isWin = /^[A-Za-z]:/.test(path) || /^\\\\/.test(path);
+        var parts = (isWin ? path.split(/[\\/]/) : path.split("/")).filter(Boolean);
         if (parts.length === 0) return path;
         var last = parts[parts.length - 1];
         // For ".../foo/quam_state", show the parent "foo" rather than "quam_state".

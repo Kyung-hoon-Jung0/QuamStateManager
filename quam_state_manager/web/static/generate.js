@@ -237,14 +237,34 @@
       return null;
     },
     7: function () {
-      if (!getOutputPath()) return "Choose an output folder.";
-      if (state.scriptsEnabled && !getScriptsPath()) {
-        return "Choose a folder for the editable Python scripts, or untick " +
-               "the export.";
+      var out = getOutputPath();
+      if (!out) return "Choose an output folder.";
+      if (!looksAbsolutePath(out)) {
+        return "Output folder must be an absolute path (e.g. " +
+               "/home/you/chips/out or C:\\chips\\out) — got \"" + out + "\".";
+      }
+      if (state.scriptsEnabled) {
+        var sp = getScriptsPath();
+        if (!sp) {
+          return "Choose a folder for the editable Python scripts, or untick " +
+                 "the export.";
+        }
+        if (!looksAbsolutePath(sp)) {
+          return "Scripts folder must be an absolute path — got \"" + sp + "\".";
+        }
       }
       return null;
     }
   };
+
+  // A path the SERVER will accept as absolute: POSIX "/…", drive "C:\" or
+  // "C:/", or UNC "\\\\server\\share". Client-side mirror of the build routes'
+  // ingestion gate (audit: "~/chips" became a literal "./~" dir; a Windows
+  // path replayed from localStorage onto a POSIX server built into
+  // "$CWD/D:\\builds").
+  function looksAbsolutePath(p) {
+    return p.charAt(0) === "/" || /^[A-Za-z]:[\\/]/.test(p) || /^\\\\/.test(p);
+  }
 
   function root() {
     return document.getElementById("generate-root");
@@ -5297,6 +5317,14 @@
 
   // -- step 7: output folder -------------------------------------------
 
+  // Display-only basename, split by the path's LEADING style ("C:…" /
+  // "\\\\server" = Windows, else POSIX) — a POSIX folder name containing "\"
+  // must not be chopped at it.
+  function pathBasename(p) {
+    var isWin = /^[A-Za-z]:/.test(p) || /^\\\\/.test(p);
+    return (isWin ? p.split(/[\\/]/) : p.split("/")).filter(Boolean).pop() || p;
+  }
+
   // Read live from the input — the folder browser fills .value directly.
   function getOutputPath() {
     var input = document.getElementById("gen-output-path");
@@ -5635,8 +5663,7 @@
         var treeEl = document.getElementById("json-panel-tree");
         var title = document.getElementById("json-panel-title");
         if (panel && treeEl && title && typeof window.renderJsonTree === "function") {
-          title.textContent = "Generated config — " +
-            (outPath.split(/[\\/]/).pop() || outPath);
+          title.textContent = "Generated config — " + pathBasename(outPath);
           treeEl.innerHTML = "";
           window.renderJsonTree("json-panel-tree", res.config,
                                 { defaultDepth: 1, valueClick: "copy" });
@@ -5884,6 +5911,13 @@
     var outPath = getOutputPath();
     if (!outPath) {
       showMessage("Choose an output folder in step 7.", "warn");
+      return;
+    }
+    if (!looksAbsolutePath(outPath)) {
+      // Defense-in-depth (a draft-restored relative path can bypass the
+      // step-7 validator via the step chips) — the server 400s it anyway.
+      showMessage("Output folder must be an absolute path — fix it in step 7.",
+                  "warn");
       return;
     }
 

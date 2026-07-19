@@ -3178,6 +3178,64 @@ class TestGenerate:
         assert resp.status_code == 400
         assert "output" in resp.get_json()["error"].lower()
 
+    def test_build_rejects_relative_output_path(self, client):
+        resp = client.post("/generate/build", json={
+            "spec": _gen_valid_spec(), "output_path": "chips/out"})
+        assert resp.status_code == 400
+        assert "absolute path" in resp.get_json()["error"]
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX classification")
+    def test_build_rejects_windows_path_on_posix(self, client):
+        # A Windows path replayed from localStorage onto a POSIX server used
+        # to silently build into '$CWD/D:\\builds' (audit).
+        resp = client.post("/generate/build", json={
+            "spec": _gen_valid_spec(), "output_path": "D:\\builds\\out"})
+        assert resp.status_code == 400
+        assert "absolute path" in resp.get_json()["error"]
+
+    def test_build_rejects_relative_scripts_dir(self, client, tmp_path):
+        resp = client.post("/generate/build", json={
+            "spec": _gen_valid_spec(), "output_path": str(tmp_path / "out"),
+            "scripts_dir": "scripts"})
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert "scripts" in body["error"].lower()
+        assert "absolute path" in body["error"]
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="HOME semantics")
+    def test_build_expands_tilde_output_path(self, client, tmp_path, monkeypatch):
+        # '~/out' used to build into a literal './~' directory (audit).
+        from quam_state_manager.core import config_generator
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        got = {}
+        monkeypatch.setattr(
+            config_generator, "run_generator",
+            lambda py, mode, spec, out, **k: got.update(out=out) or {"ok": True},
+        )
+        client.post("/generate/select-env", json={"python": sys.executable})
+        resp = client.post("/generate/build", json={
+            "spec": _gen_valid_spec(), "output_path": "~/out"})
+        assert resp.status_code == 200
+        assert got["out"] == home / "out"
+
+    def test_regenerate_build_rejects_relative_output_path(self, client):
+        resp = client.post("/regenerate/build", json={
+            "spec": _gen_valid_spec(), "output_path": "rel/out",
+            "source_folder": "/abs/src"})
+        assert resp.status_code == 400
+        assert "absolute path" in resp.get_json()["error"]
+
+    def test_regenerate_build_rejects_relative_source_folder(self, client, tmp_path):
+        resp = client.post("/regenerate/build", json={
+            "spec": _gen_valid_spec(), "output_path": str(tmp_path / "out"),
+            "source_folder": "rel/src"})
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert "source" in body["error"].lower()
+        assert "absolute path" in body["error"]
+
     def test_build_warns_on_nonempty_output_folder(self, client, tmp_path, monkeypatch):
         """A stray .json in the output folder blocks the build with a confirm."""
         from quam_state_manager.core import config_generator
@@ -4927,10 +4985,14 @@ class TestPhase5DatasetLruLock:
 
 
 class TestPhase5ScannerSymlinkSafety:
-    """Phase 5 §4.3 — Workspace._scan_root must pin followlinks=False
-    and reject any candidate whose resolved path escapes the root."""
+    """SUPERSEDED contract (cross-platform audit): Phase 5 §4.3 originally
+    pinned followlinks=False + reject-escaping-resolved-paths, which silently
+    hid symlinked archives that DatasetStore's iterdir walk DOES find (normal
+    POSIX practice). _scan_root now follows symlinks — including ones whose
+    target lives outside the root — with loop safety moved to an inode
+    visited-set (cycle tests live in test_scanner.py)."""
 
-    def test_symlink_outside_root_is_rejected(self, tmp_path):
+    def test_symlink_outside_root_is_discovered(self, tmp_path):
         import os
         from quam_state_manager.core import scanner as scanner_mod
 
@@ -4949,10 +5011,11 @@ class TestPhase5ScannerSymlinkSafety:
 
         entries = scanner_mod._scan_root(root)
         outside_qs_real = outside_qs.resolve()
-        for e in entries:
-            assert e.quam_state_path.resolve() != outside_qs_real, (
-                "scanner followed a symlink outside the workspace root"
-            )
+        assert any(e.quam_state_path.resolve() == outside_qs_real
+                   for e in entries), (
+            "symlinked archive outside the root must be discovered "
+            "(DatasetStore parity)"
+        )
 
 
 class TestPhase5LocalStorageHelpers:
@@ -6028,3 +6091,107 @@ class TestBatchUndoAtomic:
         # A lone edit still undoes (group_id None → standalone).
         u = loaded_client.post("/undo")
         assert "cellsReverted" in u.headers.get("HX-Trigger", "")
+
+
+# ---------------------------------------------------------------------------
+# Cross-platform audit: select-env .exe-on-POSIX refusal + read-only dataset
+# folders surfacing as 400 (not 500) on the tag/bookmark/note routes
+# ---------------------------------------------------------------------------
+
+
+class TestSelectEnvPosixExeRefusal:
+    """Every subprocess bridge hands the child POSIX /tmp work paths; a
+    Windows interpreter can't open them, so builds die with a silent
+    'produced no _result.json'. The route must refuse a .exe pick on POSIX —
+    except the documented WSL bridge (/mnt/<drive> path + microsoft kernel)."""
+
+    @pytest.mark.skipif(__import__("os").name == "nt", reason="POSIX-only gate")
+    def test_exe_rejected_on_posix_outside_wsl(self, client, tmp_path, monkeypatch):
+        from quam_state_manager.core import config_generator
+        monkeypatch.setattr(config_generator, "running_under_wsl", lambda: False)
+        exe = tmp_path / "python.exe"
+        exe.write_text("", encoding="utf-8")    # real file → passes the is-file gate
+        resp = client.post("/generate/select-env", json={"python": str(exe)})
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert data["ok"] is False
+        assert "bin/python" in data["error"]    # actionable: what to pick instead
+        # Nothing was persisted.
+        assert client.get("/generate/envs").get_json()["selected"] != str(exe)
+
+    @pytest.mark.skipif(__import__("os").name == "nt", reason="POSIX-only gate")
+    def test_mnt_exe_rejected_when_not_wsl(self, client, monkeypatch):
+        from quam_state_manager.core import config_generator
+        monkeypatch.setattr(config_generator, "running_under_wsl", lambda: False)
+        fake = "/mnt/c/envs/qm/python.exe"
+        real_is_file = Path.is_file
+        monkeypatch.setattr(
+            Path, "is_file",
+            lambda self: True if str(self) == fake else real_is_file(self))
+        resp = client.post("/generate/select-env", json={"python": fake})
+        assert resp.status_code == 400
+
+    @pytest.mark.skipif(__import__("os").name == "nt", reason="POSIX-only gate")
+    def test_mnt_exe_allowed_under_wsl(self, client, monkeypatch):
+        from quam_state_manager.core import config_generator
+        monkeypatch.setattr(config_generator, "running_under_wsl", lambda: True)
+        fake = "/mnt/c/envs/qm/python.exe"
+        real_is_file = Path.is_file
+        monkeypatch.setattr(
+            Path, "is_file",
+            lambda self: True if str(self) == fake else real_is_file(self))
+        resp = client.post("/generate/select-env", json={"python": fake})
+        assert resp.status_code == 200
+        assert resp.get_json()["ok"] is True
+        assert client.get("/generate/envs").get_json()["selected"] == fake
+
+
+class TestTagRoutesReadOnlyFolder:
+    """The store's tag/bookmark/note mutators roll back their in-memory change
+    and re-raise OSError when the disk write fails (read-only archive) — the
+    routes must turn that into an actionable 400, not a blank 500."""
+
+    def _app_with_run(self, tmp_path):
+        from tests.test_multifolder_datasets import _seed_run, _app_with_folders
+        from quam_state_manager.web import routes
+        fa = tmp_path / "chipA"
+        _seed_run(fa, 1)
+        app, c = _app_with_folders(tmp_path, [fa])
+        with app.app_context():
+            key = routes._folder_key(fa)
+        return c, key
+
+    def _raiser(self, *args, **kwargs):
+        raise OSError("Read-only file system: 'tags.json'")
+
+    def test_bookmark_oserror_is_400(self, tmp_path, monkeypatch):
+        from quam_state_manager.core.dataset import DatasetStore
+        c, key = self._app_with_run(tmp_path)
+        monkeypatch.setattr(DatasetStore, "toggle_bookmark", self._raiser)
+        r = c.post(f"/dataset/{key}:1/bookmark")
+        assert r.status_code == 400
+        assert "read-only" in r.get_json()["error"]
+
+    def test_add_tag_oserror_is_400(self, tmp_path, monkeypatch):
+        from quam_state_manager.core.dataset import DatasetStore
+        c, key = self._app_with_run(tmp_path)
+        monkeypatch.setattr(DatasetStore, "add_tag", self._raiser)
+        r = c.post(f"/dataset/{key}:1/tag", json={"tag": "good"})
+        assert r.status_code == 400
+        assert "read-only" in r.get_json()["error"]
+
+    def test_remove_tag_oserror_is_400(self, tmp_path, monkeypatch):
+        from quam_state_manager.core.dataset import DatasetStore
+        c, key = self._app_with_run(tmp_path)
+        monkeypatch.setattr(DatasetStore, "remove_tag", self._raiser)
+        r = c.delete(f"/dataset/{key}:1/tag", json={"tag": "good"})
+        assert r.status_code == 400
+        assert "read-only" in r.get_json()["error"]
+
+    def test_note_oserror_is_400(self, tmp_path, monkeypatch):
+        from quam_state_manager.core.dataset import DatasetStore
+        c, key = self._app_with_run(tmp_path)
+        monkeypatch.setattr(DatasetStore, "set_note", self._raiser)
+        r = c.post(f"/dataset/{key}:1/note", json={"note": "hello"})
+        assert r.status_code == 400
+        assert "read-only" in r.get_json()["error"]

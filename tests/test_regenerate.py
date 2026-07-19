@@ -21,6 +21,35 @@ def test_same_folder_guard(tmp_path):
     assert "must differ" in (out["error"] or "")
 
 
+def test_same_folder_guard_symlink_spelling(tmp_path):
+    # An alias spelling of the source dir must trip the samefile-grounded
+    # guard — the build would otherwise write INTO the source chip.
+    src = tmp_path / "chip"
+    src.mkdir()
+    alias = tmp_path / "alias"
+    try:
+        alias.symlink_to(src)
+    except OSError:                     # unprivileged Windows
+        pytest.skip("symlinks unavailable")
+    out = regenerate.run_regenerate("py", src, {"qubits": []}, alias)
+    assert out["merge"] is None
+    assert "must differ" in (out["error"] or "")
+
+
+def test_same_folder_guard_case_insensitive_host(tmp_path, monkeypatch):
+    # On macOS/Windows a case-variant spelling IS the source dir, but POSIX
+    # resolve() doesn't case-canonicalize so resolve()-equality misses it.
+    # Simulate the case-insensitive samefile verdict; the guard must fire.
+    src = tmp_path / "Chip"
+    src.mkdir()
+    out_dir = tmp_path / "chip"
+    out_dir.mkdir()                     # exists → same_folder branch is taken
+    monkeypatch.setattr(regenerate.path_match, "same_folder", lambda a, b: True)
+    out = regenerate.run_regenerate("py", src, {"qubits": []}, out_dir)
+    assert out["merge"] is None
+    assert "must differ" in (out["error"] or "")
+
+
 def test_build_failure_passthrough(tmp_path, monkeypatch):
     monkeypatch.setattr(
         regenerate.config_generator, "run_generator",

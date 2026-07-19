@@ -198,6 +198,30 @@ class TestResolveHistory:
             cs.resolve_source("hist:LabA/20990101_000000", cs.SourcePool(),
                               history_root=tmp_path)
 
+    def test_hist_traversal_shaped_ref_rejected(self, tmp_path):
+        # chip/ts are joined onto history_root; a "..\.."-shaped segment
+        # escapes it on Windows (backslash is a separator there) — reject
+        # pre-join on every OS.
+        bads = [
+            "hist:../../etc/20260101_000000",       # chip_key with /
+            "hist:..\\..\\etc/20260101_000000",     # chip_key with \
+            "hist:../20260101_000000",              # chip_key = ..
+            "hist:LabA/..",                         # ts not stamp-shaped
+            "hist:LabA/20260101_000000\\..",        # ts with a \ tail
+            "hist:LabA/20260101_000000extra",       # ts with a suffix
+        ]
+        for bad in bads:
+            with pytest.raises(cs.SourcePermanentError):
+                cs.resolve_source(bad, cs.SourcePool(), history_root=tmp_path)
+
+    def test_hist_bare_v1_stamp_still_resolves(self, tmp_path):
+        # v1 snapshot dirs have no microsecond tail — the guard must accept them.
+        root = tmp_path / "history"
+        _write_full(root / "LabA" / "20260405_125430")
+        src = cs.resolve_source("hist:LabA/20260405_125430",
+                                cs.SourcePool(), history_root=root)
+        assert src.origin == "history"
+
 
 # ===========================================================================
 # identity tokens (amendment A1)

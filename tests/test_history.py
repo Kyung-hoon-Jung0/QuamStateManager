@@ -164,6 +164,27 @@ def test_load_snapshot_cached(hm: HistoryManager, quam_path: Path):
     assert store1 is store2
 
 
+def test_load_snapshot_rejects_traversal_shaped_timestamp(hm: HistoryManager, quam_path: Path):
+    # `timestamp` is joined onto the history dir; a "..\.."-shaped URL segment
+    # escapes the root on Windows (backslash is a separator there). Anything
+    # that isn't a _ts_stamp-shaped dir name must raise KeyError pre-join.
+    import pytest
+    for bad in ("..", "../..", "..\\..\\other", "20260101_000000\\..",
+                "20260101_000000/../x", "nope", "", "20260101_000000extra"):
+        with pytest.raises(KeyError):
+            hm.load_snapshot(quam_path, bad)
+
+
+def test_load_snapshot_accepts_all_stamp_shapes(hm: HistoryManager, quam_path: Path):
+    # Bare v1 stamps and the fraction-suffixed v2 stamps both validate; a real
+    # snapshot (whatever suffix _ts_stamp produced) still loads.
+    from quam_state_manager.core.history import _HIST_TS_RE
+    for ok in ("20260101_000000", "20260101_000000_1234", "20260101_000000_123456"):
+        assert _HIST_TS_RE.match(ok)
+    meta = hm.check_and_snapshot(quam_path, "auto")
+    assert hm.load_snapshot(quam_path, meta.timestamp) is not None
+
+
 # ---------------------------------------------------------------------------
 # Diff operations
 # ---------------------------------------------------------------------------

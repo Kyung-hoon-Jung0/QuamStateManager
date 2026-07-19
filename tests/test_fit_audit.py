@@ -404,3 +404,34 @@ def test_anchor_qspec_236_all_agree():
     r = FA.audit_run("1Q_08_qubit_spectroscopy", _QS236, _VENV, _SRC)
     assert r["counts"]["reject"] == 0
     assert r["counts"]["agrees"] == 5
+
+
+# ---------------------------------------------------------------------------
+# Cross-platform audit: ns-resolution run fingerprint + atomic settings write
+# ---------------------------------------------------------------------------
+
+def test_run_fingerprint_sees_same_second_same_size_rewrite(tmp_path):
+    """int(st_mtime) second-truncation made a same-second same-size rewrite
+    invisible → a stale cached verdict; the fingerprint must use st_mtime_ns."""
+    p = tmp_path / "node.json"
+    p.write_text("{}", encoding="utf-8")
+    base = 1_700_000_000 * 10**9
+    os.utime(p, ns=(base, base))
+    fp1 = FA._run_fingerprint(tmp_path)
+    # 0.5 ms later: same integer second, same size — only the ns part moved.
+    os.utime(p, ns=(base + 500_000, base + 500_000))
+    fp2 = FA._run_fingerprint(tmp_path)
+    assert fp1 != fp2
+
+
+def test_set_audit_source_root_atomic_no_tmp_left(tmp_path):
+    """The shared settings file is written via safe_io.atomic_write_json now —
+    no plain write_text, no .tmp leftovers, other keys preserved."""
+    from quam_state_manager.core import config_generator as CG
+    CG.set_selected_env(tmp_path, "/envs/qm/bin/python")
+    FA.set_audit_source_root(tmp_path, "/src/superconducting")
+    assert list(Path(tmp_path).glob("*.tmp")) == []
+    data = json.loads(
+        (Path(tmp_path) / "config_generator.json").read_text(encoding="utf-8"))
+    assert data["selected_env_python"] == "/envs/qm/bin/python"
+    assert data["fit_audit_source_root"] == "/src/superconducting"

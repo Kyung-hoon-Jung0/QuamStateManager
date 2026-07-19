@@ -20,7 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from . import config_generator, regen_merge, regen_script, regen_spec, safe_io
+from . import config_generator, path_match, regen_merge, regen_script, regen_spec, safe_io
 
 
 def reconstruct_from_folder(folder: Path | str) -> regen_spec.ReconstructedSpec:
@@ -66,7 +66,13 @@ def run_regenerate(
     """
     old_folder = Path(old_folder)
     out_dir = Path(out_dir)
-    if old_folder.resolve() == out_dir.resolve():
+    # Same-folder guard: samefile-grounded when the output EXISTS — a
+    # case-variant spelling on a case-insensitive FS bypasses resolve()
+    # equality (POSIX resolve doesn't case-canonicalize) and the build would
+    # write INTO the source chip, silently losing its calibrations.
+    # resolve()-equality stays as the cheap check for a not-yet-existing output.
+    if (path_match.same_folder(old_folder, out_dir) if out_dir.exists()
+            else old_folder.resolve() == out_dir.resolve()):
         return {**config_generator._blank_outcome(),
                 "error": "output folder must differ from the source chip folder",
                 "merge": None}
