@@ -13340,8 +13340,18 @@ def dataset_autofit_diagnose(uid):
     # whole UNC string.
     refit_figs = [Path(str(f).replace("\\", "/")).name
                   for f in row.get("refit_figures") or []]
+    # per-target apply payload lives in a JSON <script> block (tojson-escaped)
+    # — NEVER inlined into an onclick attribute (a double-quoted attr can't
+    # hold tojson's double quotes, and archive strings could break out)
+    diag_data = {
+        "family": row.get("family"),
+        "parameters": row.get("parameters") or {},
+        "targets": {q: (t.get("fresh_full") or t.get("fresh") or {})
+                    for q, t in (row.get("targets") or {}).items()},
+    }
     return render_template("_autofit_diagnose.html", uid=uid, row=row,
                            safe_uid=safe, refit_figs=refit_figs,
+                           diag_data=diag_data,
                            chip_token=_active_chip_token() or "")
 
 
@@ -13392,8 +13402,12 @@ def autofit_diagnose_rows():
                                            current_value_of)
         power = None
         if fam.key == af_power.POWER_COUPLED_FAMILY:
+            # the feedline port resolves through the wiring pointer chain
+            # (`#/wiring/…/opx_output` → `#/ports/…`), so power rows MUST see
+            # the MERGED state+wiring view — store.state alone lacks the
+            # `wiring` key and every port lookup would (silently) refuse.
             pr = af_power.coupled_power_rows(fam.key, target, dict(fresh),
-                                             store.state)
+                                             store.merged)
             rows = rows + pr["rows"]
             power = {"applied": bool(pr["rows"]), "skipped": pr["skipped"],
                      "warnings": pr["warnings"]}

@@ -63,17 +63,29 @@ class RealBackend:
                  attempt: int, abort: threading.Event) -> StepRunResult:
         inst = self.adapter.instance_path
         source = self.resolved_files.get(step.id)
-        # v2 runtime-inserted steps (docs/56 v2) aren't in the plan-start map:
-        # a wide verification / escalation continuation re-runs the ORIGINAL
-        # step's file; an escalation re-cal carries the engine-resolved path
-        # (scan-candidate-derived, never client input) in step.node.
+        # v2 runtime-inserted steps (docs/56 v2) aren't in the plan-start map.
+        # Resolve by KIND — a cross-node re-cal runs a DIFFERENT family's node
+        # and MUST use its engine-resolved path (scan-candidate-derived, never
+        # client input); it is fail-closed rather than ever falling back to
+        # the ORIGINAL node id (which would make cross-node escalation a silent
+        # no-op on hardware). A verify_wide / escalation CONTINUATION re-runs
+        # the original step's file (its own node if node-based, else base id).
+        if not source and step.inserted_by == "escalation_recal":
+            if step.node and Path(step.node).is_file():
+                source = step.node
+            else:
+                return StepRunResult(
+                    status="failed",
+                    error=f"escalation re-cal {step.id!r}: node {step.node!r} "
+                          "unresolved (refusing to run the original node)")
         if not source and step.verify_of:
-            source = self.resolved_files.get(step.verify_of)
+            # verify_of may itself be a runtime id (a verify of an escalation
+            # continuation) — fall back to the ROOT plan-step id
+            source = (self.resolved_files.get(step.verify_of)
+                      or self.resolved_files.get(step.verify_of.split("__")[0]))
         if not source and step.inserted_by == "escalation":
-            source = self.resolved_files.get(step.id.rsplit("__", 1)[0])
-        if not source and step.inserted_by and step.node \
-                and Path(step.node).is_file():
-            source = step.node
+            source = (step.node if step.node and Path(step.node).is_file()
+                      else self.resolved_files.get(step.id.rsplit("__", 1)[0]))
         if not source:
             return StepRunResult(status="failed",
                                  error=f"step {step.id!r}: no resolved node file")

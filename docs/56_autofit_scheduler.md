@@ -448,6 +448,57 @@ the re-cal works. `gates._edge_hint` is spike-hardened (adjacent-pair
 smoothing + 1.3× interior-dominance — flat noise's smoothed max otherwise
 hints a direction ~30% of the time).
 
+## 6X. v2 adversarial-review fixes (2026-07-19, 5-lens × 3-refuter panel)
+
+A post-implementation review (9 confirmed findings; many "killed" ones were
+verifier-limit casualties re-checked by hand against the code) fixed the
+following — all pinned:
+
+- **RealBackend ran the WRONG node for escalation re-cals (CRITICAL).** The
+  `__recal` step's base-id fallback shadowed its engine-resolved `step.node`,
+  so on hardware the cross-node re-cal re-ran the ORIGINAL failing node — a
+  silent no-op (sim masked it by resolving via `family`). Fix: recals carry a
+  distinct `inserted_by="escalation_recal"` and resolve **fail-closed** to
+  `step.node` only (never the base id); continuations (`__retry`) resolve via
+  `verify_of`/base-id. `tests/test_autofit_realbackend.py::TestInsertedStep
+  Resolution`.
+- **§6G coupled power apply was DEAD in production (CRITICAL).** The diagnose
+  route passed `store.state` (no `wiring` key) to `coupled_power_rows`, so the
+  `#/wiring/…/opx_output` pointer chase always died and every rvp power write
+  silently refused. Fix: pass `store.merged`.
+  `test_autofit_power_rows.py::test_needs_the_merged_view_not_raw_state`.
+- **Confirm-card onclick attribute-injection XSS + dead flow (CRITICAL).**
+  `tojson` inlined into a double-quoted `onclick` breaks out on the first
+  `"` (archive-string injection, and the flow was dead in a real browser).
+  Fix: apply payload ships in a `tojson`-escaped `<script type="application/
+  json">` block; buttons carry only `data-af-target`; a delegated listener
+  reads the JSON. DOM still built via `textContent`.
+- **Scan-seed leaks (MAJOR).** A seed was never restored when the target
+  failed in an escalation continuation (key mismatch) or on abort/crash. Fix:
+  `_run_step` wraps the body in try/finally that CAS-restores any seed keyed
+  to the step; the escalation handoff undoes the failed hypothesis before the
+  continuation sweeps.
+- **verify_wide skipped by early exits (MAJOR).** Escalation-return / final-
+  attempt crash (`fam=None`) / co-pending-converged targets bypassed the wide
+  verification (unverified discovery adopted). Fix: `_maybe_verify_wide`
+  resolves the family from the STEP (not the last run) and fires before the
+  escalation return too.
+- **Verify-fail revert was a no-op for forward-applied discoveries (MAJOR).**
+  The discovery captured the node's (empty) patch list. Fix: `_decide` records
+  the ACTUAL applied write (node patches OR forward rows as replace-patches)
+  in `_last_write`; the discovery capture uses it.
+- **Seeded discovery reverted only to the SEED, not pre-plan; defer dropped a
+  seed.** Fix: the discovery chains each seeded path's `old` back to the
+  pre-seed value (`_last_seed_old`, path-normalized); the defer branch
+  CAS-restores an outstanding seed instead of dropping it.
+- **Relative-pointer feedline sibling silently skipped.** A readout qubit
+  whose `opx_output` doesn't resolve to a concrete port now REFUSES the whole
+  block (never a partial feedline rescale). `_resolve_ref_path` returns None
+  on a terminal pointer string (a port is a dict).
+- **window_failures carried into the continuation** (`carry_window_failure`)
+  so LOOP_STUDY case A's recovery is verified even when it converges on the
+  continuation's first attempt.
+
 ## 7. Explicit non-goals (v1)
 
 - No LLM-emitted numbers anywhere (incl. reverts, window math) — doctrinal.

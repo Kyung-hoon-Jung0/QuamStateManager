@@ -53,8 +53,11 @@ def _get(state: dict, dotted: str) -> Any:
 
 
 def _resolve_ref_path(state: dict, dotted: str) -> str | None:
-    """Follow ``#/…`` reference strings from *dotted* to the final dotted
-    path (not the value). Returns None when the walk dies or loops."""
+    """Follow ``#/…`` absolute reference strings from *dotted* to the final
+    dotted path of the CONCRETE port object. Returns None when the walk dies,
+    loops, or lands on a value that is still a pointer string — a relative
+    ``#./`` / ``#../`` pointer we deliberately don't follow (a concrete port
+    is a dict, so a terminal string means 'unresolved', never a real port)."""
     path = dotted
     for _ in range(_MAX_REF_HOPS):
         try:
@@ -64,6 +67,8 @@ def _resolve_ref_path(state: dict, dotted: str) -> str | None:
         if isinstance(val, str) and val.startswith("#/"):
             path = val[2:].replace("/", ".")
             continue
+        if isinstance(val, str):
+            return None            # a leftover relative pointer — unresolved
         return path
     return None
 
@@ -154,13 +159,25 @@ def coupled_power_rows(fam_key: str, target: str, fresh: dict,
         for q in (state.get("qubits") or {}):
             if q == target:
                 continue
-            if _resonator_port(state, q) != port_path:
-                continue
             sib_path = f"qubits.{q}.resonator.operations.readout.amplitude"
             try:
                 sib_cur = _get(state, sib_path)
             except (KeyError, TypeError):
                 continue                      # no readout op — not a member
+            sib_port = _resonator_port(state, q)
+            if sib_port is None:
+                # HAS a readout amp but its feedline is unresolvable (e.g. a
+                # relative #../ / #./ opx_output pointer we don't follow) —
+                # we can't prove it's NOT on this line, so a silent skip could
+                # leave its power shifted. Refuse the whole block.
+                if _is_num(sib_cur):
+                    return refuse(
+                        f"feedline membership of {q} is unresolvable (its "
+                        "readout port pointer did not resolve) — refusing to "
+                        "risk a partial feedline rescale")
+                continue
+            if sib_port != port_path:
+                continue                      # a different feedline
             if not _is_num(sib_cur):
                 return refuse(
                     f"feedline sibling {q}'s readout amplitude is not a "

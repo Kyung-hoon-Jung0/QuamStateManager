@@ -140,6 +140,28 @@ class TestCoupledRows:
         assert out["rows"] == []
         assert "not a literal number" in out["skipped"]
 
+    def test_needs_the_merged_view_not_raw_state(self):
+        """The port resolves through `#/wiring/...` — a raw state.json without
+        the `wiring` key must REFUSE (the route must pass store.merged, not
+        store.state; the reviewed 'dead in production' bug)."""
+        merged = _dummy_state()
+        raw = {k: v for k, v in merged.items() if k != "wiring"}
+        assert power_rows.coupled_power_rows(RVP, "qA1", _fresh(), raw)["rows"] \
+            == []      # no wiring → port unresolvable → refuse
+        assert power_rows.coupled_power_rows(
+            RVP, "qA1", _fresh(), merged)["rows"]     # merged → resolves
+
+    def test_readout_qubit_with_unresolvable_port_refuses_rescale(self):
+        """A feedline sibling that HAS a readout amp but whose port pointer
+        doesn't resolve (e.g. a relative pointer) can't be proven off-line —
+        refuse rather than silently skip its rescale."""
+        state = _dummy_state()
+        # qA2 keeps its readout amp but its port pointer becomes unresolvable
+        state["wiring"]["qubits"]["qA2"]["rr"]["opx_output"] = "#../nope"
+        out = power_rows.coupled_power_rows(RVP, "qA1", _fresh(), state)
+        assert out["rows"] == []
+        assert "unresolvable" in out["skipped"]
+
 
 # ---------------------------------------------------------------------------
 # real-archive golden tier (auto-skips off this workstation)

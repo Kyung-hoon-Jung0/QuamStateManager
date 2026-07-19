@@ -44,10 +44,15 @@ class Step:
     only_targets: tuple = ()       # restrict to these targets (verify/retry)
     verify_of: str = ""            # this step wide-verifies that step's find
     inserted_by: str = ""          # "" | verify_wide | escalation
+    # targets that had window-class failures before this continuation — a
+    # convergence here (even on attempt 0) counts as a discovery and earns
+    # the post-discovery wide verification (docs/56 v2, LOOP_STUDY case A)
+    carry_window_failure: tuple = ()
 
     def as_dict(self) -> dict:
         d = asdict(self)
         d["only_targets"] = list(self.only_targets)
+        d["carry_window_failure"] = list(self.carry_window_failure)
         return d
 
 

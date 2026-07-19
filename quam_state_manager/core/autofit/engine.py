@@ -185,6 +185,13 @@ class PlanEngine:
         # (step_id, target) → {"patches": [...]}: a value DISCOVERED on a
         # retry after window-class failures, pending wide verification
         self._discoveries: dict[tuple[str, str], dict] = {}
+        # the replace-patches of the write _decide just applied (node's own
+        # patches OR the engine's forward-applied rows) — read once by the
+        # discovery capture in _run_step_inner right after _decide returns
+        self._last_write: list[dict] = []
+        # {path: pre-seed value} for the seed _decide just consumed on a pass —
+        # lets the discovery capture chain a verify-fail revert past the seed
+        self._last_seed_old: dict[str, Any] = {}
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -303,17 +310,33 @@ class PlanEngine:
 
     def _run_step(self, step: Step, alive: list[str],
                   queue: deque[Step] | None = None) -> None:
+        try:
+            self._run_step_inner(step, alive, queue)
+        finally:
+            # SAFETY NET (docs/56 v2 rail ③): any scan seed written this step
+            # and not already consumed (pass) or restored (terminal fail) —
+            # i.e. leaked by an abort / skip / crash / escalation handoff —
+            # goes back to its pre value. A deliberately-shifted frequency
+            # must never linger on the chip. Consumed/restored seeds were
+            # already popped, so this is a no-op on the normal path.
+            for sid, tgt in [k for k in self._seeds if k[0] == step.id]:
+                self._restore_seed(sid, tgt)
+
+    def _run_step_inner(self, step: Step, alive: list[str],
+                        queue: deque[Step] | None = None) -> None:
         pending = list(alive)
         attempt = 0
         params = dict(step.params)
         # per-failure-mode ladder position (a mode's rung advances each time
         # THAT mode drives an adaptation, independent of other modes)
         mode_counts: dict[str, int] = {}
-        # targets whose earlier attempts failed window-class → a later pass
-        # is a DISCOVERY (wide verification due)
-        window_failures: set[str] = set()
+        # targets that had window-class failures → a later pass is a DISCOVERY
+        # (wide verification due). Seeded from the escalation-continuation
+        # carry so case-A recovery earns verification even if it converges on
+        # this continuation's attempt 0.
+        carried: set[str] = set(step.carry_window_failure)
+        window_failures: set[str] = set(carried)
         discovered: set[str] = set()
-        fam = None      # last attempt's family (post-loop verify gate)
         while pending and attempt <= step.retry_max \
                 and not self.abort_event.is_set():
             with self._lock:
@@ -374,14 +397,24 @@ class PlanEngine:
                     retry_mode = retry_mode or v.failure_mode
                     if v.failure_mode in _WINDOW_MODES:
                         window_failures.add(t)
-                elif decision in ("keep", "applied") and attempt > 0 \
-                        and t in window_failures:
+                elif decision in ("keep", "applied") and t in window_failures \
+                        and (attempt > 0 or t in carried):
                     # a window-class failure chain that CONVERGED — record the
-                    # discovery (its patches back the verify-fail revert)
+                    # discovery keyed to the ACTUAL write (node patches OR the
+                    # engine's forward-applied rows, captured in _decide) so
+                    # the verify-fail revert isn't a no-op for forward writes.
+                    # Where the write sits on a SEEDED path, chain its revert
+                    # back to the ORIGINAL pre-seed value (not the seed) so a
+                    # verify-fail undoes the whole hypothesis (docs/56 v2).
+                    disc = [dict(p) for p in self._last_write]
+                    for p in disc:
+                        # node patches are slash paths, forward rows + seeds
+                        # are dotted — normalize before the seed-old lookup
+                        dotted = patch_path_to_dotted(p.get("path", ""))
+                        if dotted in self._last_seed_old:
+                            p["old"] = self._last_seed_old[dotted]
                     discovered.add(t)
-                    tp = [p for p in ((res.run or {}).get("patches") or [])
-                          if _patch_target(p) == t]
-                    self._discoveries[(step.id, t)] = {"patches": tp}
+                    self._discoveries[(step.id, t)] = {"patches": disc}
             if orphan_patches and any_reject:
                 paths = [patch_path_to_dotted(p.get("path", ""))
                          for p in orphan_patches]
@@ -403,31 +436,42 @@ class PlanEngine:
                     step, fam, retry_mode, params, mode_counts, pending,
                     verdicts, attempt, queue)
                 if escalated:
-                    # the retry continues AFTER the inserted re-cal step —
-                    # this step's loop ends here (cells stay 'retrying')
-                    return
+                    # targets that CONVERGED earlier in this step still deserve
+                    # their wide verification before the plan trusts them, even
+                    # though the step ends here for the escalating ones (their
+                    # continuation carries window_failures so it can verify too)
+                    self._maybe_verify_wide(step, discovered, params, queue)
+                    return                     # (finally restores leaked seeds)
             attempt += 1
 
-        # post-discovery wide verification (LOOP_STUDY case A: the operator
-        # verified a recovered peak with a broad survey before trusting it).
-        # ``fam`` is the last attempt's family (always bound: the loop runs
-        # at least once and early exits return before reaching here).
+        self._maybe_verify_wide(step, discovered, params, queue)
+
+    def _maybe_verify_wide(self, step: Step, discovered: set[str],
+                           params: dict, queue: deque[Step] | None) -> None:
+        """Insert the post-discovery wide verification (LOOP_STUDY case A: a
+        recovered feature is re-checked with a broad survey before it is
+        trusted). Family is resolved from the STEP — never the last run —
+        so a final-attempt crash / escalation-return can't skip it."""
+        if not discovered or queue is None or step.verify_of \
+                or step.inserted_by == "verify_wide":
+            return
+        fam = fam_mod.family_for(step.family or step.node or "")
         vw = getattr(fam, "verify_wide", None) if fam is not None else None
-        if discovered and vw and queue is not None and not step.verify_of \
-                and step.inserted_by != "verify_wide":
-            span_param = vw.get("span_param", "frequency_span_in_mhz")
-            span = float(params.get(span_param, vw.get("span_default", 60.0)))
-            vparams = {**params, span_param: span * float(vw.get("factor", 4.0))}
-            vstep = Step(id=f"{step.id}__verify_wide", node=step.node,
-                         family=step.family,
-                         label=f"wide verification of {step.id}",
-                         params=vparams, retry_max=0,
-                         criticality=step.criticality,
-                         only_targets=tuple(sorted(discovered)),
-                         verify_of=step.id, inserted_by="verify_wide")
-            queue.appendleft(vstep)
-            self._ledger("verify_wide_inserted", step=step.id,
-                         targets=sorted(discovered), params=vparams)
+        if not vw:
+            return
+        span_param = vw.get("span_param", "frequency_span_in_mhz")
+        span = float(params.get(span_param, vw.get("span_default", 60.0)))
+        vparams = {**params, span_param: span * float(vw.get("factor", 4.0))}
+        vstep = Step(id=f"{step.id}__verify_wide", node=step.node,
+                     family=step.family,
+                     label=f"wide verification of {step.id}",
+                     params=vparams, retry_max=0,
+                     criticality=step.criticality,
+                     only_targets=tuple(sorted(discovered)),
+                     verify_of=step.id, inserted_by="verify_wide")
+        queue.appendleft(vstep)
+        self._ledger("verify_wide_inserted", step=step.id,
+                     targets=sorted(discovered), params=vparams)
 
     # ---- adaptation ladder (docs/56 v2) ----------------------------------
 
@@ -469,9 +513,9 @@ class PlanEngine:
             return params, False
 
         if rung.kind == "escalate" and rung.escalate_family:
-            if step.inserted_by == "escalation" or queue is None:
+            if step.inserted_by.startswith("escalation") or queue is None:
                 self._ledger("escalation_blocked", step=step.id,
-                             reason="already an escalation continuation")
+                             reason="already an escalation step (no re-escalate)")
                 return params, False
             node_file = ""
             if self.resolve_node is not None:
@@ -485,14 +529,18 @@ class PlanEngine:
                          params=dict(rung.escalate_params or {}),
                          retry_max=1, criticality="soft",
                          only_targets=tuple(pending),
-                         inserted_by="escalation")
+                         inserted_by="escalation_recal")
             cont = Step(id=f"{step.id}__retry", node=step.node,
                         family=step.family,
                         label=f"{step.label or step.id} (after re-cal)",
                         params=dict(params), retry_max=1,
                         criticality=step.criticality,
                         only_targets=tuple(pending),
-                        inserted_by="escalation")
+                        inserted_by="escalation",
+                        # these targets reached the escalate rung via window
+                        # failures — a convergence in the continuation is a
+                        # discovery and must be wide-verified (LOOP_STUDY A)
+                        carry_window_failure=tuple(pending))
             queue.appendleft(cont)
             queue.appendleft(recal)
             self._ledger("escalation_inserted", step=step.id,
@@ -531,9 +579,18 @@ class PlanEngine:
         self._ledger("seed_write", step=step.id, target=target,
                      direction=direction, delta_hz=delta, **out)
         if out.get("ok"):
-            self._seeds[(step.id, target)] = [
-                {"path": r["path"], "op": "replace", "old": r["old_hint"],
-                 "value": r["value"]} for r in rows]
+            new = [{"path": r["path"], "op": "replace", "old": r["old_hint"],
+                    "value": r["value"]} for r in rows]
+            # if a seed on these paths is already outstanding (a second seed
+            # rung — not in the shipped ladders, but defensively), keep the
+            # ORIGINAL pre-seed `old` so a restore unwinds the whole shift, not
+            # just the last hop.
+            prior = {p["path"]: p["old"]
+                     for p in self._seeds.get((step.id, target), [])}
+            for p in new:
+                if p["path"] in prior:
+                    p["old"] = prior[p["path"]]
+            self._seeds[(step.id, target)] = new
             return True
         return False
 
@@ -644,6 +701,8 @@ class PlanEngine:
     def _decide(self, step: Step, target: str, v: gates_mod.GateVerdict,
                 res: StepRunResult, fam, attempt: int) -> str:
         run = res.run or {}
+        self._last_write = []          # the write this call performs, if any
+        self._last_seed_old = {}       # pre-SEED value per seeded path (below)
         target_patches = [p for p in (run.get("patches") or [])
                           if _patch_target(p) == target]
         for p in target_patches:
@@ -657,12 +716,19 @@ class PlanEngine:
 
         if effective == "pass":
             # an outstanding scan seed is consumed by success — the node's own
-            # write supersedes it (rail ③: seeds auto-expire, never linger)
-            self._seeds.pop((step.id, target), None)
+            # write supersedes it (rail ③: seeds auto-expire, never linger).
+            # Remember its ORIGINAL pre-seed values: if this pass turns out to
+            # be a discovery, a later verify-fail revert must chain all the way
+            # back to pre-plan, not stop at the seeded (wrong) window.
+            seed = self._seeds.pop((step.id, target), None)
+            self._last_seed_old = {p["path"]: p["old"] for p in (seed or [])}
             if step.verify_of:
                 # wide verification PASSED — the discovery stands
                 self._discoveries.pop((step.verify_of, target), None)
             if target_patches:
+                # the node wrote its own state — the discovery revert (if the
+                # wide verify later refutes it) undoes exactly these patches
+                self._last_write = [dict(p) for p in target_patches]
                 self._cell(step.id, target,
                            "corrected" if attempt > 0 else "pass",
                            detail="node applied; gates passed")
@@ -678,6 +744,13 @@ class PlanEngine:
             out = self.writer.apply_rows(rows, label=f"{step.id}:{target}")
             self._ledger("write_applied", step=step.id, target=target, **out)
             if out.get("ok"):
+                # capture the ACTUAL applied write as replace-patches so a
+                # later verify-fail revert works for forward-applied writes
+                # too (the node wrote nothing — its patch list is empty)
+                self._last_write = [
+                    {"path": p.get("path"), "op": "replace",
+                     "old": p.get("old"), "value": p.get("new")}
+                    for p in (out.get("paths") or [])]
                 self._cell(step.id, target,
                            "corrected" if attempt > 0 else "applied",
                            detail=f"{len(rows)} value(s) applied",
@@ -729,9 +802,11 @@ class PlanEngine:
             return "defer"
 
         # defer (abstain policy / unverifiable) — the node's write is KEPT for
-        # review; an outstanding seed was overwritten by it (record dropped,
-        # pre-plan values still back the review-mode restore)
-        self._seeds.pop((step.id, target), None)
+        # review. Restore any outstanding seed CAS-guarded: if the node
+        # overwrote the seeded path its write stands (CAS refuses), but if the
+        # deferred run produced NO patch on the seed path the shifted window
+        # must go back — never leave a deliberate scan shift on the chip.
+        self._restore_seed(step.id, target)
         self._defer(step, target, "; ".join(v.reasons[:2]) or "unverifiable", v)
         return "defer"
 

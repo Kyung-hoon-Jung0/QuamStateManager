@@ -236,3 +236,87 @@ class TestAttribution:
                               monkeypatch=monkeypatch)
         res = backend.run_step(STEP, ["qA1"], {}, 0, threading.Event())
         assert res.status == "done"
+
+
+class TestInsertedStepResolution:
+    """docs/56 v2 — runtime-inserted steps aren't in the plan-start map. The
+    cross-node re-cal MUST run its engine-resolved node (never the base id),
+    or escalation is a silent no-op on hardware (the reviewed critical bug)."""
+
+    def test_recal_runs_engine_resolved_node_not_the_original(
+            self, tmp_path, node_file, monkeypatch):
+        resonator = tmp_path / "03_resonator_spectroscopy.py"
+        resonator.write_text("# resonator node", encoding="utf-8")
+        captured = {}
+        orig_add = FakeScheduler.add_item
+
+        def spy_add(self, inst, info, targets=None):
+            captured["file"] = info.get("file")
+            return orig_add(self, inst, info, targets)
+        monkeypatch.setattr(FakeScheduler, "add_item", spy_add)
+        monkeypatch.setattr(
+            realbackend.node_scan, "scan_file",
+            lambda p: SimpleNamespace(error=None, name=Path(p).stem,
+                                      kind="node", has_hook=True,
+                                      targets_name="qubits"))
+        fake = FakeScheduler(status_script={"it1": ["done"]})
+        folder = _mk_run_folder(tmp_path, name="03_resonator_spectroscopy")
+        backend, _ = _backend(tmp_path, fake, node_file,
+                              runs=[_fake_run(
+                                  folder, name="03_resonator_spectroscopy")],
+                              monkeypatch=monkeypatch)
+        recal = Step(id="qubit_spec__recal", family="resonator_spectroscopy",
+                     node=str(resonator), inserted_by="escalation_recal",
+                     only_targets=("qA1",))
+        backend.run_step(recal, ["qA1"], {}, 0, threading.Event())
+        assert captured["file"] == str(resonator)   # NOT the original node
+
+    def test_recal_without_resolved_node_fails_closed(self, tmp_path,
+                                                      node_file, monkeypatch):
+        # resolve failed → node="" → must FAIL, never fall back to base id
+        fake = FakeScheduler(status_script={"it1": ["done"]})
+        backend, _ = _backend(tmp_path, fake, node_file, monkeypatch=monkeypatch)
+        recal = Step(id="qubit_spec__recal", family="resonator_spectroscopy",
+                     node="", inserted_by="escalation_recal",
+                     only_targets=("qA1",))
+        res = backend.run_step(recal, ["qA1"], {}, 0, threading.Event())
+        assert res.status == "failed"
+        assert "re-cal" in (res.error or "")
+
+    def test_continuation_reruns_the_original_via_base_id(self, tmp_path,
+                                                         node_file, monkeypatch):
+        captured = {}
+        orig_add = FakeScheduler.add_item
+
+        def spy_add(self, inst, info, targets=None):
+            captured["file"] = info.get("file")
+            return orig_add(self, inst, info, targets)
+        monkeypatch.setattr(FakeScheduler, "add_item", spy_add)
+        fake = FakeScheduler(status_script={"it1": ["done"]})
+        folder = _mk_run_folder(tmp_path)
+        backend, _ = _backend(tmp_path, fake, node_file,
+                              runs=[_fake_run(folder)], monkeypatch=monkeypatch)
+        cont = Step(id="qubit_spec__retry", family="qubit_spectroscopy",
+                    inserted_by="escalation", carry_window_failure=("qA1",),
+                    only_targets=("qA1",))
+        backend.run_step(cont, ["qA1"], {}, 0, threading.Event())
+        assert captured["file"] == str(node_file)   # the original step's file
+
+    def test_verify_wide_reruns_the_original_via_verify_of(self, tmp_path,
+                                                          node_file, monkeypatch):
+        captured = {}
+        orig_add = FakeScheduler.add_item
+
+        def spy_add(self, inst, info, targets=None):
+            captured["file"] = info.get("file")
+            return orig_add(self, inst, info, targets)
+        monkeypatch.setattr(FakeScheduler, "add_item", spy_add)
+        fake = FakeScheduler(status_script={"it1": ["done"]})
+        folder = _mk_run_folder(tmp_path)
+        backend, _ = _backend(tmp_path, fake, node_file,
+                              runs=[_fake_run(folder)], monkeypatch=monkeypatch)
+        vstep = Step(id="qubit_spec__verify_wide", family="qubit_spectroscopy",
+                     verify_of="qubit_spec", inserted_by="verify_wide",
+                     only_targets=("qA1",))
+        backend.run_step(vstep, ["qA1"], {}, 0, threading.Event())
+        assert captured["file"] == str(node_file)

@@ -37,8 +37,7 @@
         <td>{{ t.fresh }}</td>
         <td>
           {% if t.refit_code in ('drift', 'recover') and t.fresh.get('success') %}
-          <button class="btn-sm outline"
-                  onclick="autofitDiagApply(this, {{ q | tojson }}, {{ row.family | tojson }}, {{ (t.fresh_full or t.fresh) | tojson }}, {{ (row.parameters or {}) | tojson }})"
+          <button class="btn-sm outline" data-af-target="{{ q }}"
                   title="Preview + apply today's re-fit values through the audited edit path (working copy; chip-token gated)">
             Apply fresh &rarr;</button>
           {% elif t.refit_code == 'reject' or t.gate_verdict == 'fail' %}
@@ -58,9 +57,27 @@
      parameters and re-run (the Autofit plan loop automates this on the real
      backend).</p>
 </div>
+{# apply payload — JSON in a script block (tojson-escaped for <,>,&,') so no
+   archive string can break out; buttons carry only data-af-target #}
+<script type="application/json" id="autofit-diag-data">{{ diag_data | tojson }}</script>
 <script>
+(function () {
+  var DATA = {};
+  try { DATA = JSON.parse(document.getElementById("autofit-diag-data").textContent); }
+  catch (e) { DATA = {family: null, parameters: {}, targets: {}}; }
+  var TOKEN = {{ chip_token | tojson }};
+  Array.prototype.forEach.call(
+    document.querySelectorAll(".autofit-diag [data-af-target]"),
+    function (btn) {
+      btn.addEventListener("click", function () {
+        autofitDiagApply(btn, btn.getAttribute("data-af-target"),
+                         DATA.family, (DATA.targets || {})[btn.getAttribute("data-af-target")] || {},
+                         DATA.parameters || {});
+      });
+    });
+
 function autofitDiagApply(btn, target, family, fresh, parameters) {
-  var token = {{ chip_token | tojson }};
+  var token = TOKEN;
   var box = document.getElementById("autofit-diag-confirm");
   fetch("/autofit/diagnose-rows", {
     method: "POST", headers: {"Content-Type": "application/json"},
@@ -125,4 +142,5 @@ function autofitDiagApply(btn, target, family, fresh, parameters) {
     card.scrollIntoView({block: "nearest"});
   }).catch(function () { btn.textContent = "error"; });
 }
+})();
 </script>
