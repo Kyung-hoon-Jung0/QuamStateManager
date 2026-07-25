@@ -1,0 +1,86 @@
+{# Autofit — the one-button automatic fitting scheduler (docs/56).
+   Server renders the shell + readiness; autofit.js renders everything live
+   from /autofit/status (board, review queue, report). #}
+<div class="table-header-row">
+    <h2>Autofit <small class="muted">run → fit → audit → correct → apply, unattended</small></h2>
+</div>
+
+{# ---- readiness strip (docs/56 §7b — never fail after ▶) ---- #}
+<div id="autofit-readiness" class="autofit-readiness"
+     data-readiness='{{ readiness | tojson }}'>
+    <span class="autofit-ready-chip {{ 'ok' if readiness.chip.ok else 'bad' }}">
+        Chip: {{ readiness.chip.name or 'none loaded' }}</span>
+    <span class="autofit-ready-chip {{ 'ok' if readiness.env.ok else 'bad' }}"
+          title="{{ readiness.env.value }}">
+        Env {{ '✓' if readiness.env.ok else '— pick on Scheduler' }}</span>
+    <span class="autofit-ready-chip {{ 'ok' if readiness.calibrations_folder.ok else 'bad' }}"
+          title="{{ readiness.calibrations_folder.value }}">
+        Calibrations {{ '✓' if readiness.calibrations_folder.ok else '— set on Scheduler' }}</span>
+    <span class="autofit-ready-chip {{ 'ok' if readiness.llm.enabled else 'off' }}">
+        LLM audit: {{ readiness.llm.provider }}</span>
+    <a href="/scheduler" hx-get="/scheduler" hx-target="#table-pane" hx-push-url="true"
+       class="muted autofit-ready-fix">fix on Scheduler →</a>
+</div>
+
+{# ---- plan bar: THE button ---- #}
+<div class="autofit-planbar">
+    <label>Plan
+        <select id="autofit-preset">
+            {% for key, name in presets.items() %}
+            <option value="{{ key }}">{{ name }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>Targets
+        <select id="autofit-targets" multiple size="3"
+                title="empty selection = all active"></select>
+    </label>
+    <label>Autonomy
+        <select id="autofit-autonomy"
+                title="full: gate-checked values land on the chip (rejects auto-reverted, pre-plan snapshot = one-click undo). review: same run, chip restored at the end, values appliable from the report.">
+            <option value="full">full — apply (gated + revertible)</option>
+            <option value="review">review — restore at end, report only</option>
+        </select>
+    </label>
+    <label>Backend
+        <select id="autofit-backend"
+                title="sim: a synthetic demo chip, zero hardware, full write-path parity. real: the loaded chip through the Scheduler chassis.">
+            <option value="sim">simulation (demo chip)</option>
+            <option value="real">real chip (scheduler chassis)</option>
+        </select>
+    </label>
+    <button id="autofit-run" class="autofit-run-btn" onclick="autofitRun()">
+        &#9654; Run plan</button>
+    <button id="autofit-abort" class="btn-sm outline" onclick="autofitAbort()"
+            hidden>Abort</button>
+    <span id="autofit-planbar-msg" class="muted"></span>
+</div>
+
+{# ---- step→file resolution table (real backend; §7b-D) ---- #}
+<div id="autofit-resolution" hidden></div>
+
+{# ---- live board ---- #}
+<details open class="detail-section">
+    <summary class="section-header">Live board</summary>
+    <div id="autofit-board"><p class="muted">No plan run yet — pick a plan and
+        press Run. The sim backend demos the whole loop with zero hardware.</p></div>
+</details>
+
+{# ---- review queue ---- #}
+<details open class="detail-section">
+    <summary class="section-header">Review queue
+        <small class="muted" id="autofit-review-count"></small></summary>
+    <div id="autofit-review"><p class="muted">Deferred / reverted targets land
+        here with their verdict chains.</p></div>
+</details>
+
+{# ---- report ---- #}
+<details class="detail-section">
+    <summary class="section-header">Report (ledger)</summary>
+    <div id="autofit-report"><p class="muted">Applied values, reverts, LLM
+        verdicts and provenance — rendered from the plan run's ledger.</p></div>
+</details>
+
+<script>
+if (window.autofitInit) window.autofitInit();
+</script>

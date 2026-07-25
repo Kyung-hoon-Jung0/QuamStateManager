@@ -170,6 +170,17 @@
 
 {# ── Section: Results ── #}
 <section class="ds-fv-section" data-fvsec="results">
+    {# Autofit diagnose (docs/56 GUI tier): before/after refit panel #}
+    <div class="autofit-diag-bar">
+        <button type="button" class="btn-sm outline"
+                hx-post="/dataset/{{ uid }}/autofit-diagnose"
+                hx-target="#autofit-diag-slot" hx-swap="innerHTML"
+                hx-indicator="#autofit-diag-busy"
+                title="Re-fit this run's frozen data with today's analysis in the QM env and show before/after (read-only over the archive)">
+            &#129514; Autofit diagnose</button>
+        <span id="autofit-diag-busy" class="htmx-indicator muted">re-fitting in the QM env… (up to ~1 min)</span>
+    </div>
+    <div id="autofit-diag-slot"></div>
     {% if run.fit_results %}
         {% for qname, qresults in run.fit_results.items() %}
         {% set qtargets = (fit_targets or {}).get(qname, {}) %}

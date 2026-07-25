@@ -13356,14 +13356,47 @@ _SCHEDULER_MUTATOR_ENDPOINTS = {
 }
 
 
+# /scheduler/* control endpoints an AUTOFIT plan must own exclusively while it
+# runs (docs/56 §7b-B3 — two-masters closure: between plan steps the queue's
+# run.status is idle, so without this gate a user could persist new critical
+# settings / mutate the queue / wipe the engine's items mid-plan).
+_AUTOFIT_BLOCKED_SCHEDULER_ENDPOINTS = {
+    "main.scheduler_start", "main.scheduler_pause", "main.scheduler_cancel",
+    "main.scheduler_settings", "main.scheduler_queue_add",
+    "main.scheduler_queue_mutate", "main.scheduler_preset_load",
+    "main.scheduler_presets", "main.scheduler_preset_delete",
+    "main.scheduler_register_storage",
+}
+
+
 @bp.before_request
 def _scheduler_lock_guard():
     """409 chip-mutating / QM-subprocess routes while the Scheduler is running.
 
     Server-side enforcement is authoritative — the UI badge/disable is only a
     hint. A manual edit or a second QM subprocess during a run would collide
-    with the experiment on the chip + OPX.
+    with the experiment on the chip + OPX. The same guard covers a running
+    AUTOFIT plan (which drives the scheduler chassis in-process), plus the
+    scheduler CONTROL endpoints themselves while autofit owns the queue.
     """
+    # Autofit first (audit R4): while a REAL plan runs, mutators + scheduler
+    # controls consistently report autofit_running even mid-step (when the
+    # chassis makes scheduler.is_active True too). Method-gated so GETs like
+    # /scheduler/settings and the presets list stay readable (audit R3). A
+    # SIM plan never locks the user's chip (locks_chip — audit R2).
+    if request.method != "GET" and request.endpoint in (
+            _SCHEDULER_MUTATOR_ENDPOINTS | _AUTOFIT_BLOCKED_SCHEDULER_ENDPOINTS):
+        from quam_state_manager.core.autofit import engine as autofit_engine
+        if autofit_engine.locks_chip(current_app.instance_path):
+            resp = make_response(jsonify({
+                "error": "autofit_running",
+                "message": "An Autofit plan is running — this action is "
+                           "locked until it finishes or is aborted "
+                           "(see the Autofit page).",
+            }), 409)
+            resp.headers["HX-Reswap"] = "none"
+            resp.headers["HX-Trigger"] = "autofitLocked"
+            return resp
     if request.endpoint in _SCHEDULER_MUTATOR_ENDPOINTS \
             and scheduler.is_active(current_app.instance_path):
         resp = make_response(jsonify({
@@ -13539,8 +13572,32 @@ def _sched_inst() -> str:
 
 
 def _sched_state() -> dict:
-    """The poll payload: queue + run state (+ orphan reconcile)."""
-    return scheduler.runner_status(_sched_inst())
+    """The poll payload: queue + run state (+ orphan reconcile). Carries a
+    compact autofit summary so the existing badge poll powers the Autofit
+    badge for free (docs/56 §7b-F)."""
+    out = scheduler.runner_status(_sched_inst())
+    try:
+        from quam_state_manager.core.autofit import engine as autofit_engine
+        eng = autofit_engine.get_engine(_sched_inst())
+        if eng is not None:
+            st = eng.status()
+            out["autofit"] = {
+                "status": st["status"],
+                "running": eng.is_running(),
+                "sim": eng.is_sim,
+                "plan": (st.get("plan") or {}).get("name"),
+                "current": st.get("current"),
+                "review_count": len(st.get("review_queue") or []),
+            }
+        else:
+            # after an SM restart the morning-after review count must still
+            # reach the badge — stat-cached read of the persisted final state
+            summary = autofit_engine.persisted_summary(_sched_inst())
+            if summary is not None:
+                out["autofit"] = summary
+    except Exception:  # noqa: BLE001 — the badge must never break the poll
+        logger.warning("autofit badge summary failed", exc_info=True)
+    return out
 
 
 @bp.route("/scheduler/scan", methods=["GET"])
@@ -13900,3 +13957,499 @@ def _find_quam_ctx_by_path(target: str | None) -> dict | None:
     return None
 
 
+
+
+# ======================================================================
+# Autofit — the one-button automatic fitting scheduler (docs/56).
+# Engine + gates + auditor live in core/autofit; these routes are thin:
+# readiness, plan resolution, start/abort, status poll, report.
+# ======================================================================
+
+def _autofit_engine_mod():
+    from quam_state_manager.core.autofit import engine as autofit_engine
+    return autofit_engine
+
+
+# Serializes /autofit/start per instance: the guards + world-prep + engine
+# claim must be one atomic unit (audits: sim-world rmtree TOCTOU, the
+# scheduler-exclusion window during real-backend prep).
+_AUTOFIT_START_LOCKS: dict[str, threading.Lock] = {}
+_AUTOFIT_START_LOCKS_GUARD = threading.Lock()
+
+
+def _autofit_start_lock(inst: str) -> threading.Lock:
+    with _AUTOFIT_START_LOCKS_GUARD:
+        lock = _AUTOFIT_START_LOCKS.get(inst)
+        if lock is None:
+            lock = threading.Lock()
+            _AUTOFIT_START_LOCKS[inst] = lock
+        return lock
+
+
+def _autofit_readiness() -> dict:
+    """The plan bar's readiness strip (docs/56 §7b — preflight on page open,
+    never first at ▶): chip, scheduler env, calibrations folder, LLM."""
+    from quam_state_manager.core.autofit import auditor as af_auditor
+
+    inst = _sched_inst()
+    settings = scheduler.load_settings(inst)
+    ctx = _active_ctx()
+    chip_ok = bool(ctx and ctx.get("type") == "quam")
+    env = settings.get("env_python") or ""
+    folder = settings.get("calibrations_folder") or ""
+    ai = af_auditor.load_settings(inst)
+    store = _store() if chip_ok else None
+    return {
+        "chip": {"ok": chip_ok,
+                 "name": (_active_chip_identity() or {}).get("name") if chip_ok else None},
+        "env": {"ok": bool(env), "value": env},
+        "calibrations_folder": {"ok": bool(folder), "value": folder},
+        "llm": {"provider": ai.get("provider", "off"),
+                "enabled": ai.get("provider", "off") not in ("off", "")},
+        "scheduler_active": scheduler.is_active(inst),
+        "autofit_active": _autofit_engine_mod().is_active(inst),
+        "qubits": store.qubit_names if store else [],
+        "qubit_pairs": store.qubit_pair_names if store else [],
+    }
+
+
+@bp.route("/autofit", methods=["GET"])
+def autofit_page():
+    """The one-button page: plan bar + live board + review queue + report."""
+    from quam_state_manager.core.autofit import plan as af_plan
+
+    template = "_autofit.html" if _is_htmx() else "autofit.html"
+    return render_template(template, **_ctx(
+        page="autofit",
+        presets={k: v["name"] for k, v in af_plan.PRESETS.items()},
+        readiness=_autofit_readiness(),
+    ))
+
+
+@bp.route("/autofit/status", methods=["GET"])
+def autofit_status():
+    """Engine status for the page poll (board, review queue, ledger tail)."""
+    eng = _autofit_engine_mod().get_engine(_sched_inst())
+    if eng is None:
+        # a previous session's persisted final state (morning-after report)
+        try:
+            persisted = safe_io.read_json(
+                Path(_sched_inst()) / "autofit_run.json")
+        except (OSError, ValueError):
+            persisted = None
+        return jsonify({"active": False, "state": persisted,
+                        "readiness": _autofit_readiness()})
+    return jsonify({"active": eng.is_running(), "state": eng.status(),
+                    "readiness": _autofit_readiness()})
+
+
+@bp.route("/autofit/resolve", methods=["POST"])
+def autofit_resolve():
+    """Resolve a preset/plan's steps against the scanned calibrations folder —
+    the pre-Run step→file table (docs/56 §7b-D)."""
+    from quam_state_manager.core.autofit import plan as af_plan
+
+    data = request.get_json(silent=True) or {}
+    try:
+        p = _autofit_plan_from_request(data)
+    except af_plan.PlanError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    folder = scheduler.load_settings(_sched_inst()).get("calibrations_folder") or ""
+    if not folder:
+        return jsonify({"ok": False, "error": "no calibrations folder set — "
+                        "configure it on the Scheduler page"}), 400
+    items = [n.to_dict() for n in
+             node_scan.scan_folder(folder, instance_path=_sched_inst())]
+    files = [{"name": i.get("name"), "path": i.get("file") or i.get("path")}
+             for i in items if i.get("kind") == "node"]
+    res = af_plan.resolve_steps(p, files)
+    return jsonify({"ok": True, "resolution": res,
+                    "plan": p.as_dict(), "folder": folder})
+
+
+def _autofit_plan_from_request(data: dict):
+    from quam_state_manager.core.autofit import plan as af_plan
+
+    preset = (data.get("preset") or "").strip()
+    if preset:
+        p = af_plan.preset_plan(preset)
+        raw = p.as_dict()
+    else:
+        raw = data.get("plan") or {}
+    # request-level overrides
+    if data.get("targets") is not None:
+        raw["targets"] = list(data["targets"])
+    if data.get("autonomy"):
+        raw["autonomy"] = data["autonomy"]
+    return af_plan.validate_plan(raw)
+
+
+@bp.route("/autofit/start", methods=["POST"])
+def autofit_start():
+    """THE button. Guards: mutual exclusion vs the scheduler + a running plan,
+    a clean scheduler queue (real), preflight (real, force-able), full step
+    resolution (real). backend=sim runs the LiveSimBackend demo world under
+    instance/autofit/sim — zero hardware, same engine + write path."""
+    from quam_state_manager.core.autofit import auditor as af_auditor
+    from quam_state_manager.core.autofit import plan as af_plan
+    from quam_state_manager.core.autofit.auditor import Auditor
+    from quam_state_manager.core.autofit.engine import PlanEngine
+
+    inst = _sched_inst()
+    autofit_engine = _autofit_engine_mod()
+    data = request.get_json(silent=True) or {}
+    start_lock = _autofit_start_lock(inst)
+    if not start_lock.acquire(blocking=False):
+        return jsonify({"ok": False,
+                        "error": "another autofit start is in progress"}), 409
+    try:
+        if autofit_engine.is_active(inst):
+            return jsonify({"ok": False,
+                            "error": "an autofit plan is already running"}), 409
+        if scheduler.is_active(inst):
+            return jsonify({"ok": False, "error": "the Scheduler is running — "
+                            "wait for it or cancel it first"}), 409
+        try:
+            p = _autofit_plan_from_request(data)
+        except af_plan.PlanError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        backend_kind = (data.get("backend") or "sim").strip()
+
+        auditor = Auditor(af_auditor.load_settings(inst))
+
+        if backend_kind == "sim":
+            eng = _autofit_start_sim(inst, p, auditor)
+        else:
+            eng, err, code = _autofit_start_real(inst, p, data, auditor)
+            if err:
+                return jsonify({"ok": False, **err}), code
+        try:
+            run_id = eng.start()
+        except RuntimeError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 409
+        return jsonify({"ok": True, "plan_run_id": run_id,
+                        "backend": backend_kind})
+    finally:
+        start_lock.release()
+
+
+def _autofit_start_sim(inst, p, auditor):
+    """The demo world: a fresh sim chip + live folder + dataset root under
+    instance/autofit/sim, driven through the REAL write path (E2E parity)."""
+    import shutil
+    import threading as _threading
+
+    from quam_state_manager.core.autofit import synth as af_synth
+    from quam_state_manager.core.autofit.engine import PlanEngine
+    from quam_state_manager.core.autofit.simbackend import LiveSimBackend
+    from quam_state_manager.core.autofit.writer import ChipHandle, RealWriter
+    from quam_state_manager.core.loader import QuamStore
+    from quam_state_manager.core.modifier import Modifier
+    from quam_state_manager.core.saver import Saver
+
+    sim_root = Path(inst) / "autofit" / "sim"
+    shutil.rmtree(sim_root, ignore_errors=True)
+    live = sim_root / "live_chip"
+    live.mkdir(parents=True)
+    pairs = ("qA2-qA1",)
+    qubits = ("qA1", "qA2", "qA3")
+    chip = af_synth.make_sim_chip(qubits, pairs, seed=42)
+    safe_io.write_state_wiring(live, chip.state, chip.wiring)
+
+    wc = working_copy.create(sim_root / "wc_inst", live)
+    store = QuamStore(wc.working_folder)
+    handle_lock = threading.RLock()
+
+    def reconcile():
+        with handle_lock:
+            res = working_copy.reconcile_with_live(
+                wc, sync_if_clean=not store.change_log)
+            if res == working_copy.RECONCILE_SYNCED:
+                store.reload()
+
+    handle = ChipHandle(store=store, modifier=Modifier(store),
+                        saver=Saver(store), wc=wc, build_lock=handle_lock,
+                        live_path=str(live), reconcile=reconcile)
+
+    class _SimIngest(LiveSimBackend):
+        def run_step(self, step, targets, params, attempt, abort):
+            res = super().run_step(step, targets, params, attempt, abort)
+            reconcile()
+            return res
+
+    targets = list(p.targets) or (list(pairs) if p.targets_kind == "qubit_pairs"
+                                  else list(qubits))
+    backend = _SimIngest(chip, sim_root / "data", live, seed=7)
+    return PlanEngine(inst, p, targets, backend, RealWriter(handle),
+                      auditor, autonomy=p.autonomy, is_sim=True)
+
+
+def _autofit_start_real(inst, p, data, auditor):
+    """Real chassis: preflight + clean-queue + resolution gates, adapter over
+    the loaded ctx, ChipHandle bound to the CAPTURED ctx (never re-fetched)."""
+    from quam_state_manager.core.autofit import plan as af_plan
+    from quam_state_manager.core.autofit.engine import PlanEngine
+    from quam_state_manager.core.autofit.realbackend import RealAdapter, RealBackend
+    from quam_state_manager.core.autofit.writer import ChipHandle, RealWriter
+
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam":
+        return None, {"error": "no chip loaded"}, 409
+    # a foreign queue would run BEFORE our items on the hardware — refuse
+    qstate = scheduler.load_queue(inst)
+    foreign = [i for i in qstate.get("queue", [])
+               if i.get("enabled") and i.get("status") == "queued"]
+    if foreign:
+        return None, {"error": f"the Scheduler queue holds {len(foreign)} "
+                      "enabled item(s) — clear or disable them first "
+                      "(they would run before the plan's steps)"}, 409
+    if not data.get("force"):
+        try:
+            pre = _gather_preflight(inst, {})
+        except Exception:  # noqa: BLE001
+            logger.warning("autofit preflight failed", exc_info=True)
+            pre = None
+        if pre is not None and not pre.get("ok"):
+            return None, {"error": "preflight failed", "reason": "preflight",
+                          "preflight": pre}, 409
+    # step → file resolution must be complete
+    folder = scheduler.load_settings(inst).get("calibrations_folder") or ""
+    items = [n.to_dict() for n in
+             node_scan.scan_folder(folder, instance_path=inst)] if folder else []
+    files = [{"name": i.get("name"), "path": i.get("file") or i.get("path")}
+             for i in items if i.get("kind") == "node"]
+    res = af_plan.resolve_steps(p, files)
+    overrides = data.get("step_files") or {}      # user's dropdown picks
+    # SECURITY: an override must be one of THIS step's scan candidates — a
+    # free-form path here would let the client run an arbitrary .py on the
+    # hardware through the chassis (the dropdown only ever offers candidates).
+    resolved: dict[str, str] = {}
+    for step in p.steps:
+        entry = res.get(step.id) or {}
+        pick = overrides.get(step.id)
+        if pick and pick not in (entry.get("candidates") or []):
+            return None, {"error": f"step {step.id!r}: override is not one of "
+                          "the scanned candidates"}, 400
+        pick = pick or entry.get("path")
+        if not pick or entry.get("status") == "missing":
+            return None, {"error": f"step {step.id!r} has no resolved node "
+                          "file", "resolution": res}, 409
+        resolved[step.id] = pick
+
+    app = current_app._get_current_object()
+    folder_key = ctx["path"]
+    live_path = ctx.get("live_path") or ctx["path"]
+    build_lock = _get_quam_build_lock(folder_key)
+
+    def reconcile():
+        # the CAPTURED ctx, never a call-time registry lookup — a mid-plan
+        # /load could displace the name-keyed entry and silently no-op the
+        # reconcile while the writer still holds this store/wc (audit E5)
+        with app.app_context():
+            try:
+                _reconcile_cached_quam_ctx(ctx["path"], ctx)
+            except Exception:  # noqa: BLE001
+                logger.exception("autofit reconcile failed for %s", live_path)
+
+    def rescan_and_list_runs():
+        with app.app_context():
+            out = []
+            for fol in _active_dataset_stores():
+                st = fol["store"]
+                try:
+                    st.rescan_if_stale()
+                except Exception:  # noqa: BLE001
+                    logger.exception("autofit dataset rescan failed")
+                with st._scan_lock:
+                    out.extend(st.runs.values())
+            out.sort(key=lambda r: (r.date or "", r.time or ""), reverse=True)
+            return out
+
+    handle = ChipHandle(store=ctx["store"], modifier=ctx["modifier"],
+                        saver=ctx["saver"], wc=ctx["working_copy"],
+                        build_lock=build_lock, live_path=str(live_path),
+                        reconcile=reconcile)
+    adapter = RealAdapter(instance_path=inst, reconcile=reconcile,
+                          rescan_and_list_runs=rescan_and_list_runs)
+    backend = RealBackend(adapter, resolved)
+    hm = _history()
+
+    def snapshot(label):
+        with app.app_context():
+            hm.check_and_snapshot(str(live_path), "manual", force=True)
+
+    targets = list(p.targets)
+    if not targets:
+        store = ctx["store"]
+        targets = list(store.qubit_pair_names if p.targets_kind == "qubit_pairs"
+                       else store.qubit_names)
+
+    def resolve_node_for(fam_key):
+        # runtime escalation re-cal steps (docs/56 v2): resolve the family
+        # against the SAME scanned candidate list the plan build used — the
+        # engine only ever receives scan-derived paths
+        try:
+            fake = af_plan.Plan(name="escalation", targets_kind=p.targets_kind,
+                                steps=[af_plan.Step(id="x", family=fam_key)])
+            ent = af_plan.resolve_steps(fake, files).get("x") or {}
+            return ent.get("path")
+        except Exception:  # noqa: BLE001
+            logger.exception("escalation node resolve failed")
+            return None
+
+    eng = PlanEngine(inst, p, targets, backend, RealWriter(handle), auditor,
+                     autonomy=p.autonomy, snapshot_fn=snapshot,
+                     resolve_node=resolve_node_for)
+    return eng, None, 200
+
+
+@bp.route("/autofit/abort", methods=["POST"])
+def autofit_abort():
+    eng = _autofit_engine_mod().get_engine(_sched_inst())
+    if eng is None:
+        return jsonify({"ok": False, "error": "no plan"}), 404
+    eng.abort()
+    return jsonify({"ok": True})
+
+
+@bp.route("/autofit/ledger", methods=["GET"])
+def autofit_ledger():
+    """The active/most-recent plan run's ledger (report rendering)."""
+    run_id = (request.args.get("run") or "").strip()
+    eng = _autofit_engine_mod().get_engine(_sched_inst())
+    if not run_id and eng is not None:
+        run_id = eng.plan_run_id
+    if not run_id:
+        try:
+            persisted = safe_io.read_json(Path(_sched_inst()) / "autofit_run.json")
+            run_id = (persisted or {}).get("plan_run_id") or ""
+        except (OSError, ValueError):
+            run_id = ""
+    if not re.match(r"^af_[a-f0-9]{6,}$", run_id or ""):
+        return jsonify({"ok": False, "error": "no plan run"}), 404
+    path = Path(_sched_inst()) / "autofit" / "runs" / run_id / "ledger.jsonl"
+    events = []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            events = [json.loads(l) for l in fh]
+    except (OSError, ValueError):
+        return jsonify({"ok": False, "error": "ledger unreadable"}), 404
+    return jsonify({"ok": True, "run": run_id, "events": events})
+
+
+# ---- Autofit GUI diagnose (docs/56 §6R → GUI tier) -----------------------
+
+@bp.route("/dataset/<uid>/autofit-diagnose", methods=["POST"])
+def dataset_autofit_diagnose(uid):
+    """Before/after diagnosis panel for one saved run: gate verdicts +
+    node-faithful refit/replot + stored-vs-fresh values. Read-only over the
+    archive; applies go through the audited /field/edit-batch path."""
+    from quam_state_manager.core.autofit import replay as af_replay
+
+    resolved = _resolve_run(uid)
+    if not resolved:
+        return render_template("_status.html", message="run not found",
+                               level="error"), 404
+    ds, run_id, _label = resolved
+    run = ds.get_run(run_id)
+    if not run:
+        # mirror dataset_detail's brand-new-run fallback: one rescan, retry
+        try:
+            ds.rescan_if_stale()
+            run = ds.get_run(run_id)
+        except Exception:  # noqa: BLE001
+            run = None
+    if not run:
+        return render_template("_status.html", message="run not found",
+                               level="error"), 404
+    folder = Path(run.get("folder_path") if isinstance(run, dict)
+                  else run.folder_path)
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", uid)
+    out_dir = Path(current_app.instance_path) / "autofit" / "diagnose" / safe
+    try:
+        row = af_replay.evaluate_run(folder, out_dir, fix="none")
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("autofit diagnose failed")
+        return render_template("_status.html",
+                               message=f"diagnose failed: {exc}",
+                               level="error"), 500
+    # refit figures are served by token = filename under the diagnose dir.
+    # The runner may return WINDOWS paths (the QM env is a .exe) — normalize
+    # separators before taking the basename, else POSIX Path.name keeps the
+    # whole UNC string.
+    refit_figs = [Path(str(f).replace("\\", "/")).name
+                  for f in row.get("refit_figures") or []]
+    # per-target apply payload lives in a JSON <script> block (tojson-escaped)
+    # — NEVER inlined into an onclick attribute (a double-quoted attr can't
+    # hold tojson's double quotes, and archive strings could break out)
+    diag_data = {
+        "family": row.get("family"),
+        "parameters": row.get("parameters") or {},
+        "targets": {q: (t.get("fresh_full") or t.get("fresh") or {})
+                    for q, t in (row.get("targets") or {}).items()},
+    }
+    return render_template("_autofit_diagnose.html", uid=uid, row=row,
+                           safe_uid=safe, refit_figs=refit_figs,
+                           diag_data=diag_data,
+                           chip_token=_active_chip_token() or "")
+
+
+@bp.route("/dataset/<uid>/autofit-diagnose-fig/<name>")
+def dataset_autofit_diagnose_fig(uid, name):
+    """Serve a refit figure from the diagnose out dir (path-contained)."""
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", uid)
+    base = (Path(current_app.instance_path) / "autofit" / "diagnose"
+            / safe).resolve()
+    target = (base / name).resolve()
+    if not str(target).startswith(str(base)) or not target.is_file() \
+            or target.suffix != ".png":
+        return "not found", 404
+    from flask import send_file
+    return send_file(target, mimetype="image/png")
+
+
+@bp.route("/autofit/diagnose-rows", methods=["POST"])
+def autofit_diagnose_rows():
+    """Map a fresh refit result to writable state rows for the LOADED chip
+    (families registry — never invents paths; ops like ceil4 applied).
+
+    For the power-coupled rvp family the row set additionally carries the
+    node-authored amplitude + shared-port FSP + feedline sibling rescales
+    (docs/56 §6G — no silent partial write); when those can't be built the
+    refusal reason rides back in ``power.skipped`` so the UI discloses that
+    the frequency-only apply leaves power uncalibrated."""
+    from quam_state_manager.core.autofit import families as af_families
+    from quam_state_manager.core.autofit import power_rows as af_power
+
+    data = request.get_json(silent=True) or {}
+    fam = af_families.FAMILIES.get(str(data.get("family") or ""))
+    target = str(data.get("target") or "")
+    fresh = data.get("fresh") or {}
+    store = _store()
+    if fam is None or not target or store is None:
+        return jsonify({"ok": False, "error": "no family/target/chip"}), 400
+
+    def current_value_of(dotted):
+        node = store.state
+        for part in dotted.split("."):
+            node = node[part]
+        return node
+
+    try:
+        rows = af_families.resolve_updates(fam, target, dict(fresh),
+                                           data.get("parameters") or {},
+                                           current_value_of)
+        power = None
+        if fam.key == af_power.POWER_COUPLED_FAMILY:
+            # the feedline port resolves through the wiring pointer chain
+            # (`#/wiring/…/opx_output` → `#/ports/…`), so power rows MUST see
+            # the MERGED state+wiring view — store.state alone lacks the
+            # `wiring` key and every port lookup would (silently) refuse.
+            pr = af_power.coupled_power_rows(fam.key, target, dict(fresh),
+                                             store.merged)
+            rows = rows + pr["rows"]
+            power = {"applied": bool(pr["rows"]), "skipped": pr["skipped"],
+                     "warnings": pr["warnings"]}
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    return jsonify({"ok": True, "rows": rows, "power": power})
