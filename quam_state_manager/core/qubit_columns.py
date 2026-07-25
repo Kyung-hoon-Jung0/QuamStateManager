@@ -6,8 +6,10 @@ gate-fidelity breakdowns, ``extras``, lab-custom leaves) was unreachable from
 Table View — searching "exponential_filter" found nothing.  This module mirrors
 ``pair_columns.derive_pair_columns``: walk every ``qubits.<qid>`` subtree down
 to its leaves, templatize per-neighbor operation suffixes, classify leaf kinds,
-drop all-null columns, and return an opt-in (all ``default_on=False``) column
-model the ``/bulk`` route renders only when explicitly requested (``?dyncols=``).
+drop all-null columns, and return the full column model. r7: the ``/bulk``
+route renders EVERY entry by default (the r6 opt-in ``?dyncols=`` model left
+buried fields the search couldn't find) — a column is excluded only when its
+key is in the client's persisted hidden set (``?dynhide=``).
 
 Design decisions (from the pair-grid precedents + the r6 item-4 brief):
 
@@ -249,8 +251,10 @@ def derive_qubit_columns(store) -> tuple[list[dict], set[str]]:
 
     ``columns`` — ordered list of ``{key, label, section, unit, tmpl, kind,
     default_on}`` (channel groups first, each followed by its Port+ group,
-    then Qubit+ direct scalars, Extras last). Every column is ``default_on=
-    False`` — dynamic columns are strictly opt-in via ``?dyncols=``.
+    then Qubit+ direct scalars, Extras last). ``default_on`` here is a stub
+    (always ``False``) — the ``/bulk`` route ignores it and decides
+    visibility itself (r7: every column renders unless the client's
+    persisted hidden set says otherwise via ``?dynhide=``).
     ``curated_tmpls`` — the curated templates the derivation deduped against.
 
     Callers get fresh dict copies (the route stamps ``group_start`` etc. onto

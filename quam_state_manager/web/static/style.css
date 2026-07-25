@@ -2642,6 +2642,9 @@ input.edit-input {
 .role-badge.rr_in   { background: var(--role-rr-in-color); color: #1a1a1a; }
 .role-badge.z       { background: var(--role-z-color); color: #1a1a1a; }
 .role-badge.coupler { background: var(--role-coupler-color); color: #1a1a1a; }
+.role-badge.twpa_pump { background: var(--role-twpa-pump-color); color: #fff; }
+.role-badge.twpa_ro   { background: var(--role-twpa-ro-color); color: #fff; }
+.role-badge.twpa_in   { background: var(--role-twpa-in-color); color: #fff; }
 .port-popup-body {
     display: grid; grid-template-columns: auto 1fr;
     gap: 0.08rem 0.55rem;
@@ -2652,16 +2655,27 @@ input.edit-input {
 .popup-val { color: var(--pico-color); }
 .port-popup-btn { width: 100%; font-size: 0.8em; margin-top: 0.1rem; }
 
-/* JSON drill-down panel (slide-up) */
+/* JSON drill-down panel (slide-up). height (not max-height) is the resizable
+   knob — defaults taller than the old fixed 38vh (review-r7: the Generate
+   Config preview routinely needs more room than a quick wiring-pointer
+   lookup); a drag on .json-panel-resizer overrides it, persisted globally
+   across every call site (see the drag-to-resize block near the end of
+   app.js). */
 .json-panel {
     position: fixed; bottom: 0; left: 0; right: 0; z-index: 250;
-    max-height: 38vh;
+    height: 55vh; max-height: 92vh; min-height: 160px;
     background: var(--pico-card-background-color);
     border-top: 2px solid var(--pico-primary);
     box-shadow: 0 -4px 16px rgba(0,0,0,0.1);
     overflow: auto;
 }
 .json-panel.hidden { display: none; }
+.json-panel-resizer {
+    height: 6px; cursor: ns-resize;
+}
+.json-panel-resizer:hover, .json-panel-resizer.json-panel-resizing {
+    background: color-mix(in srgb, var(--pico-primary) 35%, transparent);
+}
 .json-panel-header {
     display: flex; justify-content: space-between; align-items: center;
     padding: 0.3rem 0.8rem;
@@ -3217,6 +3231,32 @@ input.edit-input {
     background: var(--topo-edge-label-bg); border: 1px solid; transform: translate(-50%, -50%);
 }
 .topo-edge-label:hover { font-weight: 700; }
+/* Control->target orientation (review feedback round 2: a small triangle
+   stuck onto the box read as a decoration, not a direction — wanted the
+   TARGET-facing EDGE ITSELF reshaped into a point, like a flag/price-tag).
+   clip-path cuts that whole side of the box into a point (~9px deep); the
+   opposite/perpendicular sides stay flat rectangle edges (still bordered,
+   still border-radius'd where unclipped) — only the pointed diagonal cut
+   has no separate stroke (clip-path can't paint a border along a path it
+   creates), which reads fine since the color fill itself already ends in a
+   crisp point against the page background. Extra padding on the pointed
+   side keeps text clear of the point. */
+.topo-edge-label-arrow-right {
+    padding-right: 12px;
+    clip-path: polygon(0 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 0 100%);
+}
+.topo-edge-label-arrow-left {
+    padding-left: 12px;
+    clip-path: polygon(9px 0, 100% 0, 100% 100%, 9px 100%, 0 50%);
+}
+.topo-edge-label-arrow-down {
+    padding-bottom: 10px;
+    clip-path: polygon(0 0, 100% 0, 100% calc(100% - 9px), 50% 100%, 0 calc(100% - 9px));
+}
+.topo-edge-label-arrow-up {
+    padding-top: 10px;
+    clip-path: polygon(0 9px, 50% 0, 100% 9px, 100% 100%, 0 100%);
+}
 .topo-colorscale-note { font-size: var(--topo-colorscale-note-size); color: var(--pico-muted-color); margin-top: 0.25rem; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 .palette-selector {
     font-size: 0.8em; padding: 2px 6px; margin: 0; border-radius: 4px;
@@ -3352,7 +3392,6 @@ a.topo-health-tile:hover { background: var(--pico-card-sectioning-background-col
 
 /* Threshold editor + spec-colour toggle (Phase D) */
 .topo-thresh-btn { padding: 0.05rem 0.55rem; font-size: 0.8em; margin: 0; width: auto; }
-.topo-colormode-toggle { font-size: 0.82em; margin-left: 0; }
 .topo-thresh-editor {
     width: fit-content; max-width: 100%;        /* shrink to content, not full-width */
     margin: 0.3rem 0 0.2rem 0; padding: 0.5rem 0.7rem;

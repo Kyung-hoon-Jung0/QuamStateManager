@@ -23,7 +23,7 @@ from quam_builder.architecture.superconducting.qpu import (FluxTunableQuam as Qu
 
 # ============================ EDIT: populate ==========================
 # Base SI units (Hz, ns, V, dimensionless amp). Blank/missing keys keep
-# quam_builder defaults (x180: amp 0.1 / len 40 ns; anharmonicity -200e6).
+# quam_builder defaults (x180: amp 0.1 / len 40 ns; anharmonicity 200e6).
 POPULATE = {   'pairs': {'q1-q2': {'cz_amplitude': 0.1, 'cz_variant': 'unipolar'}},
     'pulses': {'q1': {'x180_amplitude': 0.12, 'x180_length': 48}},
     'qubit': {'q1': {'RF_freq': 5200000000.0}, 'q2': {'RF_freq': 4900000000.0}}}
@@ -282,11 +282,13 @@ def _apply_pulses(machine, vals):
         # is OPTIONAL, so a chip generated without an anharmonicity value would
         # make generate_config() crash the moment it builds the DRAG Q-component
         # (`derivative * (alpha / anharmonicity)` → `float * None` TypeError).
-        # Default it to a standard transmon value so the zero-populate path still
-        # yields a usable config; any value already set by _apply_qubit (from the
-        # populate block) is preserved, and the user can edit it afterwards.
+        # Default it to a standard transmon magnitude so the zero-populate path
+        # still yields a usable config; any value already set by _apply_qubit
+        # (from the populate block) is preserved, and the user can edit it
+        # afterwards. Positive — QM's state.json convention stores this as a
+        # positive magnitude, not the signed f_12-f_01 physics difference.
         if getattr(qubit, "anharmonicity", None) is None:
-            qubit.anharmonicity = -200e6
+            qubit.anharmonicity = 200e6
         add_DragCosine_pulses(
             qubit,
             amplitude=q_vals.get("x180_amplitude", 0.1),

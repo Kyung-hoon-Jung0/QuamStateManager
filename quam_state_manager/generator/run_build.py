@@ -719,11 +719,13 @@ def _apply_pulses(machine, vals):
         # is OPTIONAL, so a chip generated without an anharmonicity value would
         # make generate_config() crash the moment it builds the DRAG Q-component
         # (`derivative * (alpha / anharmonicity)` → `float * None` TypeError).
-        # Default it to a standard transmon value so the zero-populate path still
-        # yields a usable config; any value already set by _apply_qubit (from the
-        # populate block) is preserved, and the user can edit it afterwards.
+        # Default it to a standard transmon magnitude so the zero-populate path
+        # still yields a usable config; any value already set by _apply_qubit
+        # (from the populate block) is preserved, and the user can edit it
+        # afterwards. Positive — QM's state.json convention stores this as a
+        # positive magnitude, not the signed f_12-f_01 physics difference.
         if getattr(qubit, "anharmonicity", None) is None:
-            qubit.anharmonicity = -200e6
+            qubit.anharmonicity = 200e6
         add_DragCosine_pulses(
             qubit,
             amplitude=q_vals.get("x180_amplitude", 0.1),

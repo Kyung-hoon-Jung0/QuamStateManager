@@ -1,33 +1,32 @@
 <div class="table-header-row">
-    <h2>Qubits <small class="muted">({{ total }}{% if active_chain %} &mdash; Chain {{ active_chain }}{% endif %})</small></h2>
+    <h2>Flux <small class="muted">({{ total }}{% if active_chain %} &mdash; Chain {{ active_chain }}{% endif %})</small></h2>
     <div class="table-filter">
-        <input type="search" placeholder="Filter qubits..." autocomplete="off"
-               oninput="filterTable(this, 'qubits-table')">
-        <small id="qubits-table-filter-count" class="muted"></small>
+        <input type="search" placeholder="Filter flux channels..." autocomplete="off"
+               oninput="filterTable(this, 'flux-table')">
+        <small id="flux-table-filter-count" class="muted"></small>
     </div>
 </div>
 
 <nav class="chain-tabs">
     <ul>
-        <li><a href="/qubits?per_page={{ per_page }}" hx-get="/qubits?per_page={{ per_page }}" hx-target="#table-pane"
+        <li><a href="/flux?per_page={{ per_page }}" hx-get="/flux?per_page={{ per_page }}" hx-target="#table-pane"
                class="{% if not active_chain %}active{% endif %}">All</a></li>
         {% for ch in chains %}
-        <li><a href="/qubits?chain={{ ch }}&per_page={{ per_page }}" hx-get="/qubits?chain={{ ch }}&per_page={{ per_page }}" hx-target="#table-pane"
+        <li><a href="/flux?chain={{ ch }}&per_page={{ per_page }}" hx-get="/flux?chain={{ ch }}&per_page={{ per_page }}" hx-target="#table-pane"
                class="{% if active_chain == ch %}active{% endif %}">Chain {{ ch }}</a></li>
         {% endfor %}
     </ul>
 </nav>
 
-<table id="qubits-table" class="data-table" role="grid">
+<table id="flux-table" class="data-table" role="grid">
     <thead>
         <tr>
             <th class="sortable" data-col="0" data-type="str">ID</th>
-            <th class="sortable" data-col="1" data-type="num">f_01 <span class="unit">(GHz)</span></th>
-            <th class="sortable" data-col="2" data-type="num">T1 <span class="unit">(&micro;s)</span></th>
-            <th class="sortable" data-col="3" data-type="num">T2ramsey <span class="unit">(&micro;s)</span></th>
-            <th class="sortable" data-col="4" data-type="num">Readout Amp</th>
-            <th class="sortable" data-col="5" data-type="num">Gate Fidelity</th>
-            <th class="sortable" data-col="6" data-type="str">Grid</th>
+            <th class="sortable" data-col="1" data-type="num">Joint Offset <span class="unit">(V)</span></th>
+            <th class="sortable" data-col="2" data-type="num">Independent Offset <span class="unit">(V)</span></th>
+            <th class="sortable" data-col="3" data-type="str">Flux Point</th>
+            <th class="sortable" data-col="4" data-type="num">Delay <span class="unit">(ns)</span></th>
+            <th class="sortable" data-col="5" data-type="str">Grid</th>
         </tr>
     </thead>
     <tbody>
@@ -35,33 +34,22 @@
     {% for q in qubits %}
         <tr class="clickable-row" data-qubit-id="{{ q.id }}" hx-get="/qubit/{{ q.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
             <td><strong>{{ q.id }}</strong></td>
-            <td>{{ q.f_01 | qty('f_01') }}</td>
-            <td>{{ q.T1 | qty('T1') }}</td>
-            <td>{{ q.T2ramsey | qty('T2ramsey') }}</td>
-            <td>{{ "%.4f" | format(q.readout_amplitude) if q.readout_amplitude is not none else '-' }}</td>
-            <td>
-                {% if q.gate_fidelity_avg is not none %}
-                {% if q.gate_fidelity_avg >= 0.99 %}
-                <span class="cell-good" aria-label="Good"><span class="cell-glyph" aria-hidden="true">&#10003;</span>{{ "%.4f" | format(q.gate_fidelity_avg) }}</span>
-                {% elif q.gate_fidelity_avg >= 0.95 %}
-                <span class="cell-ok" aria-label="OK"><span class="cell-glyph" aria-hidden="true">&#9888;</span>{{ "%.4f" | format(q.gate_fidelity_avg) }}</span>
-                {% else %}
-                <span class="cell-bad" aria-label="Bad"><span class="cell-glyph" aria-hidden="true">&#10007;</span>{{ "%.4f" | format(q.gate_fidelity_avg) }}</span>
-                {% endif %}
-                {% else %}-{% endif %}
-            </td>
+            <td>{{ q.z_joint_offset | qty('z_joint_offset') }}</td>
+            <td>{{ q.z_independent_offset | qty('z_independent_offset') }}</td>
+            <td>{{ q.z_flux_point or '-' }}</td>
+            <td>{{ q.z_delay_ns if q.z_delay_ns is not none else '-' }}</td>
             <td>{{ q.grid_location or '-' }}</td>
         </tr>
     {% endfor %}
     {% else %}
-        <tr><td colspan="7" class="muted" style="text-align:center;padding:2rem">No qubits found in this state file.</td></tr>
+        <tr><td colspan="6" class="muted" style="text-align:center;padding:2rem">No flux channels found in this state file.</td></tr>
     {% endif %}
     </tbody>
 </table>
 
-{% set base_url = "/qubits" %}
+{% set base_url = "/flux" %}
 {% set extra_qs = ("&chain=" ~ active_chain) if active_chain else "" %}
-{% set storage_key = "quam_qubits_per_page" %}
+{% set storage_key = "quam_flux_per_page" %}
 {% include "_pagination.html" %}
 
 <!-- JSON drill-down panel for double-click wiring info -->
@@ -80,9 +68,9 @@
     var wiring = (rawWiring || {}).wiring || {};
     var qubitsWiring = wiring.qubits || {};
 
-    // Double-click a qubit row → show wiring JSON panel
+    // Double-click a flux row → show wiring JSON panel
     var _lastClick = {id: null, time: 0};
-    document.getElementById('qubits-table').addEventListener('click', function(e) {
+    document.getElementById('flux-table').addEventListener('click', function(e) {
         var row = e.target.closest('tr[data-qubit-id]');
         if (!row) return;
         var id = row.getAttribute('data-qubit-id');
@@ -104,7 +92,7 @@
         if (!panel || !treeEl) return;
 
         var subtree = qubitsWiring[name];
-        document.getElementById('json-panel-title').textContent = 'Wiring JSON \u2014 ' + name;
+        document.getElementById('json-panel-title').textContent = 'Wiring JSON — ' + name;
         treeEl.innerHTML = '';
         if (subtree) {
             renderJsonTree('json-panel-tree', subtree, {defaultDepth: 2});

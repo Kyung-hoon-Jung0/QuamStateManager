@@ -269,7 +269,7 @@
       {# Back / Next sit on this row (not the global footer) so the keyboard
          flow is Auto-allocate -> Enter -> Tab -> Back -> Tab -> Next. #}
       <div class="gen-allocate-row">
-        <button type="button" id="gen-allocate-btn">Auto-allocate</button>
+        <button type="button" class="btn-sync primary" id="gen-allocate-btn">Auto-allocate</button>
         <span id="gen-allocate-status" class="muted"></span>
         <span class="gen-wiring-nav">
           <button type="button" class="btn-sync" id="gen-wiring-back">&larr; Back</button>
@@ -453,6 +453,7 @@
      The wizard's wiring diagram uses the docked #gen-wiring-monitor (above)
      for hover info instead of the cursor-following port popup. #}
   <div id="json-panel" class="json-panel hidden">
+    <div class="json-panel-resizer" title="Drag to resize" aria-hidden="true"></div>
     <div class="json-panel-header">
       <span id="json-panel-title">Wiring JSON</span>
       <button type="button" onclick="closeJsonPanel()">&#10005;</button>

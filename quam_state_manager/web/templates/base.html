@@ -354,6 +354,22 @@
                            {% if page == 'qubits' or page == 'qubit_detail' %}class="active"{% endif %}>Qubits</a></li>
                     <li><a href="/pairs" hx-get="/pairs" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
                            {% if page == 'pairs' or page == 'pair_detail' %}class="active"{% endif %}>Pairs</a></li>
+                    {# Channel-scoped views (review feedback): hidden chip-wide when the
+                       chip has none of that channel (e.g. a fixed-frequency chip has no
+                       Flux; a CR-only chip has no Couplers) — has_resonator/has_flux/
+                       has_coupler are computed once in _ctx() from a raw structural scan. #}
+                    {% if has_resonator %}
+                    <li><a href="/resonators" hx-get="/resonators" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           {% if page == 'resonators' %}class="active"{% endif %}>Resonators</a></li>
+                    {% endif %}
+                    {% if has_flux %}
+                    <li><a href="/flux" hx-get="/flux" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           {% if page == 'flux' %}class="active"{% endif %}>Flux</a></li>
+                    {% endif %}
+                    {% if has_coupler %}
+                    <li><a href="/couplers" hx-get="/couplers" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           {% if page == 'couplers' %}class="active"{% endif %}>Couplers</a></li>
+                    {% endif %}
                     <li class="nav-with-sub">
                         <div class="nav-sub-row">
                             <a href="/pulses" hx-get="/pulses" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
@@ -1195,7 +1211,8 @@
     <script>
     (function () {
         var chipRev = null;   // per-tab baseline of the broadcast "chip changed" rev
-        var CHIP_PAGES = ["/topology", "/explorer", "/qubits", "/pairs", "/instrument"];
+        var CHIP_PAGES = ["/topology", "/explorer", "/qubits", "/pairs", "/instrument",
+                          "/resonators", "/flux", "/couplers"];
         function onChipPage() {
             var p = location.pathname;
             return CHIP_PAGES.some(function (c) { return p === c || p.indexOf(c + "/") === 0; });

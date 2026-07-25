@@ -240,6 +240,24 @@ class TestGetQubit:
         assert q["T2echo"] is None
         assert q["f_12"] is None
 
+    def test_has_resonator_and_has_z_true(self, engine):
+        # Drives the Resonators/Flux nav pages' row scoping — qA1 has both.
+        q = engine.get_qubit("qA1")
+        assert q["has_resonator"] is True
+        assert q["has_z"] is True
+
+    def test_has_resonator_and_has_z_false_when_missing_or_null(self):
+        # A fixed-frequency qubit (no z at all) and real QUAM data's
+        # explicit-null convention (``"resonator": null``) both read False,
+        # never crash — same null-vs-missing care as get_port_for.
+        store = QuamStore.from_dicts(
+            {"qubits": {"qX": {"id": "qX", "resonator": None}}}, {}
+        )
+        eng = QueryEngine(store)
+        q = eng.get_qubit("qX")
+        assert q["has_resonator"] is False
+        assert q["has_z"] is False
+
 
 # ---------------------------------------------------------------------------
 # get_pair
@@ -273,6 +291,8 @@ class TestGetPair:
         p = engine.get_pair("qA1-A2")
         assert p["coupler_decouple_offset"] == 0.48
         assert p["coupler_interaction_offset"] == 0.0
+        # Drives the Couplers nav page's row scoping.
+        assert p["has_coupler"] is True
 
     def test_characterization(self, engine):
         p = engine.get_pair("qA1-A2")
@@ -333,6 +353,7 @@ class TestGetPair:
         assert pair["cz_flattop_amplitude"] is None
         assert pair["cz_flattop_coupler_amplitude"] is None
         assert pair["coupler_decouple_offset"] is None
+        assert pair["has_coupler"] is False
 
     def test_get_topology_handles_explicit_null_subobjects(self, tmp_path):
         """Same regression but for get_topology, which is called by Pairs UI
@@ -594,6 +615,103 @@ class TestGetTopology:
         assert edge["target"] == "qA1"
         assert edge["has_cz"] is True
         assert edge["cz_fidelity"] == 0.85
+        # Chip Status draws a control->target arrow whenever source/target
+        # resolve (customer feedback: the diagram didn't say which qubit was
+        # control vs target) — source/target already ARE control/target;
+        # `directed` stays False for non-CR pairs (only CR gets the bold/
+        # offset variant; CZ still gets the lighter arrow client-side).
+        assert edge["gate_kind"] == "cz"
+        assert edge["directed"] is False
+
+
+# ---------------------------------------------------------------------------
+# _pair_qubit_ref — qubit_control/qubit_target resolution (get_pair +
+# get_topology share this). Most chips point straight at the qubit
+# ("#/qubits/qA2"); real tunable-coupler chip families route through a
+# wiring-side indirection instead ("#/wiring/qubit_pairs/<w-pair>/c/
+# control_qubit" -> "#/qubits/qA2") — the naive tail-segment split used to
+# return the wiring key ("control_qubit") instead of a qubit id, which
+# showed up as literal "control_qubit"/"target_qubit" in the Pairs table,
+# the new Couplers page, and the Chip Status topology arrow label.
+# ---------------------------------------------------------------------------
+
+
+class TestPairQubitRefResolution:
+    @pytest.fixture
+    def wiring_indirection_folder(self, tmp_path: Path) -> Path:
+        state = {
+            "qubits": {
+                "qX1": {"id": "qX1", "f_01": 5e9},
+                "qX2": {"id": "qX2", "f_01": 5.1e9},
+            },
+            "qubit_pairs": {
+                "coupler_qX1_qX2": {
+                    "id": "coupler_qX1_qX2",
+                    "macros": {},
+                    "qubit_control": "#/wiring/qubit_pairs/qX1-X2/c/control_qubit",
+                    "qubit_target": "#/wiring/qubit_pairs/qX1-X2/c/target_qubit",
+                },
+            },
+        }
+        wiring = {"wiring": {"qubit_pairs": {
+            "qX1-X2": {"c": {
+                "opx_output": "#/ports/analog_outputs/con1/1/1",
+                "control_qubit": "#/qubits/qX1",
+                "target_qubit": "#/qubits/qX2",
+            }},
+        }}}
+        (tmp_path / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        (tmp_path / "wiring.json").write_text(json.dumps(wiring), encoding="utf-8")
+        return tmp_path
+
+    def test_get_pair_resolves_through_wiring_indirection(self, wiring_indirection_folder):
+        store = QuamStore(wiring_indirection_folder)
+        eng = QueryEngine(store)
+        p = eng.get_pair("coupler_qX1_qX2")
+        assert p["qubit_control"] == "qX1"
+        assert p["qubit_target"] == "qX2"
+
+    def test_get_topology_resolves_through_wiring_indirection(self, wiring_indirection_folder):
+        store = QuamStore(wiring_indirection_folder)
+        eng = QueryEngine(store)
+        edge = eng.get_topology()["edges"][0]
+        assert edge["source"] == "qX1"
+        assert edge["target"] == "qX2"
+
+    def test_direct_qubit_pointer_unaffected(self, tmp_path: Path):
+        # The common (single-hop) shape still works byte-for-byte.
+        state = {
+            "qubits": {"qY1": {"id": "qY1"}, "qY2": {"id": "qY2"}},
+            "qubit_pairs": {"qY1-qY2": {
+                "id": "qY1-qY2", "macros": {},
+                "qubit_control": "#/qubits/qY1", "qubit_target": "#/qubits/qY2",
+            }},
+        }
+        (tmp_path / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        (tmp_path / "wiring.json").write_text(json.dumps({"wiring": {}}), encoding="utf-8")
+        store = QuamStore(tmp_path)
+        eng = QueryEngine(store)
+        p = eng.get_pair("qY1-qY2")
+        assert p["qubit_control"] == "qY1"
+        assert p["qubit_target"] == "qY2"
+
+    def test_dangling_pointer_falls_back_to_tail_segment(self, tmp_path: Path):
+        # A qubit_control pointing at a qubit that doesn't exist must not
+        # crash — falls back to the old tail-segment heuristic.
+        state = {
+            "qubits": {"qZ1": {"id": "qZ1"}},
+            "qubit_pairs": {"qZ1-qZZZ": {
+                "id": "qZ1-qZZZ", "macros": {},
+                "qubit_control": "#/qubits/qZ1", "qubit_target": "#/qubits/qZZZ",
+            }},
+        }
+        (tmp_path / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        (tmp_path / "wiring.json").write_text(json.dumps({"wiring": {}}), encoding="utf-8")
+        store = QuamStore(tmp_path)
+        eng = QueryEngine(store)
+        p = eng.get_pair("qZ1-qZZZ")
+        assert p["qubit_control"] == "qZ1"
+        assert p["qubit_target"] == "qZZZ"
 
 
 # ---------------------------------------------------------------------------

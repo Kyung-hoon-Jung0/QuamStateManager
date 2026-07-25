@@ -303,12 +303,12 @@ class TestBulkLinkable:
 
 class TestBulkDynCols:
     """r6 item 4 — Table View full coverage: the derived (dynamic) column model.
-
-    Baseline /bulk must render EXACTLY the curated columns (unchanged); the full
-    dynamic model ships as JSON for the Properties menu + search hint; only
-    ``?dyncols=<keys>`` turns model entries into rendered columns; list values
-    render the ✎ JSON-preview cell (never a text input); the pair grid's list
-    badge now carries the same ✎."""
+    r7: dynamic columns default to ALL VISIBLE (the r6 opt-in model buried
+    fields the search couldn't find) — baseline /bulk renders the curated
+    columns PLUS every derived one; ``?dynhide=<keys>`` is instead the
+    persisted HIDDEN set, so a key there is excluded from what would
+    otherwise render. List values render the ✎ JSON-preview cell (never a
+    text input); the pair grid's list badge carries the same ✎."""
 
     @pytest.fixture
     def dyn_client(self, tmp_path: Path):
@@ -354,17 +354,34 @@ class TestBulkDynCols:
         assert m, f"no listedit model entry labelled {label!r}"
         return m.group(1)
 
-    def test_baseline_renders_exactly_the_curated_columns(self, dyn_client):
+    def test_baseline_renders_curated_and_all_dynamic_columns(self, dyn_client):
         from quam_state_manager.core.param_specs import _BULK_COLUMNS_SPEC
         body = dyn_client.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
-        rendered = set(re.findall(r'<th[^>]*data-col-key="([^"]+)"', body)) - {"__id__"}
         curated = {c["key"] for c in _BULK_COLUMNS_SPEC}
-        # no dynamic column headers without ?dyncols= (the pair grid contributes
-        # its own derived keys, so compare against the QUBIT table's thead only)
+        # r7: no ?dynhide= means hide nothing — every derived column renders
+        # alongside the curated ones (the pair grid contributes its own
+        # derived keys, so compare against the QUBIT table's thead only).
+        # Curated columns may still be individually PRUNED when their whole
+        # channel is structurally absent on this synthetic fixture (dead-
+        # channel pruning, unrelated to dynhide) — so check the non-dyn
+        # rendered set is curated-sourced rather than demanding every curated
+        # key survive.
         qubit_thead = body.split('id="bulk-pair-table"')[0]
         q_rendered = set(re.findall(r'<th[^>]*data-col-key="([^"]+)"', qubit_thead)) - {"__id__"}
-        assert q_rendered <= curated
-        assert not any(k.startswith("dyn__") for k in rendered)
+        non_dyn = {k for k in q_rendered if not k.startswith("dyn__")}
+        assert non_dyn <= curated
+        assert any(k.startswith("dyn__") for k in q_rendered)
+
+    def test_dynhide_hides_the_requested_column(self, dyn_client):
+        base = dyn_client.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
+        key = self._listedit_key(base, "confusion_matrix")
+        body = dyn_client.get(f"/bulk?dynhide={key}",
+                              headers={"HX-Request": "true"}).get_data(as_text=True)
+        qubit_thead = body.split('id="bulk-pair-table"')[0]
+        assert f'data-col-key="{key}"' not in qubit_thead
+        # unrelated dyn columns are unaffected
+        assert any(k.startswith("dyn__") for k in
+                   re.findall(r'data-col-key="([^"]+)"', qubit_thead))
 
     def test_dynamic_model_json_ships_in_the_page(self, dyn_client):
         body = dyn_client.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
@@ -376,13 +393,12 @@ class TestBulkDynCols:
         # curated templates are deduped: no dyn entry for the curated z offset
         assert not re.search(r'"key":"dyn__z_opx_output_offset"', body)
 
-    def test_dyncols_renders_the_list_preview_cell(self, dyn_client):
-        base = dyn_client.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
-        key = self._listedit_key(base, "confusion_matrix")
-        body = dyn_client.get(f"/bulk?dyncols={key}",
-                              headers={"HX-Request": "true"}).get_data(as_text=True)
+    def test_dyn_column_renders_the_list_preview_cell(self, dyn_client):
+        # r7: visible by default — no ?dynhide= needed to see it.
+        body = dyn_client.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
+        key = self._listedit_key(body, "confusion_matrix")
         th = re.search(rf'<th[^>]*data-col-key="{key}"[^>]*>', body)
-        assert th and "bulk-col-hidden" not in th.group(0), "requested dyn column is visible"
+        assert th and "bulk-col-hidden" not in th.group(0), "dyn column is visible by default"
         row = re.search(r'data-qubit="qA1"(.*?)</tr>', body, re.S).group(1)
         cell = re.search(r'<span class="bulk-cell-list[^"]*"[^>]*>', row)
         assert cell, "list value renders the preview cell, not a text input"
@@ -396,22 +412,23 @@ class TestBulkDynCols:
         assert not re.search(
             r'<input[^>]*data-dot-path="qubits.qA1.resonator.confusion_matrix"', row)
 
-    def test_dyncols_scalar_column_is_a_normal_editable_cell(self, dyn_client):
-        base = dyn_client.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
-        m = re.search(r'\{"key":"(dyn__[^"]+)","label":"[^"]*feedback_gain[^"]*",', base)
+    def test_dyn_scalar_column_is_a_normal_editable_cell(self, dyn_client):
+        # r7: visible by default — no ?dynhide= needed.
+        body = dyn_client.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
+        m = re.search(r'\{"key":"(dyn__[^"]+)","label":"[^"]*feedback_gain[^"]*",', body)
         assert m
-        body = dyn_client.get(f"/bulk?dyncols={m.group(1)}",
-                              headers={"HX-Request": "true"}).get_data(as_text=True)
         cell = re.search(r'<input[^>]*data-dot-path="qubits.qA1.z.opx_output.feedback_gain"[^>]*>', body)
         assert cell and "readonly" not in cell.group(0)
 
-    def test_stale_dyncols_keys_silently_ignored(self, dyn_client):
-        r = dyn_client.get("/bulk?dyncols=dyn__nope,also_bad,",
+    def test_stale_dynhide_keys_silently_ignored(self, dyn_client):
+        r = dyn_client.get("/bulk?dynhide=dyn__nope,also_bad,",
                            headers={"HX-Request": "true"})
         assert r.status_code == 200
         body = r.get_data(as_text=True)
         qubit_thead = body.split('id="bulk-pair-table"')[0]
-        assert 'data-col-key="dyn__' not in qubit_thead
+        # unknown keys are a no-op — real dyn columns still render (default-visible)
+        assert any(k.startswith("dyn__") for k in
+                   re.findall(r'data-col-key="([^"]+)"', qubit_thead))
 
     def test_pair_list_badge_carries_the_json_edit_button(self, dyn_client):
         body = dyn_client.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)

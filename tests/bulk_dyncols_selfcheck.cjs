@@ -5,11 +5,15 @@
 //    Ctrl+Enter posts the PARSED value (never a string) with expect_chip; on
 //    success the preview cell updates + gets the committed (red) marker, the
 //    tray swaps, _diagChanged fires, the modal closes; Esc cancels
-//  - search hint: a query matching a NOT-enabled dynamic column shows the
-//    "N hidden columns match — Show" chip; Show appends the matched keys to
-//    localStorage quam_bulk_dyncols and reloads the pane via htmx.ajax
-//  - configRequest: /bulk GETs gain dyncols= from localStorage; /bulk/all-values
-//    and other paths are untouched; an existing dyncols= is replaced, not duped
+//  - dynamic columns default to ALL VISIBLE (review-r7): a query matching a
+//    column the user explicitly HID shows the "N hidden columns match —
+//    Show" chip; Show un-hides the matched keys (removes from localStorage
+//    quam_bulk_dynhidden) and reloads the pane via htmx.ajax
+//  - configRequest: /bulk GETs gain dynhide= (the hidden set) from
+//    localStorage; /bulk/all-values and other paths are untouched; an
+//    existing dynhide= is replaced, not duped; an empty hidden set strips it
+//  - a dyn-toggle reload does not collapse the Properties <details> menu
+//    (review-r7 item 6 — the reload swaps #table-pane wholesale)
 //
 // Run: node tests/bulk_dyncols_selfcheck.cjs   (needs jsdom)
 'use strict';
@@ -226,33 +230,32 @@ async function checkJsonModal() {
 async function checkSearchHint() {
   const win = makeWorld();
   const doc = win.document;
-  // one dyn column already enabled; the exponential_filter one is NOT
-  win.localStorage.setItem('quam_bulk_dyncols',
-    JSON.stringify(['dyn__resonator_confusion_matrix']));
+  // r7: dyn columns default to VISIBLE — only the exponential_filter one is
+  // explicitly hidden here; confusion_matrix and the XY alpha column start visible.
+  win.localStorage.setItem('quam_bulk_dynhidden',
+    JSON.stringify(['dyn__z_opx_output_exponential_filter']));
   win.BulkEdit.mount(COLS, { bands: {} }, DYN);
 
   const search = doc.getElementById('bulk-search');
   const hint = doc.getElementById('bulk-dyncol-hint');
   search.value = 'exponential';
   search.dispatchEvent(new win.Event('input', { bubbles: true }));
-  ok(!hint.hidden, 'hint chip appears for a matching disabled dynamic column');
+  ok(!hint.hidden, 'hint chip appears for a matching HIDDEN dynamic column');
   ok(/1 hidden column match/.test(hint.textContent),
     'hint counts the match, got: ' + hint.textContent);
 
   win.BulkEdit.showMatchedDynCols();
-  const saved = JSON.parse(win.localStorage.getItem('quam_bulk_dyncols'));
-  ok(saved.indexOf('dyn__z_opx_output_exponential_filter') >= 0,
-    'Show appends the matched key to quam_bulk_dyncols');
-  ok(saved.indexOf('dyn__resonator_confusion_matrix') >= 0,
-    'already-enabled keys survive');
+  const saved = JSON.parse(win.localStorage.getItem('quam_bulk_dynhidden'));
+  ok(saved.indexOf('dyn__z_opx_output_exponential_filter') < 0,
+    'Show un-hides the matched key');
   ok(win._log.ajax.length === 1 && win._log.ajax[0][1] === '/bulk'
     && win._log.ajax[0][2].target === '#table-pane',
     'Show reloads the pane via htmx.ajax GET /bulk');
 
-  // an ENABLED column never counts as hidden
+  // an already-VISIBLE column never counts as hidden
   search.value = 'confusion';
   search.dispatchEvent(new win.Event('input', { bubbles: true }));
-  ok(hint.hidden, 'no hint when every matching dyn column is already enabled');
+  ok(hint.hidden, 'no hint when every matching dyn column is already visible');
 
   // sub-2-char queries never hint
   search.value = 'e';
@@ -268,19 +271,32 @@ async function checkSearchHint() {
   ok(menu.querySelectorAll('[data-dyn-toggle]').length === 3,
     'every dynamic column has a toggle');
   const cb = menu.querySelector('[data-dyn-toggle="dyn__xy_operations_x180_DragCosine_alpha"]');
-  ok(cb && !cb.checked, 'disabled dyn column starts unchecked');
-  cb.checked = true;
+  ok(cb && cb.checked, 'a never-hidden dyn column starts checked (default-visible)');
+  cb.checked = false;   // user hides it
   cb.dispatchEvent(new win.Event('change', { bubbles: true }));
-  const saved2 = JSON.parse(win.localStorage.getItem('quam_bulk_dyncols'));
+  const saved2 = JSON.parse(win.localStorage.getItem('quam_bulk_dynhidden'));
   ok(saved2.indexOf('dyn__xy_operations_x180_DragCosine_alpha') >= 0,
-    'menu toggle adds the key');
+    'unchecking a menu toggle adds the key to the hidden set');
   ok(win._log.ajax.length === 2, 'menu toggle reloads the pane');
+
+  // review-r7 item 6: a dyn-toggle reload must NOT collapse the Properties
+  // menu — the real htmx swap replaces #table-pane wholesale, so a freshly
+  // server-rendered <details> (no `open` attribute) would otherwise land
+  // closed unless mount() restores it.
+  const colvisDetails = doc.querySelector('details.bulk-colvis');
+  colvisDetails.open = true;
+  cb.checked = true;   // un-hide again -> another dyn-toggle reload
+  cb.dispatchEvent(new win.Event('change', { bubbles: true }));
+  colvisDetails.open = false;   // simulate the swap landing a fresh, closed <details>
+  win.BulkEdit.mount(COLS, { bands: {} }, DYN);
+  ok(colvisDetails.open === true,
+    'a dyn-toggle reload re-opens the Properties menu (item 6 fix)');
 }
 
 async function checkConfigRequest() {
   const win = makeWorld();
   const doc = win.document;
-  win.localStorage.setItem('quam_bulk_dyncols', JSON.stringify(['dyn__a', 'dyn__b']));
+  win.localStorage.setItem('quam_bulk_dynhidden', JSON.stringify(['dyn__a', 'dyn__b']));
 
   function fire(path) {
     const evt = new win.CustomEvent('htmx:configRequest',
@@ -288,17 +304,18 @@ async function checkConfigRequest() {
     doc.dispatchEvent(evt);
     return evt.detail.path;
   }
-  ok(fire('/bulk') === '/bulk?dyncols=' + encodeURIComponent('dyn__a,dyn__b'),
-    '/bulk gains dyncols from localStorage');
-  ok(fire('/bulk?foo=1').indexOf('foo=1') >= 0 && /dyncols=/.test(fire('/bulk?foo=1')),
+  ok(fire('/bulk') === '/bulk?dynhide=' + encodeURIComponent('dyn__a,dyn__b'),
+    '/bulk gains dynhide from localStorage');
+  ok(fire('/bulk?foo=1').indexOf('foo=1') >= 0 && /dynhide=/.test(fire('/bulk?foo=1')),
     'existing params preserved');
-  ok(fire('/bulk?dyncols=stale') === '/bulk?dyncols=' + encodeURIComponent('dyn__a,dyn__b'),
-    'a baked dyncols is replaced, never duplicated');
+  ok(fire('/bulk?dynhide=stale') === '/bulk?dynhide=' + encodeURIComponent('dyn__a,dyn__b'),
+    'a baked dynhide is replaced, never duplicated');
   ok(fire('/bulk/all-values') === '/bulk/all-values', '/bulk/all-values untouched');
   ok(fire('/pulses?q=x') === '/pulses?q=x', 'other paths untouched');
 
-  win.localStorage.setItem('quam_bulk_dyncols', '[]');
-  ok(fire('/bulk?dyncols=stale') === '/bulk', 'empty set strips a stale dyncols');
+  win.localStorage.setItem('quam_bulk_dynhidden', '[]');
+  ok(fire('/bulk?dynhide=stale') === '/bulk',
+    'empty hidden set strips a stale dynhide (hide nothing = show all)');
 }
 
 (async function () {

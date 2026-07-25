@@ -244,9 +244,9 @@ window.ChipStatus.mount = function (opts) {
                   && typeof r.raw === 'number' && isFinite(r.raw));
     }
     // One qubit-card / popup property row with the physical gate applied: an
-    // unphysical fit shows its raw value struck-through ("bad fit"), never a heat
-    // colour or a data-heat-v that the spec painter would turn red. nullLabel is
-    // what a genuinely-missing value renders as ('—' on cards, 'None' in popups).
+    // unphysical fit shows its raw value struck-through ("bad fit"), never a
+    // heat colour. nullLabel is what a genuinely-missing value renders as
+    // ('—' on cards, 'None' in popups).
     function _propRowHtml(n, p, nullLabel) {
         if (_badFit(n, p.key)) {
             return '<div class="topo-prop-row" data-prop="' + p.key + '">'
@@ -275,10 +275,18 @@ window.ChipStatus.mount = function (opts) {
         return {avg: sum / vals.length, median: median, min: mn, max: mx, count: vals.length, values: vals};
     }
 
-    function cardColor(value, thresholds) {
+    // `range` is a flat [hi, lo] calibration pair — hi was the old "good"
+    // cutoff of the retired red/amber/green table, lo the old "bad" one.
+    // Review feedback: "pass/fail is ultimately just a magnitude read
+    // anyway", so the tile accent is a continuous normalize-against-range
+    // read on the SAME palette as the heatmap (dCfg.colorScale, Blues by
+    // default, or whatever the user has picked) instead of a separate
+    // hardcoded RAG scheme. interpolateColor clamps t to [0, 1].
+    function cardColor(value, range) {
         if (value == null) return '#999';
-        for (var i = 0; i < thresholds.length; i++) { if (value >= thresholds[i][0]) return thresholds[i][1]; }
-        return thresholds[thresholds.length - 1][1];
+        var hi = range[0], lo = range[range.length - 1];
+        var t = hi === lo ? 1 : (value - lo) / (hi - lo);
+        return interpolateColor(t, dCfg.colorScale);
     }
 
     // Robust outlier detector — modified z-score off the MEDIAN and MAD (median
@@ -336,7 +344,7 @@ window.ChipStatus.mount = function (opts) {
 
     // ── Color palette definitions ────────────────────────────────────
     var PALETTES = {
-        'GnBu':     {label:'GnBu (default)',stops:['#e0f3db','#a8ddb5','#7bccc4','#43a2ca','#0868ac']},
+        'GnBu':     {label:'GnBu',          stops:['#e0f3db','#a8ddb5','#7bccc4','#43a2ca','#0868ac']},
         'Viridis':  {label:'Viridis',       stops:['#440154','#31688e','#35b779','#90d743','#fde725']},
         'Plasma':   {label:'Plasma',        stops:['#0d0887','#7e03a8','#cc4778','#f89540','#f0f921']},
         'Inferno':  {label:'Inferno',       stops:['#000004','#57106e','#bc3754','#f98c0a','#fcffa4']},
@@ -344,22 +352,23 @@ window.ChipStatus.mount = function (opts) {
         'Cividis':  {label:'Cividis',       stops:['#002051','#3d4f7c','#7b7b78','#b8a94f','#fdea45']},
         'RdYlGn':   {label:'Red-Yellow-Green',stops:['#d73027','#fc8d59','#fee08b','#91cf60','#1a9850']},
         'YlOrRd':   {label:'Yellow-Orange-Red',stops:['#ffffb2','#fecc5c','#fd8d3c','#f03b20','#bd0026']},
-        'Blues':    {label:'Blues',          stops:['#eff3ff','#bdd7e7','#6baed6','#3182bd','#08519c']},
+        'Blues':    {label:'Blues (default)',stops:['#eff3ff','#bdd7e7','#6baed6','#3182bd','#08519c']},
         'Citrus':   {label:'Citrus',        stops:['#f7fcb9','#d9f0a3','#addd8e','#78c679','#31a354']},
         'DkGreen':  {label:'Dark \u2192 Bright Green',stops:['#00230e','#0a5226','#1a8a42','#3cc264','#66ff8c']},
     };
 
-    // Restore saved palettes or use defaults
+    // Restore saved palettes, else default to the simple/modern app-blue
+    // gradient (review feedback: the old GnBu default "wasn't a pretty
+    // color") — pale blue (low) to navy (high), matching the app's own
+    // primary blue rather than an arbitrary ColorBrewer scheme.
     var _savedPalette = null;
     try { _savedPalette = localStorage.getItem('quam_heatmap_palette'); } catch(e) {}
-    if (_savedPalette && PALETTES[_savedPalette]) {
-        dCfg.colorScale = PALETTES[_savedPalette].stops;
-    }
-    var _currentPaletteName = (_savedPalette && PALETTES[_savedPalette]) ? _savedPalette : 'GnBu';
+    var _currentPaletteName = (_savedPalette && PALETTES[_savedPalette]) ? _savedPalette : 'Blues';
+    dCfg.colorScale = PALETTES[_currentPaletteName].stops;
 
     var _savedBarPalette = null;
     try { _savedBarPalette = localStorage.getItem('quam_bar_palette'); } catch(e) {}
-    var _currentBarPaletteName = (_savedBarPalette && PALETTES[_savedBarPalette]) ? _savedBarPalette : 'GnBu';
+    var _currentBarPaletteName = (_savedBarPalette && PALETTES[_savedBarPalette]) ? _savedBarPalette : 'Blues';
     var _barColorScale = PALETTES[_currentBarPaletteName].stops;
 
     // ── Card property definitions ──────────────────────────────────
@@ -460,7 +469,7 @@ window.ChipStatus.mount = function (opts) {
 
         // metricKey (optional) → the title gets the META good-direction arrow +
         // blurb tooltip; composite tiles (Chip Size, 2Q RB, CZ Coverage) pass none.
-        function metricTile(title, agg, fmtFn, stops, metricKey) {
+        function metricTile(title, agg, fmtFn, range, metricKey) {
             if (!agg || agg.count === 0) {
                 return {title: title, metricKey: metricKey, value: '—', sub: 'no data', muted: true};
             }
@@ -469,13 +478,17 @@ window.ChipStatus.mount = function (opts) {
                 metricKey: metricKey,
                 value: fmtFn(agg.median),
                 sub: 'avg ' + fmtFn(agg.avg) + '  ·  ' + fmtFn(agg.min) + '–' + fmtFn(agg.max) + '  ·  (' + agg.count + ')',
-                color: cardColor(agg.median, stops)
+                color: cardColor(agg.median, range)
             };
         }
 
-        var fidStops = [[0.99,'#2ca02c'],[0.95,'#ff7f0e'],[0,'#d62728']];
-        var roStops  = [[0.97,'#2ca02c'],[0.90,'#ff7f0e'],[0,'#d62728']];
-        var tStops   = [[30e-6,'#2ca02c'],[10e-6,'#ff7f0e'],[0,'#d62728']];
+        // [hi, lo] calibration range for cardColor's magnitude→palette read —
+        // hi was the old "good" cutoff, lo the old "bad" cutoff; the middle
+        // "warn" cutoff no longer has a distinct role now that this is a
+        // continuous gradient, not a 3-tier verdict.
+        var fidRange = [0.99, 0];
+        var roRange  = [0.97, 0];
+        var tRange   = [30e-6, 0];
         var czCount = topo.edges.filter(function(e) { return e.has_cz; }).length;
         var czCoverage = topo.edges.length > 0 ? czCount / topo.edges.length : 0;
         // Gate-neutral vocabulary: "CZ" on flux chips, "CR" on cross-resonance
@@ -484,16 +497,16 @@ window.ChipStatus.mount = function (opts) {
 
         var tiles = [
             {title: 'Chip Size', value: topo.nodes.length + ' qubits, ' + topo.edges.length + ' pairs', color: '#4e79a7'},
-            metricTile('1Q Gate Fidelity', nodeAgg('gate_fidelity_avg'), pct, fidStops, 'gate_fidelity_avg'),
-            metricTile('Readout Fidelity', nodeAgg('assignment_fidelity'), pct, roStops, 'assignment_fidelity'),
-            metricTile('2Q RB (Standard)', computeAggregates(collect2Q(function(m) { return m === 'StandardRB'; })), pct, fidStops),
-            metricTile('2Q RB (Interleaved)', computeAggregates(collect2Q(function(m) { return m === 'InterleavedRB' || m === 'IRB'; })), pct, fidStops),
-            metricTile('2Q Bell', computeAggregates(topo.edges.map(function(e) { return e.cz_fidelity; })), pct, [[0.95,'#2ca02c'],[0.85,'#ff7f0e'],[0,'#d62728']], 'cz_fidelity'),
-            metricTile('T1', nodeAgg('T1'), us, tStops, 'T1'),
-            metricTile('T2 echo', nodeAgg('T2echo'), us, tStops, 'T2echo'),
-            metricTile('T2 Ramsey', nodeAgg('T2ramsey'), us, tStops, 'T2ramsey'),
+            metricTile('1Q Gate Fidelity', nodeAgg('gate_fidelity_avg'), pct, fidRange, 'gate_fidelity_avg'),
+            metricTile('Readout Fidelity', nodeAgg('assignment_fidelity'), pct, roRange, 'assignment_fidelity'),
+            metricTile('2Q RB (Standard)', computeAggregates(collect2Q(function(m) { return m === 'StandardRB'; })), pct, fidRange),
+            metricTile('2Q RB (Interleaved)', computeAggregates(collect2Q(function(m) { return m === 'InterleavedRB' || m === 'IRB'; })), pct, fidRange),
+            metricTile('2Q Bell', computeAggregates(topo.edges.map(function(e) { return e.cz_fidelity; })), pct, [0.95, 0], 'cz_fidelity'),
+            metricTile('T1', nodeAgg('T1'), us, tRange, 'T1'),
+            metricTile('T2 echo', nodeAgg('T2echo'), us, tRange, 'T2echo'),
+            metricTile('T2 Ramsey', nodeAgg('T2ramsey'), us, tRange, 'T2ramsey'),
             {title: gateVocab + ' Coverage', value: czCount + '/' + topo.edges.length + ' (' + (czCoverage * 100).toFixed(0) + '%)',
-             sub: czCount + ' pairs with ' + gateVocab + ' gate', color: cardColor(czCoverage, [[0.9,'#2ca02c'],[0.5,'#ff7f0e'],[0,'#d62728']])}
+             sub: czCount + ' pairs with ' + gateVocab + ' gate', color: cardColor(czCoverage, [0.9, 0])}
         ];
 
         var html = '';
@@ -564,8 +577,11 @@ window.ChipStatus.mount = function (opts) {
         // ── Build SVG edges ──────────────────────────────────────────
         // Directed (CR) edges: each direction is its own calibration target —
         // offset the two anti-parallel lines perpendicular to the run so they
-        // never overpaint, add an arrowhead at the target end, and dim pairs
-        // outside active_qubit_pair_names.
+        // never overpaint, and dim pairs outside active_qubit_pair_names.
+        // Control/target orientation is carried by the EDGE LABEL's pointed
+        // shape (below), not a separate arrowhead here — a small in-line
+        // polygon read as too subtle to notice (review feedback), and the
+        // label already needs to encode direction via source→target text.
         var svgLines = '';
         topo.edges.forEach(function(e) {
             var si = idToIdx[e.source], ti = idToIdx[e.target];
@@ -582,7 +598,6 @@ window.ChipStatus.mount = function (opts) {
                 width = 3;
             }
             var opacity = (e.active === false) ? 0.35 : 1;
-            var arrow = '';
             if (e.directed) {
                 var dx = x2 - x1, dy = y2 - y1;
                 var len = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -592,16 +607,8 @@ window.ChipStatus.mount = function (opts) {
                 var off = 4;
                 x1 += -uy * off; y1 += ux * off;
                 x2 += -uy * off; y2 += ux * off;
-                // arrowhead chevron 12px before the target center
-                var ax = x2 - ux * 28, ay = y2 - uy * 28;
-                var s = 6;
-                arrow = '<polygon points="'
-                    + (ax + ux * s) + ',' + (ay + uy * s) + ' '
-                    + (ax - ux * s - uy * s) + ',' + (ay - uy * s + ux * s) + ' '
-                    + (ax - ux * s + uy * s) + ',' + (ay - uy * s - ux * s)
-                    + '" fill="' + color + '" opacity="' + opacity + '"/>';
             }
-            svgLines += '<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" stroke="'+color+'" stroke-width="'+width+'" stroke-linecap="round" opacity="'+opacity+'"/>' + arrow;
+            svgLines += '<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" stroke="'+color+'" stroke-width="'+width+'" stroke-linecap="round" opacity="'+opacity+'"/>';
         });
 
         // ── Build edge labels ────────────────────────────────────────
@@ -629,13 +636,32 @@ window.ChipStatus.mount = function (opts) {
             if (e.has_cz && e.cz_fidelity != null) {
                 color = e.cz_fidelity >= 0.95 ? tCfg.edgeFidelityGood : (e.cz_fidelity >= 0.85 ? tCfg.edgeFidelityWarn : tCfg.edgeFidelityBad);
             }
+            // Any pair with a resolved control/target orientation gets a
+            // pointed label (clip-path reshapes the target-facing EDGE of the
+            // box into a point — see style.css .topo-edge-label-arrow-*)
+            // instead of a separate arrowhead on the line, which read as too
+            // subtle to notice (review feedback).
+            var hasOrientation = e.directed || (!!e.source && !!e.target);
+            var arrowCls = '';
+            if (hasOrientation) {
+                var ddx = positions[ti].x - positions[si].x;
+                var ddy = positions[ti].y - positions[si].y;
+                // dominant axis decides the pointer direction — chip grids are
+                // overwhelmingly axis-aligned (nearest-neighbor placement), so
+                // a diagonal (non-adjacent) CR/CZ pair just snaps to the
+                // nearest cardinal direction rather than an exact angle (which
+                // would also tip the label's TEXT sideways to stay pointed).
+                arrowCls = Math.abs(ddx) >= Math.abs(ddy)
+                    ? (ddx >= 0 ? ' topo-edge-label-arrow-right' : ' topo-edge-label-arrow-left')
+                    : (ddy >= 0 ? ' topo-edge-label-arrow-down' : ' topo-edge-label-arrow-up');
+            }
             var label = _esc(e.pair_id);
-            if (e.directed) label = _esc(e.source) + '→' + _esc(e.target);
+            if (hasOrientation) label = _esc(e.source) + '→' + _esc(e.target);
             if (e.cz_fidelity != null) label += ' (' + (e.cz_fidelity * 100).toFixed(1) + '%)';
             if (e.best_gate) label += ' ' + _esc(e.best_gate.replace(/^cz_/, ''));
             if (e.active === false) label += ' · off';
 
-            edgeLabelsHtml += '<div class="topo-edge-label" data-pair="' + _esc(e.pair_id) + '" '
+            edgeLabelsHtml += '<div class="topo-edge-label' + arrowCls + '" data-pair="' + _esc(e.pair_id) + '" '
                 + 'style="left:' + mx + 'px;top:' + my + 'px;border-color:' + color + ';color:' + color
                 + (e.active === false ? ';opacity:.45' : '') + '">'
                 + label + '</div>';
@@ -1379,7 +1405,7 @@ window.ChipStatus.mount = function (opts) {
         });
 
         _renderChartSpecsProgressively(specs);
-        if (window._recolorTopology) window._recolorTopology();   // apply Spec/relative to the new cells
+        if (window._recolorTopology) window._recolorTopology();   // repaint the new cells with the active palette
         if (window.ChipStatus && window.ChipStatus.liveDiff) window.ChipStatus.liveDiff.decorate();
     }
 
@@ -1599,7 +1625,7 @@ window.ChipStatus.mount = function (opts) {
         });
 
         _renderChartSpecsProgressively(specs);
-        if (window._recolorTopology) window._recolorTopology();   // apply Spec/relative to the new cells
+        if (window._recolorTopology) window._recolorTopology();   // repaint the new cells with the active palette
         if (window.ChipStatus && window.ChipStatus.liveDiff) window.ChipStatus.liveDiff.decorate();
     }
 
@@ -2130,7 +2156,6 @@ window.ChipStatus.mount = function (opts) {
         window._chipThresholds = thresholds;
         buildThresholdEditor();   // refresh the default/edited markers + reset state
         buildHealthSummary();
-        if (window._recolorTopology) window._recolorTopology();
         var st = document.getElementById('thresh-status');
         if (st) { st.textContent = '✓ applied'; st.classList.add('applied');
                   setTimeout(function() { if (st) { st.classList.remove('applied'); } }, 1600); }
@@ -2146,10 +2171,9 @@ window.ChipStatus.mount = function (opts) {
         try { localStorage.removeItem(THRESH_KEY); } catch (e) {}
         buildThresholdEditor();
         buildHealthSummary();
-        if (window._recolorTopology) window._recolorTopology();
     };
     // Reset ONE metric back to its spec default (mirrors applyThresholds' commit
-    // order: persist → editor rebuild → summary → recolour).
+    // order: persist → editor rebuild → summary).
     window.resetMetricThreshold = function(k) {
         var d = _defaultThresholds[k];
         if (!d || !thresholds[k]) return;
@@ -2159,54 +2183,29 @@ window.ChipStatus.mount = function (opts) {
         window._chipThresholds = thresholds;
         buildThresholdEditor();
         buildHealthSummary();
-        if (window._recolorTopology) window._recolorTopology();
     };
 
-    // ── Spec colour mode: paint each diagram cell by its absolute verdict
-    //    (pass/warn/fail) instead of the per-metric min/max heatmap. Repaints
-    //    in place from the stored data-heat-v (raw) / data-heat-t (relative). ──
-    var SPEC_COLORS = { pass: '#2e7d32', warn: '#e69500', fail: '#c62828' };
-    // Spec (absolute verdict) is the HONEST DEFAULT (Phase 3) — relative per-metric
-    // min/max flatters a bad chip (the least-bad qubit glows top-palette green).
-    // Opt out only if the user explicitly chose relative before.
-    var specColorMode = true;
-    try { if (localStorage.getItem('quam_chip_spec_color') === '0') specColorMode = false; } catch (e) {}
-
-    // Unified recolour across EVERY coloured surface (diagram prop-values AND the
-    // metric/2Q heatmap cells). Spec mode → verdict colour where a threshold
-    // exists; metrics with no spec (frequencies, amplitudes) fall back to the
-    // relative heatmap so they're still informative. Reads the stored data-heat-v
-    // (raw) / data-heat-t (relative) — no rebuild.
-    function _paintCell(cell, key) {
-        var th = key ? thresholds[key] : null;
-        if (specColorMode && th) {
-            var raw = cell.getAttribute('data-heat-v');
-            var val = (raw == null || raw === '') ? null : parseFloat(raw);
-            var vr = _verdict(val, th);
-            if (vr) { cell.style.background = SPEC_COLORS[vr]; cell.style.color = '#fff'; return; }
-            cell.style.background = ''; cell.style.color = '';   // missing/unphysical → neutral (None style shows)
-            return;
-        }
+    // ── Cell colour: ONE continuous app-blue magnitude read, everywhere ──
+    // The retired "spec colour" mode painted every thresholded value with a
+    // discrete green/amber/red verdict while the "... more" hover panel kept
+    // the continuous palette — the default cards clashed with the panel right
+    // next to them (user feedback: the RAG mix looked dated). Colour now
+    // ALWAYS means relative magnitude on the shared palette (Blues by
+    // default), identical across cards, hover panel and heatmap cells.
+    // Pass/warn/fail verdicts still live on the dedicated status surfaces
+    // (Health tiles, verdict banner, worst-qubit list, report card) — they
+    // just no longer repaint the numbers. Reads the stored data-heat-t; no
+    // rebuild.
+    function _paintCell(cell) {
         var t = parseFloat(cell.getAttribute('data-heat-t'));
         if (!isNaN(t)) { var bg = interpolateColor(t, dCfg.colorScale); cell.style.background = bg; cell.style.color = textColorForBg(bg); }
-        else { cell.style.background = ''; cell.style.color = ''; }
+        else { cell.style.background = ''; cell.style.color = ''; }   // missing/unphysical → neutral (None style shows)
     }
     window._recolorTopology = function() {
         var pv = document.querySelectorAll('.topo-prop-value');
-        for (var i = 0; i < pv.length; i++) {
-            var row = pv[i].closest('.topo-prop-row');
-            _paintCell(pv[i], row ? row.getAttribute('data-prop') : null);
-        }
+        for (var i = 0; i < pv.length; i++) _paintCell(pv[i]);
         var hc = document.querySelectorAll('.heatmap-cell[data-metric]');
-        for (var j = 0; j < hc.length; j++) {
-            _paintCell(hc[j], hc[j].getAttribute('data-metric'));
-        }
-    };
-    window.setSpecColorMode = function(on) {
-        specColorMode = !!on;
-        try { localStorage.setItem('quam_chip_spec_color', on ? '1' : '0'); } catch (e) {}
-        var cb = document.getElementById('topo-spec-color'); if (cb) cb.checked = specColorMode;
-        window._recolorTopology();
+        for (var j = 0; j < hc.length; j++) _paintCell(hc[j]);
     };
 
     // Build the health summary + Overview tiles eagerly (cheap, no Plotly).
@@ -2249,13 +2248,6 @@ window.ChipStatus.mount = function (opts) {
     } else {
         _setActiveTab('topology');
     }
-
-    // Apply the persisted spec-colour mode now the diagram cards exist.
-    (function() {
-        var cb = document.getElementById('topo-spec-color');
-        if (cb) cb.checked = specColorMode;
-        if (specColorMode && window._recolorTopology) window._recolorTopology();
-    })();
 
     _setupKeyboardNav();
 

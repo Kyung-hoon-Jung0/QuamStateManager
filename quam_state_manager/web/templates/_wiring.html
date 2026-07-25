@@ -24,9 +24,6 @@
                 <a class="btn-sm" href="/topology/report?format=html" download onclick="return ChipStatus.reportHref(this,'html')">HTML</a>
             </div>
         </details>
-        <label class="topo-toggle topo-colormode-toggle" title="Colour the diagram + heatmaps by absolute spec verdict instead of the per-metric min/max range">
-            <input type="checkbox" id="topo-spec-color" onchange="setSpecColorMode(this.checked)"> Spec colours
-        </label>
         <span class="topo-density-ctl" title="Tile size — shrink the boxes (the numbers stay the same size)">
             <span class="density-label">Tiles</span>
             <button type="button" class="btn-sm outline density-preset" data-density="0.7">S</button>
@@ -149,6 +146,7 @@
 
 <!-- JSON drill-down panel (hidden by default) -->
 <div id="json-panel" class="json-panel hidden">
+    <div class="json-panel-resizer" title="Drag to resize" aria-hidden="true"></div>
     <div class="json-panel-header">
         <span id="json-panel-title">Wiring JSON</span>
         <button onclick="closeJsonPanel()">&#10005;</button>

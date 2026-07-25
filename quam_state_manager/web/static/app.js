@@ -43,9 +43,14 @@ var UI_CONFIG = {
             },
             chainFallback:   '#777',      /* dot color for any chain letter not listed above (darkened for white text) */
             nodeBorderColor: '#ffffff',   /* thin ring drawn around each qubit dot */
-            edgeFidelityGood: '#2ca02c',  /* edge color when CZ fidelity >= 95% — green */
-            edgeFidelityWarn: '#ff7f0e',  /* edge color when CZ fidelity >= 85% — orange */
-            edgeFidelityBad:  '#d62728',  /* edge color when CZ fidelity < 85% — red */
+            /* Edge fidelity tiers share the app-blue single-hue ramp (same
+               unification as the diagram cells: colour = magnitude, deep =
+               good, washed-out toward the page = bad). A single-hue
+               luminance ramp is also inherently colorblind-safe. Light-theme
+               values; _applyThemeToPlotly swaps in the dark-theme ramp. */
+            edgeFidelityGood: '#08519c',  /* edge color when CZ fidelity >= 95% — deep app blue */
+            edgeFidelityWarn: '#4292c6',  /* edge color when CZ fidelity >= 85% — mid blue */
+            edgeFidelityBad:  '#9ecae1',  /* edge color when CZ fidelity < 85% — washed-out pale blue */
             edgeFidelityNone: '#bbbbbb',  /* edge color when no fidelity data — gray */
             hoverBg:         '#ffffff',   /* background color of the hover tooltip box */
             hoverBorder:     '#cccccc',   /* border color of the hover tooltip box */
@@ -70,9 +75,12 @@ var UI_CONFIG = {
             /* ── Dashboard panels (chip overview) ─────────────────── */
             dashboard: {
                 /* Single sequential color scale for all heatmaps (low → high).
-                   GnBu 5-stop: light mint → teal → dark blue.
-                   Change this one array to re-skin every heatmap at once.       */
-                colorScale: ['#e0f3db', '#a8ddb5', '#7bccc4', '#43a2ca', '#0868ac'],
+                   Superseded immediately by chip-status.js's PALETTES['Blues']
+                   default (or the user's saved quam_heatmap_palette choice) —
+                   this literal only matters if something reads UI_CONFIG
+                   directly before that override runs. Kept in sync so it's
+                   never a misleading fallback. */
+                colorScale: ['#eff3ff', '#bdd7e7', '#6baed6', '#3182bd', '#08519c'],
                 histColors: {
                     gateFidelity: '#43a2ca',
                     t1:           '#7bccc4',
@@ -1116,19 +1124,9 @@ window.toggleColorblindMode = function() {
     try { localStorage.setItem('quam_colorblind', active ? '1' : '0'); } catch(e) {}
     var btn = document.getElementById('colorblind-toggle');
     if (btn) btn.classList.toggle('settings-opt-active', active);
-    // Update Plotly topology colors if applicable
-    if (window.UI_CONFIG && UI_CONFIG.plotly && UI_CONFIG.plotly.topology) {
-        var t = UI_CONFIG.plotly.topology;
-        if (active) {
-            t.edgeFidelityGood = '#0571b0';
-            t.edgeFidelityWarn = '#ca6500';
-            t.edgeFidelityBad = '#92440a';
-        } else {
-            t.edgeFidelityGood = '#2ca02c';
-            t.edgeFidelityWarn = '#ff7f0e';
-            t.edgeFidelityBad = '#d62728';
-        }
-    }
+    // The topology edge-fidelity tiers no longer need a colorblind override:
+    // they moved to a single-hue blue luminance ramp (see UI_CONFIG /
+    // _applyThemeToPlotly), which is distinguishable under every CVD type.
 };
 
 // Restore colorblind mode on page load
@@ -1138,12 +1136,6 @@ window.toggleColorblindMode = function() {
             document.body.classList.add('colorblind-mode');
             var btn = document.getElementById('colorblind-toggle');
             if (btn) btn.classList.add('settings-opt-active');
-            if (window.UI_CONFIG && UI_CONFIG.plotly && UI_CONFIG.plotly.topology) {
-                var t = UI_CONFIG.plotly.topology;
-                t.edgeFidelityGood = '#0571b0';
-                t.edgeFidelityWarn = '#ca6500';
-                t.edgeFidelityBad = '#92440a';
-            }
         }
     } catch(e) {}
 })();
@@ -1319,6 +1311,9 @@ var _lightDefaults = {
     topoHoverBorder: '#cccccc',
     subLabelColor:   '#555',
     edgeLabelColor:  '#444',
+    edgeFidelityGood:'#08519c',
+    edgeFidelityWarn:'#4292c6',
+    edgeFidelityBad: '#9ecae1',
     iwGridBg:        '#f8f8f8',
     iwGridBorder:    '#dddddd',
     iwRowLabel:      '#aaaaaa',
@@ -1346,6 +1341,12 @@ function _applyThemeToPlotly(theme) {
         t.hoverBorder  = '#555';
         t.subLabelFont.color  = '#aaa';
         t.edgeLabelFont.color = '#bbb';
+        /* Same single-hue blue ramp, luminance-flipped for the dark bg:
+           brightest = best (pops against the dark), dimmest = washed toward
+           the background — mirrors "pale = bad" on the light theme. */
+        t.edgeFidelityGood = '#85bbe8';
+        t.edgeFidelityWarn = '#4a86c2';
+        t.edgeFidelityBad  = '#2e5578';
         iw.gridBg            = '#1e1e2e';
         iw.gridBorder        = '#444';
         iw.rowLabelColor     = '#666';
@@ -1363,6 +1364,9 @@ function _applyThemeToPlotly(theme) {
         t.hoverBorder  = _lightDefaults.topoHoverBorder;
         t.subLabelFont.color  = _lightDefaults.subLabelColor;
         t.edgeLabelFont.color = _lightDefaults.edgeLabelColor;
+        t.edgeFidelityGood = _lightDefaults.edgeFidelityGood;
+        t.edgeFidelityWarn = _lightDefaults.edgeFidelityWarn;
+        t.edgeFidelityBad  = _lightDefaults.edgeFidelityBad;
         iw.gridBg            = _lightDefaults.iwGridBg;
         iw.gridBorder        = _lightDefaults.iwGridBorder;
         iw.rowLabelColor     = _lightDefaults.iwRowLabel;
@@ -11236,4 +11240,53 @@ document.addEventListener("htmx:configRequest", function (evt) {
     // Keep the browser URL in sync so a later full re-fetch / reload preserves both.
     if (window._pulsesSyncUrl) window._pulsesSyncUrl();
 });
+
+// ---------------------------------------------------------------------------
+// JSON drill-down panel (#json-panel) — drag-to-resize (review-r7: the
+// Generate Config preview needed more room than a quick wiring-pointer
+// lookup, and the panel had no resize at all). One delegated listener covers
+// every call site (Wiring/Pairs/Qubits/Instrument pages + the wizard) since
+// each renders its own #json-panel copy and none share a mount hook; height
+// (not the CSS max-height) is the resizable knob, persisted globally so a
+// user's preferred size follows them from page to page.
+(function () {
+    var H_KEY = "quam_json_panel_h";
+    function _applyPersistedHeight(root) {
+        var h = parseInt(localStorage.getItem(H_KEY), 10);
+        if (!h) return;
+        (root || document).querySelectorAll(".json-panel").forEach(function (p) {
+            p.style.height = h + "px";
+        });
+    }
+    document.addEventListener("DOMContentLoaded", function () { _applyPersistedHeight(); });
+    document.addEventListener("htmx:afterSwap", function (evt) {
+        _applyPersistedHeight(evt.detail && evt.detail.target);
+    });
+    var _drag = null;
+    document.addEventListener("mousedown", function (e) {
+        var handle = e.target.closest && e.target.closest(".json-panel-resizer");
+        if (!handle) return;
+        var panel = handle.closest(".json-panel");
+        if (!panel) return;
+        e.preventDefault();
+        handle.classList.add("json-panel-resizing");
+        _drag = { panel: panel, handle: handle, startY: e.clientY,
+                  startH: panel.getBoundingClientRect().height };
+    });
+    document.addEventListener("mousemove", function (e) {
+        if (!_drag) return;
+        // Panel is bottom-docked — dragging the top edge UP grows it.
+        var dh = _drag.startY - e.clientY;
+        var h = Math.max(160, Math.min(window.innerHeight * 0.92, _drag.startH + dh));
+        _drag.panel.style.height = h + "px";
+    });
+    document.addEventListener("mouseup", function () {
+        if (!_drag) return;
+        _drag.handle.classList.remove("json-panel-resizing");
+        try {
+            localStorage.setItem(H_KEY, String(Math.round(_drag.panel.getBoundingClientRect().height)));
+        } catch (e) {}
+        _drag = null;
+    });
+})();
 

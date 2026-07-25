@@ -438,6 +438,116 @@ class TestPairs:
 
 
 # ---------------------------------------------------------------------------
+# Resonators / Flux / Couplers — channel-scoped views (review feedback):
+# same list/filter/JSON-drill-down pattern as Qubits/Pairs, narrowed to one
+# channel's fields, rows scoped to owners that structurally have that
+# channel; the sidebar hides Flux/Couplers chip-wide when nothing has one.
+# ---------------------------------------------------------------------------
+
+
+class TestResonators:
+    def test_resonators_no_store(self, client):
+        resp = client.get("/resonators")
+        assert resp.status_code == 200
+        assert b"No chip loaded" in resp.data
+
+    def test_resonators_list(self, loaded_client):
+        resp = loaded_client.get("/resonators")
+        assert resp.status_code == 200
+        assert b"qA1" in resp.data
+        assert b"Readout Freq" in resp.data
+
+    def test_resonators_row_opens_qubit_inspector(self, loaded_client):
+        html = loaded_client.get("/resonators").data.decode()
+        assert 'hx-get="/qubit/qA1"' in html
+
+    def test_resonators_nav_visible(self, loaded_client):
+        html = loaded_client.get("/qubits").data.decode()
+        assert 'href="/resonators"' in html
+
+
+class TestFlux:
+    def test_flux_list(self, loaded_client):
+        resp = loaded_client.get("/flux")
+        assert resp.status_code == 200
+        assert b"qA1" in resp.data
+        assert b"Joint Offset" in resp.data
+
+    def test_flux_row_opens_qubit_inspector(self, loaded_client):
+        html = loaded_client.get("/flux").data.decode()
+        assert 'hx-get="/qubit/qA1"' in html
+
+    def test_flux_nav_visible_when_chip_has_z(self, loaded_client):
+        html = loaded_client.get("/qubits").data.decode()
+        assert 'href="/flux"' in html
+
+
+class TestCouplers:
+    def test_couplers_list(self, loaded_client):
+        resp = loaded_client.get("/couplers")
+        assert resp.status_code == 200
+        assert b"qA1-A2" in resp.data
+        assert b"Decouple Offset" in resp.data
+
+    def test_couplers_row_opens_pair_inspector(self, loaded_client):
+        html = loaded_client.get("/couplers").data.decode()
+        assert 'hx-get="/pair/qA1-A2"' in html
+
+    def test_couplers_nav_visible_when_chip_has_coupler(self, loaded_client):
+        html = loaded_client.get("/qubits").data.decode()
+        assert 'href="/couplers"' in html
+
+
+class TestChannelScopedNavHiding:
+    """A chip with no flux / no coupler channel hides those nav items
+    entirely (but Resonators — virtually always present — still shows)."""
+
+    @pytest.fixture
+    def fixed_freq_client(self, tmp_path: Path):
+        state = {
+            "qubits": {
+                "qA1": {
+                    "id": "qA1", "f_01": 6.25e9,
+                    "resonator": {"f_01": 7.64e9,
+                                  "operations": {"readout": {"amplitude": 0.04}}},
+                    # No "z" key at all — a fixed-frequency qubit.
+                },
+            },
+            "qubit_pairs": {
+                "qA1-A2": {
+                    "id": "qA1-A2", "qubit_control": "#/qubits/qA1",
+                    "qubit_target": "#/qubits/qA1", "macros": {},
+                    # No "coupler" key — e.g. a CR-only pair.
+                },
+            },
+        }
+        (tmp_path / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        (tmp_path / "wiring.json").write_text(json.dumps({"wiring": {}}), encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "_app_instance"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(tmp_path)})
+        return c
+
+    def test_flux_and_couplers_hidden_resonators_shown(self, fixed_freq_client):
+        html = fixed_freq_client.get("/qubits").data.decode()
+        assert 'href="/resonators"' in html
+        assert 'href="/flux"' not in html
+        assert 'href="/couplers"' not in html
+
+    def test_flux_route_still_reachable_but_empty(self, fixed_freq_client):
+        # Direct navigation (e.g. a stale bookmark) never 500s — it just
+        # renders the "no rows" empty state.
+        resp = fixed_freq_client.get("/flux")
+        assert resp.status_code == 200
+        assert b"No flux channels found" in resp.data
+
+    def test_couplers_route_still_reachable_but_empty(self, fixed_freq_client):
+        resp = fixed_freq_client.get("/couplers")
+        assert resp.status_code == 200
+        assert b"No couplers found" in resp.data
+
+
+# ---------------------------------------------------------------------------
 # Table
 # ---------------------------------------------------------------------------
 

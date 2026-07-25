@@ -1502,6 +1502,26 @@ def _change_count() -> int:
     return len(store.change_log) if store else 0
 
 
+def _chip_channel_flags(store: QuamStore | None) -> tuple[bool, bool, bool]:
+    """Chip-wide (has_resonator, has_flux, has_coupler) — raw structural scan
+    (not engine.get_qubit()/get_pair(), which builds a full flattened dict per
+    row just to check one key). Drives the sidebar's Resonators/Flux/Couplers
+    nav items: shown only when at least one qubit/pair actually has that
+    channel (a fixed-frequency chip has no Flux; a chip without couplers —
+    CR-only or single-qubit — has no Couplers)."""
+    if store is None:
+        return False, False, False
+    qubits = store.merged.get("qubits", {})
+    pairs = store.merged.get("qubit_pairs", {})
+    has_resonator = any(isinstance(q, dict) and isinstance(q.get("resonator"), dict)
+                        for q in qubits.values())
+    has_flux = any(isinstance(q, dict) and isinstance(q.get("z"), dict)
+                  for q in qubits.values())
+    has_coupler = any(isinstance(p, dict) and isinstance(p.get("coupler"), dict)
+                      for p in pairs.values())
+    return has_resonator, has_flux, has_coupler
+
+
 def _ctx(**extra: Any) -> dict[str, Any]:
     """Base template context shared by all pages."""
     # Self-heal a missed live change (throttled ground-truth hash) so the
@@ -1511,6 +1531,7 @@ def _ctx(**extra: Any) -> dict[str, Any]:
     store = _store()
     path = _active_path()
     ident = _active_chip_identity()
+    has_resonator, has_flux, has_coupler = _chip_channel_flags(store)
     return {
         "active_path": path,
         # The chip-level name (shared across per-experiment loads), not the
@@ -1534,6 +1555,9 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         "wc_gc_threshold": _WC_GC_THRESHOLD,
         "qubit_names": store.qubit_names if store else [],
         "pair_names": store.qubit_pair_names if store else [],
+        "has_resonator": has_resonator,
+        "has_flux": has_flux,
+        "has_coupler": has_coupler,
         "workspace": _ws(),
         **extra,
     }
@@ -2271,6 +2295,65 @@ def qubits():
     )
 
 
+# ======================================================================
+# Resonators / Flux — channel-scoped qubit views (same table/filter/JSON-
+# drill-down pattern as Qubits, narrowed to one channel's fields; a qubit
+# without that channel is simply not a row here — see has_resonator/has_z
+# in QueryEngine.get_qubit). The sidebar hides Flux chip-wide when no qubit
+# has one (fixed-frequency chips); Resonators stays parallel for symmetry.
+# ======================================================================
+
+
+def _channel_scoped_qubits_page(*, has_key: str, page_name: str,
+                                template_stub: str):
+    engine = _engine()
+    if not engine:
+        return render_template("_empty_state.html", page=page_name)
+
+    chain_filter = request.args.get("chain")
+    page = _int_arg("page", 1, minimum=1)
+    per_page = _int_arg("per_page", _DEFAULT_PER_PAGE, minimum=1)
+
+    all_qubits = engine.list_qubits()
+    if chain_filter:
+        all_qubits = [q for q in all_qubits if q.get("id", "").startswith(f"q{chain_filter}")]
+
+    chains = sorted({q["id"][1] for q in all_qubits if len(q.get("id", "")) >= 2 and q["id"][0] == "q" and q["id"][1].isalpha()})
+
+    scoped_qubits = [q for q in all_qubits if q.get(has_key)]
+    page_qubits, total, page, total_pages = _paginate(scoped_qubits, page, per_page)
+
+    wiring_json = _wiring_json()
+
+    template = f"_{template_stub}.html" if _is_htmx() else f"{template_stub}.html"
+    return render_template(
+        template,
+        **_ctx(
+            page=page_name,
+            qubits=page_qubits,
+            chains=chains,
+            active_chain=chain_filter,
+            current_page=page,
+            total_pages=total_pages,
+            total=total,
+            per_page=per_page,
+            wiring_json=wiring_json,
+        ),
+    )
+
+
+@bp.route("/resonators")
+def resonators():
+    return _channel_scoped_qubits_page(
+        has_key="has_resonator", page_name="resonators", template_stub="resonators")
+
+
+@bp.route("/flux")
+def flux():
+    return _channel_scoped_qubits_page(
+        has_key="has_z", page_name="flux", template_stub="flux")
+
+
 @bp.route("/bulk")
 def bulk_edit():
     """Bulk-tune panel: rows = qubits, columns = the high-churn fields, every cell
@@ -2286,21 +2369,22 @@ def bulk_edit():
     from quam_state_manager.core.qubit_columns import derive_qubit_columns
 
     # Dynamic (derived) columns — full coverage of every qubit leaf (r6 item 4).
-    # The FULL model ships to the client (Properties menu + search hint); only
-    # the explicitly requested keys (?dyncols=, persisted client-side in
-    # quam_bulk_dyncols) become rendered columns, so the daily /bulk load with
-    # none enabled renders the curated spec exactly as before. Stale/unknown
-    # keys are silently ignored (the chip may have changed under a saved set).
+    # The FULL model ships to the client (Properties menu + search hint).
+    # r7: default to ALL VISIBLE — an opt-IN model buried fields the search
+    # couldn't find (the exact complaint item 4 shipped a hint chip for), so
+    # ?dynhide= is instead the client's persisted HIDDEN set (quam_bulk_
+    # dynhidden): absent/empty hides nothing, i.e. every derived column
+    # renders by default; the user opts OUT per-column instead of in.
+    # Stale/unknown keys are silently ignored (the chip may have changed
+    # under a saved set).
     dyn_model, _curated = derive_qubit_columns(store)
-    _dyn_requested = [k for k in (request.args.get("dyncols") or "").split(",") if k]
-    _dyn_by_key = {c["key"]: c for c in dyn_model if c.get("kind") != "note"}
+    _dyn_hidden = {k for k in (request.args.get("dynhide") or "").split(",") if k}
     specs: list[dict[str, Any]] = list(_BULK_COLUMNS_SPEC) + [
         {"section": c["section"], "key": c["key"], "label": c["label"],
-         "tmpl": c["tmpl"], "unit": c["unit"],
-         # explicitly requested ⇒ visible now (the client colvis default would
-         # otherwise hide a default_on=False column the user just opted into)
-         "default_on": True, "kind": c["kind"], "dyn": True}
-        for c in (_dyn_by_key[k] for k in _dyn_requested if k in _dyn_by_key)
+         "tmpl": c["tmpl"], "unit": c["unit"], "default_on": True,
+         "kind": c["kind"], "dyn": True}
+        for c in dyn_model
+        if c.get("kind") != "note" and c["key"] not in _dyn_hidden
     ]
 
     columns = [
@@ -2387,7 +2471,7 @@ def bulk_edit():
     band_meta = {"bands": {str(b): list(r) for b, r in mw_fem.BANDS.items()}}
     # Client model for the Properties menu + search hint: key/label/section/
     # unit/kind only — never the per-qubit tmpl values (the server re-derives
-    # cells from ?dyncols; the client only needs identity + display metadata).
+    # cells from ?dynhide; the client only needs identity + display metadata).
     dyn_cols = [
         {"key": c["key"], "label": c["label"], "section": c["section"],
          "unit": c.get("unit", ""), "kind": c.get("kind", "edit")}
@@ -3670,6 +3754,52 @@ def pairs():
 @bp.route("/pair/<name>")
 def pair_detail(name: str):
     return _render_pair_detail(name, focus_path=request.args.get("focus") or None)
+
+
+# ======================================================================
+# Couplers — coupler-channel-scoped pair view (same table/filter/JSON-
+# drill-down pattern as Pairs, narrowed to coupler fields; a pair without a
+# coupler — e.g. a CR chip — simply isn't a row here, see has_coupler in
+# QueryEngine.get_pair). The sidebar hides this nav item chip-wide when no
+# pair has one.
+# ======================================================================
+
+
+@bp.route("/couplers")
+def couplers():
+    engine = _engine()
+    store = _store()
+    if not engine or not store:
+        return render_template("_empty_state.html", page="couplers")
+
+    pair_data = []
+    for pair_name in store.qubit_pair_names:
+        try:
+            p = engine.get_pair(pair_name)
+        except KeyError:
+            continue
+        if p.get("has_coupler"):
+            pair_data.append(p)
+
+    page = _int_arg("page", 1, minimum=1)
+    per_page = _int_arg("per_page", _DEFAULT_PER_PAGE, minimum=1)
+    page_pairs, total, page, total_pages = _paginate(pair_data, page, per_page)
+
+    wiring_json = _wiring_json()
+
+    template = "_couplers.html" if _is_htmx() else "couplers.html"
+    return render_template(
+        template,
+        **_ctx(
+            page="couplers",
+            pairs=page_pairs,
+            current_page=page,
+            total_pages=total_pages,
+            total=total,
+            per_page=per_page,
+            wiring_json=wiring_json,
+        ),
+    )
 
 
 def _render_pair_detail(name: str, *, focus_path: str | None = None):

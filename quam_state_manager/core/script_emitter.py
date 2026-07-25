@@ -455,7 +455,7 @@ def _emit_build(spec: dict, chip: str, stamp: str) -> str:
     w("")
     w("# ============================ EDIT: populate ==========================")
     w("# Base SI units (Hz, ns, V, dimensionless amp). Blank/missing keys keep")
-    w("# quam_builder defaults (x180: amp 0.1 / len 40 ns; anharmonicity -200e6).")
+    w("# quam_builder defaults (x180: amp 0.1 / len 40 ns; anharmonicity 200e6).")
     w("POPULATE = %s" % pformat(populate, indent=4, width=88, sort_dicts=True))
     w("")
     w("# [control, target] per pair — for CZ chips the wizard ordered these")

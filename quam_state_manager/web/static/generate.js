@@ -1928,7 +1928,8 @@
 
   // spec line type -> short code used in the allocation result
   var ALLOC_KEY = { resonator: "rr", drive: "xy", flux: "z", coupler: "c",
-                    cross_resonance: "cr", zz_drive: "zz" };
+                    cross_resonance: "cr", zz_drive: "zz",
+                    twpa_pump: "p", twpa_isolation: "i" };
 
   function deriveLines() {
     // Rebuild lines from the current qubits/pairs, keeping any existing
@@ -2112,7 +2113,14 @@
   // window.renderInstrumentWiring (app.js) expects — the same data shape
   // query.py:get_instrument_wiring() produces for the /instrument page.
   function buildInstrumentData(allocation) {
-    var ROLE = { rr: "rr", xy: "xy", z: "z", c: "coupler", cr: "cr", zz: "zz" };
+    // qualang_tools' WiringLineType TWPA_PUMP / TWPA_ISOLATION values are the
+    // terse "p" / "i" — map them onto the SAME twpa_pump/twpa_ro/twpa_in
+    // roles query.py's live /instrument page already uses (UI_CONFIG.
+    // roleColors + CSS vars are pre-defined for these; only this
+    // wizard-local regroup was missing them, which silently disabled
+    // TWPA drag&drop).
+    var ROLE = { rr: "rr", xy: "xy", z: "z", c: "coupler", cr: "cr", zz: "zz",
+                 p: "twpa_pump", i: "twpa_ro" };
     var controllers = {};
     Object.keys(allocation || {}).forEach(function (element) {
       Object.keys(allocation[element] || {}).forEach(function (lineType) {
@@ -2120,6 +2128,7 @@
           var isInput = ch.io_type === "input";
           var role = ROLE[lineType] || lineType;
           if (role === "rr" && isInput) role = "rr_in";
+          if (role === "twpa_ro" && isInput) role = "twpa_in";
           var ctrl = controllers[ch.con] || (controllers[ch.con] = {});
           var fem = ctrl[ch.slot] || (ctrl[ch.slot] = {
             type: ch.instrument_id || "mw-fem",
@@ -2337,7 +2346,14 @@
       return here.length === 0 ||
              here.some(function (x) { return x.allocKey === "rr"; });
     }
-    if (src.role === "xy") return targetFem === "mw-fem" && t.io === "output";
+    if (src.role === "xy" || src.role === "twpa_pump") {
+      return targetFem === "mw-fem" && t.io === "output";
+    }
+    if (src.role === "twpa_ro" || src.role === "twpa_in") {
+      // TWPA isolation/spectroscopy is a drive+read pair, same as rr/rr_in.
+      var wantTwpaIo = (src.role === "twpa_in") ? "input" : "output";
+      return targetFem === "mw-fem" && t.io === wantTwpaIo;
+    }
     return targetFem === "lf-fem" && t.io === "output";           // z / coupler
   }
 
@@ -2374,6 +2390,18 @@
           // Feedline = qubits sharing one rr output port — re-derive `group`
           // from the dragged layout so build_connectivity multiplexes them.
           ln.group = "fl_" + ro.con + "_" + ro.slot + "_" + ro.port;
+        }
+      } else if (ln.line === "twpa_pump" && (a.p || [])[0]) {
+        var tp = a.p[0];
+        ln.channel = { kind: "mw_fem", con: tp.con, slot: tp.slot, out_port: tp.port };
+      } else if (ln.line === "twpa_isolation" && a.i) {
+        var tiOut = a.i.filter(function (x) { return (x.io_type || "output") === "output"; })[0];
+        var tiIn = a.i.filter(function (x) { return x.io_type === "input"; })[0];
+        var anchor = tiOut || tiIn;
+        if (anchor) {
+          ln.channel = { kind: "mw_fem", con: anchor.con, slot: anchor.slot,
+                         out_port: tiOut ? tiOut.port : undefined,
+                         in_port: tiIn ? tiIn.port : undefined };
         }
       }
     });
@@ -5789,13 +5817,14 @@
 
       var loadBtn = document.createElement("button");
       loadBtn.type = "button";
+      loadBtn.className = "btn-sync primary";
       loadBtn.textContent = "Load into app";
       loadBtn.addEventListener("click", function () { runLoad(outPath); });
       el.appendChild(loadBtn);
 
       var previewBtn = document.createElement("button");
       previewBtn.type = "button";
-      previewBtn.className = "outline";
+      previewBtn.className = "btn-sync outline";
       previewBtn.textContent = "Preview config";
       el.appendChild(previewBtn);
 
@@ -6485,6 +6514,9 @@
       deriveLines: deriveLines,
       pairPopCols: pairPopCols,
       ALLOC_KEY: ALLOC_KEY,
+      buildInstrumentData: buildInstrumentData,
+      isValidDrop: isValidDrop,
+      syncSpecChannels: syncSpecChannels,
       state: state
     }
   };
