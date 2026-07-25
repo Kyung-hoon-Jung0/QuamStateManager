@@ -58,6 +58,7 @@ from quam_state_manager.core import (
     diagnostics,
     gen_presets,
     node_scan,
+    path_match,
     regenerate,
     safe_io,
     scheduler,
@@ -156,6 +157,14 @@ def _build_bulk_cell(merged: dict, alias: str, modified: dict,
     resolvable = bool(ft.get("resolvable"))
     resolved = ft.get("resolved_path") or alias
     val = ft.get("resolved_value") if resolvable else None
+    # resolved_value is scalar-nulled for containers, so a real LIST leaf reads
+    # as null — one cheap walk (only on the resolvable-but-null case) detects it
+    # for the ✎ list-cell swap.
+    is_list = False
+    if resolvable and val is None:
+        from quam_state_manager.core.pointer_path import _walk as _walk_abs
+        found, node = _walk_abs(merged, resolved.split("."))
+        is_list = bool(found) and isinstance(node, list)
     p = mw_fem.port_of_resolved(resolved)
     if p:
         kind, con, fem, port, field = p
@@ -175,6 +184,9 @@ def _build_bulk_cell(merged: dict, alias: str, modified: dict,
         "linkable": resolvable,
         "modified": resolved in modified,
         "old_display": _bulk_display(modified.get(resolved)),
+        # a resolved LIST can't be a text input — the caller swaps in the ✎
+        # JSON-preview cell (dynamic listedit columns; curated defensively)
+        "is_list": is_list,
         "_port": p,
     }
 
@@ -478,7 +490,9 @@ def _refresh_live_diverged(ctx) -> None:
     # render and must never WAIT on a lock another request could hold while waiting
     # on store._lock (which would invert _reconcile_cached_quam_ctx's order). It
     # also sidesteps reading a half-written sync point mid-reconcile.
-    lock = _get_quam_build_lock(ctx["path"])
+    # fs_key: the same key _activate_quam serialises builds by — a spelling
+    # variant must not acquire a DIFFERENT lock for the same working folder.
+    lock = _get_quam_build_lock(path_match.fs_key(ctx["path"]))
     if not lock.acquire(blocking=False):
         return
     try:
@@ -538,7 +552,10 @@ def _active_wc_lock(ctx: dict | None = None) -> threading.RLock:
     """
     if ctx is None:
         ctx = _active_ctx()
-    return _get_quam_build_lock((ctx or {}).get("path") or "")
+    p = (ctx or {}).get("path") or ""
+    # fs_key so this hands back the SAME lock _activate_quam keys builds by;
+    # the empty-path sentinel must stay "" (fs_key("") would resolve to cwd).
+    return _get_quam_build_lock(path_match.fs_key(p) if p else "")
 
 
 # Working copies are created one per loaded folder and (by design) never
@@ -781,8 +798,13 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> None:
     expensive build happens OUTSIDE the lock. A racing second request
     that beats us to the insert wins; the loser discards its build.
     """
-    folder = Path(folder_path)
-    key = str(folder)
+    folder = Path(folder_path).resolve()
+    # Cache + build-lock key = the per-OS canonical folder identity
+    # (path_match.fs_key). A symlink or case-variant spelling of ONE folder
+    # used to mint TWO contexts and TWO build locks over one working folder —
+    # voiding every serialisation guarantee on it. _active_wc_lock /
+    # _refresh_live_diverged derive the SAME key from ctx["path"].
+    key = path_match.fs_key(folder)
     ctx_name = folder.parent.name
 
     # A dataset run's frozen quam_state is read-only no matter which route
@@ -856,7 +878,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> None:
                                    exc_info=True)
             ctx = {
                 "type": "quam",
-                "path": str(folder),        # the LIVE folder — context identity
+                "path": str(folder),        # the LIVE folder (resolved) — context identity
                 "live_path": str(folder),   # explicit alias for sync/apply routes
                 "origin": origin,           # "live" | "dataset_archive" (read-only)
                 "working_copy": wc,
@@ -894,6 +916,109 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> None:
                 _quam_cache.move_to_end(key)   # true LRU — mark most-recently used
             current_app.config["contexts"][ctx_name] = ctx
             current_app.config["active_context"] = ctx_name
+        # Attach the per-key type policy (stat-cached manifest + sidecar), then
+        # background-warm the schema manifest for this chip against the
+        # selected env (no-op when the cache is already warm — stat-only check).
+        _attach_type_policy(ctx)
+        _warm_state_schema_async(ctx.get("store"), current_app.instance_path,
+                                 live_folder=ctx.get("path"))
+
+
+_schema_warm_inflight: set[str] = set()
+_schema_warm_lock = threading.Lock()
+
+
+def _attach_type_policy(ctx, inst=None) -> None:
+    """Attach/refresh the per-key type policy on a context's store.
+
+    Cheap and request-path safe: a stat-keyed manifest cache read
+    (``cached_only=True`` — never spawns) plus the sidecar read. A cold
+    manifest yields a policy with user assignments only; a failure leaves
+    the previous policy in place (never bricks activation)."""
+    store = (ctx or {}).get("store")
+    live = (ctx or {}).get("path")
+    if store is None or not live:
+        return
+    from quam_state_manager.core import state_env_schema, type_policy
+    try:
+        if inst is None:
+            inst = current_app.instance_path
+        python_path = config_generator.get_selected_env(inst)
+        manifest = (state_env_schema.manifest_for_store(
+            store, python_path, inst, cached_only=True) if python_path else None)
+        if manifest is None:
+            # Keep a warm in-memory manifest across sidecar-only rebuilds
+            # (type-assign/unassign) and transient cache colds (pip install
+            # flips the stat signature; the warm thread re-probes) — but ONLY
+            # for the SAME env; an env switch must drop it.
+            prev = getattr(store, "type_policy", None)
+            if (prev is not None and prev.manifest is not None
+                    and getattr(store, "_type_manifest_env", None) == python_path):
+                manifest = prev.manifest
+        store.type_policy = type_policy.load_policy(inst, live, manifest)
+        store._type_manifest_env = python_path if manifest is not None else None
+        if manifest is not None and manifest.get("pulse_roster"):
+            # env pulse roster overlays the static catalog (env-verified
+            # homes, false-unmodeled suppression) — global, like env selection
+            from quam_state_manager.core import pulse_catalog
+            pulse_catalog.apply_env_overlay(manifest["pulse_roster"])
+    except Exception:  # noqa: BLE001
+        logger.warning("type-policy attach failed", exc_info=True)
+
+
+def _warm_state_schema_async(store, inst, live_folder=None) -> None:
+    """Background-warm the state↔env schema manifest for *store*.
+
+    Request-path safe: the only inline work is a stat-keyed cache check
+    (``cached_only=True`` never spawns); the actual probe subprocess runs in a
+    daemon thread with a single-flight guard per (env, class-set) — repeated
+    loads/selects while a probe is in flight coalesce (the replot pattern).
+    On probe success the store's type policy is re-attached so the freshly
+    warmed env layer takes effect without another activation.
+    """
+    if store is None or inst is None:
+        return
+    from quam_state_manager.core import state_env_schema
+    try:
+        python_path = config_generator.get_selected_env(inst)
+    except Exception:  # noqa: BLE001
+        return
+    if not python_path:
+        return
+    try:
+        if state_env_schema.manifest_for_store(store, python_path, inst,
+                                               cached_only=True) is not None:
+            return                                # already warm — zero cost
+        with store._lock:
+            classes = state_env_schema.harvest_classes(store.state)
+    except Exception:  # noqa: BLE001 — warm-up must never break activation
+        return
+    key = python_path + "|" + ",".join(sorted(classes))
+    with _schema_warm_lock:
+        if key in _schema_warm_inflight:
+            return
+        _schema_warm_inflight.add(key)
+
+    def _run():
+        try:
+            res = state_env_schema.probe_state_schema(python_path, classes, inst)
+            if res.get("ok") and live_folder:
+                from quam_state_manager.core import pulse_catalog, type_policy
+                manifest = {k: res[k] for k in
+                            ("classes", "pulse_roster", "by_leaf",
+                             "missing_classes", "versions")}
+                store.type_policy = type_policy.load_policy(
+                    inst, live_folder, manifest)
+                store._type_manifest_env = python_path
+                if manifest.get("pulse_roster"):
+                    pulse_catalog.apply_env_overlay(manifest["pulse_roster"])
+        except Exception:  # noqa: BLE001
+            logger.warning("state-schema warm probe failed", exc_info=True)
+        finally:
+            with _schema_warm_lock:
+                _schema_warm_inflight.discard(key)
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def _wiring_json() -> str:
@@ -1298,7 +1423,9 @@ def _replay_updates(modifier, updates: dict) -> dict:
             try:
                 if op == "create":
                     try:
-                        modifier.create_subtree(dot_path, value)
+                        # enforce=False: previously-accepted values replayed
+                        # verbatim — blocking mid-replay would be data loss.
+                        modifier.create_subtree(dot_path, value, enforce=False)
                     except KeyError:
                         # The pulled live state ALREADY has this key — it was
                         # created out-of-band (e.g. qualibrate calibrated the same
@@ -1321,10 +1448,11 @@ def _replay_updates(modifier, updates: dict) -> dict:
                 elif op == "replace":
                     try:
                         modifier.set_value(dot_path, value,
-                                           _defer_hooks=True, coerce=False)
+                                           _defer_hooks=True, coerce=False,
+                                           enforce=False)
                     except KeyError:
                         # live deleted it too — re-create the session's value
-                        modifier.create_subtree(dot_path, value)
+                        modifier.create_subtree(dot_path, value, enforce=False)
                 elif op == "delete":
                     try:
                         modifier.delete_subtree(dot_path)
@@ -1340,7 +1468,8 @@ def _replay_updates(modifier, updates: dict) -> dict:
                     # scalar→str silently stringifies it (e.g. 8e9 → "8000000000.0",
                     # reported as success). Replay the value the user accepted verbatim —
                     # consistent with the 'create'/'replace' branches above.
-                    modifier.set_value(target_path, value, _defer_hooks=True, coerce=False)
+                    modifier.set_value(target_path, value, _defer_hooks=True,
+                                       coerce=False, enforce=False)
                 applied += 1
             except (KeyError, TypeError, ValueError, IndexError) as exc:
                 failed.append({"dot_path": dot_path, "error": str(exc)})
@@ -1373,6 +1502,26 @@ def _change_count() -> int:
     return len(store.change_log) if store else 0
 
 
+def _chip_channel_flags(store: QuamStore | None) -> tuple[bool, bool, bool]:
+    """Chip-wide (has_resonator, has_flux, has_coupler) — raw structural scan
+    (not engine.get_qubit()/get_pair(), which builds a full flattened dict per
+    row just to check one key). Drives the sidebar's Resonators/Flux/Couplers
+    nav items: shown only when at least one qubit/pair actually has that
+    channel (a fixed-frequency chip has no Flux; a chip without couplers —
+    CR-only or single-qubit — has no Couplers)."""
+    if store is None:
+        return False, False, False
+    qubits = store.merged.get("qubits", {})
+    pairs = store.merged.get("qubit_pairs", {})
+    has_resonator = any(isinstance(q, dict) and isinstance(q.get("resonator"), dict)
+                        for q in qubits.values())
+    has_flux = any(isinstance(q, dict) and isinstance(q.get("z"), dict)
+                  for q in qubits.values())
+    has_coupler = any(isinstance(p, dict) and isinstance(p.get("coupler"), dict)
+                      for p in pairs.values())
+    return has_resonator, has_flux, has_coupler
+
+
 def _ctx(**extra: Any) -> dict[str, Any]:
     """Base template context shared by all pages."""
     # Self-heal a missed live change (throttled ground-truth hash) so the
@@ -1382,6 +1531,7 @@ def _ctx(**extra: Any) -> dict[str, Any]:
     store = _store()
     path = _active_path()
     ident = _active_chip_identity()
+    has_resonator, has_flux, has_coupler = _chip_channel_flags(store)
     return {
         "active_path": path,
         # The chip-level name (shared across per-experiment loads), not the
@@ -1405,6 +1555,9 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         "wc_gc_threshold": _WC_GC_THRESHOLD,
         "qubit_names": store.qubit_names if store else [],
         "pair_names": store.qubit_pair_names if store else [],
+        "has_resonator": has_resonator,
+        "has_flux": has_flux,
+        "has_coupler": has_coupler,
         "workspace": _ws(),
         **extra,
     }
@@ -1904,20 +2057,14 @@ def _qualibrate_listing() -> dict:
     # private working copy under instance/, which never matches a config path.
     ctx = _active_ctx()
     loaded = (ctx or {}).get("live_path")
-    loaded_resolved = None
-    if loaded:
-        try:
-            loaded_resolved = str(Path(loaded).resolve())
-        except OSError:
-            loaded_resolved = str(loaded)
     for p in listing["projects"]:
         native = p["state_path"]["native"]
-        try:
-            p["loaded_in_sm"] = bool(
-                loaded_resolved and native
-                and str(Path(native).resolve()) == loaded_resolved)
-        except OSError:
-            p["loaded_in_sm"] = False
+        # samefile-grounded (path_match.same_folder) — resolve()-equality
+        # false-negatives on case-variant spellings of ONE folder on
+        # case-insensitive hosts (POSIX resolve doesn't case-canonicalize).
+        # Either side may be None.
+        p["loaded_in_sm"] = bool(
+            loaded and native and path_match.same_folder(native, loaded))
     return listing
 
 
@@ -1939,10 +2086,9 @@ def _qualibrate_tray_badge() -> dict | None:
     ctx = _active_ctx()
     live = (ctx or {}).get("live_path")
     if live and st.get("state_native") and st.get("state_exists"):
-        try:
-            match = Path(live).resolve() == Path(st["state_native"]).resolve()
-        except OSError:
-            match = None
+        # samefile-grounded — resolve()-equality false-ambered on case-variant
+        # spellings of one folder on case-insensitive (macOS/Windows) hosts.
+        match = path_match.same_folder(live, st["state_native"])
     return {"project": st["active"], "dangling": not st["state_exists"],
             "match": match}
 
@@ -2149,6 +2295,65 @@ def qubits():
     )
 
 
+# ======================================================================
+# Resonators / Flux — channel-scoped qubit views (same table/filter/JSON-
+# drill-down pattern as Qubits, narrowed to one channel's fields; a qubit
+# without that channel is simply not a row here — see has_resonator/has_z
+# in QueryEngine.get_qubit). The sidebar hides Flux chip-wide when no qubit
+# has one (fixed-frequency chips); Resonators stays parallel for symmetry.
+# ======================================================================
+
+
+def _channel_scoped_qubits_page(*, has_key: str, page_name: str,
+                                template_stub: str):
+    engine = _engine()
+    if not engine:
+        return render_template("_empty_state.html", page=page_name)
+
+    chain_filter = request.args.get("chain")
+    page = _int_arg("page", 1, minimum=1)
+    per_page = _int_arg("per_page", _DEFAULT_PER_PAGE, minimum=1)
+
+    all_qubits = engine.list_qubits()
+    if chain_filter:
+        all_qubits = [q for q in all_qubits if q.get("id", "").startswith(f"q{chain_filter}")]
+
+    chains = sorted({q["id"][1] for q in all_qubits if len(q.get("id", "")) >= 2 and q["id"][0] == "q" and q["id"][1].isalpha()})
+
+    scoped_qubits = [q for q in all_qubits if q.get(has_key)]
+    page_qubits, total, page, total_pages = _paginate(scoped_qubits, page, per_page)
+
+    wiring_json = _wiring_json()
+
+    template = f"_{template_stub}.html" if _is_htmx() else f"{template_stub}.html"
+    return render_template(
+        template,
+        **_ctx(
+            page=page_name,
+            qubits=page_qubits,
+            chains=chains,
+            active_chain=chain_filter,
+            current_page=page,
+            total_pages=total_pages,
+            total=total,
+            per_page=per_page,
+            wiring_json=wiring_json,
+        ),
+    )
+
+
+@bp.route("/resonators")
+def resonators():
+    return _channel_scoped_qubits_page(
+        has_key="has_resonator", page_name="resonators", template_stub="resonators")
+
+
+@bp.route("/flux")
+def flux():
+    return _channel_scoped_qubits_page(
+        has_key="has_z", page_name="flux", template_stub="flux")
+
+
 @bp.route("/bulk")
 def bulk_edit():
     """Bulk-tune panel: rows = qubits, columns = the high-churn fields, every cell
@@ -2161,11 +2366,32 @@ def bulk_edit():
         return render_template("_empty_state.html", page="live state editing")
 
     from quam_state_manager.core import mw_fem
+    from quam_state_manager.core.qubit_columns import derive_qubit_columns
+
+    # Dynamic (derived) columns — full coverage of every qubit leaf (r6 item 4).
+    # The FULL model ships to the client (Properties menu + search hint).
+    # r7: default to ALL VISIBLE — an opt-IN model buried fields the search
+    # couldn't find (the exact complaint item 4 shipped a hint chip for), so
+    # ?dynhide= is instead the client's persisted HIDDEN set (quam_bulk_
+    # dynhidden): absent/empty hides nothing, i.e. every derived column
+    # renders by default; the user opts OUT per-column instead of in.
+    # Stale/unknown keys are silently ignored (the chip may have changed
+    # under a saved set).
+    dyn_model, _curated = derive_qubit_columns(store)
+    _dyn_hidden = {k for k in (request.args.get("dynhide") or "").split(",") if k}
+    specs: list[dict[str, Any]] = list(_BULK_COLUMNS_SPEC) + [
+        {"section": c["section"], "key": c["key"], "label": c["label"],
+         "tmpl": c["tmpl"], "unit": c["unit"], "default_on": True,
+         "kind": c["kind"], "dyn": True}
+        for c in dyn_model
+        if c.get("kind") != "note" and c["key"] not in _dyn_hidden
+    ]
 
     columns = [
         {"key": c["key"], "label": c["label"], "section": c["section"],
-         "unit": c.get("unit", ""), "default_on": c.get("default_on", True)}
-        for c in _BULK_COLUMNS_SPEC
+         "unit": c.get("unit", ""), "default_on": c.get("default_on", True),
+         "dyn": bool(c.get("dyn"))}
+        for c in specs
     ]
     modified = _modified_map()
 
@@ -2178,11 +2404,23 @@ def bulk_edit():
         # First pass: resolve every cell once through QUAM pointers (qubit fields
         # and the state→wiring→ports.* port chain by ONE path). The shared
         # _build_bulk_cell flags shared ports (a port dict backing >1 qubit).
+        # Dynamic runtime/list columns get their read-only cell variants; a
+        # curated column that (defensively) resolves to a list gets one too.
         grid: dict[str, list[dict[str, Any]]] = {}
         for qid in qids:
-            grid[qid] = [_build_bulk_cell(merged, spec["tmpl"].format(name=qid),
-                                          modified, port_info, qid)
-                         for spec in _BULK_COLUMNS_SPEC]
+            cells: list[dict[str, Any]] = []
+            for spec in specs:
+                path = spec["tmpl"].format(name=qid)
+                kind = spec.get("kind", "edit")
+                if kind == "runtime":
+                    cells.append(_runtime_pair_cell(merged, path))
+                    continue
+                cell = _build_bulk_cell(merged, path, modified, port_info, qid)
+                if kind == "listedit" or cell.get("is_list"):
+                    cells.append(_list_json_cell(merged, path, modified))
+                else:
+                    cells.append(cell)
+            grid[qid] = cells
 
     # Dead-CHANNEL column pruning: drop a column whose channel component (the
     # first path segment under the qubit, e.g. ``z``) is structurally absent
@@ -2199,14 +2437,14 @@ def bulk_edit():
             return segs[2] if len(segs) > 3 else None
 
         _chan_present = {}
-        for spec in _BULK_COLUMNS_SPEC:
+        for spec in specs:
             head = _channel_head(spec)
             if head is None or head in _chan_present:
                 continue
             _chan_present[head] = any(
                 isinstance((merged.get("qubits", {}).get(qid) or {}).get(head), dict)
                 for qid in qids)
-        keep = [i for i, spec in enumerate(_BULK_COLUMNS_SPEC)
+        keep = [i for i, spec in enumerate(specs)
                 if _chan_present.get(_channel_head(spec), True)]
         if len(keep) < len(columns):
             columns = [columns[i] for i in keep]
@@ -2231,9 +2469,18 @@ def bulk_edit():
     pair_columns, pair_groups, pair_rows = _pair_bulk_grid(store, modified)
 
     band_meta = {"bands": {str(b): list(r) for b, r in mw_fem.BANDS.items()}}
+    # Client model for the Properties menu + search hint: key/label/section/
+    # unit/kind only — never the per-qubit tmpl values (the server re-derives
+    # cells from ?dynhide; the client only needs identity + display metadata).
+    dyn_cols = [
+        {"key": c["key"], "label": c["label"], "section": c["section"],
+         "unit": c.get("unit", ""), "kind": c.get("kind", "edit")}
+        for c in dyn_model
+    ]
     template = "_bulkedit.html" if _is_htmx() else "bulkedit.html"
     return render_template(template, **_ctx(page="bulk", columns=columns, rows=rows,
                                             column_groups=column_groups, band_meta=band_meta,
+                                            dyn_cols=dyn_cols,
                                             pair_columns=pair_columns, pair_groups=pair_groups,
                                             pair_rows=pair_rows))
 
@@ -2252,26 +2499,60 @@ def bulk_all_values():
     ETag folds both ``mutation_seq`` AND ``len(change_log)`` because the per-row
     ``modified`` flag derives from the change log, which a sync/apply/discard can
     reset WITHOUT advancing mutation_seq — so (chip, mutation_seq) alone would let a
-    304 surface stale 'modified' markers. Content-Length is pinned to the actual
-    (maybe-compressed) byte count so a manual-gzip desync can't blank the tab.
+    304 surface stale 'modified' markers. The v2 salt additionally folds the
+    payload version + type-policy inputs (assignment count, manifest versions)
+    — the ``ty`` chips depend on them, not on the chip content. Content-Length
+    is pinned to the actual (maybe-compressed) byte count so a manual-gzip
+    desync can't blank the tab.
     """
     from quam_state_manager.core.all_values import build_all_values_rows
 
     store = _store()
     if not store:
         return jsonify(rows=[], summary={"total": 0, "editable": 0,
-                                         "readonly": 0, "by_kind": {}}), 200
+                                         "readonly": 0, "by_kind": {},
+                                         "arrays": 0, "empties": 0}), 200
     with store._lock:
         rows, summary = build_all_values_rows(store, _modified_map())
         mseq = store.mutation_seq
         mver = len(store.change_log)
+        merged = store.merged
+    policy = getattr(store, "type_policy", None)
     ctx = _active_ctx() or {}
     chip_tag = hashlib.sha1(str(ctx.get("path", "")).encode("utf-8")).hexdigest()[:12]
-    etag = f'"{chip_tag}-{mseq}-{mver}"'
+    # v2 salt: payload-shape version + the policy inputs the ty chips derive from
+    # (assignment count + manifest versions), so a type-assign or env manifest
+    # warm can't 304 a client into stale chips.
+    if policy is not None:
+        man_tag = (hashlib.sha1(repr(policy.manifest.get("versions") or {})
+                                .encode("utf-8")).hexdigest()[:8]
+                   if policy.manifest is not None else "0")
+        etag = f'"{chip_tag}-{mseq}-{mver}-v2-{len(policy.assignments)}-{man_tag}"'
+    else:
+        etag = f'"{chip_tag}-{mseq}-{mver}-v2"'
     if request.headers.get("If-None-Match") == etag:
         r = make_response("", 304)
         r.headers["ETag"] = etag
         return r
+    # v2 expected-type chips (200 path only — a 304 must not pay for them):
+    # annotate SCALAR rows only (xref/list enforcement fires at the resolved
+    # target — /field/peek covers those on demand). One pass, policy.annotate is
+    # O(depth) per path; outside the lock like field_peek's phases 2–3
+    # (read-only walk of the captured merged ref). Cap: a >20k-row chip skips
+    # the chips entirely rather than stall the tab.
+    if policy is not None and len(rows) <= 20000:
+        for row in rows:
+            if row[2] != "scalar":
+                continue
+            try:
+                cur: Any = merged
+                for seg in row[0].split("."):
+                    cur = cur[int(seg)] if isinstance(cur, list) else cur[seg]
+                ann = policy.annotate(merged, row[0], cur)
+            except Exception:  # noqa: BLE001 — annotation must never break the tab
+                continue
+            if ann:
+                row.append({"ty": {"t": ann["type"], "s": ann["source"]}})
     body = json.dumps({"rows": rows, "summary": summary},
                       separators=(",", ":")).encode("utf-8")
     accepts_gzip = "gzip" in request.headers.get("Accept-Encoding", "")
@@ -2309,8 +2590,10 @@ def _runtime_pair_cell(merged: dict, path: str) -> dict[str, Any]:
     val = ft.get("resolved_value")
     # inferred_* self-refs point at a property QUAM computes at config time (not in
     # the JSON), so they don't resolve to a stored number — show a clean ⟳ marker
-    # rather than the raw pointer. A self-ref that DOES resolve shows its value.
-    if not ft.get("resolvable") or is_pointer(val):
+    # rather than the raw pointer. A self-ref that DOES resolve to a scalar shows
+    # its value; an alias to a whole structure (operations.x180 → the pulse dict;
+    # resolved_value scalar-nulls containers) shows ⟳ too, not a blank cell.
+    if not ft.get("resolvable") or is_pointer(val) or val is None:
         display = "⟳"
     else:
         display = _bulk_display(val)
@@ -2321,11 +2604,16 @@ def _runtime_pair_cell(merged: dict, path: str) -> dict[str, Any]:
 
 
 def _list_pair_cell(merged: dict, pair_id: str, path: str) -> dict[str, Any]:
-    """A read-only badge cell for a list leaf (confusion matrix, etc.) that
-    deep-links to the pair inspector — the scalar coercer can't edit a list."""
-    from quam_state_manager.core.pointer_path import resolve_field_target
+    """A badge cell for a list leaf (confusion matrix, etc.) that deep-links to
+    the pair inspector; the ✎ opens the whole-value JSON editor (r6 item 4)."""
+    from quam_state_manager.core.pointer_path import _walk as _walk_abs, resolve_field_target
     try:
-        val = resolve_field_target(merged, path).get("resolved_value")
+        ft = resolve_field_target(merged, path)
+        # resolved_value is scalar-nulled for containers — fetch the real list
+        # (the ▦ dims badge rendered empty off resolved_value).
+        found, val = _walk_abs(merged, (ft.get("resolved_path") or path).split("."))
+        if not found or not ft.get("resolvable"):
+            val = None
     except Exception:
         val = None
     if isinstance(val, list) and val and all(isinstance(r, list) for r in val):
@@ -2338,6 +2626,34 @@ def _list_pair_cell(merged: dict, pair_id: str, path: str) -> dict[str, Any]:
             "is_pointer": False, "missing": val is None, "linkable": False,
             "modified": False, "old_display": "", "editable": False,
             "kind": "list", "pair_id": pair_id}
+
+
+def _list_json_cell(merged: dict, path: str, modified: dict) -> dict[str, Any]:
+    """A qubit-grid cell for a real LIST value (confusion matrix, filter taps):
+    compact JSON preview + the ✎ button that opens the client's JSON editor.
+    Commits ride the SAME atomic /field/edit-batch path — the popup posts the
+    whole parsed list in the JSON body, so no string round-trip."""
+    from quam_state_manager.core.pointer_path import _walk as _walk_abs, resolve_field_target
+    try:
+        ft = resolve_field_target(merged, path)
+    except Exception:
+        ft = {}
+    resolved = ft.get("resolved_path") or path
+    # resolved_value is scalar-nulled for containers — fetch the real list.
+    val = None
+    if ft.get("resolvable"):
+        found, node = _walk_abs(merged, resolved.split("."))
+        val = node if found else None
+    try:
+        preview = json.dumps(val, separators=(",", ":")) if val is not None else ""
+    except (TypeError, ValueError):
+        preview = str(val)
+    if len(preview) > 24:
+        preview = preview[:24] + "…"
+    return {"dot_path": path, "resolved_path": resolved, "display": preview,
+            "is_pointer": bool(ft.get("is_pointer")), "missing": val is None,
+            "linkable": False, "modified": resolved in modified,
+            "old_display": "", "editable": False, "kind": "listedit"}
 
 
 def _pair_bulk_grid(store: QuamStore, modified: dict
@@ -2629,20 +2945,18 @@ def qubit_edit(name: str):
     # Default ON: mirror f_01↔RF unless the client's 🔗 toggle is explicitly off.
     freq_sync = request.form.get("freq_sync", "1") != "0"
 
-    from quam_state_manager.cli import _parse_value
-
     try:
         # Same server-side hardening as /field/edit (audit-P0), so these legacy
-        # inspector routes aren't an open side door around it: parse inside the try
-        # (a non-finite 'inf'/'1e999' becomes a 400, not a 500), resolve pointer
-        # leaves to their literal target (value-mode, never stringify the pointer),
-        # and enforce the read-only policy (membership arrays / identity keys / list
-        # elements) instead of letting an incidental coercion error leak through.
-        parsed = _parse_value(raw_value)
+        # inspector routes aren't an open side door around it: resolve pointer
+        # leaves to their literal target (value-mode, never stringify the
+        # pointer), enforce the read-only policy, and parse against the
+        # TARGET's expected type (falls back to _parse_value byte-identically;
+        # a non-finite 'inf'/'1e999' still becomes a 400, not a 500).
         target_path = _resolve_edit_path(modifier.store, dot_path)
         _ro = _editability_reason(modifier.store, target_path)
         if _ro is not None:
             raise ValueError(_ro)
+        parsed = _parse_for_target(modifier.store, target_path, raw_value)
         # Mint one group id when the freq-mirror can fire, so the primary edit
         # and its mirrored twin share it and a single Ctrl+Z reverts both
         # atomically (otherwise one undo reverts only the twin → f_01≠RF
@@ -2686,6 +3000,20 @@ def _resolve_edit_path(store, dot_path: str) -> str:
     the two edit paths can't diverge (they did: the CLI stringified pointer leaves)."""
     from quam_state_manager.core.edit_policy import resolve_edit_path
     return resolve_edit_path(store, dot_path)
+
+
+_BRACKET_SEG_RE = re.compile(r"\[(\d+)\]")
+
+
+def _normalize_dot_path(dot_path: str) -> str:
+    """Rewrite legacy bracket segments (``parent[3]``) to canonical dot form
+    (``parent.3``). One-release compatibility shim for stale copied/bookmarked
+    paths from before the dot-form list-element grammar; only ``[digits]`` is
+    rewritten (free-form ``extras.*`` keys never carry that shape — and a wrong
+    rewrite fails safe with a 400 path error, never a mis-write)."""
+    if "[" not in dot_path:
+        return dot_path
+    return _BRACKET_SEG_RE.sub(r".\1", dot_path)
 
 
 def _active_chip_token() -> str | None:
@@ -2772,7 +3100,7 @@ def field_edit():
     if not modifier:
         return jsonify(ok=False, error="No active context"), 400
 
-    dot_path = request.form.get("dot_path", "").strip()
+    dot_path = _normalize_dot_path(request.form.get("dot_path", "").strip())
     raw_value = request.form.get("value", "")
 
     if not dot_path:
@@ -2784,22 +3112,41 @@ def field_edit():
     if guard is not None:
         return guard
 
-    from quam_state_manager.cli import _parse_value
+    from quam_state_manager.core import type_policy as _tp
     try:
-        parsed = _parse_value(raw_value)
+        # Resolve FIRST, parse against the TARGET's expectation: enforcement
+        # fires at the resolved write path, and cross-class pointer chains
+        # (z-op pulse field → pair-macro child) can change the expected type.
         target_path = _resolve_edit_path(modifier.store, dot_path)
         # Same server-side read-only policy as /field/edit-batch (audit P0):
-        # membership arrays / identity keys / list elements must be rejected
-        # with the policy reason, not incidentally via a coercion TypeError.
+        # membership arrays / identity keys must be rejected with the policy
+        # reason, not incidentally via a coercion TypeError.
         _ro = _editability_reason(modifier.store, target_path)
         if _ro is not None:
             raise ValueError(_ro)
+        parsed = _parse_for_target(modifier.store, target_path, raw_value)
         modifier.set_value(target_path, parsed)
         _invalidate_engine_cache(ctx)
-    except (KeyError, TypeError, ValueError) as e:
+    except _tp.TypeMismatchError as e:
+        return jsonify(ok=False, error=str(e), **e.as_json()), 400
+    except (KeyError, TypeError, ValueError, IndexError) as e:
         return jsonify(ok=False, error=str(e)), 400
 
     return jsonify(ok=True, tray_html=_tray_html())
+
+
+def _parse_for_target(store, target_path: str, raw_value: str):
+    """Parse typed text against the resolved target's ENFORCED expectation;
+    without one this is ``cli._parse_value`` byte-identical."""
+    from quam_state_manager.core import type_policy as _tp
+    policy = getattr(store, "type_policy", None)
+    expected = None
+    if policy is not None:
+        try:
+            expected = policy.expected_for(store.merged, target_path, infer=False)
+        except Exception:  # noqa: BLE001 — a policy bug must never brick edits
+            expected = None
+    return _tp.parse_with_expected(raw_value, expected)
 
 
 @bp.route("/field/peek", methods=["GET"])
@@ -2818,7 +3165,8 @@ def field_peek():
 
     from quam_state_manager.core.pointer_path import find_shared_by, resolve_field_target
 
-    clean_paths = [s for s in ((p or "").strip() for p in request.args.getlist("dot_path")) if s]
+    clean_paths = [s for s in (_normalize_dot_path((p or "").strip())
+                               for p in request.args.getlist("dot_path")) if s]
     values: dict[str, Any] = {}
     errors: dict[str, str] = {}
     # `resolved` follows QUAM pointers (incl. #./ siblings the global resolver
@@ -2856,7 +3204,24 @@ def field_peek():
                 "candidates": [], "chain": [], "is_pointer": False,
                 "resolvable": False, "shared_by": [],
             }
-    return jsonify(ok=True, values=values, errors=errors, resolved=resolved)
+
+    # Phase 3 — expected-type annotation per path (the type layer's ONE UI
+    # read contract; /field/typeinfo deliberately does not exist). Computed at
+    # the RESOLVED path — that's where enforcement fires. Absent policy /
+    # unknown key → the path is simply missing from `expected`.
+    expected: dict[str, Any] = {}
+    policy = getattr(store, "type_policy", None)
+    if policy is not None:
+        for p in clean_paths:
+            try:
+                target = (resolved.get(p) or {}).get("resolved_path") or p
+                ann = policy.annotate(merged, target, values.get(p))
+                if ann:
+                    expected[p] = ann
+            except Exception:  # noqa: BLE001 — annotation must not 500 the popup
+                continue
+    return jsonify(ok=True, values=values, errors=errors, resolved=resolved,
+                   expected=expected)
 
 
 def _editability_reason(store: QuamStore, target_path: str) -> str | None:
@@ -2865,6 +3230,307 @@ def _editability_reason(store: QuamStore, target_path: str) -> str | None:
     overwrite identity keys / membership arrays straight to live)."""
     from quam_state_manager.core.edit_policy import editability_reason
     return editability_reason(store, target_path)
+
+
+@bp.route("/field/type-assignments", methods=["GET"])
+def field_type_assignments():
+    """The chip's user type assignments + whether the env manifest is warm."""
+    store = _store()
+    if not store:
+        return jsonify(ok=False, error="No active context"), 400
+    policy = getattr(store, "type_policy", None)
+    assignments = dict(policy.assignments) if policy else {}
+    return jsonify(ok=True, assignments=assignments, count=len(assignments),
+                   manifest_loaded=bool(policy and policy.manifest))
+
+
+@bp.route("/field/type-assign", methods=["POST"])
+def field_type_assign():
+    """Assign a key's expected type (the user layer).
+
+    Env-conflict gate: when the env schema already types this key and
+    ``override_env`` is not set, respond 409 with the env's expectation — the
+    UI confirms and re-POSTs with ``override_env=1`` (independent-gates rule:
+    one click never silently outranks the schema). A current value already
+    violating the new type is a WARNING, not a block — the assignment IS the
+    repair path."""
+    from quam_state_manager.core import state_env_validate, type_policy as _tp
+    ctx = _active_ctx()
+    store = ctx.get("store") if ctx else None
+    if not store or not ctx.get("path"):
+        return jsonify(ok=False, error="No active context"), 400
+    guard = _chip_mismatch_response(
+        request.form.get("expect_chip", ""),
+        request.form.get("force_chip") in ("1", "true", "True"))
+    if guard is not None:
+        return guard
+
+    dot_path = _normalize_dot_path(request.form.get("dot_path", "").strip())
+    type_expr = request.form.get("type", "").strip()
+    override_env = request.form.get("override_env") in ("1", "true", "True")
+    if not dot_path or not type_expr:
+        return jsonify(ok=False, error="dot_path and type required"), 400
+
+    policy = getattr(store, "type_policy", None)
+    if policy is None:
+        _attach_type_policy(ctx)
+        policy = getattr(store, "type_policy", None)
+    if policy is not None and not override_env:
+        env_exp = policy._env_expected(store.merged, dot_path)
+        if env_exp is not None:
+            return jsonify(ok=False, error_kind="env_conflict",
+                           error=("the env schema already types this key as "
+                                  f"{_tp.format_type(env_exp.spec)} — confirm to "
+                                  "override it"),
+                           env_type=env_exp.as_json()), 409
+
+    try:
+        record = _tp.save_assignment(
+            current_app.instance_path, ctx["path"], dot_path,
+            {"type": type_expr, "override_env": override_env,
+             "note": request.form.get("note", "")})
+    except ValueError as e:
+        return jsonify(ok=False, error=str(e)), 400
+
+    _attach_type_policy(ctx)                    # rebuild with the new assignment
+    policy = getattr(store, "type_policy", None)
+
+    warning = None
+    try:
+        current = store.get_value(dot_path)
+        if (current is not None
+                and not state_env_validate.is_pointer_str(current)):
+            ok_now, _, msg = state_env_validate.judge(
+                current, _tp.parse_type(type_expr))
+            if not ok_now:
+                warning = (f"the CURRENT value already violates this type "
+                           f"({msg}) — edit it to a conforming value")
+    except (KeyError, TypeError, ValueError, IndexError):
+        pass
+
+    effective = policy.annotate(store.merged, dot_path) if policy else None
+    return jsonify(ok=True, assigned=record, expected=effective, warning=warning)
+
+
+@bp.route("/field/type-unassign", methods=["POST"])
+def field_type_unassign():
+    """Remove a user type assignment; returns the now-effective expectation
+    (env schema or inference)."""
+    from quam_state_manager.core import type_policy as _tp
+    ctx = _active_ctx()
+    store = ctx.get("store") if ctx else None
+    if not store or not ctx.get("path"):
+        return jsonify(ok=False, error="No active context"), 400
+    dot_path = _normalize_dot_path(request.form.get("dot_path", "").strip())
+    if not dot_path:
+        return jsonify(ok=False, error="dot_path required"), 400
+    removed = _tp.delete_assignment(current_app.instance_path, ctx["path"], dot_path)
+    _attach_type_policy(ctx)
+    policy = getattr(store, "type_policy", None)
+    effective = None
+    if policy is not None:
+        try:
+            current = store.get_value(dot_path)
+        except (KeyError, TypeError, ValueError, IndexError):
+            current = None
+        effective = policy.annotate(store.merged, dot_path, current)
+    return jsonify(ok=True, removed=removed, expected=effective)
+
+
+def _crud_policy_reason(store, dot_path: str, *, deleting: bool = False) -> str | None:
+    """Create/delete guard sharing the durable read-only vocabulary: membership
+    tops, identity keys, and list parents (create/delete-on-list needs element
+    insert semantics — edit the whole array instead)."""
+    from quam_state_manager.core.edit_policy import _container_at
+    from quam_state_manager.core.leaf_classify import MEMBERSHIP_TOPS, SKIP_LEAVES
+    segs = dot_path.split(".")
+    if not segs or not all(segs):
+        return "invalid path"
+    if segs[0] in MEMBERSHIP_TOPS:
+        return "chip-membership array — edit via the chip add/remove controls, not here"
+    if segs[-1] in SKIP_LEAVES:
+        return "identity / type key — read-only"
+    if len(segs) >= 2 and isinstance(_container_at(store.merged, segs[:-1]), list):
+        return ("list element — edit the whole array instead "
+                "(element insert/remove is not supported)")
+    return None
+
+
+def _count_refs_into(store, dot_path: str) -> tuple[int, list[dict]]:
+    """Pointer leaves elsewhere that resolve AT or UNDER *dot_path*.
+
+    One walk over the merged tree's string leaves; absolute + relative
+    pointers translate via ``pointer_to_abs``. Unresolvable pointers are
+    skipped (they can't be pointing here provably). Capped list of examples.
+    """
+    from quam_state_manager.core.pointer_path import pointer_to_abs
+    from quam_state_manager.core.pointer_resolver import is_pointer
+    target = dot_path.split(".")
+    refs: list[dict] = []
+    count = 0
+
+    def walk(node, segs):
+        nonlocal count
+        if isinstance(node, dict):
+            for k, v in node.items():
+                walk(v, segs + [str(k)])
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                walk(v, segs + [str(i)])
+        elif isinstance(node, str) and is_pointer(node):
+            if segs[:len(target)] == target:
+                return                       # pointers INSIDE the subtree don't count
+            abs_segs = pointer_to_abs(node, segs)
+            if abs_segs and abs_segs[:len(target)] == target:
+                count += 1
+                if len(refs) < 50:
+                    refs.append({"from_path": ".".join(segs), "pointer": node})
+
+    with store._lock:
+        walk(store.merged, [])
+    return count, refs
+
+
+@bp.route("/field/refs")
+def field_refs():
+    """Pointer references into a path (the delete-confirm blast radius)."""
+    store = _store()
+    if not store:
+        return jsonify(ok=False, error="No active context"), 400
+    dot_path = _normalize_dot_path(request.args.get("dot_path", "").strip())
+    if not dot_path:
+        return jsonify(ok=False, error="dot_path required"), 400
+    total, refs = _count_refs_into(store, dot_path)
+    return jsonify(ok=True, total=total, refs=refs)
+
+
+@bp.route("/field/create", methods=["POST"])
+def field_create():
+    """Create a brand-new key (scalar or subtree) anywhere a dict parent
+    exists — the Explorer's ＋. ``expect_type`` is a PARSE HINT only (the
+    modifier's type gate is the single enforcement authority — no separate
+    route-level gate, per the one-judge rule)."""
+    from quam_state_manager.core import type_policy as _tp
+    ctx = _active_ctx()
+    modifier = ctx.get("modifier") if ctx else None
+    if not modifier:
+        return jsonify(ok=False, error="No active context"), 400
+    guard = _chip_mismatch_response(
+        request.form.get("expect_chip", ""),
+        request.form.get("force_chip") in ("1", "true", "True"))
+    if guard is not None:
+        return guard
+
+    dot_path = _normalize_dot_path(request.form.get("dot_path", "").strip())
+    raw_value = request.form.get("value", "")
+    expect_type = request.form.get("expect_type", "").strip()
+    if not dot_path:
+        return jsonify(ok=False, error="dot_path required"), 400
+    reason = _crud_policy_reason(modifier.store, dot_path)
+    if reason is not None:
+        return jsonify(ok=False, error=reason, error_kind="policy"), 400
+
+    try:
+        if expect_type and expect_type != "infer":
+            hint = _tp.Expected(spec=_tp.parse_type(expect_type), source="user")
+            parsed = _tp.parse_with_expected(raw_value, hint)
+        else:
+            from quam_state_manager.cli import _parse_value
+            parsed = _parse_value(raw_value)
+        modifier.create_subtree(dot_path, parsed)
+        _invalidate_engine_cache(ctx)
+    except _tp.TypeMismatchError as e:
+        return jsonify(ok=False, error=str(e), **e.as_json()), 400
+    except (KeyError, TypeError, ValueError, IndexError) as e:
+        return jsonify(ok=False, error=str(e)), 400
+
+    if request.form.get("assign_type") in ("1", "true", "True") and expect_type \
+            and expect_type != "infer" and ctx.get("path"):
+        # optional convenience: record the chosen type as a user assignment
+        try:
+            _tp.save_assignment(current_app.instance_path, ctx["path"], dot_path,
+                                {"type": expect_type})
+            _attach_type_policy(ctx)
+        except ValueError:
+            pass
+    return jsonify(ok=True, tray_html=_tray_html(), created_path=dot_path)
+
+
+@bp.route("/field/delete", methods=["POST"])
+def field_delete():
+    """Delete a key (or whole subtree) — the Explorer's ✕. Reports the
+    removed-leaf count and how many pointers elsewhere now dangle (the
+    broken-pointer linter flags them immediately via diagnostics-changed)."""
+    ctx = _active_ctx()
+    modifier = ctx.get("modifier") if ctx else None
+    if not modifier:
+        return jsonify(ok=False, error="No active context"), 400
+    guard = _chip_mismatch_response(
+        request.form.get("expect_chip", ""),
+        request.form.get("force_chip") in ("1", "true", "True"))
+    if guard is not None:
+        return guard
+
+    dot_path = _normalize_dot_path(request.form.get("dot_path", "").strip())
+    if not dot_path:
+        return jsonify(ok=False, error="dot_path required"), 400
+    if len(dot_path.split(".")) == 1:
+        return jsonify(ok=False, error="top-level containers can't be deleted here",
+                       error_kind="policy"), 400
+    reason = _crud_policy_reason(modifier.store, dot_path, deleting=True)
+    if reason is not None:
+        return jsonify(ok=False, error=reason, error_kind="policy"), 400
+
+    dangling, _ = _count_refs_into(modifier.store, dot_path)
+    try:
+        entry = modifier.delete_subtree(dot_path)
+        _invalidate_engine_cache(ctx)
+    except (KeyError, TypeError, ValueError, IndexError) as e:
+        return jsonify(ok=False, error=str(e)), 400
+
+    from quam_state_manager.core.modifier import _enumerate_leaves
+    removed = sum(1 for _ in _enumerate_leaves(entry.old_value, dot_path))
+    return jsonify(ok=True, tray_html=_tray_html(), removed_leaves=removed,
+                   dangling_refs=dangling)
+
+
+@bp.route("/schema/missing-keys")
+def schema_missing_keys():
+    """Keys the env schema expects under *scope* that the state lacks — the
+    Explorer add-key datalist ('your class has these unset fields')."""
+    store = _store()
+    if not store:
+        return jsonify(ok=False, error="No active context"), 400
+    scope = _normalize_dot_path(request.args.get("scope", "").strip())
+    policy = getattr(store, "type_policy", None)
+    manifest = policy.manifest if policy is not None else None
+    if not manifest:
+        return jsonify(ok=True, warm=False, scope=scope, missing=[])
+    from quam_state_manager.core import type_policy as _tp
+    from quam_state_manager.core.state_env_validate import _anchor, _NO_ANCHOR
+    try:
+        node = store.get_value(scope) if scope else store.merged
+    except (KeyError, TypeError, ValueError, IndexError):
+        return jsonify(ok=True, warm=True, scope=scope, missing=[])
+    if not isinstance(node, dict):
+        return jsonify(ok=True, warm=True, scope=scope, missing=[])
+    anchored = _anchor(manifest, node)
+    if anchored is _NO_ANCHOR or anchored is None:
+        return jsonify(ok=True, warm=True, scope=scope, missing=[])
+    fields = anchored[1]
+    missing = []
+    for fname, f in sorted(fields.items()):
+        if fname in node:
+            continue
+        ts = f.get("type") or {}
+        missing.append({
+            "key": fname,
+            "path": f"{scope}.{fname}" if scope else fname,
+            "expected_type": _tp.format_type(ts),
+            "default": f.get("default"),
+            "source_class": (node.get("__class__") or "").rsplit(".", 1)[-1],
+        })
+    return jsonify(ok=True, warm=True, scope=scope, missing=missing[:40])
 
 
 @bp.route("/field/edit-batch", methods=["POST"])
@@ -2881,6 +3547,12 @@ def field_edit_batch():
     response includes a per-path ``results`` array so the popup can mark
     individual rows applied or annotate the failing one with its error
     message.
+
+    JSON callers may set ``"independent": true`` to apply each update on its
+    own instead (no cross-row rollback): failures are reported per row and
+    the successful rows stay applied. Used by the Explorer live-diff
+    "Accept all" — one drifted/rejected value must not roll back hundreds
+    of accepted ones.
     """
     # Capture the context up front so the post-mutation cache invalidation binds
     # to THIS chip even if a concurrent /load flips the active context.
@@ -2903,7 +3575,8 @@ def field_edit_batch():
         # rows so accepting one creates the missing key instead of KeyError-ing
         # (a generic bulk/plot edit never sets it, so its semantics are unchanged).
         pairs = [
-            (str(u.get("dot_path", "")).strip(), u.get("value"), bool(u.get("create")))
+            (_normalize_dot_path(str(u.get("dot_path", "")).strip()),
+             u.get("value"), bool(u.get("create")))
             for u in payload["updates"]
             if isinstance(u, dict)
         ]
@@ -2915,13 +3588,14 @@ def field_edit_batch():
                 ok=False,
                 error="dot_path / value count mismatch",
             ), 400
-        pairs = [(p.strip(), v, False) for (p, v) in zip(dot_paths, raw_values)]
+        pairs = [(_normalize_dot_path(p.strip()), v, False)
+                 for (p, v) in zip(dot_paths, raw_values)]
 
     pairs = [(p, v, c) for (p, v, c) in pairs if p]
     if not pairs:
         return jsonify(ok=False, error="No updates supplied"), 400
 
-    from quam_state_manager.cli import _parse_value
+    independent = bool(_pj.get("independent"))
 
     results: list[dict[str, Any]] = []
     applied_entries: list[Any] = []
@@ -2935,13 +3609,16 @@ def field_edit_batch():
         ok_overall = True
         for dot_path, raw_value, allow_create in pairs:
             try:
-                parsed = _parse_value(raw_value) if isinstance(raw_value, str) else raw_value
                 # Follow pointers to the real literal when the path isn't navigable
                 # as-is (keeps the posted dot_path in `results` for row matching).
                 target_path = _resolve_edit_path(modifier.store, dot_path)
                 _ro = _editability_reason(modifier.store, target_path)
                 if _ro is not None:
                     raise ValueError(_ro)   # read-only policy → existing atomic rollback (audit P0)
+                # String values parse against the TARGET's expectation (JSON
+                # values pass through — the modifier gate is the backstop).
+                parsed = (_parse_for_target(modifier.store, target_path, raw_value)
+                          if isinstance(raw_value, str) else raw_value)
                 try:
                     entry = modifier.set_value(target_path, parsed, _defer_hooks=True,
                                                group_id=_batch_gid)
@@ -2975,11 +3652,18 @@ def field_edit_batch():
                     "display": _bulk_display(entry.new_value),
                 })
             except (KeyError, TypeError, ValueError, IndexError) as e:
-                results.append({"dot_path": dot_path, "applied": False, "error": str(e)})
+                row = {"dot_path": dot_path, "applied": False, "error": str(e)}
+                from quam_state_manager.core.type_policy import TypeMismatchError
+                if isinstance(e, TypeMismatchError):
+                    row.update(e.as_json())     # error_kind/expected/got for the UI
+                results.append(row)
                 ok_overall = False
-                break
+                if not independent:
+                    break
+                # independent mode: this row simply failed (set_value is atomic
+                # per-row — nothing to roll back); keep applying the rest.
 
-        if not ok_overall:
+        if not ok_overall and not independent:
             # Roll back every entry applied so far; mark rolled-back rows in results.
             modifier._rollback(applied_entries)
             for r in results:
@@ -2992,19 +3676,22 @@ def field_edit_batch():
                 results=results,
             ), 400
 
-        # Success path: clear pointer cache and refresh search index ONCE
-        # (mirrors modifier.batch_set so the per-entry hooks aren't duplicated).
-        modifier.store._clear_pointer_cache()
-        if modifier.store.search_index is not None:
-            for entry in applied_entries:
-                # create_subtree already registered the new leaves itself, and a
-                # created entry's dot_path may be a subtree root, not a leaf.
-                if getattr(entry, "created", False):
-                    continue
-                modifier.store.search_index.update_entry(entry.dot_path, entry.new_value)
+        # Success path (and independent partial-success): clear pointer cache and
+        # refresh search index ONCE for whatever applied (mirrors modifier.batch_set
+        # so the per-entry hooks aren't duplicated).
+        if applied_entries:
+            modifier.store._clear_pointer_cache()
+            if modifier.store.search_index is not None:
+                for entry in applied_entries:
+                    # create_subtree already registered the new leaves itself, and a
+                    # created entry's dot_path may be a subtree root, not a leaf.
+                    if getattr(entry, "created", False):
+                        continue
+                    modifier.store.search_index.update_entry(entry.dot_path, entry.new_value)
 
-    _invalidate_engine_cache(ctx)
-    return jsonify(ok=True, tray_html=_tray_html(), results=results,
+    if applied_entries:
+        _invalidate_engine_cache(ctx)
+    return jsonify(ok=ok_overall, tray_html=_tray_html(), results=results,
                    modified=_modified_delta())
 
 
@@ -3067,6 +3754,52 @@ def pairs():
 @bp.route("/pair/<name>")
 def pair_detail(name: str):
     return _render_pair_detail(name, focus_path=request.args.get("focus") or None)
+
+
+# ======================================================================
+# Couplers — coupler-channel-scoped pair view (same table/filter/JSON-
+# drill-down pattern as Pairs, narrowed to coupler fields; a pair without a
+# coupler — e.g. a CR chip — simply isn't a row here, see has_coupler in
+# QueryEngine.get_pair). The sidebar hides this nav item chip-wide when no
+# pair has one.
+# ======================================================================
+
+
+@bp.route("/couplers")
+def couplers():
+    engine = _engine()
+    store = _store()
+    if not engine or not store:
+        return render_template("_empty_state.html", page="couplers")
+
+    pair_data = []
+    for pair_name in store.qubit_pair_names:
+        try:
+            p = engine.get_pair(pair_name)
+        except KeyError:
+            continue
+        if p.get("has_coupler"):
+            pair_data.append(p)
+
+    page = _int_arg("page", 1, minimum=1)
+    per_page = _int_arg("per_page", _DEFAULT_PER_PAGE, minimum=1)
+    page_pairs, total, page, total_pages = _paginate(pair_data, page, per_page)
+
+    wiring_json = _wiring_json()
+
+    template = "_couplers.html" if _is_htmx() else "couplers.html"
+    return render_template(
+        template,
+        **_ctx(
+            page="couplers",
+            pairs=page_pairs,
+            current_page=page,
+            total_pages=total_pages,
+            total=total,
+            per_page=per_page,
+            wiring_json=wiring_json,
+        ),
+    )
 
 
 def _render_pair_detail(name: str, *, focus_path: str | None = None):
@@ -3461,18 +4194,16 @@ def pair_edit(name: str):
     raw_value = request.form.get("value", "")
     freq_sync = request.form.get("freq_sync", "1") != "0"
 
-    from quam_state_manager.cli import _parse_value
-
     try:
         # Same server-side hardening as /field/edit (audit-P0) — see qubit_edit:
-        # parse inside the try, resolve pointer leaves to their literal target,
-        # enforce the read-only policy. Keeps these legacy routes from being a side
-        # door around the durable policy layer.
-        parsed = _parse_value(raw_value)
+        # resolve pointer leaves to their literal target, enforce the read-only
+        # policy, parse against the target's expected type. Keeps these legacy
+        # routes from being a side door around the durable policy layer.
         target_path = _resolve_edit_path(modifier.store, dot_path)
         _ro = _editability_reason(modifier.store, target_path)
         if _ro is not None:
             raise ValueError(_ro)
+        parsed = _parse_for_target(modifier.store, target_path, raw_value)
         # Group primary + freq-mirror twin under one id (see qubit_edit) so a
         # single Ctrl+Z reverts both atomically instead of leaving f_01≠RF.
         gid = (modifier.new_group_id()
@@ -4456,7 +5187,7 @@ def _render_pulse_detail(path: str, *, status_msg: str | None = None,
     spec, class_match = infer_spec_ex(
         body, context_slot=actual_path.rsplit(".", 1)[-1])
     unmodeled = (unmodeled_fields(spec, body)
-                 if class_match in ("exact", "alias", "leaf") else [])
+                 if class_match in ("exact", "env", "alias", "leaf") else [])
     pointer_fields = payload.get("pointer_fields") or {}
     resolved_params = payload.get("resolved_params") or {}
 
@@ -4623,6 +5354,14 @@ def pulse_edit():
     from quam_state_manager.cli import _parse_value
     from quam_state_manager.core.pointer_path import resolve_field_target
 
+    # Armor: __class__ is never an editable field on this surface (the detail
+    # render skips it), so a handcrafted POST targeting it must not write.
+    # (`id`/`digital_marker` stay editable here — shipped Pulses behavior.)
+    if dot_path.rsplit(".", 1)[-1] == "__class__":
+        return render_template("_status.html",
+                               message="identity / type key — read-only",
+                               level="error"), 400
+
     try:
         if mode == "pointer":
             value = raw_value.strip()
@@ -4653,7 +5392,9 @@ def pulse_edit():
                 # written over a str field uncoerced and generate_config gets the
                 # wrong type.
                 parsed = str(parsed)
-            modifier.set_value(dot_path, parsed, coerce=False)
+            # enforce=False: literal mode IS the explicit, audited type-CHANGE
+            # surface — forcing a type-assign ceremony here was rejected.
+            modifier.set_value(dot_path, parsed, coerce=False, enforce=False)
         else:  # value — follow pointer aliases to the real write target
             parsed = _parse_value(raw_value)
             if isinstance(parsed, str) and parsed.startswith("#"):
@@ -4684,7 +5425,7 @@ def pulse_edit():
                     modifier.set_value(dot_path, parsed, coerce=False)
             else:
                 modifier.set_value(target_path, parsed)
-    except (KeyError, TypeError, ValueError) as exc:
+    except (KeyError, TypeError, ValueError, IndexError) as exc:
         return render_template("_status.html", message=str(exc),
                                level="error"), 400
 
@@ -5072,7 +5813,7 @@ def _pulse_create_locked(store, modifier, spec, fields, target_kind,
             modifier.set_value(dot_path, template, coerce=False)
         else:
             modifier.create_subtree(dot_path, template)
-    except (KeyError, ValueError, TypeError) as exc:
+    except (KeyError, ValueError, TypeError, IndexError) as exc:
         return render_template("_status.html", message=str(exc),
                                level="error"), 400
     return dot_path
@@ -6593,7 +7334,11 @@ def workspace_remove():
             data = _load_session()
             excluded = data.get("workspace_excluded", [])
             abs_path = str(Path(folder).resolve())
-            if abs_path not in excluded:
+            # Membership via fs_key on BOTH sides — a case-variant / NFD
+            # spelling of an already-excluded folder must not append a second
+            # entry (stored spelling stays the resolved path, for display).
+            if path_match.fs_key(abs_path) not in {
+                    path_match.fs_key(e) for e in excluded}:
                 excluded.append(abs_path)
                 data["workspace_excluded"] = excluded
                 _save_session_raising(data)
@@ -6731,18 +7476,34 @@ def _has_experiment_descendant(root: Path, max_depth: int = 4) -> bool:
     return False
 
 
-def _is_system_path(p: Path) -> bool:
-    """Check if path points to a protected system directory (Windows only)."""
+def _is_system_path(p: Path, for_mkdir: bool = False) -> bool:
+    """Check if path points to a protected system directory.
+
+    Prefix matching is by whole path COMPONENTS (``Path.parts``) — the old
+    ``str.startswith`` check also blocked innocent siblings like
+    ``C:\\Windows_backup``. POSIX gets its own block list; ``/`` itself is
+    additionally protected from mkdir (browsing the root stays allowed).
+    """
     import platform
-    if platform.system() != "Windows":
-        return False
     try:
-        resolved = str(p.resolve()).lower()
+        resolved = p.resolve()
     except OSError:
         return True
-    blocked = ["c:\\windows", "c:\\program files", "c:\\program files (x86)",
-               "c:\\programdata", "c:\\$recycle.bin"]
-    return any(resolved.startswith(b) for b in blocked)
+    if platform.system() == "Windows":
+        parts = tuple(part.casefold() for part in resolved.parts)
+        blocked = [
+            ("c:\\", "windows"),
+            ("c:\\", "program files"),
+            ("c:\\", "program files (x86)"),
+            ("c:\\", "programdata"),
+            ("c:\\", "$recycle.bin"),
+        ]
+    else:
+        parts = resolved.parts
+        if for_mkdir and parts == ("/",):
+            return True
+        blocked = [("/", "proc"), ("/", "sys"), ("/", "dev"), ("/", "etc")]
+    return any(parts[:len(b)] == b for b in blocked)
 
 
 @bp.route("/browse")
@@ -6770,15 +7531,35 @@ def browse_directory():
         # POSIX: an empty path lands in the user's home — a "/" root listing
         # is rarely useful and permission-noisy. Falls through to the normal
         # directory branch so parent/".."-navigation still walks to /.
-        p = Path.home()
+        # Path.home() raises RuntimeError when HOME is unset (stripped-env
+        # service launches) — degrade to the filesystem root, never a 500.
+        try:
+            p = Path.home()
+        except RuntimeError:
+            p = Path("/")
     else:
-        p = Path(raw)
+        # "~"-forms come from hand-typed paths and replayed localStorage —
+        # expand them server-side (audit: "~/x" was treated as a RELATIVE
+        # path whose first segment is literally "~").
+        try:
+            p = Path(raw).expanduser()
+        except RuntimeError:            # "~" with no resolvable home
+            p = Path(raw)
+
+    def _isdir(d: Path) -> bool:
+        # Path.is_dir() PROPAGATES PermissionError (only ENOENT-class errnos
+        # are swallowed) — a path under a non-traversable dir must classify
+        # as missing (→ the ancestor-walk / empty branches), never a 500.
+        try:
+            return d.is_dir()
+        except OSError:
+            return False
 
     if _is_system_path(p):
         logger.warning("Browse attempt on protected system path: %s", raw)
         return jsonify({"path": raw, "dirs": [], "has_quam_state": False, "parent": ""})
 
-    if not p.is_dir():
+    if not _isdir(p):
         # Two consumers with different needs (the root-jump bug lived here —
         # the response `path` MUST always be the folder actually listed, or
         # the dialog's breadcrumbs desync and a mid-crumb click cascades to
@@ -6791,15 +7572,23 @@ def browse_directory():
         #    Recent entry or a deleted folder lands at its deepest surviving
         #    parent with truthful breadcrumbs, never at the root.
         if request.args.get("complete"):
+            # Absolute-only, like the dialog branch below — a relative input
+            # used to list the APP's CWD and return bare relative suggestions.
+            if not p.is_absolute():
+                return jsonify({"path": raw, "dirs": [], "has_quam_state": False, "parent": ""})
             parent = p.parent
-            if not parent.is_dir():
+            if not _isdir(parent):
                 return jsonify({"path": raw, "dirs": [], "has_quam_state": False, "parent": ""})
             prefix = p.name.lower()
             err = None
             try:
                 dirs = sorted(
-                    str(c) for c in parent.iterdir()
-                    if c.is_dir() and c.name.lower().startswith(prefix) and not c.name.startswith(".")
+                    (str(c) for c in parent.iterdir()
+                     if c.is_dir() and c.name.lower().startswith(prefix)
+                     # Dot-dirs surface only when the TYPED segment starts with
+                     # "." (…/.qual → ~/.qualibrate) — otherwise stay hidden.
+                     and (prefix.startswith(".") or not c.name.startswith("."))),
+                    key=str.casefold,   # display order only — paths untouched
                 )
             except PermissionError:
                 dirs, err = [], "Permission denied"
@@ -6822,9 +7611,9 @@ def browse_directory():
             return jsonify({"path": raw, "dirs": [], "has_quam_state": False,
                             "parent": "", "missing": missing})
         anc = p.parent
-        while anc != anc.parent and not anc.is_dir():
+        while anc != anc.parent and not _isdir(anc):
             anc = anc.parent
-        if not anc.is_dir():
+        if not _isdir(anc):
             return jsonify({"path": raw, "dirs": [], "has_quam_state": False,
                             "parent": "", "missing": missing})
         p = anc
@@ -6836,8 +7625,9 @@ def browse_directory():
     err = None
     try:
         children = sorted(
-            str(c) for c in p.iterdir()
-            if c.is_dir() and not c.name.startswith(".")
+            (str(c) for c in p.iterdir()
+             if c.is_dir() and not c.name.startswith(".")),
+            key=str.casefold,   # display order only — paths untouched
         )
     except PermissionError:
         children, err = [], "Permission denied"
@@ -6854,14 +7644,19 @@ def browse_directory():
 
     parent_str = "" if p.parent == p else str(p.parent)
 
+    cap = 400   # dialog cap — the old silent 50 hid most of big lab archives
     payload = {
         "path": str(p),
-        "dirs": children[:50],
+        "dirs": children[:cap],
         "has_quam_state": has_quam,
         "has_experiment_children": has_children,
         "parent": parent_str,
         **({"missing": missing} if missing else {}),
     }
+    if len(children) > cap:
+        # Honest capping — the client renders a "showing first N of M" note.
+        payload["truncated"] = True
+        payload["total"] = len(children)
 
     # kind=dataset (the Dataset-load / workspace-add pickers): mark which
     # children are dataset RUN folders (node.json / data.json — the same
@@ -6890,12 +7685,20 @@ def browse_directory():
     return jsonify(payload)
 
 
+_WIN_RESERVED_NAMES = frozenset(
+    ["CON", "PRN", "AUX", "NUL"]
+    + [f"COM{i}" for i in range(1, 10)]
+    + [f"LPT{i}" for i in range(1, 10)]
+)
+
+
 @bp.route("/mkdir", methods=["POST"])
 def make_directory():
     """Create a new subfolder inside an existing directory — the folder browser's
     'New folder' action. Same anti-traversal / system-path guards as ``/browse``;
-    the name is sanitized (non-empty, no path separators, not ``.``/``..``). Mutation
-    is origin-CSRF-gated by ``_csrf_origin_check`` (no token needed)."""
+    the name is sanitized (non-empty, no path separators, not ``.``/``..``, and
+    PORTABLE: creatable on every OS the workspace may move to). Mutation is
+    origin-CSRF-gated by ``_csrf_origin_check`` (no token needed)."""
     parent_raw = (request.form.get("path") or "").strip()
     name = (request.form.get("name") or "").strip()
     if not parent_raw:
@@ -6903,16 +7706,45 @@ def make_directory():
     if (not name or name in (".", "..") or "\0" in name
             or "/" in name or "\\" in name):
         return jsonify({"ok": False, "error": "Invalid folder name"}), 400
+    # Portable-folder policy (enforced on ALL OSes): a name Windows can't
+    # represent would strand the folder the day the workspace moves to a
+    # Windows machine — reject it up front, saying why.
+    if any(ch in name for ch in '<>:"|?*'):
+        return jsonify({"ok": False, "error":
+                        'Folder name contains <>:"|?* — not allowed on '
+                        "Windows, so the folder would not be portable"}), 400
+    if name.endswith(".") or name.endswith(" "):
+        return jsonify({"ok": False, "error":
+                        "Folder name ends with a dot or space — Windows "
+                        "silently strips these, so the folder would not be "
+                        "portable"}), 400
+    if name.split(".", 1)[0].upper() in _WIN_RESERVED_NAMES:
+        return jsonify({"ok": False, "error":
+                        f"'{name}' is a reserved device name on Windows "
+                        "(CON, PRN, AUX, NUL, COM1-9, LPT1-9), so the folder "
+                        "would not be portable"}), 400
 
-    parent = Path(parent_raw)
-    if not parent.is_dir():
+    try:
+        parent = Path(parent_raw).expanduser()
+    except RuntimeError:                # "~" with no resolvable home
+        parent = Path(parent_raw)
+    if not parent.is_absolute():
+        # A relative parent resolved against the APP's CWD (audit: created
+        # stray folders under the server's working directory).
+        return jsonify({"ok": False,
+                        "error": "Parent folder must be an absolute path"}), 400
+    try:
+        parent_ok = parent.is_dir()
+    except OSError:                     # stat under a non-traversable dir
+        parent_ok = False
+    if not parent_ok:
         return jsonify({"ok": False, "error": "Parent folder does not exist"}), 400
-    if _is_system_path(parent):
+    if _is_system_path(parent, for_mkdir=True):
         logger.warning("mkdir rejected on protected system path: %s", parent_raw)
         return jsonify({"ok": False, "error": "Protected system path"}), 403
 
     new = parent / name
-    if _is_system_path(new):
+    if _is_system_path(new, for_mkdir=True):
         return jsonify({"ok": False, "error": "Protected system path"}), 403
     try:
         new.mkdir(parents=False, exist_ok=True)
@@ -7679,7 +8511,9 @@ def _hub_working_lookup(ctx_path: str):
     then the contexts registry (covers contexts registered without passing
     through the cache, e.g. in tests)."""
     with _quam_cache_lock:
-        cached = _quam_cache.get(ctx_path)
+        # The cache is keyed by fs_key (see _activate_quam); the ref carries
+        # the ctx["path"] spelling, so derive the same key here.
+        cached = _quam_cache.get(path_match.fs_key(ctx_path) if ctx_path else "")
     if cached is not None:
         return cached.get("store")
     for ctx in current_app.config.get("contexts", {}).values():
@@ -9440,11 +10274,17 @@ def _maybe_auto_add_workspace_root(quam_state_path: str | Path) -> None:
     if chip_folder is None or not chip_folder.is_dir():
         return
     chip_str = str(chip_folder.resolve())
+    # Membership via fs_key on BOTH sides — a case-variant spelling of an
+    # already-registered root (or of an excluded folder) must not re-add it
+    # on case-insensitive-default hosts. Roots are still STORED as the
+    # resolved (unfolded) path.
+    chip_key = path_match.fs_key(chip_folder)
     ws = _ws()
-    if any(str(Path(r).resolve()) == chip_str for r in ws.root_folders):
+    if any(path_match.fs_key(r) == chip_key for r in ws.root_folders):
         return
-    excluded = set(_load_session().get("workspace_excluded", []))
-    if chip_str in excluded:
+    excluded = {path_match.fs_key(e)
+                for e in _load_session().get("workspace_excluded", [])}
+    if chip_key in excluded:
         return
     try:
         ws.add_root(chip_str)
@@ -9468,8 +10308,10 @@ def _rehydrate_workspace_from_recents() -> None:
     if not recents:
         return
     ws = _ws()
-    existing = {str(Path(r).resolve()) for r in ws.root_folders}
-    excluded = set(data.get("workspace_excluded", []))
+    # fs_key on both sides — see _maybe_auto_add_workspace_root.
+    existing = {path_match.fs_key(r) for r in ws.root_folders}
+    excluded = {path_match.fs_key(e)
+                for e in data.get("workspace_excluded", [])}
     added: list[str] = []
     for rp in recents:
         try:
@@ -9480,10 +10322,11 @@ def _rehydrate_workspace_from_recents() -> None:
             if chip_folder is None or not chip_folder.is_dir():
                 continue
             chip_str = str(chip_folder.resolve())
-            if chip_str in existing or chip_str in excluded:
+            chip_key = path_match.fs_key(chip_folder)
+            if chip_key in existing or chip_key in excluded:
                 continue
             ws.add_root(chip_str)
-            existing.add(chip_str)
+            existing.add(chip_key)
             added.append(chip_str)
         except Exception:
             continue
@@ -10682,7 +11525,12 @@ def dataset_bookmark(uid):
     if not resolved:
         return jsonify({"error": "No dataset loaded"}), 400
     ds, run_id, _ = resolved
-    new_state = ds.toggle_bookmark(run_id)
+    try:
+        new_state = ds.toggle_bookmark(run_id)
+    except OSError as exc:
+        # The store already rolled back the in-memory toggle; the disk write
+        # failed (read-only archive / permissions) — a 400, not a 500.
+        return jsonify({"error": f"dataset folder is read-only ({exc})"}), 400
     run = ds.runs.get(run_id)
     tags = list(run.tags) if run else []
     return jsonify({"bookmarked": new_state, "tags": tags, "run_id": run_id, "uid": uid})
@@ -10698,7 +11546,12 @@ def dataset_add_tag(uid):
     tag = request.json.get("tag", "").strip() if request.is_json else request.form.get("tag", "").strip()
     if not tag:
         return jsonify({"error": "No tag specified"}), 400
-    tags = ds.add_tag(run_id, tag)
+    try:
+        tags = ds.add_tag(run_id, tag)
+    except OSError as exc:
+        # In-memory change already rolled back by the store (docs: _tags_lock
+        # rollback contract) — surface the read-only folder as a 400.
+        return jsonify({"error": f"dataset folder is read-only ({exc})"}), 400
     return jsonify({"tags": tags, "run_id": run_id, "uid": uid})
 
 
@@ -10712,7 +11565,10 @@ def dataset_remove_tag(uid):
     tag = request.json.get("tag", "").strip() if request.is_json else ""
     if not tag:
         return jsonify({"error": "No tag specified"}), 400
-    tags = ds.remove_tag(run_id, tag)
+    try:
+        tags = ds.remove_tag(run_id, tag)
+    except OSError as exc:
+        return jsonify({"error": f"dataset folder is read-only ({exc})"}), 400
     return jsonify({"tags": tags, "run_id": run_id, "uid": uid})
 
 
@@ -10907,7 +11763,10 @@ def dataset_set_note(uid):
         return jsonify({"error": "No dataset loaded"}), 400
     ds, run_id, _ = resolved
     note = request.json.get("note", "") if request.is_json else request.form.get("note", "")
-    ds.set_note(run_id, note)
+    try:
+        ds.set_note(run_id, note)
+    except OSError as exc:
+        return jsonify({"error": f"dataset folder is read-only ({exc})"}), 400
     return jsonify({"note": note, "run_id": run_id, "uid": uid})
 
 
@@ -11059,7 +11918,26 @@ def generate_select_env():
                       "(e.g. /path/to/.venv/bin/python or "
                       r"C:\path\to\venv\Scripts\python.exe)."),
         }), 400
+    # A Windows interpreter selected from a POSIX app can't open the POSIX
+    # /tmp work paths every subprocess bridge hands it — the failure mode is
+    # a silent "produced no _result.json" on every later build. The ONE
+    # documented, supported bridge is WSL driving a /mnt/<drive> Windows
+    # conda env, so allow exactly that.
+    if os.name != "nt" and python_path.lower().endswith(".exe"):
+        if not (python_path.startswith("/mnt/")
+                and config_generator.running_under_wsl()):
+            return jsonify({
+                "ok": False,
+                "error": ("That's a Windows interpreter (.exe) — it can't read "
+                          "this app's POSIX work files, so every build would "
+                          "fail with 'produced no _result.json'. Pick the "
+                          "env's bin/python instead."),
+            }), 400
     config_generator.set_selected_env(current_app.instance_path, python_path)
+    # The pulse-roster overlay belongs to the PREVIOUS env — clear it now; the
+    # warm below re-applies the new env's roster when its probe lands.
+    from quam_state_manager.core import pulse_catalog
+    pulse_catalog.apply_env_overlay(None)
     # Warm the capability manifest in the background so the review step's report
     # is instant (the deep probe imports the stack — a few seconds, then cached).
     inst = current_app.instance_path
@@ -11067,6 +11945,14 @@ def generate_select_env():
         target=lambda: config_generator.probe_capabilities(python_path, inst),
         daemon=True,
     ).start()
+    # Re-bind the active chip's type policy to the NEW env (stat-cached read —
+    # likely cold for a fresh env → assignments-only until the warm lands),
+    # then warm the schema manifest in the background (single-flight).
+    _ctx = _active_ctx()
+    if _ctx:
+        _attach_type_policy(_ctx, inst)
+        _warm_state_schema_async(_ctx.get("store"), inst,
+                                 live_folder=_ctx.get("path"))
     return jsonify({"ok": True, "selected": python_path})
 
 
@@ -11140,6 +12026,22 @@ def generate_allocate():
     return jsonify(outcome)
 
 
+def _ingest_abs_path(raw: str) -> tuple[str, str | None]:
+    """Normalize a user-supplied folder path from a build request: expand ``~``
+    and require an ABSOLUTE result. Returns ``(path, error)``. Audit-proven
+    failure modes this closes: ``~/chips`` built into a literal ``./~`` dir,
+    and a Windows path replayed from localStorage onto a POSIX server
+    silently built into ``$CWD/D:\\builds``."""
+    try:
+        p = Path(raw).expanduser()
+    except RuntimeError:                # "~" with no resolvable home
+        p = Path(raw)
+    if not p.is_absolute():
+        return raw, ("not an absolute path — use an absolute path, "
+                     "e.g. /Users/you/chips/out")
+    return str(p), None
+
+
 def _build_output_guard(output_path: str) -> dict | None:
     """A needs_confirm payload if building into *output_path* would clobber an
     existing chip or ingest stray JSON, else None. Two hazards: (1) an EXISTING chip
@@ -11189,6 +12091,14 @@ def generate_build():
         return jsonify({"ok": False, "errors": errors}), 400
     if not output_path:
         return jsonify({"ok": False, "error": "No output folder given."}), 400
+    output_path, path_err = _ingest_abs_path(output_path)
+    if path_err:
+        return jsonify({"ok": False, "error": f"Output folder: {path_err}"}), 400
+    if scripts_dir:
+        scripts_dir, path_err = _ingest_abs_path(scripts_dir)
+        if path_err:
+            return jsonify({"ok": False,
+                            "error": f"Scripts folder: {path_err}"}), 400
 
     python_path = config_generator.get_selected_env(current_app.instance_path)
     if not python_path:
@@ -11313,7 +12223,19 @@ def regenerate_build():
         return jsonify({"ok": False, "error": "No output folder given."}), 400
     if not source_folder:
         return jsonify({"ok": False, "error": "No source chip to merge from."}), 400
-    if Path(output_path).resolve() == Path(source_folder).resolve():
+    output_path, path_err = _ingest_abs_path(output_path)
+    if path_err:
+        return jsonify({"ok": False, "error": f"Output folder: {path_err}"}), 400
+    source_folder, path_err = _ingest_abs_path(source_folder)
+    if path_err:
+        return jsonify({"ok": False, "error": f"Source folder: {path_err}"}), 400
+    out_p, src_p = Path(output_path), Path(source_folder)
+    # samefile-grounded when the output EXISTS — a case-variant spelling on a
+    # case-insensitive FS bypasses resolve()-equality and the rebuild would
+    # write INTO the source chip (calibrations silently lost). resolve()
+    # equality stays as the cheap check for a not-yet-existing output.
+    if (path_match.same_folder(out_p, src_p) if out_p.exists()
+            else out_p.resolve() == src_p.resolve()):
         return jsonify({
             "ok": False,
             "error": "Output folder must differ from the source chip folder.",
@@ -11368,8 +12290,9 @@ _PREVIEW_SEED_TTL_S = 900.0  # 15 min; wizard build→load is usually seconds
 
 
 def _seed_key(folder) -> str:
-    s = str(Path(folder).resolve())
-    return s.lower() if os.name == "nt" else s  # match working_copy.key_for
+    # per-OS canonical folder identity — the same normalization
+    # working_copy.key_for hashes (case-folded only on Windows/macOS).
+    return path_match.fs_key(folder)
 
 
 def _stash_preview_seed(folder, files_hash: str, config, meta: dict) -> None:
@@ -11764,13 +12687,64 @@ def config_preview():
 _DIAG_RANK = {"error": 0, "warning": 1, "info": 2}
 
 
+def _env_schema_findings(store: QuamStore) -> list:
+    """Env-match findings for the active chip against the SELECTED env.
+
+    Request-path safe: reads only the warm (stat-keyed) schema-manifest cache
+    — ``cached_only=True`` NEVER spawns a subprocess — and the per-store
+    memoized analysis (one walk per mutation). Cold cache / no env → []
+    (the /diagnostics env card renders its "Probe now" affordance instead).
+    """
+    from quam_state_manager.core import state_env_validate
+    try:
+        policy = getattr(store, "type_policy", None)
+        manifest = policy.manifest if policy is not None else None
+        if manifest is None:
+            return []
+        analysis = state_env_validate.analysis_for_store(store, manifest)
+        versions = manifest.get("versions") or {}
+        label = " ".join(f"{k} {v}" for k, v in sorted(versions.items())
+                         if k in ("quam", "quam_builder") and v)
+        return state_env_validate.to_diag_findings(analysis, env_label=label)
+    except Exception:  # noqa: BLE001 — env findings must never break /diagnostics
+        logger.warning("env-schema findings failed", exc_info=True)
+        return []
+
+
 def _active_chip_findings(store: QuamStore) -> list:
-    """Lint the active chip's state (+ cached generated config), errors first."""
+    """Lint the active chip's state (+ cached generated config + env match),
+    errors first."""
     findings = diagnostics.lint_state(store)
     if store.generated_config:
         findings = findings + diagnostics.lint_config(store.generated_config)
+    findings = findings + _env_schema_findings(store)
     findings.sort(key=lambda f: _DIAG_RANK.get(f.severity, 3))
     return findings
+
+
+def _env_card_state(store: QuamStore) -> dict:
+    """Context for the /diagnostics env-match card: selection, warmth,
+    versions, in-flight probe status. Cheap (stat + in-memory)."""
+    inst = current_app.instance_path
+    python_path = None
+    try:
+        python_path = config_generator.get_selected_env(inst)
+    except Exception:  # noqa: BLE001
+        pass
+    policy = getattr(store, "type_policy", None)
+    manifest = policy.manifest if policy is not None else None
+    with _schema_warm_lock:
+        probing = any(k.startswith((python_path or "\0") + "|")
+                      for k in _schema_warm_inflight)
+    missing = list((manifest or {}).get("missing_classes") or [])
+    return {
+        "selected": python_path,
+        "selected_exists": bool(python_path and Path(python_path).is_file()),
+        "warm": manifest is not None,
+        "probing": probing,
+        "versions": (manifest or {}).get("versions") or {},
+        "missing_classes": missing,
+    }
 
 
 @bp.route("/diagnostics")
@@ -11790,6 +12764,7 @@ def diagnostics_view():
             diag_catalog=diagnostics.check_catalog(),
             allow_jump=True,
             has_config=bool(store.generated_config),
+            env_card=_env_card_state(store),
             # The config-reference findings were linted against the cached
             # generated config, which may predate the latest edits — surface
             # that so a stale config doesn't pass off old findings as current
@@ -11797,6 +12772,66 @@ def diagnostics_view():
             config_stale=_config_stale(store),
         ),
     )
+
+
+@bp.route("/diagnostics/env-probe", methods=["POST"])
+def diagnostics_env_probe():
+    """Kick off the schema probe for the active chip in a background thread
+    (the explicit "Probe environment" button; ``force=1`` re-probes even a
+    warm cache — editable installs). Poll /diagnostics/env-card for status."""
+    ctx = _active_ctx()
+    store = ctx.get("store") if ctx else None
+    if not store:
+        return jsonify(ok=False, error="No active context"), 400
+    inst = current_app.instance_path
+    python_path = config_generator.get_selected_env(inst)
+    if not python_path:
+        return jsonify(ok=False, error="No environment selected — pick one in "
+                                       "Generate Config first."), 400
+    force = request.form.get("force") in ("1", "true", "True")
+    from quam_state_manager.core import state_env_schema
+    with store._lock:
+        classes = state_env_schema.harvest_classes(store.state)
+    key = python_path + "|" + ",".join(sorted(classes))
+    with _schema_warm_lock:
+        already = key in _schema_warm_inflight
+        if not already:
+            _schema_warm_inflight.add(key)
+    if not already:
+        live_folder = ctx.get("path")
+
+        def _run():
+            try:
+                res = state_env_schema.probe_state_schema(
+                    python_path, classes, inst, force=force)
+                if res.get("ok") and live_folder:
+                    from quam_state_manager.core import pulse_catalog, type_policy
+                    manifest = {k: res[k] for k in
+                                ("classes", "pulse_roster", "by_leaf",
+                                 "missing_classes", "versions")}
+                    store.type_policy = type_policy.load_policy(
+                        inst, live_folder, manifest)
+                    store._type_manifest_env = python_path
+                    if manifest.get("pulse_roster"):
+                        pulse_catalog.apply_env_overlay(manifest["pulse_roster"])
+            except Exception:  # noqa: BLE001
+                logger.warning("env probe failed", exc_info=True)
+            finally:
+                with _schema_warm_lock:
+                    _schema_warm_inflight.discard(key)
+
+        threading.Thread(target=_run, daemon=True).start()
+    return jsonify(ok=True, started=not already, probing=True)
+
+
+@bp.route("/diagnostics/env-card")
+def diagnostics_env_card():
+    """The env-match card fragment (self-polls while a probe is in flight)."""
+    store = _store()
+    if not store:
+        return ("", 204)
+    return render_template("_diagnostics_env.html",
+                           env_card=_env_card_state(store), oob=False)
 
 
 @bp.route("/diagnostics/summary")
@@ -11849,6 +12884,10 @@ def diagnostics_findings_json():
     findings = _active_chip_findings(store)
     spec = [f.as_dict() for f in findings
             if f.category.startswith(("value_spec", "waveform"))]
+    # env_* findings carry jump_paths into the Explorer too — a field the
+    # selected env's class doesn't know gets the same ⚠ row mark treatment.
+    spec += [f.as_dict() for f in findings
+             if f.category.startswith("env_") and f.jump_path]
     conn = [f.as_dict() for f in findings
             if f.category.startswith(("connectivity", "port_"))]
     return jsonify({
@@ -11901,7 +12940,7 @@ def diagnostics_apply_fix():
     try:
         modifier.set_value(dot_path, pointer, coerce=False)
         _invalidate_engine_cache()
-    except (KeyError, TypeError, ValueError) as e:
+    except (KeyError, TypeError, ValueError, IndexError) as e:
         return jsonify(ok=False, error=str(e)), 400
     return jsonify(ok=True, tray_html=_tray_html())
 

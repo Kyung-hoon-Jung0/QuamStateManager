@@ -110,6 +110,7 @@ def summarize(findings: list[Finding]) -> dict:
 # connectivity split, which routes Explorer marks vs wiring-port rings — a
 # connectivity finding both rings its port AND lives in the Connectivity domain.)
 DIAG_DOMAINS = [
+    ("env", "Environment match"),
     ("connectivity", "Connectivity & wiring"),
     ("values", "Values"),
     ("waveforms", "Waveforms"),
@@ -122,6 +123,8 @@ DIAG_DOMAINS = [
 def domain_of(category: str) -> str:
     """Map a Finding ``category`` to one of :data:`DIAG_DOMAINS` (first match)."""
     c = category or ""
+    if c.startswith("env_"):
+        return "env"
     if c.startswith(("connectivity", "port_", "downconverter")):
         return "connectivity"
     if c.startswith("waveform"):
@@ -145,6 +148,13 @@ def domain_of(category: str) -> str:
 # typical tier the check emits (a couple emit a softer tier in benign cases); it
 # only drives the colour of the little badge in the popup.
 _CHECK_CATALOG: list[tuple[str, list[tuple[str, str, str]]]] = [
+    ("env", [
+        ("error", "Classes importable in the selected env", "Every __class__ the state references imports in the selected python environment (third-party packages included) — an unimportable class makes Quam.load() fail."),
+        ("error", "Fields exist on the env's classes", "Every key under a __class__-bearing node is a real field of that class in the selected env — an unknown field raises AttributeError('Unexpected attribute') at Quam.load(). Free-form dicts (extras, operations) are never flagged."),
+        ("error", "Required fields present", "Fields the env's class requires (no default) exist in the state."),
+        ("warning", "Value types match annotations", "Scalar values match the env class's type annotations (int widening and pointer values always pass; enum membership is advisory)."),
+        ("warning", "Package versions match", "The state's __package_versions__ stamp (written by quam ≥0.6) matches the selected env's installed versions."),
+    ]),
     ("connectivity", [
         ("error", "Port exists", "Every channel's assigned opx_output / opx_input resolves to a real port declared in state.json 'ports'."),
         ("error", "No port collisions", "Two elements never share one physical port + upconverter (legal readout- and cross-resonance multiplexing and a TWPA's own pump/pump_ are allowed)."),
@@ -1236,6 +1246,10 @@ def _pulse_peak(store, row: dict) -> tuple[float | None, str | None]:
         # transcription may not be that class's math: render it elsewhere,
         # but never fabricate a config-crash / DAC-range finding from it.
         # Verify-vs-config is the authoritative check for these.
+        # NB: "env" (module home verified by the active env overlay —
+        # pulse_catalog.apply_env_overlay) is fully-known like "exact"/"alias"
+        # and deliberately passes this gate: env-verified pulses re-enter
+        # DAC-range linting.
         return None, None
 
     if payload.get("ok"):

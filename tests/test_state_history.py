@@ -274,12 +274,31 @@ class TestBuildLockBinding:
 
     def test_active_wc_lock_binds_to_passed_ctx(self, app):
         from quam_state_manager.web import routes
-        lock_a = routes._get_quam_build_lock("/chipA")
-        lock_b = routes._get_quam_build_lock("/chipB")
+        # build locks are keyed by fs_key (the per-OS canonical identity) —
+        # derive the expected locks the same way _activate_quam does
+        lock_a = routes._get_quam_build_lock(routes.path_match.fs_key("/chipA"))
+        lock_b = routes._get_quam_build_lock(routes.path_match.fs_key("/chipB"))
         assert lock_a is not lock_b
         # passing a captured ctx pins to THAT folder regardless of active ctx
         assert routes._active_wc_lock({"path": "/chipA"}) is lock_a
         assert routes._active_wc_lock({"path": "/chipB"}) is lock_b
+
+    def test_wc_lock_spelling_variants_share_one_lock(self, app, tmp_path):
+        # A symlink (or ./ spelling) of one folder must hand back the SAME
+        # lock — two locks over one working folder void every serialisation
+        # guarantee (the audit-proven double-context bug).
+        from quam_state_manager.web import routes
+        real = tmp_path / "chipR"
+        real.mkdir()
+        alias = tmp_path / "aliasR"
+        try:
+            alias.symlink_to(real)
+        except OSError:
+            pytest.skip("symlinks unavailable")
+        assert (routes._active_wc_lock({"path": str(alias)})
+                is routes._active_wc_lock({"path": str(real)}))
+        assert (routes._active_wc_lock({"path": str(real / ".")})
+                is routes._active_wc_lock({"path": str(real)}))
 
 
 class TestLabelPin:
@@ -317,3 +336,58 @@ class TestPinnedExemptFromPrune:
             hm.check_and_snapshot(str(live), "manual", force=True)
         timestamps = [m.timestamp for m in hm.list_snapshots(str(live))]
         assert a.timestamp in timestamps   # pinned snapshot survived the prune
+
+
+class TestTimestampTraversalGuard:
+    """A traversal-shaped <timestamp> URL segment must 4xx, never be joined
+    onto the history root — on Windows a ``..%5C..``-shaped segment escapes it
+    and stage/restore-live would adopt an arbitrary folder as the chip."""
+
+    # %5C decodes to a backslash — a separator on Windows only, so it survives
+    # URL routing as a single segment on every OS.
+    BAD_TS = ("..%5C..%5Cboom", "20260101_000000%5C..", "junk", "20260101_000000extra")
+
+    def test_stage_rejects_traversal_ts(self, client):
+        for bad in self.BAD_TS:
+            r = client.post(f"/state-history/{bad}/stage", data={"force": "1"})
+            assert r.status_code == 404, (bad, r.status_code)
+
+    def test_restore_live_rejects_traversal_ts(self, client):
+        for bad in self.BAD_TS:
+            r = client.post(f"/state-history/{bad}/restore-live", data={"force": "1"})
+            assert r.status_code == 404, (bad, r.status_code)
+
+    def test_valid_ts_still_stages(self, client):
+        ts = _take_snapshot(client)[0]
+        r = client.post(f"/state-history/{ts}/stage", data={"force": "1"})
+        assert r.status_code == 200
+
+
+class TestActivateQuamIdentity:
+    """_activate_quam must key its cache + build lock by the folder's per-OS
+    canonical identity — a symlink spelling vs the real path used to create
+    TWO contexts (and TWO build locks) over ONE working folder."""
+
+    def test_symlink_and_real_path_share_one_context(self, app, tmp_path):
+        from quam_state_manager.web import routes
+        live = _make_live(tmp_path)
+        alias = tmp_path / "live" / "LabA-alias"
+        try:
+            alias.symlink_to(live)
+        except OSError:
+            pytest.skip("symlinks unavailable")
+        client = app.test_client()
+        real_key = routes.path_match.fs_key(live)
+        with routes._quam_cache_lock:
+            routes._quam_cache.pop(real_key, None)
+
+        client.post("/load", data={"folder": str(alias)})
+        client.post("/load", data={"folder": str(live)})
+
+        with routes._quam_cache_lock:
+            hits = [k for k in routes._quam_cache if k == real_key]
+        assert hits == [real_key]        # ONE cached context, keyed canonically
+        # …and both spellings resolve to the same registered context path
+        with app.test_request_context():
+            ctx = app.config["contexts"].get(live.parent.name)
+        assert ctx is not None and ctx["path"] == str(live.resolve())

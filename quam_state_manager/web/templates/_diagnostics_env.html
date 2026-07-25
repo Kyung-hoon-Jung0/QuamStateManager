@@ -1,0 +1,76 @@
+{# Env-match card on /diagnostics — selection/warmth/probe controls for the
+   state ↔ selected-python-env schema validation. The FINDINGS themselves flow
+   through the normal diagnostics list (domain "Environment match"); this card
+   carries only the status line + actions. Self-polls while a probe runs. #}
+<div id="diag-env-card" class="diag-env-card"
+     {% if env_card.probing %}hx-get="/diagnostics/env-card" hx-trigger="every 2s"
+     hx-swap="outerHTML"{% endif %}>
+  <div class="diag-env-head">
+    <strong>Environment match</strong>
+    {% if not env_card.selected %}
+      <span class="muted">— no python environment selected.
+        <a href="/generate" hx-get="/generate" hx-target="#table-pane"
+           hx-push-url="true">Pick one in Generate Config</a> to validate this
+        state against its quam/quam-builder.</span>
+    {% elif not env_card.selected_exists %}
+      <span class="diag-env-err">selected interpreter no longer exists —
+        reselect the environment in Generate Config.</span>
+    {% elif env_card.probing %}
+      <span class="muted">probing the environment&hellip;</span>
+      <progress class="diag-env-progress"></progress>
+    {% elif env_card.warm %}
+      <span class="muted">checked against
+        {% for k in ("quam", "quam_builder") %}{% if env_card.versions.get(k) %}
+          <code>{{ k }} {{ env_card.versions[k] }}</code>{% endif %}{% endfor %}
+        · <a href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane"
+             hx-sync="#table-pane:replace">refresh findings</a>
+      </span>
+    {% else %}
+      <span class="muted">not probed yet — the schema of the selected
+        environment hasn't been read for this chip.</span>
+    {% endif %}
+  </div>
+
+  {% if env_card.selected and env_card.selected_exists %}
+  <div class="diag-env-actions">
+    {% if not env_card.probing %}
+    <button type="button" class="btn-sm outline"
+            onclick="diagEnvProbe(this, {{ '1' if env_card.warm else '0' }})">
+      {{ "Re-probe environment" if env_card.warm else "Probe environment" }}
+    </button>
+    {% endif %}
+    {% if env_card.warm %}
+    <button type="button" class="btn-sm outline"
+            hx-post="/config/regenerate" hx-target="#diag-env-deep"
+            hx-swap="innerHTML" hx-indicator="#diag-env-deep-busy"
+            title="The acid test: actually Quam.load() + generate_config() this state inside the selected environment">
+      Validate deeply (Quam.load)
+    </button>
+    <span id="diag-env-deep-busy" class="htmx-indicator muted">running in the env&hellip;</span>
+    {% endif %}
+  </div>
+  <div id="diag-env-deep"></div>
+  {% if env_card.missing_classes %}
+  <p class="diag-env-missing muted">
+    {{ env_card.missing_classes | length }} class(es) not importable in this
+    env: {% for c in env_card.missing_classes[:3] %}<code>{{ c }}</code>{% if not loop.last %}, {% endif %}{% endfor %}{% if env_card.missing_classes | length > 3 %}, &hellip;{% endif %}
+    — details in the Environment-match findings below.
+  </p>
+  {% endif %}
+  {% endif %}
+</div>
+{% if not oob %}
+<script>
+  window.diagEnvProbe = window.diagEnvProbe || function (btn, force) {
+    btn.disabled = true;
+    fetch("/diagnostics/env-probe", {
+      method: "POST",
+      headers: {"Content-Type": "application/x-www-form-urlencoded"},
+      body: "force=" + force
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d.ok) { window.showToast && window.showToast(d.error || "probe failed", "warning"); btn.disabled = false; return; }
+      if (window.htmx) htmx.ajax("GET", "/diagnostics/env-card", {target: "#diag-env-card", swap: "outerHTML"});
+    }).catch(function () { btn.disabled = false; });
+  };
+</script>
+{% endif %}

@@ -287,6 +287,14 @@ def _ts_stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")[:20]
 
 
+# Shape of a snapshot-dir name produced by ``_ts_stamp`` — bare v1 stamps have
+# no fraction; newer stamps carry a truncated microsecond tail (1–6 digits).
+# ``timestamp`` route/URL segments are JOINED onto the history root, so any
+# value outside this shape (e.g. a ``..\..``-shaped segment, which escapes the
+# root on Windows where backslash is a separator) must be rejected pre-join.
+_HIST_TS_RE = re.compile(r"^\d{8}_\d{6}(_\d{1,6})?$")
+
+
 # Per-experiment folder pattern: e.g. "#4_03_resonator_spectroscopy_single_202031".
 # Six trailing digits = HHMMSS.
 _EXPERIMENT_PATTERN = re.compile(r"^#?\d+_.+_\d{6}$")
@@ -1290,7 +1298,16 @@ class HistoryManager:
         return snapshots
 
     def load_snapshot(self, quam_state_path: str | Path, timestamp: str) -> QuamStore:
-        """Load a ``QuamStore`` from a historical snapshot (LRU-cached)."""
+        """Load a ``QuamStore`` from a historical snapshot (LRU-cached).
+
+        Raises :class:`KeyError` on a malformed *timestamp* — the value is
+        joined onto the history dir and often arrives as a URL segment, so a
+        traversal-shaped one (``..\\..``) would escape the root on Windows
+        and stage/restore-live would adopt an arbitrary folder. Routes turn
+        the KeyError into a 4xx.
+        """
+        if not isinstance(timestamp, str) or not _HIST_TS_RE.match(timestamp):
+            raise KeyError(f"invalid snapshot timestamp: {timestamp!r}")
         path = Path(quam_state_path)
         cache_key = (str(path.resolve()), timestamp)
 

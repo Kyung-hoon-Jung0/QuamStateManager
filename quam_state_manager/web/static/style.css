@@ -2642,6 +2642,9 @@ input.edit-input {
 .role-badge.rr_in   { background: var(--role-rr-in-color); color: #1a1a1a; }
 .role-badge.z       { background: var(--role-z-color); color: #1a1a1a; }
 .role-badge.coupler { background: var(--role-coupler-color); color: #1a1a1a; }
+.role-badge.twpa_pump { background: var(--role-twpa-pump-color); color: #fff; }
+.role-badge.twpa_ro   { background: var(--role-twpa-ro-color); color: #fff; }
+.role-badge.twpa_in   { background: var(--role-twpa-in-color); color: #fff; }
 .port-popup-body {
     display: grid; grid-template-columns: auto 1fr;
     gap: 0.08rem 0.55rem;
@@ -2652,16 +2655,27 @@ input.edit-input {
 .popup-val { color: var(--pico-color); }
 .port-popup-btn { width: 100%; font-size: 0.8em; margin-top: 0.1rem; }
 
-/* JSON drill-down panel (slide-up) */
+/* JSON drill-down panel (slide-up). height (not max-height) is the resizable
+   knob — defaults taller than the old fixed 38vh (review-r7: the Generate
+   Config preview routinely needs more room than a quick wiring-pointer
+   lookup); a drag on .json-panel-resizer overrides it, persisted globally
+   across every call site (see the drag-to-resize block near the end of
+   app.js). */
 .json-panel {
     position: fixed; bottom: 0; left: 0; right: 0; z-index: 250;
-    max-height: 38vh;
+    height: 55vh; max-height: 92vh; min-height: 160px;
     background: var(--pico-card-background-color);
     border-top: 2px solid var(--pico-primary);
     box-shadow: 0 -4px 16px rgba(0,0,0,0.1);
     overflow: auto;
 }
 .json-panel.hidden { display: none; }
+.json-panel-resizer {
+    height: 6px; cursor: ns-resize;
+}
+.json-panel-resizer:hover, .json-panel-resizer.json-panel-resizing {
+    background: color-mix(in srgb, var(--pico-primary) 35%, transparent);
+}
 .json-panel-header {
     display: flex; justify-content: space-between; align-items: center;
     padding: 0.3rem 0.8rem;
@@ -3217,6 +3231,32 @@ input.edit-input {
     background: var(--topo-edge-label-bg); border: 1px solid; transform: translate(-50%, -50%);
 }
 .topo-edge-label:hover { font-weight: 700; }
+/* Control->target orientation (review feedback round 2: a small triangle
+   stuck onto the box read as a decoration, not a direction — wanted the
+   TARGET-facing EDGE ITSELF reshaped into a point, like a flag/price-tag).
+   clip-path cuts that whole side of the box into a point (~9px deep); the
+   opposite/perpendicular sides stay flat rectangle edges (still bordered,
+   still border-radius'd where unclipped) — only the pointed diagonal cut
+   has no separate stroke (clip-path can't paint a border along a path it
+   creates), which reads fine since the color fill itself already ends in a
+   crisp point against the page background. Extra padding on the pointed
+   side keeps text clear of the point. */
+.topo-edge-label-arrow-right {
+    padding-right: 12px;
+    clip-path: polygon(0 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 0 100%);
+}
+.topo-edge-label-arrow-left {
+    padding-left: 12px;
+    clip-path: polygon(9px 0, 100% 0, 100% 100%, 9px 100%, 0 50%);
+}
+.topo-edge-label-arrow-down {
+    padding-bottom: 10px;
+    clip-path: polygon(0 0, 100% 0, 100% calc(100% - 9px), 50% 100%, 0 calc(100% - 9px));
+}
+.topo-edge-label-arrow-up {
+    padding-top: 10px;
+    clip-path: polygon(0 9px, 50% 0, 100% 9px, 100% 100%, 0 100%);
+}
 .topo-colorscale-note { font-size: var(--topo-colorscale-note-size); color: var(--pico-muted-color); margin-top: 0.25rem; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 .palette-selector {
     font-size: 0.8em; padding: 2px 6px; margin: 0; border-radius: 4px;
@@ -3352,7 +3392,6 @@ a.topo-health-tile:hover { background: var(--pico-card-sectioning-background-col
 
 /* Threshold editor + spec-colour toggle (Phase D) */
 .topo-thresh-btn { padding: 0.05rem 0.55rem; font-size: 0.8em; margin: 0; width: auto; }
-.topo-colormode-toggle { font-size: 0.82em; margin-left: 0; }
 .topo-thresh-editor {
     width: fit-content; max-width: 100%;        /* shrink to content, not full-width */
     margin: 0.3rem 0 0.2rem 0; padding: 0.5rem 0.7rem;
@@ -3862,6 +3901,85 @@ input.tree-edit-input {
 }
 .tree-val-error { background: var(--tree-val-error-bg); border-radius: 3px; transition: background 0.3s; }
 
+/* Explorer-only scale control (r6 item 3) — the All-values Aa pattern. */
+.tree-scale-ctl {
+    display: inline-flex; align-items: center; gap: 0.25rem;
+    margin-left: auto;              /* right edge of the toolbar */
+}
+.tree-scale-ctl .tree-scale-label { font-size: 0.85em; color: var(--pico-muted-color); }
+.tree-scale-ctl #explorer-scale-slider { width: 5.5rem; margin: 0; }
+.tree-scale-ctl .tree-scale-preset.active {
+    border-color: var(--pico-primary); color: var(--pico-primary);
+}
+
+/* Explorer structural CRUD — hover row actions + inline add/delete/type panels. */
+.tree-row-actions { margin-left: 0.6em; display: inline-flex; gap: 0.15em; align-items: center; }
+.tree-act-btn {
+    all: unset; cursor: pointer; padding: 0 0.25em; border-radius: 3px;
+    color: var(--pico-muted-color); font-size: 0.85em; line-height: 1.2;
+    opacity: 0; transition: opacity 0.12s, color 0.12s;
+}
+.tree-row:hover .tree-act-btn { opacity: 0.7; }
+.tree-act-btn:hover { opacity: 1 !important; color: var(--pico-color); }
+.tree-act-del:hover { color: var(--color-error-text) !important; }
+.tree-del-confirm { font-size: 0.85em; color: var(--color-warning-text, #b45309); }
+.tree-crud-panel {
+    display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center;
+    margin: 0.25rem 0 0.35rem 1.6rem; padding: 0.4rem 0.5rem;
+    border: 1px solid var(--pico-muted-border-color); border-radius: 5px;
+}
+.tree-crud-panel input, .tree-crud-panel select {
+    margin: 0; padding: 0.1rem 0.35rem; height: 1.8em; font-size: 0.85em;
+    font-family: var(--font-mono); width: auto;
+}
+.tree-crud-key { min-width: 11em; }
+.tree-crud-val { min-width: 16em; }
+.tree-crud-err { font-size: 0.85em; color: var(--color-error-text); }
+.tree-type-panel .tree-type-opts { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+.tree-type-panel .tree-type-opts label {
+    display: inline-flex; gap: 0.25em; align-items: center; font-size: 0.85em; margin: 0;
+}
+.tree-type-panel .tree-type-opts input[type="radio"] { margin: 0; }
+.tree-type-head { flex-basis: 100%; font-size: 0.85em; }
+.tree-type-chip {
+    margin-left: 0.45em; padding: 0 0.35em; font-size: 0.75em;
+    border: 1px solid color-mix(in srgb, var(--pico-primary) 40%, transparent);
+    border-radius: 3px; color: var(--pico-primary);
+    vertical-align: middle; white-space: nowrap;
+}
+
+/* Env-match card on /diagnostics — status line + probe/deep-validate actions. */
+.diag-env-card {
+    border: 1px solid var(--pico-muted-border-color);
+    border-left: 3px solid color-mix(in srgb, var(--pico-primary) 55%, transparent);
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+    margin: 0.5rem 0 0.75rem;
+}
+.diag-env-head { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+.diag-env-actions { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.4rem; }
+.diag-env-err { color: var(--color-error-text); }
+.diag-env-progress { width: 8rem; height: 0.5rem; margin: 0; }
+.diag-env-missing { margin: 0.4rem 0 0; font-size: 0.85em; }
+
+/* Inline rejection-reason chip after a bounced edit (the red flash alone said
+   nothing). Theme rule: coloured border + text token, never *-border as text. */
+.tree-edit-err {
+    margin-left: 0.5em;
+    padding: 0 0.4em;
+    font-size: 0.85em;
+    border: 1px solid color-mix(in srgb, var(--color-error-text, #c62828) 45%, transparent);
+    border-radius: 3px;
+    color: var(--color-error-text, #c62828);
+    cursor: pointer;
+    white-space: nowrap;
+    max-width: 46em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: inline-block;
+    vertical-align: middle;
+}
+
 /* Whole-container (list/dict) JSON editor — the ✎ button on a container row + the
    inline textarea it opens. Lets a user enter a list / matrix / object at once. */
 .tree-json-edit-btn {
@@ -4101,15 +4219,21 @@ input.tree-edit-input {
 }
 
 /* ── Live State Edit: segmented control (Live grid | All values) ───────────── */
-.bulk-segmented { display: inline-flex; border: 1px solid var(--pico-muted-border-color);
+/* r6b: the Table View / Flat View switch was near-invisible (boundary only
+   read on hover) — give the group a clearly visible default outline and the
+   buttons real default separation, so the menu reads as a menu. */
+.bulk-segmented { display: inline-flex;
+    border: 1px solid color-mix(in srgb, var(--pico-color) 30%, transparent);
     border-radius: 6px; overflow: hidden; margin-left: .5rem; }
-.bulk-seg { width: auto; margin: 0; border: 0; border-right: 1px solid var(--pico-muted-border-color);
+.bulk-seg { width: auto; margin: 0; border: 0;
+    border-right: 1px solid color-mix(in srgb, var(--pico-color) 22%, transparent);
     border-radius: 0; background: transparent; color: var(--pico-muted-color);
     padding: .2rem .8rem; font-size: .82rem; line-height: 1.3; cursor: pointer; }
 .bulk-seg:last-child { border-right: 0; }
 .bulk-seg:hover { background: color-mix(in srgb, var(--pico-primary) 7%, transparent); }
 .bulk-seg.active { background: color-mix(in srgb, var(--pico-primary) 12%, transparent);
-    color: var(--pico-primary); font-weight: 600; }
+    color: var(--pico-primary); font-weight: 600;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pico-primary) 55%, transparent); }
 
 /* ── All values (Live State Edit completeness tab) virtual scroller ──────────
    ROW_HEIGHT in all-values.js MUST equal `.av-table-virtual tbody tr {height:28px}`.
@@ -4165,24 +4289,49 @@ input.tree-edit-input {
 .av-table-virtual thead th {
     position: sticky; top: 0; z-index: 2; background: var(--pico-background-color);
     padding: 4px 0; border-bottom: 1px solid var(--pico-muted-border-color);
-    display: grid; grid-template-columns: 26px 1fr 240px; align-items: center; gap: 6px;
+    display: grid; grid-template-columns: 26px 1fr var(--av-val-w, 240px);
+    align-items: center; gap: 6px;
     font: 600 11px var(--font-mono); text-transform: uppercase; letter-spacing: .04em;
     color: var(--pico-muted-color); text-align: left;
 }
-.av-table-virtual tbody tr { height: 28px; }              /* === ROW_HEIGHT */
+/* Row height reads the SAME source the JS scroller math uses (--av-rh set by
+   applyFont from the r6 row-spacing slider; base 28px) — parity by design. */
+.av-table-virtual tbody tr { height: var(--av-rh, 28px); }  /* === ROW_HEIGHT */
 .av-table-virtual tbody tr.av-spacer { height: auto; }    /* inline-sized; never 28 */
 .av-table-virtual tbody tr.av-spacer td { padding: 0; border: 0; }
 .av-table-virtual tbody td {
     padding: 4px 0; line-height: 18px; border-bottom: 1px solid var(--pico-muted-border-color);
     font-family: var(--font-mono); font-size: calc(12.5px * var(--av-fs, 1));
     letter-spacing: var(--av-ls, 0); font-variant-numeric: tabular-nums;
-    display: grid; grid-template-columns: 26px 1fr 240px; align-items: center; gap: 6px;
+    display: grid; grid-template-columns: 26px 1fr var(--av-val-w, 240px);
+    align-items: center; gap: 6px;
 }
 /* min-width:0 lets a grid child shrink below its content so ellipsis works; nowrap
    + ellipsis on BOTH path and value so a long pointer/path never wraps to a 2nd
    line and desyncs scrollTop/index (part of the 28px invariant, not cosmetic). */
 .av-cell-path, .av-cell-val { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.av-cell-val { color: var(--pico-muted-color); }
+/* r6b: a thin DEFAULT-visible vertical rule at the path|value boundary — every
+   row's border-left stacks into one continuous line; the draggable resizer
+   overlay (all-values.js) sits on the same boundary. */
+.av-cell-val {
+    color: var(--pico-muted-color);
+    border-left: 1px solid color-mix(in srgb, var(--pico-muted-border-color) 85%, transparent);
+    padding-left: 6px;
+}
+/* r6b: mouse column-resize — a slim full-height hit strip on the boundary; the
+   1px core line lights up on hover/drag. Injected by all-values.js into the
+   scroll container's (position:relative) parent so it doesn't scroll away. */
+.av-col-resizer {
+    position: absolute; top: 0; bottom: 0; width: 7px;
+    cursor: col-resize; z-index: 6;
+}
+.av-col-resizer::after {
+    content: ""; position: absolute; left: 3px; top: 0; bottom: 0; width: 1px;
+    background: transparent; transition: background 0.1s;
+}
+.av-col-resizer:hover::after, .av-col-resizer.dragging::after {
+    background: var(--pico-primary);
+}
 .av-gutter { width: 26px; text-align: center; font-size: 11px; }
 /* A1 TIGHTEN: the editable input now matches the read-only span's 18px text band
    (was a 20px box, 2px taller — the "input rows too tall" the user flagged). The
@@ -6265,6 +6414,23 @@ table.gen-wiring tbody tr.pinned {
     display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap;
     margin: 0 0 0.45rem; font-size: 13.5px;
 }
+/* Small inline action in a band header (Import port CSV…). Had NO rule at all,
+   so Pico's full-size button default applied — a huge button next to a 12.5px
+   band title (r6 review item 2). Same compact metrics as the wizard nav. */
+button.gen-mini-btn {
+    width: auto; height: auto; margin: 0;
+    padding: 0.15rem 0.6rem;
+    font-size: 12px; line-height: 1.4; font-weight: 500;
+    background: transparent;
+    color: var(--pico-primary);
+    border: 1px solid color-mix(in srgb, var(--pico-primary) 45%, transparent);
+    border-radius: 4px;
+    box-shadow: none;
+}
+button.gen-mini-btn:hover {
+    background: color-mix(in srgb, var(--pico-primary) 10%, transparent);
+    color: var(--pico-primary);
+}
 .gen-band-title {
     font-weight: 800; font-size: 12.5px; letter-spacing: 0.09em;
     text-transform: uppercase;
@@ -7469,17 +7635,15 @@ button.diag-badge { cursor: pointer; }
 .bulk-font-ctl .bulk-ls-label { font-size: 0.95em; }   /* the ↔ glyph */
 .bulk-font-ctl #bulk-ls-slider { width: 4.5rem; }       /* shorter than the size slider */
 .bulk-toolbar-spacer { flex: 1; }
-.bulk-hint { font-size: 0.8em; max-width: 64ch; margin: 0; }   /* drop Pico's <p> margin-bottom */
-/* Dismissible help text: ✕ on the hint hides it (persisted); the toolbar ⓘ button
-   brings it back. */
-.bulk-panel.bulk-hint-hidden .bulk-hint { display: none; }
-.bulk-hint-x {
-    float: right; margin: 0 0 0 .5rem; padding: 0 .25rem; line-height: 1.2;
-    border: none; background: none; cursor: pointer; color: var(--pico-muted-color);
-    font-size: 1.1em;
-}
-.bulk-hint-x:hover { color: var(--pico-color); }
+/* r6 item 5: the help lives in a <details> popover (the bulk-colvis dropdown
+   pattern) anchored at the ⓘ immediately left of Properties — no boxed hint. */
 .bulk-hint-toggle { font-size: 1em; }
+.bulk-help-pop .bulk-help-menu {
+    max-width: 46ch; min-width: 34ch;
+    padding: 0.6rem 0.8rem;
+    font-size: 0.82em; line-height: 1.5;
+    color: var(--pico-color);
+}
 .bulk-toolbar .btn-sm { margin: 0; padding: 0.15rem 0.8rem; width: auto; }
 .bulk-dirty-count { font-size: 0.82em; font-weight: 600; color: var(--color-warning-text); }
 /* A second horizontal scrollbar ABOVE the table, synced to it — so a wide table
@@ -7658,6 +7822,78 @@ button.diag-badge { cursor: pointer; }
    (0,1,0) — defeat it with a 2-class selector so the search box doesn't add dead space. */
 .bulk-search-wrap .bulk-search { margin-bottom: 0; }
 .bulk-search-count { font-size: 0.78em; }
+
+/* ── r6 item 4: dynamic (derived) columns — list cells, JSON modal, hint ── */
+/* List-value preview cell: mono + muted + ellipsed; the ✎ shows on row hover. */
+.bulk-cell-list {
+    display: inline-block; max-width: 15rem; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; vertical-align: middle; cursor: default;
+    font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+    font-size: calc(0.86rem * var(--bulk-fs, 1));
+    color: var(--pico-muted-color); padding: 0 3px;
+}
+.bulk-cell-list.bulk-cell-modified {
+    color: var(--pico-color); border: 1.5px solid var(--color-error-text); border-radius: 3px;
+    background: color-mix(in srgb, var(--color-error-text) 12%, transparent);
+}
+.bulk-list-edit {
+    all: unset; cursor: pointer; margin-left: 0.15rem; padding: 0 0.2em; border-radius: 3px;
+    color: var(--pico-muted-color); font-size: 0.9em; line-height: 1;
+    opacity: 0; transition: opacity 0.12s, color 0.12s;
+}
+.bulk-td:hover .bulk-list-edit, .bulk-list-edit:focus-visible { opacity: 0.85; }
+.bulk-list-edit:hover { opacity: 1; color: var(--pico-primary); }
+/* "N hidden columns match — Show" chip next to the search count. Warning-TEXT
+   token as text + warning-border as border (the theme rule: coloured text via
+   *-text tokens, never a bg token reused as text). */
+.bulk-dyncol-hint {
+    width: auto; margin: 0; padding: 0 0.55rem; font-size: 0.76em; line-height: 1.7;
+    white-space: nowrap; cursor: pointer; border-radius: 999px;
+    background: transparent; color: var(--color-warning-text);
+    border: 1px solid var(--color-warning-border);
+}
+.bulk-dyncol-hint:hover { background: var(--color-warning-bg); }
+/* Collapsible per-section dynamic groups appended to the Properties menu. */
+.bulk-colvis-dyn { margin: 0; }
+.bulk-colvis-dyn > summary {
+    list-style: none; cursor: pointer; padding: 2px; font-size: 0.8em; font-weight: 600;
+}
+.bulk-colvis-dyn > summary::-webkit-details-marker { display: none; }
+.bulk-colvis-dyn > summary::before { content: "▸ "; color: var(--pico-muted-color); }
+.bulk-colvis-dyn[open] > summary::before { content: "▾ "; }
+.bulk-colvis-dyn .bulk-colvis-item { margin-left: 0.9rem; }
+.bulk-colvis-dyn-head {
+    margin-top: 8px; border-top: 1px solid var(--pico-muted-border-color); padding-top: 6px;
+}
+.bulk-colvis-note { font-size: 0.75em; padding: 2px; }
+/* Whole-value JSON editor modal (the ✎ on a list cell) — same visual language
+   as the All-values ✎ modal (#av-json-modal) / .tree-json-editor. */
+#bulk-json-modal {
+    position: fixed; inset: 0; z-index: 240; background: rgba(0, 0, 0, 0.35);
+    display: flex; align-items: center; justify-content: center;
+}
+#bulk-json-modal .bulk-json-card {
+    width: min(44rem, 92vw); background: var(--pico-card-background-color);
+    border: 1px solid var(--pico-muted-border-color); border-radius: 6px;
+    padding: 0.8rem; display: flex; flex-direction: column; gap: 0.5rem;
+}
+#bulk-json-modal .bulk-json-head {
+    display: flex; justify-content: space-between; gap: 0.6rem;
+    align-items: baseline; min-width: 0;
+}
+#bulk-json-modal .bulk-json-path {
+    font-family: var(--font-mono); font-size: 12.5px; font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#bulk-json-modal .bulk-json-keys { font-size: 11px; white-space: nowrap; }
+#bulk-json-modal textarea.bulk-json-ta {
+    width: 100%; min-height: 12rem; max-height: 50vh; resize: vertical; margin: 0;
+    font-family: var(--font-mono); font-size: 12.5px; white-space: pre; tab-size: 2;
+}
+#bulk-json-modal .bulk-json-err {
+    color: var(--color-error-text, #c0392b); font-size: 12px; white-space: pre-wrap;
+}
+#bulk-json-modal .bulk-json-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
 
 /* ── Chip report-card export dropdown (Chip Status health header) ──── */
 .topo-report-export { position: relative; display: inline-block; }

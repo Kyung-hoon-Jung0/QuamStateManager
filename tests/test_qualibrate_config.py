@@ -187,9 +187,61 @@ class TestConfigDirEnv:
         monkeypatch.setenv("QUALIBRATE_CONFIG_DIR", str(tmp_path / "legacy"))
         assert qc._config_dir() == tmp_path / "official"
 
-    def test_quam_state_path_env_wins(self, tmp_path, monkeypatch):
+    def test_own_override_wins_over_runner_env(self, tmp_path, monkeypatch):
+        # QUALIBRATE_STATE_PATH is SM's own deliberate override — first always.
         monkeypatch.setenv("QUAM_STATE_PATH", str(tmp_path / "quam_env"))
-        monkeypatch.setenv("QUALIBRATE_STATE_PATH", str(tmp_path / "legacy_env"))
+        monkeypatch.setenv("QUALIBRATE_STATE_PATH", str(tmp_path / "own_env"))
+        assert qc.resolve_live_state_path() == tmp_path / "own_env"
+
+    def test_active_project_beats_inherited_runner_env(self, tmp_path, monkeypatch):
+        # r6b stale-banner fix: an SM launched from a calibration shell inherits
+        # a FROZEN QUAM_STATE_PATH; the live active-project config must win so a
+        # project switch in qualibrate propagates to the workbench watch/banner.
+        monkeypatch.delenv("QUALIBRATE_STATE_PATH", raising=False)
+        monkeypatch.setenv("QUAM_STATE_PATH", str(tmp_path / "stale_shell_env"))
+        cfg = tmp_path / "cfg"
+        _write(cfg / "config.toml", '[qualibrate]\nproject = "P2"\n')
+        _write(cfg / "projects" / "P2" / "config.toml",
+               '[quam]\nstate_path = "/proj/new_live"\n')
+        monkeypatch.setenv("QUALIBRATE_CONFIG_DIR", str(cfg))
+        monkeypatch.delenv("QUALIBRATE_CONFIG_FILE", raising=False)
+        assert qc.resolve_live_state_path() == Path("/proj/new_live")
+
+    def test_inherited_global_state_path_beats_runner_env(self, tmp_path, monkeypatch):
+        # The REAL user config shape (r6b round 2): the active project's overlay
+        # is a pure inheritor (no [quam] state_path) and the value lives
+        # GLOBAL-side — the EFFECTIVE (deep-merged) config must win over the
+        # stale shell env, exactly as qualibrate itself resolves it.
+        monkeypatch.delenv("QUALIBRATE_STATE_PATH", raising=False)
+        monkeypatch.setenv("QUAM_STATE_PATH", str(tmp_path / "stale_shell_env"))
+        cfg = tmp_path / "cfg"
+        _write(cfg / "config.toml",
+               '[qualibrate]\nproject = "P3"\n\n[quam]\nstate_path = "/global/new_live"\n')
+        _write(cfg / "projects" / "P3" / "config.toml",
+               "[qualibrate.database_state]\nis_connected = false\n")
+        monkeypatch.setenv("QUALIBRATE_CONFIG_DIR", str(cfg))
+        monkeypatch.delenv("QUALIBRATE_CONFIG_FILE", raising=False)
+        assert qc.resolve_live_state_path() == Path("/global/new_live")
+
+    def test_explicit_empty_state_path_resolves_none(self, tmp_path, monkeypatch):
+        # docs/55: `state_path = ""` IS an explicit "this project has none" —
+        # never fall through to a misleading env/global path.
+        monkeypatch.delenv("QUALIBRATE_STATE_PATH", raising=False)
+        monkeypatch.setenv("QUAM_STATE_PATH", str(tmp_path / "env_path"))
+        cfg = tmp_path / "cfg"
+        _write(cfg / "config.toml",
+               '[qualibrate]\nproject = "P4"\n\n[quam]\nstate_path = "/global/live"\n')
+        _write(cfg / "projects" / "P4" / "config.toml",
+               '[quam]\nstate_path = ""\n')
+        monkeypatch.setenv("QUALIBRATE_CONFIG_DIR", str(cfg))
+        monkeypatch.delenv("QUALIBRATE_CONFIG_FILE", raising=False)
+        assert qc.resolve_live_state_path() is None
+
+    def test_runner_env_still_the_no_config_fallback(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("QUALIBRATE_STATE_PATH", raising=False)
+        monkeypatch.setenv("QUAM_STATE_PATH", str(tmp_path / "quam_env"))
+        monkeypatch.setenv("QUALIBRATE_CONFIG_DIR", str(tmp_path / "no-such-cfg"))
+        monkeypatch.delenv("QUALIBRATE_CONFIG_FILE", raising=False)
         assert qc.resolve_live_state_path() == tmp_path / "quam_env"
 
 

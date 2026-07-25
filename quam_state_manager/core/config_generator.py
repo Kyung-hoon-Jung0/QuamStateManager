@@ -431,8 +431,22 @@ def find_conda_executable() -> str | None:
     home = Path.home()
     bases = [
         home / "miniconda3", home / "anaconda3", home / "miniforge3",
-        Path("C:/ProgramData/miniconda3"), Path("C:/ProgramData/anaconda3"),
+        home / "opt" / "miniconda3",   # macOS graphical-installer default
     ]
+    if os.name == "nt":
+        bases += [
+            Path("C:/ProgramData/miniconda3"), Path("C:/ProgramData/anaconda3"),
+        ]
+    else:
+        # macOS system/homebrew locations. A Finder-launched .app inherits
+        # launchd's minimal PATH — no CONDA_EXE, no conda on PATH — so this
+        # hardcoded list is the only discovery channel there.
+        bases += [
+            Path("/opt/miniconda3"), Path("/opt/anaconda3"),
+            Path("/opt/homebrew/Caskroom/miniconda/base"),
+            Path("/opt/homebrew/Caskroom/miniforge/base"),
+            Path("/usr/local/Caskroom/miniconda/base"),
+        ]
     for base in bases:
         for rel in ("Scripts/conda.exe", "condabin/conda.bat", "bin/conda"):
             candidate = base / rel
@@ -453,28 +467,50 @@ def _env_python(env_path) -> str:
     return str(windows if os.name == "nt" else posix)
 
 
+def _envs_from_environments_txt() -> list[Path]:
+    """Env paths from ``~/.conda/environments.txt`` (one absolute path per line).
+
+    conda maintains this registry on every OS and every install flavor, and it
+    is dialect-free (no JSON, no subprocess) — so it still finds envs when the
+    ``conda`` executable itself is unreachable (e.g. a Finder-launched .app
+    running with launchd's minimal PATH). Missing/unreadable file → ``[]``.
+    """
+    txt = Path.home() / ".conda" / "environments.txt"
+    try:
+        lines = txt.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    return [Path(s) for s in (ln.strip() for ln in lines) if s]
+
+
 def discover_envs() -> list[dict]:
     """List the conda environments on this machine.
 
-    Returns ``[{"name", "path", "python"}, ...]`` — empty if conda is absent
-    or unreadable. Probing each env for the QM stack is done separately by
-    :func:`probe_env`.
+    Merges ``conda env list --json`` (when conda is findable) with
+    ``~/.conda/environments.txt`` (which needs no conda executable at all),
+    deduped by path — empty only if both channels come up dry. Probing each
+    env for the QM stack is done separately by :func:`probe_env`.
     """
+    env_paths: list[Path] = []
     conda = find_conda_executable()
-    if not conda:
-        return []
+    if conda:
+        returncode, stdout, _ = _run_command([conda, "env", "list", "--json"], timeout=30)
+        if returncode == 0 and stdout.strip():
+            try:
+                data = json.loads(stdout)
+            except (ValueError, TypeError):
+                data = {}
+            for raw_path in data.get("envs", []):
+                env_paths.append(Path(raw_path))
+    env_paths.extend(_envs_from_environments_txt())
 
-    returncode, stdout, _ = _run_command([conda, "env", "list", "--json"], timeout=30)
-    if returncode != 0 or not stdout.strip():
-        return []
-    try:
-        data = json.loads(stdout)
-    except (ValueError, TypeError):
-        return []
-
-    envs = []
-    for raw_path in data.get("envs", []):
-        path = Path(raw_path)
+    envs: list[dict] = []
+    seen: set[str] = set()
+    for path in env_paths:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
         envs.append({
             "name": path.name,
             "path": str(path),
@@ -703,7 +739,20 @@ def set_selected_env(instance_path, python_path: str) -> None:
     except (ValueError, OSError):
         data = {}
     data["selected_env_python"] = python_path
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    # Atomic (tmp + fsync + replace), never a plain write_text: this file is a
+    # SHARED read-modify-write target (fit_audit_source_root lives here too) —
+    # a torn/partial write would silently drop the other keys.
+    safe_io.atomic_write_json(path, data)
+
+
+def running_under_wsl() -> bool:
+    """True when this process runs inside WSL — the one documented, supported
+    bridge for driving a *Windows* interpreter (``….exe``) from a POSIX app:
+    both WSL1 and WSL2 kernels report 'microsoft' in ``/proc/version``."""
+    try:
+        return "microsoft" in Path("/proc/version").read_text(encoding="utf-8").lower()
+    except OSError:
+        return False
 
 
 def _cleanup_work_dir(work_dir: Path) -> None:

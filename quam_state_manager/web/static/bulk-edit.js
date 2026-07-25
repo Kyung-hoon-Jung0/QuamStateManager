@@ -20,8 +20,15 @@
     var HIDE_KEY = 'quam_bulk_hidden_cols';
     var SEARCH_KEY = 'quam_bulk_search';   // persist the search/filter box across visits
     var FREQSYNC_KEY = 'quam_bulk_freqsync';   // 🔗 mirror f_01↔RF on edit (default on)
-    var COLS = [];                 // column model from the server: {key,label,section,unit,default_on}
+    // r7: dynamic columns default to ALL VISIBLE (the r6 opt-in model buried
+    // fields the search couldn't find) — so this persists the HIDDEN set, not
+    // an enabled set; empty/absent means "hide nothing".
+    var DYNHIDDEN_KEY = 'quam_bulk_dynhidden';
+    var COLS = [];                 // column model from the server: {key,label,section,unit,default_on[,dyn]}
     var BANDS = {};                // {"1":[lo,hi], ...} MW-FEM band ranges (from server)
+    var DYN = [];                  // FULL dynamic model: {key,label,section,unit,kind}
+    var _dynHintKeys = [];         // dyn keys matching the current search but hidden
+    var _reopenColvis = false;     // r7: keep the Properties menu open across a dyn-toggle reload
     var sortKey = null, sortDir = 1;
 
     // f_01 ↔ RF_frequency column pairs (same row = same qubit). RF_frequency is the
@@ -78,6 +85,52 @@
         _updateTopScroll();
     }
 
+    // ── dynamic columns (r6 item 4, r7 default-visible): persisted HIDDEN set
+    // + /bulk patching ── The hidden dyn-column keys live in localStorage and
+    // ride EVERY /bulk GET via a document-level configRequest listener (the
+    // pulses-page filter-persistence precedent) — so htmx pane reloads,
+    // cross-surface refreshes and sidebar nav all keep the user's opt-OUTs
+    // without threading dynhide through each caller. ONLY the exact /bulk
+    // path is patched (never /bulk/all-values), and the param is
+    // stripped+set so no duplicate appends. Absent/empty ⇒ hide nothing ⇒
+    // every derived column renders — the default.
+    function _dynHidden() {
+        try {
+            var a = JSON.parse(localStorage.getItem(DYNHIDDEN_KEY) || '[]');
+            return Array.isArray(a) ? a : [];
+        } catch (e) { return []; }
+    }
+    function _saveDynHidden(arr) {
+        try { localStorage.setItem(DYNHIDDEN_KEY, JSON.stringify(arr)); } catch (e) {}
+    }
+    function _bulkSetQueryParam(path, key, value) {
+        var qIdx = path.indexOf('?');
+        var base = qIdx >= 0 ? path.slice(0, qIdx) : path;
+        var qs = qIdx >= 0 ? path.slice(qIdx + 1) : '';
+        var parts = qs ? qs.split('&').filter(function (p) {
+            return p && decodeURIComponent(p.split('=')[0]) !== key;
+        }) : [];
+        if (value !== null && value !== undefined && value !== '') {
+            parts.push(encodeURIComponent(key) + '=' + encodeURIComponent(value));
+        }
+        return base + (parts.length ? '?' + parts.join('&') : '');
+    }
+    if (!window._bulkDynColsCfgBound) {
+        window._bulkDynColsCfgBound = true;
+        document.addEventListener('htmx:configRequest', function (evt) {
+            var p = evt.detail && evt.detail.path;
+            if (typeof p !== 'string' || p.split('?')[0] !== '/bulk') return;
+            var keys = _dynHidden();
+            evt.detail.path = _bulkSetQueryParam(p, 'dynhide', keys.length ? keys.join(',') : '');
+            if (evt.detail.parameters) delete evt.detail.parameters['dynhide'];
+        });
+    }
+    // Re-GET /bulk into the table pane — the same idiom the cross-surface
+    // state-changed listener uses; configRequest re-attaches dynhide.
+    function _reloadPane() {
+        if (window.htmx) htmx.ajax('GET', '/bulk', { target: '#table-pane', swap: 'innerHTML' });
+    }
+
     // ── user font size + weight + letter-spacing (persisted; applied globally) ─
     var FONT_KEY = 'quam_bulk_fs', BOLD_KEY = 'quam_bulk_bold', LS_KEY = 'quam_bulk_ls';
     function _readScale() {
@@ -116,16 +169,8 @@
         _updateTopScroll();
         _updateStickyOffset();   // band height changes with the font scale
     }
-    // ── dismissible hint (persisted) ─────────────────────────────────────────
-    var HINT_KEY = 'quam_bulk_hint_hidden';
-    function _applyHint() {
-        var panel = document.getElementById('bulk-panel'); if (!panel) return;
-        var hidden = false;
-        try { hidden = localStorage.getItem(HINT_KEY) === '1'; } catch (e) {}
-        panel.classList.toggle('bulk-hint-hidden', hidden);
-        var info = document.getElementById('bulk-hint-toggle');
-        if (info) info.setAttribute('aria-pressed', hidden ? 'false' : 'true');
-    }
+    // (r6 item 5: the dismissible boxed hint became a native <details> popover
+    //  next to Properties — no JS/persistence needed; closed by default.)
 
     // ── synced top horizontal scrollbar ──────────────────────────────────────
     function _updateTopScroll() {
@@ -178,6 +223,7 @@
         var bySection = {};
         var order = [];
         COLS.forEach(function (c) {
+            if (c.dyn) return;   // enabled dynamic columns live in the groups below
             if (!bySection[c.section]) { bySection[c.section] = []; order.push(c.section); }
             bySection[c.section].push(c);
         });
@@ -192,6 +238,43 @@
                     (on ? ' checked' : '') + '> ' + _esc(c.label) + (c.unit ? ' <span class="unit muted">(' + _esc(c.unit) + ')</span>' : '') + '</label>';
             });
         });
+        // r6 item 4 / r7: the FULL derived model as collapsible per-section
+        // groups, DEFAULT VISIBLE — a checkbox toggles the key into
+        // quam_bulk_dynhidden and re-GETs the pane (the server renders every
+        // dyn column except the hidden keys — nothing to hide/show locally).
+        // A group starts open only when it has a hidden column (needs
+        // attention); otherwise it stays collapsed so the popover itself
+        // doesn't turn into a wall of already-visible checkboxes.
+        if (DYN.length) {
+            var hidden = {};
+            _dynHidden().forEach(function (k) { hidden[k] = true; });
+            var dynBySec = {}, dynOrder = [], dynNotes = [];
+            DYN.forEach(function (c) {
+                if (c.kind === 'note') { dynNotes.push(c); return; }
+                if (!dynBySec[c.section]) { dynBySec[c.section] = []; dynOrder.push(c.section); }
+                dynBySec[c.section].push(c);
+            });
+            html += '<div class="bulk-colvis-sec bulk-colvis-dyn-head">All properties (derived from this chip)</div>';
+            dynOrder.forEach(function (sec) {
+                var cs = dynBySec[sec];
+                var nHidden = cs.filter(function (c) { return hidden[c.key]; }).length;
+                html += '<details class="bulk-colvis-dyn"' + (nHidden ? ' open' : '') +
+                    '><summary>' + _esc(sec) + ' <span class="muted">(' +
+                    (nHidden ? (cs.length - nHidden) + ' of ' : '') + cs.length + ')</span></summary>';
+                cs.forEach(function (c) {
+                    html += '<label class="bulk-colvis-item"><input type="checkbox" data-dyn-toggle="' + _esc(c.key) + '"' +
+                        (hidden[c.key] ? '' : ' checked') + '> ' + _esc(c.label) +
+                        (c.unit ? ' <span class="unit muted">(' + _esc(c.unit) + ')</span>' : '') +
+                        (c.kind === 'listedit' ? ' <span class="muted" title="list — edited as JSON">▦</span>'
+                            : (c.kind === 'runtime' ? ' <span class="muted" title="runtime — read-only">⟳</span>' : '')) +
+                        '</label>';
+                });
+                html += '</details>';
+            });
+            dynNotes.forEach(function (c) {
+                html += '<div class="bulk-colvis-note muted">' + _esc(c.label) + '</div>';
+            });
+        }
         menu.innerHTML = html;
         menu.querySelectorAll('[data-col-toggle]').forEach(function (cb) {
             cb.addEventListener('change', function () {
@@ -201,6 +284,20 @@
                 _saveHidden(hide);
                 _applyColumnVisibility();
                 _recomputeStats();
+            });
+        });
+        menu.querySelectorAll('[data-dyn-toggle]').forEach(function (cb) {
+            cb.addEventListener('change', function () {
+                var k = cb.getAttribute('data-dyn-toggle');
+                var arr = _dynHidden().filter(function (x) { return x !== k; });
+                if (!cb.checked) arr.push(k);
+                _saveDynHidden(arr);
+                // A dyn toggle needs a server round-trip (unlike curated columns,
+                // which just show/hide client-side) — the reload swaps #table-pane
+                // wholesale, which would otherwise reset this <details> to closed
+                // (review-r7: "checking a box collapses the menu").
+                _reopenColvis = true;
+                _reloadPane();
             });
         });
     }
@@ -287,6 +384,30 @@
         });
         var cnt = document.getElementById('bulk-search-count');
         if (cnt) cnt.textContent = q ? (shown + ' of ' + rows.length) : '';
+        // r6 item 4 / r7: the search also scans dynamic columns the user has
+        // explicitly HIDDEN (label/key/section, AND over tokens) — now a rare
+        // case since everything is visible by default, but still actionable:
+        // "1 hidden column matches — Show".
+        var hint = document.getElementById('bulk-dyncol-hint');
+        if (hint) {
+            _dynHintKeys = [];
+            if (q.length >= 2 && DYN.length) {
+                var hiddenKeys = {};
+                _dynHidden().forEach(function (k) { hiddenKeys[k] = true; });
+                DYN.forEach(function (c) {
+                    if (c.kind === 'note' || !hiddenKeys[c.key]) return;
+                    var hay = (c.label + ' ' + c.key + ' ' + c.section).toLowerCase();
+                    if (tokens.every(function (tok) { return hay.indexOf(tok) >= 0; })) {
+                        _dynHintKeys.push(c.key);
+                    }
+                });
+            }
+            hint.hidden = !_dynHintKeys.length;
+            if (_dynHintKeys.length) {
+                hint.textContent = _dynHintKeys.length + ' hidden column' +
+                    (_dynHintKeys.length === 1 ? '' : 's') + ' match — Show';
+            }
+        }
         _updateGroupHeader();   // re-span the group band over what's now visible
     }
 
@@ -745,12 +866,13 @@
     }
 
     var BulkEdit = {
-        mount: function (columns, bandMeta) {
+        mount: function (columns, bandMeta, dynModel) {
             if (Array.isArray(columns)) COLS = columns;
             // An HTMX swap re-renders the tbody in server (default) order, so the
             // old sort no longer applies — clear it (the fresh header has no caret).
             sortKey = null; sortDir = 1;
             if (bandMeta && bandMeta.bands) BANDS = bandMeta.bands;
+            DYN = Array.isArray(dynModel) ? dynModel : [];
             var t = table();
             if (!t) return;
             // Restore the persisted search/filter before applySearch runs below.
@@ -759,11 +881,19 @@
             _loadColWidths();
             _applyColWidthStyle();   // re-apply persisted column widths after each (re)render
             _buildColMenu();
+            // r7: a dyn-column toggle reloads #table-pane wholesale, which would
+            // otherwise reset the fresh server-rendered <details> to closed —
+            // reopen it right after the rebuilt menu is in the DOM.
+            if (_reopenColvis) {
+                _reopenColvis = false;
+                var colvisMenu = document.getElementById('bulk-colvis-menu');
+                var colvisDet = colvisMenu && colvisMenu.closest('details');
+                if (colvisDet) colvisDet.open = true;
+            }
             _applyColumnVisibility();
             _recomputeStats();
             _setupTopScroll();
             _applyFont();
-            _applyHint();
             _updateTopScroll();
             // flag any already-out-of-band ports on load
             Array.prototype.slice.call(t.querySelectorAll('.bulk-cell[data-lo-field]')).forEach(_validateBand);
@@ -1005,6 +1135,124 @@
             _refreshGlobal();
         },
 
+        // r6 item 4 / r7: un-hide every dynamic column the current search
+        // matched (the "N hidden columns match — Show" chip) and re-render.
+        showMatchedDynCols: function () {
+            if (!_dynHintKeys.length) return;
+            var arr = _dynHidden().filter(function (k) { return _dynHintKeys.indexOf(k) < 0; });
+            _saveDynHidden(arr);
+            _reopenColvis = true;
+            _reloadPane();
+        },
+
+        // r6 item 4: whole-value JSON editor for list cells (qubit-grid listedit
+        // previews AND the pair grid's ▦ badges). Prefills from /field/peek's RAW
+        // value, saves the PARSED value through the same atomic /field/edit-batch
+        // path (non-string values skip server-side re-parse, so the list commits
+        // typed-correctly); client parse errors + server 400s render inline.
+        openJsonCell: function (path, btn) {
+            var old = document.getElementById('bulk-json-modal');
+            if (old && old.parentNode) old.parentNode.removeChild(old);
+            var ov = document.createElement('div');
+            ov.id = 'bulk-json-modal';
+            ov.innerHTML = '<div class="bulk-json-card" role="dialog" aria-modal="true" aria-label="Edit JSON value">'
+                + '<div class="bulk-json-head"><span class="bulk-json-path" title="' + _esc(path) + '">' + _esc(path) + '</span>'
+                + '<span class="muted bulk-json-keys">Ctrl+Enter save · Esc cancel</span></div>'
+                + '<textarea class="bulk-json-ta" spellcheck="false" aria-label="JSON value"></textarea>'
+                + '<div class="bulk-json-err" hidden></div>'
+                + '<div class="bulk-json-actions">'
+                + '<button type="button" class="btn-sm" data-bulk-json-save>Save</button>'
+                + '<button type="button" class="btn-sm outline" data-bulk-json-cancel>Cancel</button>'
+                + '</div></div>';
+            document.body.appendChild(ov);
+            var ta = ov.querySelector('.bulk-json-ta');
+            function close() { if (ov.parentNode) ov.parentNode.removeChild(ov); }
+            function showErr(msg) {
+                var el = ov.querySelector('.bulk-json-err');
+                el.textContent = msg; el.hidden = false;
+            }
+            // Prefill from the RAW stored value (peek `values`) — the rendered
+            // preview/badge is a summary, not the data. A port-alias path
+            // (qubits.*.z.opx_output.exponential_filter) is NOT raw-navigable
+            // (the io key is a pointer string), so fall back to peeking the
+            // RESOLVED path; the save still posts the alias (edit-batch
+            // re-resolves it server-side).
+            function prefill(v) {
+                ta.value = JSON.stringify(v === undefined ? null : v, null, 2);
+                ta.focus();
+            }
+            fetch('/field/peek?dot_path=' + encodeURIComponent(path))
+                .then(function (r) { return r.json(); })
+                .then(function (jb) {
+                    var v = jb && jb.values ? jb.values[path] : undefined;
+                    var ft = jb && jb.resolved ? jb.resolved[path] : null;
+                    if ((v === undefined || v === null) && ft && ft.resolved_path
+                            && ft.resolved_path !== path) {
+                        return fetch('/field/peek?dot_path=' + encodeURIComponent(ft.resolved_path))
+                            .then(function (r2) { return r2.json(); })
+                            .then(function (jb2) {
+                                prefill(jb2 && jb2.values ? jb2.values[ft.resolved_path] : undefined);
+                            });
+                    }
+                    prefill(v);
+                })
+                .catch(function (err) { showErr('Could not load current value: ' + err); ta.focus(); });
+            function save() {
+                var parsed;
+                try { parsed = JSON.parse(ta.value); }
+                catch (ex) { showErr('Invalid JSON: ' + ex.message); return; }
+                fetch('/field/edit-batch', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ updates: [{ dot_path: path, value: parsed }],
+                                           expect_chip: window.__chipToken || '' })
+                }).then(function (r) { return r.json(); }).then(function (jb) {
+                    if (!jb || !jb.ok) {
+                        showErr((jb && jb.results && jb.results[0] && jb.results[0].error)
+                            || (jb && jb.error) || 'Apply failed');
+                        return;
+                    }
+                    // Refresh the cell in place until the next pane render: the
+                    // qubit-grid preview span gets new truncated JSON + the red
+                    // committed marker; a pair-grid ▦ badge re-derives its dims.
+                    var td = btn && btn.closest ? btn.closest('td') : null;
+                    var s;
+                    try { s = JSON.stringify(parsed); } catch (e2) { s = String(parsed); }
+                    var prev = td && td.querySelector('.bulk-cell-list');
+                    if (prev) {
+                        prev.textContent = s.length > 24 ? s.slice(0, 24) + '…' : s;
+                        prev.classList.add('bulk-cell-modified');
+                    } else {
+                        var inp = td && td.querySelector('input.bulk-cell');
+                        if (inp) {
+                            var badge = '';
+                            if (Array.isArray(parsed)) {
+                                var mat = parsed.length && parsed.every(function (r2) { return Array.isArray(r2); });
+                                badge = mat ? ('▦ ' + parsed.length + '×' + (parsed[0] ? parsed[0].length : 0))
+                                    : ('[ ' + parsed.length + ' ]');
+                            }
+                            inp.value = badge;
+                            inp.setAttribute('data-orig', badge);   // committed, not dirty
+                            inp.classList.add('bulk-cell-modified');
+                        }
+                    }
+                    if (jb.tray_html && window._swapPendingTray) {
+                        window._bulkSelfEdit = true;            // suppress our own refresh
+                        window._swapPendingTray(jb.tray_html);
+                        window._bulkSelfEdit = false;
+                    }
+                    if (window._diagChanged) window._diagChanged();
+                    close();
+                }).catch(function (ex) { showErr('Apply failed: ' + ex); });
+            }
+            ov.addEventListener('keydown', function (e) {
+                if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+                else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); }
+            });
+            ov.addEventListener('mousedown', function (e) { if (e.target === ov) close(); });
+            ov.querySelector('[data-bulk-json-save]').addEventListener('click', save);
+            ov.querySelector('[data-bulk-json-cancel]').addEventListener('click', close);
+        },
+
         sort: sort,
         setFreqSync: function (on) {
             try { localStorage.setItem(FREQSYNC_KEY, on ? '1' : '0'); } catch (e) {}
@@ -1017,13 +1265,21 @@
             try { localStorage.setItem(BOLD_KEY, on ? '0' : '1'); } catch (e) {}
             _applyFont();
         },
-        toggleHint: function () {
-            var hidden = false; try { hidden = localStorage.getItem(HINT_KEY) === '1'; } catch (e) {}
-            try { localStorage.setItem(HINT_KEY, hidden ? '0' : '1'); } catch (e) {}
-            _applyHint();
+        // "Show all" / "Reset" cover BOTH curated (client-only) and dynamic
+        // (server-rendered) columns, so they always reload the pane — a dyn
+        // change can't take effect any other way.
+        showAllColumns: function () {
+            _saveHidden(new Set());
+            _saveDynHidden([]);
+            _reopenColvis = true;
+            _reloadPane();
         },
-        showAllColumns: function () { _saveHidden(new Set()); _buildColMenu(); _applyColumnVisibility(); _recomputeStats(); },
-        resetColumns: function () { try { localStorage.removeItem(HIDE_KEY); } catch (e) {} _buildColMenu(); _applyColumnVisibility(); _recomputeStats(); },
+        resetColumns: function () {
+            try { localStorage.removeItem(HIDE_KEY); } catch (e) {}
+            try { localStorage.removeItem(DYNHIDDEN_KEY); } catch (e) {}
+            _reopenColvis = true;
+            _reloadPane();
+        },
 
         // marker-only refresh from a server `modified` delta (keeps in-progress typing)
         applyModifiedDelta: function (modified) {

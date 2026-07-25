@@ -39,19 +39,22 @@ def _tiny():
 def test_twpa_lines_extracted_and_buildable():
     # modern quam_builder builds TWPAs (Connectivity.add_twpa_lines), so the
     # reconstruct must PIN each pump line from wiring.twpas, not drop them.
-    state = {"qubits": {"q1": {}}, "twpas": {"twpaA": {"pump": {}}}}
+    state = {"qubits": {"q1": {}},
+             "twpas": {"twpaA": {"pump": {}, "qubits": ["q1"]}}}
     wiring = {"network": {"host": "1.2.3.4", "cluster_name": "C"}, "wiring": {
         "qubits": {"q1": {"rr": {"opx_output": "#/ports/mw_outputs/con1/1/1",
                                  "opx_input": "#/ports/mw_inputs/con1/1/1"}}},
         "twpas": {"twpaA": {"pump": {"opx_output": "#/ports/mw_outputs/con1/1/8"},
                             "pump_": {"opx_output": "#/ports/mw_outputs/con1/1/8"}}}}}
     rec = reconstruct_spec(state, wiring)
-    assert rec.spec["twpas"] == ["twpaA"]
+    # WIZARD-NATIVE object shape (review-r6: bare strings rendered as broken
+    # empty rows in step 4), carrying the source chip's coverage list
+    assert rec.spec["twpas"] == [{"id": "twpaA", "qubits": ["q1"]}]
     pump = [ln for ln in rec.spec["lines"] if ln["line"] == "twpa_pump"]
     assert len(pump) == 1
     assert pump[0]["element"] == "twpaA"
     assert pump[0]["channel"] == {"kind": "mw_fem", "con": 1, "slot": 1, "out_port": 8}
-    assert config_generator.validate_spec(rec.spec) == []   # string-id TWPAs accepted
+    assert config_generator.validate_spec(rec.spec) == []   # object-id TWPAs accepted
 
 
 def test_twpa_short_line_keys_accepted():
@@ -65,7 +68,7 @@ def test_twpa_short_line_keys_accepted():
         "twpas": {"twpa1": {"p": {"opx_output": "#/ports/mw_outputs/con1/1/4"},
                             "i": {"opx_output": "#/ports/mw_outputs/con1/1/5"}}}}}
     rec = reconstruct_spec(state, wiring)
-    assert rec.spec["twpas"] == ["twpa1"]
+    assert rec.spec["twpas"] == [{"id": "twpa1", "qubits": []}]
     pump = [ln for ln in rec.spec["lines"] if ln["line"] == "twpa_pump"]
     iso = [ln for ln in rec.spec["lines"] if ln["line"] == "twpa_isolation"]
     assert len(pump) == 1 and pump[0]["channel"]["out_port"] == 4

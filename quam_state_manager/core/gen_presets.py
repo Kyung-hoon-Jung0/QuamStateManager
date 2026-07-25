@@ -119,7 +119,10 @@ def builtin_standard() -> dict:
                 "overrides": {},
             },
             "qubit": {
-                "defaults": {"anharmonicity": -200e6},
+                # positive — QM's state.json convention stores anharmonicity as
+                # a positive magnitude (confirmed against real production
+                # chips), not the signed f_12-f_01 physics difference.
+                "defaults": {"anharmonicity": 200e6},
                 "overrides": {},
             },
             "resonator": {

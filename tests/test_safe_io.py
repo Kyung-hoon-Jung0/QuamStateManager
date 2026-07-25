@@ -313,3 +313,32 @@ def test_read_state_wiring_never_settles_raises_not_torn(tmp_path, monkeypatch):
 
     with pytest.raises(safe_io.LiveFileError):
         read_state_wiring(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# POSIX rename durability (cross-platform audit): os.replace is atomic but NOT
+# durable until the parent dir is fsync'd — a power cut right after
+# apply-to-live could silently lose the rename. (ReplaceFileW is already
+# durable, so the branch is a Windows no-op.)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX-only durability branch")
+def test_atomic_write_fsyncs_parent_dir(tmp_path, monkeypatch):
+    calls = []
+    real = safe_io._fsync_dir
+
+    def spying_fsync_dir(p):
+        calls.append(p)
+        real(p)
+
+    monkeypatch.setattr(safe_io, "_fsync_dir", spying_fsync_dir)
+    target = tmp_path / "sub" / "settings.json"
+    target.parent.mkdir()
+    atomic_write_json(target, {"a": 1})
+    assert calls == [target.parent]
+    assert json.loads(target.read_text(encoding="utf-8")) == {"a": 1}
+
+
+def test_fsync_dir_missing_dir_is_noop(tmp_path):
+    safe_io._fsync_dir(tmp_path / "does_not_exist")   # must not raise

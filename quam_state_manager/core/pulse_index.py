@@ -229,10 +229,12 @@ def _row_for_pulse(merged: dict, path: str, body: Any, *,
     row["known"] = spec is not None
     row["class_match"] = class_match
     # A leaf match is a class NAME claim only — surface what the catalog spec
-    # does not model so the table/detail can flag it. Implicit slots are a
-    # structural guess, not a class claim: never flagged.
+    # does not model so the table/detail can flag it ("env" = home verified
+    # by the active env overlay, fully-known like "exact"). Implicit slots
+    # are a structural guess, not a class claim: never flagged.
     row["unmodeled"] = (unmodeled_fields(spec, body)
-                        if class_match in ("exact", "alias", "leaf") else [])
+                        if class_match in ("exact", "env", "alias", "leaf")
+                        else [])
     row["creatable"] = bool(spec and spec.creatable)
     row["readout"] = bool(spec and spec.readout)
     row["params"] = {k: v for k, v in body.items() if k != "__class__"}

@@ -546,3 +546,40 @@ class TestSaverEdgeCases:
         saver.save(out)
         assert (out / "state.json").exists()
         assert (out / "wiring.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Backup stamp collision (cross-platform audit): rapid same-second saves used
+# to reuse ONE .bak name (second-granularity stamp) — the second save's copy2
+# silently overwrote the first save's backup, losing the older pre-image.
+# ---------------------------------------------------------------------------
+
+
+class TestBackupStampMicroseconds:
+    def test_same_second_double_save_keeps_both_baks(self, synth_folder, store):
+        saver = Saver(store)
+        saver.save()
+        saver.save()   # near-certainly the same wall-clock second
+        baks = sorted(p.name for p in synth_folder.glob("state.json.bak.*"))
+        assert len(baks) == 2, f"one backup was silently overwritten: {baks}"
+        import re as _re
+        assert all(_re.fullmatch(r"state\.json\.bak\.\d{8}_\d{6}_\d{6}", n)
+                   for n in baks)
+
+    def test_old_form_baks_still_count_and_rotate(self, synth_folder, store):
+        """Pre-existing second-granularity .baks (written by older builds) must
+        keep counting toward — and rotating out of — the retention budget."""
+        for stamp in ("20200101_000001", "20200101_000002", "20200101_000003"):
+            (synth_folder / f"state.json.bak.{stamp}").write_text("{}", encoding="utf-8")
+
+        saver = Saver(store, backup_retention=2)
+        saver.save()   # + one new-form bak → 4 candidates → keep the 2 newest
+
+        names = sorted(p.name for p in synth_folder.glob("state.json.bak.*"))
+        assert len(names) == 2
+        import re as _re
+        assert any(_re.fullmatch(r"state\.json\.bak\.\d{8}_\d{6}_\d{6}", n)
+                   for n in names)                                  # the new save's bak
+        assert "state.json.bak.20200101_000003" in names            # newest legacy kept
+        assert "state.json.bak.20200101_000001" not in names        # oldest rotated out
+        assert "state.json.bak.20200101_000002" not in names

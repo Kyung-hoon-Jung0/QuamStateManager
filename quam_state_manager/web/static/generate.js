@@ -237,14 +237,34 @@
       return null;
     },
     7: function () {
-      if (!getOutputPath()) return "Choose an output folder.";
-      if (state.scriptsEnabled && !getScriptsPath()) {
-        return "Choose a folder for the editable Python scripts, or untick " +
-               "the export.";
+      var out = getOutputPath();
+      if (!out) return "Choose an output folder.";
+      if (!looksAbsolutePath(out)) {
+        return "Output folder must be an absolute path (e.g. " +
+               "/home/you/chips/out or C:\\chips\\out) — got \"" + out + "\".";
+      }
+      if (state.scriptsEnabled) {
+        var sp = getScriptsPath();
+        if (!sp) {
+          return "Choose a folder for the editable Python scripts, or untick " +
+                 "the export.";
+        }
+        if (!looksAbsolutePath(sp)) {
+          return "Scripts folder must be an absolute path — got \"" + sp + "\".";
+        }
       }
       return null;
     }
   };
+
+  // A path the SERVER will accept as absolute: POSIX "/…", drive "C:\" or
+  // "C:/", or UNC "\\\\server\\share". Client-side mirror of the build routes'
+  // ingestion gate (audit: "~/chips" became a literal "./~" dir; a Windows
+  // path replayed from localStorage onto a POSIX server built into
+  // "$CWD/D:\\builds").
+  function looksAbsolutePath(p) {
+    return p.charAt(0) === "/" || /^[A-Za-z]:[\\/]/.test(p) || /^\\\\/.test(p);
+  }
 
   function root() {
     return document.getElementById("generate-root");
@@ -1908,7 +1928,8 @@
 
   // spec line type -> short code used in the allocation result
   var ALLOC_KEY = { resonator: "rr", drive: "xy", flux: "z", coupler: "c",
-                    cross_resonance: "cr", zz_drive: "zz" };
+                    cross_resonance: "cr", zz_drive: "zz",
+                    twpa_pump: "p", twpa_isolation: "i" };
 
   function deriveLines() {
     // Rebuild lines from the current qubits/pairs, keeping any existing
@@ -1984,6 +2005,24 @@
             lines.push({ element: el, line: "zz_drive",
                          channel: pinned[el + "|zz_drive"] || null });
           }
+        }
+      });
+    }
+    // TWPA lines must survive every re-derive: this rebuild used to emit only
+    // qubit/pair lines, silently WIPING the reconstructed twpa_pump pins on the
+    // first count/rename/gate edit — a re-generated chip then built without its
+    // TWPAs (review-r6 report). One pump line per TWPA (MW hardware only);
+    // isolation only where a pin exists (reconstruct emits it when the source
+    // wiring had an isolation port).
+    if (mw) {
+      (state.spec.twpas || []).forEach(function (tw) {
+        var tid = (tw && typeof tw === "object") ? tw.id : tw;
+        if (!tid) return;
+        lines.push({ element: tid, line: "twpa_pump",
+                     channel: pinned[tid + "|twpa_pump"] || null });
+        if (pinned[tid + "|twpa_isolation"]) {
+          lines.push({ element: tid, line: "twpa_isolation",
+                       channel: pinned[tid + "|twpa_isolation"] });
         }
       });
     }
@@ -2074,7 +2113,14 @@
   // window.renderInstrumentWiring (app.js) expects — the same data shape
   // query.py:get_instrument_wiring() produces for the /instrument page.
   function buildInstrumentData(allocation) {
-    var ROLE = { rr: "rr", xy: "xy", z: "z", c: "coupler", cr: "cr", zz: "zz" };
+    // qualang_tools' WiringLineType TWPA_PUMP / TWPA_ISOLATION values are the
+    // terse "p" / "i" — map them onto the SAME twpa_pump/twpa_ro/twpa_in
+    // roles query.py's live /instrument page already uses (UI_CONFIG.
+    // roleColors + CSS vars are pre-defined for these; only this
+    // wizard-local regroup was missing them, which silently disabled
+    // TWPA drag&drop).
+    var ROLE = { rr: "rr", xy: "xy", z: "z", c: "coupler", cr: "cr", zz: "zz",
+                 p: "twpa_pump", i: "twpa_ro" };
     var controllers = {};
     Object.keys(allocation || {}).forEach(function (element) {
       Object.keys(allocation[element] || {}).forEach(function (lineType) {
@@ -2082,6 +2128,7 @@
           var isInput = ch.io_type === "input";
           var role = ROLE[lineType] || lineType;
           if (role === "rr" && isInput) role = "rr_in";
+          if (role === "twpa_ro" && isInput) role = "twpa_in";
           var ctrl = controllers[ch.con] || (controllers[ch.con] = {});
           var fem = ctrl[ch.slot] || (ctrl[ch.slot] = {
             type: ch.instrument_id || "mw-fem",
@@ -2299,7 +2346,14 @@
       return here.length === 0 ||
              here.some(function (x) { return x.allocKey === "rr"; });
     }
-    if (src.role === "xy") return targetFem === "mw-fem" && t.io === "output";
+    if (src.role === "xy" || src.role === "twpa_pump") {
+      return targetFem === "mw-fem" && t.io === "output";
+    }
+    if (src.role === "twpa_ro" || src.role === "twpa_in") {
+      // TWPA isolation/spectroscopy is a drive+read pair, same as rr/rr_in.
+      var wantTwpaIo = (src.role === "twpa_in") ? "input" : "output";
+      return targetFem === "mw-fem" && t.io === wantTwpaIo;
+    }
     return targetFem === "lf-fem" && t.io === "output";           // z / coupler
   }
 
@@ -2336,6 +2390,18 @@
           // Feedline = qubits sharing one rr output port — re-derive `group`
           // from the dragged layout so build_connectivity multiplexes them.
           ln.group = "fl_" + ro.con + "_" + ro.slot + "_" + ro.port;
+        }
+      } else if (ln.line === "twpa_pump" && (a.p || [])[0]) {
+        var tp = a.p[0];
+        ln.channel = { kind: "mw_fem", con: tp.con, slot: tp.slot, out_port: tp.port };
+      } else if (ln.line === "twpa_isolation" && a.i) {
+        var tiOut = a.i.filter(function (x) { return (x.io_type || "output") === "output"; })[0];
+        var tiIn = a.i.filter(function (x) { return x.io_type === "input"; })[0];
+        var anchor = tiOut || tiIn;
+        if (anchor) {
+          ln.channel = { kind: "mw_fem", con: anchor.con, slot: anchor.slot,
+                         out_port: tiOut ? tiOut.port : undefined,
+                         in_port: tiIn ? tiIn.port : undefined };
         }
       }
     });
@@ -5279,6 +5345,14 @@
 
   // -- step 7: output folder -------------------------------------------
 
+  // Display-only basename, split by the path's LEADING style ("C:…" /
+  // "\\\\server" = Windows, else POSIX) — a POSIX folder name containing "\"
+  // must not be chopped at it.
+  function pathBasename(p) {
+    var isWin = /^[A-Za-z]:/.test(p) || /^\\\\/.test(p);
+    return (isWin ? p.split(/[\\/]/) : p.split("/")).filter(Boolean).pop() || p;
+  }
+
   // Read live from the input — the folder browser fills .value directly.
   function getOutputPath() {
     var input = document.getElementById("gen-output-path");
@@ -5617,8 +5691,7 @@
         var treeEl = document.getElementById("json-panel-tree");
         var title = document.getElementById("json-panel-title");
         if (panel && treeEl && title && typeof window.renderJsonTree === "function") {
-          title.textContent = "Generated config — " +
-            (outPath.split(/[\\/]/).pop() || outPath);
+          title.textContent = "Generated config — " + pathBasename(outPath);
           treeEl.innerHTML = "";
           window.renderJsonTree("json-panel-tree", res.config,
                                 { defaultDepth: 1, valueClick: "copy" });
@@ -5744,13 +5817,14 @@
 
       var loadBtn = document.createElement("button");
       loadBtn.type = "button";
+      loadBtn.className = "btn-sync primary";
       loadBtn.textContent = "Load into app";
       loadBtn.addEventListener("click", function () { runLoad(outPath); });
       el.appendChild(loadBtn);
 
       var previewBtn = document.createElement("button");
       previewBtn.type = "button";
-      previewBtn.className = "outline";
+      previewBtn.className = "btn-sync outline";
       previewBtn.textContent = "Preview config";
       el.appendChild(previewBtn);
 
@@ -5866,6 +5940,13 @@
     var outPath = getOutputPath();
     if (!outPath) {
       showMessage("Choose an output folder in step 7.", "warn");
+      return;
+    }
+    if (!looksAbsolutePath(outPath)) {
+      // Defense-in-depth (a draft-restored relative path can bypass the
+      // step-7 validator via the step chips) — the server 400s it anyway.
+      showMessage("Output folder must be an absolute path — fix it in step 7.",
+                  "warn");
       return;
     }
 
@@ -6354,6 +6435,16 @@
     // stale/Generate draft so (a) it can't interfere here and (b) this named,
     // non-contiguous spec never lingers as a draft for a later plain Generate.
     try { sessionStorage.removeItem(DRAFT_KEY); } catch (e) {}
+    // Normalize TWPAs to the wizard's object shape. Old exact-spec sidecars
+    // (and the pre-fix reconstructor) carry bare id strings; the step-4 rows
+    // bind twpa.id, so strings rendered as broken empty rows and edits
+    // silently no-op'd on the primitives (review-r6 TWPA-loss report).
+    if (spec && spec.twpas) {
+      spec.twpas = spec.twpas.map(function (t) {
+        return (t && typeof t === "object") ? t
+             : { id: String(t), qubits: [] };
+      });
+    }
     var pg = (spec && spec.pair_gate) || "cz_tunable";
     var arch = pg === "cr" ? "fixed_frequency"
              : pg === "cz_fixed" ? "flux_tunable_fixed_coupler"
@@ -6423,6 +6514,9 @@
       deriveLines: deriveLines,
       pairPopCols: pairPopCols,
       ALLOC_KEY: ALLOC_KEY,
+      buildInstrumentData: buildInstrumentData,
+      isValidDrop: isValidDrop,
+      syncSpecChannels: syncSpecChannels,
       state: state
     }
   };

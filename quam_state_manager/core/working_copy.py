@@ -22,11 +22,12 @@ import logging
 import re
 import shutil
 import time
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from quam_state_manager.core import safe_io
+from quam_state_manager.core import path_match, safe_io
 from quam_state_manager.core.history import chip_name_for
 
 logger = logging.getLogger(__name__)
@@ -75,7 +76,26 @@ def key_for(live_folder: str | Path) -> str:
     The chip-name prefix keeps the folder readable; the path hash makes it
     unique per live folder, so two folders of the same chip (the live state
     and a per-experiment copy) never share -- and overwrite -- one working
-    copy.  The path is lower-cased before hashing (Windows is case-folding).
+    copy.  The hash input is :func:`path_match.fs_key` -- the per-OS canonical
+    identity (case-folded ONLY on case-insensitive-default hosts).  The old
+    unconditional ``.lower()`` aliased *distinct* case-variant dirs on Linux
+    onto ONE working copy, and ``apply_to_live`` then wrote the WRONG live
+    folder.  The chip name is NFC-folded too (macOS NFD spellings).
+    """
+    digest = hashlib.sha1(
+        path_match.fs_key(live_folder).encode("utf-8")).hexdigest()[:8]
+    chip = _sanitize(
+        unicodedata.normalize("NFC", chip_name_for(Path(live_folder)))) or "chip"
+    return f"{chip}-{digest}"
+
+
+def _legacy_key_for(live_folder: str | Path) -> str:
+    """The pre-``fs_key`` key scheme (sha1 of ``resolve().lower()``).
+
+    Kept ONLY so :func:`load` can migrate an existing Linux/macOS working dir
+    -- possibly holding unapplied edits -- onto the new key instead of
+    orphaning it (the fold-always hash differs from :func:`key_for` on any
+    path with an upper-case character on a POSIX host).
     """
     resolved = str(Path(live_folder).resolve())
     digest = hashlib.sha1(resolved.lower().encode("utf-8")).hexdigest()[:8]
@@ -162,7 +182,13 @@ def create(instance_path: str | Path, live_folder: str | Path) -> WorkingCopy:
     them into ``instance/working_state/<key>/``.  Any previous working copy
     for the same live folder is overwritten.
     """
-    live = Path(live_folder)
+    # RESOLVED so the meta sidecar persists a canonical absolute path: the
+    # caller's spelling (relative, symlinked) would otherwise round-trip into
+    # the meta and defeat load()'s identity guard in a later session.
+    try:
+        live = Path(live_folder).resolve()
+    except OSError:
+        live = Path(live_folder)
     key = key_for(live)
     working = working_state_root(instance_path) / key
     working.mkdir(parents=True, exist_ok=True)
@@ -188,6 +214,61 @@ def create(instance_path: str | Path, live_folder: str | Path) -> WorkingCopy:
     return wc
 
 
+def _same_live(recorded: str | Path, requested: str | Path) -> bool:
+    """Is the meta's recorded live folder the one being loaded?
+
+    :func:`path_match.same_folder` (``samefile`` ground truth) decides when
+    both sides exist; when either is missing, fall back to ``fs_key`` string
+    equality -- the same per-OS canonical form the key hash uses, so this
+    verdict can never disagree with the key scheme.
+    """
+    if path_match.same_folder(recorded, requested):
+        return True
+    return path_match.fs_key(recorded) == path_match.fs_key(requested)
+
+
+def _migrate_legacy_dir(instance_path: str | Path, live_folder: str | Path,
+                        key: str) -> None:
+    """Best-effort rename of a pre-``fs_key`` working dir onto the new *key*.
+
+    The legacy scheme hashed ``resolve().lower()``, so on POSIX hosts every
+    path with an upper-case character keys differently now.  Those dirs may
+    hold unapplied edits -- adopt them, but ONLY when their meta proves they
+    belong to *live_folder* (on Linux the legacy fold ALIASED case-variant
+    distinct dirs, so the key alone proves nothing).  Never clobbers an
+    existing new-scheme copy; failures just log (caller re-seeds from live).
+    """
+    legacy = _legacy_key_for(live_folder)
+    if legacy == key:
+        return
+    root = working_state_root(instance_path)
+    old_dir = root / legacy
+    old_meta_path = root / f"{legacy}.meta.json"
+    if not old_meta_path.exists() or not (old_dir / "state.json").exists():
+        return
+    try:
+        meta = json.loads(old_meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    recorded = meta.get("live_folder")
+    if not recorded or not _same_live(recorded, live_folder):
+        return
+    new_dir = root / key
+    new_meta_path = root / f"{key}.meta.json"
+    if new_dir.exists() or new_meta_path.exists():
+        return      # a new-scheme copy already exists -- never overwrite it
+    try:
+        old_dir.rename(new_dir)
+        meta["key"] = key
+        safe_io.atomic_write_json(new_meta_path, meta)
+        old_meta_path.unlink(missing_ok=True)
+    except OSError:
+        logger.warning("Legacy working-copy migration %s -> %s failed",
+                       legacy, key, exc_info=True)
+        return
+    logger.info("Migrated legacy working copy %s -> %s", legacy, key)
+
+
 def load(instance_path: str | Path, live_folder: str | Path) -> WorkingCopy | None:
     """Reconstruct a :class:`WorkingCopy` from a persisted meta sidecar.
 
@@ -197,10 +278,24 @@ def load(instance_path: str | Path, live_folder: str | Path) -> WorkingCopy | No
     working = working_state_root(instance_path) / key
     meta_path = working.parent / f"{key}.meta.json"
     if not meta_path.exists() or not (working / "state.json").exists():
-        return None
+        # Key miss: a dir made under the legacy key scheme may still hold this
+        # folder's unapplied edits -- migrate it onto the new key and retry.
+        _migrate_legacy_dir(instance_path, live_folder, key)
+        if not meta_path.exists() or not (working / "state.json").exists():
+            return None
     try:
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
+        return None
+    # Belt-and-braces identity guard: whatever the key scheme hashed, NEVER
+    # hand back a copy whose meta records a DIFFERENT live folder -- serving
+    # it cross-wires two chips and apply_to_live writes the wrong live files.
+    recorded = meta.get("live_folder")
+    if recorded and not _same_live(recorded, live_folder):
+        logger.warning(
+            "Working copy %s records live folder %r but %r was requested -- "
+            "refusing the cross-wired copy (a fresh one will be seeded)",
+            key, recorded, str(live_folder))
         return None
     raw_hash = meta.get("synced_live_hash")
     return WorkingCopy(

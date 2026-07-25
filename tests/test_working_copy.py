@@ -274,7 +274,9 @@ def test_meta_persisted(tmp_path):
 
     assert wc.meta_path().exists()
     meta = json.loads(wc.meta_path().read_text())
-    assert meta["live_folder"] == str(live)
+    # stored RESOLVED — a caller's relative/symlinked spelling must not
+    # round-trip into the sidecar (defeats load()'s identity guard)
+    assert meta["live_folder"] == str(live.resolve())
 
 
 def test_load_reconstructs(tmp_path):
@@ -834,3 +836,125 @@ def test_live_diverged_now_is_read_only(tmp_path):
     assert wc_mod.live_diverged_now(wc) is True
     assert (wc.synced_live_hash, wc.synced_state_mtime, wc.synced_wiring_mtime) == base
     assert wc.meta_path().read_text(encoding="utf-8") == meta_before
+
+
+# ---------------------------------------------------------------------------
+# Path identity — fs_key-based keys, the load() cross-wiring guard, and the
+# legacy-key migration (cross-platform audit fixes)
+# ---------------------------------------------------------------------------
+
+def test_key_for_case_twin_dirs_distinct_on_case_sensitive_fs(tmp_path):
+    # Two DISTINCT case-variant dirs of the same chip name: on Linux these are
+    # different folders and MUST key apart — the legacy unconditional lower()
+    # aliased them onto one working copy and apply_to_live wrote the wrong
+    # live folder. (On Windows/macOS the twins are one folder — skip.)
+    import sys
+    if os.name == "nt" or sys.platform == "darwin":
+        pytest.skip("case-insensitive-default filesystem")
+    a = tmp_path / "CaseTwin" / "chipA" / "quam_state"
+    b = tmp_path / "casetwin" / "chipA" / "quam_state"
+    _seed(a)
+    _seed(b)
+    ka, kb = key_for(a), key_for(b)
+    assert ka.startswith("chipA-") and kb.startswith("chipA-")  # same chip prefix
+    assert ka != kb                                             # distinct hashes
+
+
+def test_key_for_spelling_variants_share_key(tmp_path):
+    live = tmp_path / "chip" / "quam_state"
+    _seed(live)
+    assert key_for(str(live) + "/") == key_for(live)
+    assert key_for(tmp_path / "chip" / "." / "quam_state") == key_for(live)
+
+
+def test_load_guard_rejects_cross_wired_meta(tmp_path):
+    # A meta recording a DIFFERENT live folder (however the key hashed) must
+    # never be served — the proven cross-wiring had load() return another
+    # folder's copy and apply_to_live write the wrong live files.
+    inst = tmp_path / "instance"
+    live_a = tmp_path / "a" / "quam_state"
+    live_b = tmp_path / "b" / "quam_state"
+    _seed(live_a)
+    _seed(live_b)
+    wc = create(inst, live_a)
+    meta = json.loads(wc.meta_path().read_text(encoding="utf-8"))
+    meta["live_folder"] = str(live_b.resolve())
+    wc.meta_path().write_text(json.dumps(meta), encoding="utf-8")
+    assert load(inst, live_a) is None       # caller re-seeds a fresh copy
+
+
+def test_load_guard_tolerates_missing_live_folder(tmp_path):
+    # samefile can't run when the live folder is gone; the fs_key string
+    # fallback must still recognise the copy as ours (kept, not orphaned).
+    import shutil
+    inst = tmp_path / "instance"
+    live = tmp_path / "chip" / "quam_state"
+    _seed(live)
+    create(inst, live)
+    shutil.rmtree(live.parent)
+    loaded = load(inst, live)
+    assert loaded is not None
+
+
+def test_load_migrates_legacy_key_dir(tmp_path):
+    # A working dir persisted under the OLD key scheme (sha1 of
+    # resolve().lower()) — possibly holding unapplied edits — must be renamed
+    # onto the new key on load, not orphaned.
+    inst = tmp_path / "instance"
+    live = tmp_path / "MixedCase" / "chipA" / "quam_state"
+    _seed(live)
+    wc = create(inst, live)
+    new_key = wc.key
+    legacy = wc_mod._legacy_key_for(live)
+    if legacy == new_key:
+        pytest.skip("key schemes coincide on this host (case-folding FS)")
+    root = wc.working_folder.parent
+    # Recreate the legacy on-disk layout: dir + meta under the legacy key.
+    (root / new_key).rename(root / legacy)
+    meta = json.loads((root / f"{new_key}.meta.json").read_text(encoding="utf-8"))
+    meta["key"] = legacy
+    (root / f"{legacy}.meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    (root / f"{new_key}.meta.json").unlink()
+
+    loaded = load(inst, live)
+    assert loaded is not None
+    assert loaded.key == new_key
+    assert (root / new_key / "state.json").exists()
+    assert not (root / legacy).exists()
+    assert not (root / f"{legacy}.meta.json").exists()
+
+
+def test_load_migration_never_clobbers_new_scheme_copy(tmp_path):
+    # When BOTH a new-scheme copy and a legacy dir exist, the migration must
+    # leave the legacy dir alone and serve the new-scheme copy.
+    inst = tmp_path / "instance"
+    live = tmp_path / "MixedCase" / "chipA" / "quam_state"
+    _seed(live)
+    wc = create(inst, live)
+    legacy = wc_mod._legacy_key_for(live)
+    if legacy == wc.key:
+        pytest.skip("key schemes coincide on this host (case-folding FS)")
+    root = wc.working_folder.parent
+    legacy_dir = root / legacy
+    legacy_dir.mkdir()
+    (legacy_dir / "state.json").write_text("{}", encoding="utf-8")
+    meta = json.loads(wc.meta_path().read_text(encoding="utf-8"))
+    meta["key"] = legacy
+    (root / f"{legacy}.meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    loaded = load(inst, live)
+    assert loaded is not None and loaded.key == wc.key
+    assert legacy_dir.exists()              # untouched
+
+
+def test_create_stores_resolved_live_folder(tmp_path, monkeypatch):
+    # A relative spelling must not round-trip into the meta sidecar.
+    live = tmp_path / "chip" / "quam_state"
+    _seed(live)
+    monkeypatch.chdir(tmp_path)
+    from pathlib import Path
+    wc = create(tmp_path / "instance", Path("chip") / "quam_state")
+    meta = json.loads(wc.meta_path().read_text(encoding="utf-8"))
+    assert meta["live_folder"] == str(live.resolve())
+    # …and the resolved spelling loads it straight back
+    assert load(tmp_path / "instance", live) is not None

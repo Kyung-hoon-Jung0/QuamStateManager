@@ -43,6 +43,7 @@ a = Analysis(
         "quam_state_manager.core.saver",
         "quam_state_manager.core.differ",
         "quam_state_manager.core.config_generator",
+        "quam_state_manager.core.state_env_schema",
         # Pulses-page waveform synthesis (lazy-imported in routes.py) + its
         # scipy dependency — pin so the frozen bundle keeps them.
         "quam_state_manager.core.waveform_synth",

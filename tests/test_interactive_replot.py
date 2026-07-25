@@ -455,3 +455,17 @@ def test_extractor_nan_becomes_none():
     plt.close(fig)
     ys = out["axes"][0]["traces"][0]["y"]
     assert ys[1] is None  # NaN -> null (Plotly reads as a gap)
+
+
+def test_fingerprint_sees_same_second_same_size_rewrite(tmp_path):
+    """int(st_mtime) second-truncation made a same-second same-size rewrite
+    invisible → a stale cached replot; the fingerprint must use st_mtime_ns."""
+    import os
+    p = tmp_path / "node.json"
+    p.write_text("{}", encoding="utf-8")
+    base = 1_700_000_000 * 10**9
+    os.utime(p, ns=(base, base))
+    fp1 = replot._fingerprint(tmp_path)
+    os.utime(p, ns=(base + 500_000, base + 500_000))   # same second, same size
+    fp2 = replot._fingerprint(tmp_path)
+    assert fp1 != fp2

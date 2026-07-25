@@ -89,6 +89,7 @@ def get_audit_source_root(instance_path) -> str | None:
 
 def set_audit_source_root(instance_path, source_root: str) -> None:
     """Persist the audit source-root under ``instance/`` (merged into the settings)."""
+    from quam_state_manager.core import safe_io
     from quam_state_manager.core.config_generator import _settings_path
     path = _settings_path(instance_path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -97,7 +98,10 @@ def set_audit_source_root(instance_path, source_root: str) -> None:
     except (ValueError, OSError):
         data = {}
     data["fit_audit_source_root"] = source_root or ""
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    # Atomic, never a plain write_text: the settings file is a SHARED
+    # read-modify-write target (selected_env_python lives here too) — a
+    # torn/partial write would silently drop the other keys.
+    safe_io.atomic_write_json(path, data)
 
 
 def validate_source_root(source_root: str | None) -> tuple[bool, str]:
@@ -348,7 +352,9 @@ def _run_fingerprint(folder: Path) -> str:
     for name in ("node.json", "ds_raw.h5", "data.json"):
         try:
             st = (folder / name).stat()
-            parts.append(f"{name}:{int(st.st_mtime)}:{st.st_size}")
+            # st_mtime_ns, not int(st_mtime): second-truncation made a
+            # same-second same-size rewrite invisible → stale cached verdict.
+            parts.append(f"{name}:{st.st_mtime_ns}:{st.st_size}")
         except OSError:
             parts.append(f"{name}:-")
     return "|".join(parts)

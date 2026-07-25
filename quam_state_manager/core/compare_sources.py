@@ -51,6 +51,9 @@ from typing import Any, Callable
 
 from quam_state_manager.core import safe_io
 from quam_state_manager.core.history import (
+    _HIST_TS_RE as _TS_STAMP_RE,  # strict snapshot-dir shape (traversal guard)
+)
+from quam_state_manager.core.history import (
     ChipFingerprint,
     chip_name_for,
     fingerprint_from_dicts,
@@ -408,6 +411,14 @@ def resolve_source(
         if not sep or not chip_key or not ts_dir:
             raise SourcePermanentError(
                 f"hist: ref must be hist:<chip>/<ts>, got {ref!r}", ref=ref)
+        # Traversal guard: both segments are joined onto history_root, and a
+        # ``..\..``-shaped segment escapes it on Windows (backslash is a
+        # separator there). chip_key must be a bare dir name; ts must be a
+        # ``_ts_stamp``-shaped snapshot dir.
+        if ("/" in chip_key or "\\" in chip_key or ".." in chip_key
+                or not _TS_STAMP_RE.match(ts_dir)):
+            raise SourcePermanentError(
+                f"hist: ref segments are path-shaped, got {ref!r}", ref=ref)
         folder = Path(history_root) / chip_key / ts_dir
         state, wiring, wmiss = _read_folder(folder, ref)
         chash = content_hash(state, wiring)

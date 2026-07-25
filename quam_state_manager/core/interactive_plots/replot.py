@@ -65,7 +65,9 @@ def _fingerprint(folder: Path) -> str:
         p = folder / name
         try:
             st = p.stat()
-            parts.append(f"{name}:{int(st.st_mtime)}:{st.st_size}")
+            # st_mtime_ns, not int(st_mtime): second-truncation made a
+            # same-second same-size rewrite invisible → stale cached replot.
+            parts.append(f"{name}:{st.st_mtime_ns}:{st.st_size}")
         except OSError:
             parts.append(f"{name}:-")
     return "|".join(parts)

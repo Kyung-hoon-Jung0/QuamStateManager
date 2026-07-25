@@ -136,6 +136,11 @@ class QueryEngine:
 
         result["confusion_matrix"] = rr.get("confusion_matrix")
         result["time_of_flight"] = rr.get("time_of_flight")
+        # Structural presence (not "does it have a resolved value") — the
+        # Resonators/Flux nav pages hide themselves chip-wide when nothing has
+        # one, and filter their own rows to only qubits that structurally do.
+        result["has_resonator"] = isinstance(q.get("resonator"), dict)
+        result["has_z"] = isinstance(q.get("z"), dict)
 
         z = q.get("z") or {}
         result["z_joint_offset"] = z.get("joint_offset")
@@ -185,8 +190,8 @@ class QueryEngine:
 
         qc = p.get("qubit_control", "")
         qt = p.get("qubit_target", "")
-        result["qubit_control"] = qc.split("/")[-1] if isinstance(qc, str) and "/" in qc else qc
-        result["qubit_target"] = qt.split("/")[-1] if isinstance(qt, str) and "/" in qt else qt
+        result["qubit_control"] = _pair_qubit_ref(self.store, qc, base + ("qubit_control",))
+        result["qubit_target"] = _pair_qubit_ref(self.store, qt, base + ("qubit_target",))
         result["moving_qubit"] = p.get("moving_qubit")
 
         macros = p.get("macros") or {}
@@ -293,6 +298,10 @@ class QueryEngine:
 
         result["active"] = cr_semantics.is_active(root, name) if (
             cr is not None or zz is not None) else None
+
+        # Structural presence — the Couplers nav page hides itself chip-wide
+        # when no pair has one, and filters its own rows to pairs that do.
+        result["has_coupler"] = isinstance(p.get("coupler"), dict)
 
         coupler = p.get("coupler") or {}
         result["coupler_decouple_offset"] = coupler.get("decouple_offset")
@@ -571,8 +580,9 @@ class QueryEngine:
 
             qc_raw = p.get("qubit_control", "")
             qt_raw = p.get("qubit_target", "")
-            source = qc_raw.split("/")[-1] if isinstance(qc_raw, str) and "/" in qc_raw else qc_raw
-            target = qt_raw.split("/")[-1] if isinstance(qt_raw, str) and "/" in qt_raw else qt_raw
+            pair_base = ("qubit_pairs", pair_name)
+            source = _pair_qubit_ref(self.store, qc_raw, pair_base + ("qubit_control",))
+            target = _pair_qubit_ref(self.store, qt_raw, pair_base + ("qubit_target",))
 
             # ``or {}`` instead of ``.get(k, {})`` because the value may be
             # explicitly null in state.json (dict.get falls back only when
@@ -1131,6 +1141,32 @@ def _resolve(store: QuamStore, value: Any, path_tuple: tuple[str, ...]) -> Any:
     if is_pointer(value) and not is_self_ref(value):
         return store.resolve_pointer(value, path_tuple)
     return value
+
+
+def _pair_qubit_ref(store: QuamStore, raw: Any, path_tuple: tuple[str, ...]) -> Any:
+    """Resolve a pair's ``qubit_control``/``qubit_target`` to a bare qubit id.
+
+    Most chips point straight at the qubit (``"#/qubits/qA2"``) — splitting
+    off the tail segment resolves that with zero pointer traversal (the old
+    behavior). Real tunable-coupler chip families instead route
+    control/target through a WIRING-side indirection (``"#/wiring/
+    qubit_pairs/<w-pair>/c/control_qubit"`` -> ``"#/qubits/qA2"``) —
+    splitting THAT tail gives the wiring key (``"control_qubit"``), not a
+    qubit id, which is exactly the garbage that showed up as the Chip
+    Status arrow label and the Pairs/Couplers table's Control/Target
+    columns. ``store.resolve_pointer`` already recurses through pointer
+    chains of any depth, so fully resolving lands on the qubit's own dict
+    either way — read its ``"id"`` from there. Falls back to the old tail-
+    segment heuristic when resolution doesn't yield a qubit dict (dangling
+    pointer / already a bare string / etc.), so chips that never hit this
+    indirection are byte-for-byte unaffected.
+    """
+    resolved = _resolve(store, raw, path_tuple)
+    if isinstance(resolved, dict) and isinstance(resolved.get("id"), str):
+        return resolved["id"]
+    if isinstance(raw, str) and "/" in raw:
+        return raw.split("/")[-1]
+    return raw
 
 
 def _get_nested(obj: Any, *keys: str) -> Any:

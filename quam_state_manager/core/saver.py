@@ -31,8 +31,13 @@ logger = logging.getLogger(__name__)
 # Long calibration sessions can otherwise accumulate GBs of timestamped backups.
 DEFAULT_BACKUP_RETENTION = 20
 
-# Matches files like "state.json.bak.20260522_174501"
-_BACKUP_RE = re.compile(r"\.bak\.(\d{8}_\d{6})$")
+# Matches both backup stamp forms:
+#   old  "state.json.bak.20260522_174501"          (second granularity)
+#   new  "state.json.bak.20260522_174501_123456"   (+ microseconds)
+# so pre-existing old-form .baks keep counting toward / rotating out of the
+# retention budget. Lexicographic order on the stamp stays chronological
+# across both forms (the shorter old form sorts before a same-second new one).
+_BACKUP_RE = re.compile(r"\.bak\.(\d{8}_\d{6}(?:_\d{6})?)$")
 
 DEFAULT_PROPERTIES = [
     "id",
@@ -79,7 +84,10 @@ class Saver:
             state_path = target / "state.json"
             wiring_path = target / "wiring.json"
 
-            stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            # Microseconds in the stamp: two saves inside one second used to
+            # produce the SAME .bak name — the second save's copy2 overwrote
+            # the first save's backup, silently losing the older pre-image.
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
             self._backup(state_path, stamp)
             self._backup(wiring_path, stamp)
             self._rotate_backups(state_path)

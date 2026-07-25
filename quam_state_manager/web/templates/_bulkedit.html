@@ -6,19 +6,34 @@
            (aria-selected + tabpanel + arrow roving) wasn't implemented, so a broken-
            contract role=tablist/tab is worse than honest pressed-toggle buttons; switchPane
            keeps aria-pressed in sync. #}
+        {# r6 renames: "Live grid" → "Table View", "All values" → "Flat View".
+           data-pane keys stay "grid"/"allvalues" — JS hooks + tests bind them. #}
         <div class="bulk-segmented" role="group" aria-label="Live State Edit view">
             <button type="button" class="bulk-seg active" data-pane="grid" aria-pressed="true"
-                    title="The curated Qubits + Pairs grids — fast cross-qubit retune">Live grid</button>
+                    title="The curated Qubits + Pairs grids — fast cross-qubit retune">Table View</button>
             <button type="button" class="bulk-seg" data-pane="allvalues" aria-pressed="false"
-                    title="Edit ANY value in the chip — every leaf of state + wiring, searchable">All values</button>
+                    title="Edit ANY value in the chip — every leaf of state + wiring, searchable">Flat View</button>
         </div>
-        <button type="button" class="btn-sm outline bulk-hint-toggle" id="bulk-hint-toggle"
-                onclick="BulkEdit.toggleHint()" aria-pressed="true" title="Show/hide the help text">&#9432;</button>
     </div>
     {# ── Pane 1: the existing curated Qubits + Pairs grids (UNCHANGED) ───────── #}
     <div class="bulk-pane" data-bulk-pane="grid">
     {# Controls row (below the title): Properties · Search · Apply all · Reset · Aa. #}
     <div class="bulk-toolbar bulk-toolbar-controls">
+        {# r6 item 5: the boxed help paragraph is gone — just this ⓘ, sitting
+           immediately left of Properties, opening the same text as a popover
+           (native <details> dropdown, the bulk-colvis pattern). #}
+        <details class="bulk-colvis bulk-help-pop" id="bulk-help-pop">
+            <summary class="btn-sm outline bulk-hint-toggle" id="bulk-hint-toggle"
+                     title="How Live State Edit works">&#9432;</summary>
+            <div class="bulk-colvis-menu bulk-help-menu">
+                Edit a cell, then <b>Apply</b> its row or <b>Apply&nbsp;all</b>. Edits go to a
+                safe <b>working state</b> (your live chip is untouched) — review them in the tray,
+                then <b>apply&nbsp;to&nbsp;live</b>. A changed cell keeps a red box; hover it for
+                <i>before&nbsp;→&nbsp;after</i>. Click a column header to sort, drag its right
+                edge to resize. <span class="bulk-shared-legend">&#9888; = LO-coupled port
+                (must share a band with its peer)</span>.
+            </div>
+        </details>
         <details class="bulk-colvis">
             <summary class="btn-sm outline" title="Choose which property columns to show">&#9776; Properties</summary>
             <div class="bulk-colvis-menu" id="bulk-colvis-menu" role="menu"></div>
@@ -28,6 +43,11 @@
                    placeholder="Search columns, qubits, numbers…" autocomplete="off"
                    aria-label="Filter by column name, qubit id, or value">
             <span class="bulk-search-count muted" id="bulk-search-count" aria-live="polite"></span>
+            {# r6 item 4: searching a property that exists on the chip but isn't a
+               visible column (a dynamic column not yet enabled) offers to show it. #}
+            <button type="button" class="bulk-dyncol-hint" id="bulk-dyncol-hint" hidden
+                    onclick="BulkEdit.showMatchedDynCols()"
+                    title="Hidden chip properties match your search — click to enable those columns"></button>
         </span>
         <span class="bulk-band-warn" id="bulk-band-warn" aria-live="polite" hidden></span>
         <span class="bulk-dirty-count" id="bulk-dirty-count" aria-live="polite"></span>
@@ -57,12 +77,6 @@
                    oninput="BulkEdit.setLetterSpacing(this.value)" aria-label="Cell letter spacing" title="Letter spacing (digit gap)">
         </span>
     </div>
-    <p class="bulk-hint muted"><button type="button" class="bulk-hint-x" onclick="BulkEdit.toggleHint()"
-        title="Hide this help (re-show with the ⓘ button)" aria-label="Hide help">&#10005;</button>Edit a cell, then <b>Apply</b> its row or <b>Apply&nbsp;all</b>. Edits go to a
-        safe <b>working state</b> (your live chip is untouched) — review them in the tray, then
-        <b>apply&nbsp;to&nbsp;live</b>. A changed cell keeps a red box; hover it for <i>before&nbsp;→&nbsp;after</i>.
-        Click a column header to sort, drag its right edge to resize. <span class="bulk-shared-legend">&#9888; = LO-coupled port (must share a band with its peer)</span>.</p>
-
     <div class="bulk-scroll-top" id="bulk-scroll-top" aria-hidden="true"><div id="bulk-scroll-top-inner"></div></div>
     <div class="bulk-table-wrap">
         <table class="bulk-table" id="bulk-table">
@@ -96,8 +110,24 @@
                     <th class="bulk-rowhead" scope="row" data-col-key="__id__">{{ row.id }}</th>
                     {% for cell in row.cells %}
                     {% set col = columns[loop.index0] %}
-                    <td class="bulk-td{% if not col.default_on %} bulk-col-hidden{% endif %}{% if col.group_start %} bulk-col-group-start{% endif %}{% if cell.is_pointer %} bulk-td-pointer{% endif %}{% if cell.lo and cell.lo.peer_qubit %} bulk-td-lo{% endif %}"
+                    <td class="bulk-td{% if not col.default_on %} bulk-col-hidden{% endif %}{% if col.group_start %} bulk-col-group-start{% endif %}{% if cell.is_pointer %} bulk-td-pointer{% endif %}{% if cell.lo and cell.lo.peer_qubit %} bulk-td-lo{% endif %}{% if cell.kind in ('listedit', 'runtime') %} bulk-td-ro{% endif %}"
                         data-col-key="{{ col.key }}">
+                        {% if cell.kind == 'listedit' %}
+                        {# r6 item 4: a real LIST value — compact JSON preview + the ✎
+                           whole-value JSON editor (NOT a text input; the scalar
+                           coercer can't take a list). #}
+                        <span class="bulk-cell-list{% if cell.modified %} bulk-cell-modified{% endif %}"
+                              data-path="{{ cell.dot_path }}"
+                              title="{{ cell.dot_path }} — list value; ✎ edits the whole JSON">{{ cell.display }}</span>
+                        <button type="button" class="bulk-list-edit"
+                                title="Edit as JSON (Ctrl+Enter saves, Esc cancels)"
+                                onclick="BulkEdit.openJsonCell('{{ cell.dot_path }}', this)">&#9998;</button>
+                        {% elif cell.kind == 'runtime' %}
+                        <input type="text" class="bulk-cell bulk-cell-ro bulk-cell-runtime"
+                               value="{{ cell.display }}" size="{{ col.maxlen }}" readonly tabindex="-1"
+                               data-dot-path="{{ cell.dot_path }}" data-resolved="{{ cell.resolved_path }}" data-orig="{{ cell.display }}"
+                               title="{{ cell.dot_path }} — computed at runtime (read-only)">
+                        {% else %}
                         <input type="text"
                                class="bulk-cell{% if cell.modified %} bulk-cell-modified{% endif %}"
                                value="{{ cell.display }}"
@@ -114,6 +144,7 @@
                         {% if cell.lo and cell.lo.peer_qubit %}<span class="bulk-shared" title="Shares the LO with {{ cell.lo.peer_qubit }} (band {{ cell.lo.peer_band }}) — LO-coupled ports must use the same band (bands 1 & 3 compatible; band 2 only with band 2)">&#9888;</span>{% elif cell.is_pointer %}<span class="bulk-ptr" title="JSON pointer — editing writes the resolved target">&#8599;</span>{% endif %}
                         <span class="bulk-band-msg" hidden></span>
                         <span class="bulk-ba" aria-hidden="true"><span class="bulk-ba-old">{{ cell.old_display }}</span> &rarr; <span class="bulk-ba-new"></span></span>
+                        {% endif %}
                     </td>
                     {% endfor %}
                     <td class="bulk-apply-col">
@@ -196,6 +227,11 @@
                         <a class="bulk-ro-link" href="#" tabindex="-1"
                            onclick="return BulkPairEdit.openPair('{{ row.id }}')"
                            title="Open {{ row.id }} in the inspector to edit this list">&#8599;</a>
+                        {# r6 item 4: list cells are now also editable in place via
+                           the shared whole-value JSON editor (same edit-batch path). #}
+                        <button type="button" class="bulk-list-edit"
+                                title="Edit as JSON (Ctrl+Enter saves, Esc cancels)"
+                                onclick="BulkEdit.openJsonCell('{{ cell.dot_path }}', this)">&#9998;</button>
                         {% elif cell.kind in ('runtime', 'missing') %}
                         <input type="text" class="bulk-cell bulk-cell-ro{% if cell.kind == 'runtime' %} bulk-cell-runtime{% endif %}"
                                value="{{ cell.display }}" size="{{ col.maxlen }}" readonly tabindex="-1"
@@ -256,6 +292,8 @@
                     <button type="button" class="btn-xs outline av-bold-toggle" id="av-bold" onclick="AllValues.toggleBold()" aria-pressed="false" title="Bold values">B</button>
                     <span class="av-font-label" title="Letter spacing">↔</span>
                     <input type="range" id="av-ls-slider" min="0" max="0.12" step="0.02" value="0" oninput="AllValues.setLetterSpacing(this.value)" aria-label="Letter spacing" title="Letter spacing">
+                    <span class="av-font-label" title="Row spacing">↕</span>
+                    <input type="range" id="av-rh-slider" min="1" max="1.6" step="0.05" value="1" oninput="AllValues.setRowSpacing(this.value)" aria-label="Row spacing" title="Row spacing (row height)">
                 </span>
                 <button type="button" class="btn-xs outline" id="av-expand-all" title="Expand every group">Expand all</button>
                 <button type="button" class="btn-xs outline" id="av-collapse-all" title="Collapse every group">Collapse all</button>
@@ -275,12 +313,59 @@
             <button type="button" class="av-chip" data-kind="is:editable">Editable</button>
             <button type="button" class="av-chip" data-kind="kind:xref">Pointers</button>
             <button type="button" class="av-chip" data-kind="kind:list">Lists</button>
+            <button type="button" class="av-chip" data-kind="kind:array">Arrays</button>
+            <button type="button" class="av-chip" data-kind="kind:empty">Empty</button>
             <button type="button" class="av-chip" data-kind="kind:membership">Membership</button>
             <button type="button" class="av-chip" data-kind="is:modified">Modified</button>
         </div>
-        <p class="bulk-hint muted av-help">Every leaf of <b>state + wiring</b> is here. Editable scalars take input
-            (Apply goes to the safe <b>working state</b>); pointer links (↗), list/matrix (▦), self-refs (⟳) and
-            chip-membership (⚠) arrays are <b>read-only</b> by design. Click a group to expand; search to jump anywhere.</p>
+        <p class="bulk-hint muted av-help">Every leaf of <b>state + wiring</b> is here. Scalars, list/matrix
+            elements (▦) and resolvable pointers (↗ — edits write <b>through</b> to the target; focus shows where)
+            take input; arrays and empty containers edit whole via ✎ (JSON). Apply goes to the safe
+            <b>working state</b>. Self-refs (⟳), chip-membership (⚠) arrays and dangling pointers are
+            <b>read-only</b> by design. Click a group to expand; search to jump anywhere.</p>
+        {# All-values v2 styles live HERE (pane-owned; style.css belongs to the grid
+           session). Everything is height-neutral: chips/buttons sit inside the 18px
+           text band of the 3-column row grid; the hint + modal are fixed-position
+           overlays outside the table flow — ROW_HEIGHT=28 and the virtual-scroll
+           index math are untouched. #}
+        <style>
+        .av-val-wrap { display: flex; align-items: center; gap: 4px; min-width: 0; height: 18px; }
+        .av-val-wrap .av-input { width: 0; flex: 1 1 auto; }
+        .av-val-wrap .av-link { flex: none; margin-left: 0; }
+        .av-ty-chip { flex: none; max-width: 96px; overflow: hidden; text-overflow: ellipsis;
+            white-space: nowrap; font-size: 10px; line-height: 14px; padding: 0 4px;
+            border-radius: 7px; color: var(--pico-muted-color);
+            border: 1px solid var(--pico-muted-border-color); }
+        .av-cell-val .av-ty-chip { display: inline-block; vertical-align: baseline; margin-left: .3rem; }
+        .av-table-virtual button.av-edit-btn { display: inline-block; width: auto; height: 18px;
+            line-height: 16px; margin: 0; padding: 0 5px; font-size: 11px;
+            border: 1px solid var(--pico-muted-border-color); border-radius: 3px;
+            background: transparent; color: var(--pico-muted-color); cursor: pointer; }
+        .av-table-virtual button.av-edit-btn:hover { color: var(--pico-primary); border-color: var(--pico-primary); }
+        .av-array-g, .av-empty-g { color: var(--pico-muted-color); }
+        .av-array .av-cell-val, .av-empty .av-cell-val { font-style: italic; }
+        #av-xref-hint { position: fixed; z-index: 220; max-width: 46rem; overflow: hidden;
+            text-overflow: ellipsis; white-space: nowrap; padding: 2px 8px; border-radius: 4px;
+            background: var(--pico-card-background-color);
+            border: 1px solid var(--pico-muted-border-color); color: var(--pico-muted-color);
+            font: 11px var(--font-mono); pointer-events: none; }
+        #av-json-modal { position: fixed; inset: 0; z-index: 240; background: rgba(0,0,0,.35);
+            display: flex; align-items: center; justify-content: center; }
+        #av-json-modal .av-modal-card { width: min(44rem, 92vw);
+            background: var(--pico-card-background-color);
+            border: 1px solid var(--pico-muted-border-color); border-radius: 6px;
+            padding: .8rem; display: flex; flex-direction: column; gap: .5rem; }
+        #av-json-modal .av-modal-head { display: flex; justify-content: space-between;
+            gap: .6rem; align-items: baseline; min-width: 0; }
+        #av-json-modal .av-modal-path { font-family: var(--font-mono); font-size: 12.5px;
+            font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        #av-json-modal .av-modal-keys { font-size: 11px; white-space: nowrap; }
+        #av-json-modal textarea.av-modal-ta { width: 100%; min-height: 12rem; max-height: 50vh;
+            resize: vertical; margin: 0; font-family: var(--font-mono); font-size: 12.5px; }
+        #av-json-modal .av-modal-err { color: var(--color-error-text, #c0392b);
+            font-size: 12px; white-space: pre-wrap; }
+        #av-json-modal .av-modal-actions { display: flex; gap: .5rem; justify-content: flex-end; }
+        </style>
         <div class="av-scroll" id="av-scroll">
             <table class="av-table-virtual" id="av-table">
                 <colgroup><col style="width:100%"></colgroup>
@@ -292,7 +377,7 @@
 </div>
 
 <script>
-    if (window.BulkEdit && BulkEdit.mount) BulkEdit.mount({{ columns | script_json }}, {{ band_meta | script_json }});
+    if (window.BulkEdit && BulkEdit.mount) BulkEdit.mount({{ columns | script_json }}, {{ band_meta | script_json }}, {{ (dyn_cols or []) | script_json }});
     {% if pair_rows %}
     if (window.BulkPairEdit && BulkPairEdit.mount) BulkPairEdit.mount({{ pair_columns | script_json }});
     {% endif %}

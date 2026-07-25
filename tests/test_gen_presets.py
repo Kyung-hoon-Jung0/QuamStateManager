@@ -222,7 +222,7 @@ class TestBuiltinPreset:
         assert res["readout_length"] == 1000
         assert res["depletion_time"] == 10000       # user-specified (10 µs)
         assert res["time_of_flight"] == 28
-        assert p["sections"]["qubit"]["defaults"]["anharmonicity"] == -200e6
+        assert p["sections"]["qubit"]["defaults"]["anharmonicity"] == 200e6
         pairs = p["sections"]["pairs"]["defaults"]
         assert pairs["cz_amplitude"] == 0.1 and pairs["cr_drive_amplitude"] == 1.0
         # Never chip-specific values.

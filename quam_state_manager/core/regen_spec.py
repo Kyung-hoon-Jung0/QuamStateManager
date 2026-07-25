@@ -486,11 +486,19 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
     # constraint seeds pump + pump_ on one MW port; an optional isolation port maps
     # to a twpa_isolation line. (Older builders without add_twpa_lines skip these
     # with a warning — see run_build.build_connectivity.)
-    twpa_ids: list[str] = []
+    # Emitted as WIZARD-NATIVE objects {"id", "qubits"} — the step-4 TWPA rows
+    # bind `twpa.id`/`twpa.qubits`; bare-string ids rendered as broken empty
+    # rows there ("Every TWPA needs an id" — the review-r6 TWPA-loss report).
+    # validate_spec + run_build accept both shapes, so old sidecars stay valid.
+    twpa_ids: list[dict] = []
+    state_twpas = state.get("twpas") or {}
     for tid, ch in (wire.get("twpas") or {}).items():
         if not isinstance(ch, dict):
             continue
-        twpa_ids.append(tid)
+        st = state_twpas.get(tid) if isinstance(state_twpas.get(tid), dict) else {}
+        qlist = st.get("qubits")
+        twpa_ids.append({"id": tid,
+                         "qubits": list(qlist) if isinstance(qlist, list) else []})
         # quam_builder 0.4.0 / qualang_tools 0.22 write the short line keys
         # "p"/"i" (same convention as qubit "rr"/"xy"/"z"); older stacks
         # wrote "pump"/"isolation". Accept both or the TWPA is silently
