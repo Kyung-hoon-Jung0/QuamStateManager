@@ -71,7 +71,15 @@ Generate-Config wizard: customer feedback batch r3 (`docs/53_generate_feedback_r
 
 - New `qsm` console alias + `qsm browser` command (serve + auto-open browser)
 
-## v0.6.0 (unreleased — feat/typed-edit-env)
+## v0.7.0 (2026-07-25)
+
+### Autofit — one-button automatic fitting scheduler (docs/56_autofit_scheduler.md)
+
+- New sidebar page `/autofit` (below Scheduler): one button runs a plan of calibration nodes over chosen targets, gates every fit deterministically, LLM-audits only the residual suspects, reverts rejected node writes, re-measures with adapted parameters, and reports everything from an append-only ledger with per-target keep/applied/retry/defer decisions
+- Doctrine (docs/47, binding): the LLM **never emits a number** — its schema is `{verdict, failure_mode, reason}` (numeric emissions are discarded and flagged); corrections are ① deterministic gates ② revert via the node's own `patches[].old` (compare-and-swap, `coerce=False`) ③ re-run with family-keyed parameter adaptations — the calibration numbers always come from the node's own fitter, and a deterministic gate fail can never be overridden by an LLM accept
+- Gate ladder per fit: node outcome → physical bands → raw-data cross-check (argmax only where provably valid, spectral signal-presence for oscillation/decay/2-D) → metric consistency/error ratios → history jump limits vs the pre-update anchor; per-family registry is code-curated (`core/autofit/families.py`), with iq_blobs verify-only
+- Autonomy modes: `full` (apply with revert guarantee + pre-plan pinned snapshot) and `review` (restore-at-end); while a plan runs, the scheduler edit-lock engages and every `/scheduler/*` control route 409s (no two masters); all writes go through one writer path (build lock → `batch_set` → save → apply-to-live, one pull+re-stage retry)
+- Ground-truth sim backend: `/autofit/start {backend: sim}` runs the whole loop hardware-free through the REAL write path (synthetic run folders indistinguishable to every SM reader, corruption modes wrong_peak/no_signal/noisy/out_of_band/drift); a CI accuracy ledger pins per-family false-accept coverage; RealBackend drives the Scheduler chassis with a lost-wakeup watchdog and normalized-prefix + time-window run attribution
 
 ### Typed editing + environment validation (docs/56)
 
