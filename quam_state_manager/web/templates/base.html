@@ -272,12 +272,10 @@
        hx-swap-oob copy of this slot, so loading a chip via HTMX updates the
        banner here instead of rendering a duplicate inside the pane. #}
     <div id="live-diverged-slot">{% include '_live_diverged_banner.html' %}</div>
-    {# Accumulating live-drift banner — filled by the global /state/drift poll in
-       app.js (no server render, so it costs nothing per page). Shows "N params
-       changed on the live chip since <time>" with View / Reset / dismiss, and
-       keeps accumulating across qualibrate fits even when the working copy
-       auto-syncs. Persistent base-level slot, like the diverged banner. #}
-    <div id="live-drift-slot"></div>
+    {# The accumulating live-drift ALARM banner used to live here — removed
+       (docs/58): users rarely acted on it. The same data now lives in the
+       "Live changes since baseline" panels on Param History + State History;
+       the /state/drift poll in app.js still runs to keep those fresh. #}
     {% include '_wc_gc_banner.html' %}
     {# Auto-popped diagnostics error banner (only when the active chip has a
        crash-class error). Lazily fetched on every full page load — so it pops on

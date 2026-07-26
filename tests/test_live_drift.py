@@ -328,3 +328,42 @@ class TestDriftRoutes:
         hm = HistoryManager(tmp_path / "_app_instance")
         snaps = hm.list_snapshots(str(live_folder))
         assert any(s.label == LIVE_BASELINE_LABEL and s.pinned for s in snaps)
+
+
+# ---------------------------------------------------------------------------
+# Alarm relocation (docs/58): NO main-screen banner — the drift data lives in
+# the Param History + State History panels instead.
+# ---------------------------------------------------------------------------
+
+class TestDriftAlarmRelocation:
+    def test_no_main_screen_banner_slot_anywhere(self):
+        """The popping "N parameters changed" banner is GONE: no #live-drift-slot
+        in the base layout and no banner-rendering code left in app.js (users
+        rarely acted on the alarm; the poll survives only to keep the embedded
+        panels fresh)."""
+        web = Path(routes_mod.__file__).resolve().parent
+        base_html = (web / "templates" / "base.html").read_text(encoding="utf-8")
+        app_js = (web / "static" / "app.js").read_text(encoding="utf-8")
+        assert '<div id="live-drift-slot">' not in base_html
+        assert "live-drift-slot" not in app_js
+        assert "_renderBanner" not in app_js
+        # the drift machinery the embeds rely on must survive the removal
+        assert "window._pollDrift" in app_js
+        assert "resetBaseline" in app_js
+
+    def test_param_history_embeds_drift_panel(self, tmp_path, live_folder):
+        """Param History now carries the "Live changes since baseline" card
+        (lazy hx-get of the same embed the State History page uses)."""
+        client = _app_client(tmp_path)
+        client.post("/load", data={"folder": str(live_folder)})
+        body = client.get("/param-history",
+                          headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert 'id="live-drift-panel"' in body
+        assert "/state/drift/view?embed=1" in body
+
+    def test_state_history_keeps_its_drift_panel(self, tmp_path, live_folder):
+        client = _app_client(tmp_path)
+        client.post("/load", data={"folder": str(live_folder)})
+        body = client.get("/state-history",
+                          headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert 'id="live-drift-panel"' in body
