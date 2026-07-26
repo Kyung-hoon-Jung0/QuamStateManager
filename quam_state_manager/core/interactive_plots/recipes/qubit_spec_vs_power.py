@@ -134,7 +134,9 @@ def build(bundle, key):
 def _max_amp(bundle):
     """The run's ``max_amp`` (amp ceiling the node derives fs from): dataset
     root attrs first (HDF5 round-trips scalars as 1-element arrays), then the
-    run parameters — same source discipline as resonator_2d._amp_conversion."""
+    run parameters. Unlike resonator_2d's fs-first ``_amp_conversion``, the
+    attr IS the faithful source here — the 08b node derives its full-scale
+    FROM max_amp (its own 1 dB formula), it never reads the current port."""
     for src in ((bundle.raw or {}).get("root_attrs") or {},
                 getattr(bundle.run, "parameters", None) or {}):
         v = _num(src.get("max_amp"))

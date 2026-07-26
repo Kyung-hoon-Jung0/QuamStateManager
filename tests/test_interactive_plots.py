@@ -818,19 +818,36 @@ def test_num_unwraps_single_element_arrays_and_scalars():
 
 
 def test_amp_conversion_source_order():
-    # 1) root_attrs (1-element arrays, as stored on disk) win and are unwrapped.
-    b = Bundle(run=None, raw={"root_attrs": {"max_power_dbm": [-25], "max_amp": [0.1]}})
-    assert resonator_2d._amp_conversion(b, "q0") == (-25.0, 0.1)
+    # 1) The pointer-resolved port full-scale WINS (scale = 1 ⇒ the node's
+    #    amp = 10^((P − fs)/20) formula) — even when the attr pair is present.
+    #    The attrs only IMPLY the full-scale when the legacy 3 dB power grid
+    #    didn't snap; on a real archive run they disagreed by exactly 3 dB
+    #    (fs −2 vs implied −5) and the staged amplitude came out 3 dB hot —
+    #    the bug this order fixes.
+    qs = {"qubits": {"q0": {"resonator": {"opx_output": {"full_scale_power_dbm": -30}}}}}
+    b = Bundle(run=None, raw={"root_attrs": {"max_power_dbm": [-25], "max_amp": [0.1]}},
+               quam_state=qs)
+    assert resonator_2d._amp_conversion(b, "q0")[:2] == (-30.0, 1.0)
 
-    # 2) run.parameters fallback when root_attrs are absent/empty.
+    # 1b) Patches-aware: when this run's update MOVED the full-scale, the
+    #     amplitude it wrote used the NEW value — the patch overrides the
+    #     (post-update ≡ same, pre-update ≠) snapshot value.
+    b = Bundle(run=None, raw={"root_attrs": {}}, quam_state=qs,
+               node_meta={"patches": [{
+                   "op": "replace",
+                   "path": "/quam/qubits/q0/resonator/opx_output/full_scale_power_dbm",
+                   "value": -27, "old": -30}]})
+    assert resonator_2d._amp_conversion(b, "q0")[:2] == (-27.0, 1.0)
+
+    # 2) root_attrs fallback (1-element arrays, as stored on disk) unwrapped,
+    #    when no snapshot resolves the port.
+    b = Bundle(run=None, raw={"root_attrs": {"max_power_dbm": [-25], "max_amp": [0.1]}})
+    assert resonator_2d._amp_conversion(b, "q0")[:2] == (-25.0, 0.1)
+
+    # 3) run.parameters fallback when root_attrs are absent/empty.
     run = types.SimpleNamespace(parameters={"max_power_dbm": -20, "max_amp": 0.2})
     b = Bundle(run=run, raw={"root_attrs": {}})
-    assert resonator_2d._amp_conversion(b, "q0") == (-20.0, 0.2)
-
-    # 3) quam_state full_scale_power_dbm fallback (scale = 1 ⇒ node's amp formula).
-    qs = {"qubits": {"q0": {"resonator": {"opx_output": {"full_scale_power_dbm": -30}}}}}
-    b = Bundle(run=None, raw={"root_attrs": {}}, quam_state=qs)
-    assert resonator_2d._amp_conversion(b, "q0") == (-30.0, 1.0)
+    assert resonator_2d._amp_conversion(b, "q0")[:2] == (-20.0, 0.2)
 
     # None when no source resolves.
     assert resonator_2d._amp_conversion(Bundle(run=None, raw={"root_attrs": {}}), "q0") is None

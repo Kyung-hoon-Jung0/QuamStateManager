@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .. import plotbuild as pb
+from .. import contracts, plotbuild as pb
 from .base import FigureSpec, figure_key, qslice, qubit_index, qubits_of, split_key
 
 FAMILY = ("1Q_05_resonator_spectroscopy_vs_power", "1Q_06_resonator_spectroscopy_vs_flux",
@@ -98,28 +98,45 @@ def _num(v):
 
 
 def _amp_conversion(bundle, qname):
-    """(ref_dbm, scale) for amp = scale·10^((dBm−ref_dbm)/20), or None.
+    """(ref_dbm, scale, source) for amp = scale·10^((dBm−ref_dbm)/20), or None.
 
-    Source order: (1) the dataset's ``max_power_dbm``/``max_amp`` root attrs —
-    the node's own amp/dBm reference (round-tripped through HDF5 as 1-element
-    arrays, so unwrapped via :func:`_num`); (2) the same two keys from the run
-    parameters (reliable fallback / forward-compat); (3) ``full_scale_power_dbm``
-    resolved through the quam_state pointer chain (scale = 1 ⇒ amp is the 0–1
-    scale factor the readout amplitude is stored as — also the node's formula).
+    The node realises a readout power via ``set_output_power`` — the written
+    amplitude is ``10^((P − fs)/20)`` against the chip's ACTUAL readout
+    full-scale, so the faithful reference is the port full-scale the run
+    snapshot's pointer chain resolves to (scale = 1; PATCHES-AWARE: when this
+    run's update moved the full-scale, the amplitude it wrote used the NEW
+    value). The dataset's ``max_power_dbm``/``max_amp`` attr pair only implies
+    that full-scale when the legacy 3 dB power grid didn't snap — on a real
+    archive run they disagreed by exactly 3 dB (fs −2 vs implied −5) and the
+    staged amplitude came out 3 dB hot; the attr pair (then the run
+    parameters) stays as the fallback when the snapshot can't resolve the
+    port. Attrs round-trip through HDF5 as 1-element arrays → :func:`_num`.
     """
-    for src in ((bundle.raw or {}).get("root_attrs") or {},
-                getattr(bundle.run, "parameters", None) or {}):
-        mp, ma = _num(src.get("max_power_dbm")), _num(src.get("max_amp"))
-        if mp is not None and ma is not None:
-            return mp, ma
     merged = bundle.quam_state or {}
     if merged and qname:
         from quam_state_manager.core.pointer_path import resolve_field_target
-        ft = resolve_field_target(
-            merged, f"qubits.{qname}.resonator.opx_output.full_scale_power_dbm")
+        try:
+            ft = resolve_field_target(
+                merged, f"qubits.{qname}.resonator.opx_output.full_scale_power_dbm")
+        except Exception:
+            ft = {}
         v = _num(ft.get("resolved_value"))
         if ft.get("resolvable") and v is not None:
-            return v, 1.0
+            patches = (getattr(bundle, "node_meta", None) or {}).get("patches")
+            if isinstance(patches, list):
+                jp = "/quam/" + str(ft.get("resolved_path", "")).replace(".", "/")
+                for p in patches:
+                    if str(p.get("path", "")) == jp:
+                        pv = _num(p.get("value"))
+                        if pv is not None:
+                            v = pv
+                        break
+            return v, 1.0, "port full-scale (run snapshot, patches-aware)"
+    for src, label in (((bundle.raw or {}).get("root_attrs") or {}, "dataset attrs"),
+                       (getattr(bundle.run, "parameters", None) or {}, "run parameters")):
+        mp, ma = _num(src.get("max_power_dbm")), _num(src.get("max_amp"))
+        if mp is not None and ma is not None:
+            return mp, ma, f"max_power/max_amp ({label})"
     return None
 
 
@@ -143,7 +160,7 @@ def _vs_power(bundle, key, qname, qidx, x_ghz):
     clickable = None
     conv = _amp_conversion(bundle, qname)
     if conv is not None and power.size:
-        ref_dbm, scale = conv
+        ref_dbm, scale, conv_src = conv
         amp_lo = scale * 10 ** ((float(power.min()) - ref_dbm) / 20)
         amp_hi = scale * 10 ** ((float(power.max()) - ref_dbm) / 20)
         # transparent trace establishes the twin y-axis range (amplitude)
@@ -161,7 +178,15 @@ def _vs_power(bundle, key, qname, qidx, x_ghz):
         # amplitude changes). The clicked power is shown read-only for context.
         clickable = {"axis": "y", "qubit": qname, "label": "Set readout amplitude",
                      "targets": [{"path": "qubits.{q}.resonator.operations.readout.amplitude",
-                                  "transform": {"type": "dbm_to_amp", "ref_dbm": ref_dbm, "scale": scale}}],
+                                  "transform": {"type": "dbm_to_amp", "ref_dbm": ref_dbm, "scale": scale},
+                                  "provenance": contracts._prov(
+                                      "amp = scale·10^((clicked dBm − ref)/20) — ref: "
+                                      + conv_src + ". If a click is far enough out of"
+                                      " range that the node would also move the"
+                                      " full-scale, this amplitude-only staging cannot"
+                                      " reproduce that pair.",
+                                      [{"label": f"ref dBm ({conv_src})", "frozen_value": ref_dbm},
+                                       {"label": "scale", "frozen_value": scale}])}],
                      "context": [{"label": "Readout power", "axis": "y", "scale": 1,
                                   "unit": "dBm", "decimals": 2}]}
         # x-axis → frequency with the node's INCREMENT semantics (05b does
@@ -169,9 +194,8 @@ def _vs_power(bundle, key, qname, qidx, x_ghz):
         # whenever f_01 ≠ RF). Offsets baked from the run's own dataset +
         # frozen snapshot (see contracts.freq_increment_targets). View-only on
         # x when RF-at-run can't be established.
-        from .. import contracts as _contracts
-        _freq = _contracts.freq_increment_targets(bundle, qname, axis="x",
-                                                  axis_scale=1e9, resonator=True)
+        _freq = contracts.freq_increment_targets(bundle, qname, axis="x",
+                                                 axis_scale=1e9, resonator=True)
         if _freq:
             clickable["targets"] = clickable["targets"] + _freq["targets"]
     return FigureSpec(key=key, title="Resonator vs power", kind="2d",
@@ -199,12 +223,11 @@ def _vs_flux(bundle, key, qname, qidx, x_ghz):
         # += with shift = clicked − RF_at_run collapses to the clicked value),
         # but f_01 is a true INCREMENT — wrong by (f_01 − RF divergence) if
         # overwritten absolutely (real chips diverge, e.g. qB5 −1.23 MHz).
-        from .. import contracts as _contracts
-        flux_t = (_contracts.flux_absolute_targets(bundle, qname, axis="y")
+        flux_t = (contracts.flux_absolute_targets(bundle, qname, axis="y")
                   or {}).get("targets", [])
         f01_t = []
-        _inc = _contracts.freq_increment_targets(bundle, qname, axis="x",
-                                                 axis_scale=1e9, resonator=True)
+        _inc = contracts.freq_increment_targets(bundle, qname, axis="x",
+                                                axis_scale=1e9, resonator=True)
         if _inc:
             f01_t = [t for t in _inc["targets"] if t["path"].endswith(".f_01")]
         clickable = {

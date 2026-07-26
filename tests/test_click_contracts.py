@@ -377,6 +377,52 @@ def _patched_qubits(patches, *suffixes):
 
 
 @pytest.mark.skipif(not _DATASET_ROOT.is_dir(), reason="dataset archive not present")
+class TestResonatorVsPowerAmpGolden:
+
+    def test_05_amp_click_uses_actual_full_scale(self):
+        """05 vs power: the node writes amp = 10^((P − fs_actual)/20) via
+        set_output_power against the chip's ACTUAL port full-scale. The old
+        attr-pair conversion implied fs = max_power − 20·log10(max_amp), which
+        the legacy 3 dB power grid can snap away from — on the pinning run the
+        two disagreed by exactly 3 dB and the staged amplitude was 3 dB hot.
+        Click at the fitted optimal power → staged == the node's own patch."""
+        from quam_state_manager.core.interactive_plots import build_interactive_figure
+        for folder in sorted(_DATASET_ROOT.rglob("#*resonator_spectroscopy_vs_power*")):
+            if "_iq" in folder.name or "qubit_spectroscopy" in folder.name:
+                continue
+            if not (folder / "ds_fit.h5").exists():
+                continue
+            patches = _patches(folder)
+            ampp = {}
+            for p in patches:
+                parts = str(p.get("path", "")).split("/")
+                if "qubits" in parts and str(p["path"]).endswith("/readout/amplitude"):
+                    ampp[parts[parts.index("qubits") + 1]] = p
+            if not ampp:
+                continue
+            run = _bundle_for(folder)
+            if run is None:
+                continue
+            for qname, patch in ampp.items():
+                p_opt = ((run.fit_results or {}).get(qname) or {}).get("optimal_power")
+                if p_opt is None:
+                    continue
+                fig = build_interactive_figure(run, f"amplitude::{qname}")
+                if not fig or not fig.get("clickable"):
+                    continue
+                amp_t = next((t for t in fig["clickable"]["targets"]
+                              if (t.get("transform") or {}).get("type") == "dbm_to_amp"),
+                             None)
+                assert amp_t is not None, "amp target must be offered"
+                tr = amp_t["transform"]
+                staged = tr.get("scale", 1) * 10 ** ((float(p_opt) - tr["ref_dbm"]) / 20)
+                assert staged == pytest.approx(float(patch["value"]), rel=1e-9), \
+                    "click at the fitted optimal power must reproduce the node's write"
+                return
+        pytest.skip("no patched 05 run with optimal_power in the archive")
+
+
+@pytest.mark.skipif(not _DATASET_ROOT.is_dir(), reason="dataset archive not present")
 class TestQubitSpecVsPowerGoldens:
 
     def _run_with_patches(self):

@@ -174,3 +174,30 @@ fs −11 **clamp branch** + amp `0.04158775887163147` bit-identical; α
 mirror in app.js is not executed by tests, parity rests on these pinned
 numbers) and `::TestQubitSpecVsPowerGoldens` (round-trip vs `patches[]`,
 auto-skip without the archive).
+
+## Amendment (2026-07-27): 05 vs-power amplitude contract — actual full-scale, not the attr pair
+
+Sweep-verification of 03/05/08b against real archives found the 05 amplitude
+click staging **3 dB hot** on one patched archive run. Root cause: the node
+writes `amp = 10^((P − fs)/20)` via `set_output_power` against the chip's
+ACTUAL readout full-scale; `_amp_conversion` preferred the dataset's
+`max_power_dbm`/`max_amp` attrs, which only *imply* that full-scale when the
+legacy 3 dB power grid didn't snap (the pinning run: fs −2 vs implied −5 —
+exactly the observed 3 dB). The current lab chip happens to sit exactly on
+the implied value, so the error was latent there.
+
+Fix: `_amp_conversion` now prefers the **pointer-resolved snapshot
+full-scale** (scale = 1), **patches-aware** (an fs patch at the resolved
+port path means the written amplitude used the NEW value), with the attr
+pair → run-params demoted to fallback. The twin log-amp axis inherits the
+correction; the amp target now carries a provenance block naming its
+reference source and the honest limitation (a click far enough out of range
+that the node would also move the full-scale can't be reproduced by
+amplitude-only staging). Pinned by
+`test_click_contracts.py::TestResonatorVsPowerAmpGolden` (round-trip vs the
+node's own patch, auto-skip without the archive — executed against the real
+archive at fix time: bit-exact) and the updated
+`test_interactive_plots.py::test_amp_conversion_source_order` (synthetic,
+always runs, includes the patches-aware branch). 03 (all five figures +
+f_01/RF assign) and 08b re-verified green in the same sweep; the excluded
+05b `_iq` variant stays static-only by design.
