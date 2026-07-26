@@ -6818,6 +6818,16 @@ function _attachInteractivePlotClickHandler(plotDiv, clickable, runId) {
             } else if (t.transform && t.transform.type === 'ceil4') {
                 // CZ length contract: ceil(clicked_ns / 4) * 4 (+ add).
                 value = Math.ceil(av / 4) * 4 + (t.transform.add || 0);
+            } else if (t.transform && t.transform.type === 'dbm_gridfs') {
+                // 08b drive-power contract: the node realises a dBm as a PAIR —
+                // full-scale on the 1 dB grid + waveform amplitude. Mirror of
+                // recipes/qubit_spec_vs_power.fs_and_amp (parity pinned by
+                // TestDbmGridFs against real patch values):
+                //   fs  = clamp(ceil(P − 20·log10(max_amp)), fs_min, fs_max)
+                //   amp = 10^((P − fs)/20)
+                var gfs = Math.ceil(av - 20 * Math.log10(t.transform.max_amp));
+                gfs = Math.min(Math.max(gfs, t.transform.fs_min), t.transform.fs_max);
+                value = (t.transform.part === 'fs') ? gfs : Math.pow(10, (av - gfs) / 20);
             } else if (t.transform && t.transform.type === 'wrap01') {
                 // MOD-WRAP phase contract (CZ phase compensation): the node
                 // writes (pre ± clicked frame) mod 1 — 2π units. a=±1, b=pre.

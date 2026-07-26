@@ -132,3 +132,45 @@ node's fit optimum through the baked affine must equal the node's own
   (39_2 SNZ).
 - `tests/ndview_selfcheck.cjs` — jsdom, loads the **real app.js** with a Plotly
   stub (run with `NODE_PATH=<repo>/node_modules node tests/ndview_selfcheck.cjs`).
+
+## Amendment (2026-07-26): 1Q_08b qubit spectroscopy vs power
+
+New recipe `recipes/qubit_spec_vs_power.py` (`FAMILY =
+("1Q_08b_qubit_spectroscopy_vs_power",)`; tier-2 covers standalone
+`08b_...` names; the `_vs_power` suffix keeps it disjoint from plain 08).
+The map carries TWO physically distinct lines — the GE line (→ `f_01`) and
+the 2-photon g→f/2 line (→ `anharmonicity`) — and one click cannot be both
+interpretations (Apply All would stage contradictions), so the recipe emits
+**two tiles per qubit** over the same heatmap:
+
+- **`power_dbm`** — x assigns `f_01` + `xy.RF_frequency` absolutely (the
+  node assigns the fitted absolute; patch-verified). y stages the node's
+  **coupled drive-power pair** via the new `dbm_gridfs` client transform:
+  `fs = clamp(ceil(P − 20·log10(max_amp)), −11…16)` (the node's 1 dB grid)
+  written to the **port path the run snapshot's pointer resolves to**
+  (exactly where the node's `get_reference` write landed), plus
+  `operations.saturation.amplitude = 10^((P−fs)/20)`. PAIR-OR-NOTHING: no
+  resolvable port pointer / non-"saturation" swept operation ⇒ the power
+  axis degrades to a read-only context row (staging half a pair under a
+  moved full-scale would realise the wrong power). When the run overrode
+  `operation_len_in_ns`, the length is staged too (click-independent
+  scale-0 target) so the trio stays self-consistent. Twin log-amp y2 axis
+  as in resonator vs power.
+- **`two_photon`** — x assigns `anharmonicity = 2·(f_01_fit − clicked)`,
+  plain affine anchored to THIS run's fitted GE frequency (ds_fit
+  `res_freq` == the run's own f_01 patch value). This deliberately upgrades
+  the old "anharmonicity is a delta ⇒ view-only" stance (28_ef): here the
+  GE anchor is fitted in the *same run*, so the delta math is fully
+  determined. Only offered when the analysis carries the ef fit — the older
+  generation (no `anharmonicity_fitted`/`twophoton_freq_fitted`) gets an
+  honest unavailable tile, never a wrong contract.
+
+Verified digit-exact against a real 8-qubit run's patches (f_01 assign;
+fs −11 **clamp branch** + amp `0.04158775887163147` bit-identical; α
+`212400000` exact) and against a graph-launched older-generation run
+(correct view-only degrade). Goldens:
+`tests/test_click_contracts.py::TestQubitSpecVsPowerUnit` (matcher routing +
+`dbm_gridfs` server/client parity pinned on real patch values — the JS
+mirror in app.js is not executed by tests, parity rests on these pinned
+numbers) and `::TestQubitSpecVsPowerGoldens` (round-trip vs `patches[]`,
+auto-skip without the archive).
