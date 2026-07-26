@@ -29,7 +29,9 @@
     {% elif change_count > 0 %}Working state · {{ change_count }} unsaved
     {% elif working_dirty %}Working state · not applied
     {% else %}Synced{% endif %}
-    {% if active_name %}<span class="state-status-name">{{ active_name }}</span>{% endif %}
+    {# title: the name span ellipsizes at 26ch, so hover must recover the full
+       folder name (the button's own title explains the status instead). #}
+    {% if active_name %}<span class="state-status-name" title="{{ active_name }}">{{ active_name }}</span>{% endif %}
 </button>
 {% endif %}
 {% if change_count > 0 or working_dirty %}

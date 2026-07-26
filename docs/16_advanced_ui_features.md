@@ -358,6 +358,17 @@ The tray is a stable DOM element (included in `base.html`, never swapped away by
 
 The tray open/closed state is stored in `sessionStorage` under `quam_tray_open`. The `htmx:afterSettle` event fires after every OOB swap, calling `_restoreTrayState()` to re-apply the expanded class so the drawer stays open across edits.
 
+### Topbar-era layout fix (2026-07-26)
+
+The tray has since moved from the bottom dock into the topbar (`<li id="topbar-tray-slot">` in `base.html`), where it grew neighbours — the ⚗ QUAlibrate project badge (docs/55) and the working-state status pill. Three layout defects showed whenever a chip + active project + pending change were all present at once:
+
+1. **Overlapping pills on wrap.** `#pending-tray` was a plain block: the badges are `inline-flex` pills whose ~27px border boxes overflow their `line-height: 1.4` line boxes, so when the topbar got tight the wrapped lines overlapped — borders cutting through each other — and the block-level `.tray-bar` always forced its own row, even at ≥1400px.
+   **Fix:** `#pending-tray` is now a wrapping `inline-flex` cluster (`align-items: center; flex-wrap: wrap; row-gap: .3rem`) — flex lines size to the tallest item so wrapped rows can never overlap, and the amber bar sits inline whenever it fits. The staleness-conflict variant (`_state_apply_conflict.html`) keeps `display: block` (a deliberate multi-row panel: bar / note / choices). `.topbar > nav > ul` gained `row-gap: .25rem` so wrapped nav rows (bookmark / issues badges) keep a gap too.
+2. **Stray amber hairline under the topbar.** The collapsed review drawer (`.tray-drawer`, `max-height: 0; overflow: hidden`) still painted its 1px amber border — at its `min-width: 320px` — plus drop shadow: `max-height` clips the content, not the border box. **Fix:** `.tray-drawer:not(.tray-expanded) { border-width: 0; box-shadow: none; }`.
+3. **Unbounded folder name.** `.state-status-name` (the chip folder name inside the status pill) caps at `26ch` with ellipsis; the span now carries `title="{{ active_name }}"` so hover recovers the full name (the button's own title explains the status, not the name).
+
+Residual (pre-existing, out of scope here): when the cluster does wrap, the topbar grows taller than the `--topbar-height` literal that `calc(100vh − topbar)` panels assume, so those panels can extend slightly past the viewport bottom until the window widens again.
+
 ---
 
 ## Current test count

@@ -821,7 +821,9 @@ body {
    <details>-wrapped bookmark land on slightly different baselines. Force
    flex-centering on the nav row and each direct item so their centers align. */
 .topbar > nav { align-items: center; }
-.topbar > nav > ul { align-items: center; }
+/* When the nav wraps (tray cluster + bookmark + issues on narrow windows),
+   keep a breathing gap between the wrapped rows instead of cramming them. */
+.topbar > nav > ul { align-items: center; row-gap: .25rem; }
 .topbar > nav > ul > li { display: inline-flex; align-items: center; }
 .topbar .archive-wrap, .topbar .archive-details { display: inline-flex; align-items: center; }
 /* Pico gives <details> a margin-bottom; inside the centered flex <li> that bottom
@@ -1694,6 +1696,22 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
 /* ---------------------------------------------------------------- */
 #pending-tray.tray-empty { display: none; }
 #topbar-tray-slot { margin: 0; }
+/* The tray is a WRAPPING flex cluster (⚗ project badge · status pill · amber
+   action bar). As a plain block it broke two ways: the inline-flex pills'
+   ~27px border boxes overflow their 1.4 line boxes, so wrapped lines
+   OVERLAPPED (borders cutting through each other), and the block-level
+   .tray-bar always forced its own row even on wide screens. Flex lines size
+   to the tallest item — wrapped rows can never overlap — and the bar sits
+   inline whenever it fits. position: relative anchors the review drawer. */
+#pending-tray {
+    position: relative;
+    display: inline-flex; align-items: center; flex-wrap: wrap;
+    row-gap: .3rem;
+    min-width: 0;
+}
+/* Staleness-conflict variant (_state_apply_conflict.html) is a multi-row
+   panel (bar / note / choices stacked) — keep block flow. */
+#pending-tray.pending-tray-conflict { display: block; }
 
 /* Persistent working-copy / live-state status badge (topbar). Amber = local
    edits not yet on the live chip; neutral green dot = synced. Click → review. */
@@ -1720,7 +1738,10 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
     background: color-mix(in srgb, #a855f7 14%, transparent);
 }
 .state-status-archive .state-status-dot { color: #a855f7; }
-.state-status-name { opacity: .65; font-weight: 400; margin-left: .1rem; }
+/* Folder names are user-controlled and can be long — cap them so one name
+   can't push the whole topbar cluster into wrapping. Full name in tooltip. */
+.state-status-name { opacity: .65; font-weight: 400; margin-left: .1rem;
+    max-width: 26ch; overflow: hidden; text-overflow: ellipsis; }
 
 .tray-bar {
     display: flex; align-items: center; justify-content: space-between;
@@ -1763,11 +1784,15 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
     z-index: 101;
     box-shadow: 0 4px 12px rgba(0,0,0,.15);
 }
-#pending-tray { position: relative; }
 .tray-drawer.tray-expanded {
     max-height: var(--tray-drawer-max-height); overflow-y: auto;
     padding: 0.25rem 0.5rem;
 }
+/* Closed drawer must paint NOTHING. max-height: 0 clips the CONTENT but not
+   the border box: the 1px amber border (min-width 320px wide) + drop shadow
+   kept rendering as a stray hairline hanging under the topbar whenever a
+   change was pending. */
+.tray-drawer:not(.tray-expanded) { border-width: 0; box-shadow: none; }
 
 .tray-change-list { margin: 0; padding: 0; }
 .tray-change-item {
