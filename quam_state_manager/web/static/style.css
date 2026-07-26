@@ -1794,6 +1794,14 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
    change was pending. */
 .tray-drawer:not(.tray-expanded) { border-width: 0; box-shadow: none; }
 
+/* Drawer footer — home of "Save to working state" since it left the topbar. */
+.tray-drawer-foot {
+    display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
+    margin-top: .35rem; padding-top: .35rem;
+    border-top: 1px solid var(--pico-muted-border-color);
+}
+.tray-foot-hint { font-size: .78em; }
+
 .tray-change-list { margin: 0; padding: 0; }
 .tray-change-item {
     padding: 0.3rem 0;

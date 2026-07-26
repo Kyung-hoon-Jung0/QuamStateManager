@@ -1202,7 +1202,8 @@ class TestSaveFlow:
         loaded_client.post("/field/edit", data={"dot_path": "qubits.qA1.f_01", "value": "5.0e9"})
         html = loaded_client.get("/qubits").data.decode()
         # Pending edit, clean working state (change_count>0, not working_dirty) → the
-        # tray offers "Save to working state" + the one-click "⚡ Apply to live now".
+        # tray bar offers the one-click "⚡ Apply to live now"; "Save to working state"
+        # moved off the bar into the Review drawer's footer (same fragment, collapsed).
         assert "Save to working state" in html
         assert "Apply to live now" in html
 

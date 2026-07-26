@@ -46,12 +46,12 @@
       <button class="tray-review-btn" onclick="togglePendingTray()">
         <span id="tray-toggle-label">&#9660; Review</span>
       </button>
-      <button class="btn-sm btn-save"
-              hx-post="/save"
-              hx-target="#pending-tray"
-              hx-swap="outerHTML"
-              hx-disabled-elt="this"
-              title="Save these edits to the working state (the live chip stays untouched).">Save to working state</button>
+      {# "Save to working state" used to sit HERE. It's a rare action (park a
+         draft on disk without publishing to the instrument) that was costing a
+         ~150px always-on button in an already-overcrowded topbar, so it moved
+         into the Review drawer's footer. Keep it reachable somewhere: the
+         review MODAL only offers pull/apply/discard, so the drawer is now the
+         only UI path to /save. #}
       {% endif %}
       {% if _archive %}
       {# Read-only archive: applying to live is blocked server-side (409), and
@@ -112,6 +112,15 @@
         </div>
       </div>
       {% endfor %}
+    </div>
+    <div class="tray-drawer-foot">
+      <button class="btn-sm btn-save"
+              hx-post="/save"
+              hx-target="#pending-tray"
+              hx-swap="outerHTML"
+              hx-disabled-elt="this"
+              title="Save these edits to the working state — a durable draft on disk that survives an app restart. The live chip stays untouched.">Save to working state</button>
+      <span class="muted tray-foot-hint">Durable draft &mdash; the live chip stays untouched.</span>
     </div>
   </div>
   {% endif %}
