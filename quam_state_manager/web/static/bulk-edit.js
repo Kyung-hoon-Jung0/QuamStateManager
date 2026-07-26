@@ -24,9 +24,14 @@
     // fields the search couldn't find) — so this persists the HIDDEN set, not
     // an enabled set; empty/absent means "hide nothing".
     var DYNHIDDEN_KEY = 'quam_bulk_dynhidden';
+    // ⚏ Qubits (row) picker: per-CHIP persisted hidden-qubit set — chips differ
+    // in qubit sets, and hidden-set semantics mean new qubits default to visible
+    // (same trick as the column picker's HIDE_KEY).
+    var QHIDE_PREFIX = 'quam_bulk_qhidden:';
     var COLS = [];                 // column model from the server: {key,label,section,unit,default_on[,dyn]}
     var BANDS = {};                // {"1":[lo,hi], ...} MW-FEM band ranges (from server)
     var DYN = [];                  // FULL dynamic model: {key,label,section,unit,kind}
+    var QMETA = { chip: '', qubits: [] };   // ⚏ Qubits payload: {id, grid:"c,r"|null} per qubit
     var _dynHintKeys = [];         // dyn keys matching the current search but hidden
     var _reopenColvis = false;     // r7: keep the Properties menu open across a dyn-toggle reload
     var sortKey = null, sortDir = 1;
@@ -306,6 +311,200 @@
             .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
+    // ── ⚏ Qubits — which ROWS are shown (mirror of the Properties picker) ────
+    // Per-chip persisted HIDDEN set; chip-map (grid_location "c,r", row 0 at
+    // the BOTTOM → Y flipped) + grouped checkbox list. A row with an unsaved
+    // edit can never be hidden — "Apply all" stays "apply what you see". The
+    // pair grid follows: a pair hides when either resolved member is hidden
+    // (fail-open when the pair id can't be resolved against the qubit ids).
+    function _qKey() { return QHIDE_PREFIX + (QMETA.chip || 'chip'); }
+    function _qHidden() {
+        try {
+            var a = JSON.parse(localStorage.getItem(_qKey()) || '[]');
+            return new Set(Array.isArray(a) ? a : []);
+        } catch (e) { return new Set(); }
+    }
+    function _saveQHidden(set) {
+        try { localStorage.setItem(_qKey(), JSON.stringify(Array.from(set))); } catch (e) {}
+    }
+    function _rowDirty(tr) { return _cells(tr).some(_isDirty); }
+    function _qGroupOf(id) {
+        var m = /^q([A-Za-z]+)/.exec(id);
+        return m ? m[1].toUpperCase() : '·';
+    }
+    function _qDirtyIds() {
+        var d = {};
+        _rows().forEach(function (r) {
+            if (_rowDirty(r)) d[r.getAttribute('data-qubit') || ''] = true;
+        });
+        return d;
+    }
+
+    // Core visibility pass — NO applySearch/_recomputeStats here: this also runs
+    // from _refreshGlobal (every cell keystroke), and re-running the search there
+    // could hide the very row being edited mid-keystroke (its cell value can stop
+    // matching a value token).
+    function _applyQubitVisCore() {
+        var t = table(); if (!t) return;
+        var hid = _qHidden();
+        var rows = _rows();
+        var shown = 0;
+        rows.forEach(function (r) {
+            var id = r.getAttribute('data-qubit') || '';
+            var off = hid.has(id) && !_rowDirty(r);   // unsaved edits never vanish
+            r.classList.toggle('bulk-qubit-off', off);
+            if (!off) shown++;
+        });
+        var pill = document.getElementById('bulk-qubit-pill');
+        if (pill) {
+            pill.hidden = shown === rows.length;
+            pill.textContent = shown + ' of ' + rows.length + ' qubits — Show all';
+        }
+        _applyPairFollow(hid);
+    }
+    function applyQubitVis() {
+        _applyQubitVisCore();
+        _recomputeStats();   // min/max + extreme colouring over the visible scope
+        applySearch();       // combined "N of M" row count
+    }
+
+    function _pairMembers(pid) {
+        // Pair ids occur as BOTH 'qA1-qA2' and 'qA2-A1' — resolve every dash
+        // segment against the chip's real qubit ids ('A1' → 'qA1'); anything
+        // unresolved ⇒ [] ⇒ the pair is never hidden by the qubit selection.
+        var ids = QMETA.qubits.map(function (q) { return q.id; });
+        var out = [];
+        String(pid || '').split('-').forEach(function (p) {
+            if (ids.indexOf(p) >= 0) out.push(p);
+            else if (ids.indexOf('q' + p) >= 0) out.push('q' + p);
+        });
+        return out.length === 2 ? out : [];
+    }
+    function _applyPairFollow(hid) {
+        var pt = document.getElementById('bulk-pair-table'); if (!pt) return;
+        Array.prototype.slice.call(pt.querySelectorAll('tbody tr[data-pair]')).forEach(function (r) {
+            var m = _pairMembers(r.getAttribute('data-pair'));
+            var off = m.length === 2 && (hid.has(m[0]) || hid.has(m[1]));
+            if (off && _rowDirty(r)) off = false;
+            r.classList.toggle('bulk-qubit-off', off);
+        });
+    }
+
+    function _buildQubitMenu() {
+        var menu = document.getElementById('bulk-qubitvis-menu');
+        if (!menu) return;
+        var hid = _qHidden();
+        var dirty = _qDirtyIds();
+        var qs = QMETA.qubits;
+        var html = '<div class="bulk-colvis-actions">' +
+            '<button type="button" class="btn-xs outline" data-qsel="all">All</button>' +
+            '<button type="button" class="btn-xs outline" data-qsel="none">None</button>' +
+            '<button type="button" class="btn-xs outline" data-qsel="invert">Invert</button></div>';
+
+        // chip map — only when ≥2 qubits carry a parseable grid_location
+        var sited = qs.filter(function (q) { return /^\s*\d+\s*,\s*\d+\s*$/.test(q.grid || ''); });
+        if (sited.length >= 2) {
+            var maxR = -Infinity, minC = Infinity;
+            sited.forEach(function (q) {
+                var p = q.grid.split(',');
+                var c = parseInt(p[0], 10), r = parseInt(p[1], 10);
+                if (r > maxR) maxR = r;
+                if (c < minC) minC = c;
+            });
+            html += '<div class="bulk-colvis-sec">Chip map — click to toggle</div>' +
+                '<div class="bulk-qmap">';
+            sited.forEach(function (q) {
+                var p = q.grid.split(',');
+                var c = parseInt(p[0], 10), r = parseInt(p[1], 10);
+                var off = hid.has(q.id) && !dirty[q.id];
+                html += '<button type="button" class="bulk-qmap-cell' + (off ? ' off' : '') + '"' +
+                    ' style="grid-column:' + (c - minC + 1) + ';grid-row:' + (maxR - r + 1) + '"' +
+                    ' data-qtoggle="' + _esc(q.id) + '" title="' + _esc(q.id) +
+                    (dirty[q.id] ? ' — has an unsaved edit (cannot hide)'
+                                 : ' — click to ' + (off ? 'show' : 'hide')) + '">' +
+                    _esc(q.id) + '</button>';
+            });
+            html += '</div>';
+        }
+
+        // grouped checkbox list (by row letter — feedline groups on lettered chips)
+        var groups = [], seen = {};
+        qs.forEach(function (q) {
+            var g = _qGroupOf(q.id);
+            if (!seen[g]) { seen[g] = true; groups.push(g); }
+        });
+        var multi = groups.length > 1;
+        groups.forEach(function (g) {
+            if (multi) {
+                html += '<div class="bulk-colvis-sec bulk-qgroup-head"><span>' + _esc(g) + '</span>' +
+                    '<span><button type="button" class="btn-xs outline" data-qgroup-on="' + _esc(g) + '">show</button> ' +
+                    '<button type="button" class="btn-xs outline" data-qgroup-off="' + _esc(g) + '">hide</button></span></div>';
+            }
+            qs.forEach(function (q) {
+                if (_qGroupOf(q.id) !== g) return;
+                var isDirty = !!dirty[q.id];
+                var checked = !hid.has(q.id) || isDirty;
+                html += '<label class="bulk-colvis-item bulk-qubit-item"><span>' +
+                    '<input type="checkbox" data-qcb="' + _esc(q.id) + '"' +
+                    (checked ? ' checked' : '') + (isDirty ? ' disabled' : '') + '> ' +
+                    _esc(q.id) + '</span>' +
+                    (isDirty
+                        ? '<span class="bulk-qdirty" title="This qubit has an unsaved edit — apply or reset it first">unsaved edit</span>'
+                        : '<button type="button" class="bulk-qonly" data-qonly="' + _esc(q.id) + '" title="Show only ' + _esc(q.id) + '">only</button>') +
+                    '</label>';
+            });
+        });
+        menu.innerHTML = html;
+
+        if (!menu._qBound) {
+            menu._qBound = true;
+            menu.addEventListener('click', function (ev) {
+                var b = ev.target.closest('[data-qsel],[data-qtoggle],[data-qonly],[data-qgroup-on],[data-qgroup-off]');
+                if (!b) return;
+                ev.preventDefault();
+                var hid2 = _qHidden();
+                var dirty2 = _qDirtyIds();
+                var all = QMETA.qubits.map(function (q) { return q.id; });
+                if (b.hasAttribute('data-qsel')) {
+                    var mode = b.getAttribute('data-qsel');
+                    if (mode === 'all') hid2 = new Set();
+                    else if (mode === 'none') hid2 = new Set(all.filter(function (id) { return !dirty2[id]; }));
+                    else all.forEach(function (id) {
+                        if (dirty2[id]) { hid2.delete(id); return; }
+                        if (hid2.has(id)) hid2.delete(id); else hid2.add(id);
+                    });
+                } else if (b.hasAttribute('data-qtoggle')) {
+                    var id = b.getAttribute('data-qtoggle');
+                    if (dirty2[id] || hid2.has(id)) hid2.delete(id); else hid2.add(id);
+                } else if (b.hasAttribute('data-qonly')) {
+                    var only = b.getAttribute('data-qonly');
+                    hid2 = new Set(all.filter(function (id) { return id !== only && !dirty2[id]; }));
+                } else {
+                    var g = b.getAttribute('data-qgroup-on') || b.getAttribute('data-qgroup-off');
+                    var show = b.hasAttribute('data-qgroup-on');
+                    all.forEach(function (id) {
+                        if (_qGroupOf(id) !== g) return;
+                        if (show || dirty2[id]) hid2.delete(id); else hid2.add(id);
+                    });
+                }
+                _saveQHidden(hid2);
+                applyQubitVis();
+                _buildQubitMenu();
+            });
+            menu.addEventListener('change', function (ev) {
+                var cb = ev.target.closest('input[data-qcb]');
+                if (!cb) return;
+                var hid2 = _qHidden();
+                var id = cb.getAttribute('data-qcb');
+                if (cb.checked) hid2.delete(id);
+                else if (!_qDirtyIds()[id]) hid2.add(id);
+                _saveQHidden(hid2);
+                applyQubitVis();
+                _buildQubitMenu();
+            });
+        }
+    }
+
     // ── search (columns by label, rows by id, cells by comma-insensitive value) ─
     function applySearch() {
         var t = table(); if (!t) return;
@@ -380,7 +579,8 @@
             var id = (r.getAttribute('data-qubit') || '').toLowerCase();
             var vis = rowVisible(id, rowHay[i]);
             r.classList.toggle('bulk-row-hidden', !vis);
-            if (vis) shown++;
+            // the count reflects what's actually on screen: search AND ⚏ Qubits
+            if (vis && !r.classList.contains('bulk-qubit-off')) shown++;
         });
         var cnt = document.getElementById('bulk-search-count');
         if (cnt) cnt.textContent = q ? (shown + ' of ' + rows.length) : '';
@@ -448,11 +648,18 @@
             var stat = t.querySelector('[data-col-stats="' + (window.CSS && CSS.escape ? CSS.escape(c.key) : c.key) + '"]');
             if (!stat) return;
             if (hide.has(c.key)) { stat.textContent = ''; return; }
-            var cells = Array.prototype.slice.call(
+            var allCells = Array.prototype.slice.call(
                 t.querySelectorAll('[data-col-key="' + (window.CSS && CSS.escape ? CSS.escape(c.key) : c.key) + '"] .bulk-cell'));
+            allCells.forEach(function (cell) { cell.classList.remove('cell-best', 'cell-worst'); });
+            // Stats + extreme colouring cover the VISIBLE scope only — with a ⚏
+            // Qubits selection active, chip-wide extremes on hidden rows would
+            // mislead (and could colour nothing the user can see).
+            var cells = allCells.filter(function (cell) {
+                var tr = cell.closest('tr');
+                return !(tr && tr.classList.contains('bulk-qubit-off'));
+            });
             var nums = [];
             cells.forEach(function (cell) { var n = _num(cell.value); if (n !== null) nums.push(n); });
-            cells.forEach(function (cell) { cell.classList.remove('cell-best', 'cell-worst'); });
             if (nums.length < 2) { stat.textContent = ''; return; }
             var mn = Math.min.apply(null, nums), mx = Math.max.apply(null, nums);
             stat.textContent = 'min ' + _grp(mn) + ' · max ' + _grp(mx);
@@ -504,6 +711,12 @@
         var all = document.getElementById('bulk-apply-all'); if (all) all.disabled = n === 0;
         var aps = document.getElementById('bulk-apply-sync'); if (aps) aps.disabled = n === 0;
         var rst = document.getElementById('bulk-reset'); if (rst) rst.disabled = n === 0;
+        // ⚏ Qubits: the dirty state feeds the picker (disabled entries) and the
+        // hidden-row force-show guard — refresh both on any dirty transition.
+        // Core pass only: re-running the SEARCH here could hide the row being
+        // edited the moment its value stops matching a value token.
+        _applyQubitVisCore();
+        _buildQubitMenu();
     }
 
     function _applyCells(cells, tr, silent, seenGlobal) {
@@ -866,13 +1079,17 @@
     }
 
     var BulkEdit = {
-        mount: function (columns, bandMeta, dynModel) {
+        mount: function (columns, bandMeta, dynModel, qubitMeta) {
             if (Array.isArray(columns)) COLS = columns;
             // An HTMX swap re-renders the tbody in server (default) order, so the
             // old sort no longer applies — clear it (the fresh header has no caret).
             sortKey = null; sortDir = 1;
             if (bandMeta && bandMeta.bands) BANDS = bandMeta.bands;
             DYN = Array.isArray(dynModel) ? dynModel : [];
+            if (qubitMeta && typeof qubitMeta === 'object') {
+                QMETA = { chip: String(qubitMeta.chip || ''),
+                          qubits: Array.isArray(qubitMeta.qubits) ? qubitMeta.qubits : [] };
+            }
             var t = table();
             if (!t) return;
             // Restore the persisted search/filter before applySearch runs below.
@@ -890,7 +1107,9 @@
                 var colvisDet = colvisMenu && colvisMenu.closest('details');
                 if (colvisDet) colvisDet.open = true;
             }
+            _buildQubitMenu();
             _applyColumnVisibility();
+            _applyQubitVisCore();   // restore the persisted ⚏ Qubits selection
             _recomputeStats();
             _setupTopScroll();
             _applyFont();
@@ -1257,6 +1476,12 @@
         setFreqSync: function (on) {
             try { localStorage.setItem(FREQSYNC_KEY, on ? '1' : '0'); } catch (e) {}
             var cb = document.getElementById('bulk-freq-sync'); if (cb) cb.checked = !!on;
+        },
+        // ⚏ Qubits pill: one click back to every row (clears the per-chip set).
+        showAllQubits: function () {
+            _saveQHidden(new Set());
+            applyQubitVis();
+            _buildQubitMenu();
         },
         setFont: function (scale) { try { localStorage.setItem(FONT_KEY, String(scale)); } catch (e) {} _applyFont(); },
         setLetterSpacing: function (ls) { try { localStorage.setItem(LS_KEY, String(ls)); } catch (e) {} _applyFont(); },

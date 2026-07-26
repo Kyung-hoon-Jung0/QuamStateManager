@@ -2463,6 +2463,15 @@ def bulk_edit():
     _bulk_col_maxlen(columns, grid, qids)
     column_groups = _bulk_column_groups(columns)
 
+    # Slim per-qubit metadata for the ⚏ Qubits row picker (chip-map + grouped
+    # list): id + grid_location only — the map's geometry comes from the chip
+    # itself (row 0 = bottom; the client flips Y). Non-string/absent grids
+    # degrade the picker to its list-only form.
+    qubit_meta = []
+    for qid in qids:
+        g = (merged.get("qubits", {}).get(qid) or {}).get("grid_location")
+        qubit_meta.append({"id": qid, "grid": g if isinstance(g, str) else None})
+
     # Pair grid (stacked below the qubit table): columns are DERIVED from the chip's
     # real pair leaves — lab-flexible, no hardcoded gate/leaf names. Same cell
     # pipeline + commit path. Empty for chips with no pairs / no editable pair leaves.
@@ -2480,7 +2489,7 @@ def bulk_edit():
     template = "_bulkedit.html" if _is_htmx() else "bulkedit.html"
     return render_template(template, **_ctx(page="bulk", columns=columns, rows=rows,
                                             column_groups=column_groups, band_meta=band_meta,
-                                            dyn_cols=dyn_cols,
+                                            dyn_cols=dyn_cols, qubit_meta=qubit_meta,
                                             pair_columns=pair_columns, pair_groups=pair_groups,
                                             pair_rows=pair_rows))
 

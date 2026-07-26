@@ -38,6 +38,17 @@
             <summary class="btn-sm outline" title="Choose which property columns to show">&#9776; Properties</summary>
             <div class="bulk-colvis-menu" id="bulk-colvis-menu" role="menu"></div>
         </details>
+        {# ⚏ Qubits — which ROWS are shown. Mirror of the Properties picker:
+           chip-map (from grid_location, row 0 = bottom) + grouped checkbox
+           list, per-chip persisted HIDDEN set (new qubits default visible).
+           A row with an unsaved edit can never be hidden. #}
+        <details class="bulk-colvis bulk-qubitvis">
+            <summary class="btn-sm outline" title="Choose which qubits (rows) are shown">&#9871; Qubits</summary>
+            <div class="bulk-colvis-menu bulk-qubitvis-menu" id="bulk-qubitvis-menu" role="menu"></div>
+        </details>
+        <button type="button" class="bulk-qubit-pill" id="bulk-qubit-pill" hidden
+                onclick="BulkEdit.showAllQubits()"
+                title="Some qubits are hidden by the &#9871; Qubits selection — click to show all"></button>
         <span class="bulk-search-wrap">
             <input type="search" id="bulk-search" class="bulk-search"
                    placeholder="Search columns, qubits, numbers…" autocomplete="off"
@@ -377,7 +388,7 @@
 </div>
 
 <script>
-    if (window.BulkEdit && BulkEdit.mount) BulkEdit.mount({{ columns | script_json }}, {{ band_meta | script_json }}, {{ (dyn_cols or []) | script_json }});
+    if (window.BulkEdit && BulkEdit.mount) BulkEdit.mount({{ columns | script_json }}, {{ band_meta | script_json }}, {{ (dyn_cols or []) | script_json }}, {{ {'chip': active_name or '', 'qubits': qubit_meta or []} | script_json }});
     {% if pair_rows %}
     if (window.BulkPairEdit && BulkPairEdit.mount) BulkPairEdit.mount({{ pair_columns | script_json }});
     {% endif %}
