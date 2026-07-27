@@ -94,6 +94,40 @@ class TestBulkRender:
         assert 'id="bulk-apply-all"' in body
         assert 'class="btn-xs bulk-row-apply"' in body
 
+    def test_qubit_picker_and_pill_render(self, client):
+        """⚏ Qubits row picker: menu container + the amber "N of M — Show all"
+        pill ship with the page (the menu itself is client-built)."""
+        body = client.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert 'id="bulk-qubitvis-menu"' in body
+        assert 'id="bulk-qubit-pill"' in body
+
+    def test_mount_payload_carries_chip_key_and_grid_locations(self, client):
+        """The mount call ships {chip, qubits:[{id, grid}]} — per-chip
+        persistence key + the chip-map geometry (grid_location verbatim)."""
+        body = client.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
+        m = re.search(r"BulkEdit\.mount\((.*)\);", body)
+        assert m, "BulkEdit.mount call missing"
+        payload = m.group(1)
+        assert re.search(r'"chip"\s*:', payload)
+        assert re.search(r'"id"\s*:\s*"qA1"', payload)
+        assert re.search(r'"grid"\s*:\s*"2,4"', payload)
+
+    def test_mount_payload_null_grid_when_chip_has_none(self, tmp_path):
+        """No grid_location on the chip → grid: null (picker degrades to its
+        list-only form; never crashes the render)."""
+        state = _state()
+        for q in state["qubits"].values():
+            q.pop("grid_location", None)
+        (tmp_path / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        (tmp_path / "wiring.json").write_text(json.dumps(_wiring()), encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "_app_instance"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(tmp_path)})
+        body = c.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
+        m = re.search(r"BulkEdit\.mount\((.*)\);", body)
+        assert m, "BulkEdit.mount call missing"
+        assert re.search(r'"grid"\s*:\s*null', m.group(1))
+
     def test_group_header_band(self, client):
         body = client.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
         # a spanning group row labels each section over its columns
