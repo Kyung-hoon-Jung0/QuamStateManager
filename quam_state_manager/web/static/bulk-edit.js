@@ -34,6 +34,12 @@
     var QMETA = { chip: '', qubits: [] };   // ⚏ Qubits payload: {id, grid:"c,r"|null} per qubit
     var _dynHintKeys = [];         // dyn keys matching the current search but hidden
     var _reopenColvis = false;     // r7: keep the Properties menu open across a dyn-toggle reload
+    // ── search-typing performance (audit: "typing in Live Edit is slow") ─────
+    // A real chip renders ~150 columns × ~30 rows ≈ 2000 cells; re-scanning all
+    // of them AND re-toggling their classes per keystroke froze typing.
+    var _searchTimer = null;       // debounce: one applySearch per typing pause
+    var _hayCache = null;          // { key, rowMap: WeakMap(row→[hay]), colHay } across keystrokes
+    var _lastDirtySig = null;      // ⚏ picker refresh gate: dirty-ID set signature
     var sortKey = null, sortDir = 1;
 
     // f_01 ↔ RF_frequency column pairs (same row = same qubit). RF_frequency is the
@@ -547,23 +553,37 @@
             return true;
         }
 
-        // gather per-column cell haystacks (only over checkbox-visible columns)
+        // gather per-column cell haystacks (only over checkbox-visible columns).
+        // CACHED across keystrokes — rebuilding ~2000 lowercased strings +
+        // closest() walks per key was half the typing lag. Invalidated by
+        // _refreshGlobal (any cell input/commit/reset/JSON edit funnels
+        // through it) and keyed on the hidden-column set; rows are keyed by
+        // ELEMENT (WeakMap), so sorting never stales the cache.
         var rows = _rows();
-        var colHay = {};   // key -> [haystack...]
-        visCols.forEach(function (c) { colHay[c.key] = []; });
-        var rowHay = rows.map(function (r) {
-            var hs = [];
-            _cells(r).forEach(function (cell) {
-                var k = cell.closest('[data-col-key]').getAttribute('data-col-key');
-                if (hide.has(k)) return;
-                var disp = cell.value.toLowerCase();
-                var bare = disp.replace(/,/g, '');
-                var h = disp + ' ' + bare;
-                hs.push(h);
-                if (colHay[k]) colHay[k].push(h);
+        var hayKey = Array.from(hide).sort().join(',');
+        if (!_hayCache || _hayCache.key !== hayKey) {
+            _hayCache = { key: hayKey, rowMap: new WeakMap(), colHay: null };
+        }
+        var colHay = _hayCache.colHay;
+        if (!colHay) {
+            colHay = {};
+            visCols.forEach(function (c) { colHay[c.key] = []; });
+            rows.forEach(function (r) {
+                var hs = [];
+                _cells(r).forEach(function (cell) {
+                    var k = cell.closest('[data-col-key]').getAttribute('data-col-key');
+                    if (hide.has(k)) return;
+                    var disp = cell.value.toLowerCase();
+                    var bare = disp.replace(/,/g, '');
+                    var h = disp + ' ' + bare;
+                    hs.push(h);
+                    if (colHay[k]) colHay[k].push(h);
+                });
+                _hayCache.rowMap.set(r, hs);
             });
-            return hs;
-        });
+            _hayCache.colHay = colHay;
+        }
+        var rowHay = rows.map(function (r) { return _hayCache.rowMap.get(r) || []; });
 
         // decide column visibility (search layer, on top of checkbox layer)
         var colSearchHide = {};
@@ -716,12 +736,22 @@
         var all = document.getElementById('bulk-apply-all'); if (all) all.disabled = n === 0;
         var aps = document.getElementById('bulk-apply-sync'); if (aps) aps.disabled = n === 0;
         var rst = document.getElementById('bulk-reset'); if (rst) rst.disabled = n === 0;
+        // Any path through here means cell values/dirty state may have changed
+        // (typing, mirror writes, apply, reset, JSON edits all funnel through)
+        // — drop the search-haystack cache so the next search sees fresh text.
+        _hayCache = null;
         // ⚏ Qubits: the dirty state feeds the picker (disabled entries) and the
-        // hidden-row force-show guard — refresh both on any dirty transition.
-        // Core pass only: re-running the SEARCH here could hide the row being
-        // edited the moment its value stops matching a value token.
-        _applyQubitVisCore();
-        _buildQubitMenu();
+        // hidden-row force-show guard — refresh both when the dirty-ID SET
+        // changes (gated: rebuilding the picker menu on every keystroke of a
+        // cell edit was measurable typing overhead). Core pass only: re-running
+        // the SEARCH here could hide the row being edited the moment its value
+        // stops matching a value token.
+        var sig = Object.keys(_qDirtyIds()).sort().join(',');
+        if (sig !== _lastDirtySig) {
+            _lastDirtySig = sig;
+            _applyQubitVisCore();
+            _buildQubitMenu();
+        }
     }
 
     function _applyCells(cells, tr, silent, seenGlobal) {
@@ -1089,6 +1119,7 @@
             // An HTMX swap re-renders the tbody in server (default) order, so the
             // old sort no longer applies — clear it (the fresh header has no caret).
             sortKey = null; sortDir = 1;
+            _hayCache = null; _lastDirtySig = null;   // fresh DOM → fresh caches
             if (bandMeta && bandMeta.bands) BANDS = bandMeta.bands;
             DYN = Array.isArray(dynModel) ? dynModel : [];
             if (qubitMeta && typeof qubitMeta === 'object') {
@@ -1219,7 +1250,12 @@
             var search = document.getElementById('bulk-search');
             if (search) search.addEventListener('input', function () {
                 try { localStorage.setItem(SEARCH_KEY, search.value); } catch (e) {}
-                applySearch();
+                // DEBOUNCED (audit: typing here was slow): applySearch re-scans
+                // the table and re-toggles ~2000 cells' classes — a full-table
+                // reflow on a multi-MB DOM. One pass shortly after the last
+                // keystroke instead of one per key.
+                if (_searchTimer) clearTimeout(_searchTimer);
+                _searchTimer = setTimeout(applySearch, 120);
             });
 
             // nav guard: warn before losing unapplied edits
@@ -1457,6 +1493,7 @@
                             inp.value = badge;
                             inp.setAttribute('data-orig', badge);   // committed, not dirty
                             inp.classList.add('bulk-cell-modified');
+                            _hayCache = null;   // badge text changed → fresh search haystacks
                         }
                     }
                     if (jb.tray_html && window._swapPendingTray) {
