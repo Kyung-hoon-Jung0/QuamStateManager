@@ -217,15 +217,27 @@ class QueryEngine:
             # Use ``or {}`` (not ``.get(k, {})``) because the value may be
             # explicitly null in state.json — ``dict.get`` only falls back
             # to the default when the key is MISSING, not when it's None.
+            # Wizard-built chips (run_build._seed_cz_variant — and customer
+            # chips built with the same pair_gates recipe) store the macro's
+            # flux_pulse_qubit / coupler_flux_pulse as JSON REFERENCES to the
+            # op on the moving qubit's z (or the coupler) line — the op is the
+            # single calibration home. Deref the reference to its target dict
+            # (re-anchoring the path so inner relative pointers resolve in the
+            # TARGET's frame); calling .get() on the raw pointer string used
+            # to crash the whole Pairs page on such chips.
             fpq = gate.get("flux_pulse_qubit") or {}
+            fpq_base = base + ("macros", gate_name, "flux_pulse_qubit")
+            fpq, fpq_base = _deref_pulse_ref(self.store, fpq, fpq_base)
             result[f"{prefix}_amplitude"] = fpq.get("amplitude")
-            result[f"{prefix}_length"] = _resolve(self.store, fpq.get("length"), base + ("macros", gate_name, "flux_pulse_qubit", "length"))
+            result[f"{prefix}_length"] = _resolve(self.store, fpq.get("length"), fpq_base + ("length",))
 
             if "flat_length" in fpq:
                 result[f"{prefix}_flat_length"] = fpq.get("flat_length")
                 result[f"{prefix}_smoothing_length"] = fpq.get("smoothing_length")
 
             cfp = gate.get("coupler_flux_pulse") or {}
+            cfp_base = base + ("macros", gate_name, "coupler_flux_pulse")
+            cfp, _cfp_base = _deref_pulse_ref(self.store, cfp, cfp_base)
             result[f"{prefix}_coupler_amplitude"] = cfp.get("amplitude")
 
             result[f"{prefix}_phase_shift_control"] = gate.get("phase_shift_control")
@@ -1141,6 +1153,31 @@ def _resolve(store: QuamStore, value: Any, path_tuple: tuple[str, ...]) -> Any:
     if is_pointer(value) and not is_self_ref(value):
         return store.resolve_pointer(value, path_tuple)
     return value
+
+
+def _deref_pulse_ref(
+    store: QuamStore, val: Any, path_tuple: tuple[str, ...],
+) -> tuple[dict, tuple[str, ...]]:
+    """Follow a pointer-valued pulse field to its target dict.
+
+    ``(value, effective_path)``: an inline dict passes through unchanged (the
+    pre-existing behavior, byte-identical); a pointer (``"#/qubits/q1/z/
+    operations/<op>"`` — the form run_build's CZ seeds and the pair_gates
+    recipe write) returns the resolved TARGET dict together with the target's
+    path tuple, so inner relative pointers keep resolving in the right frame.
+    Anything unresolvable (dangling pointer, ``#./`` self-ref, non-dict
+    target) degrades to ``({}, path)`` — the pair renders with blank fields
+    instead of crashing the Pairs page.
+    """
+    if isinstance(val, dict):
+        return val, path_tuple
+    if isinstance(val, str) and is_pointer(val):
+        resolved = _resolve(store, val, path_tuple)
+        if isinstance(resolved, dict):
+            if val.startswith("#/"):
+                return resolved, tuple(val[2:].split("/"))
+            return resolved, path_tuple
+    return {}, path_tuple
 
 
 def _pair_qubit_ref(store: QuamStore, raw: Any, path_tuple: tuple[str, ...]) -> Any:

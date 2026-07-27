@@ -287,6 +287,57 @@ class TestGetPair:
         assert p["cz_flattop_standard_rb"] == 0.55
         assert p["cz_flattop_interleaved_rb"] == 0.92
 
+    def test_pointer_form_flux_pulse_macro(self):
+        """Wizard-built chips (and customer chips built with the same
+        pair_gates recipe) store the CZ macro's flux_pulse_qubit /
+        coupler_flux_pulse as JSON REFERENCES to the op on the moving qubit's
+        z (or the coupler) line. get_pair must deref to the target dict —
+        calling .get() on the raw pointer string crashed the whole Pairs page
+        on a real customer chip."""
+        store = QuamStore.from_dicts({
+            "qubits": {
+                "q1": {"id": "q1", "z": {"operations": {
+                    "cz_unipolar_flux_pulse_q1_q2": {
+                        "amplitude": 0.2, "length": 40}}}},
+                "q2": {"id": "q2"},
+            },
+            "qubit_pairs": {"q1-2": {
+                "id": "q1-2",
+                "qubit_control": "#/qubits/q1",
+                "qubit_target": "#/qubits/q2",
+                "moving_qubit": "control",
+                "coupler": None,
+                "macros": {"cz_unipolar": {
+                    "flux_pulse_qubit":
+                        "#/qubits/q1/z/operations/cz_unipolar_flux_pulse_q1_q2",
+                    "coupler_flux_pulse": None,
+                    "phase_shift_control": 0.0, "phase_shift_target": 0.0,
+                }},
+            }},
+        }, {})
+        p = QueryEngine(store).get_pair("q1-2")
+        assert p["cz_unipolar_amplitude"] == 0.2
+        assert p["cz_unipolar_length"] == 40
+
+    def test_dangling_pointer_macro_degrades_blank(self):
+        """A dangling flux_pulse_qubit reference renders blank fields — the
+        Pairs page must never 500 on one broken pair."""
+        store = QuamStore.from_dicts({
+            "qubits": {"q1": {"id": "q1"}, "q2": {"id": "q2"}},
+            "qubit_pairs": {"q1-2": {
+                "id": "q1-2",
+                "qubit_control": "#/qubits/q1",
+                "qubit_target": "#/qubits/q2",
+                "macros": {"cz_unipolar": {
+                    "flux_pulse_qubit": "#/qubits/q1/z/operations/gone",
+                    "coupler_flux_pulse": None,
+                }},
+            }},
+        }, {})
+        p = QueryEngine(store).get_pair("q1-2")
+        assert p["cz_unipolar_amplitude"] is None
+        assert p["cz_unipolar_length"] is None
+
     def test_coupler(self, engine):
         p = engine.get_pair("qA1-A2")
         assert p["coupler_decouple_offset"] == 0.48
