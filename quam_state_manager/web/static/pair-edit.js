@@ -201,7 +201,11 @@
         }
         rows.sort(function (a, b) {
             var va = keyOf(a), vb = keyOf(b);
-            if (key === '__id__') return va < vb ? -sortDir : (va > vb ? sortDir : 0);
+            // NATURAL id sort — q2-q3 before q10-q11 (see bulk-edit.js).
+            if (key === '__id__') {
+                return va.localeCompare(vb, undefined,
+                    { numeric: true, sensitivity: 'base' }) * sortDir;
+            }
             var na = _num(va), nb = _num(vb);
             if (na === null && nb === null) return 0;
             if (na === null) return 1;

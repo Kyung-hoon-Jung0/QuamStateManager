@@ -627,7 +627,12 @@
         }
         rows.sort(function (a, b) {
             var va = keyOf(a), vb = keyOf(b);
-            if (key === '__id__') return va < vb ? -sortDir : (va > vb ? sortDir : 0);
+            // NATURAL id sort (numeric:true): q2 before q10 — plain string
+            // compare listed double-digit chips as q1, q10, q11, q2.
+            if (key === '__id__') {
+                return va.localeCompare(vb, undefined,
+                    { numeric: true, sensitivity: 'base' }) * sortDir;
+            }
             var na = _num(va), nb = _num(vb);
             if (na === null && nb === null) return 0;
             if (na === null) return 1;            // missing sinks to the bottom

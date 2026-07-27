@@ -877,7 +877,11 @@ window.showWaveformPlot = function(btn) {
                 if (bText === '-' || bText === '') bVal = -Infinity;
                 return dir === 'asc' ? aVal - bVal : bVal - aVal;
             }
-            return dir === 'asc' ? aText.localeCompare(bText) : bText.localeCompare(aText);
+            // numeric:true = NATURAL sort — q2 before q10 (labs with double-digit
+            // qubit numbering hit q1, q10, q11, q2 with the plain comparator).
+            var nat = { numeric: true, sensitivity: 'base' };
+            return dir === 'asc' ? aText.localeCompare(bText, undefined, nat)
+                                 : bText.localeCompare(aText, undefined, nat);
         });
         rows.forEach(function(row) { tbody.appendChild(row); });
     });
