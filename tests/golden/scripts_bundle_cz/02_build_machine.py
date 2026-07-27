@@ -608,7 +608,8 @@ def _cz_variant_pulses(variant, *, amplitude, duration, smoothing, padding):
     return None
 
 def _seed_cz_variant(pair, *, variant="unipolar", amplitude=0.1, duration=100,
-                     moving_override=None, smoothing=20, padding=20, vals=None):
+                     moving_override=None, smoothing=20, padding=20, vals=None,
+                     fallback=True):
     """Seed a CZ macro of *variant* onto *pair* (pair_gates.py ``add_cz`` recipe).
 
     Flux pulse on the moving (higher-frequency) qubit's z line; on a tunable
@@ -653,6 +654,12 @@ def _seed_cz_variant(pair, *, variant="unipolar", amplitude=0.1, duration=100,
         variant = "unipolar"
     built = _cz_variant_pulses(variant, amplitude=amplitude, duration=duration,
                                smoothing=smoothing, padding=padding)
+    if built is None and not fallback:
+        # all-variants mode: a missing pulse class SKIPS the variant with a
+        # warning — falling back would seed 'unipolar' once per unavailable
+        # variant, silently overwriting the same macro key N times.
+        return (f"CZ variant {variant!r} needs a pulse class missing from this "
+                "quam_builder install — skipped (the other variants still seed).")
     if built is None:
         warning = (f"CZ variant {variant!r} needs a pulse class missing from this "
                    "quam_builder install — falling back to 'unipolar'.")
@@ -1265,15 +1272,28 @@ def _finalize_pair_gates(machine, spec, pair_gate):
             ow = _cz_order_warning(quam_id, pair, vals)
             if ow:
                 warnings.append(ow)
-            w = _seed_cz_variant(
-                pair,
-                # "" is the wizard's "use default" sentinel == unipolar.
-                variant=vals.get("cz_variant") or "unipolar",
-                amplitude=vals.get("cz_amplitude", 0.1),
-                duration=vals.get("cz_interaction_duration", 100),
-                moving_override=vals.get("moving_qubit"),
-                vals=vals,
-            )
+            # Supercritical feedback: EVERY possible CZ gate is seeded BY
+            # DEFAULT (blank == "all"), pre-filled from the same per-pair
+            # seeds — users start with the full gate library and modify in
+            # SM afterwards instead of filling each pair from scratch. A
+            # variant whose pulse class is missing from this env is skipped
+            # with a warning (never silently collapsed onto unipolar); an
+            # explicit single variant keeps the old fall-back-to-unipolar.
+            req = vals.get("cz_variant") or "all"
+            variants = list(_CZ_VARIANTS) if req == "all" else [req]
+            w = None
+            for _v in variants:
+                vw = _seed_cz_variant(
+                    pair,
+                    variant=_v,
+                    amplitude=vals.get("cz_amplitude", 0.1),
+                    duration=vals.get("cz_interaction_duration", 100),
+                    moving_override=vals.get("moving_qubit"),
+                    vals=vals,
+                    fallback=(req != "all"),
+                )
+                if vw:
+                    warnings.append(vw)
         if w:
             warnings.append(w)
 

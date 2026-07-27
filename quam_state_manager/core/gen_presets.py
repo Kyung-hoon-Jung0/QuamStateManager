@@ -140,6 +140,12 @@ def builtin_standard() -> dict:
                     "cz_amplitude": 0.1,              # V (run_build seed)
                     "cr_drive_amplitude": 1.0,        # run_build seed
                     "cr_cancel_amplitude": 0.1,       # run_build seed
+                    # ZZ (Stark-CZ) drive seeds — run_build's own defaults, so
+                    # the auto-prefilled cells show the values a blank build
+                    # would use anyway (never invented numbers).
+                    "zz_drive_amplitude": 1.0,
+                    "zz_flattop_length": 100,         # ns
+                    "zz_flattop_flat_length": 84,     # ns
                 },
                 "overrides": {},
             },

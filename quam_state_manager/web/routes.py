@@ -12386,6 +12386,48 @@ def generate_preview_config():
     return jsonify({"ok": True, "config": result.get("config"), "meta": meta})
 
 
+@bp.route("/generate/preview-pulses")
+def generate_preview_pulses():
+    """List every 2Q-gate operation in the just-previewed config (supercritical
+    feedback: show the pulse shapes of the default-seeded CZ gate library right
+    in the wizard, like readout pulses). Gated on a warm preview seed — the
+    gallery only appears after Preview config has run."""
+    folder = (request.args.get("path") or "").strip()
+    if not folder:
+        return jsonify({"ok": False, "error": "No folder given."}), 400
+    seed = _peek_preview_seed(Path(folder))
+    if seed is None:
+        return jsonify({"ok": False,
+                        "error": "No previewed config for this folder — run "
+                                 "Preview config first."}), 409
+    ops = config_view.all_pair_gate_operations(seed.get("config") or {})
+    return jsonify({"ok": True, "ops": ops})
+
+
+@bp.route("/generate/preview-pulse-waveform")
+def generate_preview_pulse_waveform():
+    """One 2Q-gate op's waveform traces from the stashed preview config — the
+    same payload shape as the Config Viewer's /pair/<n>/waveform/<op>, so the
+    client renders both with the same plot code."""
+    folder = (request.args.get("path") or "").strip()
+    element = (request.args.get("element") or "").strip()
+    op_name = (request.args.get("op") or "").strip()
+    if not folder or not element or not op_name:
+        return jsonify({"ok": False, "error": "path, element and op required"}), 400
+    seed = _peek_preview_seed(Path(folder))
+    if seed is None:
+        return jsonify({"ok": False,
+                        "error": "No previewed config for this folder — run "
+                                 "Preview config first."}), 409
+    payload = config_view.waveform_for_element_op(
+        seed.get("config") or {}, element, op_name)
+    if payload is None:
+        return jsonify({"ok": False,
+                        "error": f"no waveform for {op_name!r} on {element!r}"}), 404
+    payload["ok"] = True
+    return jsonify(payload)
+
+
 @bp.route("/generate/export-config", methods=["GET"])
 def generate_export_config():
     """Download a just-previewed build's config as a drop-in file for bare QUA.

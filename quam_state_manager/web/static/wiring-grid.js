@@ -24,6 +24,12 @@ window.WiringGrid = (function () {
   var _sel = null;          // selected qid (highlight)
   var _drag = null;         // { qid, startX, startY, moved }
   var _onChange = null;     // host callback after a spec mutation (sync + persist)
+  // Undo stack for qubit DELETES (supercritical feedback: an accidental
+  // Del on an armed stone irrecoverably destroyed the qubit + its pairs +
+  // its physics — users restarted the whole wizard). Each entry snapshots
+  // everything removeQubit destroys, so undo restores it bit-for-bit.
+  var _undoStack = [];
+  var _UNDO_CAP = 20;
 
   // Re-render the board AND notify the host (generate.js) so the pairs dropdown /
   // derived lines / draft stay in sync. `kind` tells the host WHAT changed
@@ -256,6 +262,14 @@ window.WiringGrid = (function () {
     } else if (_sel) {
       el.textContent = _sel + " selected — Delete to remove, or drag to move.";
       el.className = "gen-topo-status gen-topo-status--sel";
+    } else if (_undoStack.length) {
+      // Persistent recovery affordance: stays until undone or superseded, so an
+      // accidental delete is never a wizard restart.
+      var last = _undoStack[_undoStack.length - 1];
+      el.innerHTML = esc(last.qid) + " deleted — " +
+        '<button type="button" class="gen-topo-undo" ' +
+        'onclick="WiringGrid.undoDelete()">Undo</button> <span class="muted">(or Ctrl+Z)</span>';
+      el.className = "gen-topo-status gen-topo-status--undo";
     } else {
       el.textContent = "";
       el.className = "gen-topo-status";
@@ -325,14 +339,35 @@ window.WiringGrid = (function () {
   }
 
   // Remove a qubit entirely (creates an id gap; the step-4 gate enforces a
-  // renumber before leaving). Drops its placement, incident edges, and populate.
+  // renumber before leaving). Drops its placement, incident edges, and populate —
+  // ALL of it snapshotted onto the undo stack first, so an accidental Del is
+  // recoverable via the status-row Undo button or Ctrl+Z (wizard undo sentinel).
+  function _clone(v) { return JSON.parse(JSON.stringify(v)); }
+
   function removeQubit(qid) {
     var sp = spec(); if (!sp) return;
     var i = (sp.qubits || []).indexOf(qid);
     if (i < 0) return;
+    var pop = sp.populate || {};
+    // Snapshot BEFORE any mutation: id + position, per-group physics, incident
+    // pairs (with their list positions), and the pair-physics buckets.
+    var snap = { qid: qid, index: i, populate: {}, pairs: [], pairPop: {} };
+    ["qubit", "resonator", "flux", "pulses"].forEach(function (g) {
+      if (pop[g] && pop[g][qid] !== undefined) snap.populate[g] = _clone(pop[g][qid]);
+    });
+    (sp.qubit_pairs || []).forEach(function (p, k) {
+      if (p[0] === qid || p[1] === qid) snap.pairs.push({ pair: p.slice(), index: k });
+    });
+    if (pop.pairs) {
+      Object.keys(pop.pairs).forEach(function (key) {
+        if (key.split("-").indexOf(qid) !== -1) snap.pairPop[key] = _clone(pop.pairs[key]);
+      });
+    }
+    _undoStack.push(snap);
+    if (_undoStack.length > _UNDO_CAP) _undoStack.shift();
+
     sp.qubits.splice(i, 1);
     sp.qubit_pairs = (sp.qubit_pairs || []).filter(function (p) { return p[0] !== qid && p[1] !== qid; });
-    var pop = sp.populate || {};
     ["qubit", "resonator", "flux", "pulses"].forEach(function (g) { if (pop[g]) delete pop[g][qid]; });
     // Drop any per-pair populate whose key references this qubit (spec-form
     // "qC-qT") so a deleted qubit leaves no orphaned pair physics behind.
@@ -345,6 +380,44 @@ window.WiringGrid = (function () {
     var s = S(); if (s) s.pairsTouched = true;
     _sel = null; _armed = null;
     commit("delete");
+    if (window.showToast) window.showToast(qid + " removed — Ctrl+Z (or the board's Undo) restores it", "info");
+  }
+
+  function hasUndo() { return _undoStack.length > 0; }
+
+  // Restore the most recently deleted qubit: id at its original position,
+  // placement + physics, and every incident pair (only those whose OTHER
+  // member still exists — deleting q4 then q5 and undoing q5 must not
+  // resurrect a q4-q5 edge into a board with no q4). Tolerates the count
+  // field having re-created the bare id meanwhile (physics merge onto it).
+  function undoDelete() {
+    var sp = spec(); if (!sp || !_undoStack.length) return null;
+    var snap = _undoStack.pop();
+    sp.qubits = sp.qubits || [];
+    if (sp.qubits.indexOf(snap.qid) < 0) {
+      sp.qubits.splice(Math.min(snap.index, sp.qubits.length), 0, snap.qid);
+    }
+    var pop = sp.populate || (sp.populate = {});
+    Object.keys(snap.populate).forEach(function (g) {
+      (pop[g] || (pop[g] = {}))[snap.qid] = snap.populate[g];
+    });
+    sp.qubit_pairs = sp.qubit_pairs || [];
+    snap.pairs.forEach(function (rec) {
+      var a = rec.pair[0], b = rec.pair[1];
+      if (sp.qubits.indexOf(a) < 0 || sp.qubits.indexOf(b) < 0) return;
+      if (pairIndex(a, b) >= 0) return;
+      sp.qubit_pairs.splice(Math.min(rec.index, sp.qubit_pairs.length), 0, rec.pair.slice());
+    });
+    Object.keys(snap.pairPop).forEach(function (key) {
+      var seg = key.split("-");
+      if (seg.length === 2 && sp.qubits.indexOf(seg[0]) >= 0 && sp.qubits.indexOf(seg[1]) >= 0) {
+        (pop.pairs || (pop.pairs = {}))[key] = snap.pairPop[key];
+      }
+    });
+    var s = S(); if (s) s.pairsTouched = true;
+    _sel = null; _armed = null;
+    commit("undo");
+    return snap.qid;
   }
 
   var _bound = false;
@@ -483,6 +556,8 @@ window.WiringGrid = (function () {
     zone: zone,
     preset: preset,
     render: render,
+    hasUndo: hasUndo,
+    undoDelete: undoDelete,
     // exposed for tests
     _cellOf: cellOf, _toggleEdge: toggleEdge, _nextUnplaced: nextUnplaced,
     _occupant: occupant, _removeQubit: removeQubit,

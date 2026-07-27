@@ -525,6 +525,53 @@ def pair_slice_for(
     }
 
 
+def all_pair_gate_operations(config: dict) -> list[dict]:
+    """Every 2Q-gate operation in a generated config, without needing pair
+    identities — for the wizard's preview-pulses gallery, where only the raw
+    config dict exists (no loaded store, no pair objects).
+
+    Covers both quam-builder namings: dedicated gate elements
+    (``cr_/zz_/coupler_/cz_`` prefixed keys — every op counts) and 2Q ops
+    seeded on a qubit's own channel (``<c>.z`` flux ops, ``xy_detuned`` ZZ
+    twins) whose names carry the gate prefix.
+    """
+    out: list[dict] = []
+    elements = config.get("elements") or {}
+    if not isinstance(elements, dict):
+        return out
+    for ekey, elem in elements.items():
+        if not isinstance(elem, dict):
+            continue
+        ops = elem.get("operations")
+        ops = ops if isinstance(ops, dict) else {}
+        dedicated = ekey.startswith(_PAIR_GATE_PREFIXES)
+        for opn, pulse in ops.items():
+            if dedicated or str(opn).startswith(_PAIR_GATE_PREFIXES):
+                out.append({
+                    "element": ekey,
+                    "op_name": opn,
+                    "pulse": pulse if isinstance(pulse, str) else None,
+                })
+    return sorted(out, key=lambda e: (e["element"], e["op_name"]))
+
+
+def waveform_for_element_op(config: dict, element: str, op_name: str) -> dict | None:
+    """Waveform traces for one (element, operation) addressed directly —
+    the gallery companion of :func:`all_pair_gate_operations`."""
+    elem = (config.get("elements") or {}).get(element) or {}
+    ops = elem.get("operations")
+    ops = ops if isinstance(ops, dict) else {}
+    pulse_name = ops.get(op_name)
+    if not isinstance(pulse_name, str):
+        return None
+    traces = _traces_for_pulse(
+        config, (config.get("pulses") or {}).get(pulse_name) or {})
+    if traces is None:
+        return None
+    return {"element": element, "operation": op_name,
+            "pulse": pulse_name, "traces": traces}
+
+
 def pair_waveform_for_operation(
     config: dict, control: str, target: str, op_name: str,
     *, element: str | None = None, pair_name: str | None = None,

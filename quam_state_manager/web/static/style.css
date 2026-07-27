@@ -6590,6 +6590,29 @@ input.gen-topo-dim { width: 3.2em; margin: 0; }
 .gen-topo-status:empty { min-height: 0; }
 .gen-topo-status--armed { color: var(--pico-primary); }
 .gen-topo-status--sel { color: var(--pico-del-color); }
+/* Persistent post-delete recovery affordance (supercritical: accidental qubit
+   delete used to be unrecoverable). */
+.gen-topo-status--undo { color: var(--color-warning-text); }
+.gen-topo-undo {
+    font-size: .8em; padding: 0 .5rem; margin: 0 .1rem; width: auto;
+    display: inline-block; line-height: 1.5; cursor: pointer;
+    background: transparent; color: var(--pico-primary);
+    border: 1px solid var(--pico-primary); border-radius: 4px;
+}
+.gen-topo-undo:hover { background: var(--pico-primary); color: var(--pico-primary-inverse); }
+
+/* 2Q-gate pulse gallery under the wizard's Preview-config result. */
+.gen-preview-pulses {
+    margin-top: .6rem; padding-top: .5rem;
+    border-top: 1px dashed var(--pico-muted-border-color);
+}
+.gen-preview-pulses-head { margin: 0 0 .3rem; font-size: .85em; }
+.gen-preview-pulses-list { display: flex; flex-wrap: wrap; gap: .3rem; margin: 0 0 .4rem; }
+.gen-preview-pulse-btn { font-size: .74rem; padding: .1rem .5rem; margin: 0; width: auto; }
+.gen-preview-pulse-btn.active {
+    border-color: var(--pico-primary); color: var(--pico-primary); font-weight: 600;
+}
+.gen-preview-pulse-cap { margin: .2rem 0; font-size: .8em; }
 /* one-click Renumber button (shown only while ids have gaps) */
 .gen-topo-renumber { background: var(--pico-del-color); border-color: var(--pico-del-color); }
 /* multi-line gesture hint */

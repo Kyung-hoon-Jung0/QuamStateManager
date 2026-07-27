@@ -1876,12 +1876,20 @@
       // (renderPairs is O(pairs × qubits); firing it per placement was O(N²)).
       if (kind === "place" || kind === "move") return;
 
-      // edge / delete / preset / full — the pair list and/or qubit set changed.
-      // A board delete shrinks spec.qubits; keep the count field in lock-step so
-      // captureDomFields() (which re-fires `change` when the input disagrees with
-      // spec.qubits.length) doesn't "repair" the count and silently re-create the
-      // deleted qubit. We set the value only — firing change here would regenerate
-      // a contiguous q1…qN and erase the hole the ID-gate is meant to catch.
+      // edge / delete / undo / preset / full — the pair list and/or qubit set
+      // changed. A board delete shrinks spec.qubits; keep the count field in
+      // lock-step so captureDomFields() (which re-fires `change` when the input
+      // disagrees with spec.qubits.length) doesn't "repair" the count and
+      // silently re-create the deleted qubit. We set the value only — firing
+      // change here would regenerate a contiguous q1…qN and erase the hole the
+      // ID-gate is meant to catch. ("undo" reverses a delete and takes the same
+      // full-sync path.)
+      // Interleave board deletes into the wizard Ctrl+Z stack via a sentinel,
+      // so "edit field, delete qubit, Ctrl+Z" restores the QUBIT first.
+      if (kind === "delete" && typeof _wizStack !== "undefined") {
+        _wizStack.push({ boardUndo: true });
+        if (_wizStack.length > _WIZ_STACK_CAP) _wizStack.shift();
+      }
       var qc = document.getElementById("gen-qubit-count");
       if (qc) qc.value = String(state.spec.qubits.length);
       renderQubitSummary();    // count chip below the board reflects the delete
@@ -2878,10 +2886,13 @@
   // values flow to spec.populate.pairs[<control-target>] and run_build seeds
   // them onto the gate (see _seed_cz_variant / _seed_cr_gate).
   var POP_CZ_PAIR_COLS = [
-    // cz_variant picks which flux-pulse shape run_build seeds (unipolar default;
-    // the rest are opt-in). Mirrors the customer's pair_gates.add_cz variants.
+    // cz_variant picks which flux-pulse shape(s) run_build seeds. DEFAULT =
+    // "all": every variant the env's quam_builder can build is seeded with
+    // these per-pair values (supercritical feedback — users want the full CZ
+    // gate library pre-made, then tweak in SM). A single variant stays
+    // selectable; blank (old drafts) means "all" too.
     { field: "cz_variant", label: "CZ variant", kind: "select",
-      options: ["", "unipolar", "flattop", "bipolar", "SNZ", "flattop_erf"] },
+      options: ["all", "unipolar", "flattop", "bipolar", "SNZ", "flattop_erf"] },
     { field: "cz_interaction_duration", label: "CZ dur", dim: "time" },
     { field: "cz_amplitude", label: "CZ amp", dim: "volt" },
     { field: "moving_qubit", label: "moving qubit", kind: "select",
@@ -5161,6 +5172,32 @@
     return report;
   }
 
+  // Supercritical feedback: pre-fill EVERY empty populate cell with the
+  // built-in standard defaults ONCE per draft — users start from filled-in
+  // values (the same seeds run_build would use on blanks) and modify, instead
+  // of typing every pair/pulse parameter from scratch. Fill-only-empty: a
+  // typed value is never overwritten, and because the one-shot flag persists
+  // in the draft, a cell the user deliberately clears afterwards stays
+  // cleared on the next visit.
+  function autoApplyStandardDefaults() {
+    if (state.autoPresetApplied) return;
+    state.autoPresetApplied = true;
+    saveDraft();
+    fetch("/generate/presets/builtin-standard")
+      .then(function (r) { return r.json(); })
+      .then(function (p) {
+        if (!p || !p.ok || !p.sections) return;
+        var report = applyPreset(p, false);
+        if (report.applied > 0) {
+          renderPopulateTables();
+          presetNote("Pre-filled " + report.applied + " empty cell(s) with the " +
+                     "standard defaults — edit anything you like.");
+          saveDraft();
+        }
+      })
+      .catch(function () { /* offline / route failure — cells stay blank */ });
+  }
+
   function presetNote(text) {
     var el = document.getElementById("gen-preset-note");
     if (!el) return;
@@ -5317,6 +5354,7 @@
     loadPowerMode();
     renderUnitToggles();
     renderPopulateTables();
+    autoApplyStandardDefaults();   // pre-fill empty cells once per draft (async re-render)
     var loMap = document.getElementById("gen-lo-map");
     if (loMap) {
       loMap.open = loadLoMapOpen();
@@ -5685,6 +5723,12 @@
         });
         out.appendChild(exp);
 
+        // 2Q-gate pulse gallery (supercritical feedback): the default-seeded
+        // CZ gate library is inspectable right here — click an op to see the
+        // exact waveform this config plays (the config's own sample arrays,
+        // the same traces the Config Viewer shows after load).
+        renderPreviewPulseGallery(out, outPath);
+
         // Reuse the shared slide-up JSON panel (read-only copy mode — the
         // default "edit" mode is for live-state trees only).
         var panel = document.getElementById("json-panel");
@@ -5703,6 +5747,73 @@
         out.textContent = "";
         renderPreviewError(out, { error: "Preview request failed." });
       });
+  }
+
+  // 2Q-gate pulse gallery under the Preview-config result: enumerates every
+  // gate op in the stashed previewed config (dedicated cr_/zz_/coupler_/cz_
+  // elements + cz_*/zz_* ops on qubit channels) and plots the selected op's
+  // waveform traces with the same plot conventions as the Config Viewer.
+  function renderPreviewPulseGallery(out, outPath) {
+    fetch("/generate/preview-pulses?path=" + encodeURIComponent(outPath))
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (!res.ok || !res.ops || !res.ops.length) return;   // no 2Q gates — stay silent
+        var box = document.createElement("div");
+        box.className = "gen-preview-pulses";
+        var head = document.createElement("p");
+        head.className = "muted gen-preview-pulses-head";
+        head.textContent = "2Q gate pulses (" + res.ops.length + ") — click to view the waveform:";
+        box.appendChild(head);
+        var list = document.createElement("div");
+        list.className = "gen-preview-pulses-list";
+        var plot = document.createElement("div");
+        plot.className = "gen-preview-pulses-plot";
+        res.ops.forEach(function (o) {
+          var b = document.createElement("button");
+          b.type = "button";
+          b.className = "outline btn-sm gen-preview-pulse-btn";
+          b.textContent = o.element + " · " + o.op_name;
+          b.addEventListener("click", function () {
+            list.querySelectorAll(".gen-preview-pulse-btn.active").forEach(function (x) {
+              x.classList.remove("active");
+            });
+            b.classList.add("active");
+            plot.textContent = "loading…";
+            fetch("/generate/preview-pulse-waveform?path=" + encodeURIComponent(outPath) +
+                  "&element=" + encodeURIComponent(o.element) +
+                  "&op=" + encodeURIComponent(o.op_name))
+              .then(function (r) { return r.json(); })
+              .then(function (wf) {
+                if (!wf.ok) { plot.textContent = wf.error || "waveform unavailable"; return; }
+                plot.textContent = "";
+                var cap = document.createElement("p");
+                cap.className = "muted gen-preview-pulse-cap";
+                cap.textContent = wf.element + " · " + wf.operation + " → " + wf.pulse;
+                plot.appendChild(cap);
+                var canvas = document.createElement("div");
+                canvas.style.height = "240px";
+                plot.appendChild(canvas);
+                var traces = (wf.traces || []).map(function (t) {
+                  return { x: t.x, y: t.y, mode: "lines", type: "scatter",
+                           name: t.label, line: { width: 2 } };
+                });
+                window._plotlyRender(canvas, traces, {
+                  margin: { l: 50, r: 10, t: 10, b: 40 },
+                  xaxis: { title: "time (ns)" },
+                  yaxis: { title: "voltage (V at 50 Ω)" },
+                  showlegend: traces.length > 1,
+                  legend: { orientation: "h", y: -0.3 },
+                }, { responsive: true, displayModeBar: false });
+              })
+              .catch(function () { plot.textContent = "waveform request failed"; });
+          });
+          list.appendChild(b);
+        });
+        box.appendChild(list);
+        box.appendChild(plot);
+        out.appendChild(box);
+      })
+      .catch(function () { /* gallery is best-effort */ });
   }
 
   function showBuildResult(res, outPath) {
@@ -6094,7 +6205,8 @@
         qubitFlux: state.qubitFlux, couplerFlux: state.couplerFlux,
         pairGate: state.pairGate, chipArch: state.chipArch,
         crPortMode: state.crPortMode, zzEnabled: state.zzEnabled,
-        topoZone: state.topoZone
+        topoZone: state.topoZone,
+        autoPresetApplied: state.autoPresetApplied
       }));
     } catch (e) { /* quota / serialisation — non-fatal */ }
   }
@@ -6167,6 +6279,9 @@
     // Line-type toggles — default true for backward compat with old drafts.
     state.qubitFlux = d.qubitFlux !== false;
     state.couplerFlux = d.couplerFlux !== false;
+    // One-shot standard-defaults auto-apply (per draft): old drafts lack the
+    // flag → falsy → the prefill runs once on their next populate-step visit.
+    state.autoPresetApplied = !!d.autoPresetApplied;
     // 2-qubit gate — default to the tunable-coupler CZ, and migrate the
     // pre-redesign vocabulary (coupler / cross_resonance / zz_drive).
     state.pairGate = d.pairGate || "cz_tunable";
@@ -6392,6 +6507,22 @@
       if (!root()) return false;   // wizard not on screen → not ours
       while (_wizStack.length) {
         var entry = _wizStack.pop();
+        // Board-delete sentinel (supercritical: irrecoverable qubit delete):
+        // restore the deleted qubit — placement, physics, pairs — via the
+        // board's own snapshot stack. A stale sentinel (its delete was already
+        // undone via the board's Undo button) is skipped harmlessly.
+        if (entry.boardUndo) {
+          if (window.WiringGrid && WiringGrid.hasUndo && WiringGrid.hasUndo()) {
+            var restored = WiringGrid.undoDelete();
+            try { captureDomFields(); saveDraft(); } catch (e2) { /* best-effort */ }
+            if (window.showToast && restored) {
+              window.showToast('Restored deleted qubit ' + restored +
+                  ' (placement, physics and pairs)', 'success');
+            }
+            return true;
+          }
+          continue;
+        }
         var el = (entry.el && entry.el.isConnected) ? entry.el
                : (entry.id ? document.getElementById(entry.id) : null);
         // A step re-render replaced the element and it carries no id —

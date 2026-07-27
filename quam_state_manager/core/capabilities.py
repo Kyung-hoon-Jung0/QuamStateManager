@@ -344,7 +344,12 @@ def required_capabilities(spec: dict) -> set[str]:
     if spec.get("cr_port_mode") == "shared_xy":
         req.add("wire.alloc_block_reuse")
 
-    # per-pair CZ variants + parametric gate type (from the populate step)
+    # per-pair CZ variants + parametric gate type (from the populate step).
+    # blank / "all" (the default since the all-gates-by-default change) adds
+    # NO shape requirements: run_build seeds every AVAILABLE variant and
+    # SKIPS missing shapes with a build warning — unipolar (core SquarePulse)
+    # always seeds, so the build cannot fail on a missing optional shape.
+    # An EXPLICIT single variant still requires its shape class.
     for pv in _pair_populate(spec):
         variant = pv.get("cz_variant")
         for cap in _CZ_VARIANT_CAPS.get(variant, ()):
