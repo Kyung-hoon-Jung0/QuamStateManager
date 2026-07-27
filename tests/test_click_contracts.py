@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 _LabA = Path("<dataset-root>/example_lab")
+_DATASET_ROOT = Path("<dataset-root>")
 _LabC_ARCHIVE = Path("<install-root>/dataset")
 _LabC_TOP = Path("<install-root>")
 
@@ -82,6 +83,38 @@ class TestRelativeAxisGate:
         from quam_state_manager.core.click_targets import candidates_for
         assert candidates_for("11_power_rabi", "amp_prefactor", None,
                               "qubit") == []
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 08b qubit spectroscopy vs power — no-data checks (always run)
+# ──────────────────────────────────────────────────────────────────────────
+
+class TestQubitSpecVsPowerUnit:
+    def test_matcher_routes_both_launch_conventions(self):
+        """08b must route to its own recipe under BOTH node-name conventions,
+        and must never capture (or be captured by) plain qubit spectroscopy —
+        the '_vs_power' suffix is a different experiment."""
+        from quam_state_manager.core.interactive_plots.recipes import (
+            qubit_spec_vs_power, qubit_spectroscopy)
+        from quam_state_manager.core.interactive_plots.registry import _resolve
+        assert _resolve("1Q_08b_qubit_spectroscopy_vs_power") is qubit_spec_vs_power
+        assert _resolve("08b_qubit_spectroscopy_vs_power") is qubit_spec_vs_power
+        assert _resolve("1Q_08_qubit_spectroscopy") is qubit_spectroscopy
+        assert _resolve("08_qubit_spectroscopy") is qubit_spectroscopy
+
+    def test_dbm_gridfs_math_matches_real_patches(self):
+        """Server/client `dbm_gridfs` parity, pinned on values a REAL run's
+        node wrote (fs clamped to −11 in one case, on-grid −8 in the other):
+        fs = clamp(ceil(P − 20·log10(max_amp)), −11…16); amp = 10^((P−fs)/20)."""
+        from quam_state_manager.core.interactive_plots.recipes.qubit_spec_vs_power import (
+            fs_and_amp)
+        fs, amp = fs_and_amp(-38.62068965517241, 0.1)
+        assert fs == -11 and amp == pytest.approx(0.04158775887163147, rel=1e-12)
+        fs, amp = fs_and_amp(-28.275862068965516, 0.1)
+        assert fs == -8 and amp == pytest.approx(0.09687392507403286, rel=1e-12)
+        # clamp at the top of the grid
+        fs, amp = fs_and_amp(40.0, 0.1)
+        assert fs == 16 and amp == pytest.approx(10 ** ((40.0 - 16) / 20), rel=1e-12)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -314,6 +347,169 @@ class TestExtendedGoldens:
         assert applied, "golden lost its alpha patch?"
         new = float(applied[0]["value"])
         assert _eval_target(t, new) == pytest.approx(new, rel=1e-12)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 08b qubit spectroscopy vs power — round-trip goldens (real archive).
+# Locally verified digit-exact on a standalone-launched run (f_01 assign,
+# fs −11 clamped + amp, α = 2·(f01_fit − f_2photon)); the graph-launched
+# generation correctly degrades two_photon to view-only (no ef fit).
+# ──────────────────────────────────────────────────────────────────────────
+
+def _find_08b_runs():
+    if not _DATASET_ROOT.is_dir():
+        return []
+    return [h for h in sorted(_DATASET_ROOT.rglob("#*08b_qubit_spectroscopy_vs_power*"))
+            if (h / "ds_fit.h5").exists()]
+
+
+def _patched_qubits(patches, *suffixes):
+    """{qubit: patch} for patches whose path ends with each suffix, per suffix."""
+    out = []
+    for suf in suffixes:
+        d = {}
+        for p in patches:
+            parts = str(p.get("path", "")).split("/")
+            if "qubits" in parts and str(p["path"]).endswith(suf):
+                d[parts[parts.index("qubits") + 1]] = p
+        out.append(d)
+    return out
+
+
+@pytest.mark.skipif(not _DATASET_ROOT.is_dir(), reason="dataset archive not present")
+class TestResonatorVsPowerAmpGolden:
+
+    def test_05_amp_click_uses_actual_full_scale(self):
+        """05 vs power: the node writes amp = 10^((P − fs_actual)/20) via
+        set_output_power against the chip's ACTUAL port full-scale. The old
+        attr-pair conversion implied fs = max_power − 20·log10(max_amp), which
+        the legacy 3 dB power grid can snap away from — on the pinning run the
+        two disagreed by exactly 3 dB and the staged amplitude was 3 dB hot.
+        Click at the fitted optimal power → staged == the node's own patch."""
+        from quam_state_manager.core.interactive_plots import build_interactive_figure
+        for folder in sorted(_DATASET_ROOT.rglob("#*resonator_spectroscopy_vs_power*")):
+            if "_iq" in folder.name or "qubit_spectroscopy" in folder.name:
+                continue
+            if not (folder / "ds_fit.h5").exists():
+                continue
+            patches = _patches(folder)
+            ampp = {}
+            for p in patches:
+                parts = str(p.get("path", "")).split("/")
+                if "qubits" in parts and str(p["path"]).endswith("/readout/amplitude"):
+                    ampp[parts[parts.index("qubits") + 1]] = p
+            if not ampp:
+                continue
+            run = _bundle_for(folder)
+            if run is None:
+                continue
+            for qname, patch in ampp.items():
+                p_opt = ((run.fit_results or {}).get(qname) or {}).get("optimal_power")
+                if p_opt is None:
+                    continue
+                fig = build_interactive_figure(run, f"amplitude::{qname}")
+                if not fig or not fig.get("clickable"):
+                    continue
+                amp_t = next((t for t in fig["clickable"]["targets"]
+                              if (t.get("transform") or {}).get("type") == "dbm_to_amp"),
+                             None)
+                assert amp_t is not None, "amp target must be offered"
+                tr = amp_t["transform"]
+                staged = tr.get("scale", 1) * 10 ** ((float(p_opt) - tr["ref_dbm"]) / 20)
+                assert staged == pytest.approx(float(patch["value"]), rel=1e-9), \
+                    "click at the fitted optimal power must reproduce the node's write"
+                return
+        pytest.skip("no patched 05 run with optimal_power in the archive")
+
+
+@pytest.mark.skipif(not _DATASET_ROOT.is_dir(), reason="dataset archive not present")
+class TestQubitSpecVsPowerGoldens:
+
+    def _run_with_patches(self):
+        for folder in _find_08b_runs():
+            patches = _patches(folder)
+            f01p, ampp = _patched_qubits(patches, "/f_01", "/saturation/amplitude")
+            q = next((q for q in f01p if q in ampp), None)
+            if q is not None:
+                return folder, patches, q
+        return None, None, None
+
+    def test_freq_and_power_pair_reproduce_patches(self):
+        """Click the fit's own optimum → the staged values must equal the
+        node's patches: f_01/RF assigned absolutely; the drive power staged as
+        the fs-grid + amplitude PAIR, with fs written at the PORT path the
+        run's pointer resolves to (exactly where the node's patch landed)."""
+        folder, patches, qname = self._run_with_patches()
+        if folder is None:
+            pytest.skip("no patched 08b run in the archive")
+        run = _bundle_for(folder)
+        if run is None:
+            pytest.skip("run not indexed")
+        from quam_state_manager.core.interactive_plots import build_interactive_figure
+        from quam_state_manager.core.interactive_plots.recipes.qubit_spec_vs_power import (
+            fs_and_amp)
+        fig = build_interactive_figure(run, f"power_dbm::{qname}")
+        assert fig and fig.get("clickable"), "patched golden must be clickable"
+        targets = {t["path"].replace("{q}", qname): t
+                   for t in fig["clickable"]["targets"]}
+
+        f01p, ampp = _patched_qubits(patches, "/f_01", "/saturation/amplitude")
+        f01_new = float(f01p[qname]["value"])
+        staged = _eval_target(targets[f"qubits.{qname}.f_01"], f01_new / 1e9)
+        assert staged == pytest.approx(f01_new, rel=1e-12)
+        staged = _eval_target(targets[f"qubits.{qname}.xy.RF_frequency"], f01_new / 1e9)
+        assert staged == pytest.approx(f01_new, rel=1e-12)
+
+        fs_t = next((t for t in fig["clickable"]["targets"]
+                     if (t.get("transform") or {}).get("part") == "fs"), None)
+        amp_t = next((t for t in fig["clickable"]["targets"]
+                      if (t.get("transform") or {}).get("part") == "amp"), None)
+        assert fs_t is not None and amp_t is not None, "power pair must be offered"
+        p_opt = ((run.fit_results or {}).get(qname) or {}).get("optimal_power")
+        assert p_opt is not None, "fit_results lack optimal_power"
+        fs, amp = fs_and_amp(float(p_opt), float(fs_t["transform"]["max_amp"]))
+        # fs lands at the resolved PORT path == the node's own patch path
+        port_patch = next((p for p in patches
+                           if p["path"] == "/quam/" + fs_t["path"].replace(".", "/")),
+                          None)
+        assert port_patch is not None, \
+            f"fs target {fs_t['path']} must match a node patch path"
+        assert fs == int(port_patch["value"])
+        assert amp == pytest.approx(float(ampp[qname]["value"]), rel=1e-9)
+
+    def test_two_photon_click_reproduces_anharmonicity_patch(self):
+        """Click the fitted 2-photon line → α = 2·(f01_fit − clicked) must
+        equal the node's anharmonicity patch (newer analysis runs only)."""
+        import h5py
+        for folder in _find_08b_runs():
+            patches = _patches(folder)
+            (anhp,) = _patched_qubits(patches, "/anharmonicity")
+            if not anhp:
+                continue
+            with h5py.File(folder / "ds_fit.h5") as f:
+                if "twophoton_freq_fitted" not in f:
+                    continue
+                qs = [x.decode() if isinstance(x, bytes) else str(x)
+                      for x in f["qubit"][()]]
+                qname = next((q for q in anhp if q in qs), None)
+                if qname is None:
+                    continue
+                two = float(np.asarray(f["twophoton_freq_fitted"][()])[qs.index(qname)])
+            if not np.isfinite(two):
+                continue
+            run = _bundle_for(folder)
+            if run is None:
+                continue
+            from quam_state_manager.core.interactive_plots import build_interactive_figure
+            fig = build_interactive_figure(run, f"two_photon::{qname}")
+            assert fig and fig.get("clickable"), "ef-fitted golden must be clickable"
+            t = fig["clickable"]["targets"][0]
+            assert t["path"].replace("{q}", qname) == f"qubits.{qname}.anharmonicity"
+            staged = _eval_target(t, two / 1e9)
+            assert staged == pytest.approx(float(anhp[qname]["value"]), abs=1.0), \
+                "α click must reproduce the node's write to sub-Hz"
+            return
+        pytest.skip("no 08b run with an anharmonicity patch + ef fit")
 
     def test_15a_absolute_freq_assign(self):
         """LabC #111: RF/f_01 assigned the absolute optimum; the recipe's ×1e9

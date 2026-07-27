@@ -132,3 +132,72 @@ node's fit optimum through the baked affine must equal the node's own
   (39_2 SNZ).
 - `tests/ndview_selfcheck.cjs` — jsdom, loads the **real app.js** with a Plotly
   stub (run with `NODE_PATH=<repo>/node_modules node tests/ndview_selfcheck.cjs`).
+
+## Amendment (2026-07-26): 1Q_08b qubit spectroscopy vs power
+
+New recipe `recipes/qubit_spec_vs_power.py` (`FAMILY =
+("1Q_08b_qubit_spectroscopy_vs_power",)`; tier-2 covers standalone
+`08b_...` names; the `_vs_power` suffix keeps it disjoint from plain 08).
+The map carries TWO physically distinct lines — the GE line (→ `f_01`) and
+the 2-photon g→f/2 line (→ `anharmonicity`) — and one click cannot be both
+interpretations (Apply All would stage contradictions), so the recipe emits
+**two tiles per qubit** over the same heatmap:
+
+- **`power_dbm`** — x assigns `f_01` + `xy.RF_frequency` absolutely (the
+  node assigns the fitted absolute; patch-verified). y stages the node's
+  **coupled drive-power pair** via the new `dbm_gridfs` client transform:
+  `fs = clamp(ceil(P − 20·log10(max_amp)), −11…16)` (the node's 1 dB grid)
+  written to the **port path the run snapshot's pointer resolves to**
+  (exactly where the node's `get_reference` write landed), plus
+  `operations.saturation.amplitude = 10^((P−fs)/20)`. PAIR-OR-NOTHING: no
+  resolvable port pointer / non-"saturation" swept operation ⇒ the power
+  axis degrades to a read-only context row (staging half a pair under a
+  moved full-scale would realise the wrong power). When the run overrode
+  `operation_len_in_ns`, the length is staged too (click-independent
+  scale-0 target) so the trio stays self-consistent. Twin log-amp y2 axis
+  as in resonator vs power.
+- **`two_photon`** — x assigns `anharmonicity = 2·(f_01_fit − clicked)`,
+  plain affine anchored to THIS run's fitted GE frequency (ds_fit
+  `res_freq` == the run's own f_01 patch value). This deliberately upgrades
+  the old "anharmonicity is a delta ⇒ view-only" stance (28_ef): here the
+  GE anchor is fitted in the *same run*, so the delta math is fully
+  determined. Only offered when the analysis carries the ef fit — the older
+  generation (no `anharmonicity_fitted`/`twophoton_freq_fitted`) gets an
+  honest unavailable tile, never a wrong contract.
+
+Verified digit-exact against a real 8-qubit run's patches (f_01 assign;
+fs −11 **clamp branch** + amp `0.04158775887163147` bit-identical; α
+`212400000` exact) and against a graph-launched older-generation run
+(correct view-only degrade). Goldens:
+`tests/test_click_contracts.py::TestQubitSpecVsPowerUnit` (matcher routing +
+`dbm_gridfs` server/client parity pinned on real patch values — the JS
+mirror in app.js is not executed by tests, parity rests on these pinned
+numbers) and `::TestQubitSpecVsPowerGoldens` (round-trip vs `patches[]`,
+auto-skip without the archive).
+
+## Amendment (2026-07-27): 05 vs-power amplitude contract — actual full-scale, not the attr pair
+
+Sweep-verification of 03/05/08b against real archives found the 05 amplitude
+click staging **3 dB hot** on one patched archive run. Root cause: the node
+writes `amp = 10^((P − fs)/20)` via `set_output_power` against the chip's
+ACTUAL readout full-scale; `_amp_conversion` preferred the dataset's
+`max_power_dbm`/`max_amp` attrs, which only *imply* that full-scale when the
+legacy 3 dB power grid didn't snap (the pinning run: fs −2 vs implied −5 —
+exactly the observed 3 dB). The current lab chip happens to sit exactly on
+the implied value, so the error was latent there.
+
+Fix: `_amp_conversion` now prefers the **pointer-resolved snapshot
+full-scale** (scale = 1), **patches-aware** (an fs patch at the resolved
+port path means the written amplitude used the NEW value), with the attr
+pair → run-params demoted to fallback. The twin log-amp axis inherits the
+correction; the amp target now carries a provenance block naming its
+reference source and the honest limitation (a click far enough out of range
+that the node would also move the full-scale can't be reproduced by
+amplitude-only staging). Pinned by
+`test_click_contracts.py::TestResonatorVsPowerAmpGolden` (round-trip vs the
+node's own patch, auto-skip without the archive — executed against the real
+archive at fix time: bit-exact) and the updated
+`test_interactive_plots.py::test_amp_conversion_source_order` (synthetic,
+always runs, includes the patches-aware branch). 03 (all five figures +
+f_01/RF assign) and 08b re-verified green in the same sweep; the excluded
+05b `_iq` variant stays static-only by design.
