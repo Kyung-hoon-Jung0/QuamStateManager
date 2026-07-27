@@ -615,6 +615,13 @@ class SnapshotMeta:
     # Optional free-text note for a user "bookmark/archive" snapshot (feedback #3).
     # Defaults absent so old meta.json files deserialize fine via SnapshotMeta(**data).
     note: str | None = None
+    # The qualibrate project the snapshot's SOURCE folder belonged to at
+    # capture time (docs/63 project lens) — display-only (a muted badge on
+    # State History rows), NEVER a filter (lens, not isolation). Stamped by
+    # the web layer from the source path's reverse match; None for
+    # standalone chips, workspace backfill ingests, and every pre-lens
+    # snapshot. meta.json-only — no SQLite column.
+    project: str | None = None
 
 
 # Sentinel for annotate_snapshot's ``note``: "argument not provided" so a label-
@@ -1065,6 +1072,7 @@ class HistoryManager:
         experiment_folder_path: str | None = None,
         new_experiments: list[str] | None = None,
         defer_index: bool = False,
+        project: str | None = None,
     ) -> SnapshotMeta | None:
         """Create a snapshot if the state files changed (or if *force* is True).
 
@@ -1176,6 +1184,7 @@ class HistoryManager:
                 state_hash=content_hash,
                 data_folder=_data_folder_name(path),
                 chip_swap_detected=swap_info,
+                project=project,
             )
             # Cache the new hash so subsequent calls in the same session see it,
             # and flush the sidecar so a fresh process starts hot (Phase 3 §2.3).

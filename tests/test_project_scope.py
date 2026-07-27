@@ -222,6 +222,97 @@ class TestSidebarReorg:
         assert "beta" in body
 
 
+class TestHistoryLens:
+    """Step-6 pins (docs/63): snapshots are STAMPED with the project scope at
+    capture (meta.json-only, display-only); Param/State History gain scoped
+    headers; every persisted key/URL contract stays raw."""
+
+    def test_snapshot_meta_round_trip(self, tmp_path):
+        from quam_state_manager.core.history import HistoryManager
+        chip = _chip(tmp_path / "chip_rt")
+        hm = HistoryManager(tmp_path / "inst_rt")
+        meta = hm.check_and_snapshot(chip, "manual", force=True, project="alpha")
+        assert meta is not None and meta.project == "alpha"
+        # a FRESH manager re-reads meta.json from disk — the field survives
+        hm2 = HistoryManager(tmp_path / "inst_rt")
+        snaps = hm2.list_snapshots(chip)
+        assert snaps and snaps[0].project == "alpha"
+
+    def test_unstamped_snapshot_defaults_none(self, tmp_path):
+        from quam_state_manager.core.history import HistoryManager
+        chip = _chip(tmp_path / "chip_un")
+        hm = HistoryManager(tmp_path / "inst_un")
+        meta = hm.check_and_snapshot(chip, "manual", force=True)
+        assert meta is not None and meta.project is None
+
+    def test_pre_lens_meta_still_loads(self, tmp_path):
+        """meta.json written BEFORE the field existed (no ``project`` key)
+        must load with project=None — not disappear from State History."""
+        from quam_state_manager.core.history import HistoryManager
+        chip = _chip(tmp_path / "chip_old")
+        hm = HistoryManager(tmp_path / "inst_old")
+        meta = hm.check_and_snapshot(chip, "manual", force=True, project="alpha")
+        meta_file = (tmp_path / "inst_old" / "history" / hm._key_for(chip)
+                     / meta.timestamp / "meta.json")
+        data = json.loads(meta_file.read_text(encoding="utf-8"))
+        del data["project"]
+        meta_file.write_text(json.dumps(data), encoding="utf-8")
+        hm2 = HistoryManager(tmp_path / "inst_old")
+        snaps = hm2.list_snapshots(chip)
+        assert snaps and snaps[0].project is None
+
+    def test_state_history_row_badge_and_header(self, scoped):
+        c = scoped["client"]
+        c.post("/qualibrate/open", data={"project": "alpha"})
+        r = c.post("/state-history/snapshot")
+        assert r.status_code == 200
+        body = c.get("/state-history",
+                     headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert "sh-project-badge" in body
+        assert "scope-suffix" in body
+        assert "alpha" in body
+
+    def test_param_history_scoped_display_keeps_raw_keys(self, scoped):
+        """The header + loaded selector chip show the project, but
+        data-loaded-chip-key / ?chip_key= keep the RAW history key —
+        the persisted URL/JS contract (docs/63 decision 7)."""
+        import re
+        c = scoped["client"]
+        c.post("/qualibrate/open", data={"project": "alpha"})
+        body = c.get("/param-history",
+                     headers={"HX-Request": "true"}).get_data(as_text=True)
+        hm = scoped["app"].config["history_manager"]
+        raw_key = hm._key_for(scoped["chip_a"])
+        m = re.search(r'data-loaded-chip-key="([^"]*)"', body)
+        assert m and m.group(1) == raw_key
+        assert f"alpha · {raw_key}" in body          # scoped display name
+        assert f"/param-history?chip_key={raw_key}" in body  # raw URL contract
+        assert "scope-suffix" in body and "Param History" in body
+
+    def test_param_history_unscoped_is_plain(self, scoped):
+        c = scoped["client"]
+        c.post("/load", data={"folder": str(scoped["standalone"])})
+        body = c.get("/param-history",
+                     headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert "scope-suffix" not in body
+
+    def test_hist_ref_resolves_for_stamped_snapshot(self, scoped):
+        """hist:<chip>/<ts> compare refs must keep resolving for snapshots
+        that carry the new meta field."""
+        from quam_state_manager.core import compare_sources as cs
+        c = scoped["client"]
+        c.post("/qualibrate/open", data={"project": "alpha"})
+        c.post("/state-history/snapshot")
+        hm = scoped["app"].config["history_manager"]
+        key = hm._key_for(scoped["chip_a"])
+        snaps = hm.list_snapshots(scoped["chip_a"])
+        assert snaps and snaps[0].project == "alpha"  # the route stamped it
+        src = cs.resolve_source(
+            f"hist:{key}/{snaps[0].timestamp}", cs.SourcePool(),
+            history_root=scoped["inst"] / "history")
+        assert src.chip_name == key
+
+
 class TestLanding:
     """Step-5 pins (docs/63): project-first landing with lazy cards; welcome
     verbatim without a config; Resume card; /qubits redirect."""

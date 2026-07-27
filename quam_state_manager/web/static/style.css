@@ -8303,6 +8303,16 @@ table.prop-table .pulse-slider-row .pulse-slider-commit {
 .sh-cb { margin: 0; }
 .sh-time { font-family: var(--font-mono); font-size: 0.88em; font-weight: 600; }
 .sh-pin-badge { font-size: 0.9em; }
+/* Project lens (docs/63): display-only qualibrate-project marks on history */
+.sh-project-badge {
+  font-size: 0.72em;
+  color: var(--pico-muted-color);
+  border: 1px solid var(--pico-muted-border-color, var(--pico-form-element-border-color));
+  border-radius: 999px;
+  padding: 0.05rem 0.45rem;
+  white-space: nowrap;
+}
+.scope-suffix { color: var(--pico-muted-color); font-weight: 400; }
 .sh-attribution { font-size: 0.85em; margin: 0.25rem 0 0 1.4rem; }
 .sh-attribution strong { color: var(--pico-color); }
 .sh-label { font-size: 0.82em; color: var(--pico-muted-color); margin: 0.15rem 0 0 1.4rem; }

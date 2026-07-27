@@ -738,7 +738,8 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict) -> None:
             # The live chip visibly changed and we adopted it — record a
             # Param History snapshot like the explicit /state/sync does.
             try:
-                _history().check_and_snapshot(ctx.get("path"), "auto")
+                _history().check_and_snapshot(ctx.get("path"), "auto",
+                                              project=_scope_for(ctx.get("path")))
             except Exception:
                 logger.warning("History snapshot after auto-sync failed",
                                exc_info=True)
@@ -877,7 +878,8 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> None:
                 # The live chip was replaced and we adopted it — record a
                 # Param History snapshot like the explicit /state/sync does.
                 try:
-                    _history().check_and_snapshot(str(folder), "auto")
+                    _history().check_and_snapshot(str(folder), "auto",
+                                                project=_scope_for(folder))
                 except Exception:
                     logger.warning("History snapshot after auto-sync failed",
                                    exc_info=True)
@@ -4541,7 +4543,8 @@ def history_snapshot():
         return render_template("_status.html", message="No state loaded", level="warning")
 
     hm = _history()
-    hm.check_and_snapshot(_active_path(), "manual", force=True)
+    hm.check_and_snapshot(_active_path(), "manual", force=True,
+                          project=_scope_for(_active_path()))
 
     return history_list()
 
@@ -4807,7 +4810,8 @@ def state_history_restore_live(timestamp: str):
     try:
         with _active_wc_lock(ctx):
             try:
-                backup_meta = hm.check_and_snapshot(path, "manual", force=True)
+                backup_meta = hm.check_and_snapshot(path, "manual", force=True,
+                                                    project=_scope_for(path))
             except Exception as exc:
                 logger.warning("Pre-restore snapshot failed", exc_info=True)
                 return render_template(
@@ -4853,7 +4857,7 @@ def state_history_restore_live(timestamp: str):
     # the restored bytes are identical to an existing snapshot, so content-hash
     # dedup should recognise it and skip a redundant ~1MB write.
     try:
-        hm.check_and_snapshot(path, "restore")
+        hm.check_and_snapshot(path, "restore", project=_scope_for(path))
     except Exception:
         logger.warning("Post-restore snapshot failed", exc_info=True)
     logger.info("State History: restored snapshot %s to live", timestamp)
@@ -4899,7 +4903,8 @@ def state_history_snapshot():
     if not ctx or ctx.get("type") != "quam":
         return render_template("_status.html", message="No state loaded", level="warning")
     try:
-        _history().check_and_snapshot(ctx["path"], "manual", force=True)
+        _history().check_and_snapshot(ctx["path"], "manual", force=True,
+                                      project=_scope_for(ctx["path"]))
     except Exception as exc:
         return render_template("_status.html",
                                message=f"Snapshot failed: {exc}", level="error"), 500
@@ -4929,7 +4934,8 @@ def state_archive():
     if dirty:
         note = ((note + " — ") if note else "") + "captured the LIVE chip; unapplied working-copy edits not included"
     try:
-        meta = _history().check_and_snapshot(ctx["path"], "manual", force=True)
+        meta = _history().check_and_snapshot(ctx["path"], "manual", force=True,
+                                             project=_scope_for(ctx["path"]))
         if meta is None:
             return '<span class="archive-status archive-err">Could not capture state</span>'
         _history().annotate_snapshot(ctx["path"], meta.timestamp,
@@ -6949,7 +6955,8 @@ def state_sync():
 
     # Record a Param History snapshot of the now-current live state.
     try:
-        _history().check_and_snapshot(_active_path(), "auto")
+        _history().check_and_snapshot(_active_path(), "auto",
+                                      project=_scope_for(_active_path()))
     except Exception:
         logger.warning("History snapshot after sync failed", exc_info=True)
     return jsonify({
@@ -7026,7 +7033,8 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False):
     try:
         _history().check_and_snapshot(
             _active_path(), "save",
-            defer_index=not current_app.config.get("TESTING"))
+            defer_index=not current_app.config.get("TESTING"),
+            project=_scope_for(_active_path()))
     except Exception:
         logger.warning("History snapshot after pull-apply failed", exc_info=True)
     return jsonify({
@@ -7103,7 +7111,8 @@ def state_apply_to_live():
     try:
         _history().check_and_snapshot(
             _active_path(), "save",
-            defer_index=not current_app.config.get("TESTING"))
+            defer_index=not current_app.config.get("TESTING"),
+            project=_scope_for(_active_path()))
     except Exception:
         logger.warning("History snapshot after apply failed", exc_info=True)
     toast = render_template(
@@ -9809,6 +9818,12 @@ def param_history():
     all_disk_chips = hm.list_chip_histories()
     disk_by_key = {c["key"]: c for c in all_disk_chips}
 
+    # Project lens (docs/63): the loaded chip's selector text becomes
+    # "<project> · <key>" when the context carries a scope. DISPLAY ONLY —
+    # ``key`` (and every URL / data attribute built from it) stays the raw
+    # history key so ?chip_key=, hist: refs and the JS contract are untouched.
+    scope_project = (_active_ctx() or {}).get("qualibrate_project")
+
     active_chips: list[dict[str, Any]] = []
     active_keys: set[str] = set()
     # Always include the currently-loaded chip — the only thing in the main
@@ -9817,7 +9832,7 @@ def param_history():
         info = disk_by_key.get(loaded_key, {})
         active_chips.insert(0, {
             "key": loaded_key,
-            "name": loaded_key,
+            "name": f"{scope_project} · {loaded_key}" if scope_project else loaded_key,
             "snapshot_count": info.get("snapshot_count", 0),
             "latest_timestamp": info.get("latest_timestamp", ""),
             "qubits": info.get("qubits", []),
@@ -14442,7 +14457,8 @@ def _autofit_start_real(inst, p, data, auditor):
 
     def snapshot(label):
         with app.app_context():
-            hm.check_and_snapshot(str(live_path), "manual", force=True)
+            hm.check_and_snapshot(str(live_path), "manual", force=True,
+                                   project=_scope_for(live_path))
 
     targets = list(p.targets)
     if not targets:
