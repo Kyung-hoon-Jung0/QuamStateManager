@@ -10460,30 +10460,18 @@ def _ensure_workspace_loaded() -> None:
 
         if not _session_loaded:
             _session_loaded = True
+            # docs/63 decision 3: startup NEVER auto-activates the last chip —
+            # SM lands on the clean Projects page and the last chip/project
+            # are one-click "Resume"/"Continue" cards there instead. What
+            # remains of the old restore is the hygiene: prune a vanished
+            # last path from the session so recents and the landing never
+            # offer a dead folder. (A transient read error can't happen any
+            # more — nothing is read beyond the two existence stats.)
             data = _load_session()
             last = data.get("last_quam_state_path")
             if last:
                 last_path = Path(last)
-                if last_path.is_dir() and (last_path / "state.json").exists():
-                    try:
-                        _activate_quam(last)
-                        # Auto-restored a chip — promote its chip folder to
-                        # the workspace tree the same way an explicit /load would.
-                        _maybe_auto_add_workspace_root(last)
-                    except (safe_io.LiveFileError, OSError, ValueError):
-                        # Transient read failure (an external writer mid-save, a
-                        # lock, or a pair that didn't settle) — the folder +
-                        # state.json exist (pre-checked), so the chip is fine;
-                        # KEEP it in recents so a re-open retries. Dropping it
-                        # here would silently forget a chip qualibrate happened to
-                        # be writing at startup (audit C32).
-                        logger.warning("Auto-restore of %s hit a transient read "
-                                       "error; keeping it in recents", last,
-                                       exc_info=True)
-                    except Exception:
-                        logger.warning("Auto-restore failed for %s; dropping", last, exc_info=True)
-                        _drop_bad_path(last)
-                else:
+                if not (last_path.is_dir() and (last_path / "state.json").exists()):
                     _drop_bad_path(last)
 
         if not _rehydrated:

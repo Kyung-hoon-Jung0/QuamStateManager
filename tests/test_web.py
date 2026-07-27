@@ -2772,17 +2772,23 @@ class TestSessionPersistence:
         assert data["last_quam_state_path"] == abs_path
         assert data["recent_quam_state_paths"][0] == abs_path
 
-    def test_session_auto_restores_on_first_request(self, client, synth_folder, app):
-        # Seed session file BEFORE the first request
+    def test_session_not_auto_activated_on_startup(self, client, synth_folder, app):
+        """docs/63 decision 3: the seeded last chip must NOT auto-activate —
+        startup lands clean, and re-entry is a one-click card on the landing.
+        (The old test asserted the absence of a string the empty state never
+        contained, so it passed whether or not restore ran — this pins the
+        contract for real via active_context.)"""
         abs_path = str(Path(synth_folder).resolve())
         self._seed_session(app, last=abs_path)
         self._reset_load_flags()
 
-        # First request should auto-activate the seeded path
         resp = client.get("/qubits", headers={"HX-Request": "true"})
         assert resp.status_code == 200
-        # If no state was loaded, the route renders a "No state loaded" warning
-        assert b"No state loaded" not in resp.data
+        # nothing was activated server-side
+        assert app.config.get("active_context") is None
+        # the session file keeps the path — the landing's Resume card needs it
+        data = json.loads(self._session_file(app).read_text(encoding="utf-8"))
+        assert data["last_quam_state_path"] == abs_path
 
     def test_session_handles_missing_folder(self, client, tmp_path, app):
         gone = tmp_path / "definitely_not_here"
