@@ -474,6 +474,58 @@ class TestDatasetLens:
         assert "sk.length < known" in js                 # proper-subset guard
 
 
+class TestTrayBadge:
+    """Step-8 pins (docs/63 decision 10): the ⚗ badge shows SM's scope, appends
+    the qualibrate-active project muted when they differ, never re-colors for
+    a mere scope difference, and hides only without config or (no active AND
+    no scope)."""
+
+    def test_scope_shown_with_differing_active(self, scoped):
+        c = scoped["client"]
+        c.post("/qualibrate/open", data={"project": "gamma"})   # active is alpha
+        body = c.get("/qubits").get_data(as_text=True)
+        assert "qualibrate-tray-badge" in body
+        assert "gamma" in body
+        assert "(qualibrate: alpha)" in body
+
+    def test_scope_equal_active_no_note(self, scoped):
+        c = scoped["client"]
+        c.post("/qualibrate/open", data={"project": "alpha"})
+        body = c.get("/qubits").get_data(as_text=True)
+        assert "qualibrate-tray-badge" in body
+        assert "(qualibrate:" not in body
+        # same chip as qualibrate's write target → no mismatch color either
+        assert "qualibrate-tray-warn" not in body
+
+    def test_scope_only_badge_when_no_active(self, scoped):
+        # qualibrate has NO active project — a scope-only badge, never danger
+        _write(scoped["cfg"] / "config.toml", f'''
+[qualibrate]
+version = 5
+
+[quam]
+state_path = "{scoped["chip_a"]}"
+version = 3
+''')
+        qc._tray_cache.clear()
+        qc._state_index_cache.clear()
+        c = scoped["client"]
+        c.post("/qualibrate/open", data={"project": "gamma"})
+        body = c.get("/qubits").get_data(as_text=True)
+        assert "qualibrate-tray-badge" in body
+        assert "gamma" in body
+        assert "qualibrate-tray-danger" not in body
+        assert "(qualibrate:" not in body
+
+    def test_no_badge_without_config(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(tmp_path / "ghost"))
+        qc._tray_cache.clear()
+        qc._state_index_cache.clear()
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        body = app.test_client().get("/").get_data(as_text=True)
+        assert "qualibrate-tray-badge" not in body
+
+
 class TestLanding:
     """Step-5 pins (docs/63): project-first landing with lazy cards; welcome
     verbatim without a config; Resume card; /qubits redirect."""

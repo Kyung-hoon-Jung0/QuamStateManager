@@ -9124,6 +9124,9 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
     color: var(--cell-ok-color, #ff7f0e); }
 .qualibrate-tray-danger { border-color: var(--cell-bad-color, #d62728);
     color: var(--cell-bad-color, #d62728); }
+/* Project lens (docs/63): muted "(qualibrate: <active>)" note when SM's scope
+   differs from qualibrate's active project — informational, never a warn color */
+.qualibrate-tray-active-note { color: var(--pico-muted-color); font-size: .92em; }
 
 /* ---- Autofit (docs/56) ---- */
 .autofit-readiness { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap;

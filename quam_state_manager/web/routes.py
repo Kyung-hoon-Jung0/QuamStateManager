@@ -2192,24 +2192,32 @@ def _qualibrate_tray_badge() -> dict | None:
 
     Cheap enough for every render: qualibrate_config.tray_status is
     stat-cached (two os.stat steady-state). ``match`` is True/False vs the
-    chip SM has open, or None when either side is unknown."""
+    chip SM has open, or None when either side is unknown. ``sm_scope`` is
+    SM's OWN project scope (docs/63) — shown as the badge name when present;
+    a mere scope≠active difference is NEVER a warn/danger color (``match``
+    keeps meaning "SM's chip == qualibrate's active write target"). Hidden
+    only when there's no config, or neither an active project nor a scope."""
     from quam_state_manager.core import qualibrate_config
 
     try:
         st = qualibrate_config.tray_status()
     except Exception:  # the badge must never break a page render
         return None
-    if not st.get("config_exists") or not st.get("active"):
+    ctx = _active_ctx()
+    sm_scope = (ctx or {}).get("qualibrate_project")
+    if not st.get("config_exists") or not (st.get("active") or sm_scope):
         return None
     match = None
-    ctx = _active_ctx()
     live = (ctx or {}).get("live_path")
     if live and st.get("state_native") and st.get("state_exists"):
         # samefile-grounded — resolve()-equality false-ambered on case-variant
         # spellings of one folder on case-insensitive (macOS/Windows) hosts.
         match = path_match.same_folder(live, st["state_native"])
-    return {"project": st["active"], "dangling": not st["state_exists"],
-            "match": match}
+    return {"project": st["active"],
+            # dangling only ever describes the ACTIVE project's state_path —
+            # a scope-only badge (no active project) must not read as broken.
+            "dangling": bool(st.get("active")) and not st["state_exists"],
+            "match": match, "sm_scope": sm_scope}
 
 
 @bp.route("/api/qualibrate/projects")
