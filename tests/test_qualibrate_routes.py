@@ -41,22 +41,24 @@ def _tree(tmp_path: Path) -> dict[str, Path]:
     other = _chip(tmp_path / "chips" / "other_chip", name="qB1")
     storage = tmp_path / "datasets"
     storage.mkdir()
+    # as_posix(): backslashes are ESCAPES in a TOML basic string — a raw
+    # WindowsPath makes the whole config unparseable on native Windows.
     _write(cfg / "config.toml", f'''
 [qualibrate]
 project = "alpha"
 version = 5
 
 [qualibrate.storage]
-location = "{storage}"
+location = "{storage.as_posix()}"
 
 [quam]
-state_path = "{good}"
+state_path = "{good.as_posix()}"
 version = 3
 ''')
     _write(cfg / "projects" / "alpha" / "config.toml",
-           f'[quam]\nstate_path = "{tmp_path / "chips" / "missing"}"\n')
+           f'[quam]\nstate_path = "{(tmp_path / "chips" / "missing").as_posix()}"\n')
     _write(cfg / "projects" / "beta" / "config.toml",
-           f'[quam]\nstate_path = "{good}"\n')
+           f'[quam]\nstate_path = "{good.as_posix()}"\n')
     _write(cfg / "projects" / "delta" / "config.toml",
            '[quam]\nstate_path = ""\n')
     return {"cfg": cfg, "good": good, "other": other}

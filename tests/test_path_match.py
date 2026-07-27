@@ -146,3 +146,13 @@ def test_fs_key_case_folds_on_mac(monkeypatch):
     monkeypatch.setattr(pm, "os", SimpleNamespace(name="posix", path=os.path))
     monkeypatch.setattr(sys, "platform", "darwin")
     assert pm.fs_key("/A/B") == pm.fs_key("/a/b")
+
+
+def test_nul_byte_paths_never_raise(tmp_path):
+    # POSIX stat/resolve raise ValueError (not OSError) on an embedded NUL —
+    # reachable via a mangled-but-valid-JSON roots memo, and a scoped
+    # /datasets render sits directly above fs_key. Degrade, never propagate.
+    bad = "chips\x00one"
+    assert isinstance(pm.fs_key(bad), str)
+    assert pm.same_folder(bad, bad) is True       # raw-compare fallback
+    assert pm.same_folder(bad, tmp_path) is False

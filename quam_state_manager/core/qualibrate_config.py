@@ -431,15 +431,20 @@ def tray_status(cfg_dir: Path | None = None) -> dict[str, Any]:
     except OSError:
         return {"config_exists": False, "active": None,
                 "state_raw": None, "state_native": None, "state_exists": False}
+    # Rebuilds assign ONE immutable entry tuple and afterwards read only
+    # locals — concurrent first hits (pywebview window + workbench iframe
+    # both landing on GET /) may waste a rebuild but can never observe a
+    # half-built cache. The previous clear()/update()/read-back sequence
+    # could KeyError between two racing threads.
     c = _tray_cache
-    if c.get("key") != (str(cfg_dir), root_m):
+    key = (str(cfg_dir), root_m)
+    entry = c.get("entry")
+    if entry is None or entry[0] != key:
         root_cfg = _load_toml(root_path)
-        active = (root_cfg.get("qualibrate") or {}).get("project")
-        c.clear()
-        c.update(key=(str(cfg_dir), root_m),
-                 active=str(active) if active else None,
-                 root_cfg=root_cfg, overlay_m=None, state=None)
-    active = c["active"]
+        active_v = (root_cfg.get("qualibrate") or {}).get("project")
+        entry = (key, str(active_v) if active_v else None, root_cfg, {})
+        c["entry"] = entry
+    _, active, root_cfg, state_memo = entry
     if not active:
         return {"config_exists": True, "active": None,
                 "state_raw": None, "state_native": None, "state_exists": False}
@@ -448,14 +453,15 @@ def tray_status(cfg_dir: Path | None = None) -> dict[str, Any]:
         overlay_m = overlay_path.stat().st_mtime_ns
     except OSError:
         overlay_m = -1
-    if c.get("state") is None or c.get("overlay_m") != overlay_m:
+    st = state_memo.get(overlay_m)
+    if st is None:
         overlay = _load_toml(overlay_path) if overlay_m >= 0 else {}
-        eff = _deep_merge(c["root_cfg"], overlay)
+        eff = _deep_merge(root_cfg, overlay)
         raw = (eff.get("quam") or {}).get("state_path")
         native = native_path(raw)
-        c["overlay_m"] = overlay_m
-        c["state"] = {"raw": raw, "native": str(native) if native else None}
-    st = c["state"]
+        st = {"raw": raw, "native": str(native) if native else None}
+        state_memo.clear()          # one overlay state per entry, like before
+        state_memo[overlay_m] = st
     return {
         "config_exists": True,
         "active": active,
@@ -542,8 +548,17 @@ def lint(listing: dict[str, Any]) -> list[dict[str, Any]]:
                                      f"{SUPPORTED_QUALIBRATE_VERSION}/{SUPPORTED_QUAM_VERSION} "
                                      "— SM stays read-only for these configs")})
 
+    # state_path grouping uses filesystem identity (fs_key), not raw string
+    # equality: the scope engine's ambiguity rule (_project_for_path) treats
+    # case/spelling variants of ONE folder as the same chip via same_folder,
+    # so the Doctor hint that explains its None-abstention must cluster the
+    # same way. Deferred import — path_match pulls in history; lint only runs
+    # on Doctor renders. (storage_shared keeps its historical raw grouping.)
+    from quam_state_manager.core import path_match
+
     storage_users: dict[str, list[str]] = {}
     state_users: dict[str, list[str]] = {}
+    state_locs: dict[str, str] = {}     # fs_key → first spelling, for display
     for p in listing.get("projects", []):
         name = p["name"]
         st = p["state_path"]
@@ -559,14 +574,17 @@ def lint(listing: dict[str, Any]) -> list[dict[str, Any]]:
             finding = {"severity": sev, "project": name,
                        "code": "state_path_dangling",
                        "message": f"state_path does not exist: {st['raw']}"}
-            # sibling suggestion: existing dirs next to the dangling target
+            # sibling suggestion: existing dirs next to the dangling target.
+            # ValueError: scandir raises it (not OSError) on an embedded NUL
+            # — legal in a TOML basic string, and lint must never 500 the
+            # landing over an adversarial config value.
             try:
                 parent = Path(st["native"]).parent
                 sibs = [d.name for d in parent.iterdir() if d.is_dir()][:4]
                 if sibs:
                     finding["suggestion"] = (
                         "existing sibling folder(s): " + ", ".join(sibs))
-            except OSError:
+            except (OSError, ValueError):
                 pass
             findings.append(finding)
         if p["calibration_library"]["native"] and not p["calibration_library"]["exists"]:
@@ -577,7 +595,9 @@ def lint(listing: dict[str, Any]) -> list[dict[str, Any]]:
         if p["storage"]["native"]:
             storage_users.setdefault(p["storage"]["native"], []).append(name)
         if st["native"]:
-            state_users.setdefault(st["native"], []).append(name)
+            k = path_match.fs_key(st["native"])
+            state_users.setdefault(k, []).append(name)
+            state_locs.setdefault(k, st["native"])
 
     for loc, users in storage_users.items():
         if len(users) > 1:
@@ -593,13 +613,13 @@ def lint(listing: dict[str, Any]) -> list[dict[str, Any]]:
     # structurally easy for several projects to resolve to ONE chip folder,
     # and SM's project lens then can't auto-attribute the chip to a single
     # project on a plain folder load (an explicit Open pins the choice).
-    for loc, users in state_users.items():
+    for k, users in state_users.items():
         if len(users) > 1:
             findings.append({
                 "severity": "info", "project": None,
                 "code": "state_path_shared",
                 "message": (f"{len(users)} projects share one state_path "
-                            f"({loc}): " + ", ".join(sorted(users)) +
+                            f"({state_locs[k]}): " + ", ".join(sorted(users)) +
                             " — a plain folder load can't tell which project "
                             "is meant; open the project explicitly to pin it"),
             })

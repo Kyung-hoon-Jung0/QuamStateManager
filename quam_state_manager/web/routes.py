@@ -739,7 +739,7 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict) -> None:
             # Param History snapshot like the explicit /state/sync does.
             try:
                 _history().check_and_snapshot(ctx.get("path"), "auto",
-                                              project=_scope_for(ctx.get("path")))
+                                              project=_scope_for(ctx.get("path"), ctx))
             except Exception:
                 logger.warning("History snapshot after auto-sync failed",
                                exc_info=True)
@@ -755,8 +755,14 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict) -> None:
             ctx["live_diverged"] = result == working_copy.RECONCILE_STALE
 
 
-def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> None:
+def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
     """Load a QUAM state folder and register it as the active context.
+
+    Returns the activated context dict, so a caller that must keep acting on
+    THIS chip (e.g. /qualibrate/open's scope pin) can bind to it directly —
+    re-reading ``_active_ctx()`` later in the request cross-wires onto
+    whatever a concurrent ``/load`` activated meanwhile (the same bug class
+    :func:`_active_wc_lock` documents).
 
     *origin* records provenance — ``"live"`` for a chip the user loaded to
     edit, ``"dataset_archive"`` for a frozen per-run snapshot opened from the
@@ -852,13 +858,18 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> None:
             # keep it read-only. Only live→archive is allowed.
             if origin != "live" or (current.get("origin") or "live") == "live":
                 current["origin"] = origin
+        # Project lens (docs/63): derive the scope when this context doesn't
+        # carry one yet — BEFORE publication (a concurrent /datasets render
+        # must never observe an active scoped chip without its memo: the
+        # transient data-scope="" identity flip would wipe the user's
+        # folder-filter toggles) and outside the cache lock (the reverse
+        # index may do a few stats / a rare TOML re-parse). An explicitly
+        # pinned name sticks.
+        _acquire_project_scope(current)
+        with _quam_cache_lock:
             current_app.config["contexts"][ctx_name] = current
             current_app.config["active_context"] = ctx_name
-        # Project lens (docs/63): derive the scope when this context doesn't
-        # carry one yet (outside the cache lock — the reverse index may do a
-        # few stats / a rare TOML re-parse). An explicitly pinned name sticks.
-        _acquire_project_scope(current)
-        return
+        return current
 
     # Slow path. Serialise builds for THIS folder so two threads don't
     # race on the working-folder atomic write. Builds for DIFFERENT
@@ -907,6 +918,12 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> None:
                 # the silent clean auto-pull becomes a visible "Live chip updated —
                 # N params pulled" notice (feedback #5 — the root of "pulse edits not synced").
                 ctx["_auto_pulled"] = {"count": pulled_count or 0}
+        # Project lens (docs/63): fresh builds (first load, LRU-eviction
+        # rehydrates, restarts) derive their scope here — BEFORE publication
+        # (a concurrent /datasets render must never observe an active scoped
+        # chip without its memo); every activation path converges on the
+        # reverse index, so a lost memo self-heals.
+        _acquire_project_scope(ctx)
         with _quam_cache_lock:
             if key not in _quam_cache:
                 # Evict the oldest CLEAN in-memory entry if the cache is full.
@@ -929,10 +946,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> None:
         _attach_type_policy(ctx)
         _warm_state_schema_async(ctx.get("store"), current_app.instance_path,
                                  live_folder=ctx.get("path"))
-        # Project lens (docs/63): fresh builds (first load, LRU-eviction
-        # rehydrates, restarts) derive their scope here — every activation
-        # path converges on the reverse index, so a lost memo self-heals.
-        _acquire_project_scope(ctx)
+        return ctx
 
 
 _schema_warm_inflight: set[str] = set()
@@ -1951,12 +1965,19 @@ def home():
     pre-lens Welcome renders verbatim."""
     config_exists = bool(qualibrate_config.tray_status().get("config_exists"))
     session = _load_session()
+    # Session values are hand-editable JSON — a type-corrupt entry (int,
+    # nested list, …) must degrade to "no history", never TypeError the
+    # most-hit route out of Path().
     resume_path = session.get("last_quam_state_path")
+    if not isinstance(resume_path, str):
+        resume_path = None
     if resume_path and not (Path(resume_path) / "state.json").exists():
         resume_path = None      # startup hygiene may not have run yet
     recents = []
-    for p in (session.get("recent_quam_state_paths") or [])[:5]:
-        if p != resume_path and (Path(p) / "state.json").exists():
+    raw_recents = session.get("recent_quam_state_paths")
+    for p in (raw_recents if isinstance(raw_recents, list) else [])[:5]:
+        if (isinstance(p, str) and p != resume_path
+                and (Path(p) / "state.json").exists()):
             recents.append({"path": p, "name": _chip_display_name(Path(p))})
     return render_template("base.html", **_ctx(
         page="home",
@@ -2145,9 +2166,24 @@ def _project_for_path(folder) -> str | None:
         return None
 
 
-def _scope_for(path) -> str | None:
-    """Project scope for an arbitrary state folder (snapshot stamping etc.) —
-    the same reverse match, name-only convenience."""
+def _scope_for(path, ctx: dict | None = None) -> str | None:
+    """Project scope for an arbitrary state folder (snapshot stamping etc.).
+
+    The owning context's memoized scope is the session truth the UI headers
+    show — an explicit /qualibrate/open pin included, which the pure reverse
+    match can never recover when several projects share one state_path (it
+    refuses to guess → None, and the stamp would contradict the header).
+    So prefer the memo when the snapshot source IS that context's folder;
+    fall back to the reverse match (no ctx in hand — background paths — or
+    a ctx that predates scope acquisition)."""
+    if ctx:
+        memo = ctx.get("qualibrate_project")
+        live = ctx.get("live_path") or ctx.get("path") or ""
+        try:
+            if memo and live and path and path_match.same_folder(live, path):
+                return memo
+        except Exception:  # noqa: BLE001 — the lens must never break a save
+            logger.debug("scope memo match failed", exc_info=True)
     return _project_for_path(path)
 
 
@@ -2164,14 +2200,19 @@ def _acquire_project_scope(ctx: dict | None, *, explicit: str | None = None) -> 
     if not ctx:
         return
     if explicit is not None:
-        if ctx.get("qualibrate_project") != explicit:
-            ctx["qualibrate_project"] = explicit
-            _remember_last_project(explicit)
+        ctx["qualibrate_project"] = explicit
+        # Unconditional (it self-dedups): a RE-open of an already-scoped
+        # project must still refresh the landing highlight — gating on the
+        # ctx memo left last_project pointing at whatever was derived since.
+        _remember_last_project(explicit)
         return
     if ctx.get("qualibrate_project"):
         return
     name = _project_for_path(ctx.get("live_path") or ctx.get("path") or "")
-    if name:
+    # Re-check before writing: the derive above does stat/TOML work, and an
+    # explicit pin may have landed on this ctx meanwhile — a user's pin
+    # always outranks a concurrent derive.
+    if name and not ctx.get("qualibrate_project"):
         ctx["qualibrate_project"] = name
         _remember_last_project(name)
 
@@ -2302,10 +2343,20 @@ def qualibrate_open_project():
             level="error"), 409
 
     try:
-        _activate_quam(state["native"])
+        opened = _activate_quam(state["native"])
     except (FileNotFoundError, ValueError, OSError) as e:
         return render_template("_status.html", message=str(e), level="error"), 400
     _remember_load_path(state["native"])
+
+    # a qualibrate project is a SCOPE on the context, not a new context type.
+    # Explicit open PINS the user's choice — it survives cache-hit
+    # re-activations of the same folder even when several projects share this
+    # state_path (the reverse-matcher would refuse to guess; docs/63). The
+    # pin binds to the context _activate_quam RETURNED, immediately: the
+    # storage scan below can take seconds on a network mount, and re-reading
+    # _active_ctx() after it would cross-wire the pin onto whatever a
+    # concurrent /load activated meanwhile (the _active_wc_lock bug class).
+    _acquire_project_scope(opened, explicit=name)
 
     # dataset roots from the project's storage location (read-only scan)
     added = 0
@@ -2328,14 +2379,6 @@ def qualibrate_open_project():
         # including already-registered ones — so Datasets/Trends can seed
         # their folder selection from the scope in later sessions too.
         _record_project_roots(name, found)
-
-    # a qualibrate project is a SCOPE on the context, not a new context type.
-    # Explicit open PINS the user's choice — it survives cache-hit
-    # re-activations of the same folder even when several projects share this
-    # state_path (the reverse-matcher would refuse to guess; docs/63).
-    ctx = _active_ctx()
-    if ctx is not None:
-        _acquire_project_scope(ctx, explicit=name)
 
     logger.info("qualibrate open-in-sm: %s -> %s (+%d dataset roots)",
                 name, state["native"], added)
@@ -4560,7 +4603,7 @@ def history_snapshot():
 
     hm = _history()
     hm.check_and_snapshot(_active_path(), "manual", force=True,
-                          project=_scope_for(_active_path()))
+                          project=_scope_for(_active_path(), _active_ctx()))
 
     return history_list()
 
@@ -4827,7 +4870,7 @@ def state_history_restore_live(timestamp: str):
         with _active_wc_lock(ctx):
             try:
                 backup_meta = hm.check_and_snapshot(path, "manual", force=True,
-                                                    project=_scope_for(path))
+                                                    project=_scope_for(path, ctx))
             except Exception as exc:
                 logger.warning("Pre-restore snapshot failed", exc_info=True)
                 return render_template(
@@ -4873,7 +4916,7 @@ def state_history_restore_live(timestamp: str):
     # the restored bytes are identical to an existing snapshot, so content-hash
     # dedup should recognise it and skip a redundant ~1MB write.
     try:
-        hm.check_and_snapshot(path, "restore", project=_scope_for(path))
+        hm.check_and_snapshot(path, "restore", project=_scope_for(path, ctx))
     except Exception:
         logger.warning("Post-restore snapshot failed", exc_info=True)
     logger.info("State History: restored snapshot %s to live", timestamp)
@@ -4920,7 +4963,7 @@ def state_history_snapshot():
         return render_template("_status.html", message="No state loaded", level="warning")
     try:
         _history().check_and_snapshot(ctx["path"], "manual", force=True,
-                                      project=_scope_for(ctx["path"]))
+                                      project=_scope_for(ctx["path"], ctx))
     except Exception as exc:
         return render_template("_status.html",
                                message=f"Snapshot failed: {exc}", level="error"), 500
@@ -4951,7 +4994,7 @@ def state_archive():
         note = ((note + " — ") if note else "") + "captured the LIVE chip; unapplied working-copy edits not included"
     try:
         meta = _history().check_and_snapshot(ctx["path"], "manual", force=True,
-                                             project=_scope_for(ctx["path"]))
+                                             project=_scope_for(ctx["path"], ctx))
         if meta is None:
             return '<span class="archive-status archive-err">Could not capture state</span>'
         _history().annotate_snapshot(ctx["path"], meta.timestamp,
@@ -6972,7 +7015,7 @@ def state_sync():
     # Record a Param History snapshot of the now-current live state.
     try:
         _history().check_and_snapshot(_active_path(), "auto",
-                                      project=_scope_for(_active_path()))
+                                      project=_scope_for(_active_path(), _active_ctx()))
     except Exception:
         logger.warning("History snapshot after sync failed", exc_info=True)
     return jsonify({
@@ -7050,7 +7093,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False):
         _history().check_and_snapshot(
             _active_path(), "save",
             defer_index=not current_app.config.get("TESTING"),
-            project=_scope_for(_active_path()))
+            project=_scope_for(_active_path(), _active_ctx()))
     except Exception:
         logger.warning("History snapshot after pull-apply failed", exc_info=True)
     return jsonify({
@@ -7128,7 +7171,7 @@ def state_apply_to_live():
         _history().check_and_snapshot(
             _active_path(), "save",
             defer_index=not current_app.config.get("TESTING"),
-            project=_scope_for(_active_path()))
+            project=_scope_for(_active_path(), _active_ctx()))
     except Exception:
         logger.warning("History snapshot after apply failed", exc_info=True)
     toast = render_template(
@@ -10461,6 +10504,17 @@ def _load_session() -> dict[str, Any]:
         data = json.loads(p.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             return {}
+        # Hand-editable JSON: a type-corrupt path entry (int, nested list, …)
+        # must degrade to absent — GET / and the before_request hook Path()
+        # these keys, and a TypeError there takes down every route.
+        if not isinstance(data.get("last_quam_state_path"), (str, type(None))):
+            data.pop("last_quam_state_path", None)
+        recents = data.get("recent_quam_state_paths")
+        if isinstance(recents, list):
+            data["recent_quam_state_paths"] = [r for r in recents
+                                               if isinstance(r, str)]
+        elif recents is not None:
+            data.pop("recent_quam_state_paths", None)
         return data
     except Exception:
         logging.getLogger(__name__).warning("Could not read last_session.json", exc_info=True)
@@ -14609,7 +14663,7 @@ def _autofit_start_real(inst, p, data, auditor):
     def snapshot(label):
         with app.app_context():
             hm.check_and_snapshot(str(live_path), "manual", force=True,
-                                   project=_scope_for(live_path))
+                                   project=_scope_for(live_path, ctx))
 
     targets = list(p.targets)
     if not targets:

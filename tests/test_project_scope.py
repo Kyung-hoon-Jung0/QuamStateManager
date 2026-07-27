@@ -37,7 +37,13 @@ def _chip(folder: Path, name: str = "qA1") -> Path:
 @pytest.fixture
 def scoped(tmp_path, monkeypatch):
     """cfg tree: alpha (ACTIVE) → chip_a; beta + gamma → shared chip (the
-    ambiguity pair); plus a standalone chip in no project."""
+    ambiguity pair); plus a standalone chip in no project.
+
+    Paths are interpolated ``as_posix()``: backslashes are ESCAPES inside a
+    TOML basic string, so a raw ``WindowsPath`` (``C:\\Users\\…`` → ``\\U``)
+    makes the whole config unparseable on native Windows and every
+    derivation silently returns None. ``C:/…`` stays drive-recognisable to
+    native_path/same_folder, and on POSIX as_posix() is the identity."""
     cfg = tmp_path / ".qualibrate"
     chip_a = _chip(tmp_path / "chips" / "chip_a")
     shared = _chip(tmp_path / "chips" / "shared", name="qB1")
@@ -50,20 +56,20 @@ project = "alpha"
 version = 5
 
 [qualibrate.storage]
-location = "{storage}"
+location = "{storage.as_posix()}"
 
 [quam]
-state_path = "{chip_a}"
+state_path = "{chip_a.as_posix()}"
 version = 3
 ''')
     _write(cfg / "projects" / "alpha" / "config.toml",
-           f'[quam]\nstate_path = "{chip_a}"\n')
+           f'[quam]\nstate_path = "{chip_a.as_posix()}"\n')
     _write(cfg / "projects" / "beta" / "config.toml",
-           f'[quam]\nstate_path = "{shared}"\n')
+           f'[quam]\nstate_path = "{shared.as_posix()}"\n')
     _write(cfg / "projects" / "gamma" / "config.toml",
-           f'[quam]\nstate_path = "{shared}"\n')
+           f'[quam]\nstate_path = "{shared.as_posix()}"\n')
     _write(cfg / "projects" / "delta" / "config.toml",
-           f'[quam]\nstate_path = "{tmp_path / "chips" / "missing"}"\n')
+           f'[quam]\nstate_path = "{(tmp_path / "chips" / "missing").as_posix()}"\n')
     monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(cfg))
     monkeypatch.delenv("QUALIBRATE_CONFIG_DIR", raising=False)
     qc._state_index_cache.clear()
@@ -118,7 +124,7 @@ project = "beta"
 version = 5
 
 [quam]
-state_path = "{scoped["chip_a"]}"
+state_path = "{scoped["chip_a"].as_posix()}"
 version = 3
 ''')
         qc._state_index_cache.clear()
@@ -141,6 +147,29 @@ class TestScopePinning:
         # (the reverse-matcher would refuse the beta/gamma tie → None)
         c.post("/load", data={"folder": str(scoped["shared"])})
         assert _active_scope(scoped["app"]) == "gamma"
+
+    def test_pin_reaches_snapshot_stamps(self, scoped):
+        """Header truth == stamp truth (audit): beta/gamma share one folder,
+        so the pure reverse match abstains — but the ctx's explicit pin must
+        reach the meta.json stamp (_scope_for is memo-first)."""
+        c = scoped["client"]
+        c.post("/qualibrate/open", data={"project": "gamma"})
+        r = c.post("/state-history/snapshot")
+        assert r.status_code == 200
+        hm = scoped["app"].config["history_manager"]
+        snaps = hm.list_snapshots(scoped["shared"])
+        assert snaps and snaps[0].project == "gamma"
+
+    def test_reopen_refreshes_last_project(self, scoped):
+        """Re-opening an already-scoped project must refresh the landing
+        highlight even though the ctx memo already carries the name (audit:
+        the memo guard used to skip _remember_last_project)."""
+        c = scoped["client"]
+        c.post("/qualibrate/open", data={"project": "gamma"})
+        c.post("/load", data={"folder": str(scoped["chip_a"])})  # derive → alpha
+        assert _session(scoped["inst"]).get("last_project") == "alpha"
+        c.post("/qualibrate/open", data={"project": "gamma"})
+        assert _session(scoped["inst"]).get("last_project") == "gamma"
 
     def test_eviction_rebuild_rederives(self, scoped):
         c = scoped["client"]
@@ -172,7 +201,7 @@ class TestReverseIndex:
     def test_index_invalidates_on_overlay_change(self, scoped):
         qc.project_state_paths()
         _write(scoped["cfg"] / "projects" / "beta" / "config.toml",
-               f'[quam]\nstate_path = "{scoped["standalone"]}"\n')
+               f'[quam]\nstate_path = "{scoped["standalone"].as_posix()}"\n')
         idx = qc.project_state_paths()
         assert Path(dict(idx["projects"])["beta"]) == scoped["standalone"]
 
@@ -262,6 +291,20 @@ class TestHistoryLens:
         snaps = hm2.list_snapshots(chip)
         assert snaps and snaps[0].project is None
 
+    def test_project_survives_annotate_rewrite(self, tmp_path):
+        """label/pin updates rewrite meta.json in place — the stamp must
+        survive the round-trip (annotate must keep raw-dict round-tripping,
+        never reconstruct SnapshotMeta field-by-field)."""
+        from quam_state_manager.core.history import HistoryManager
+        chip = _chip(tmp_path / "chip_an")
+        hm = HistoryManager(tmp_path / "inst_an")
+        meta = hm.check_and_snapshot(chip, "manual", force=True, project="alpha")
+        hm.annotate_snapshot(chip, meta.timestamp, label="baseline", pinned=True)
+        hm.annotate_snapshot(chip, meta.timestamp, label=None, pinned=False)
+        hm2 = HistoryManager(tmp_path / "inst_an")
+        snaps = hm2.list_snapshots(chip)
+        assert snaps and snaps[0].project == "alpha"
+
     def test_state_history_row_badge_and_header(self, scoped):
         c = scoped["client"]
         c.post("/qualibrate/open", data={"project": "alpha"})
@@ -347,10 +390,10 @@ def ds_scoped(scoped):
     _seed_run(data_a, 1, qubits=["q0"])
     _write(scoped["cfg"] / "projects" / "alpha" / "config.toml", f'''
 [quam]
-state_path = "{scoped["chip_a"]}"
+state_path = "{scoped["chip_a"].as_posix()}"
 
 [qualibrate.storage]
-location = "{storage_alpha}"
+location = "{storage_alpha.as_posix()}"
 ''')
     qc._state_index_cache.clear()
     scoped["storage_alpha"] = storage_alpha
@@ -504,7 +547,7 @@ class TestTrayBadge:
 version = 5
 
 [quam]
-state_path = "{scoped["chip_a"]}"
+state_path = "{scoped["chip_a"].as_posix()}"
 version = 3
 ''')
         qc._tray_cache.clear()
@@ -554,6 +597,17 @@ class TestLanding:
         body = c.get("/").get_data(as_text=True)
         assert '<details class="landing-gs">' in body
         assert '<details class="landing-gs" open>' not in body
+
+    def test_home_tolerates_type_corrupt_session(self, scoped):
+        """last_session.json is hand-editable — non-string path entries must
+        degrade to 'no history', never TypeError GET / (audit)."""
+        (scoped["inst"] / "last_session.json").write_text(json.dumps({
+            "last_quam_state_path": 123,
+            "recent_quam_state_paths": ["not-a-chip", 7, None],
+            "last_project": ["weird"],
+        }), encoding="utf-8")
+        r = scoped["client"].get("/")
+        assert r.status_code == 200
 
     def test_landing_cards_fragment(self, scoped):
         body = scoped["client"].get("/landing/projects").get_data(as_text=True)

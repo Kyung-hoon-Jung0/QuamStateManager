@@ -107,25 +107,28 @@ def _projects_tree(tmp_path: Path) -> dict[str, Path]:
     own_storage = tmp_path / "datasets" / "beta_only"
     own_storage.mkdir()
 
+    # as_posix(): backslashes are ESCAPES in a TOML basic string — a raw
+    # WindowsPath makes the whole config unparseable on native Windows
+    # (C:\Users → \U → TOMLDecodeError) and every test here goes vacuous.
     _write(cfg / "config.toml", f'''
 [qualibrate]
 project = "alpha"
 version = 5
 
 [qualibrate.storage]
-location = "{shared}"
+location = "{shared.as_posix()}"
 
 [quam]
-state_path = "{good}"
+state_path = "{good.as_posix()}"
 version = 3
 ''')
     # alpha: ACTIVE + dangling own state_path (the real folder's worst anomaly)
     _write(cfg / "projects" / "alpha" / "config.toml",
-           f'[quam]\nstate_path = "{chips / "missing_chip"}"\n')
+           f'[quam]\nstate_path = "{(chips / "missing_chip").as_posix()}"\n')
     # beta: healthy — own existing state_path + own storage
     _write(cfg / "projects" / "beta" / "config.toml",
-           f'[quam]\nstate_path = "{good}"\n\n'
-           f'[qualibrate.storage]\nlocation = "{own_storage}"\n')
+           f'[quam]\nstate_path = "{good.as_posix()}"\n\n'
+           f'[qualibrate.storage]\nlocation = "{own_storage.as_posix()}"\n')
     # gamma: 0-byte overlay — pure inheritor
     (cfg / "projects" / "gamma").mkdir(parents=True)
     (cfg / "projects" / "gamma" / "config.toml").touch()
@@ -135,7 +138,7 @@ version = 3
     # epsilon: lazy project template in its storage location
     _write(cfg / "projects" / "epsilon" / "config.toml",
            '[qualibrate.storage]\nlocation = "'
-           + str(tmp_path / "datasets") + '/${#/qualibrate/project}"\n')
+           + (tmp_path / "datasets").as_posix() + '/${#/qualibrate/project}"\n')
     return {"cfg": cfg, "good": good, "shared": shared,
             "own_storage": own_storage, "chips": chips}
 
@@ -280,7 +283,8 @@ class TestEffectiveConfig:
     def test_zero_byte_overlay_inherits_everything(self, tmp_path):
         paths = _projects_tree(tmp_path)
         eff = qc.effective_config("gamma", cfg_dir=paths["cfg"])
-        assert eff["quam"]["state_path"] == str(paths["good"])
+        # effective_config returns the RAW toml value — the as_posix spelling
+        assert eff["quam"]["state_path"] == paths["good"].as_posix()
         assert eff["qualibrate"]["project"] == "gamma"
 
 
@@ -464,3 +468,21 @@ class TestStatePathSharedLint:
         ])
         assert [f for f in qc.lint(listing)
                 if f["code"] == "state_path_shared"] == []
+
+    def test_spelling_variants_of_one_folder_still_flagged(self, tmp_path):
+        # Grouping is filesystem identity (fs_key), not raw string equality:
+        # the scope engine's same_folder treats spelling variants of ONE
+        # folder as the same chip and abstains (scope None) — the Doctor hint
+        # that explains the abstention must cluster the same way.
+        real = tmp_path / "chips" / "one"
+        real.mkdir(parents=True)
+        variant = tmp_path / "chips" / ".." / "chips" / "one"
+        listing = self._listing([
+            ("beta", str(real), str(tmp_path / "da")),
+            ("gamma", str(variant), str(tmp_path / "db")),
+        ])
+        shared = [f for f in qc.lint(listing) if f["code"] == "state_path_shared"]
+        assert len(shared) == 1
+        assert "beta" in shared[0]["message"] and "gamma" in shared[0]["message"]
+        # display keeps a real spelling, not the normalized key
+        assert str(real) in shared[0]["message"]

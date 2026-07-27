@@ -38,9 +38,13 @@ exactly as before, "displayed as-is".
   converge on the same answer by construction.
 - **Ambiguity rule** (several projects can share one `state_path` via
   inheritance): the qualibrate-**active** matching project wins; else a
-  **unique** match wins; else scope = `None` and the UI shows a
-  "N projects use this chip" hint. A new info-level `state_path_shared`
-  doctor finding mirrors `storage_shared`.
+  **unique** match wins; else scope = `None` (never guess). *(Amended by the
+  2026-07-28 audit:)* the shipped explanation surface is the info-level
+  `state_path_shared` **Doctor finding** (which mirrors `storage_shared` but
+  groups by `path_match.fs_key`, so case/spelling variants of one folder
+  cluster exactly like the scope engine's `same_folder` match) plus the
+  explicit-Open pin; an *in-context* "N projects use this chip" banner on
+  the ambiguous chip itself is deferred follow-up, not shipped.
 - **Scope = None ⇒ byte-identical legacy behavior** on every surface.
 
 ## Persistence (all under `instance/`, never `~/.qualibrate`)
@@ -53,10 +57,16 @@ exactly as before, "displayed as-is".
   bare-array format (external tooling contract), and its writer would
   otherwise silently drop unknown keys.
 - `SnapshotMeta.project: str | None` — stamped on new snapshots from the
-  snapshot's **source path** (via the reverse index), never from the active
-  context (background snapshots record non-active chips). Lives in
-  `meta.json` only (the `_SNAPSHOT_META_FIELDS` filter makes it
-  bidirectionally version-safe); no SQLite schema change.
+  snapshot's **source path**, never from the *globally active* context
+  (background snapshots record non-active chips). *(Amended by the
+  2026-07-28 audit:)* `_scope_for(path, ctx)` is **memo-first**: when the
+  call site holds the context that OWNS the source path, that context's
+  memoized scope (an explicit Open pin included) is the stamp — it is the
+  session truth the headers show, and the pure reverse match can never
+  recover a pin on a shared state_path (it abstains with None, so header
+  and stamp would contradict). The reverse index stays the fallback for
+  ctx-less paths. Lives in `meta.json` only (the `_SNAPSHOT_META_FIELDS`
+  filter makes it bidirectionally version-safe); no SQLite schema change.
 
 ## Surfaces
 
@@ -152,7 +162,60 @@ each independently green:
 | 8 | `f9eca41` | tray badge `sm_scope`: name = scope-or-active + muted `(qualibrate: <active>)` on differ; colors unchanged; scope-only badge never "dangling" |
 | 9 | (this commit) | docs sweep (docs/10, docs/22, docs/55, CLAUDE.md), doctrine pin extended over a full scoped session, full suite |
 
-Verification: `tests/test_project_scope.py` (45 tests across
-TestScopeDerivation/Pinning/ReverseIndex/SidebarReorg/HistoryLens/
-DatasetLens/TrayBadge/Landing) + the extended read-only doctrine pin in
-`tests/test_qualibrate_routes.py` + full-suite run.
+Verification: `tests/test_project_scope.py` (TestScopeDerivation/Pinning/
+ReverseIndex/SidebarReorg/HistoryLens/DatasetLens/TrayBadge/Landing) + the
+extended read-only doctrine pin in `tests/test_qualibrate_routes.py` +
+full-suite run.
+
+## §A — Pre-release adversarial audit (2026-07-28)
+
+Four parallel review agents (scope core+landing / history lens /
+datasets+trends lens / config+badge+doctrine+packaging) swept the whole
+branch diff; every finding was hand-verified against the code before fixing.
+Nothing rose to data-loss level. Fixed in the audit batch:
+
+1. **P1 — `/qualibrate/open` pin cross-wire.** The explicit pin used to bind
+   to `_active_ctx()` re-read *after* the storage scan (seconds on a network
+   mount); a concurrent `/load` in that window would pin the WRONG chip to
+   the project. `_activate_quam` now **returns the activated context** and
+   the pin binds to it immediately (the `_active_wc_lock` bug class).
+2. **Pinned scope now reaches snapshot stamps** — the memo-first
+   `_scope_for(path, ctx)` amendment above (header truth == stamp truth on a
+   shared state_path). Pinned by
+   `TestScopePinning::test_pin_reaches_snapshot_stamps`.
+3. **Scope acquisition moved BEFORE context publication** in both
+   `_activate_quam` exits: a concurrent `/datasets` render could observe an
+   active scoped chip without its memo → transient `data-scope=""` →
+   one-time wipe of the user's folder-filter toggles.
+4. **`tray_status` cache rebuild made atomic** (single immutable entry
+   tuple, no `clear()/update()/read-back`): two racing first hits on `GET /`
+   (pywebview window + workbench iframe) could KeyError — and `home()` is
+   the first unguarded caller.
+5. **Re-opening an already-scoped project now refreshes `last_project`**
+   (the memo-equality guard used to skip it → stale "Continue" highlight).
+6. **Type-corrupt `last_session.json` degrades instead of 500ing** — path
+   keys are sanitized in `_load_session` (both `GET /` and the
+   before_request hook `Path()` them).
+7. **Embedded-NUL hardening**: `path_match.same_folder`/`fs_key` and lint's
+   sibling-suggestion `iterdir` now catch `ValueError` (POSIX raises it, not
+   OSError, for NUL bytes — reachable via a mangled-but-valid-JSON memo or a
+   TOML `\u0000` escape; was a render-500 class on the landing and scoped
+   Datasets on macOS/Linux).
+8. **`state_path_shared` groups by `fs_key`** (see the amended ambiguity
+   bullet) so the Doctor hint fires exactly when the scope engine abstains.
+9. **The qualibrate/scope test files now genuinely run on native Windows**:
+   fixture paths are interpolated `as_posix()` (backslashes are escapes in
+   TOML basic strings — raw `WindowsPath` made the configs unparseable, 26
+   tests hard-failed and the None-expecting ones passed vacuously).
+   `annotate_snapshot` project-survival and corrupt-session landing pins
+   added alongside.
+
+Reviewed and **accepted as-is** (documented, not bugs to fix now): the
+instance-file memos (`last_session.json`, `project_dataset_roots.json`) are
+lockless read-modify-write like their pre-existing siblings — last writer
+wins, seed-only data, self-healing on the next Open; `fs_key` does not
+bridge Windows↔WSL dialects (recording is dialect-consistent per OS;
+mixed-dialect is the dev harness only — degrade is "no seed", never wrong
+data); project-roots entries for deleted projects are filtered naturally by
+the present-folder intersection (no GC pass); the trends scope hint shows on
+full cover too (honest there — trends' default is first-folder-only).
