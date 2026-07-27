@@ -185,6 +185,7 @@ import time as _time
 
 _PROJECT_TEMPLATE = "${#/qualibrate/project}"
 _WIN_DRIVE_RE = _re.compile(r"^([A-Za-z]):[\\/]")
+_WSL_MNT_RE = _re.compile(r"^/mnt/([A-Za-z])(?:/|$)")
 
 # Config schema generations this reader's semantics are pinned to (docs/55
 # version gate — writes elsewhere must degrade to read-only on mismatch).
@@ -197,15 +198,30 @@ def native_path(raw: Any) -> Path | None:
 
     Config values are written by qualibrate on Windows (``D:\\…``, sometimes
     lowercase ``d:``); when SM runs under WSL those must map to ``/mnt/d/…``
-    or every existence badge lies. Native Windows / native Linux values pass
-    through. Empty string → None (the explicit-override empty state_path)."""
+    or every existence badge lies. The INVERSE also holds (docs/63): a config
+    written from WSL carries ``/mnt/d/…`` values, and SM on native Windows
+    must map them to ``D:\\…`` or the project lens' reverse path-matching
+    false-negatives on every load. Native-dialect values pass through.
+    Empty string → None (the explicit-override empty state_path)."""
     if not isinstance(raw, str) or not raw.strip():
         return None
+    return _to_native(raw, os.name)
+
+
+def _to_native(raw: str, os_name: str) -> Path:
+    """Dialect mapping with the host OS as an argument — pure and therefore
+    testable for BOTH directions on any host (patching ``os.name`` breaks
+    pathlib's own class selection)."""
     m = _WIN_DRIVE_RE.match(raw)
-    if m and os.name != "nt":
+    if m and os_name != "nt":
         drive = m.group(1).lower()
         rest = raw[m.end():].replace("\\", "/")
         return Path(f"/mnt/{drive}/{rest}")
+    m = _WSL_MNT_RE.match(raw)
+    if m and os_name == "nt":
+        drive = m.group(1).upper()
+        rest = raw[m.end():].replace("/", "\\")
+        return Path(f"{drive}:\\{rest}")
     return Path(raw)
 
 
@@ -224,9 +240,22 @@ def _deep_merge(base: dict, overlay: dict) -> dict:
 def _load_toml_retry(path: Path) -> dict[str, Any]:
     """User-facing read: one short retry over :func:`_load_toml` — qualibrate's
     root write is non-atomic (truncate-in-place), so a mid-write read can see
-    a torn file. Polls keep the plain tolerant read; pages get one retry."""
+    a torn file. Polls keep the plain tolerant read; pages get one retry.
+
+    A genuinely EMPTY file is NOT a torn write: a 0-byte project overlay is a
+    supported "pure inheritor" (docs/55), and retrying it cost a 150 ms sleep
+    per empty overlay per listing — the studied real config has four of them,
+    which would put ~0.6 s of pure sleep on every listing (and, since the
+    project lens, on the chip-activation path). Skip the retry when the file
+    is empty; a mid-truncate root config is also momentarily 0-byte, but the
+    next poll/render re-reads it — same tolerance the plain read already has."""
     out = _load_toml(path)
     if out or not path.exists():
+        return out
+    try:
+        if path.stat().st_size == 0:
+            return out
+    except OSError:
         return out
     _time.sleep(0.15)
     return _load_toml(path)
@@ -463,6 +492,7 @@ def lint(listing: dict[str, Any]) -> list[dict[str, Any]]:
                                      "— SM stays read-only for these configs")})
 
     storage_users: dict[str, list[str]] = {}
+    state_users: dict[str, list[str]] = {}
     for p in listing.get("projects", []):
         name = p["name"]
         st = p["state_path"]
@@ -495,6 +525,8 @@ def lint(listing: dict[str, Any]) -> list[dict[str, Any]]:
                                          f"exist: {p['calibration_library']['raw']}")})
         if p["storage"]["native"]:
             storage_users.setdefault(p["storage"]["native"], []).append(name)
+        if st["native"]:
+            state_users.setdefault(st["native"], []).append(name)
 
     for loc, users in storage_users.items():
         if len(users) > 1:
@@ -505,5 +537,19 @@ def lint(listing: dict[str, Any]) -> list[dict[str, Any]]:
                             f"({loc}): " + ", ".join(sorted(users)) +
                             " — runs from different campaigns land in the "
                             "same tree (may be deliberate)"),
+            })
+    # Mirrors storage_shared for state_path (docs/63): inheritance makes it
+    # structurally easy for several projects to resolve to ONE chip folder,
+    # and SM's project lens then can't auto-attribute the chip to a single
+    # project on a plain folder load (an explicit Open pins the choice).
+    for loc, users in state_users.items():
+        if len(users) > 1:
+            findings.append({
+                "severity": "info", "project": None,
+                "code": "state_path_shared",
+                "message": (f"{len(users)} projects share one state_path "
+                            f"({loc}): " + ", ".join(sorted(users)) +
+                            " — a plain folder load can't tell which project "
+                            "is meant; open the project explicitly to pin it"),
             })
     return findings
