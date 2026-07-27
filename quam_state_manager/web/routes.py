@@ -1942,7 +1942,39 @@ def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore)
 
 @bp.route("/")
 def home():
-    return render_template("base.html", **_ctx(page="home"))
+    """Project-first landing (docs/63): with a qualibrate config the home
+    page is the Projects landing (shell renders instantly; the cards are a
+    lazy fragment so GET / never pays the TOML/doctor I/O — it is the
+    workbench iframe's entry and the most-hit route). Without a config the
+    pre-lens Welcome renders verbatim."""
+    config_exists = bool(qualibrate_config.tray_status().get("config_exists"))
+    session = _load_session()
+    resume_path = session.get("last_quam_state_path")
+    if resume_path and not (Path(resume_path) / "state.json").exists():
+        resume_path = None      # startup hygiene may not have run yet
+    recents = []
+    for p in (session.get("recent_quam_state_paths") or [])[:5]:
+        if p != resume_path and (Path(p) / "state.json").exists():
+            recents.append({"path": p, "name": _chip_display_name(Path(p))})
+    return render_template("base.html", **_ctx(
+        page="home",
+        landing_config_exists=config_exists,
+        last_project=session.get("last_project"),
+        resume_path=resume_path,
+        resume_name=_chip_display_name(Path(resume_path)) if resume_path else "",
+        recent_paths=recents[:3],
+    ))
+
+
+@bp.route("/landing/projects")
+def landing_projects():
+    """The landing's lazy project-cards fragment (docs/63) — the only place
+    the landing pays the listing + doctor cost."""
+    return render_template(
+        "_landing_projects.html",
+        listing=_qualibrate_listing(),
+        last_project=_load_session().get("last_project"),
+    )
 
 
 @bp.route("/workbench")
@@ -2289,11 +2321,15 @@ def qualibrate_open_project():
 
     logger.info("qualibrate open-in-sm: %s -> %s (+%d dataset roots)",
                 name, state["native"], added)
+    # Land on /qubits (docs/63): the sibling "open a chip" flow
+    # (/workspace/select) already does, and the qubit overview is the right
+    # first screen for "I opened my project" — /explorer stays the plain
+    # /load target for folder-first users.
     if _is_htmx():
         resp = make_response()
-        resp.headers["HX-Redirect"] = url_for("main.explorer")
+        resp.headers["HX-Redirect"] = url_for("main.qubits")
         return resp
-    return redirect(url_for("main.explorer"))
+    return redirect(url_for("main.qubits"))
 
 
 @bp.route("/load", methods=["POST"])

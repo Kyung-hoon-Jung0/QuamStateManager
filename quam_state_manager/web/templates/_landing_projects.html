@@ -1,0 +1,41 @@
+{# Lazy project-cards fragment (GET /landing/projects, docs/63). One card
+   per project: status facts + the Open-in-SM form (the same contract as the
+   Config Manager page / sidebar rows). Card CSS classes are deliberately
+   disjoint from qualibrate-tray-* — the topbar badge tests pin those class
+   names to badge-only usage. #}
+{% if not listing.config_exists %}
+<p class="muted">No ~/.qualibrate config found at <code>{{ listing.config_dir }}</code>.</p>
+{% elif not listing.projects %}
+<p class="muted">No projects yet — create one in QUAlibrate, then open it here.</p>
+{% else %}
+<div class="landing-card-grid">
+    {% for p in listing.projects %}
+    {% set n_doctor = (listing.doctor | selectattr('project', 'equalto', p.name) | list) | length %}
+    <div class="landing-card{% if p.name == last_project %} landing-card-last{% endif %}{% if p.active %} landing-card-active{% endif %}">
+        <div class="landing-card-head">
+            <span class="landing-card-dot" title="{{ 'QUAlibrate active project' if p.active else 'inactive' }}">{{ '●' if p.active else '○' }}</span>
+            <span class="landing-card-name">{{ p.name }}</span>
+            {% if p.loaded_in_sm %}<span class="landing-card-sm" title="currently loaded in the State Manager">[SM]</span>{% endif %}
+        </div>
+        <div class="landing-card-facts muted">
+            <span title="{{ p.state_path.raw or '(no state path)' }}">state
+                {{ '✓' if p.state_path.exists else '✗' }}</span>
+            <span title="{{ p.storage.raw or '(default)' }}">data
+                {{ '✓' if p.storage.exists else '✗' }}</span>
+            {% if n_doctor %}<span class="landing-card-doctor"
+                title="doctor findings for this project — see Manage / doctor">⚠ {{ n_doctor }}</span>{% endif %}
+        </div>
+        <form method="post" action="/qualibrate/open" hx-post="/qualibrate/open"
+              hx-target="#landing-open-err" hx-swap="innerHTML"
+              class="landing-card-open">
+            <input type="hidden" name="project" value="{{ p.name }}">
+            <button type="submit" class="btn-sm{% if p.name == last_project %} primary{% endif %}"
+                    {% if not p.state_path.exists %}disabled
+                    title="state_path missing or empty — fix it in QUAlibrate first (Manage / doctor)"
+                    {% else %}title="Load {{ p.state_path.raw }} + its data folders"{% endif %}>
+                {{ 'Continue' if p.name == last_project else 'Open' }}</button>
+        </form>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}

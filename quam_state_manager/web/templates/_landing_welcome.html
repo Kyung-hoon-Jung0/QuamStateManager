@@ -1,0 +1,122 @@
+{# The pre-project-lens Welcome page, verbatim (docs/63): shown when no
+   ~/.qualibrate config exists — standalone users keep exactly the old
+   landing. Extracted from base.html unchanged. #}
+                    <div class="welcome">
+                        <h2>Welcome to QUAM State Manager</h2>
+                        <p class="welcome-lead">Inspect, edit, generate, and track your QUAM chip state — a working copy always sits between you and the live instrument, so nothing reaches the hardware by accident.</p>
+                        <p class="welcome-sub">Get started from the left panel: <b>State Load</b> opens a chip's <code>quam_state</code>, <b>Dataset Load</b> adds an experiment folder.</p>
+
+                        {# Core mental model — kept always-visible; everything else keys off these three. #}
+                        <div class="welcome-glossary">
+                            <div><b>Live chip</b> — the <code>state.json</code> / <code>wiring.json</code> your instrument &amp; Qualibrate actually read.</div>
+                            <div><b>Working state</b> — your private editable copy; edits here never touch the instrument until you <b>Apply to live</b>.</div>
+                            <div><b>Snapshot</b> — an immutable, timestamped archive (in State History) you can roll back to.</div>
+                        </div>
+
+                        {# Feature tour — collapsible so the page stays compact by default but
+                           each area carries a real description. Left chevron rotates on open;
+                           Pico's right-floated summary::after is suppressed in .welcome CSS. #}
+                        <div class="welcome-features">
+                            <p class="welcome-features-title">What you can do <span class="muted">— click a topic to expand</span></p>
+
+                            <details class="wc-feat" open>
+                                <summary><span aria-hidden="true">🔎</span> Explore &amp; edit the state</summary>
+                                <div class="wc-feat-body">
+                                    <p class="wc-gist">Find any value and change it safely.</p>
+                                    <ul class="wc-steps">
+                                        <li>Browse in <b>Explorer</b>, or a <b>Qubit</b> / <b>Pair</b> inspector</li>
+                                        <li>Search any property — results in &lt;1&nbsp;ms</li>
+                                        <li>Edit inline → the change lands in the <b>working state</b></li>
+                                        <li>Many fields at once? <b>Live State Edit</b> gives a grid</li>
+                                    </ul>
+                                </div>
+                            </details>
+
+                            <details class="wc-feat">
+                                <summary><span aria-hidden="true">〰️</span> Pulses &amp; waveforms</summary>
+                                <div class="wc-feat-body">
+                                    <p class="wc-gist">Manage pulses with a live preview.</p>
+                                    <ul class="wc-steps">
+                                        <li>Open <b>Pulses</b> — every pulse in one table</li>
+                                        <li>Edit a field → the <b>waveform preview</b> redraws live</li>
+                                        <li>Create / rename / duplicate / delete (with “used-by” safety)</li>
+                                        <li><b>Config Viewer</b> → the waveforms after <code>generate_config()</code></li>
+                                    </ul>
+                                </div>
+                            </details>
+
+                            <details class="wc-feat">
+                                <summary><span aria-hidden="true">🛠️</span> Generate a fresh config</summary>
+                                <div class="wc-feat-body">
+                                    <p class="wc-gist">Build a new chip config from scratch.</p>
+                                    <ul class="wc-steps">
+                                        <li>Run the <b>Generate Config</b> wizard</li>
+                                        <li>Enter instruments, LO plan, qubit specs</li>
+                                        <li>Check the topology + wiring previews</li>
+                                        <li>Preview <code>generate_config()</code> → save <code>state.json</code> + <code>wiring.json</code></li>
+                                    </ul>
+                                </div>
+                            </details>
+
+                            <details class="wc-feat">
+                                <summary><span aria-hidden="true">📊</span> Chip Status dashboards</summary>
+                                <div class="wc-feat-body">
+                                    <p class="wc-gist">The whole chip’s health at a glance.</p>
+                                    <ul class="wc-steps">
+                                        <li><b>Topology · Overview · Distributions</b> — layout &amp; summaries</li>
+                                        <li><b>Coherence · Fidelity · Frequencies</b> — heatmap views</li>
+                                        <li><b>Gate (2Q) · Calibration</b> — per-pair readouts</li>
+                                    </ul>
+                                </div>
+                            </details>
+
+                            <details class="wc-feat">
+                                <summary><span aria-hidden="true">⇄</span> Compare across time &amp; devices</summary>
+                                <div class="wc-feat-body">
+                                    <p class="wc-gist">Spot exactly what changed.</p>
+                                    <ul class="wc-steps">
+                                        <li>Same chip, two times → drift over time</li>
+                                        <li>Two devices → side-by-side (auto grid-map)</li>
+                                        <li>Set a tolerance → hide noise, show real diffs</li>
+                                    </ul>
+                                </div>
+                            </details>
+
+                            <details class="wc-feat">
+                                <summary><span aria-hidden="true">🕘</span> History, snapshots &amp; rollback</summary>
+                                <div class="wc-feat-body">
+                                    <p class="wc-gist">Nothing is lost — roll back anytime.</p>
+                                    <ul class="wc-steps">
+                                        <li><b>🔖 bookmark</b> → pin a tagged archive before risky edits</li>
+                                        <li><b>Param History</b> → per-parameter trends</li>
+                                        <li><b>State History</b> → stage or restore any snapshot</li>
+                                    </ul>
+                                </div>
+                            </details>
+
+                            <details class="wc-feat">
+                                <summary><span aria-hidden="true">📁</span> Datasets &amp; interactive plots</summary>
+                                <div class="wc-feat-body">
+                                    <p class="wc-gist">From measurement to calibrated value.</p>
+                                    <ul class="wc-steps">
+                                        <li>Pick an experiment run in the sidebar</li>
+                                        <li>Open its data in the <b>interactive viewer</b></li>
+                                        <li>Click a fit point → stage the value (confirm popup, never silent)</li>
+                                    </ul>
+                                </div>
+                            </details>
+
+                            <details class="wc-feat">
+                                <summary><span aria-hidden="true">🔗</span> Sync-Qualibrate &amp; operations</summary>
+                                <div class="wc-feat-body">
+                                    <p class="wc-gist">Run alongside Qualibrate and keep watch.</p>
+                                    <ul class="wc-steps">
+                                        <li><b>Sync-Qualibrate</b> → Qualibrate side-by-side</li>
+                                        <li><b>Diagnostics</b> badge → always-on health</li>
+                                        <li><b>Scheduler</b> → drive the run queue</li>
+                                        <li><b>Fit Audit</b> → triage calibration fits</li>
+                                    </ul>
+                                </div>
+                            </details>
+                        </div>
+                    </div>

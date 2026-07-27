@@ -334,6 +334,14 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
         evt.detail.shouldSwap = true;
         evt.detail.isError = false;
     }
+    // Landing project cards (docs/63): an Open-in-SM 4xx (dangling
+    // state_path race, vanished project) carries a doctor-quality message —
+    // render it inline in the landing's shared error slot instead of
+    // dropping the body.
+    if (t.id === 'landing-open-err' && status >= 400) {
+        evt.detail.shouldSwap = true;
+        evt.detail.isError = false;
+    }
 });
 
 /* Surface a toast on ANY htmx error response. htmx 2.x drops error-response

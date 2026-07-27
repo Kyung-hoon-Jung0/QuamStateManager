@@ -61,6 +61,8 @@ version = 3
            f'[quam]\nstate_path = "{shared}"\n')
     _write(cfg / "projects" / "gamma" / "config.toml",
            f'[quam]\nstate_path = "{shared}"\n')
+    _write(cfg / "projects" / "delta" / "config.toml",
+           f'[quam]\nstate_path = "{tmp_path / "chips" / "missing"}"\n')
     monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(cfg))
     monkeypatch.delenv("QUALIBRATE_CONFIG_DIR", raising=False)
     qc._state_index_cache.clear()
@@ -218,3 +220,54 @@ class TestSidebarReorg:
         body = c.get("/qualibrate/subnav").get_data(as_text=True)
         assert "no longer a qualibrate project" in body
         assert "beta" in body
+
+
+class TestLanding:
+    """Step-5 pins (docs/63): project-first landing with lazy cards; welcome
+    verbatim without a config; Resume card; /qubits redirect."""
+
+    def test_landing_shell_with_config(self, scoped):
+        body = scoped["client"].get("/").get_data(as_text=True)
+        assert 'id="landing-cards"' in body
+        assert 'hx-get="/landing/projects"' in body
+        # the shell must NOT inline the project list (lazy fragment only)
+        assert "landing-card-grid" not in body
+        # the legacy welcome is not shown when a config exists
+        assert "Welcome to QUAM State Manager" not in body
+
+    def test_landing_cards_fragment(self, scoped):
+        body = scoped["client"].get("/landing/projects").get_data(as_text=True)
+        assert "landing-card-grid" in body
+        for name in ("alpha", "beta", "gamma", "delta"):
+            assert name in body
+        # the dangling project's Open button is disabled with guidance
+        assert "disabled" in body and "fix it in QUAlibrate first" in body
+
+    def test_landing_welcome_without_config(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(tmp_path / "ghost"))
+        qc._state_index_cache.clear()
+        qc._tray_cache.clear()
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        body = app.test_client().get("/").get_data(as_text=True)
+        assert "Welcome to QUAM State Manager" in body
+        assert 'id="landing-cards"' not in body
+
+    def test_resume_card_after_a_session(self, scoped):
+        c = scoped["client"]
+        c.post("/load", data={"folder": str(scoped["chip_a"])})
+        body = c.get("/").get_data(as_text=True)
+        assert "landing-resume" in body
+        assert "Resume" in body and "alpha" in body
+
+    def test_continue_highlight_on_last_project(self, scoped):
+        c = scoped["client"]
+        c.post("/qualibrate/open", data={"project": "beta"})
+        body = c.get("/landing/projects").get_data(as_text=True)
+        assert "landing-card-last" in body
+        assert "Continue</button>" in body
+
+    def test_open_redirects_to_qubits(self, scoped):
+        r = scoped["client"].post("/qualibrate/open", data={"project": "alpha"},
+                                  headers={"HX-Request": "true"})
+        assert r.status_code == 200
+        assert r.headers.get("HX-Redirect", "").endswith("/qubits")
