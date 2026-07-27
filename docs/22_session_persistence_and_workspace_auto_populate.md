@@ -74,14 +74,16 @@ time any request arrives after server start:
    `Workspace.add_root(...)`. Folders that no longer exist on disk are
    silently skipped.
 
-2. **Last session** — `_load_session()` reads `last_session.json`. If
-   `last_quam_state_path` exists and the folder is still readable,
-   calls `_activate_quam(last_path)` so the dashboard opens already
-   loaded into the user's chip. On `_activate_quam` failure (folder
-   moved, files corrupted, etc.) the bad path is dropped via
-   `_drop_bad_path()` and the file is rewritten without it.
-   The auto-restored chip's chip folder is then handed to
-   `_maybe_auto_add_workspace_root()` so the workspace tree picks up too.
+2. **Last session** — `_load_session()` reads `last_session.json` and
+   prunes: if `last_quam_state_path` points at a folder that is gone or
+   unreadable, the bad path is dropped via `_drop_bad_path()` and the
+   file is rewritten without it. **Since docs/63 the chip is NOT
+   auto-activated** — startup lands on the project-first landing page
+   clean, which offers a one-click **"Resume <chip>"** card built from
+   `last_quam_state_path` (+ `last_project` for the highlighted
+   "Continue" project card). The old behavior silently reopened
+   whatever was loaded last, which fought the project-first mental
+   model and hid load errors in a before_request hook.
 
 3. **Rehydration** — `_rehydrate_workspace_from_recents()` walks
    `recent_quam_state_paths`, derives each chip folder via
@@ -90,9 +92,10 @@ time any request arrives after server start:
    that was wiped (e.g. by an older test run that leaked into the real
    instance) without forcing the user to re-load anything.
 
-Together this means: **start the app → the dashboard opens with the
-user's chip already loaded, the workspace tree populated, and Param
-History ready** — even after wiping the browser's localStorage.
+Together this means: **start the app → the landing page opens with the
+workspace tree populated and one-click Resume/Continue cards** — nothing
+is activated behind the user's back (docs/63 decision 3), and the
+`last_project` field is only ever a landing highlight, never restored.
 
 ---
 
@@ -130,8 +133,9 @@ still add manually.
 4. Otherwise: `ws.add_root(chip_str)`, `_save_workspace_roots()`, and
    invalidate the cached `DatasetStore`.
 
-The same helper is called from the auto-restore path so an auto-loaded
-chip also auto-adds its folder.
+(Until docs/63 the same helper was also called from the startup
+auto-restore path; startup no longer activates a chip, so the helper now
+runs only on explicit loads.)
 
 ---
 
@@ -215,8 +219,9 @@ research data path is never mistakenly purged.
 `TestSessionPersistence`:
 
 - `test_session_persists_after_load` — `/load` → file written.
-- `test_session_auto_restores_on_first_request` — pre-seed file → first
-  request activates the chip, no "No state loaded" message.
+- `test_session_not_auto_activated_but_offered` — pre-seed file → first
+  request does NOT activate the chip (docs/63); the landing carries the
+  Resume card instead.
 - `test_session_handles_missing_folder` — pre-seed with non-existent
   path → app boots cleanly, file is pruned.
 - `test_recent_paths_lru_cap_and_dedup` — 12 distinct paths → list

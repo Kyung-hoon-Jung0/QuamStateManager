@@ -133,3 +133,26 @@ exactly as before, "displayed as-is".
   overlay repairs (Phase 3) remain designed-but-unimplemented.
 - No per-project isolation of history or datasets (lens only).
 - No changes to the `hist:` ref or dataset-uid formats.
+
+## Implementation status (2026-07-27) — SHIPPED
+
+All nine steps landed on `feat/project-centric-reorg`, one commit per step,
+each independently green:
+
+| Step | Commit | What |
+|------|--------|------|
+| 0 | `de83f65` | this design record |
+| 1 | `abb6f66` | prerequisites: `_load_toml_retry` 0-byte skip, `native_path` WSL→Win inverse (`_to_native`), `state_path_shared` lint, `tests/conftest.py` env isolation |
+| 2 | `114f044` | scope core: `project_state_paths()` stat-cached reverse index, `_project_for_path` (active→unique→None), `_acquire_project_scope` at both `_activate_quam` exits + explicit pin, `last_project` persistence, `_ctx()["project_scope"]` |
+| 3 | `7fb29a1` | startup lands clean — `_ensure_workspace_loaded` keeps pruning/roots/rehydrate, drops only the auto-activation |
+| 4 | `4d14433` | sidebar: Projects → State Load → Generate Config; subnav expanded + SUBNAVS-persisted; palette entry |
+| 5 | `1b2c528` | project-first landing (`_landing_shell/_landing_projects/_landing_welcome`, lazy cards, Resume/Continue, 4xx inline); `/qualibrate/open` → `/qubits` |
+| 6 | `db0cf09` | history lens: `SnapshotMeta.project` stamped from the snapshot's SOURCE path at all 11 call sites; scoped Param/State History headers, `<project> · <key>` selector, `sh-project-badge`; raw-key contracts pinned |
+| 7 | `c3ec5db` | datasets/trends lens: `instance/project_dataset_roots.json` (+record/strip), `data-scope` + `#ds-scope-folders`, client seeding (proper subset, All escapes), Trends same-chip-gated pre-select |
+| 8 | `f9eca41` | tray badge `sm_scope`: name = scope-or-active + muted `(qualibrate: <active>)` on differ; colors unchanged; scope-only badge never "dangling" |
+| 9 | (this commit) | docs sweep (docs/10, docs/22, docs/55, CLAUDE.md), doctrine pin extended over a full scoped session, full suite |
+
+Verification: `tests/test_project_scope.py` (45 tests across
+TestScopeDerivation/Pinning/ReverseIndex/SidebarReorg/HistoryLens/
+DatasetLens/TrayBadge/Landing) + the extended read-only doctrine pin in
+`tests/test_qualibrate_routes.py` + full-suite run.

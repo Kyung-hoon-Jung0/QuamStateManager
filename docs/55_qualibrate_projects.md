@@ -89,6 +89,15 @@ pattern (`#config-subnav`, Generate Config → Config Viewer):
   badge turns amber ("SM is editing a different chip than QUAlibrate
   writes").
 
+> **Amended by docs/63 (project-centric reorg).** The Projects block now
+> sits at the **top** of the sidebar (above the State Load form and
+> Generate Config), its subnav server-renders **expanded** (collapse
+> persisted via `quam_qualibrate_nav_collapsed` in the SUBNAVS restore
+> registry), and `GET /` is a **project-first landing** (lazy
+> `/landing/projects` cards + Resume/recents) instead of the static
+> welcome. `POST /qualibrate/open` now redirects to `/qubits` and PINS the
+> ctx scope. The read-only doctrine is unchanged.
+
 ### 3.2 The Project Config Manager page (`/qualibrate`)
 
 Table-first layout (brainstormed against a 3-pane alternative; the table won
@@ -156,6 +165,14 @@ Web: `GET /api/qualibrate/projects` (+ `/api/qualibrate/doctor`),
 enrichment. "Open in SM" = existing `_activate_quam` + `find_dataset_roots`
 + `_save_workspace_roots`; the project name is stashed in the ctx dict
 (`project=<name>`) — a scope, **not** a new context type.
+
+> **Amended by docs/63:** `ctx["qualibrate_project"]` is no longer
+> write-only. It is DERIVED on every chip activation by reverse-matching
+> the folder against the stat-cached `project_state_paths()` index
+> (`_project_for_path`; active-wins → unique-wins → None), pinned by an
+> explicit Open, and read by the history lens (SnapshotMeta stamping +
+> scoped headers), the datasets/trends lens (folder-filter seeding from
+> `instance/project_dataset_roots.json`) and the tray badge (`sm_scope`).
 
 Tests: synthetic `.qualibrate` tree builder fixture (root + overlays incl.
 0-byte, empty-string, dangling, collision cases — the studied folder's

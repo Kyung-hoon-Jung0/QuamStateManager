@@ -240,6 +240,9 @@ async function checkSearchHint() {
   const hint = doc.getElementById('bulk-dyncol-hint');
   search.value = 'exponential';
   search.dispatchEvent(new win.Event('input', { bubbles: true }));
+  // applySearch is DEBOUNCED at 120ms (docs/62 typing-perf fix) — model the
+  // user's typing pause before asserting anything search-derived.
+  await tick(200);
   ok(!hint.hidden, 'hint chip appears for a matching HIDDEN dynamic column');
   ok(/1 hidden column match/.test(hint.textContent),
     'hint counts the match, got: ' + hint.textContent);
@@ -255,11 +258,13 @@ async function checkSearchHint() {
   // an already-VISIBLE column never counts as hidden
   search.value = 'confusion';
   search.dispatchEvent(new win.Event('input', { bubbles: true }));
+  await tick(200);   // debounce (see above)
   ok(hint.hidden, 'no hint when every matching dyn column is already visible');
 
   // sub-2-char queries never hint
   search.value = 'e';
   search.dispatchEvent(new win.Event('input', { bubbles: true }));
+  await tick(200);   // debounce (see above)
   ok(hint.hidden, 'a 1-char query never hints');
 
   // the colvis menu carries the collapsible dynamic groups with counts

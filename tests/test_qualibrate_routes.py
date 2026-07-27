@@ -173,6 +173,15 @@ class TestReadOnlyGuarantee:
         c.post("/qualibrate/open", data={"project": "beta"})
         c.get("/")
         c.get("/workbench/match")
+        # docs/63 project lens — a full SCOPED session (landing cards, scoped
+        # history + datasets + trends, a project-stamped snapshot) must also
+        # leave the tree untouched (the lens only READS the reverse index).
+        c.get("/landing/projects")
+        c.get("/param-history", headers={"HX-Request": "true"})
+        c.get("/state-history", headers={"HX-Request": "true"})
+        c.post("/state-history/snapshot")
+        c.get("/datasets", headers={"HX-Request": "true"})
+        c.get("/trends", headers={"HX-Request": "true"})
         assert _snapshot(env["cfg"]) == before
 
 
