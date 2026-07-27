@@ -16,6 +16,7 @@ reads can't hand us a torn snapshot.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +31,20 @@ from quam_state_manager.core.pointer_resolver import (
 )
 
 logger = logging.getLogger(__name__)
+
+_NAT_SPLIT = re.compile(r"(\d+)")
+
+
+def natural_key(name: str) -> tuple:
+    """Human/numeric sort key: ``q10`` sorts AFTER ``q2`` (q1, q2, …, q9, q10 —
+    not the lexicographic q1, q10, q11, q2 that labs with double-digit qubit
+    numbering hit). Digit runs compare numerically, text runs case-insensitively;
+    the raw string is the final tie-breaker. Positions always alternate
+    text/int/text/… for keys produced by this function, so tuple comparison
+    never mixes types."""
+    parts = tuple(int(t) if t.isdigit() else t.lower()
+                  for t in _NAT_SPLIT.split(str(name)))
+    return (parts, str(name))
 
 
 @dataclass
@@ -366,15 +381,15 @@ class QuamStore:
 
     @property
     def qubit_names(self) -> list[str]:
-        """Return sorted list of qubit IDs from the merged dict."""
+        """Return naturally sorted list of qubit IDs from the merged dict."""
         qubits = self.merged.get("qubits", {})
-        return sorted(qubits.keys()) if isinstance(qubits, dict) else []
+        return sorted(qubits.keys(), key=natural_key) if isinstance(qubits, dict) else []
 
     @property
     def qubit_pair_names(self) -> list[str]:
-        """Return sorted list of qubit pair IDs from the merged dict."""
+        """Return naturally sorted list of qubit pair IDs from the merged dict."""
         pairs = self.merged.get("qubit_pairs", {})
-        return sorted(pairs.keys()) if isinstance(pairs, dict) else []
+        return sorted(pairs.keys(), key=natural_key) if isinstance(pairs, dict) else []
 
     def __repr__(self) -> str:
         folder = self.folder_path.name if self.folder_path is not None else "<in-memory>"
