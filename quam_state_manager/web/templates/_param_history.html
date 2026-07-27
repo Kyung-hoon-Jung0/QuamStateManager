@@ -30,6 +30,22 @@
   </div>
   {% endif %}
 
+  {# ── Live changes since baseline ─────────────────────────────────────
+     Relocated HERE from the old main-screen alarm banner (docs/58): the
+     popping "N parameters changed — Reset baseline" interrupted everyone
+     and was almost never acted on. Same data + Reset baseline as the State
+     History panel (shared #live-drift-panel id — one page renders at a
+     time); refreshes on load, on the 5s /state/drift poll's change
+     dispatch, and whenever a sync/apply/reset fires liveDriftChanged. #}
+  <details class="ph-drift-card" open>
+    <summary class="ph-drift-title">Live changes since baseline
+      <small class="muted">— what the live chip changed (formerly the main-screen alarm)</small></summary>
+    <div id="live-drift-panel"
+         hx-get="/state/drift/view?embed=1"
+         hx-trigger="load, liveDriftChanged from:body"
+         hx-swap="innerHTML"></div>
+  </details>
+
   {# ── Chip selector — workspace + currently-loaded chips only ───── #}
   {% if active_chips %}
   <div class="phf-row chip-selector-row">

@@ -189,10 +189,12 @@ var UI_CONFIG = {
     topoLivePollInterval: 3,
 
     /* ── LIVE-DRIFT TRACKING ──────────────────────────────────────────
-     * How often (in seconds) every page polls /state/drift to refresh the
-     * accumulating "Live changes since baseline" banner. The server gates
-     * the work on a pair of stat() calls (no content read unless the live
-     * files actually moved), so short intervals are cheap. 0 disables it. */
+     * How often (in seconds) every page polls /state/drift so the "Live
+     * changes since baseline" panels (Param History / State History) and an
+     * open drift overlay stay fresh — there is no main-screen banner any
+     * more (docs/58). The server gates the work on a pair of stat() calls
+     * (no content read unless the live files actually moved), so short
+     * intervals are cheap. 0 disables it. */
     driftPollInterval: 5,
 };
 
@@ -2241,84 +2243,22 @@ window.applyEditsToLive = function () {
 /* Live-drift tracking — accumulating "Live changes since baseline"    */
 /* ------------------------------------------------------------------ */
 
-/* A persistent, global comparison of the live chip against a baseline that
- * survives the working-copy auto-sync. A watch-only user (most users) runs
- * qualibrate fit after fit without touching SM; the working copy keeps
- * auto-adopting the new live, which used to silently absorb the diff. This
- * polls /state/drift (mtime-gated server-side) on every page and keeps a
- * running banner of how many params the live chip changed since the baseline.
- * "View changes" opens the full before/after overlay; "Reset baseline"
- * acknowledges them all and starts fresh. The same data is embedded at the
- * top of the State History page. */
+/* Accumulating comparison of the live chip against a baseline that survives
+ * the working-copy auto-sync. A watch-only user (most users) runs qualibrate
+ * fit after fit without touching SM; the working copy keeps auto-adopting the
+ * new live, which used to silently absorb the diff. This polls /state/drift
+ * (mtime-gated server-side, stat()-cheap) and dispatches liveDriftChanged
+ * whenever the count moves, so the embedded panels stay live.
+ *
+ * There is deliberately NO main-screen banner any more (docs/58): the popping
+ * "N parameters changed — Reset baseline" alarm interrupted everyone and was
+ * almost never acted on. The same data now waits where a user comes looking —
+ * the "Live changes since baseline" panels on Param History and State History
+ * (count + baseline time + per-param table + Reset baseline) — plus the
+ * openDrift() overlay for surfaces that link to it. */
 (function () {
     var POLL_MS = ((window.UI_CONFIG && UI_CONFIG.driftPollInterval) || 0) * 1000;
-    var _lastCount = null;        // last count we rendered (for change detection)
-    var _dismissedAt = 0;         // count value at which the user dismissed the banner
-    var _shownCount = 0;          // count currently rendered in the banner (skip re-render churn)
-    var _driftHideTimer = null;   // auto-dismiss timer for the live-drift banner
-    function _clearDriftHideTimer() {
-        if (_driftHideTimer) { clearTimeout(_driftHideTimer); _driftHideTimer = null; }
-    }
-
-    function _fmtBaseline(iso) {
-        if (!iso) return "";
-        // Emit a ts-local span (matches the C2 filter): the JS-off fallback is the UTC
-        // text, and applyLocalTimes() converts data-utc → the user's local time, so the
-        // persistent banner reads in local time like the _live_drift.html panel — not
-        // "since … UTC" next to a panel showing the same instant localized (audit P1).
-        var norm = String(iso).slice(0, 19);   // YYYY-MM-DDTHH:MM:SS
-        return '<span class="ts-local" data-utc="' + norm + 'Z">'
-            + norm.replace("T", " ") + ' UTC</span>';
-    }
-
-    function _esc(s) {
-        return String(s == null ? "" : s)
-            .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    }
-
-    function _renderBanner(d) {
-        var slot = document.getElementById("live-drift-slot");
-        if (!slot) return;
-        var count = (d && d.ok && d.tracked) ? (d.count || 0) : 0;
-        if (!count) { slot.innerHTML = ""; _dismissedAt = 0; _shownCount = 0; _clearDriftHideTimer(); return; }
-        // Re-show on any NEW change beyond what was dismissed.
-        if (count > _dismissedAt) _dismissedAt = 0;
-        if (_dismissedAt && count <= _dismissedAt) { slot.innerHTML = ""; _shownCount = 0; _clearDriftHideTimer(); return; }
-        // Already showing this exact count → leave the banner (and its running
-        // auto-dismiss timer) alone; the 5s poll must not reset either.
-        if (count === _shownCount) return;
-        _shownCount = count;
-        var when = _fmtBaseline(d.baseline_utc);
-        slot.innerHTML =
-            '<div class="topo-change-banner live-drift-banner" role="status">' +
-              '<span class="topo-change-banner-text">' +
-                '&#128202; <b>' + count + '</b> parameter' + (count === 1 ? '' : 's') +
-                ' changed on the live chip' +
-                (when ? ' since <span class="muted">' + when + '</span>' : '') +
-              '</span>' +
-              '<button type="button" class="topo-change-banner-btn" onclick="openDrift()">View changes</button>' +
-              '<button type="button" class="btn-sm outline" onclick="resetBaseline()" ' +
-                'title="Acknowledge all current changes and start accumulating fresh">Reset baseline</button>' +
-              '<button type="button" class="topo-change-banner-dismiss" aria-label="Dismiss" ' +
-                'onclick="window._dismissDrift(' + count + ')">&#10005;</button>' +
-            '</div>';
-        if (window.applyLocalTimes) window.applyLocalTimes(slot);   // localize the baseline time (audit P1)
-        // PERSISTENT until acknowledged (feedback #5): NO auto-dismiss timer — a
-        // notice about un-synced live changes must survive the user being away in the
-        // IDE (the old 9s timer hid it before they ever looked, the root of "SM was
-        // supposed to pop up but I never saw it"). It clears only when the count
-        // returns to 0, on explicit dismiss (×), or on Reset baseline; the poll's
-        // visibilitychange catch-up keeps it fresh when the tab regains focus.
-        _clearDriftHideTimer();
-    }
-
-    window._dismissDrift = function (count) {
-        _clearDriftHideTimer();
-        _shownCount = 0;
-        _dismissedAt = count || 0;
-        var slot = document.getElementById("live-drift-slot");
-        if (slot) slot.innerHTML = "";
-    };
+    var _lastCount = null;        // last polled count (change detection → event dispatch)
 
     var _driftPolling = false;
     function poll() {
@@ -2329,7 +2269,6 @@ window.applyEditsToLive = function () {
         fetch("/state/drift", { cache: "no-store" })
             .then(function (r) { return r.ok ? r.json() : null; })
             .then(function (d) {
-                _renderBanner(d);
                 // Surface the clean auto-pull that just happened on load/select — the
                 // pull used to be SILENT, so a user's IDE pulse edit was adopted with
                 // no signal and read as "not synced" (feedback #5). One-shot from the server.
@@ -2424,8 +2363,6 @@ window.resetBaseline = function () {
                 return;
             }
             window.showToast("Baseline reset to the current live chip.", "success");
-            var slot = document.getElementById("live-drift-slot");
-            if (slot) slot.innerHTML = "";
             // Refresh the State History embedded panel + any open overlay. Bubble from
             // body so the from:body listener on _state_history.html actually receives it
             // (a non-bubbling event on document never reaches a body listener — audit P0-4).
