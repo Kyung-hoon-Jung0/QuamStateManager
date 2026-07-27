@@ -26,6 +26,7 @@
     var sortKey = null, sortDir = 1;
     var _colWidths = {};
     var _resize = null, _resizeJustEnded = false;
+    var _pairSearchTimer = null;   // debounce for the shared #bulk-search box
 
     function table() { return document.getElementById('bulk-pair-table'); }
     function _cells(scope) { return Array.prototype.slice.call(scope.querySelectorAll('.bulk-cell')); }
@@ -532,11 +533,16 @@
 
             // Shared search box: add our own listener (the qubit grid has its own),
             // so one box filters BOTH tables. Persist is handled by the qubit grid;
-            // we only re-filter the pair table.
+            // we only re-filter the pair table. DEBOUNCED like the qubit grid's
+            // listener — the two un-debounced full-table scans per keystroke were
+            // the reported "typing in Live Edit is slow".
             var search = document.getElementById('bulk-search');
             if (search && !search._pairBound) {
                 search._pairBound = true;
-                search.addEventListener('input', applySearch);
+                search.addEventListener('input', function () {
+                    if (_pairSearchTimer) clearTimeout(_pairSearchTimer);
+                    _pairSearchTimer = setTimeout(applySearch, 120);
+                });
             }
             // restore persisted query into our filter on (re)mount
             try { if (search && localStorage.getItem(SEARCH_KEY)) applySearch(); } catch (e) {}
