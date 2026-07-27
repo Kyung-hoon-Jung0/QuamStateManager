@@ -22,4 +22,13 @@
 {% else %}
 <li><span class="muted qualibrate-subnav-note">no projects yet</span></li>
 {% endfor %}
+{# docs/63 edge: the context's scope names a project that no longer exists in
+   qualibrate — the memo label stays harmless (drops on the next rebuild),
+   but say so instead of silently listing a menu that doesn't contain it. #}
+{% if project_scope and listing.projects and
+      project_scope not in (listing.projects | map(attribute='name') | list) %}
+<li><span class="muted qualibrate-subnav-note"
+          title="The chip stays loaded; the scope label clears on the next reload.">
+    current scope &laquo;{{ project_scope }}&raquo; is no longer a qualibrate project</span></li>
+{% endif %}
 {% endif %}

@@ -1280,6 +1280,11 @@ window.toggleChipStatusSub = function(btn) {
 // holding the active page is force-expanded regardless of the stored state.
 (function() {
     var SUBNAVS = [
+        // Projects first (docs/63): the primary entry point defaults OPEN and,
+        // unlike before, its collapsed choice now round-trips (the key was
+        // written by the toggle but never read back — it re-collapsed on
+        // every navigation).
+        { id: 'qualibrate-subnav',  key: 'quam_qualibrate_nav_collapsed', def: '0' },
         { id: 'chip-status-subnav', key: 'quam_chipstatus_nav_collapsed', def: '0' },
         { id: 'config-subnav',      key: 'quam_config_nav_collapsed',     def: '1' },
         { id: 'pulses-subnav',      key: 'quam_pulses_nav_collapsed',     def: '1' },

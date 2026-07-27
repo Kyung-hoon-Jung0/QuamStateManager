@@ -2187,9 +2187,12 @@ def api_qualibrate_projects():
 @bp.route("/qualibrate/subnav")
 def qualibrate_subnav():
     """The sidebar's lazy-loaded project submenu (hx-trigger=load) — keeps
-    the base-page render free of the 16 TOML reads."""
+    the base-page render free of the 16 TOML reads. Passes the ctx's project
+    scope explicitly (this fragment renders outside _ctx()) so a scope whose
+    project vanished from qualibrate gets an honest hint row."""
     return render_template("_qualibrate_subnav.html",
-                           listing=_qualibrate_listing())
+                           listing=_qualibrate_listing(),
+                           project_scope=(_active_ctx() or {}).get("qualibrate_project"))
 
 
 @bp.route("/qualibrate")

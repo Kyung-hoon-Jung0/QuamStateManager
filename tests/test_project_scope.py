@@ -177,3 +177,44 @@ class TestReverseIndex:
         monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(tmp_path / "ghost"))
         qc._state_index_cache.clear()
         assert qc.project_state_paths() == {"active": None, "projects": []}
+
+
+class TestSidebarReorg:
+    """Step-4 pins (docs/63): Projects first, State Load beneath, subnav
+    expanded + restore-registered, palette entry."""
+
+    _ROOT = Path(__file__).resolve().parent.parent
+
+    def _src(self, rel):
+        return (self._ROOT / rel).read_text(encoding="utf-8")
+
+    def test_projects_block_first_then_load_then_generate(self):
+        src = self._src("quam_state_manager/web/templates/base.html")
+        assert (src.index('id="qualibrate-subnav"')
+                < src.index('id="load-form"')
+                < src.index('>Generate Config</a>'))
+
+    def test_subnav_renders_expanded_and_is_restore_registered(self):
+        base = self._src("quam_state_manager/web/templates/base.html")
+        # the old page-gated collapse conditional is gone — server renders open
+        assert "nav-subitems{% if page != 'qualibrate'" not in base
+        # …and the restore registry now round-trips the collapse choice
+        appjs = self._src("quam_state_manager/web/static/app.js")
+        assert "{ id: 'qualibrate-subnav'" in appjs
+        assert "quam_qualibrate_nav_collapsed" in base and \
+               "quam_qualibrate_nav_collapsed" in appjs
+
+    def test_command_palette_lists_projects(self):
+        base = self._src("quam_state_manager/web/templates/base.html")
+        assert '{"label": "Projects",          "url": "/qualibrate"}' in base
+
+    def test_deleted_scope_hint_renders(self, scoped):
+        c = scoped["client"]
+        c.post("/qualibrate/open", data={"project": "beta"})
+        # remove beta from qualibrate entirely
+        import shutil
+        shutil.rmtree(scoped["cfg"] / "projects" / "beta")
+        qc._state_index_cache.clear()
+        body = c.get("/qualibrate/subnav").get_data(as_text=True)
+        assert "no longer a qualibrate project" in body
+        assert "beta" in body

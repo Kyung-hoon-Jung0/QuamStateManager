@@ -288,9 +288,53 @@
         <aside id="sidebar">
             <nav class="sidebar-nav">
                 <ul>
-                    {# Creation feature — kept at the very top, set apart by a
-                       divider, since it builds a new chip rather than viewing one.
-                       The rarely-used Config Viewer nests under it, collapsed by
+                    {# QUAlibrate Projects — THE primary entry point (docs/63):
+                       qualibrate always runs inside a project, so the project
+                       list sits first and its submenu renders EXPANDED (row
+                       click = Open in SM: chip + data folders in one go).
+                       Content stays lazy-loaded so unrelated page renders
+                       never pay the TOML reads. READ-ONLY for qualibrate. #}
+                    <li class="nav-with-sub">
+                        <div class="nav-sub-row">
+                            <a href="/qualibrate" hx-get="/qualibrate" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                               {% if page == 'qualibrate' %}class="active"{% endif %}>Projects</a>
+                            <button type="button" class="nav-sub-toggle"
+                                    aria-expanded="true"
+                                    aria-controls="qualibrate-subnav" aria-label="Toggle QUAlibrate projects"
+                                    onclick="toggleNavSub(this, 'qualibrate-subnav', 'quam_qualibrate_nav_collapsed')">&#9662;</button>
+                        </div>
+                        <ul class="nav-subitems"
+                            id="qualibrate-subnav"
+                            hx-get="/qualibrate/subnav" hx-trigger="load" hx-swap="innerHTML">
+                            <li><span class="muted qualibrate-subnav-note">loading&hellip;</span></li>
+                        </ul>
+                    </li>
+                </ul>
+            </nav>
+            {# The explicit "otherwise" path: load a bare state folder without
+               any project coupling (docs/63 — independent sources stay
+               first-class and render exactly as before). #}
+            <div class="sidebar-load">
+                <form id="load-form" hx-post="/load" hx-target="#table-pane">
+                    <div class="path-input-group">
+                        <input type="text" name="folder" id="load-path-input"
+                               placeholder="quam_state folder path..." autocomplete="off">
+                        <button type="button" class="outline btn-sm btn-browse"
+                                onclick="openFolderBrowser('load-path-input')" title="Browse folders">&#128193;</button>
+                        <button type="button" class="outline btn-sm btn-recents"
+                                onclick="toggleRecentPaths(this)" title="Recent paths"
+                                aria-haspopup="true" aria-expanded="false">&#9662;</button>
+                    </div>
+                    <div id="recents-dropdown" class="recents-dropdown" hidden></div>
+                    <button type="submit" class="btn-sm">State Load</button>
+                </form>
+            </div>
+            <hr class="sidebar-section-divider">
+            <nav class="sidebar-nav">
+                <ul>
+                    {# Creation feature — set apart by a divider, since it
+                       builds a new chip rather than viewing one. The
+                       rarely-used Config Viewer nests under it, collapsed by
                        default, so it no longer occupies permanent sidebar space. #}
                     <li class="nav-with-sub">
                         <div class="nav-sub-row">
@@ -405,44 +449,6 @@
                            <span id="autofit-nav-badge" class="autofit-nav-badge" hidden></span></a></li>
                 </ul>
             </nav>
-            <nav class="sidebar-nav">
-                <ul>
-                    {# QUAlibrate Projects (docs/55): main click = the Config
-                       Manager page; the submenu (lazy-loaded — never pay the
-                       TOML reads on unrelated page renders) lists projects,
-                       row click = "Open in SM" (read-only for qualibrate). #}
-                    <li class="nav-with-sub">
-                        <div class="nav-sub-row">
-                            <a href="/qualibrate" hx-get="/qualibrate" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                               {% if page == 'qualibrate' %}class="active"{% endif %}>Projects</a>
-                            <button type="button" class="nav-sub-toggle"
-                                    aria-expanded="{{ 'true' if page == 'qualibrate' else 'false' }}"
-                                    aria-controls="qualibrate-subnav" aria-label="Toggle QUAlibrate projects"
-                                    onclick="toggleNavSub(this, 'qualibrate-subnav', 'quam_qualibrate_nav_collapsed')">&#9662;</button>
-                        </div>
-                        <ul class="nav-subitems{% if page != 'qualibrate' %} nav-subitems-collapsed{% endif %}"
-                            id="qualibrate-subnav"
-                            hx-get="/qualibrate/subnav" hx-trigger="load" hx-swap="innerHTML">
-                            <li><span class="muted qualibrate-subnav-note">loading&hellip;</span></li>
-                        </ul>
-                    </li>
-                </ul>
-            </nav>
-            <div class="sidebar-load">
-                <form id="load-form" hx-post="/load" hx-target="#table-pane">
-                    <div class="path-input-group">
-                        <input type="text" name="folder" id="load-path-input"
-                               placeholder="quam_state folder path..." autocomplete="off">
-                        <button type="button" class="outline btn-sm btn-browse"
-                                onclick="openFolderBrowser('load-path-input')" title="Browse folders">&#128193;</button>
-                        <button type="button" class="outline btn-sm btn-recents"
-                                onclick="toggleRecentPaths(this)" title="Recent paths"
-                                aria-haspopup="true" aria-expanded="false">&#9662;</button>
-                    </div>
-                    <div id="recents-dropdown" class="recents-dropdown" hidden></div>
-                    <button type="submit" class="btn-sm">State Load</button>
-                </form>
-            </div>
             <hr class="sidebar-section-divider">
             <nav class="sidebar-nav">
                 <ul>
@@ -805,6 +811,7 @@
             "qubits": {{ qubit_names | tojson }},
             "pairs":  {{ pair_names  | tojson }},
             "pages": [
+                {"label": "Projects",          "url": "/qualibrate"},
                 {"label": "Generate Config",   "url": "/generate"},
                 {"label": "Chip Status",       "url": "/topology"},
                                 {"label": "Explorer",          "url": "/explorer"},
