@@ -97,6 +97,17 @@ window.GenPreview = (function () {
     if (group === "pairs") {
       var p = rowValues("pairs", rid);
       if ((st.pairGate || "") === "cr") {
+        // ZZ (Stark-CZ) cells preview the flattop ZZ drive run_build actually
+        // seeds (SquarePulse used to fall through here — a misleading trace).
+        if (field && field.indexOf("zz_") === 0) {
+          return {
+            qclass: "FlatTopGaussianPulse", title: "ZZ flattop drive · " + rid,
+            params: { length: num(p.zz_flattop_length, 100),
+                      amplitude: num(p.zz_drive_amplitude, 1.0),
+                      axis_angle: 0,
+                      flat_length: num(p.zz_flattop_flat_length, 84) },
+          };
+        }
         // Editing a cancel-tone field previews the target-side cancel pulse
         // (run_build seeds it at cr_cancel_amplitude); otherwise the drive square.
         if (field === "cr_cancel_amplitude" || field === "cr_cancel_phase") {
@@ -112,7 +123,16 @@ window.GenPreview = (function () {
                     amplitude: num(p.cr_drive_amplitude, 1.0), axis_angle: 0 },
         };
       }
-      return czDescribe(rid, p.cz_variant || "unipolar",
+      // Coupler cells preview the COUPLER-side pulse run_build seeds (unipolar/
+      // flattop/bipolar carry one; SNZ/erf put the whole gate on the qubit z
+      // line — no coupler pulse, so no preview rather than a wrong one).
+      if (field === "coupler_interaction_offset") {
+        return czCouplerDescribe(rid, p.cz_variant || "all",
+                                 num(p.cz_interaction_duration, 100),
+                                 num(p.cz_amplitude, 0.1));
+      }
+      // blank == "all" (every variant seeded): show the unipolar representative.
+      return czDescribe(rid, p.cz_variant || "all",
                         num(p.cz_interaction_duration, 100),
                         num(p.cz_amplitude, 0.1));
     }
@@ -120,8 +140,21 @@ window.GenPreview = (function () {
     return null;   // qubit (frequencies), flux — not a pulse
   }
 
+  // Coupler-side CZ pulse (mirrors run_build._cz_variant_pulses' coupler leg):
+  // unipolar → square; flattop/bipolar → flat-top mirror; SNZ/erf → none.
+  function czCouplerDescribe(rid, variant, dur, amp) {
+    if (variant === "SNZ" || variant === "flattop_erf") return null;
+    var t = "CZ coupler pulse (" + (variant === "all" ? "unipolar shown" : variant) + ") · " + rid;
+    if (variant === "flattop" || variant === "bipolar") {
+      return { qclass: "_FlatTopGaussianPulse", title: t,
+        params: { amplitude: amp, flat_length: dur, smoothing_length: 20, post_zero_padding_length: 20 } };
+    }
+    return { qclass: "SquarePulse", title: t, params: { length: dur, amplitude: amp } };
+  }
+
   function czDescribe(rid, variant, dur, amp) {
-    var t = "CZ " + variant + " · " + rid;
+    var t = variant === "all" ? "CZ all variants (unipolar shown) · " + rid
+                              : "CZ " + variant + " · " + rid;
     if (variant === "flattop") {
       return { qclass: "_FlatTopGaussianPulse", title: t,
         params: { amplitude: amp, flat_length: dur, smoothing_length: 20, post_zero_padding_length: 20 } };

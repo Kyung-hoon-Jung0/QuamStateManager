@@ -204,9 +204,11 @@ class TestCrossResonanceSeed:
 # --- CZ variants ------------------------------------------------------------
 
 class TestCZVariantSeed:
-    """The default stays unipolar; a populate cz_variant selects another shape."""
+    """Default (blank == "all") seeds EVERY available variant (supercritical
+    feedback — the full CZ gate library pre-made); an explicit cz_variant
+    selects exactly one shape."""
 
-    def test_default_is_unipolar(self, tmp_path):
+    def test_default_seeds_all_available_variants(self, tmp_path):
         usable = _first_usable_qm_env()
         if not usable:
             pytest.skip("no conda env with the QM stack available")
@@ -216,7 +218,25 @@ class TestCZVariantSeed:
         macro_keys = set()
         for pair in state["qubit_pairs"].values():
             macro_keys |= set((pair.get("macros") or {}).keys())
-        assert "cz_unipolar" in macro_keys, f"default not unipolar: {macro_keys}"
+        # unipolar (core SquarePulse) must ALWAYS be among them…
+        assert "cz_unipolar" in macro_keys, f"unipolar missing: {macro_keys}"
+        # …and a modern quam_builder (any optional shape importable) must have
+        # seeded more than one variant. An env with zero optional shapes
+        # legitimately seeds unipolar only (the others skip with warnings).
+        czs = {k for k in macro_keys if k.startswith("cz_")}
+        assert len(czs) >= 1, f"no CZ macros at all: {macro_keys}"
+
+    def test_explicit_single_variant_seeds_only_that_one(self, tmp_path):
+        usable = _first_usable_qm_env()
+        if not usable:
+            pytest.skip("no conda env with the QM stack available")
+        out_dir = tmp_path / "quam_state"
+        spec = _cz_tunable_spec(populate_pairs={"q1-2": {"cz_variant": "unipolar"}})
+        assert run_generator(usable, "build", spec, out_dir, timeout=180)["ok"]
+        state = json.loads((out_dir / "state.json").read_text(encoding="utf-8"))
+        p12 = state["qubit_pairs"]["q1-2"]
+        czs = {k for k in (p12.get("macros") or {}) if k.startswith("cz_")}
+        assert czs == {"cz_unipolar"}, f"explicit single variant leaked: {czs}"
 
     def test_opt_in_snz_variant(self, tmp_path):
         usable = _first_usable_qm_env()

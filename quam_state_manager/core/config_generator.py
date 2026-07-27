@@ -327,9 +327,10 @@ def validate_spec(spec) -> list[str]:
                 if not isinstance(pvals, dict):
                     continue
                 variant = pvals.get("cz_variant")
-                # "" is the wizard's "use default" sentinel (== unipolar), like the
-                # pair_gate check above; only a non-empty unknown value is an error.
-                if variant not in (None, "") and variant not in CZ_VARIANTS:
+                # "" is the wizard's "use default" sentinel — which now means
+                # "all" (every variant seeded, missing shapes skipped); "all"
+                # is also accepted explicitly. Only an unknown value errors.
+                if variant not in (None, "", "all") and variant not in CZ_VARIANTS:
                     errors.append(
                         f"populate.pairs['{pid}'].cz_variant: unknown value "
                         f"{variant!r} (expected one of {sorted(CZ_VARIANTS)})"
