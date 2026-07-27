@@ -59,6 +59,7 @@ from quam_state_manager.core import (
     gen_presets,
     node_scan,
     path_match,
+    qualibrate_config,
     regenerate,
     safe_io,
     scheduler,
@@ -852,6 +853,10 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> None:
                 current["origin"] = origin
             current_app.config["contexts"][ctx_name] = current
             current_app.config["active_context"] = ctx_name
+        # Project lens (docs/63): derive the scope when this context doesn't
+        # carry one yet (outside the cache lock — the reverse index may do a
+        # few stats / a rare TOML re-parse). An explicitly pinned name sticks.
+        _acquire_project_scope(current)
         return
 
     # Slow path. Serialise builds for THIS folder so two threads don't
@@ -922,6 +927,10 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> None:
         _attach_type_policy(ctx)
         _warm_state_schema_async(ctx.get("store"), current_app.instance_path,
                                  live_folder=ctx.get("path"))
+        # Project lens (docs/63): fresh builds (first load, LRU-eviction
+        # rehydrates, restarts) derive their scope here — every activation
+        # path converges on the reverse index, so a lost memo self-heals.
+        _acquire_project_scope(ctx)
 
 
 _schema_warm_inflight: set[str] = set()
@@ -1550,6 +1559,10 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         "change_count": _change_count(),
         "working_dirty": _working_dirty(),
         "qualibrate_tray": _qualibrate_tray_badge(),
+        # docs/63 project lens: the qualibrate project this context operates
+        # under (explicitly opened, or reverse-matched from its live folder).
+        # None ⇒ every consumer renders exactly the pre-lens behavior.
+        "project_scope": (_active_ctx() or {}).get("qualibrate_project"),
         "live_diverged": bool(_ctx_obj("live_diverged")),
         "wc_gc_count": _working_copy_count(),
         "wc_gc_threshold": _WC_GC_THRESHOLD,
@@ -2068,6 +2081,78 @@ def _qualibrate_listing() -> dict:
     return listing
 
 
+def _project_for_path(folder) -> str | None:
+    """The qualibrate project whose EFFECTIVE state_path IS *folder* (docs/63).
+
+    Reverse-matches against the stat-cached
+    :func:`qualibrate_config.project_state_paths` index — steady-state cost
+    is a handful of ``os.stat`` calls, so it is safe on the chip-activation
+    path. Ambiguity rule (several projects can share one state_path via
+    inheritance): the qualibrate-ACTIVE matching project wins; else a UNIQUE
+    match wins; else None (never guess — an explicit Open pins the choice).
+    Never raises; never breaks a load."""
+    try:
+        idx = qualibrate_config.project_state_paths()
+        matches = [name for name, native in idx.get("projects", [])
+                   if native and path_match.same_folder(native, folder)]
+        if not matches:
+            return None
+        active = idx.get("active")
+        if active in matches:
+            return active
+        if len(matches) == 1:
+            return matches[0]
+        return None
+    except Exception:  # noqa: BLE001 — the lens must never break a load
+        logger.debug("project reverse-match failed", exc_info=True)
+        return None
+
+
+def _scope_for(path) -> str | None:
+    """Project scope for an arbitrary state folder (snapshot stamping etc.) —
+    the same reverse match, name-only convenience."""
+    return _project_for_path(path)
+
+
+def _acquire_project_scope(ctx: dict | None, *, explicit: str | None = None) -> None:
+    """Attach the project scope to *ctx* (docs/63).
+
+    ``explicit`` (from POST /qualibrate/open) always overwrites — the user's
+    choice is pinned and survives cache-hit re-activations. Otherwise the
+    scope is DERIVED from the context's live folder, but only when the ctx
+    doesn't already carry a name: a previously pinned/derived name sticks for
+    the context's lifetime (re-derivation happens naturally on rebuild after
+    LRU eviction or restart — the reverse index is the source of truth, the
+    ctx field is a memo)."""
+    if not ctx:
+        return
+    if explicit is not None:
+        if ctx.get("qualibrate_project") != explicit:
+            ctx["qualibrate_project"] = explicit
+            _remember_last_project(explicit)
+        return
+    if ctx.get("qualibrate_project"):
+        return
+    name = _project_for_path(ctx.get("live_path") or ctx.get("path") or "")
+    if name:
+        ctx["qualibrate_project"] = name
+        _remember_last_project(name)
+
+
+def _remember_last_project(name: str) -> None:
+    """Persist the landing-page highlight (instance/last_session.json,
+    ``last_project``) — NEVER auto-restored (docs/63 decision 3); a
+    standalone folder load deliberately does not clear it."""
+    try:
+        data = _load_session()
+        if data.get("last_project") == name:
+            return
+        data["last_project"] = name
+        _save_session(data)
+    except Exception:  # noqa: BLE001 — best-effort persistence
+        logger.debug("last_project persist failed", exc_info=True)
+
+
 def _qualibrate_tray_badge() -> dict | None:
     """State for the topbar '⚗ <project>' badge; ``None`` hides it.
 
@@ -2191,10 +2276,13 @@ def qualibrate_open_project():
             _save_workspace_roots()
             current_app.config.pop("dataset_store", None)
 
-    # a qualibrate project is a SCOPE on the context, not a new context type
+    # a qualibrate project is a SCOPE on the context, not a new context type.
+    # Explicit open PINS the user's choice — it survives cache-hit
+    # re-activations of the same folder even when several projects share this
+    # state_path (the reverse-matcher would refuse to guess; docs/63).
     ctx = _active_ctx()
     if ctx is not None:
-        ctx["qualibrate_project"] = name
+        _acquire_project_scope(ctx, explicit=name)
 
     logger.info("qualibrate open-in-sm: %s -> %s (+%d dataset roots)",
                 name, state["native"], added)

@@ -1,0 +1,179 @@
+"""Project-lens scope core (docs/63): derivation, pinning, persistence.
+
+The scope (``ctx["qualibrate_project"]``) is DERIVED by reverse-matching the
+loaded folder against the stat-cached project→state_path index; an explicit
+POST /qualibrate/open PINS the user's choice. The ctx field is a memo — LRU
+eviction / restart re-derive on the next activation.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from quam_state_manager.core import qualibrate_config as qc
+from quam_state_manager.web import routes as routes_mod
+from quam_state_manager.web.app import create_app
+
+
+def _write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def _chip(folder: Path, name: str = "qA1") -> Path:
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "state.json").write_text(json.dumps(
+        {"qubits": {name: {"id": name, "f_01": 6.25e9}},
+         "qubit_pairs": {}, "active_qubit_names": [name]}), encoding="utf-8")
+    (folder / "wiring.json").write_text(json.dumps(
+        {"network": {"host": "1.1.1.1"}}), encoding="utf-8")
+    return folder
+
+
+@pytest.fixture
+def scoped(tmp_path, monkeypatch):
+    """cfg tree: alpha (ACTIVE) → chip_a; beta + gamma → shared chip (the
+    ambiguity pair); plus a standalone chip in no project."""
+    cfg = tmp_path / ".qualibrate"
+    chip_a = _chip(tmp_path / "chips" / "chip_a")
+    shared = _chip(tmp_path / "chips" / "shared", name="qB1")
+    standalone = _chip(tmp_path / "chips" / "standalone", name="qC1")
+    storage = tmp_path / "datasets"
+    storage.mkdir()
+    _write(cfg / "config.toml", f'''
+[qualibrate]
+project = "alpha"
+version = 5
+
+[qualibrate.storage]
+location = "{storage}"
+
+[quam]
+state_path = "{chip_a}"
+version = 3
+''')
+    _write(cfg / "projects" / "alpha" / "config.toml",
+           f'[quam]\nstate_path = "{chip_a}"\n')
+    _write(cfg / "projects" / "beta" / "config.toml",
+           f'[quam]\nstate_path = "{shared}"\n')
+    _write(cfg / "projects" / "gamma" / "config.toml",
+           f'[quam]\nstate_path = "{shared}"\n')
+    monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(cfg))
+    monkeypatch.delenv("QUALIBRATE_CONFIG_DIR", raising=False)
+    qc._state_index_cache.clear()
+
+    inst = tmp_path / "_inst"
+    app = create_app(testing=True, instance_path=str(inst))
+    return {"cfg": cfg, "chip_a": chip_a, "shared": shared,
+            "standalone": standalone, "inst": inst,
+            "app": app, "client": app.test_client()}
+
+
+def _active_scope(app) -> str | None:
+    name = app.config.get("active_context")
+    ctx = (app.config.get("contexts") or {}).get(name) if name else None
+    return (ctx or {}).get("qualibrate_project")
+
+
+def _session(inst: Path) -> dict:
+    p = inst / "last_session.json"
+    return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+
+
+class TestScopeDerivation:
+    def test_plain_load_acquires_unique_project(self, scoped):
+        scoped["client"].post("/load", data={"folder": str(scoped["chip_a"])})
+        assert _active_scope(scoped["app"]) == "alpha"
+
+    def test_last_project_persisted_on_acquire(self, scoped):
+        scoped["client"].post("/load", data={"folder": str(scoped["chip_a"])})
+        assert _session(scoped["inst"]).get("last_project") == "alpha"
+
+    def test_standalone_folder_gets_no_scope(self, scoped):
+        scoped["client"].post("/load", data={"folder": str(scoped["standalone"])})
+        assert _active_scope(scoped["app"]) is None
+
+    def test_standalone_load_does_not_clear_last_project(self, scoped):
+        c = scoped["client"]
+        c.post("/load", data={"folder": str(scoped["chip_a"])})
+        c.post("/load", data={"folder": str(scoped["standalone"])})
+        assert _session(scoped["inst"]).get("last_project") == "alpha"
+
+    def test_ambiguous_state_path_refuses_to_guess(self, scoped):
+        # beta AND gamma point at `shared`; neither is qualibrate-active
+        scoped["client"].post("/load", data={"folder": str(scoped["shared"])})
+        assert _active_scope(scoped["app"]) is None
+
+    def test_active_project_wins_ambiguity(self, scoped):
+        # flip qualibrate's active project to beta → the tie resolves to it
+        _write(scoped["cfg"] / "config.toml", f'''
+[qualibrate]
+project = "beta"
+version = 5
+
+[quam]
+state_path = "{scoped["chip_a"]}"
+version = 3
+''')
+        qc._state_index_cache.clear()
+        scoped["client"].post("/load", data={"folder": str(scoped["shared"])})
+        assert _active_scope(scoped["app"]) == "beta"
+
+
+class TestScopePinning:
+    def test_explicit_open_pins_ambiguous_chip(self, scoped):
+        c = scoped["client"]
+        r = c.post("/qualibrate/open", data={"project": "gamma"})
+        assert r.status_code in (200, 302)
+        assert _active_scope(scoped["app"]) == "gamma"
+        assert _session(scoped["inst"]).get("last_project") == "gamma"
+
+    def test_pin_survives_cache_hit_reactivation(self, scoped):
+        c = scoped["client"]
+        c.post("/qualibrate/open", data={"project": "gamma"})
+        # plain /load of the same folder is a cache hit — must NOT re-derive
+        # (the reverse-matcher would refuse the beta/gamma tie → None)
+        c.post("/load", data={"folder": str(scoped["shared"])})
+        assert _active_scope(scoped["app"]) == "gamma"
+
+    def test_eviction_rebuild_rederives(self, scoped):
+        c = scoped["client"]
+        c.post("/load", data={"folder": str(scoped["chip_a"])})
+        assert _active_scope(scoped["app"]) == "alpha"
+        # simulate LRU eviction / restart: drop the in-memory context wholesale
+        with routes_mod._quam_cache_lock:
+            routes_mod._quam_cache.clear()
+        scoped["app"].config["contexts"].clear()
+        scoped["app"].config["active_context"] = None
+        c.post("/load", data={"folder": str(scoped["chip_a"])})
+        assert _active_scope(scoped["app"]) == "alpha"
+
+
+class TestReverseIndex:
+    def test_index_lists_effective_paths(self, scoped):
+        idx = qc.project_state_paths()
+        by_name = dict(idx["projects"])
+        assert idx["active"] == "alpha"
+        assert Path(by_name["alpha"]) == scoped["chip_a"]
+        assert Path(by_name["beta"]) == scoped["shared"]
+
+    def test_index_is_stat_cached(self, scoped):
+        qc.project_state_paths()
+        entry1 = qc._state_index_cache.get("entry")
+        qc.project_state_paths()
+        assert qc._state_index_cache.get("entry") is entry1  # no rebuild
+
+    def test_index_invalidates_on_overlay_change(self, scoped):
+        qc.project_state_paths()
+        _write(scoped["cfg"] / "projects" / "beta" / "config.toml",
+               f'[quam]\nstate_path = "{scoped["standalone"]}"\n')
+        idx = qc.project_state_paths()
+        assert Path(dict(idx["projects"])["beta"]) == scoped["standalone"]
+
+    def test_missing_config_is_empty(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(tmp_path / "ghost"))
+        qc._state_index_cache.clear()
+        assert qc.project_state_paths() == {"active": None, "projects": []}

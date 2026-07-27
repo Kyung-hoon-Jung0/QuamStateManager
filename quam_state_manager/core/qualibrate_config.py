@@ -465,6 +465,57 @@ def tray_status(cfg_dir: Path | None = None) -> dict[str, Any]:
     }
 
 
+# Stat-keyed cache for the project↔state_path reverse index (docs/63 project
+# lens): the web layer reverse-matches every chip activation against it, so it
+# must cost a handful of os.stat calls steady-state — TOML parsing happens
+# only when the root or any overlay actually changed (or a project dir
+# appeared/vanished). Same discipline as _tray_cache. NEVER calls lint()
+# (which stats/iterdirs arbitrary configured paths, potentially dead mounts).
+_state_index_cache: dict[str, Any] = {}
+
+
+def project_state_paths(cfg_dir: Path | None = None) -> dict[str, Any]:
+    """``{"active": str|None, "projects": [(name, native_state_path|None)]}``.
+
+    The minimal payload the project lens needs to reverse-match a loaded
+    folder onto a project: every project's EFFECTIVE ``[quam].state_path``
+    (root deep-merged with its overlay; explicit ``""`` override → None) in
+    this process's path dialect. READ-ONLY, never raises."""
+    cfg_dir = cfg_dir or _config_dir()
+    root_path = cfg_dir / "config.toml"
+    try:
+        root_m = root_path.stat().st_mtime_ns
+    except OSError:
+        return {"active": None, "projects": []}
+    proj_dir = cfg_dir / "projects"
+    try:
+        names = sorted(d.name for d in proj_dir.iterdir() if d.is_dir())
+    except OSError:
+        names = []
+    key_parts: list[Any] = [str(cfg_dir), root_m]
+    for n in names:
+        try:
+            key_parts.append((n, (proj_dir / n / "config.toml").stat().st_mtime_ns))
+        except OSError:
+            key_parts.append((n, -1))
+    key = tuple(key_parts)
+    cached = _state_index_cache.get("entry")
+    if cached is not None and cached[0] == key:
+        return cached[1]
+
+    root_cfg = _load_toml_retry(root_path)
+    active = (root_cfg.get("qualibrate") or {}).get("project")
+    projects: list[tuple[str, str | None]] = []
+    for n in names:
+        overlay = _load_toml_retry(proj_dir / n / "config.toml")
+        eff = _deep_merge(root_cfg, overlay)
+        native = native_path((eff.get("quam") or {}).get("state_path"))
+        projects.append((n, str(native) if native else None))
+    result = {"active": str(active) if active else None, "projects": projects}
+    _state_index_cache["entry"] = (key, result)
+    return result
+
+
 def lint(listing: dict[str, Any]) -> list[dict[str, Any]]:
     """Doctor findings over a :func:`list_projects` result (pure; no I/O
     beyond what listing already did). Each: {severity, project, code, message,
