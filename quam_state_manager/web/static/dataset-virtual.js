@@ -1682,11 +1682,14 @@
         for (var j = 0; j < rows.length; j++) {
             state.rowsById.set(rows[j].uid, j);
         }
-        // Key the persisted selection on folder + view so the Datasets and
-        // Collections pages (same DatasetStore/folder) keep independent compare
-        // selections — switching between them shouldn't carry checks over.
+        // Key the persisted selection on folder + view + project scope so the
+        // Datasets and Collections pages (same DatasetStore/folder) keep
+        // independent compare selections — switching between them shouldn't
+        // carry checks over — and a project open/switch re-seeds the folder
+        // filter (docs/63).
         var newFolder = (data.getAttribute('data-folder') || '')
-                        + '|' + (data.getAttribute('data-view') || 'datasets');
+                        + '|' + (data.getAttribute('data-view') || 'datasets')
+                        + '|' + (data.getAttribute('data-scope') || '');
         if (newFolder !== _persistedFolder) {
             _persistedSelection = new Set();
             _persistedQubitFilter = new Set();   // different chip → qubit names unrelated
@@ -1694,6 +1697,22 @@
             _persistedParamFilter = new Map();   // …and param facets are chip-specific too
             _persistedParamRangeFilter = new Map();
             _persistedFolderFilter = new Set();  // active-folder SET changed → reset to "all"
+            // Project lens (docs/63): seed the folder filter from the scope's
+            // recorded roots — only when they're a PROPER subset of the present
+            // folders (covering all == the All chip). Within the same
+            // folder-set+scope, user toggles stay authoritative; All escapes.
+            var scopeEl = document.getElementById('ds-scope-folders');
+            if (scopeEl) {
+                try {
+                    var sk = JSON.parse(scopeEl.textContent || '[]') || [];
+                    var known = Object.keys(state.foldersByKey).length;
+                    if (sk.length && sk.length < known) {
+                        sk.forEach(function (k) {
+                            if (state.foldersByKey[k]) _persistedFolderFilter.add(k);
+                        });
+                    }
+                } catch (e) { /* unscoped */ }
+            }
             _persistedFolder = newFolder;
         } else if (_persistedSelection.size > 0) {
             // Prune uids that no longer appear in the fresh payload (deleted

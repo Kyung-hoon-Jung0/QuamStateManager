@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from quam_state_manager.core import path_match
 from quam_state_manager.core import qualibrate_config as qc
 from quam_state_manager.web import routes as routes_mod
 from quam_state_manager.web.app import create_app
@@ -311,6 +312,166 @@ class TestHistoryLens:
             f"hist:{key}/{snaps[0].timestamp}", cs.SourcePool(),
             history_root=scoped["inst"] / "history")
         assert src.chip_name == key
+
+
+def _seed_run(root: Path, run_id: int, *, date="2026-05-28", hhmmss="010000",
+              name="test_experiment", qubits=None) -> Path:
+    """One qualibrate-shaped run folder under ``root/<date>/#<id>_<name>_<hhmmss>``."""
+    qubits = qubits or [f"q{run_id}"]
+    run = root / date / f"#{run_id}_{name}_{hhmmss}"
+    run.mkdir(parents=True)
+    (run / "node.json").write_text(json.dumps({
+        "metadata": {"name": name, "status": "successful",
+                     "run_start": f"{date}T01:00:00", "run_end": f"{date}T01:00:01"},
+        "data": {"parameters": {"model": {"qubits": qubits}}, "outcomes": {}},
+        "id": run_id, "parents": [], "created_at": f"{date}T01:00:00",
+    }), encoding="utf-8")
+    (run / "data.json").write_text(json.dumps(
+        {"fit_results": {qubits[0]: {"T1": 8.0e-6}}}), encoding="utf-8")
+    return run
+
+
+def _script_json(body: str, el_id: str):
+    import re
+    m = re.search(rf'id="{el_id}"[^>]*>(.*?)</script>', body, re.S)
+    assert m, f"missing <script id={el_id}>"
+    return json.loads(m.group(1))
+
+
+@pytest.fixture
+def ds_scoped(scoped):
+    """``scoped`` + alpha gets its OWN storage holding one dataset root."""
+    tmp = scoped["cfg"].parent
+    storage_alpha = tmp / "storage_alpha"
+    data_a = storage_alpha / "data_a"
+    _seed_run(data_a, 1, qubits=["q0"])
+    _write(scoped["cfg"] / "projects" / "alpha" / "config.toml", f'''
+[quam]
+state_path = "{scoped["chip_a"]}"
+
+[qualibrate.storage]
+location = "{storage_alpha}"
+''')
+    qc._state_index_cache.clear()
+    scoped["storage_alpha"] = storage_alpha
+    scoped["data_a"] = data_a
+    return scoped
+
+
+class TestDatasetLens:
+    """Step-7 pins (docs/63): per-project dataset roots recorded on open
+    (instance/project_dataset_roots.json), Datasets ships the scope payload,
+    Trends pre-selects the scope's roots, remove strips the map — and
+    scope=None stays byte-identical to today."""
+
+    def _roots_map(self, inst: Path) -> dict:
+        p = inst / "project_dataset_roots.json"
+        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+
+    def test_open_records_project_roots(self, ds_scoped):
+        c = ds_scoped["client"]
+        c.post("/qualibrate/open", data={"project": "alpha"})
+        m = self._roots_map(ds_scoped["inst"])
+        assert [path_match.fs_key(r) for r in m.get("alpha", [])] == \
+               [path_match.fs_key(ds_scoped["data_a"])]
+
+    def test_open_empty_storage_records_nothing(self, ds_scoped):
+        # gamma inherits the ROOT storage (an empty dir) → 0 roots → no entry
+        c = ds_scoped["client"]
+        c.post("/qualibrate/open", data={"project": "gamma"})
+        assert "gamma" not in self._roots_map(ds_scoped["inst"])
+
+    def test_datasets_page_ships_scope_payload(self, ds_scoped):
+        c = ds_scoped["client"]
+        c.post("/qualibrate/open", data={"project": "alpha"})
+        other = ds_scoped["cfg"].parent / "other_data"
+        _seed_run(other, 5, qubits=["q7"])
+        c.post("/workspace/add", data={"folder": str(other)})
+        body = c.get("/datasets", headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert 'data-scope="alpha"' in body
+        key_a = routes_mod._folder_key(ds_scoped["data_a"])
+        assert _script_json(body, "ds-scope-folders") == [key_a]
+        assert "scoped to alpha" in body   # proper-subset hint
+
+    def test_full_cover_scope_hides_hint(self, ds_scoped):
+        # scope covers EVERY present folder → All ≡ scope → no hint
+        c = ds_scoped["client"]
+        c.post("/qualibrate/open", data={"project": "alpha"})
+        body = c.get("/datasets", headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert 'data-scope="alpha"' in body
+        assert "scoped to alpha" not in body
+
+    def test_scope_none_identity(self, ds_scoped):
+        c = ds_scoped["client"]
+        c.post("/load", data={"folder": str(ds_scoped["standalone"])})
+        other = ds_scoped["cfg"].parent / "other_data"
+        _seed_run(other, 5, qubits=["q7"])
+        c.post("/workspace/add", data={"folder": str(other)})
+        body = c.get("/datasets", headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert 'data-scope=""' in body
+        assert _script_json(body, "ds-scope-folders") == []
+        assert "scoped to" not in body
+
+    def test_remove_strips_project_map(self, ds_scoped):
+        c = ds_scoped["client"]
+        c.post("/qualibrate/open", data={"project": "alpha"})
+        assert "alpha" in self._roots_map(ds_scoped["inst"])
+        c.post("/workspace/remove", data={"folder": str(ds_scoped["data_a"])})
+        assert "alpha" not in self._roots_map(ds_scoped["inst"])
+
+    def test_trends_preselects_scope_folder(self, ds_scoped):
+        c = ds_scoped["client"]
+        c.post("/qualibrate/open", data={"project": "alpha"})
+        other = ds_scoped["cfg"].parent / "other_data"
+        _seed_run(other, 5, qubits=["q7"])
+        c.post("/workspace/add", data={"folder": str(other)})
+        body = c.get("/trends", headers={"HX-Request": "true"}).get_data(as_text=True)
+        key_a = routes_mod._folder_key(ds_scoped["data_a"])
+        key_o = routes_mod._folder_key(other)
+        assert f'class="folder-chip active" data-folder-key="{key_a}"' in body
+        assert f'class="folder-chip" data-folder-key="{key_o}"' in body
+        assert "scoped to alpha" in body
+
+    def test_trends_same_chip_scope_selects_all(self, ds_scoped):
+        # second scope root, SAME qubit set → same chip → both pre-selected
+        data_b = ds_scoped["storage_alpha"] / "data_b"
+        _seed_run(data_b, 9, date="2026-06-01", qubits=["q0"])
+        c = ds_scoped["client"]
+        c.post("/qualibrate/open", data={"project": "alpha"})
+        body = c.get("/trends", headers={"HX-Request": "true"}).get_data(as_text=True)
+        for key in (routes_mod._folder_key(ds_scoped["data_a"]),
+                    routes_mod._folder_key(data_b)):
+            assert f'class="folder-chip active" data-folder-key="{key}"' in body
+
+    def test_trends_cross_chip_scope_picks_newest(self, ds_scoped):
+        # second scope root with a DIFFERENT chip → only the newest starts selected
+        data_b = ds_scoped["storage_alpha"] / "data_b"
+        _seed_run(data_b, 9, date="2026-06-01", qubits=["q9"])
+        c = ds_scoped["client"]
+        c.post("/qualibrate/open", data={"project": "alpha"})
+        body = c.get("/trends", headers={"HX-Request": "true"}).get_data(as_text=True)
+        key_a = routes_mod._folder_key(ds_scoped["data_a"])
+        key_b = routes_mod._folder_key(data_b)
+        assert f'class="folder-chip active" data-folder-key="{key_b}"' in body
+        assert f'class="folder-chip" data-folder-key="{key_a}"' in body
+
+    def test_trends_unscoped_keeps_first_folder_default(self, ds_scoped):
+        c = ds_scoped["client"]
+        c.post("/load", data={"folder": str(ds_scoped["standalone"])})
+        other = ds_scoped["cfg"].parent / "other_data"
+        _seed_run(other, 5, qubits=["q7"])
+        c.post("/workspace/add", data={"folder": str(other)})
+        c.post("/workspace/add", data={"folder": str(ds_scoped["data_a"])})
+        body = c.get("/trends", headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert body.count('class="folder-chip active"') == 1   # today's default
+
+    def test_client_seeding_source_pins(self):
+        js = (Path(__file__).resolve().parent.parent
+              / "quam_state_manager/web/static/dataset-virtual.js"
+              ).read_text(encoding="utf-8")
+        assert "data.getAttribute('data-scope')" in js   # scope joins the identity key
+        assert "ds-scope-folders" in js                  # seeding source element
+        assert "sk.length < known" in js                 # proper-subset guard
 
 
 class TestLanding:

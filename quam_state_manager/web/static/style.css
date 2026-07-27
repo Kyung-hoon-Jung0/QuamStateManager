@@ -2153,6 +2153,8 @@ th.sortable.sort-desc::after { content: '\25BC'; opacity: 0.8; }
 .folder-filter-sections { margin-bottom: .35rem; }
 .folder-filter-topbar { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
 .folder-filter-label { font-size: .8em; font-weight: 600; color: var(--pico-muted-color); margin-right: .15rem; }
+/* Project lens (docs/63): muted "scoped to <project>" note beside folder chips */
+.ds-scope-hint { font-size: .74em; align-self: center; margin-left: .3rem; white-space: nowrap; }
 .folder-chip {
     display: inline-flex; align-items: center; padding: 3px 9px;
     border-radius: 8px; font-size: .78em; line-height: 1.3;

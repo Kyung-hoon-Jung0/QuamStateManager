@@ -2302,7 +2302,8 @@ def qualibrate_open_project():
     if storage_native and proj["storage"]["exists"]:
         ws = _ws()
         existing = {str(p) for p in ws.root_folders}
-        for root in scheduler.find_dataset_roots(storage_native):
+        found = scheduler.find_dataset_roots(storage_native)
+        for root in found:
             if root not in existing:
                 try:
                     ws.add_root(root)
@@ -2312,6 +2313,10 @@ def qualibrate_open_project():
         if added:
             _save_workspace_roots()
             current_app.config.pop("dataset_store", None)
+        # Project lens (docs/63): remember ALL of this project's roots —
+        # including already-registered ones — so Datasets/Trends can seed
+        # their folder selection from the scope in later sessions too.
+        _record_project_roots(name, found)
 
     # a qualibrate project is a SCOPE on the context, not a new context type.
     # Explicit open PINS the user's choice — it survives cache-hit
@@ -7470,6 +7475,9 @@ def workspace_remove():
     # …and the candidate-folder cache (per-run fast path — see workspace_add).
     _dataset_candidates_cache.pop(id(current_app._get_current_object()), None)
     _save_workspace_roots()
+    # Project lens (docs/63): an explicitly removed folder must not keep
+    # seeding project scopes on the Datasets/Trends pages.
+    _strip_project_root(folder)
     # Remember the explicit remove so future /load calls don't auto-re-add it.
     # Propagate OSError so the user is warned if the exclusion didn't persist
     # — without this, the next auto-rehydrate quietly re-adds the folder
@@ -10316,6 +10324,113 @@ def _load_workspace_roots() -> None:
 
 
 # ----------------------------------------------------------------------
+# Per-project dataset roots (docs/63 decision 5).
+#
+# ``instance/project_dataset_roots.json`` — ``{project: [resolved root paths]}``.
+# A SEPARATE file from workspace_roots.json on purpose: that writer serializes
+# only the historical bare array (an envelope would be silently wiped on the
+# next save) and the bare-list format is an external contract. The map is a
+# memo of "which data roots belong to which qualibrate project" used ONLY to
+# seed the Datasets folder filter / Trends folder pick — never to hide data.
+# ----------------------------------------------------------------------
+
+
+def _project_roots_file() -> Path:
+    return Path(current_app.instance_path) / "project_dataset_roots.json"
+
+
+def _load_project_roots() -> dict[str, list[str]]:
+    p = _project_roots_file()
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except Exception as exc:  # noqa: BLE001 — a corrupt memo must never break a page
+        logging.getLogger(__name__).warning(
+            "Could not read project dataset roots: %s", exc)
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k): [str(r) for r in v]
+            for k, v in raw.items() if isinstance(v, list)}
+
+
+def _record_project_roots(project: str, roots: list[str]) -> None:
+    """Merge *roots* into the project's recorded list (fs_key-dedup, atomic).
+
+    Called by /qualibrate/open with ALL of the project's found roots —
+    including ones already registered in the workspace — so a root added in
+    an earlier session still scopes. A recorded root that later vanishes
+    from the workspace simply stops intersecting the present folder set.
+    """
+    if not project or not roots:
+        return
+    data = _load_project_roots()
+    cur = data.get(project, [])
+    have = {path_match.fs_key(r) for r in cur}
+    changed = False
+    for r in roots:
+        resolved = str(Path(r).resolve())
+        k = path_match.fs_key(resolved)
+        if k not in have:
+            cur.append(resolved)
+            have.add(k)
+            changed = True
+    if not changed:
+        return
+    data[project] = cur
+    try:
+        safe_io.atomic_write_json(_project_roots_file(), data)
+    except OSError as exc:
+        logger.warning("Could not save project dataset roots: %s", exc)
+
+
+def _strip_project_root(folder: str) -> None:
+    """Remove *folder* from EVERY project's recorded roots (workspace_remove:
+    an explicitly removed folder must not keep seeding project scopes)."""
+    if not folder:
+        return
+    data = _load_project_roots()
+    if not data:
+        return
+    k = path_match.fs_key(str(Path(folder).resolve()))
+    out: dict[str, list[str]] = {}
+    changed = False
+    for name, roots in data.items():
+        kept = [r for r in roots if path_match.fs_key(r) != k]
+        if len(kept) != len(roots):
+            changed = True
+        if kept:
+            out[name] = kept
+        else:
+            changed = True  # drop the now-empty project entry entirely
+    if not changed:
+        return
+    try:
+        safe_io.atomic_write_json(_project_roots_file(), out)
+    except OSError as exc:
+        logger.warning("Could not update project dataset roots: %s", exc)
+
+
+def _scope_folder_keys(scope_project: str | None,
+                       folders: list[dict[str, Any]]) -> list[str]:
+    """The ``folder_key``s among *folders* recorded for *scope_project*.
+
+    ``folders`` dicts carry ``key`` + ``full_path`` (the /datasets + /trends
+    shape). Empty when unscoped / nothing recorded / no intersection — every
+    caller treats [] as "behave exactly as today".
+    """
+    if not scope_project:
+        return []
+    recorded = _load_project_roots().get(scope_project) or []
+    if not recorded:
+        return []
+    rec_keys = {path_match.fs_key(r) for r in recorded}
+    return [f["key"] for f in folders
+            if path_match.fs_key(str(f.get("full_path") or "")) in rec_keys]
+
+
+# ----------------------------------------------------------------------
 # Last-session persistence (mirrors the workspace_roots pattern).
 # Stores the most recently activated quam_state path plus an LRU list of
 # the last N paths so the user can switch between active projects with
@@ -11083,9 +11198,19 @@ def _datasets_view(view_mode: str):
     # dataset-virtual.js).
     folder_sig = ",".join(sorted(f["key"] for f in folders))
 
+    # Project lens (docs/63): which of the present folders are recorded for
+    # the active context's project scope. Seeds the client's folder filter
+    # only — rows, uids and the folder_key contract are untouched, and the
+    # All chip always escapes. scope=None → [] → byte-identical behavior.
+    scope_project = (_active_ctx() or {}).get("qualibrate_project") or ""
+    scope_keys = _scope_folder_keys(scope_project, folders)
+
     return render_template(
         template,
         **_ctx(page=page),
+        scope_project=scope_project,
+        scope_keys=scope_keys,
+        scope_keys_json=json.dumps(scope_keys, separators=(",", ":")),
         view_mode=view_mode,
         collection_tags=collection_tags,
         digest=digest,
@@ -11816,10 +11941,25 @@ def trends():
         experiments.update(f["store"].experiment_types)
         qubits.update(f["store"].summary_stats.get("unique_qubits", []))
     folders = [{"key": f["key"], "label": f["label"], "full_path": f["path"]} for f in active]
+    # Project lens (docs/63): pre-select the scope's recorded roots — all of
+    # them only when they're provably the SAME chip (cross-chip trend merges
+    # are meaningless), else just the newest one. Unscoped → [] → the
+    # template falls back to today's first-folder default.
+    scope_project = (_active_ctx() or {}).get("qualibrate_project") or ""
+    trend_scope_keys = _scope_folder_keys(scope_project, folders)
+    if len(trend_scope_keys) > 1:
+        in_scope = set(trend_scope_keys)
+        scope_folders = [f for f in active if f["key"] in in_scope]
+        if _folders_same_chip(scope_folders) != "same":
+            newest = max(scope_folders,
+                         key=lambda f: max(f["store"].dates or [""]))
+            trend_scope_keys = [newest["key"]]
     return render_template(template, **_ctx(page="trends"),
                            experiments=sorted(experiments),
                            qubits=sorted(qubits),
                            folders=folders,
+                           scope_project=scope_project,
+                           trend_scope_keys=trend_scope_keys,
                            no_workspace=False)
 
 
