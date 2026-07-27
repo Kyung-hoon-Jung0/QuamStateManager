@@ -536,8 +536,24 @@ class TestLanding:
         assert 'hx-get="/landing/projects"' in body
         # the shell must NOT inline the project list (lazy fragment only)
         assert "landing-card-grid" not in body
-        # the legacy welcome is not shown when a config exists
-        assert "Welcome to QUAM State Manager" not in body
+        # greeting + question header (user feedback), NOT the legacy welcome
+        # page (its lead paragraph is unique to _landing_welcome.html)
+        assert "what's your project?" in body
+        assert "welcome-lead" not in body
+        # the manual rides below the picker as a collapsible section
+        assert 'class="landing-gs"' in body
+        assert "Getting started" in body
+
+    def test_getting_started_open_only_on_first_run(self, scoped):
+        c = scoped["client"]
+        # fresh instance, no session history at all → manual starts expanded
+        body = c.get("/").get_data(as_text=True)
+        assert '<details class="landing-gs" open>' in body
+        # any history (a load) collapses it on the next landing render
+        c.post("/load", data={"folder": str(scoped["chip_a"])})
+        body = c.get("/").get_data(as_text=True)
+        assert '<details class="landing-gs">' in body
+        assert '<details class="landing-gs" open>' not in body
 
     def test_landing_cards_fragment(self, scoped):
         body = scoped["client"].get("/landing/projects").get_data(as_text=True)

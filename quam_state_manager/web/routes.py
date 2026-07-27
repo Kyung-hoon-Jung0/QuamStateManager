@@ -1965,6 +1965,9 @@ def home():
         resume_path=resume_path,
         resume_name=_chip_display_name(Path(resume_path)) if resume_path else "",
         recent_paths=recents[:3],
+        # True first run (no session history at all) → the landing's
+        # "Getting started" manual starts expanded; any history collapses it.
+        first_run=not (session.get("last_project") or resume_path or recents),
     ))
 
 

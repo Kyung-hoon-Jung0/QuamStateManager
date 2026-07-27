@@ -1884,6 +1884,14 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
     border: 1px solid var(--pico-muted-border-color); border-radius: 999px;
 }
 .landing-recent-btn:hover { border-color: var(--pico-primary); }
+/* "what's your project?" tail of the landing greeting — same size, softer ink */
+.landing-head-q { color: var(--pico-muted-color); font-weight: 500; }
+/* Collapsed Getting-started manual under the project picker (docs/63 refinement) */
+.landing-gs { margin-top: 1.2rem; border-top: 1px solid var(--pico-muted-border-color); padding-top: 0.7rem; }
+.landing-gs > summary { cursor: pointer; font-weight: 600; width: max-content; }
+.landing-gs-body { margin-top: 0.4rem; }
+.landing-gs-body .welcome-glossary,
+.landing-gs-body .welcome-features { margin-top: 0.8rem; }
 .welcome h2 { margin-bottom: 0.5rem; }
 .welcome-lead { font-size: 1.02rem; color: var(--pico-color); margin: 0.2rem auto 0.4rem; max-width: 40rem; }
 .welcome-sub { color: var(--pico-muted-color); margin-bottom: 0.5rem; }
