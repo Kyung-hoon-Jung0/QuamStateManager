@@ -3445,11 +3445,11 @@ window.clearDetailPanelSearch = function(btnEl) {
     // groups them on BLUR (never per-keystroke — zero caret risk, matches the
     // app's commit-time grouping), and auto-grows the box to fit its content via
     // the HTML `size` attr (mono+tabular ⇒ 1 glyph = 1ch). Reuses the SAME comma
-    // rule the server uses (cli.py `_parse_value` / `_GROUPED_NUMBER`), so a genuine
+    // rule the server uses (type_policy.py `parse_value` (grouped-number gate)), so a genuine
     // string ("MW,FEM", a pointer, "con/slot/port") is left untouched. Scientific
     // notation (1.2e9) is left verbatim — value identical, notation respected.
     window.NumberInput = (function () {
-        var GROUPED = /^[+-]?\d[\d,]*(\.\d+)?$/;   // mirror cli.py:546 _GROUPED_NUMBER (no exponent)
+        var GROUPED = /^[+-]?\d[\d,]*(\.\d+)?$/;   // mirror type_policy._PLAIN_GROUPED_NUMBER (no exponent)
         function strip(s) {
             s = String(s == null ? "" : s).trim();
             return (s.indexOf(",") >= 0 && GROUPED.test(s)) ? s.replace(/,/g, "") : s;
@@ -10371,10 +10371,17 @@ document.addEventListener('click', function(evt) {
         // first so the customer isn't surprised by a later config diff. (The equal
         // case is info-severity → no data-confirm → one-click, nothing changes.)
         if (btn.getAttribute("data-confirm") === "1") {
-            var oldv = btn.getAttribute("data-old") || "the current literal";
-            if (!window.confirm("Relink downconverter_frequency to its paired upconverter?\n\n" +
+            // r9: server-rendered confirm text when present (set_value fixes
+            // carry their own wording); the downconverter relink keeps its
+            // historical message.
+            var confirmText = btn.getAttribute("data-confirm-text");
+            if (!confirmText) {
+                var oldv = btn.getAttribute("data-old") || "the current literal";
+                confirmText = "Relink downconverter_frequency to its paired upconverter?\n\n" +
                     "Its value (" + oldv + ") will change to track the shared LO. The change is added " +
-                    "to your pending edits — review it in the tray before applying to the live chip.")) {
+                    "to your pending edits — review it in the tray before applying to the live chip.";
+            }
+            if (!window.confirm(confirmText)) {
                 return;
             }
         }
@@ -10382,8 +10389,9 @@ document.addEventListener('click', function(evt) {
         body.append("action", btn.getAttribute("data-action") || "");
         body.append("dot_path", btn.getAttribute("data-dot-path") || "");
         body.append("pointer", btn.getAttribute("data-pointer") || "");
+        body.append("value", btn.getAttribute("data-value") || "");
         var orig = btn.textContent;
-        btn.disabled = true; btn.textContent = "Converting…";
+        btn.disabled = true; btn.textContent = "Applying…";
         fetch("/diagnostics/apply-fix", {
             method: "POST",
             headers: { "Content-Type": "application/x-www-form-urlencoded" },

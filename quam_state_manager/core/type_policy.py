@@ -352,13 +352,66 @@ def _graft(merged: dict, root_path: str, value: Any) -> dict:
 # expectation-aware parsing (route boundary)
 # ---------------------------------------------------------------------------
 
+# cli's grouped-number gate, verbatim (NO exponent — the empty-policy golden
+# pins parse_value byte-identical to the historical cli parser; the
+# expectation path's _GROUPED_NUMBER_OK below deliberately also accepts
+# exponents and must stay separate).
+_PLAIN_GROUPED_NUMBER = re.compile(r"^[+-]?\d[\d,]*(\.\d+)?$")
+
+
+def parse_value(raw: str):
+    """Parse a CLI / web-edit string value into the appropriate Python type.
+
+    Lives HERE (not cli.py, its historical home): the web edit path calls it
+    on every /field/edit, and cli.py imports typer at module level — an env
+    without the CLI stack 500'd every field edit (r9 SUPER-CRITICAL). cli.py
+    re-imports it for its own commands.
+
+    Symmetric with :func:`units.group_digits`: a comma-grouped number like
+    ``"5,075,187,484"`` has its grouping commas stripped before numeric
+    parsing (guarded so genuine comma-bearing strings are left untouched).
+    Non-finite floats (``inf``/``nan``/overflow) are rejected with
+    ``ValueError`` so a hostile value can never reach the JSON store as
+    ``Infinity`` (invalid strict JSON).
+    """
+    s = raw.strip()
+    low = s.lower()
+    if low in ("null", "none"):
+        return None
+    if low == "true":
+        return True
+    if low == "false":
+        return False
+    # Explicit JSON literal — a quoted string, an array, or an object. Lets a
+    # user type a genuine string (``"02"`` → the 2-char string ``02``) or a
+    # list / dict value the scalar parser can't express; a malformed literal
+    # (``[1,2``) falls through to the bare-string path.
+    if s[:1] in ('"', '[', '{'):
+        try:
+            return json.loads(s)
+        except (ValueError, TypeError):
+            pass
+    candidate = (s.replace(",", "")
+                 if ("," in s and _PLAIN_GROUPED_NUMBER.match(s)) else s)
+    try:
+        return int(candidate)
+    except ValueError:
+        pass
+    try:
+        f = float(candidate)
+    except (ValueError, OverflowError):
+        return raw
+    if not math.isfinite(f):
+        raise ValueError(f"{raw!r} is not a finite number")
+    return f
+
+
 def parse_with_expected(raw: str, expected: Expected | None) -> Any:
     """Parse user-typed text against the expected type. With no ENFORCED
-    expectation, behavior is ``cli._parse_value`` byte-identical."""
-    from quam_state_manager.cli import _parse_value
-
+    expectation, behavior is :func:`parse_value` (the historical
+    ``cli._parse_value``) byte-identical."""
     if expected is None or not expected.enforced:
-        return _parse_value(raw)
+        return parse_value(raw)
 
     s = raw.strip()
     # pointers and the null/none tokens ALWAYS win (null is always writable —
@@ -407,7 +460,7 @@ def parse_with_expected(raw: str, expected: Expected | None) -> Any:
             raise ValueError(
                 f"expected JSON for a {format_type(expected.spec)} — e.g. {shape}; "
                 f"could not parse {raw!r}") from exc
-    return _parse_value(raw)
+    return parse_value(raw)
 
 
 def _GROUPED_NUMBER_OK(s: str) -> bool:

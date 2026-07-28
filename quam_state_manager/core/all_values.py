@@ -76,7 +76,7 @@ def _walk_classified(
 
 def _display(value: Any) -> str:
     """Editable/display string for a leaf. Numbers use the lossless comma-grouped
-    form (round-trips through ``cli._parse_value``, identical to Bulk Edit cells);
+    form (round-trips through ``type_policy.parse_value``, identical to Bulk Edit cells);
     strings (incl. pointer targets) show verbatim; ``None`` shows blank.
     Containers (a pointer resolving to a dict/list) render as JSON so the
     edit-through input round-trips via the JSON-aware ``_parse_value``."""

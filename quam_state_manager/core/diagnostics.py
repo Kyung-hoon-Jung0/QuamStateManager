@@ -910,6 +910,27 @@ def _frequency_consistency_findings(store) -> list[Finding]:
             severity = "warning" if abs(delta) >= FREQ_CONSISTENCY_WARN_HZ else "info"
             f01_dp = "qubits." + qname + "." + ".".join(f01_rel)
             rf_dp = "qubits." + qname + "." + ".".join(rf_rel)
+            # One-click sync (r9 feedback): set the tracking field := the
+            # resolved carrier. Only offered for a LITERAL number — the fix
+            # would silently break a pointer link otherwise. The apply route
+            # re-validates against a live re-run of this linter (chip
+            # identity + current values), like the downconverter fix.
+            fix = None
+            if _isnum(f01_raw):
+                leaf = f01_rel[-1]
+                fix = {
+                    "action": "set_value",
+                    "dot_path": f01_dp,
+                    "value": repr(float(rf)),
+                    "label": f"Update {leaf} → {_ghz(rf)}",
+                    "confirm": (
+                        f"Set {f01_dp} to the carrier RF_frequency "
+                        f"({_ghz(rf)})?\n\nCurrent {_ghz(f01)} will be "
+                        "replaced. The change lands in your pending edits — "
+                        "review it in the tray before applying to the live "
+                        "chip. (Skip this if the offset is a deliberate "
+                        "detuning.)"),
+                }
             findings.append(Finding(
                 severity, "value_freq_consistency", f01_dp,
                 f"{label} f_01 ({_ghz(f01)}) and RF_frequency ({_ghz(rf)}) differ by "
@@ -918,6 +939,7 @@ def _frequency_consistency_findings(store) -> list[Finding]:
                 f"was edited without the other (or it's a deliberate detuning).",
                 detail=f"{f01_dp}={f01!r}  vs  {rf_dp}={rf!r}  (Δ={delta:+.3f} Hz)",
                 jump_path=f01_dp,
+                fix=fix,
             ))
     return findings
 

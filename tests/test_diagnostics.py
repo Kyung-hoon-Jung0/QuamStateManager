@@ -670,3 +670,25 @@ class TestFrequencyConsistency:
     def test_healthy_fixture_unaffected(self):
         # The shared healthy chip has f_01 but no xy/resonator freq pair → silent.
         assert diagnostics.lint_state(_store()) == []
+
+    def test_fix_offered_for_literal_f01(self):
+        """r9: the finding carries a one-click set_value fix — set f_01 :=
+        the resolved carrier — with its own confirm wording."""
+        fs = self._find(f01=5.002e9, xy_rf=5.0e9, res_f01=7e9, res_rf=7e9)
+        fx = fs[0].fix
+        assert fx and fx["action"] == "set_value"
+        assert fx["dot_path"] == "qubits.q1.f_01"
+        assert fx["value"] == repr(5.0e9)
+        assert "Update f_01" in fx["label"]
+        assert "pending edits" in fx["confirm"]
+
+    def test_no_fix_when_f01_is_a_pointer(self):
+        """A pointer f_01 must never be overwritten by the one-click fix —
+        the finding still fires (resolved values differ), fix stays None."""
+        state = _freq_state(f01=5.002e9, xy_rf=5.0e9, res_f01=7e9, res_rf=7e9)
+        state["qubits"]["q1"]["anchor"] = 5.002e9
+        state["qubits"]["q1"]["f_01"] = "#/qubits/q1/anchor"
+        store = QuamStore.from_dicts(state, {})
+        fs = diagnostics._frequency_consistency_findings(store)
+        drive = [f for f in fs if f.jump_path == "qubits.q1.f_01"]
+        assert drive and drive[0].fix is None

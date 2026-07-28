@@ -131,7 +131,7 @@ def _bulk_display(v: Any) -> str:
     grouping (``units.group_digits``). The old ``%.6e`` rounded to 7 sig figs and,
     because that rounded string was reused as the edit baseline, silently dropped
     the sub-kHz tail of real frequencies on round-trip. group_digits round-trips
-    exactly with ``cli._parse_value``."""
+    exactly with ``type_policy.parse_value`` (the historical cli parser)."""
     from quam_state_manager.core import units
     return units.group_digits(v)
 
@@ -3552,7 +3552,7 @@ def field_edit():
 
 def _parse_for_target(store, target_path: str, raw_value: str):
     """Parse typed text against the resolved target's ENFORCED expectation;
-    without one this is ``cli._parse_value`` byte-identical."""
+    without one this is ``type_policy.parse_value`` byte-identical."""
     from quam_state_manager.core import type_policy as _tp
     policy = getattr(store, "type_policy", None)
     expected = None
@@ -3850,8 +3850,7 @@ def field_create():
             hint = _tp.Expected(spec=_tp.parse_type(expect_type), source="user")
             parsed = _tp.parse_with_expected(raw_value, hint)
         else:
-            from quam_state_manager.cli import _parse_value
-            parsed = _parse_value(raw_value)
+            parsed = _tp.parse_value(raw_value)
         modifier.create_subtree(dot_path, parsed)
         _invalidate_engine_cache(ctx)
     except _tp.TypeMismatchError as e:
@@ -5770,7 +5769,7 @@ def pulse_edit():
         return render_template("_status.html", message="Invalid pulse path",
                                level="error"), 400
 
-    from quam_state_manager.cli import _parse_value
+    from quam_state_manager.core.type_policy import parse_value as _parse_value
     from quam_state_manager.core.pointer_path import resolve_field_target
 
     # Armor: __class__ is never an editable field on this surface (the detail
@@ -13518,6 +13517,34 @@ def diagnostics_apply_fix():
     action = request.form.get("action", "")
     dot_path = request.form.get("dot_path", "").strip()
     pointer = request.form.get("pointer", "").strip()
+
+    if action == "set_value":
+        # r9: the frequency-consistency "Update f_01 → carrier" fix. Same
+        # doctrine as set_pointer below: never trust the render-time form —
+        # re-run the linter on the CURRENT store and require a live finding
+        # offering EXACTLY this fix (chip identity + current values).
+        value = request.form.get("value", "").strip()
+        from quam_state_manager.core.diagnostics import (
+            _frequency_consistency_findings,
+        )
+        if not any(
+            (fnd.fix or {}).get("action") == "set_value"
+            and (fnd.fix or {}).get("dot_path") == dot_path
+            and (fnd.fix or {}).get("value") == value
+            for fnd in _frequency_consistency_findings(modifier.store)
+        ):
+            return jsonify(ok=False, error=(
+                "This fix is no longer valid for the loaded chip — the value "
+                "or chip changed since Diagnostics was rendered. Reload the "
+                "page.")), 409
+        try:
+            from quam_state_manager.core import type_policy as _tp
+            modifier.set_value(dot_path, _tp.parse_value(value))
+            _invalidate_engine_cache()
+        except (KeyError, TypeError, ValueError, IndexError) as e:
+            return jsonify(ok=False, error=str(e)), 400
+        return jsonify(ok=True, tray_html=_tray_html())
+
     if action != "set_pointer":
         return jsonify(ok=False, error="unsupported fix action"), 400
     if not (dot_path.endswith(".downconverter_frequency")
