@@ -1,0 +1,63 @@
+{# Project-first landing (docs/63) — the SHELL renders instantly (GET / is
+   the workbench iframe's entry and the most-hit route); the project CARDS
+   are a lazy fragment so the ~16 TOML reads + doctor stats never block the
+   page. Context: landing_config_exists, last_project, resume_path,
+   resume_name, recent_paths (from home()). #}
+<div class="landing-projects">
+    <div class="landing-head">
+        {# User feedback (docs/63 refinement): greet + ask for the project in
+           one line — the picker is the hero, the manual waits collapsed below. #}
+        <h2>Welcome to QUAM State Manager <span class="landing-head-q">— what's your project?</span></h2>
+        <p class="muted landing-lead">QUAlibrate runs inside a project — open one to load its
+            chip state and data folders in a single click.
+            <a href="/qualibrate" hx-get="/qualibrate" hx-target="#table-pane"
+               hx-push-url="true">Manage / doctor &rarr;</a></p>
+    </div>
+
+    {# shared inline slot for Open-in-SM 4xx bodies (htmx drops error bodies
+       by default; a beforeSwap allowance routes them here — app.js) #}
+    <div id="landing-open-err" class="landing-open-err" aria-live="polite"></div>
+
+    <div id="landing-cards"
+         hx-get="/landing/projects" hx-trigger="load" hx-swap="innerHTML">
+        <p class="muted">loading projects&hellip;</p>
+    </div>
+
+    {% if resume_path %}
+    <div class="landing-resume">
+        <span class="muted">Last session:</span>
+        <form method="post" action="/load" hx-post="/load" hx-target="#table-pane"
+              class="landing-resume-form">
+            <input type="hidden" name="folder" value="{{ resume_path }}">
+            <button type="submit" class="btn-sm landing-resume-btn"
+                    title="{{ resume_path }}">Resume {{ resume_name }}{% if last_project %} ({{ last_project }}){% endif %}</button>
+        </form>
+    </div>
+    {% endif %}
+
+    <div class="landing-standalone muted">
+        Working without qualibrate? Use <b>State Load</b> / <b>Dataset Load</b>
+        in the sidebar to open independent folders — they render exactly as before.
+        {% if recent_paths %}
+        <span class="landing-recents">Recent:
+            {% for rp in recent_paths %}
+            <form method="post" action="/load" hx-post="/load" hx-target="#table-pane"
+                  class="landing-recent-form">
+                <input type="hidden" name="folder" value="{{ rp.path }}">
+                <button type="submit" class="landing-recent-btn" title="{{ rp.path }}">{{ rp.name }}</button>
+            </form>
+            {% endfor %}
+        </span>
+        {% endif %}
+    </div>
+
+    {# The manual, kept below the picker (user feedback): collapsed for daily
+       users, auto-expanded only on a true first run (no session history at
+       all) so newcomers still get the guided tour. #}
+    <details class="landing-gs"{% if first_run %} open{% endif %}>
+        <summary>Getting started <span class="muted">— what you can do here</span></summary>
+        <div class="landing-gs-body">
+            {% include '_landing_getting_started.html' %}
+        </div>
+    </details>
+</div>

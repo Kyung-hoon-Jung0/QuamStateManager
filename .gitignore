@@ -58,3 +58,4 @@ instance.bak.*/
 .DS_Store
 Thumbs.db
 _replay_report_local/
+instance_audit*/

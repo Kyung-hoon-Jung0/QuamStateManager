@@ -2,7 +2,9 @@
    that produced each. Review / diff / compare / restore. Backed by the same
    HistoryManager store that powers Param History (no new capture). #}
 <div class="table-header-row">
-    <h2>State History
+    {# Project lens (docs/63): display-only suffix when the loaded chip
+       carries a qualibrate-project scope. #}
+    <h2>State History{% if project_scope %} <span class="scope-suffix">— {{ project_scope }}</span>{% endif %}
         <small class="muted">full state.json + wiring.json snapshots — review, compare, roll back</small>
     </h2>
     <button class="btn-sm outline" hx-post="/state-history/snapshot"

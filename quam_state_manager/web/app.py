@@ -14,6 +14,7 @@ alongside QUAM without restructuring the session model.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -266,6 +267,25 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     os.makedirs(app.instance_path, exist_ok=True)
     app.config["TESTING"] = testing
     app.config["SECRET_KEY"] = os.urandom(24).hex()
+
+    # SM-side qualibrate config-location override (docs/63 §B): the UI-chosen
+    # directory persists in instance/qualibrate_location.json and is installed
+    # process-wide here (below the env vars — see qualibrate_config). Set
+    # unconditionally so a later create_app with a different instance (tests)
+    # can't inherit a previous app's choice.
+    from quam_state_manager.core import qualibrate_config as _qcfg
+    chosen = None
+    try:
+        loc_file = Path(app.instance_path) / "qualibrate_location.json"
+        if loc_file.exists():
+            data = json.loads(loc_file.read_text(encoding="utf-8"))
+            val = data.get("config_dir") if isinstance(data, dict) else None
+            if isinstance(val, str) and val.strip():
+                chosen = val
+    except Exception:  # noqa: BLE001 — a corrupt memo must never block startup
+        logging.getLogger(__name__).warning(
+            "Could not read qualibrate_location.json", exc_info=True)
+    _qcfg.set_dir_override(chosen)
 
     # Phase 4 §1 — register the XSS-safe JSON filter as `script_json`,
     # used by every template that embeds a JSON payload inside a

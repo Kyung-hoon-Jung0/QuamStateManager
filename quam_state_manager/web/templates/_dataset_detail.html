@@ -401,14 +401,26 @@
 {# ── Tab: State ── #}
 <div class="dataset-tab-content hidden" id="ds-tab-state">
 
-    {# Compact Load State bar (only when quam_state available) #}
+    {# Compact Load State bar (only when quam_state available). r11: the
+       primary action STAGES the snapshot into the open chip's WORKING copy
+       (Sync / Apply pushes it live) — the archive open that used to hijack
+       the active context stays as the secondary read-only button and as the
+       automatic fallback when nothing is loaded. Gates (chip mismatch /
+       pending edits) come back as 409 confirm fragments into the result
+       slot below. #}
     {% if run.has_quam_state %}
     <div class="ds-state-action-bar">
         <button hx-post="/dataset/{{ uid }}/load-state"
-                hx-confirm="Load this run's state? Unsaved edits will be lost."
+                hx-target="#ds-load-state-result" hx-swap="innerHTML"
                 class="btn-sm">Load State</button>
-        <small class="muted">Replaces the active state with this run's snapshot</small>
+        <small class="muted">Into the open chip's <b>working</b> state — Sync&nbsp;/&nbsp;Apply
+            pushes it to the live chip. With no chip open, opens read-only.</small>
+        <button hx-post="/dataset/{{ uid }}/load-state?mode=archive"
+                hx-target="#ds-load-state-result" hx-swap="innerHTML"
+                class="btn-sm ds-load-archive-btn"
+                title="Open this run's frozen quam_state as a separate READ-ONLY context — does not touch the open chip">Open read-only</button>
     </div>
+    <div id="ds-load-state-result" aria-live="polite"></div>
     {% endif %}
 
     {# File sub-tabs #}

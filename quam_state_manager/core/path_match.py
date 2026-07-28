@@ -43,14 +43,17 @@ def same_folder(a: str | Path, b: str | Path) -> bool:
     compare).
     """
     pa, pb = Path(a), Path(b)
+    # ValueError: POSIX stat/resolve raise it (not OSError) on an embedded
+    # NUL byte — reachable via hand-edited/mangled JSON memos and TOML
+    # escapes, and a compare helper must never 500 a page over it.
     try:
         if os.path.samefile(pa, pb):
             return True
-    except OSError:
+    except (OSError, ValueError):
         pass
     try:
         return os.path.normcase(str(pa.resolve())) == os.path.normcase(str(pb.resolve()))
-    except OSError:
+    except (OSError, ValueError):
         return os.path.normcase(str(pa)) == os.path.normcase(str(pb))
 
 
@@ -74,7 +77,9 @@ def fs_key(path: str | Path) -> str:
     p = Path(path)
     try:
         s = str(p.resolve())
-    except OSError:     # resolve failed (exotic mount / malformed drive spec)
+    except (OSError, ValueError):
+        # resolve failed (exotic mount / malformed drive spec / NUL byte —
+        # POSIX raises ValueError for embedded NULs, not OSError)
         s = str(p)
     s = unicodedata.normalize("NFC", s)
     if os.name == "nt" or sys.platform == "darwin":

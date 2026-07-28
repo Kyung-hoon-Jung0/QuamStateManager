@@ -631,51 +631,12 @@ def trend(
 # (users mix comma + plain). Commas anywhere among the integer digits are treated
 # as grouping and stripped. Must start with a digit (after an optional sign) so a
 # genuine string ("a,b", "MW,FEM", a "#/..." pointer) is left untouched.
-_GROUPED_NUMBER = re.compile(r"^[+-]?\d[\d,]*(\.\d+)?$")
-
-
-def _parse_value(raw: str):
-    """Parse a CLI / web-edit string value into the appropriate Python type.
-
-    Symmetric with :func:`units.group_digits`: a comma-grouped number like
-    ``"5,075,187,484"`` has its grouping commas stripped before numeric parsing
-    (guarded so genuine comma-bearing strings are left untouched). Non-finite
-    floats (``inf``/``nan``/overflow) are rejected with ``ValueError`` so a hostile
-    value can never reach the JSON store as ``Infinity`` (invalid strict JSON).
-    """
-    s = raw.strip()
-    low = s.lower()
-    if low in ("null", "none"):
-        return None
-    if low == "true":
-        return True
-    if low == "false":
-        return False
-    # Explicit JSON literal — a quoted string, an array, or an object. This lets a
-    # user type a genuine string (``"02"`` → the 2-char string ``02``, never the
-    # int ``2`` nor the double-quoted ``"\"02\""`` the bare-string fallback used to
-    # produce) or enter a list / dict value the scalar parser can't express — a
-    # ``confusion_matrix`` ``[[..],[..]]``, an ``exponential_filter`` list, etc.
-    # Only attempted for these lead characters, so bare numbers / words / ``#``
-    # pointers / grouped numbers keep their existing int→float→string handling; a
-    # malformed literal (``[1,2``) falls through to the bare-string path.
-    if s[:1] in ('"', '[', '{'):
-        try:
-            return _json.loads(s)
-        except (ValueError, TypeError):
-            pass
-    candidate = s.replace(",", "") if ("," in s and _GROUPED_NUMBER.match(s)) else s
-    try:
-        return int(candidate)
-    except ValueError:
-        pass
-    try:
-        f = float(candidate)
-    except (ValueError, OverflowError):
-        return raw
-    if not math.isfinite(f):
-        raise ValueError(f"{raw!r} is not a finite number")
-    return f
+#
+# _parse_value MOVED to core.type_policy.parse_value (r9 SUPER-CRITICAL): the
+# web edit path calls it on every /field/edit, and importing THIS module pulls
+# typer — an env without the CLI stack 500'd every field edit. Re-exported
+# here so CLI commands and existing callers keep the historical name.
+from quam_state_manager.core.type_policy import parse_value as _parse_value  # noqa: E402
 
 
 def main():

@@ -16,6 +16,9 @@
                onchange="StateHistory.toggleSelect(this)" aria-label="Select for compare">
         <span class="sh-time">{{ s.timestamp | ts_local }}</span>
         <span class="history-trigger-badge history-trigger-{{ s.trigger }}">{{ s.trigger }}</span>
+        {# Project lens (docs/63): which qualibrate project the chip was scoped
+           to when this snapshot was captured. Display-only — never filters. #}
+        {% if s.project %}<span class="sh-project-badge" title="Captured while scoped to qualibrate project &quot;{{ s.project }}&quot;">&#9879; {{ s.project }}</span>{% endif %}
         {% if s.pinned %}<span class="sh-pin-badge" title="Pinned (kept regardless of retention)">&#128204;</span>{% endif %}
         {% if s.diff_summary.total > 0 %}
         <span class="diff-badge diff-added">+{{ s.diff_summary.added }}</span>

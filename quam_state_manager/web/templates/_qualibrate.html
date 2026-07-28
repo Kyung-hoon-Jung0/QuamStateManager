@@ -25,6 +25,21 @@
     <p class="muted">Everything on this page is read-only — QUAlibrate owns these files.
        Clicking <em>Open in SM</em> loads a project's chip + datasets into the State
        Manager without touching any qualibrate config.</p>
+    {# docs/63 §B — the config LOCATION is the one thing the user can steer
+       (an SM-side memo; the tree itself stays untouched). #}
+    <details class="qualibrate-locate-details">
+        <summary class="muted">Config location&hellip;
+            {% if listing.source == 'sm-override' %}<span class="locate-src-chip">chosen in SM</span>{% endif %}</summary>
+        <div class="qualibrate-locate-body">
+            {% include '_qualibrate_locate.html' %}
+            {% if listing.source == 'sm-override' %}
+            <form hx-post="/qualibrate/use-default-location" class="locate-use-form"
+                  hx-confirm="Forget the chosen folder and go back to the default/env resolution?">
+                <button type="submit" class="btn-sm">Reset to default location</button>
+            </form>
+            {% endif %}
+        </div>
+    </details>
 </div>
 
 {# ---- doctor panel ---- #}

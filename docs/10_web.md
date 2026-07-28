@@ -68,7 +68,8 @@ web/
 
 | Route | Method | Target | Description |
 |-------|--------|--------|-------------|
-| `/` | GET | full | Welcome page with getting-started steps |
+| `/` | GET | full | Project-first landing (docs/63): lazy project cards + Resume/recents when a `~/.qualibrate` config exists; legacy welcome otherwise |
+| `/landing/projects` | GET | fragment | Lazy landing card grid (`hx-trigger="load"`) — per-project facts, doctor counts, Open/Continue |
 | `/load` | POST | `#table-pane` | Load a quam_state folder, activate QUAM context, redirect to `/explorer` |
 
 ### Explorer (1 route)
@@ -213,15 +214,16 @@ Every page route checks for `HX-Request` header:
 
 This means every page works as a standalone URL and as an HTMX partial swap.
 
-### Sidebar layout (top to bottom)
+### Sidebar layout (top to bottom — project-first since docs/63)
 
-1. **Bookmarks** — collapsible panel loaded via HTMX (`/bookmarks/panel`), refreshes on `bookmark-changed` event
-2. **Generate Config** — the "creation" entry, pinned at the top above a divider (builds a new chip rather than viewing one)
-3. **Chip navigation** — Chip Status, Explorer, Qubits, Pairs, Table, Instrument Wiring, Param History
-4. **QUAM state folder path + Load button** — manually load a `quam_state` folder
-5. **Cross-cutting tools** — Datasets, Diff, Trends
-6. **Workspace** — collapsible `<details>` with: add-folder form, filter input with tag rendering, workspace tree (polled every 60s via `hx-trigger`)
-7. **Pending changes tray** — amber bar showing unsaved edit count, OOB-swapped
+1. **Projects** — the qualibrate-project entry, first (project-first shell): lazy per-project subnav (`GET /qualibrate/subnav`), server-rendered expanded, collapse persisted (`quam_qualibrate_nav_collapsed` in the SUBNAVS registry); row click = `POST /qualibrate/open`
+2. **State Load** — QUAM state folder path + Load button (the standalone, folder-first entry)
+3. **Generate Config** (after a divider) — with the Config Viewer / Re-generate subnav (`#config-subnav`)
+4. **Chip navigation** — Chip Status (+ section subnav), Compare, Explorer, Qubits, Pairs (+ Resonators/Flux/Couplers), Pulses, Live State Edit, State History, Instrument Wiring, Diagnostics, Param History, Fit Audit, Scheduler, Autofit
+5. **Dataset navigation** — Datasets, Collections, Trends
+6. **Workspace** — Dataset Load add-folder form, compare actions, filter input, workspace tree (polled every 60s via `hx-trigger`)
+
+The pending-changes tray is docked at the bottom of `#main` (not the sidebar) and OOB-swapped; it carries the ⚗ project badge (docs/55 + docs/63 `sm_scope`).
 
 ### Target panes
 

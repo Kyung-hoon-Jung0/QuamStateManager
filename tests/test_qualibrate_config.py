@@ -24,6 +24,9 @@ def test_state_path_env_override_wins(tmp_path, monkeypatch):
 
 def test_resolves_per_project_state_path(tmp_path, monkeypatch):
     monkeypatch.delenv("QUALIBRATE_STATE_PATH", raising=False)
+    # this test drives the LEGACY dir var — clear the (conftest-defaulted)
+    # file var, which takes precedence
+    monkeypatch.delenv("QUALIBRATE_CONFIG_FILE", raising=False)
     cfg = tmp_path / "cfg"
     _write(cfg / "config.toml",
            '[qualibrate]\nproject = "P1"\n\n[quam]\nstate_path = "/global/old"\n')
@@ -36,6 +39,7 @@ def test_resolves_per_project_state_path(tmp_path, monkeypatch):
 
 def test_falls_back_to_global_state_path(tmp_path, monkeypatch):
     monkeypatch.delenv("QUALIBRATE_STATE_PATH", raising=False)
+    monkeypatch.delenv("QUALIBRATE_CONFIG_FILE", raising=False)
     cfg = tmp_path / "cfg"
     _write(cfg / "config.toml",
            '[qualibrate]\nproject = "P1"\n\n[quam]\nstate_path = "/global/only"\n')
@@ -103,25 +107,28 @@ def _projects_tree(tmp_path: Path) -> dict[str, Path]:
     own_storage = tmp_path / "datasets" / "beta_only"
     own_storage.mkdir()
 
+    # as_posix(): backslashes are ESCAPES in a TOML basic string — a raw
+    # WindowsPath makes the whole config unparseable on native Windows
+    # (C:\Users → \U → TOMLDecodeError) and every test here goes vacuous.
     _write(cfg / "config.toml", f'''
 [qualibrate]
 project = "alpha"
 version = 5
 
 [qualibrate.storage]
-location = "{shared}"
+location = "{shared.as_posix()}"
 
 [quam]
-state_path = "{good}"
+state_path = "{good.as_posix()}"
 version = 3
 ''')
     # alpha: ACTIVE + dangling own state_path (the real folder's worst anomaly)
     _write(cfg / "projects" / "alpha" / "config.toml",
-           f'[quam]\nstate_path = "{chips / "missing_chip"}"\n')
+           f'[quam]\nstate_path = "{(chips / "missing_chip").as_posix()}"\n')
     # beta: healthy — own existing state_path + own storage
     _write(cfg / "projects" / "beta" / "config.toml",
-           f'[quam]\nstate_path = "{good}"\n\n'
-           f'[qualibrate.storage]\nlocation = "{own_storage}"\n')
+           f'[quam]\nstate_path = "{good.as_posix()}"\n\n'
+           f'[qualibrate.storage]\nlocation = "{own_storage.as_posix()}"\n')
     # gamma: 0-byte overlay — pure inheritor
     (cfg / "projects" / "gamma").mkdir(parents=True)
     (cfg / "projects" / "gamma" / "config.toml").touch()
@@ -131,7 +138,7 @@ version = 3
     # epsilon: lazy project template in its storage location
     _write(cfg / "projects" / "epsilon" / "config.toml",
            '[qualibrate.storage]\nlocation = "'
-           + str(tmp_path / "datasets") + '/${#/qualibrate/project}"\n')
+           + (tmp_path / "datasets").as_posix() + '/${#/qualibrate/project}"\n')
     return {"cfg": cfg, "good": good, "shared": shared,
             "own_storage": own_storage, "chips": chips}
 
@@ -145,12 +152,29 @@ class TestNativePath:
         assert qc.native_path(r"C:\Users\u\.qualibrate") == Path(
             "/mnt/c/Users/u/.qualibrate")
 
+    @pytest.mark.skipif(os.name == "nt", reason="/mnt passthrough is the POSIX case")
     def test_passthrough_and_empties(self):
         assert qc.native_path("/mnt/d/already/native") == Path("/mnt/d/already/native")
         assert qc.native_path("") is None          # explicit-override empty
         assert qc.native_path("   ") is None
         assert qc.native_path(None) is None
         assert qc.native_path(5) is None           # non-string config garbage
+
+    def test_wsl_mnt_maps_to_drive_on_windows(self):
+        """The INVERSE mapping (docs/63): a config written from WSL carries
+        /mnt/<x>/… values — SM on native Windows must translate them or the
+        project lens' reverse path-matching false-negatives on every load.
+        Exercised via the pure ``_to_native(raw, os_name)`` (patching os.name
+        breaks pathlib's own class selection)."""
+        assert qc._to_native("/mnt/d/work/chips", "nt") == Path("D:\\work\\chips")
+        assert qc._to_native("/mnt/c/Users/u/.qualibrate", "nt") == Path(
+            "C:\\Users\\u\\.qualibrate")
+        assert qc._to_native("/mnt/d", "nt") == Path("D:\\")
+        # native-dialect values pass through on Windows
+        assert qc._to_native("D:\\native\\win", "nt") == Path("D:\\native\\win")
+        assert qc._to_native("/home/u/x", "nt") == Path("/home/u/x")
+        # and the POSIX direction stays intact through the same helper
+        assert qc._to_native("D:\\work\\chips", "posix") == Path("/mnt/d/work/chips")
 
 
 class TestDeepMerge:
@@ -259,7 +283,8 @@ class TestEffectiveConfig:
     def test_zero_byte_overlay_inherits_everything(self, tmp_path):
         paths = _projects_tree(tmp_path)
         eff = qc.effective_config("gamma", cfg_dir=paths["cfg"])
-        assert eff["quam"]["state_path"] == str(paths["good"])
+        # effective_config returns the RAW toml value — the as_posix spelling
+        assert eff["quam"]["state_path"] == paths["good"].as_posix()
         assert eff["qualibrate"]["project"] == "gamma"
 
 
@@ -369,3 +394,95 @@ class TestTrayStatus:
         st = qc.tray_status(tmp_path / "ghost")
         assert st == {"config_exists": False, "active": None, "state_raw": None,
                       "state_native": None, "state_exists": False}
+
+
+class TestLoadTomlRetrySkipsEmptyFiles:
+    """A 0-byte overlay is a supported 'pure inheritor', not a torn write —
+    the 150 ms retry sleep on it put ~0.6 s of pure sleep on every listing
+    for the studied real config (4 empty overlays). docs/63."""
+
+    def test_zero_byte_file_does_not_sleep(self, tmp_path, monkeypatch):
+        p = tmp_path / "config.toml"
+        p.write_bytes(b"")
+
+        def _boom(_s):
+            raise AssertionError("slept on a 0-byte file")
+
+        monkeypatch.setattr(qc._time, "sleep", _boom)
+        assert qc._load_toml_retry(p) == {}
+
+    def test_missing_file_does_not_sleep(self, tmp_path, monkeypatch):
+        def _boom(_s):
+            raise AssertionError("slept on a missing file")
+
+        monkeypatch.setattr(qc._time, "sleep", _boom)
+        assert qc._load_toml_retry(tmp_path / "ghost.toml") == {}
+
+    def test_unparseable_nonempty_still_retries_once(self, tmp_path, monkeypatch):
+        p = tmp_path / "config.toml"
+        p.write_text("not [ valid toml", encoding="utf-8")
+        calls: list = []
+        monkeypatch.setattr(qc._time, "sleep", lambda s: calls.append(s))
+        qc._load_toml_retry(p)
+        assert calls == [0.15]
+
+
+class TestStatePathSharedLint:
+    """state_path_shared mirrors storage_shared (docs/63): several projects
+    resolving to ONE chip folder is structurally easy via inheritance, and a
+    plain folder load then can't tell which project is meant."""
+
+    @staticmethod
+    def _listing(entries):
+        def entry(native):
+            return {"raw": native or "", "native": native,
+                    "exists": native is not None, "source": "own"}
+
+        return {
+            "ok": True, "config_exists": True,
+            "versions": {"supported": True},
+            "projects": [
+                {"name": n, "active": False,
+                 "state_path": entry(sp), "storage": entry(st),
+                 "calibration_library": entry(None)}
+                for n, sp, st in entries
+            ],
+        }
+
+    def test_shared_state_path_flagged_info(self):
+        listing = self._listing([
+            ("alpha", "/mnt/d/chips/one", "/mnt/d/data/a"),
+            ("beta", "/mnt/d/chips/shared", "/mnt/d/data/b"),
+            ("gamma", "/mnt/d/chips/shared", "/mnt/d/data/c"),
+        ])
+        shared = [f for f in qc.lint(listing) if f["code"] == "state_path_shared"]
+        assert len(shared) == 1
+        assert shared[0]["severity"] == "info"
+        assert "beta" in shared[0]["message"] and "gamma" in shared[0]["message"]
+        assert "alpha" not in shared[0]["message"]
+
+    def test_unique_state_paths_no_finding(self):
+        listing = self._listing([
+            ("alpha", "/mnt/d/chips/one", "/mnt/d/data/a"),
+            ("beta", "/mnt/d/chips/two", "/mnt/d/data/b"),
+        ])
+        assert [f for f in qc.lint(listing)
+                if f["code"] == "state_path_shared"] == []
+
+    def test_spelling_variants_of_one_folder_still_flagged(self, tmp_path):
+        # Grouping is filesystem identity (fs_key), not raw string equality:
+        # the scope engine's same_folder treats spelling variants of ONE
+        # folder as the same chip and abstains (scope None) — the Doctor hint
+        # that explains the abstention must cluster the same way.
+        real = tmp_path / "chips" / "one"
+        real.mkdir(parents=True)
+        variant = tmp_path / "chips" / ".." / "chips" / "one"
+        listing = self._listing([
+            ("beta", str(real), str(tmp_path / "da")),
+            ("gamma", str(variant), str(tmp_path / "db")),
+        ])
+        shared = [f for f in qc.lint(listing) if f["code"] == "state_path_shared"]
+        assert len(shared) == 1
+        assert "beta" in shared[0]["message"] and "gamma" in shared[0]["message"]
+        # display keeps a real spelling, not the normalized key
+        assert str(real) in shared[0]["message"]

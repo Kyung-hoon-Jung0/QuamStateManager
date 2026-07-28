@@ -41,22 +41,24 @@ def _tree(tmp_path: Path) -> dict[str, Path]:
     other = _chip(tmp_path / "chips" / "other_chip", name="qB1")
     storage = tmp_path / "datasets"
     storage.mkdir()
+    # as_posix(): backslashes are ESCAPES in a TOML basic string — a raw
+    # WindowsPath makes the whole config unparseable on native Windows.
     _write(cfg / "config.toml", f'''
 [qualibrate]
 project = "alpha"
 version = 5
 
 [qualibrate.storage]
-location = "{storage}"
+location = "{storage.as_posix()}"
 
 [quam]
-state_path = "{good}"
+state_path = "{good.as_posix()}"
 version = 3
 ''')
     _write(cfg / "projects" / "alpha" / "config.toml",
-           f'[quam]\nstate_path = "{tmp_path / "chips" / "missing"}"\n')
+           f'[quam]\nstate_path = "{(tmp_path / "chips" / "missing").as_posix()}"\n')
     _write(cfg / "projects" / "beta" / "config.toml",
-           f'[quam]\nstate_path = "{good}"\n')
+           f'[quam]\nstate_path = "{good.as_posix()}"\n')
     _write(cfg / "projects" / "delta" / "config.toml",
            '[quam]\nstate_path = ""\n')
     return {"cfg": cfg, "good": good, "other": other}
@@ -168,12 +170,46 @@ class TestReadOnlyGuarantee:
         c.get("/api/qualibrate/projects")
         c.get("/qualibrate")
         c.get("/qualibrate/subnav")
+        c.get("/qualibrate/project-config/beta")   # r8 popup — read-only
         c.post("/qualibrate/open", data={"project": "nope"})
         c.post("/qualibrate/open", data={"project": "alpha"})
         c.post("/qualibrate/open", data={"project": "beta"})
         c.get("/")
         c.get("/workbench/match")
+        # docs/63 project lens — a full SCOPED session (landing cards, scoped
+        # history + datasets + trends, a project-stamped snapshot) must also
+        # leave the tree untouched (the lens only READS the reverse index).
+        c.get("/landing/projects")
+        c.get("/param-history", headers={"HX-Request": "true"})
+        c.get("/state-history", headers={"HX-Request": "true"})
+        c.post("/state-history/snapshot")
+        c.get("/datasets", headers={"HX-Request": "true"})
+        c.get("/trends", headers={"HX-Request": "true"})
         assert _snapshot(env["cfg"]) == before
+
+
+class TestProjectConfigPopup:
+    """r8 feedback: the landing card's Config button — a read-only popup of
+    the project's paths + port settings (effective merge + both raw TOMLs)."""
+
+    def test_returns_facts_effective_and_raws(self, env):
+        body = env["client"].get(
+            "/qualibrate/project-config/beta").get_data(as_text=True)
+        assert "project config" in body and "beta" in body
+        assert "QUAM state_path" in body                 # facts table
+        assert env["good"].as_posix() in body            # effective JSON value
+        assert "Effective (merged) values" in body
+        assert "[qualibrate]" in body                    # root raw TOML pane
+
+    def test_unknown_project_404(self, env):
+        r = env["client"].get("/qualibrate/project-config/ghost")
+        assert r.status_code == 404
+
+    def test_landing_cards_carry_config_button(self, env):
+        body = env["client"].get("/landing/projects").get_data(as_text=True)
+        assert "landing-card-config" in body
+        assert "landing-config-dialog" in body
+        assert "/qualibrate/project-config/beta" in body
 
 
 class TestTrayBadge:

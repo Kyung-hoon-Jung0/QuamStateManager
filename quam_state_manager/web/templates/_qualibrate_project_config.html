@@ -1,0 +1,38 @@
+{# Per-project config popup body (r8 feedback): users want to inspect a
+   project's paths + port settings straight from the landing. READ-ONLY —
+   QUAlibrate owns these files (docs/55). Context: p (listing entry),
+   eff_json (pretty effective merge), raws {overlay, root}, cfg_dir. #}
+<div class="proj-config-head">
+    <div>
+        <strong class="proj-config-title">{{ p.name }} &mdash; project config</strong>
+        <p class="muted proj-config-sub">root <code>config.toml</code> &oplus; project overlay
+            &mdash; the values this project actually runs with. Read-only.</p>
+    </div>
+    <button type="button" class="btn-close proj-config-close" aria-label="Close"
+            onclick="this.closest('dialog').close()">&times;</button>
+</div>
+<table class="proj-config-facts">
+    <tr><th>QUAM state_path</th>
+        <td><code class="locate-path">{{ p.state_path.raw or '(none)' }}</code>
+            {{ '✓' if p.state_path.exists else '✗' }}
+            <small class="muted">({{ p.state_path.source }})</small></td></tr>
+    <tr><th>Dataset storage</th>
+        <td><code class="locate-path">{{ p.storage.raw or '(default)' }}</code>
+            {{ '✓' if p.storage.exists else '✗' }}
+            <small class="muted">({{ p.storage.source }})</small></td></tr>
+    <tr><th>Calibration library</th>
+        <td><code class="locate-path">{{ p.calibration_library.raw or '(none)' }}</code>
+            {% if p.calibration_library.raw %}{{ '✓' if p.calibration_library.exists else '✗' }}{% endif %}</td></tr>
+</table>
+<details open class="proj-config-sec">
+    <summary>Effective (merged) values <small class="muted">&mdash; incl. app/runner ports</small></summary>
+    <pre class="proj-config-pre">{{ eff_json }}</pre>
+</details>
+<details class="proj-config-sec">
+    <summary>Project overlay &mdash; <code>projects/{{ p.name }}/config.toml</code></summary>
+    <pre class="proj-config-pre">{{ raws.overlay }}</pre>
+</details>
+<details class="proj-config-sec">
+    <summary>Root &mdash; <code>config.toml</code> <small class="muted">({{ cfg_dir }})</small></summary>
+    <pre class="proj-config-pre">{{ raws.root }}</pre>
+</details>

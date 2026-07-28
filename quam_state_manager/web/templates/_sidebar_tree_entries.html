@@ -18,7 +18,9 @@
            clicking a dataset is the #1 complaint. So run entries carry no
            hx-post; only a real CHIP-FOLDER entry (run_id is none) loads itself
            as the active live chip via /workspace/select. The run's frozen state
-           stays opt-in via the detail's "Load State" button. #}
+           stays opt-in via the detail's "Load State" button (r11: stages into
+           the open chip's working copy; read-only archive open is the
+           secondary button / the no-chip fallback). #}
         <span class="tree-entry-click"
               {% if entry.run_id is none %}hx-post="/workspace/select" hx-target="#table-pane"
               hx-vals='{"path": {{ entry.quam_state_path | string | tojson }}}'{% endif %}

@@ -5,8 +5,13 @@
 <li><span class="muted qualibrate-subnav-note"
           title="{{ listing.config_dir }}">no ~/.qualibrate config</span></li>
 {% else %}
+{# r8 feedback: cap the visible rows — with many projects the expanded list
+   buried everything below it in the sidebar. The route orders the list
+   relevance-first (active → SM scope → alphabetical) so the head is always
+   the useful part; the rest hides behind "… show all". #}
+{% set cap = 3 %}
 {% for p in listing.projects %}
-<li>
+<li{% if loop.index > cap %} hidden data-subnav-extra{% endif %}>
     <form method="post" action="/qualibrate/open" hx-post="/qualibrate/open"
           hx-target="#table-pane" class="qualibrate-open-form">
         <input type="hidden" name="project" value="{{ p.name }}">
@@ -22,4 +27,32 @@
 {% else %}
 <li><span class="muted qualibrate-subnav-note">no projects yet</span></li>
 {% endfor %}
+{% if listing.projects | length > cap %}
+<li class="qualibrate-subnav-more-li">
+    <button type="button" id="qualibrate-subnav-more-btn"
+            class="qualibrate-subnav-more-btn"
+            data-label-all="… show all ({{ listing.projects | length }})"
+            onclick="qualibrateSubnavToggleAll(this)">… show all ({{ listing.projects | length }})</button>
+</li>
+<script>(function () {
+    /* re-apply the stored preference on every lazy re-load of this fragment */
+    try {
+        if (localStorage.getItem('quam_projects_subnav_all') === '1') {
+            var b = document.getElementById('qualibrate-subnav-more-btn');
+            if (b && b.getAttribute('data-expanded') !== '1') {
+                window.qualibrateSubnavToggleAll(b);
+            }
+        }
+    } catch (e) { /* private mode */ }
+})();</script>
+{% endif %}
+{# docs/63 edge: the context's scope names a project that no longer exists in
+   qualibrate — the memo label stays harmless (drops on the next rebuild),
+   but say so instead of silently listing a menu that doesn't contain it. #}
+{% if project_scope and listing.projects and
+      project_scope not in (listing.projects | map(attribute='name') | list) %}
+<li><span class="muted qualibrate-subnav-note"
+          title="The chip stays loaded; the scope label clears on the next reload.">
+    current scope &laquo;{{ project_scope }}&raquo; is no longer a qualibrate project</span></li>
+{% endif %}
 {% endif %}

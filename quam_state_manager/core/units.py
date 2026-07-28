@@ -192,7 +192,7 @@ def group_digits(value: Any) -> str:
     stored digit — so a frequency reads ``5,075,187,484.52453`` next to a ``(Hz)``
     column header, never a precision-losing ``5.075187e+09``. It is the editable
     representation in Bulk Edit and is **round-trip exact**: stripping the commas
-    and re-parsing (``cli._parse_value``) yields the identical number/type.
+    and re-parsing (``type_policy.parse_value``) yields the identical number/type.
 
     - ``int``           -> ``"5,050,000,000"`` (group every 3 digits)
     - ``float``         -> ``repr(v)`` (shortest round-tripping form) with the

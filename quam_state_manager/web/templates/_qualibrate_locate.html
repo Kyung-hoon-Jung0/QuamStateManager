@@ -1,0 +1,17 @@
+{# Config-location picker (docs/63 §B) — shared by the no-config landing and
+   the /qualibrate page. READ-ONLY over any tree it touches; the choice
+   itself persists in instance/qualibrate_location.json (SM-side). #}
+<form hx-post="/qualibrate/locate" hx-target="#qualibrate-locate-result"
+      hx-swap="innerHTML" class="locate-form">
+    <input type="text" name="path" class="locate-input"
+           placeholder="\\wsl.localhost\Ubuntu\home\youruser\.qualibrate &nbsp;or&nbsp; /home/youruser/.qualibrate"
+           aria-label="QUAlibrate config folder path">
+    <button type="submit" class="btn-sm">Check</button>
+    <button type="button" class="btn-sm locate-scan-btn"
+            hx-get="/qualibrate/locate-candidates"
+            hx-target="#qualibrate-locate-result" hx-swap="innerHTML"
+            hx-indicator="#qualibrate-locate-busy"
+            title="Probe ~/.qualibrate in this user's home, every WSL distro's /home/* (from Windows) and every C:\Users profile (from WSL)">Scan common locations</button>
+    <span id="qualibrate-locate-busy" class="htmx-indicator muted">scanning&hellip;</span>
+</form>
+<div id="qualibrate-locate-result" aria-live="polite"></div>

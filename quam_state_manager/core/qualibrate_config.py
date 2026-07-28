@@ -48,6 +48,33 @@ except ModuleNotFoundError:  # pragma: no cover - older interpreters
         _toml = None  # type: ignore
 
 
+# SM-side config-location override (docs/63 §B): chosen in the UI when the
+# default/env locations hold no config (e.g. qualibrate lives in a WSL distro
+# while SM runs native Windows). Set from instance/qualibrate_location.json at
+# app creation and by the /qualibrate/use-location route. Deliberately BELOW
+# both env vars: an environment variable is deployment-level intent (and the
+# test suite's isolation relies on it winning).
+_dir_override: Path | None = None
+
+
+def set_dir_override(value: str | Path | None) -> None:
+    """Install (or clear, with None) the UI-chosen config directory."""
+    global _dir_override
+    _dir_override = Path(value) if value else None
+
+
+def config_source() -> dict[str, Any]:
+    """Where the config dir comes from: ``{"dir": str, "source":
+    "env" | "override" | "default"}`` — surfaced in the UI so a user can see
+    WHY a given tree is (not) being read."""
+    if os.environ.get("QUALIBRATE_CONFIG_FILE") or os.environ.get(
+            "QUALIBRATE_CONFIG_DIR"):
+        return {"dir": str(_config_dir()), "source": "env"}
+    if _dir_override is not None:
+        return {"dir": str(_config_dir()), "source": "override"}
+    return {"dir": str(_config_dir()), "source": "default"}
+
+
 def _config_dir() -> Path:
     """The qualibrate config ROOT directory.
 
@@ -55,7 +82,8 @@ def _config_dir() -> Path:
     dir-OR-file (qualibrate_config/vars.py — a file value points at the
     config.toml itself). SM's historical ``QUALIBRATE_CONFIG_DIR`` stays as a
     legacy alias — before this fix a user who redirected qualibrate via its
-    official variable was invisible to SM (docs/55).
+    official variable was invisible to SM (docs/55). Below the env vars sits
+    the UI-chosen override (docs/63 §B), then the ``~/.qualibrate`` default.
     """
     official = os.environ.get("QUALIBRATE_CONFIG_FILE")
     if official:
@@ -65,6 +93,8 @@ def _config_dir() -> Path:
     override = os.environ.get("QUALIBRATE_CONFIG_DIR")
     if override:
         return Path(override)
+    if _dir_override is not None:
+        return _dir_override
     return Path.home() / ".qualibrate"
 
 
@@ -185,6 +215,10 @@ import time as _time
 
 _PROJECT_TEMPLATE = "${#/qualibrate/project}"
 _WIN_DRIVE_RE = _re.compile(r"^([A-Za-z]):[\\/]")
+_WSL_MNT_RE = _re.compile(r"^/mnt/([A-Za-z])(?:/|$)")
+# \\wsl.localhost\<distro> (or the older \\wsl$\<distro>), either slash kind.
+_WSL_UNC_RE = _re.compile(r"^[\\/]{2}(?:wsl\.localhost|wsl\$)[\\/]([^\\/]+)",
+                          _re.IGNORECASE)
 
 # Config schema generations this reader's semantics are pinned to (docs/55
 # version gate — writes elsewhere must degrade to read-only on mismatch).
@@ -197,15 +231,45 @@ def native_path(raw: Any) -> Path | None:
 
     Config values are written by qualibrate on Windows (``D:\\…``, sometimes
     lowercase ``d:``); when SM runs under WSL those must map to ``/mnt/d/…``
-    or every existence badge lies. Native Windows / native Linux values pass
-    through. Empty string → None (the explicit-override empty state_path)."""
+    or every existence badge lies. The INVERSE also holds (docs/63): a config
+    written from WSL carries ``/mnt/d/…`` values, and SM on native Windows
+    must map them to ``D:\\…`` or the project lens' reverse path-matching
+    false-negatives on every load. When the config itself is read from a WSL
+    distro share (``\\\\wsl.localhost\\<distro>\\…``, docs/63 §B), POSIX
+    values OUTSIDE ``/mnt`` (``/home/u/…``) live on that distro's own
+    filesystem and map to the same share. Native-dialect values pass through.
+    Empty string → None (the explicit-override empty state_path)."""
     if not isinstance(raw, str) or not raw.strip():
         return None
+    return _to_native(raw, os.name, wsl_root=_wsl_root_of(_config_dir()))
+
+
+def _wsl_root_of(path: Path | str) -> str | None:
+    """``\\\\wsl.localhost\\<distro>`` (verbatim prefix spelling) when *path*
+    is on a WSL distro share, else None. Pure string work — no I/O."""
+    m = _WSL_UNC_RE.match(str(path))
+    return m.group(0) if m else None
+
+
+def _to_native(raw: str, os_name: str, wsl_root: str | None = None) -> Path:
+    """Dialect mapping with the host OS as an argument — pure and therefore
+    testable for BOTH directions on any host (patching ``os.name`` breaks
+    pathlib's own class selection). *wsl_root* (Windows host only) anchors
+    non-``/mnt`` POSIX values onto the distro share the config came from —
+    ``/mnt/<x>`` still prefers the direct drive (same bytes, faster I/O)."""
     m = _WIN_DRIVE_RE.match(raw)
-    if m and os.name != "nt":
+    if m and os_name != "nt":
         drive = m.group(1).lower()
         rest = raw[m.end():].replace("\\", "/")
         return Path(f"/mnt/{drive}/{rest}")
+    m = _WSL_MNT_RE.match(raw)
+    if m and os_name == "nt":
+        drive = m.group(1).upper()
+        rest = raw[m.end():].replace("/", "\\")
+        return Path(f"{drive}:\\{rest}")
+    if wsl_root and os_name == "nt" and raw.startswith("/"):
+        rest = raw.lstrip("/").replace("/", "\\")
+        return Path(wsl_root + "\\" + rest)
     return Path(raw)
 
 
@@ -224,9 +288,22 @@ def _deep_merge(base: dict, overlay: dict) -> dict:
 def _load_toml_retry(path: Path) -> dict[str, Any]:
     """User-facing read: one short retry over :func:`_load_toml` — qualibrate's
     root write is non-atomic (truncate-in-place), so a mid-write read can see
-    a torn file. Polls keep the plain tolerant read; pages get one retry."""
+    a torn file. Polls keep the plain tolerant read; pages get one retry.
+
+    A genuinely EMPTY file is NOT a torn write: a 0-byte project overlay is a
+    supported "pure inheritor" (docs/55), and retrying it cost a 150 ms sleep
+    per empty overlay per listing — the studied real config has four of them,
+    which would put ~0.6 s of pure sleep on every listing (and, since the
+    project lens, on the chip-activation path). Skip the retry when the file
+    is empty; a mid-truncate root config is also momentarily 0-byte, but the
+    next poll/render re-reads it — same tolerance the plain read already has."""
     out = _load_toml(path)
     if out or not path.exists():
+        return out
+    try:
+        if path.stat().st_size == 0:
+            return out
+    except OSError:
         return out
     _time.sleep(0.15)
     return _load_toml(path)
@@ -296,6 +373,7 @@ def list_projects(cfg_dir: Path | None = None) -> dict[str, Any]:
 
     src = ("env:QUALIBRATE_CONFIG_FILE" if os.environ.get("QUALIBRATE_CONFIG_FILE")
            else "env:QUALIBRATE_CONFIG_DIR" if os.environ.get("QUALIBRATE_CONFIG_DIR")
+           else "sm-override" if _dir_override is not None
            else "default")
     q_ver = (root_cfg.get("qualibrate") or {}).get("version")
     m_ver = (root_cfg.get("quam") or {}).get("version")
@@ -402,15 +480,20 @@ def tray_status(cfg_dir: Path | None = None) -> dict[str, Any]:
     except OSError:
         return {"config_exists": False, "active": None,
                 "state_raw": None, "state_native": None, "state_exists": False}
+    # Rebuilds assign ONE immutable entry tuple and afterwards read only
+    # locals — concurrent first hits (pywebview window + workbench iframe
+    # both landing on GET /) may waste a rebuild but can never observe a
+    # half-built cache. The previous clear()/update()/read-back sequence
+    # could KeyError between two racing threads.
     c = _tray_cache
-    if c.get("key") != (str(cfg_dir), root_m):
+    key = (str(cfg_dir), root_m)
+    entry = c.get("entry")
+    if entry is None or entry[0] != key:
         root_cfg = _load_toml(root_path)
-        active = (root_cfg.get("qualibrate") or {}).get("project")
-        c.clear()
-        c.update(key=(str(cfg_dir), root_m),
-                 active=str(active) if active else None,
-                 root_cfg=root_cfg, overlay_m=None, state=None)
-    active = c["active"]
+        active_v = (root_cfg.get("qualibrate") or {}).get("project")
+        entry = (key, str(active_v) if active_v else None, root_cfg, {})
+        c["entry"] = entry
+    _, active, root_cfg, state_memo = entry
     if not active:
         return {"config_exists": True, "active": None,
                 "state_raw": None, "state_native": None, "state_exists": False}
@@ -419,14 +502,15 @@ def tray_status(cfg_dir: Path | None = None) -> dict[str, Any]:
         overlay_m = overlay_path.stat().st_mtime_ns
     except OSError:
         overlay_m = -1
-    if c.get("state") is None or c.get("overlay_m") != overlay_m:
+    st = state_memo.get(overlay_m)
+    if st is None:
         overlay = _load_toml(overlay_path) if overlay_m >= 0 else {}
-        eff = _deep_merge(c["root_cfg"], overlay)
+        eff = _deep_merge(root_cfg, overlay)
         raw = (eff.get("quam") or {}).get("state_path")
         native = native_path(raw)
-        c["overlay_m"] = overlay_m
-        c["state"] = {"raw": raw, "native": str(native) if native else None}
-    st = c["state"]
+        st = {"raw": raw, "native": str(native) if native else None}
+        state_memo.clear()          # one overlay state per entry, like before
+        state_memo[overlay_m] = st
     return {
         "config_exists": True,
         "active": active,
@@ -434,6 +518,57 @@ def tray_status(cfg_dir: Path | None = None) -> dict[str, Any]:
         "state_native": st["native"],
         "state_exists": bool(st["native"] and Path(st["native"]).is_dir()),
     }
+
+
+# Stat-keyed cache for the project↔state_path reverse index (docs/63 project
+# lens): the web layer reverse-matches every chip activation against it, so it
+# must cost a handful of os.stat calls steady-state — TOML parsing happens
+# only when the root or any overlay actually changed (or a project dir
+# appeared/vanished). Same discipline as _tray_cache. NEVER calls lint()
+# (which stats/iterdirs arbitrary configured paths, potentially dead mounts).
+_state_index_cache: dict[str, Any] = {}
+
+
+def project_state_paths(cfg_dir: Path | None = None) -> dict[str, Any]:
+    """``{"active": str|None, "projects": [(name, native_state_path|None)]}``.
+
+    The minimal payload the project lens needs to reverse-match a loaded
+    folder onto a project: every project's EFFECTIVE ``[quam].state_path``
+    (root deep-merged with its overlay; explicit ``""`` override → None) in
+    this process's path dialect. READ-ONLY, never raises."""
+    cfg_dir = cfg_dir or _config_dir()
+    root_path = cfg_dir / "config.toml"
+    try:
+        root_m = root_path.stat().st_mtime_ns
+    except OSError:
+        return {"active": None, "projects": []}
+    proj_dir = cfg_dir / "projects"
+    try:
+        names = sorted(d.name for d in proj_dir.iterdir() if d.is_dir())
+    except OSError:
+        names = []
+    key_parts: list[Any] = [str(cfg_dir), root_m]
+    for n in names:
+        try:
+            key_parts.append((n, (proj_dir / n / "config.toml").stat().st_mtime_ns))
+        except OSError:
+            key_parts.append((n, -1))
+    key = tuple(key_parts)
+    cached = _state_index_cache.get("entry")
+    if cached is not None and cached[0] == key:
+        return cached[1]
+
+    root_cfg = _load_toml_retry(root_path)
+    active = (root_cfg.get("qualibrate") or {}).get("project")
+    projects: list[tuple[str, str | None]] = []
+    for n in names:
+        overlay = _load_toml_retry(proj_dir / n / "config.toml")
+        eff = _deep_merge(root_cfg, overlay)
+        native = native_path((eff.get("quam") or {}).get("state_path"))
+        projects.append((n, str(native) if native else None))
+    result = {"active": str(active) if active else None, "projects": projects}
+    _state_index_cache["entry"] = (key, result)
+    return result
 
 
 def lint(listing: dict[str, Any]) -> list[dict[str, Any]]:
@@ -462,7 +597,17 @@ def lint(listing: dict[str, Any]) -> list[dict[str, Any]]:
                                      f"{SUPPORTED_QUALIBRATE_VERSION}/{SUPPORTED_QUAM_VERSION} "
                                      "— SM stays read-only for these configs")})
 
+    # state_path grouping uses filesystem identity (fs_key), not raw string
+    # equality: the scope engine's ambiguity rule (_project_for_path) treats
+    # case/spelling variants of ONE folder as the same chip via same_folder,
+    # so the Doctor hint that explains its None-abstention must cluster the
+    # same way. Deferred import — path_match pulls in history; lint only runs
+    # on Doctor renders. (storage_shared keeps its historical raw grouping.)
+    from quam_state_manager.core import path_match
+
     storage_users: dict[str, list[str]] = {}
+    state_users: dict[str, list[str]] = {}
+    state_locs: dict[str, str] = {}     # fs_key → first spelling, for display
     for p in listing.get("projects", []):
         name = p["name"]
         st = p["state_path"]
@@ -478,14 +623,17 @@ def lint(listing: dict[str, Any]) -> list[dict[str, Any]]:
             finding = {"severity": sev, "project": name,
                        "code": "state_path_dangling",
                        "message": f"state_path does not exist: {st['raw']}"}
-            # sibling suggestion: existing dirs next to the dangling target
+            # sibling suggestion: existing dirs next to the dangling target.
+            # ValueError: scandir raises it (not OSError) on an embedded NUL
+            # — legal in a TOML basic string, and lint must never 500 the
+            # landing over an adversarial config value.
             try:
                 parent = Path(st["native"]).parent
                 sibs = [d.name for d in parent.iterdir() if d.is_dir()][:4]
                 if sibs:
                     finding["suggestion"] = (
                         "existing sibling folder(s): " + ", ".join(sibs))
-            except OSError:
+            except (OSError, ValueError):
                 pass
             findings.append(finding)
         if p["calibration_library"]["native"] and not p["calibration_library"]["exists"]:
@@ -495,6 +643,10 @@ def lint(listing: dict[str, Any]) -> list[dict[str, Any]]:
                                          f"exist: {p['calibration_library']['raw']}")})
         if p["storage"]["native"]:
             storage_users.setdefault(p["storage"]["native"], []).append(name)
+        if st["native"]:
+            k = path_match.fs_key(st["native"])
+            state_users.setdefault(k, []).append(name)
+            state_locs.setdefault(k, st["native"])
 
     for loc, users in storage_users.items():
         if len(users) > 1:
@@ -505,5 +657,19 @@ def lint(listing: dict[str, Any]) -> list[dict[str, Any]]:
                             f"({loc}): " + ", ".join(sorted(users)) +
                             " — runs from different campaigns land in the "
                             "same tree (may be deliberate)"),
+            })
+    # Mirrors storage_shared for state_path (docs/63): inheritance makes it
+    # structurally easy for several projects to resolve to ONE chip folder,
+    # and SM's project lens then can't auto-attribute the chip to a single
+    # project on a plain folder load (an explicit Open pins the choice).
+    for k, users in state_users.items():
+        if len(users) > 1:
+            findings.append({
+                "severity": "info", "project": None,
+                "code": "state_path_shared",
+                "message": (f"{len(users)} projects share one state_path "
+                            f"({state_locs[k]}): " + ", ".join(sorted(users)) +
+                            " — a plain folder load can't tell which project "
+                            "is meant; open the project explicitly to pin it"),
             })
     return findings

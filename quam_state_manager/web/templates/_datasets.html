@@ -119,6 +119,10 @@
               onclick="toggleFolderFilter('{{ f.key }}', this)"
               title="{{ f.full_path }}">{{ f.label[:6] }}{% if f.label | length > 6 %}…{% endif %}</span>
         {% endfor %}
+        {% if scope_project and scope_keys and scope_keys | length < folders | length %}
+        <span class="muted ds-scope-hint"
+              title="Folder selection starts from the roots recorded for this qualibrate project — click All to see everything">scoped to {{ scope_project }}</span>
+        {% endif %}
     </div>
 </div>
 {% endif %}
@@ -266,12 +270,17 @@
 <script type="application/json" id="ds-rows-data"
         data-now="{{ initial_poll_ts | default(0) }}"
         data-view="{{ view_mode | default('datasets') }}"
+        data-scope="{{ scope_project | default('') | e }}"
         data-folder="{{ active_folder | default('') | e }}">{{ rows_json | script_json }}</script>
 {# Curated fit-key order (FIT_TARGET_MAP) — the Sort banner floats these first. #}
 <script type="application/json" id="ds-curated-keys">{{ curated_keys_json | default('[]') | script_json }}</script>
 {# Active data folders [{key,label,full_path}] — dataset-virtual.js builds the
    folder_key → label map (Folder column + per-row chip) from this. #}
 <script type="application/json" id="ds-folders-data">{{ folders_json | default('[]') | script_json }}</script>
+{# Project lens (docs/63): folder_keys recorded for the active project scope.
+   dataset-virtual.js seeds the folder filter from this on a folder-set/scope
+   change — a PROPER subset only; user toggles then stay authoritative. #}
+<script type="application/json" id="ds-scope-folders">{{ scope_keys_json | default('[]') | script_json }}</script>
 
 {# Floating compare panel (item 3): stays hidden until the first row checkbox is
    ticked (data-state leaves "empty" — see CSS), replacing the old always-on Tip

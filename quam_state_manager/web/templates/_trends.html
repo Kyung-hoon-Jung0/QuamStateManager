@@ -11,13 +11,17 @@
    only allowed for the SAME chip (server-checked). Leaf name shown, full path on
    hover. A cross-chip selection returns a warning instead of a meaningless merge. #}
 {% if folders and folders | length > 1 %}
+{# Project lens (docs/63): the scope's recorded roots start selected (server
+   guarantees same-chip when several); unscoped keeps the first-folder default. #}
+{% set tsk = trend_scope_keys | default([]) %}
 <div class="trends-folder-row" id="trend-folder-grid">
     <span class="folder-filter-label">Folder:</span>
     {% for f in folders %}
-    <span class="folder-chip{% if loop.first %} active{% endif %}" data-folder-key="{{ f.key }}"
+    <span class="folder-chip{% if (tsk and f.key in tsk) or (not tsk and loop.first) %} active{% endif %}" data-folder-key="{{ f.key }}"
           onclick="toggleTrendFolder('{{ f.key }}', this)"
           title="{{ f.full_path }}">{{ f.label[:6] }}{% if f.label | length > 6 %}…{% endif %}</span>
     {% endfor %}
+    {% if tsk %}<span class="muted ds-scope-hint">scoped to {{ scope_project }}</span>{% endif %}
 </div>
 {% endif %}
 <div class="trends-filters">

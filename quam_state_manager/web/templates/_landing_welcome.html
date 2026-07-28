@@ -1,0 +1,21 @@
+{# The pre-project-lens Welcome page (docs/63): shown when no qualibrate
+   config was FOUND — which is not the same as not having one (docs/63 §B:
+   Windows and Linux keep ~/.qualibrate in different homes, and a WSL-hosted
+   qualibrate is invisible to a native-Windows SM's default). So the locate
+   block leads; standalone users keep the old landing below it. The manual
+   body lives in _landing_getting_started.html, shared with the project-first
+   landing's collapsed "Getting started" section. #}
+                    <div class="welcome">
+                        <h2>Welcome to QUAM State Manager</h2>
+                        <div class="landing-locate">
+                            <p class="landing-locate-lead"><b>Using QUAlibrate?</b>
+                                <span class="muted">No config found at
+                                <code>{{ qualibrate_source.dir if qualibrate_source else '~/.qualibrate' }}</code>{% if qualibrate_source and qualibrate_source.source != 'default' %} (via {{ qualibrate_source.source }}){% endif %}.
+                                If your projects live elsewhere &mdash; a WSL distro, another
+                                user profile &mdash; point SM at that folder and the
+                                project-first landing lights up:</span></p>
+                            {% include '_qualibrate_locate.html' %}
+                        </div>
+                        <p class="welcome-lead">Inspect, edit, generate, and track your QUAM chip state — a working copy always sits between you and the live instrument, so nothing reaches the hardware by accident.</p>
+                        {% include '_landing_getting_started.html' %}
+                    </div>

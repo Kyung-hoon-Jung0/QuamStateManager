@@ -13,10 +13,14 @@
    runs would fail); amber = SM has a DIFFERENT chip open than the one
    qualibrate writes to; neutral otherwise. #}
 {% if qualibrate_tray is defined and qualibrate_tray %}
+{# Badge name = SM's own project scope when present (docs/63), else the
+   qualibrate-active project. When both exist and differ, the active project
+   is appended muted — informational, never a warn color (colors keep their
+   docs/55 meaning: red = active state_path dangling, amber = chip mismatch). #}
 <a href="/qualibrate" hx-get="/qualibrate" hx-target="#table-pane" hx-push-url="true"
    class="qualibrate-tray-badge{% if qualibrate_tray.dangling %} qualibrate-tray-danger{% elif qualibrate_tray.match == false %} qualibrate-tray-warn{% endif %}"
-   title="{% if qualibrate_tray.dangling %}QUAlibrate active project — its state_path does not exist (see Projects &rarr; Doctor){% elif qualibrate_tray.match == false %}QUAlibrate writes to a different chip than the one open in SM — click to review projects{% elif qualibrate_tray.match %}QUAlibrate active project — same chip as loaded in SM{% else %}QUAlibrate active project — click to manage projects{% endif %}">
-    <span aria-hidden="true">&#9879;</span>&nbsp;{{ qualibrate_tray.project }}</a>
+   title="{% if qualibrate_tray.dangling %}QUAlibrate active project — its state_path does not exist (see Projects &rarr; Doctor){% elif qualibrate_tray.match == false %}QUAlibrate writes to a different chip than the one open in SM — click to review projects{% elif qualibrate_tray.match %}QUAlibrate active project — same chip as loaded in SM{% elif qualibrate_tray.project %}QUAlibrate active project — click to manage projects{% else %}SM project scope — qualibrate has no active project set{% endif %}">
+    <span aria-hidden="true">&#9879;</span>&nbsp;{{ qualibrate_tray.sm_scope or qualibrate_tray.project }}{% if qualibrate_tray.sm_scope and qualibrate_tray.project and qualibrate_tray.sm_scope != qualibrate_tray.project %}&nbsp;<span class="qualibrate-tray-active-note">(qualibrate: {{ qualibrate_tray.project }})</span>{% endif %}</a>
 {% endif %}
 {% if active_name or change_count > 0 or working_dirty %}
 {% set _dirty = change_count > 0 or working_dirty %}

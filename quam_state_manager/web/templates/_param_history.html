@@ -15,7 +15,10 @@
      data-importable-count="{{ importable_count }}"
      data-pending-import-count="{{ pending_import_count }}">
   <div class="param-history-header">
-    <h2 style="margin:0">Param History</h2>
+    {# Project lens (docs/63): display-only suffix when the loaded chip carries
+       a qualibrate-project scope AND we're viewing that chip (an archived
+       ?chip_key= view is someone else's history — no suffix). #}
+    <h2 style="margin:0">Param History{% if project_scope and is_loaded_chip %} <span class="scope-suffix">— {{ project_scope }}</span>{% endif %}</h2>
     <p class="muted" style="margin:0">
       How each tracked field in <code>state.json</code> drifts across every modification —
       saves, manual edits, and experiment runs.
@@ -61,7 +64,7 @@
            title="{% if chip.workspace_only %}Workspace folder, no history yet{% else %}{{ chip.snapshot_count }} snapshots · latest {{ chip.latest_timestamp }}{% endif %}"
            style="text-decoration:none">
           {% if is_loaded %}<span class="chip-loaded-dot" title="Currently loaded">●</span>{% endif %}
-          {{ chip.key }}
+          {{ chip.name or chip.key }}
           {% if chip.snapshot_count %}<span class="phf-chip-count">{{ chip.snapshot_count }}</span>{% endif %}
         </a>
       {% endfor %}

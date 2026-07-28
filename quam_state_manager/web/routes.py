@@ -59,6 +59,7 @@ from quam_state_manager.core import (
     gen_presets,
     node_scan,
     path_match,
+    qualibrate_config,
     regenerate,
     safe_io,
     scheduler,
@@ -130,7 +131,7 @@ def _bulk_display(v: Any) -> str:
     grouping (``units.group_digits``). The old ``%.6e`` rounded to 7 sig figs and,
     because that rounded string was reused as the edit baseline, silently dropped
     the sub-kHz tail of real frequencies on round-trip. group_digits round-trips
-    exactly with ``cli._parse_value``."""
+    exactly with ``type_policy.parse_value`` (the historical cli parser)."""
     from quam_state_manager.core import units
     return units.group_digits(v)
 
@@ -737,7 +738,8 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict) -> None:
             # The live chip visibly changed and we adopted it — record a
             # Param History snapshot like the explicit /state/sync does.
             try:
-                _history().check_and_snapshot(ctx.get("path"), "auto")
+                _history().check_and_snapshot(ctx.get("path"), "auto",
+                                              project=_scope_for(ctx.get("path"), ctx))
             except Exception:
                 logger.warning("History snapshot after auto-sync failed",
                                exc_info=True)
@@ -753,8 +755,14 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict) -> None:
             ctx["live_diverged"] = result == working_copy.RECONCILE_STALE
 
 
-def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> None:
+def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
     """Load a QUAM state folder and register it as the active context.
+
+    Returns the activated context dict, so a caller that must keep acting on
+    THIS chip (e.g. /qualibrate/open's scope pin) can bind to it directly —
+    re-reading ``_active_ctx()`` later in the request cross-wires onto
+    whatever a concurrent ``/load`` activated meanwhile (the same bug class
+    :func:`_active_wc_lock` documents).
 
     *origin* records provenance — ``"live"`` for a chip the user loaded to
     edit, ``"dataset_archive"`` for a frozen per-run snapshot opened from the
@@ -850,9 +858,18 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> None:
             # keep it read-only. Only live→archive is allowed.
             if origin != "live" or (current.get("origin") or "live") == "live":
                 current["origin"] = origin
+        # Project lens (docs/63): derive the scope when this context doesn't
+        # carry one yet — BEFORE publication (a concurrent /datasets render
+        # must never observe an active scoped chip without its memo: the
+        # transient data-scope="" identity flip would wipe the user's
+        # folder-filter toggles) and outside the cache lock (the reverse
+        # index may do a few stats / a rare TOML re-parse). An explicitly
+        # pinned name sticks.
+        _acquire_project_scope(current)
+        with _quam_cache_lock:
             current_app.config["contexts"][ctx_name] = current
             current_app.config["active_context"] = ctx_name
-        return
+        return current
 
     # Slow path. Serialise builds for THIS folder so two threads don't
     # race on the working-folder atomic write. Builds for DIFFERENT
@@ -872,7 +889,8 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> None:
                 # The live chip was replaced and we adopted it — record a
                 # Param History snapshot like the explicit /state/sync does.
                 try:
-                    _history().check_and_snapshot(str(folder), "auto")
+                    _history().check_and_snapshot(str(folder), "auto",
+                                                project=_scope_for(folder))
                 except Exception:
                     logger.warning("History snapshot after auto-sync failed",
                                    exc_info=True)
@@ -900,6 +918,12 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> None:
                 # the silent clean auto-pull becomes a visible "Live chip updated —
                 # N params pulled" notice (feedback #5 — the root of "pulse edits not synced").
                 ctx["_auto_pulled"] = {"count": pulled_count or 0}
+        # Project lens (docs/63): fresh builds (first load, LRU-eviction
+        # rehydrates, restarts) derive their scope here — BEFORE publication
+        # (a concurrent /datasets render must never observe an active scoped
+        # chip without its memo); every activation path converges on the
+        # reverse index, so a lost memo self-heals.
+        _acquire_project_scope(ctx)
         with _quam_cache_lock:
             if key not in _quam_cache:
                 # Evict the oldest CLEAN in-memory entry if the cache is full.
@@ -922,6 +946,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> None:
         _attach_type_policy(ctx)
         _warm_state_schema_async(ctx.get("store"), current_app.instance_path,
                                  live_folder=ctx.get("path"))
+        return ctx
 
 
 _schema_warm_inflight: set[str] = set()
@@ -1550,6 +1575,10 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         "change_count": _change_count(),
         "working_dirty": _working_dirty(),
         "qualibrate_tray": _qualibrate_tray_badge(),
+        # docs/63 project lens: the qualibrate project this context operates
+        # under (explicitly opened, or reverse-matched from its live folder).
+        # None ⇒ every consumer renders exactly the pre-lens behavior.
+        "project_scope": (_active_ctx() or {}).get("qualibrate_project"),
         "live_diverged": bool(_ctx_obj("live_diverged")),
         "wc_gc_count": _working_copy_count(),
         "wc_gc_threshold": _WC_GC_THRESHOLD,
@@ -1929,7 +1958,52 @@ def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore)
 
 @bp.route("/")
 def home():
-    return render_template("base.html", **_ctx(page="home"))
+    """Project-first landing (docs/63): with a qualibrate config the home
+    page is the Projects landing (shell renders instantly; the cards are a
+    lazy fragment so GET / never pays the TOML/doctor I/O — it is the
+    workbench iframe's entry and the most-hit route). Without a config the
+    pre-lens Welcome renders verbatim."""
+    config_exists = bool(qualibrate_config.tray_status().get("config_exists"))
+    session = _load_session()
+    # Session values are hand-editable JSON — a type-corrupt entry (int,
+    # nested list, …) must degrade to "no history", never TypeError the
+    # most-hit route out of Path().
+    resume_path = session.get("last_quam_state_path")
+    if not isinstance(resume_path, str):
+        resume_path = None
+    if resume_path and not (Path(resume_path) / "state.json").exists():
+        resume_path = None      # startup hygiene may not have run yet
+    recents = []
+    raw_recents = session.get("recent_quam_state_paths")
+    for p in (raw_recents if isinstance(raw_recents, list) else [])[:5]:
+        if (isinstance(p, str) and p != resume_path
+                and (Path(p) / "state.json").exists()):
+            recents.append({"path": p, "name": _chip_display_name(Path(p))})
+    return render_template("base.html", **_ctx(
+        page="home",
+        landing_config_exists=config_exists,
+        # for the no-config welcome's locate block (docs/63 §B): WHERE we
+        # looked and WHY (env/override/default) — cheap, no I/O.
+        qualibrate_source=qualibrate_config.config_source(),
+        last_project=session.get("last_project"),
+        resume_path=resume_path,
+        resume_name=_chip_display_name(Path(resume_path)) if resume_path else "",
+        recent_paths=recents[:3],
+        # True first run (no session history at all) → the landing's
+        # "Getting started" manual starts expanded; any history collapses it.
+        first_run=not (session.get("last_project") or resume_path or recents),
+    ))
+
+
+@bp.route("/landing/projects")
+def landing_projects():
+    """The landing's lazy project-cards fragment (docs/63) — the only place
+    the landing pays the listing + doctor cost."""
+    return render_template(
+        "_landing_projects.html",
+        listing=_qualibrate_listing(),
+        last_project=_load_session().get("last_project"),
+    )
 
 
 @bp.route("/workbench")
@@ -2068,29 +2142,129 @@ def _qualibrate_listing() -> dict:
     return listing
 
 
+def _project_for_path(folder) -> str | None:
+    """The qualibrate project whose EFFECTIVE state_path IS *folder* (docs/63).
+
+    Reverse-matches against the stat-cached
+    :func:`qualibrate_config.project_state_paths` index — steady-state cost
+    is a handful of ``os.stat`` calls, so it is safe on the chip-activation
+    path. Ambiguity rule (several projects can share one state_path via
+    inheritance): the qualibrate-ACTIVE matching project wins; else a UNIQUE
+    match wins; else None (never guess — an explicit Open pins the choice).
+    Never raises; never breaks a load."""
+    try:
+        idx = qualibrate_config.project_state_paths()
+        matches = [name for name, native in idx.get("projects", [])
+                   if native and path_match.same_folder(native, folder)]
+        if not matches:
+            return None
+        active = idx.get("active")
+        if active in matches:
+            return active
+        if len(matches) == 1:
+            return matches[0]
+        return None
+    except Exception:  # noqa: BLE001 — the lens must never break a load
+        logger.debug("project reverse-match failed", exc_info=True)
+        return None
+
+
+def _scope_for(path, ctx: dict | None = None) -> str | None:
+    """Project scope for an arbitrary state folder (snapshot stamping etc.).
+
+    The owning context's memoized scope is the session truth the UI headers
+    show — an explicit /qualibrate/open pin included, which the pure reverse
+    match can never recover when several projects share one state_path (it
+    refuses to guess → None, and the stamp would contradict the header).
+    So prefer the memo when the snapshot source IS that context's folder;
+    fall back to the reverse match (no ctx in hand — background paths — or
+    a ctx that predates scope acquisition)."""
+    if ctx:
+        memo = ctx.get("qualibrate_project")
+        live = ctx.get("live_path") or ctx.get("path") or ""
+        try:
+            if memo and live and path and path_match.same_folder(live, path):
+                return memo
+        except Exception:  # noqa: BLE001 — the lens must never break a save
+            logger.debug("scope memo match failed", exc_info=True)
+    return _project_for_path(path)
+
+
+def _acquire_project_scope(ctx: dict | None, *, explicit: str | None = None) -> None:
+    """Attach the project scope to *ctx* (docs/63).
+
+    ``explicit`` (from POST /qualibrate/open) always overwrites — the user's
+    choice is pinned and survives cache-hit re-activations. Otherwise the
+    scope is DERIVED from the context's live folder, but only when the ctx
+    doesn't already carry a name: a previously pinned/derived name sticks for
+    the context's lifetime (re-derivation happens naturally on rebuild after
+    LRU eviction or restart — the reverse index is the source of truth, the
+    ctx field is a memo)."""
+    if not ctx:
+        return
+    if explicit is not None:
+        ctx["qualibrate_project"] = explicit
+        # Unconditional (it self-dedups): a RE-open of an already-scoped
+        # project must still refresh the landing highlight — gating on the
+        # ctx memo left last_project pointing at whatever was derived since.
+        _remember_last_project(explicit)
+        return
+    if ctx.get("qualibrate_project"):
+        return
+    name = _project_for_path(ctx.get("live_path") or ctx.get("path") or "")
+    # Re-check before writing: the derive above does stat/TOML work, and an
+    # explicit pin may have landed on this ctx meanwhile — a user's pin
+    # always outranks a concurrent derive.
+    if name and not ctx.get("qualibrate_project"):
+        ctx["qualibrate_project"] = name
+        _remember_last_project(name)
+
+
+def _remember_last_project(name: str) -> None:
+    """Persist the landing-page highlight (instance/last_session.json,
+    ``last_project``) — NEVER auto-restored (docs/63 decision 3); a
+    standalone folder load deliberately does not clear it."""
+    try:
+        data = _load_session()
+        if data.get("last_project") == name:
+            return
+        data["last_project"] = name
+        _save_session(data)
+    except Exception:  # noqa: BLE001 — best-effort persistence
+        logger.debug("last_project persist failed", exc_info=True)
+
+
 def _qualibrate_tray_badge() -> dict | None:
     """State for the topbar '⚗ <project>' badge; ``None`` hides it.
 
     Cheap enough for every render: qualibrate_config.tray_status is
     stat-cached (two os.stat steady-state). ``match`` is True/False vs the
-    chip SM has open, or None when either side is unknown."""
+    chip SM has open, or None when either side is unknown. ``sm_scope`` is
+    SM's OWN project scope (docs/63) — shown as the badge name when present;
+    a mere scope≠active difference is NEVER a warn/danger color (``match``
+    keeps meaning "SM's chip == qualibrate's active write target"). Hidden
+    only when there's no config, or neither an active project nor a scope."""
     from quam_state_manager.core import qualibrate_config
 
     try:
         st = qualibrate_config.tray_status()
     except Exception:  # the badge must never break a page render
         return None
-    if not st.get("config_exists") or not st.get("active"):
+    ctx = _active_ctx()
+    sm_scope = (ctx or {}).get("qualibrate_project")
+    if not st.get("config_exists") or not (st.get("active") or sm_scope):
         return None
     match = None
-    ctx = _active_ctx()
     live = (ctx or {}).get("live_path")
     if live and st.get("state_native") and st.get("state_exists"):
         # samefile-grounded — resolve()-equality false-ambered on case-variant
         # spellings of one folder on case-insensitive (macOS/Windows) hosts.
         match = path_match.same_folder(live, st["state_native"])
-    return {"project": st["active"], "dangling": not st["state_exists"],
-            "match": match}
+    return {"project": st["active"],
+            # dangling only ever describes the ACTIVE project's state_path —
+            # a scope-only badge (no active project) must not read as broken.
+            "dangling": bool(st.get("active")) and not st["state_exists"],
+            "match": match, "sm_scope": sm_scope}
 
 
 @bp.route("/api/qualibrate/projects")
@@ -2102,9 +2276,20 @@ def api_qualibrate_projects():
 @bp.route("/qualibrate/subnav")
 def qualibrate_subnav():
     """The sidebar's lazy-loaded project submenu (hx-trigger=load) — keeps
-    the base-page render free of the 16 TOML reads."""
+    the base-page render free of the 16 TOML reads. Passes the ctx's project
+    scope explicitly (this fragment renders outside _ctx()) so a scope whose
+    project vanished from qualibrate gets an honest hint row."""
+    listing = _qualibrate_listing()
+    scope = (_active_ctx() or {}).get("qualibrate_project")
+    # r8 feedback: the template caps the visible rows, so order the list
+    # relevance-first — the qualibrate-active project and the loaded SM scope
+    # must sit in the always-visible head, the rest stays alphabetical.
+    listing["projects"] = sorted(
+        listing["projects"],
+        key=lambda p: (not p["active"], p["name"] != scope,
+                       p["name"].lower()))
     return render_template("_qualibrate_subnav.html",
-                           listing=_qualibrate_listing())
+                           listing=listing, project_scope=scope)
 
 
 @bp.route("/qualibrate")
@@ -2138,11 +2323,218 @@ def qualibrate_page():
         page="qualibrate",
         listing=listing,
         raw_tomls=raws,
+        qualibrate_source=qualibrate_config.config_source(),
         supported_versions={
             "qualibrate": qualibrate_config.SUPPORTED_QUALIBRATE_VERSION,
             "quam": qualibrate_config.SUPPORTED_QUAM_VERSION,
         },
     ))
+
+
+@bp.route("/qualibrate/project-config/<name>")
+def qualibrate_project_config(name: str):
+    """Per-project config popup (r8 feedback): paths + port settings straight
+    from the landing card. Effective merge + both raw TOMLs. READ-ONLY."""
+    from quam_state_manager.core import qualibrate_config
+
+    listing = _qualibrate_listing()
+    proj = next((p for p in listing["projects"] if p["name"] == name), None)
+    if proj is None:
+        return render_template("_status.html",
+                               message=f"Unknown qualibrate project: {name!r}",
+                               level="error"), 404
+    cfg_dir = Path(listing["config_dir"])
+    eff = qualibrate_config.effective_config(name, cfg_dir=cfg_dir)
+    raws: dict[str, str] = {}
+    try:
+        raws["overlay"] = (cfg_dir / "projects" / name / "config.toml").read_text(
+            encoding="utf-8", errors="replace") \
+            or "(empty overlay — inherits everything)"
+    except OSError:
+        raws["overlay"] = "(unreadable)"
+    try:
+        raws["root"] = (cfg_dir / "config.toml").read_text(
+            encoding="utf-8", errors="replace")
+    except OSError:
+        raws["root"] = "(unreadable)"
+    return render_template(
+        "_qualibrate_project_config.html", p=proj,
+        eff_json=json.dumps(eff, indent=2, ensure_ascii=False),
+        raws=raws, cfg_dir=str(cfg_dir))
+
+
+# ---- config-location picker (docs/63 §B) -----------------------------------
+# Windows and Linux keep ~/.qualibrate in different homes, and the common
+# split deployment (qualibrate inside a WSL distro, SM native Windows) puts it
+# somewhere SM's default never looks. These routes let the user point SM at
+# the folder — the CHOICE persists in instance/qualibrate_location.json; the
+# chosen tree itself is never written (docs/55 doctrine unchanged).
+
+
+def _qualibrate_location_file() -> Path:
+    return Path(current_app.instance_path) / "qualibrate_location.json"
+
+
+def _normalize_config_input(text: str) -> Path:
+    """User-typed config location → a Path in THIS host's dialect.
+
+    Accepts a directory or a direct ``config.toml`` path (the env var's
+    dir-or-file semantics), ``~``, both slash kinds, Explorer's quoted
+    copy-as-path form, and cross-dialect spellings (``/mnt/d/…`` on Windows,
+    ``D:\\…`` under WSL). Pure — existence is the caller's question."""
+    raw = (text or "").strip().strip('"').strip("'")
+    p = Path(raw).expanduser()
+    if p.suffix == ".toml":
+        p = p.parent
+    # no wsl_root here: a bare /home/… typed on Windows stays as-is and the
+    # locate route offers distro-anchored suggestions instead of guessing.
+    return qualibrate_config._to_native(str(p), os.name)
+
+
+def _classify_config_location(p: Path) -> dict:
+    """READ-ONLY probe of a candidate config dir. Never raises."""
+    out = {"path": str(p), "exists": False, "has_config": False,
+           "n_projects": 0, "active": None, "versions_supported": None}
+    try:
+        if not p.is_dir():
+            return out
+        out["exists"] = True
+        if not (p / "config.toml").is_file():
+            return out
+        out["has_config"] = True
+        listing = qualibrate_config.list_projects(p)
+        out["n_projects"] = len(listing.get("projects") or [])
+        out["active"] = listing.get("active")
+        out["versions_supported"] = bool(
+            (listing.get("versions") or {}).get("supported", False))
+    except Exception:  # noqa: BLE001 — adversarial user input must not 500
+        logger.debug("config-location probe failed for %s", p, exc_info=True)
+    return out
+
+
+def _wsl_distros() -> list[str]:
+    """Registered WSL distros visible via the ``\\\\wsl.localhost`` share.
+    Windows-only; [] on any problem. Stats a network share — call only from
+    user-initiated actions (Check / Scan), never on a render path."""
+    if os.name != "nt":
+        return []
+    try:
+        return sorted(d.name for d in Path(r"\\wsl.localhost").iterdir()
+                      if d.is_dir())
+    except OSError:
+        return []
+
+
+@bp.route("/qualibrate/locate", methods=["POST"])
+def qualibrate_locate():
+    """Validate a user-supplied config location (READ-ONLY) and render the
+    preview fragment. Persistence happens only on 'Use this folder'."""
+    text = request.form.get("path") or ""
+    if not text.strip():
+        return render_template("_qualibrate_locate_result.html", result=None,
+                               suggestions=[],
+                               message="Type a folder path first.")
+    p = _normalize_config_input(text)
+    res = _classify_config_location(p)
+    suggestions = []
+    if not res["has_config"] and os.name == "nt" and str(p).startswith("/"):
+        # A WSL-internal path typed on Windows (e.g. /home/u/.qualibrate) —
+        # anchor it on each distro share and offer the ones that resolve.
+        for d in _wsl_distros():
+            cand = Path("\\\\wsl.localhost\\" + d
+                        + str(p).replace("/", "\\"))
+            c = _classify_config_location(cand)
+            if c["has_config"]:
+                suggestions.append(c)
+    return render_template("_qualibrate_locate_result.html", result=res,
+                           suggestions=suggestions, message=None)
+
+
+@bp.route("/qualibrate/locate-candidates")
+def qualibrate_locate_candidates():
+    """Scan the well-known locations for config trees (user-clicked — may
+    stat WSL/drvfs shares). Candidates: this user's home, every WSL distro's
+    /home/<user> (from Windows), every C:\\Users profile (from WSL)."""
+    cands: list[dict] = []
+    seen: set[str] = set()
+
+    def add(p: Path) -> None:
+        k = str(p).lower()
+        if k in seen:
+            return
+        seen.add(k)
+        c = _classify_config_location(p)
+        if c["has_config"]:
+            cands.append(c)
+
+    add(Path.home() / ".qualibrate")
+    if os.name == "nt":
+        for d in _wsl_distros():
+            try:
+                for u in (Path("\\\\wsl.localhost") / d / "home").iterdir():
+                    add(u / ".qualibrate")
+            except OSError:
+                continue
+        try:
+            for u in (Path(Path.home().drive + "\\") / "Users").iterdir():
+                add(u / ".qualibrate")
+        except OSError:
+            pass
+    else:
+        try:
+            for u in Path("/mnt/c/Users").iterdir():
+                add(u / ".qualibrate")
+        except OSError:
+            pass
+    return render_template(
+        "_qualibrate_locate_result.html", result=None, suggestions=cands,
+        message=None if cands else ("No config.toml found in the common "
+                                    "locations — type the folder path "
+                                    "manually."))
+
+
+@bp.route("/qualibrate/use-location", methods=["POST"])
+def qualibrate_use_location():
+    """Adopt a config directory: persist the choice (instance memo only —
+    the chosen tree is never written) + install the process-wide override."""
+    src = qualibrate_config.config_source()
+    if src["source"] == "env":
+        return render_template(
+            "_qualibrate_locate_result.html", result=None, suggestions=[],
+            message=("An environment variable (QUALIBRATE_CONFIG_FILE / "
+                     "QUALIBRATE_CONFIG_DIR) pins the config location for "
+                     "this process and outranks a chosen folder — unset it "
+                     "and restart SM, or point it at the right place."))
+    p = _normalize_config_input(request.form.get("path") or "")
+    res = _classify_config_location(p)
+    if not res["has_config"]:
+        return render_template("_qualibrate_locate_result.html", result=res,
+                               suggestions=[], message=None)
+    safe_io.atomic_write_json(_qualibrate_location_file(),
+                              {"config_dir": str(p)})
+    qualibrate_config.set_dir_override(str(p))
+    logger.info("qualibrate config location chosen: %s", p)
+    if _is_htmx():
+        resp = make_response()
+        resp.headers["HX-Refresh"] = "true"   # every cache keys on cfg_dir
+        return resp
+    return redirect(url_for("main.home"))
+
+
+@bp.route("/qualibrate/use-default-location", methods=["POST"])
+def qualibrate_use_default_location():
+    """Drop the chosen location — back to env/default resolution."""
+    try:
+        _qualibrate_location_file().unlink(missing_ok=True)
+    except OSError:
+        logger.warning("could not remove qualibrate_location.json",
+                       exc_info=True)
+    qualibrate_config.set_dir_override(None)
+    if _is_htmx():
+        resp = make_response()
+        resp.headers["HX-Refresh"] = "true"
+        return resp
+    return redirect(url_for("main.home"))
 
 
 @bp.route("/qualibrate/open", methods=["POST"])
@@ -2169,10 +2561,20 @@ def qualibrate_open_project():
             level="error"), 409
 
     try:
-        _activate_quam(state["native"])
+        opened = _activate_quam(state["native"])
     except (FileNotFoundError, ValueError, OSError) as e:
         return render_template("_status.html", message=str(e), level="error"), 400
     _remember_load_path(state["native"])
+
+    # a qualibrate project is a SCOPE on the context, not a new context type.
+    # Explicit open PINS the user's choice — it survives cache-hit
+    # re-activations of the same folder even when several projects share this
+    # state_path (the reverse-matcher would refuse to guess; docs/63). The
+    # pin binds to the context _activate_quam RETURNED, immediately: the
+    # storage scan below can take seconds on a network mount, and re-reading
+    # _active_ctx() after it would cross-wire the pin onto whatever a
+    # concurrent /load activated meanwhile (the _active_wc_lock bug class).
+    _acquire_project_scope(opened, explicit=name)
 
     # dataset roots from the project's storage location (read-only scan)
     added = 0
@@ -2180,7 +2582,8 @@ def qualibrate_open_project():
     if storage_native and proj["storage"]["exists"]:
         ws = _ws()
         existing = {str(p) for p in ws.root_folders}
-        for root in scheduler.find_dataset_roots(storage_native):
+        found = scheduler.find_dataset_roots(storage_native)
+        for root in found:
             if root not in existing:
                 try:
                     ws.add_root(root)
@@ -2190,19 +2593,22 @@ def qualibrate_open_project():
         if added:
             _save_workspace_roots()
             current_app.config.pop("dataset_store", None)
-
-    # a qualibrate project is a SCOPE on the context, not a new context type
-    ctx = _active_ctx()
-    if ctx is not None:
-        ctx["qualibrate_project"] = name
+        # Project lens (docs/63): remember ALL of this project's roots —
+        # including already-registered ones — so Datasets/Trends can seed
+        # their folder selection from the scope in later sessions too.
+        _record_project_roots(name, found)
 
     logger.info("qualibrate open-in-sm: %s -> %s (+%d dataset roots)",
                 name, state["native"], added)
+    # Land on /qubits (docs/63): the sibling "open a chip" flow
+    # (/workspace/select) already does, and the qubit overview is the right
+    # first screen for "I opened my project" — /explorer stays the plain
+    # /load target for folder-first users.
     if _is_htmx():
         resp = make_response()
-        resp.headers["HX-Redirect"] = url_for("main.explorer")
+        resp.headers["HX-Redirect"] = url_for("main.qubits")
         return resp
-    return redirect(url_for("main.explorer"))
+    return redirect(url_for("main.qubits"))
 
 
 @bp.route("/load", methods=["POST"])
@@ -3146,7 +3552,7 @@ def field_edit():
 
 def _parse_for_target(store, target_path: str, raw_value: str):
     """Parse typed text against the resolved target's ENFORCED expectation;
-    without one this is ``cli._parse_value`` byte-identical."""
+    without one this is ``type_policy.parse_value`` byte-identical."""
     from quam_state_manager.core import type_policy as _tp
     policy = getattr(store, "type_policy", None)
     expected = None
@@ -3444,8 +3850,7 @@ def field_create():
             hint = _tp.Expected(spec=_tp.parse_type(expect_type), source="user")
             parsed = _tp.parse_with_expected(raw_value, hint)
         else:
-            from quam_state_manager.cli import _parse_value
-            parsed = _parse_value(raw_value)
+            parsed = _tp.parse_value(raw_value)
         modifier.create_subtree(dot_path, parsed)
         _invalidate_engine_cache(ctx)
     except _tp.TypeMismatchError as e:
@@ -4414,7 +4819,8 @@ def history_snapshot():
         return render_template("_status.html", message="No state loaded", level="warning")
 
     hm = _history()
-    hm.check_and_snapshot(_active_path(), "manual", force=True)
+    hm.check_and_snapshot(_active_path(), "manual", force=True,
+                          project=_scope_for(_active_path(), _active_ctx()))
 
     return history_list()
 
@@ -4680,7 +5086,8 @@ def state_history_restore_live(timestamp: str):
     try:
         with _active_wc_lock(ctx):
             try:
-                backup_meta = hm.check_and_snapshot(path, "manual", force=True)
+                backup_meta = hm.check_and_snapshot(path, "manual", force=True,
+                                                    project=_scope_for(path, ctx))
             except Exception as exc:
                 logger.warning("Pre-restore snapshot failed", exc_info=True)
                 return render_template(
@@ -4726,7 +5133,7 @@ def state_history_restore_live(timestamp: str):
     # the restored bytes are identical to an existing snapshot, so content-hash
     # dedup should recognise it and skip a redundant ~1MB write.
     try:
-        hm.check_and_snapshot(path, "restore")
+        hm.check_and_snapshot(path, "restore", project=_scope_for(path, ctx))
     except Exception:
         logger.warning("Post-restore snapshot failed", exc_info=True)
     logger.info("State History: restored snapshot %s to live", timestamp)
@@ -4772,7 +5179,8 @@ def state_history_snapshot():
     if not ctx or ctx.get("type") != "quam":
         return render_template("_status.html", message="No state loaded", level="warning")
     try:
-        _history().check_and_snapshot(ctx["path"], "manual", force=True)
+        _history().check_and_snapshot(ctx["path"], "manual", force=True,
+                                      project=_scope_for(ctx["path"], ctx))
     except Exception as exc:
         return render_template("_status.html",
                                message=f"Snapshot failed: {exc}", level="error"), 500
@@ -4802,7 +5210,8 @@ def state_archive():
     if dirty:
         note = ((note + " — ") if note else "") + "captured the LIVE chip; unapplied working-copy edits not included"
     try:
-        meta = _history().check_and_snapshot(ctx["path"], "manual", force=True)
+        meta = _history().check_and_snapshot(ctx["path"], "manual", force=True,
+                                             project=_scope_for(ctx["path"], ctx))
         if meta is None:
             return '<span class="archive-status archive-err">Could not capture state</span>'
         _history().annotate_snapshot(ctx["path"], meta.timestamp,
@@ -5360,7 +5769,7 @@ def pulse_edit():
         return render_template("_status.html", message="Invalid pulse path",
                                level="error"), 400
 
-    from quam_state_manager.cli import _parse_value
+    from quam_state_manager.core.type_policy import parse_value as _parse_value
     from quam_state_manager.core.pointer_path import resolve_field_target
 
     # Armor: __class__ is never an editable field on this surface (the detail
@@ -6822,7 +7231,8 @@ def state_sync():
 
     # Record a Param History snapshot of the now-current live state.
     try:
-        _history().check_and_snapshot(_active_path(), "auto")
+        _history().check_and_snapshot(_active_path(), "auto",
+                                      project=_scope_for(_active_path(), _active_ctx()))
     except Exception:
         logger.warning("History snapshot after sync failed", exc_info=True)
     return jsonify({
@@ -6899,7 +7309,8 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False):
     try:
         _history().check_and_snapshot(
             _active_path(), "save",
-            defer_index=not current_app.config.get("TESTING"))
+            defer_index=not current_app.config.get("TESTING"),
+            project=_scope_for(_active_path(), _active_ctx()))
     except Exception:
         logger.warning("History snapshot after pull-apply failed", exc_info=True)
     return jsonify({
@@ -6976,7 +7387,8 @@ def state_apply_to_live():
     try:
         _history().check_and_snapshot(
             _active_path(), "save",
-            defer_index=not current_app.config.get("TESTING"))
+            defer_index=not current_app.config.get("TESTING"),
+            project=_scope_for(_active_path(), _active_ctx()))
     except Exception:
         logger.warning("History snapshot after apply failed", exc_info=True)
     toast = render_template(
@@ -7334,6 +7746,9 @@ def workspace_remove():
     # …and the candidate-folder cache (per-run fast path — see workspace_add).
     _dataset_candidates_cache.pop(id(current_app._get_current_object()), None)
     _save_workspace_roots()
+    # Project lens (docs/63): an explicitly removed folder must not keep
+    # seeding project scopes on the Datasets/Trends pages.
+    _strip_project_root(folder)
     # Remember the explicit remove so future /load calls don't auto-re-add it.
     # Propagate OSError so the user is warned if the exclusion didn't persist
     # — without this, the next auto-rehydrate quietly re-adds the folder
@@ -9682,6 +10097,12 @@ def param_history():
     all_disk_chips = hm.list_chip_histories()
     disk_by_key = {c["key"]: c for c in all_disk_chips}
 
+    # Project lens (docs/63): the loaded chip's selector text becomes
+    # "<project> · <key>" when the context carries a scope. DISPLAY ONLY —
+    # ``key`` (and every URL / data attribute built from it) stays the raw
+    # history key so ?chip_key=, hist: refs and the JS contract are untouched.
+    scope_project = (_active_ctx() or {}).get("qualibrate_project")
+
     active_chips: list[dict[str, Any]] = []
     active_keys: set[str] = set()
     # Always include the currently-loaded chip — the only thing in the main
@@ -9690,7 +10111,7 @@ def param_history():
         info = disk_by_key.get(loaded_key, {})
         active_chips.insert(0, {
             "key": loaded_key,
-            "name": loaded_key,
+            "name": f"{scope_project} · {loaded_key}" if scope_project else loaded_key,
             "snapshot_count": info.get("snapshot_count", 0),
             "latest_timestamp": info.get("latest_timestamp", ""),
             "qubits": info.get("qubits", []),
@@ -10174,6 +10595,113 @@ def _load_workspace_roots() -> None:
 
 
 # ----------------------------------------------------------------------
+# Per-project dataset roots (docs/63 decision 5).
+#
+# ``instance/project_dataset_roots.json`` — ``{project: [resolved root paths]}``.
+# A SEPARATE file from workspace_roots.json on purpose: that writer serializes
+# only the historical bare array (an envelope would be silently wiped on the
+# next save) and the bare-list format is an external contract. The map is a
+# memo of "which data roots belong to which qualibrate project" used ONLY to
+# seed the Datasets folder filter / Trends folder pick — never to hide data.
+# ----------------------------------------------------------------------
+
+
+def _project_roots_file() -> Path:
+    return Path(current_app.instance_path) / "project_dataset_roots.json"
+
+
+def _load_project_roots() -> dict[str, list[str]]:
+    p = _project_roots_file()
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except Exception as exc:  # noqa: BLE001 — a corrupt memo must never break a page
+        logging.getLogger(__name__).warning(
+            "Could not read project dataset roots: %s", exc)
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k): [str(r) for r in v]
+            for k, v in raw.items() if isinstance(v, list)}
+
+
+def _record_project_roots(project: str, roots: list[str]) -> None:
+    """Merge *roots* into the project's recorded list (fs_key-dedup, atomic).
+
+    Called by /qualibrate/open with ALL of the project's found roots —
+    including ones already registered in the workspace — so a root added in
+    an earlier session still scopes. A recorded root that later vanishes
+    from the workspace simply stops intersecting the present folder set.
+    """
+    if not project or not roots:
+        return
+    data = _load_project_roots()
+    cur = data.get(project, [])
+    have = {path_match.fs_key(r) for r in cur}
+    changed = False
+    for r in roots:
+        resolved = str(Path(r).resolve())
+        k = path_match.fs_key(resolved)
+        if k not in have:
+            cur.append(resolved)
+            have.add(k)
+            changed = True
+    if not changed:
+        return
+    data[project] = cur
+    try:
+        safe_io.atomic_write_json(_project_roots_file(), data)
+    except OSError as exc:
+        logger.warning("Could not save project dataset roots: %s", exc)
+
+
+def _strip_project_root(folder: str) -> None:
+    """Remove *folder* from EVERY project's recorded roots (workspace_remove:
+    an explicitly removed folder must not keep seeding project scopes)."""
+    if not folder:
+        return
+    data = _load_project_roots()
+    if not data:
+        return
+    k = path_match.fs_key(str(Path(folder).resolve()))
+    out: dict[str, list[str]] = {}
+    changed = False
+    for name, roots in data.items():
+        kept = [r for r in roots if path_match.fs_key(r) != k]
+        if len(kept) != len(roots):
+            changed = True
+        if kept:
+            out[name] = kept
+        else:
+            changed = True  # drop the now-empty project entry entirely
+    if not changed:
+        return
+    try:
+        safe_io.atomic_write_json(_project_roots_file(), out)
+    except OSError as exc:
+        logger.warning("Could not update project dataset roots: %s", exc)
+
+
+def _scope_folder_keys(scope_project: str | None,
+                       folders: list[dict[str, Any]]) -> list[str]:
+    """The ``folder_key``s among *folders* recorded for *scope_project*.
+
+    ``folders`` dicts carry ``key`` + ``full_path`` (the /datasets + /trends
+    shape). Empty when unscoped / nothing recorded / no intersection — every
+    caller treats [] as "behave exactly as today".
+    """
+    if not scope_project:
+        return []
+    recorded = _load_project_roots().get(scope_project) or []
+    if not recorded:
+        return []
+    rec_keys = {path_match.fs_key(r) for r in recorded}
+    return [f["key"] for f in folders
+            if path_match.fs_key(str(f.get("full_path") or "")) in rec_keys]
+
+
+# ----------------------------------------------------------------------
 # Last-session persistence (mirrors the workspace_roots pattern).
 # Stores the most recently activated quam_state path plus an LRU list of
 # the last N paths so the user can switch between active projects with
@@ -10193,6 +10721,17 @@ def _load_session() -> dict[str, Any]:
         data = json.loads(p.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             return {}
+        # Hand-editable JSON: a type-corrupt path entry (int, nested list, …)
+        # must degrade to absent — GET / and the before_request hook Path()
+        # these keys, and a TypeError there takes down every route.
+        if not isinstance(data.get("last_quam_state_path"), (str, type(None))):
+            data.pop("last_quam_state_path", None)
+        recents = data.get("recent_quam_state_paths")
+        if isinstance(recents, list):
+            data["recent_quam_state_paths"] = [r for r in recents
+                                               if isinstance(r, str)]
+        elif recents is not None:
+            data.pop("recent_quam_state_paths", None)
         return data
     except Exception:
         logging.getLogger(__name__).warning("Could not read last_session.json", exc_info=True)
@@ -10372,30 +10911,18 @@ def _ensure_workspace_loaded() -> None:
 
         if not _session_loaded:
             _session_loaded = True
+            # docs/63 decision 3: startup NEVER auto-activates the last chip —
+            # SM lands on the clean Projects page and the last chip/project
+            # are one-click "Resume"/"Continue" cards there instead. What
+            # remains of the old restore is the hygiene: prune a vanished
+            # last path from the session so recents and the landing never
+            # offer a dead folder. (A transient read error can't happen any
+            # more — nothing is read beyond the two existence stats.)
             data = _load_session()
             last = data.get("last_quam_state_path")
             if last:
                 last_path = Path(last)
-                if last_path.is_dir() and (last_path / "state.json").exists():
-                    try:
-                        _activate_quam(last)
-                        # Auto-restored a chip — promote its chip folder to
-                        # the workspace tree the same way an explicit /load would.
-                        _maybe_auto_add_workspace_root(last)
-                    except (safe_io.LiveFileError, OSError, ValueError):
-                        # Transient read failure (an external writer mid-save, a
-                        # lock, or a pair that didn't settle) — the folder +
-                        # state.json exist (pre-checked), so the chip is fine;
-                        # KEEP it in recents so a re-open retries. Dropping it
-                        # here would silently forget a chip qualibrate happened to
-                        # be writing at startup (audit C32).
-                        logger.warning("Auto-restore of %s hit a transient read "
-                                       "error; keeping it in recents", last,
-                                       exc_info=True)
-                    except Exception:
-                        logger.warning("Auto-restore failed for %s; dropping", last, exc_info=True)
-                        _drop_bad_path(last)
-                else:
+                if not (last_path.is_dir() and (last_path / "state.json").exists()):
                     _drop_bad_path(last)
 
         if not _rehydrated:
@@ -10953,9 +11480,19 @@ def _datasets_view(view_mode: str):
     # dataset-virtual.js).
     folder_sig = ",".join(sorted(f["key"] for f in folders))
 
+    # Project lens (docs/63): which of the present folders are recorded for
+    # the active context's project scope. Seeds the client's folder filter
+    # only — rows, uids and the folder_key contract are untouched, and the
+    # All chip always escapes. scope=None → [] → byte-identical behavior.
+    scope_project = (_active_ctx() or {}).get("qualibrate_project") or ""
+    scope_keys = _scope_folder_keys(scope_project, folders)
+
     return render_template(
         template,
         **_ctx(page=page),
+        scope_project=scope_project,
+        scope_keys=scope_keys,
+        scope_keys_json=json.dumps(scope_keys, separators=(",", ":")),
         view_mode=view_mode,
         collection_tags=collection_tags,
         digest=digest,
@@ -11492,24 +12029,122 @@ def dataset_prev_state_diff(uid):
 
 @bp.route("/dataset/<uid>/load-state", methods=["POST"])
 def dataset_load_state(uid):
-    """Activate the run's quam_state/ as the current QuamStore."""
+    """Bring a run's frozen quam_state INTO the open chip (r11 feedback).
+
+    With a project chip open, the user's intent is "pull this experiment's
+    state into MY chip" — so the snapshot is STAGED into the active context's
+    WORKING COPY (State History Mode-1 semantics: review, then Sync / Apply
+    pushes it live; the live files are never written here). The old behavior
+    — activating the run's archive as a separate read-only context, which
+    hijacked the active context (project scope lost, load-path box rewritten
+    to the experiment folder) — stays available as ``mode=archive`` and as
+    the fallback when nothing editable is loaded.
+
+    Gates (independent tokens, docs/41 doctrine): chip-identity mismatch →
+    ``force_chip=1``; pending working-copy edits → ``force=1``.
+    """
     resolved = _resolve_run(uid)
     state_path = None
+    run_id = None
     if resolved:
         ds, run_id, _ = resolved
         state_path = ds.get_quam_state_path(run_id)
     if not state_path:
         return render_template("_status.html",
                                message="No quam_state in this run", level="error")
+
+    ctx = _active_ctx()
+    can_stage = (ctx is not None and ctx.get("type") == "quam"
+                 and (ctx.get("origin") or "live") == "live"
+                 and request.values.get("mode") != "archive")
+    if not can_stage:
+        try:
+            # A dataset run's quam_state is a FROZEN archive — open it
+            # read-only so save/apply routes refuse to overwrite the record.
+            _activate_quam(state_path, origin="dataset_archive")
+        except Exception as e:  # noqa: BLE001
+            return render_template("_status.html",
+                                   message=f"Failed to load state: {e}",
+                                   level="error")
+        resp = make_response()
+        resp.headers["HX-Redirect"] = "/qubits"
+        return resp
+
+    # ---- stage into the ACTIVE chip's working copy ----
+    base_url = f"/dataset/{uid}/load-state"
+    chip_label = _chip_display_name(Path(ctx["path"]))
+
+    # Gate 1 — chip identity: the run's snapshot must fingerprint-align with
+    # the loaded chip; UNKNOWN (unreadable fingerprint) also confirms.
+    if request.values.get("force_chip") != "1":
+        from quam_state_manager.core import history as _hist
+        alignment = _hist.align(_hist.fingerprint_of(ctx["path"]),
+                                _hist.fingerprint_of(state_path))
+        if alignment != _hist.ALIGN_ALIGNED:
+            reason = ("could not be verified (unreadable fingerprint)"
+                      if alignment == _hist.ALIGN_UNKNOWN
+                      else "looks like a DIFFERENT chip")
+            url = (base_url + "?force_chip=1"
+                   + ("&force=1" if request.values.get("force") == "1" else ""))
+            return render_template(
+                "_sh_confirm.html",
+                message=(f"This run's quam_state {reason} vs the loaded chip "
+                         f"({chip_label}). Loading it replaces the working "
+                         "state wholesale."),
+                action_url=url,
+                action_label="Load into working state anyway",
+                confirm=("Replace the working state with a snapshot from a "
+                         "different/unverified chip?"),
+                target="#ds-load-state-result",
+            ), 409
+
+    # Gate 2 — pending edits (mirrors /state-history/<ts>/stage).
+    store = ctx["store"]
+    with store._lock:
+        has_pending = (bool(store.change_log) or bool(ctx.get("pending_reapply"))
+                       or bool(ctx.get("working_dirty")))
+    if has_pending and request.values.get("force") != "1":
+        url = (base_url + "?force=1"
+               + ("&force_chip=1" if request.values.get("force_chip") == "1" else ""))
+        return render_template(
+            "_sh_confirm.html",
+            message=("You have unsaved edits in the working state. Loading "
+                     "this run's snapshot will replace them."),
+            action_url=url,
+            action_label="Replace working state anyway",
+            confirm="Discard your unsaved edits and load this run's state?",
+            target="#ds-load-state-result",
+        ), 409
+
     try:
-        # A dataset run's quam_state is a FROZEN archive — open it read-only
-        # so save/apply routes refuse to overwrite the experiment's record.
-        _activate_quam(state_path, origin="dataset_archive")
-    except Exception as e:
+        state, wiring = safe_io.read_state_wiring(Path(state_path))
+    except (OSError, ValueError, safe_io.LiveFileError) as exc:
         return render_template("_status.html",
-                               message=f"Failed to load state: {e}", level="error")
-    resp = make_response()
-    resp.headers["HX-Redirect"] = "/qubits"
+                               message=f"Could not read the run's quam_state: {exc}",
+                               level="error"), 500
+    wc = ctx["working_copy"]
+    try:
+        with _active_wc_lock(ctx):
+            safe_io.write_state_wiring(wc.working_folder, state, wiring)
+            _rebuild_after_working_copy_replaced(ctx)
+            ctx["working_dirty"] = True   # working now differs from live
+    except (OSError, ValueError) as exc:
+        return render_template("_status.html",
+                               message=f"Loading run state failed: {exc}",
+                               level="error"), 500
+    _clear_reapply(ctx)
+    logger.info("dataset run %s staged into the working copy of %s",
+                uid, ctx["path"])
+    msg = render_template(
+        "_status.html",
+        message=(f"Run #{run_id}'s state is now the WORKING state of "
+                 f"{chip_label} — review it, then Sync / Apply to live from "
+                 "the top bar (the live chip is untouched until then)."),
+        level="success")
+    # detail-area message + OOB tray refresh; stateRestored closes stale
+    # inspector panes open on another menu (the working copy changed wholesale).
+    resp = make_response(msg + "\n" + _tray_oob())
+    resp.headers["HX-Trigger"] = "pulses-changed, stateRestored, diagnostics-changed"
     return resp
 
 
@@ -11686,10 +12321,25 @@ def trends():
         experiments.update(f["store"].experiment_types)
         qubits.update(f["store"].summary_stats.get("unique_qubits", []))
     folders = [{"key": f["key"], "label": f["label"], "full_path": f["path"]} for f in active]
+    # Project lens (docs/63): pre-select the scope's recorded roots — all of
+    # them only when they're provably the SAME chip (cross-chip trend merges
+    # are meaningless), else just the newest one. Unscoped → [] → the
+    # template falls back to today's first-folder default.
+    scope_project = (_active_ctx() or {}).get("qualibrate_project") or ""
+    trend_scope_keys = _scope_folder_keys(scope_project, folders)
+    if len(trend_scope_keys) > 1:
+        in_scope = set(trend_scope_keys)
+        scope_folders = [f for f in active if f["key"] in in_scope]
+        if _folders_same_chip(scope_folders) != "same":
+            newest = max(scope_folders,
+                         key=lambda f: max(f["store"].dates or [""]))
+            trend_scope_keys = [newest["key"]]
     return render_template(template, **_ctx(page="trends"),
                            experiments=sorted(experiments),
                            qubits=sorted(qubits),
                            folders=folders,
+                           scope_project=scope_project,
+                           trend_scope_keys=trend_scope_keys,
                            no_workspace=False)
 
 
@@ -12965,6 +13615,34 @@ def diagnostics_apply_fix():
     action = request.form.get("action", "")
     dot_path = request.form.get("dot_path", "").strip()
     pointer = request.form.get("pointer", "").strip()
+
+    if action == "set_value":
+        # r9: the frequency-consistency "Update f_01 → carrier" fix. Same
+        # doctrine as set_pointer below: never trust the render-time form —
+        # re-run the linter on the CURRENT store and require a live finding
+        # offering EXACTLY this fix (chip identity + current values).
+        value = request.form.get("value", "").strip()
+        from quam_state_manager.core.diagnostics import (
+            _frequency_consistency_findings,
+        )
+        if not any(
+            (fnd.fix or {}).get("action") == "set_value"
+            and (fnd.fix or {}).get("dot_path") == dot_path
+            and (fnd.fix or {}).get("value") == value
+            for fnd in _frequency_consistency_findings(modifier.store)
+        ):
+            return jsonify(ok=False, error=(
+                "This fix is no longer valid for the loaded chip — the value "
+                "or chip changed since Diagnostics was rendered. Reload the "
+                "page.")), 409
+        try:
+            from quam_state_manager.core import type_policy as _tp
+            modifier.set_value(dot_path, _tp.parse_value(value))
+            _invalidate_engine_cache()
+        except (KeyError, TypeError, ValueError, IndexError) as e:
+            return jsonify(ok=False, error=str(e)), 400
+        return jsonify(ok=True, tray_html=_tray_html())
+
     if action != "set_pointer":
         return jsonify(ok=False, error="unsupported fix action"), 400
     if not (dot_path.endswith(".downconverter_frequency")
@@ -14327,7 +15005,8 @@ def _autofit_start_real(inst, p, data, auditor):
 
     def snapshot(label):
         with app.app_context():
-            hm.check_and_snapshot(str(live_path), "manual", force=True)
+            hm.check_and_snapshot(str(live_path), "manual", force=True,
+                                   project=_scope_for(live_path, ctx))
 
     targets = list(p.targets)
     if not targets:

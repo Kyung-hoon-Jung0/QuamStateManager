@@ -90,6 +90,17 @@
                       {% if f.severity == 'warning' %}data-confirm="1" data-old="{{ f.detail }}"{% endif %}
                       title="Set this field to a JSON pointer: {{ f.fix.pointer }}"
                       onclick="applyDiagFix(this)">{{ f.fix.label or 'Convert to pointer' }}</button>
+              {% elif f.fix and f.fix.action == 'set_value' %}
+              {# r9: one-click value sync (Update f_01 → carrier). Always
+                 confirmed — it changes a calibration number. #}
+              <button type="button" class="btn-sm diag-fix"
+                      data-action="{{ f.fix.action }}"
+                      data-dot-path="{{ f.fix.dot_path }}"
+                      data-value="{{ f.fix.value }}"
+                      data-confirm="1"
+                      data-confirm-text="{{ f.fix.confirm }}"
+                      title="Set {{ f.fix.dot_path }} = {{ f.fix.value }} (lands in pending edits)"
+                      onclick="applyDiagFix(this)">{{ f.fix.label }}</button>
               {% endif %}
             </td>
             {% endif %}
