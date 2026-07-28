@@ -1892,6 +1892,35 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
 .landing-gs-body { margin-top: 0.4rem; }
 .landing-gs-body .welcome-glossary,
 .landing-gs-body .welcome-features { margin-top: 0.8rem; }
+/* Config-location picker (docs/63 §B) — the no-config landing's lead block
+   and the /qualibrate "Config location…" details share these. */
+.landing-locate {
+    text-align: left; max-width: 46rem; margin: 0.8rem auto 1.1rem;
+    padding: 0.7rem 0.9rem; border: 1px solid var(--pico-muted-border-color);
+    border-radius: 8px; background: var(--pico-card-background-color);
+}
+.landing-locate-lead { margin: 0 0 0.5rem; }
+.locate-form { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; margin: 0; }
+.locate-input {
+    flex: 1 1 22rem; min-width: 16rem; margin: 0;
+    font-family: var(--sm-mono, monospace); font-size: 0.85rem;
+    padding: 0.3rem 0.5rem; height: auto;
+}
+.locate-form .btn-sm { white-space: nowrap; }
+.locate-result { margin: 0.5rem 0 0; padding: 0.4rem 0.6rem; border-radius: 6px; font-size: 0.9rem; }
+.locate-result.locate-ok { border: 1px solid var(--sm-good-border, #2e7d3255); background: var(--sm-good-bg, #2e7d3211); }
+.locate-result.locate-warn { border: 1px solid var(--pico-muted-border-color); color: var(--pico-muted-color); }
+.locate-ok-mark { color: var(--sm-good, #2e7d32); font-weight: 700; margin-right: 0.2rem; }
+.locate-path { word-break: break-all; }
+.locate-use-form { display: inline-block; margin: 0 0 0 0.5rem; }
+.locate-src-chip {
+    font-size: 0.72rem; padding: 0.05rem 0.45rem; border-radius: 999px;
+    border: 1px solid var(--pico-muted-border-color); color: var(--pico-muted-color);
+    margin-left: 0.4rem; vertical-align: middle;
+}
+.qualibrate-locate-details { margin: 0.4rem 0 0; }
+.qualibrate-locate-details > summary { cursor: pointer; font-size: 0.9rem; }
+.qualibrate-locate-body { margin: 0.5rem 0 0.2rem; }
 .welcome h2 { margin-bottom: 0.5rem; }
 .welcome-lead { font-size: 1.02rem; color: var(--pico-color); margin: 0.2rem auto 0.4rem; max-width: 40rem; }
 .welcome-sub { color: var(--pico-muted-color); margin-bottom: 0.5rem; }

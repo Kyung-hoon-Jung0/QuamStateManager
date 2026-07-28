@@ -48,6 +48,33 @@ except ModuleNotFoundError:  # pragma: no cover - older interpreters
         _toml = None  # type: ignore
 
 
+# SM-side config-location override (docs/63 §B): chosen in the UI when the
+# default/env locations hold no config (e.g. qualibrate lives in a WSL distro
+# while SM runs native Windows). Set from instance/qualibrate_location.json at
+# app creation and by the /qualibrate/use-location route. Deliberately BELOW
+# both env vars: an environment variable is deployment-level intent (and the
+# test suite's isolation relies on it winning).
+_dir_override: Path | None = None
+
+
+def set_dir_override(value: str | Path | None) -> None:
+    """Install (or clear, with None) the UI-chosen config directory."""
+    global _dir_override
+    _dir_override = Path(value) if value else None
+
+
+def config_source() -> dict[str, Any]:
+    """Where the config dir comes from: ``{"dir": str, "source":
+    "env" | "override" | "default"}`` — surfaced in the UI so a user can see
+    WHY a given tree is (not) being read."""
+    if os.environ.get("QUALIBRATE_CONFIG_FILE") or os.environ.get(
+            "QUALIBRATE_CONFIG_DIR"):
+        return {"dir": str(_config_dir()), "source": "env"}
+    if _dir_override is not None:
+        return {"dir": str(_config_dir()), "source": "override"}
+    return {"dir": str(_config_dir()), "source": "default"}
+
+
 def _config_dir() -> Path:
     """The qualibrate config ROOT directory.
 
@@ -55,7 +82,8 @@ def _config_dir() -> Path:
     dir-OR-file (qualibrate_config/vars.py — a file value points at the
     config.toml itself). SM's historical ``QUALIBRATE_CONFIG_DIR`` stays as a
     legacy alias — before this fix a user who redirected qualibrate via its
-    official variable was invisible to SM (docs/55).
+    official variable was invisible to SM (docs/55). Below the env vars sits
+    the UI-chosen override (docs/63 §B), then the ``~/.qualibrate`` default.
     """
     official = os.environ.get("QUALIBRATE_CONFIG_FILE")
     if official:
@@ -65,6 +93,8 @@ def _config_dir() -> Path:
     override = os.environ.get("QUALIBRATE_CONFIG_DIR")
     if override:
         return Path(override)
+    if _dir_override is not None:
+        return _dir_override
     return Path.home() / ".qualibrate"
 
 
@@ -186,6 +216,9 @@ import time as _time
 _PROJECT_TEMPLATE = "${#/qualibrate/project}"
 _WIN_DRIVE_RE = _re.compile(r"^([A-Za-z]):[\\/]")
 _WSL_MNT_RE = _re.compile(r"^/mnt/([A-Za-z])(?:/|$)")
+# \\wsl.localhost\<distro> (or the older \\wsl$\<distro>), either slash kind.
+_WSL_UNC_RE = _re.compile(r"^[\\/]{2}(?:wsl\.localhost|wsl\$)[\\/]([^\\/]+)",
+                          _re.IGNORECASE)
 
 # Config schema generations this reader's semantics are pinned to (docs/55
 # version gate — writes elsewhere must degrade to read-only on mismatch).
@@ -201,17 +234,29 @@ def native_path(raw: Any) -> Path | None:
     or every existence badge lies. The INVERSE also holds (docs/63): a config
     written from WSL carries ``/mnt/d/…`` values, and SM on native Windows
     must map them to ``D:\\…`` or the project lens' reverse path-matching
-    false-negatives on every load. Native-dialect values pass through.
+    false-negatives on every load. When the config itself is read from a WSL
+    distro share (``\\\\wsl.localhost\\<distro>\\…``, docs/63 §B), POSIX
+    values OUTSIDE ``/mnt`` (``/home/u/…``) live on that distro's own
+    filesystem and map to the same share. Native-dialect values pass through.
     Empty string → None (the explicit-override empty state_path)."""
     if not isinstance(raw, str) or not raw.strip():
         return None
-    return _to_native(raw, os.name)
+    return _to_native(raw, os.name, wsl_root=_wsl_root_of(_config_dir()))
 
 
-def _to_native(raw: str, os_name: str) -> Path:
+def _wsl_root_of(path: Path | str) -> str | None:
+    """``\\\\wsl.localhost\\<distro>`` (verbatim prefix spelling) when *path*
+    is on a WSL distro share, else None. Pure string work — no I/O."""
+    m = _WSL_UNC_RE.match(str(path))
+    return m.group(0) if m else None
+
+
+def _to_native(raw: str, os_name: str, wsl_root: str | None = None) -> Path:
     """Dialect mapping with the host OS as an argument — pure and therefore
     testable for BOTH directions on any host (patching ``os.name`` breaks
-    pathlib's own class selection)."""
+    pathlib's own class selection). *wsl_root* (Windows host only) anchors
+    non-``/mnt`` POSIX values onto the distro share the config came from —
+    ``/mnt/<x>`` still prefers the direct drive (same bytes, faster I/O)."""
     m = _WIN_DRIVE_RE.match(raw)
     if m and os_name != "nt":
         drive = m.group(1).lower()
@@ -222,6 +267,9 @@ def _to_native(raw: str, os_name: str) -> Path:
         drive = m.group(1).upper()
         rest = raw[m.end():].replace("/", "\\")
         return Path(f"{drive}:\\{rest}")
+    if wsl_root and os_name == "nt" and raw.startswith("/"):
+        rest = raw.lstrip("/").replace("/", "\\")
+        return Path(wsl_root + "\\" + rest)
     return Path(raw)
 
 
@@ -325,6 +373,7 @@ def list_projects(cfg_dir: Path | None = None) -> dict[str, Any]:
 
     src = ("env:QUALIBRATE_CONFIG_FILE" if os.environ.get("QUALIBRATE_CONFIG_FILE")
            else "env:QUALIBRATE_CONFIG_DIR" if os.environ.get("QUALIBRATE_CONFIG_DIR")
+           else "sm-override" if _dir_override is not None
            else "default")
     q_ver = (root_cfg.get("qualibrate") or {}).get("version")
     m_ver = (root_cfg.get("quam") or {}).get("version")

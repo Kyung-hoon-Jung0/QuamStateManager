@@ -1,0 +1,37 @@
+{# Preview fragment for /qualibrate/locate, /qualibrate/locate-candidates and
+   the use-location rejection paths. Context: result (one classified dict or
+   None), suggestions (list of classified dicts), message (str or None). #}
+{% macro found_row(c, note=None) %}
+<div class="locate-result locate-ok">
+    <span class="locate-ok-mark">&#10003;</span>
+    <code class="locate-path">{{ c.path }}</code> &mdash;
+    {{ c.n_projects }} project{{ 's' if c.n_projects != 1 }}{% if c.active %},
+    active: <b>{{ c.active }}</b>{% endif %}
+    {% if c.versions_supported is sameas false %}
+    <span class="muted" title="config versions differ from the supported set — SM reads the tree read-only">(unsupported versions)</span>
+    {% endif %}
+    {% if note %}<span class="muted">{{ note }}</span>{% endif %}
+    <form hx-post="/qualibrate/use-location"
+          hx-target="#qualibrate-locate-result" hx-swap="innerHTML"
+          class="locate-use-form">
+        <input type="hidden" name="path" value="{{ c.path }}">
+        <button type="submit" class="btn-sm">Use this folder</button>
+    </form>
+</div>
+{% endmacro %}
+
+{% if message %}<p class="locate-result locate-warn">{{ message }}</p>{% endif %}
+{% if result %}
+    {% if result.has_config %}
+        {{ found_row(result) }}
+    {% elif result.exists %}
+        <p class="locate-result locate-warn">Folder exists but holds no
+            <code>config.toml</code>: <code class="locate-path">{{ result.path }}</code></p>
+    {% else %}
+        <p class="locate-result locate-warn">Not found:
+            <code class="locate-path">{{ result.path }}</code></p>
+    {% endif %}
+{% endif %}
+{% for s in suggestions %}
+    {{ found_row(s, note='(found by scan)' if not result else '(same path on a WSL distro share)') }}
+{% endfor %}

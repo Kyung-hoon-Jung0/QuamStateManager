@@ -219,3 +219,59 @@ mixed-dialect is the dev harness only — degrade is "no seed", never wrong
 data); project-roots entries for deleted projects are filtered naturally by
 the present-folder intersection (no GC pass); the trends scope hint shows on
 full cover too (honest there — trends' default is first-folder-only).
+
+## §B — Config-location picker + WSL bridge (2026-07-28, customer feedback)
+
+"No config found" is NOT the same as "not a qualibrate user": Windows and
+Linux keep `~/.qualibrate` in different homes, and the common split
+deployment — **qualibrate inside a WSL distro, SM native Windows** — puts the
+config somewhere SM's default never looks. The landing used to fall silently
+back to the standalone welcome; now the user can point SM at the folder.
+
+**Resolution ladder** (first hit wins): `QUALIBRATE_CONFIG_FILE` env →
+`QUALIBRATE_CONFIG_DIR` env (legacy alias) → **the UI-chosen override**
+(`qualibrate_config.set_dir_override`, persisted in
+`instance/qualibrate_location.json`, installed at `create_app`) →
+`~/.qualibrate`. Env stays above the choice deliberately: an environment
+variable is deployment-level intent, and the test suite's isolation relies
+on it winning; `/qualibrate/use-location` refuses (with an explanation) when
+an env var pins the location. `config_source()` / `list_projects()["source"]
+== "sm-override"` surface the provenance; the `/qualibrate` topstrip gains a
+"Config location…" details (change + reset-to-default).
+
+**Surfaces**: the no-config welcome leads with the locate block — path input
+(`~`, quoted copy-as-path, dir-or-`config.toml`, both slash dialects all
+accepted by `_normalize_config_input`) + **Check** (READ-ONLY probe:
+exists / has config.toml / N projects / active / version gate) + **Scan
+common locations** (this user's home; every WSL distro's `/home/*` via
+`\\wsl.localhost` from Windows; every `C:\Users\*` profile from WSL —
+network-share stats, so scan is user-clicked only, never on a render path).
+A `/home/…` path typed on Windows gets distro-anchored suggestions instead
+of a guess. "Use this folder" persists the memo (instance-side ONLY — the
+docs/55 doctrine is untouched, pinned by
+`test_locate_never_touches_the_tree`) and `HX-Refresh`es; every cache keys
+on the cfg dir, so the whole app flips atomically.
+
+**WSL value bridge**: when the config itself is read from a distro share,
+POSIX values OUTSIDE `/mnt` (`/home/u/chip`) live on that distro's own
+filesystem — `native_path` now anchors them onto the same share
+(`\\wsl.localhost\<distro>\home\u\chip`); `/mnt/<x>/…` still prefers the
+direct drive (same bytes, faster I/O). Pure string work via
+`_wsl_root_of(_config_dir())`; POSIX hosts ignore the root.
+
+**safe_io P9 fallback** (found by this review — pre-existing, promoted to
+mainstream by the picker): WSL's P9 file server does not implement
+`ReplaceFileW` (WinError 50 `ERROR_NOT_SUPPORTED`, probed empirically), so
+every apply-to-live/save onto a `\\wsl.localhost` live folder died with
+`LiveFileError`. `_replace_into_place` now falls back to `os.replace` on
+WinError 50/1 — the open-target `ACCESS_DENIED` weakness that fallback
+re-introduces is exactly what the retry loop already absorbs, and Win32
+share locks never mapped onto a Linux-side writer anyway. Verified
+end-to-end on a real WSL-homed chip: adopt config → cards → open (~230 ms)
+→ edit → save → apply-to-live over P9 (~60 ms, live bytes confirmed);
+renders with a UNC config run ~10 ms warm (the tray's per-render existence
+stat costs ~8 ms over P9 — accepted).
+
+Tests: `tests/test_qualibrate_location.py` (precedence, bridge forms, P9
+fallback, locate/use routes, landing block, restart persistence, read-only
+pin).

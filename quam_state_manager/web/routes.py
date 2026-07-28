@@ -1982,6 +1982,9 @@ def home():
     return render_template("base.html", **_ctx(
         page="home",
         landing_config_exists=config_exists,
+        # for the no-config welcome's locate block (docs/63 §B): WHERE we
+        # looked and WHY (env/override/default) — cheap, no I/O.
+        qualibrate_source=qualibrate_config.config_source(),
         last_project=session.get("last_project"),
         resume_path=resume_path,
         resume_name=_chip_display_name(Path(resume_path)) if resume_path else "",
@@ -2312,11 +2315,186 @@ def qualibrate_page():
         page="qualibrate",
         listing=listing,
         raw_tomls=raws,
+        qualibrate_source=qualibrate_config.config_source(),
         supported_versions={
             "qualibrate": qualibrate_config.SUPPORTED_QUALIBRATE_VERSION,
             "quam": qualibrate_config.SUPPORTED_QUAM_VERSION,
         },
     ))
+
+
+# ---- config-location picker (docs/63 §B) -----------------------------------
+# Windows and Linux keep ~/.qualibrate in different homes, and the common
+# split deployment (qualibrate inside a WSL distro, SM native Windows) puts it
+# somewhere SM's default never looks. These routes let the user point SM at
+# the folder — the CHOICE persists in instance/qualibrate_location.json; the
+# chosen tree itself is never written (docs/55 doctrine unchanged).
+
+
+def _qualibrate_location_file() -> Path:
+    return Path(current_app.instance_path) / "qualibrate_location.json"
+
+
+def _normalize_config_input(text: str) -> Path:
+    """User-typed config location → a Path in THIS host's dialect.
+
+    Accepts a directory or a direct ``config.toml`` path (the env var's
+    dir-or-file semantics), ``~``, both slash kinds, Explorer's quoted
+    copy-as-path form, and cross-dialect spellings (``/mnt/d/…`` on Windows,
+    ``D:\\…`` under WSL). Pure — existence is the caller's question."""
+    raw = (text or "").strip().strip('"').strip("'")
+    p = Path(raw).expanduser()
+    if p.suffix == ".toml":
+        p = p.parent
+    # no wsl_root here: a bare /home/… typed on Windows stays as-is and the
+    # locate route offers distro-anchored suggestions instead of guessing.
+    return qualibrate_config._to_native(str(p), os.name)
+
+
+def _classify_config_location(p: Path) -> dict:
+    """READ-ONLY probe of a candidate config dir. Never raises."""
+    out = {"path": str(p), "exists": False, "has_config": False,
+           "n_projects": 0, "active": None, "versions_supported": None}
+    try:
+        if not p.is_dir():
+            return out
+        out["exists"] = True
+        if not (p / "config.toml").is_file():
+            return out
+        out["has_config"] = True
+        listing = qualibrate_config.list_projects(p)
+        out["n_projects"] = len(listing.get("projects") or [])
+        out["active"] = listing.get("active")
+        out["versions_supported"] = bool(
+            (listing.get("versions") or {}).get("supported", False))
+    except Exception:  # noqa: BLE001 — adversarial user input must not 500
+        logger.debug("config-location probe failed for %s", p, exc_info=True)
+    return out
+
+
+def _wsl_distros() -> list[str]:
+    """Registered WSL distros visible via the ``\\\\wsl.localhost`` share.
+    Windows-only; [] on any problem. Stats a network share — call only from
+    user-initiated actions (Check / Scan), never on a render path."""
+    if os.name != "nt":
+        return []
+    try:
+        return sorted(d.name for d in Path(r"\\wsl.localhost").iterdir()
+                      if d.is_dir())
+    except OSError:
+        return []
+
+
+@bp.route("/qualibrate/locate", methods=["POST"])
+def qualibrate_locate():
+    """Validate a user-supplied config location (READ-ONLY) and render the
+    preview fragment. Persistence happens only on 'Use this folder'."""
+    text = request.form.get("path") or ""
+    if not text.strip():
+        return render_template("_qualibrate_locate_result.html", result=None,
+                               suggestions=[],
+                               message="Type a folder path first.")
+    p = _normalize_config_input(text)
+    res = _classify_config_location(p)
+    suggestions = []
+    if not res["has_config"] and os.name == "nt" and str(p).startswith("/"):
+        # A WSL-internal path typed on Windows (e.g. /home/u/.qualibrate) —
+        # anchor it on each distro share and offer the ones that resolve.
+        for d in _wsl_distros():
+            cand = Path("\\\\wsl.localhost\\" + d
+                        + str(p).replace("/", "\\"))
+            c = _classify_config_location(cand)
+            if c["has_config"]:
+                suggestions.append(c)
+    return render_template("_qualibrate_locate_result.html", result=res,
+                           suggestions=suggestions, message=None)
+
+
+@bp.route("/qualibrate/locate-candidates")
+def qualibrate_locate_candidates():
+    """Scan the well-known locations for config trees (user-clicked — may
+    stat WSL/drvfs shares). Candidates: this user's home, every WSL distro's
+    /home/<user> (from Windows), every C:\\Users profile (from WSL)."""
+    cands: list[dict] = []
+    seen: set[str] = set()
+
+    def add(p: Path) -> None:
+        k = str(p).lower()
+        if k in seen:
+            return
+        seen.add(k)
+        c = _classify_config_location(p)
+        if c["has_config"]:
+            cands.append(c)
+
+    add(Path.home() / ".qualibrate")
+    if os.name == "nt":
+        for d in _wsl_distros():
+            try:
+                for u in (Path("\\\\wsl.localhost") / d / "home").iterdir():
+                    add(u / ".qualibrate")
+            except OSError:
+                continue
+        try:
+            for u in (Path(Path.home().drive + "\\") / "Users").iterdir():
+                add(u / ".qualibrate")
+        except OSError:
+            pass
+    else:
+        try:
+            for u in Path("/mnt/c/Users").iterdir():
+                add(u / ".qualibrate")
+        except OSError:
+            pass
+    return render_template(
+        "_qualibrate_locate_result.html", result=None, suggestions=cands,
+        message=None if cands else ("No config.toml found in the common "
+                                    "locations — type the folder path "
+                                    "manually."))
+
+
+@bp.route("/qualibrate/use-location", methods=["POST"])
+def qualibrate_use_location():
+    """Adopt a config directory: persist the choice (instance memo only —
+    the chosen tree is never written) + install the process-wide override."""
+    src = qualibrate_config.config_source()
+    if src["source"] == "env":
+        return render_template(
+            "_qualibrate_locate_result.html", result=None, suggestions=[],
+            message=("An environment variable (QUALIBRATE_CONFIG_FILE / "
+                     "QUALIBRATE_CONFIG_DIR) pins the config location for "
+                     "this process and outranks a chosen folder — unset it "
+                     "and restart SM, or point it at the right place."))
+    p = _normalize_config_input(request.form.get("path") or "")
+    res = _classify_config_location(p)
+    if not res["has_config"]:
+        return render_template("_qualibrate_locate_result.html", result=res,
+                               suggestions=[], message=None)
+    safe_io.atomic_write_json(_qualibrate_location_file(),
+                              {"config_dir": str(p)})
+    qualibrate_config.set_dir_override(str(p))
+    logger.info("qualibrate config location chosen: %s", p)
+    if _is_htmx():
+        resp = make_response()
+        resp.headers["HX-Refresh"] = "true"   # every cache keys on cfg_dir
+        return resp
+    return redirect(url_for("main.home"))
+
+
+@bp.route("/qualibrate/use-default-location", methods=["POST"])
+def qualibrate_use_default_location():
+    """Drop the chosen location — back to env/default resolution."""
+    try:
+        _qualibrate_location_file().unlink(missing_ok=True)
+    except OSError:
+        logger.warning("could not remove qualibrate_location.json",
+                       exc_info=True)
+    qualibrate_config.set_dir_override(None)
+    if _is_htmx():
+        resp = make_response()
+        resp.headers["HX-Refresh"] = "true"
+        return resp
+    return redirect(url_for("main.home"))
 
 
 @bp.route("/qualibrate/open", methods=["POST"])

@@ -309,7 +309,20 @@ def _replace_into_place(tmp: Path, dst: Path) -> None:
     for attempt in range(_WRITE_ATTEMPTS):
         try:
             if _IS_WINDOWS and dst.exists():
-                _replace_file_windows(tmp, dst)
+                try:
+                    _replace_file_windows(tmp, dst)
+                except OSError as exc:
+                    # ReplaceFileW needs filesystem support the WSL P9 server
+                    # (\\wsl.localhost shares) doesn't provide — WinError 50
+                    # ERROR_NOT_SUPPORTED (probed 2026-07-28; some network
+                    # filesystems raise 1 ERROR_INVALID_FUNCTION). os.replace
+                    # works there, and the open-target ACCESS_DENIED weakness
+                    # it re-introduces is exactly what this retry loop already
+                    # absorbs — Win32 share locks don't map onto a Linux-side
+                    # writer anyway.
+                    if getattr(exc, "winerror", None) not in (1, 50):
+                        raise
+                    os.replace(str(tmp), str(dst))
             else:
                 os.replace(str(tmp), str(dst))
                 _fsync_dir(dst.parent)

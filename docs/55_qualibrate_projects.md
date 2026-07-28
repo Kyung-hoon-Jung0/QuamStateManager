@@ -144,6 +144,17 @@ inside the manager with its own confirm flow.
 - **Env-var fix (verified live bug)**: honor QUAlibrate's real variables —
   `QUALIBRATE_CONFIG_FILE` (dir-**or**-file) and `QUAM_STATE_PATH` — before
   SM's legacy `QUALIBRATE_CONFIG_DIR`/`QUALIBRATE_STATE_PATH` aliases.
+
+> **Amended by docs/63 §B (2026-07-28):** the config-DIR resolution gained a
+> third tier — env vars → **UI-chosen override** (persisted in
+> `instance/qualibrate_location.json`; the no-config landing and the
+> `/qualibrate` "Config location…" details set it) → `~/.qualibrate`
+> default. Provenance surfaces as `list_projects()["source"] ==
+> "sm-override"`. The No-Conflict Doctrine is UNCHANGED: the choice is an
+> SM-side instance memo; the chosen tree itself is never written (pinned by
+> `test_locate_never_touches_the_tree`). `native_path` additionally bridges
+> non-`/mnt` POSIX values onto the `\\wsl.localhost\<distro>` share the
+> config was read from.
 - `list_projects() -> [ProjectInfo]`, `active_project()`,
   `effective_config(name)` — merge fidelity per qualibrate_config 0.1.12:
   deep-merge overlay over root (`recursive_update_dict` semantics), 0-byte
