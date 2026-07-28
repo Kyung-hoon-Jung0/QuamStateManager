@@ -1852,14 +1852,17 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
 .landing-lead { margin: 0 0 0.8rem; }
 .landing-open-err { margin: 0.3rem 0; }
 .landing-open-err p { margin: 0.2rem 0; color: var(--color-error-text); }
+/* r8 feedback: cards were stretching to fill wide columns, leaving dead
+   space to the right of each card's content — narrower minimum tracks pack
+   more columns per row so a card is only as wide as it needs. */
 .landing-card-grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
-    gap: 0.7rem; margin: 0.5rem 0 1rem;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(185px, 1fr));
+    gap: 0.55rem; margin: 0.5rem 0 1rem;
 }
 .landing-card {
     border: 1px solid var(--pico-muted-border-color); border-radius: 8px;
-    padding: 0.6rem 0.8rem; background: var(--pico-card-background-color);
-    display: flex; flex-direction: column; gap: 0.35rem;
+    padding: 0.5rem 0.65rem; background: var(--pico-card-background-color);
+    display: flex; flex-direction: column; gap: 0.25rem;
 }
 .landing-card-active { border-color: var(--pico-primary); }
 .landing-card-last { box-shadow: 0 0 0 2px color-mix(in srgb, var(--pico-primary) 35%, transparent); }
@@ -1933,7 +1936,7 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
     font-family: var(--sm-mono, monospace); font-size: 0.85rem;
     padding: 0.3rem 0.5rem; height: auto;
 }
-.locate-form .btn-sm { white-space: nowrap; }
+.locate-form .btn-sm { white-space: nowrap; margin: 0; }
 .locate-result { margin: 0.5rem 0 0; padding: 0.4rem 0.6rem; border-radius: 6px; font-size: 0.9rem; }
 .locate-result.locate-ok { border: 1px solid var(--sm-good-border, #2e7d3255); background: var(--sm-good-bg, #2e7d3211); }
 .locate-result.locate-warn { border: 1px solid var(--pico-muted-border-color); color: var(--pico-muted-color); }
@@ -9167,19 +9170,20 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .qualibrate-toml { max-height: 22rem; overflow: auto; font-size: .78em;
                    padding: .5rem; white-space: pre; }
 .qualibrate-open-form { margin: 0; }
-/* r8 feedback: each row is a <form> — Pico's default form margin-bottom
-   (~1rem) made the project list read triple-spaced; zero it and keep the
-   rows compact so a long list stays scannable. */
+/* r8 feedback: compact rows. The ~1rem gaps came from PICO'S DEFAULTS on
+   the row elements themselves — every <button> (the row IS one) and <form>
+   carries margin-bottom: var(--pico-spacing); zero BOTH, then compact the
+   padding, so a long project list reads as a tight menu. */
 .qualibrate-open-form { margin: 0; }
 .sidebar-nav .nav-subitems li:has(> .qualibrate-open-form) { margin-bottom: 0; }
 .qualibrate-project-row { display: flex; gap: .35rem; align-items: baseline;
-    width: 100%; background: none; border: none; padding: .08rem .3rem;
-    line-height: 1.3; cursor: pointer; font: inherit; color: inherit;
-    text-align: left; }
+    width: 100%; background: none; border: none; margin: 0;
+    padding: .07rem .3rem; line-height: 1.25; cursor: pointer; font: inherit;
+    color: inherit; text-align: left; }
 .qualibrate-subnav-more-li { margin-bottom: 0; }
 .qualibrate-subnav-more-btn {
-    background: none; border: none; cursor: pointer; width: 100%;
-    text-align: left; font: inherit; font-size: .8em; padding: .08rem .3rem;
+    background: none; border: none; cursor: pointer; width: 100%; margin: 0;
+    text-align: left; font: inherit; font-size: .8em; padding: .07rem .3rem;
     color: var(--pico-muted-color); }
 .qualibrate-subnav-more-btn:hover { color: var(--pico-primary); }
 .qualibrate-project-row:hover { background: var(--pico-secondary-background, rgba(128,128,128,.12)); }
