@@ -12029,24 +12029,122 @@ def dataset_prev_state_diff(uid):
 
 @bp.route("/dataset/<uid>/load-state", methods=["POST"])
 def dataset_load_state(uid):
-    """Activate the run's quam_state/ as the current QuamStore."""
+    """Bring a run's frozen quam_state INTO the open chip (r11 feedback).
+
+    With a project chip open, the user's intent is "pull this experiment's
+    state into MY chip" — so the snapshot is STAGED into the active context's
+    WORKING COPY (State History Mode-1 semantics: review, then Sync / Apply
+    pushes it live; the live files are never written here). The old behavior
+    — activating the run's archive as a separate read-only context, which
+    hijacked the active context (project scope lost, load-path box rewritten
+    to the experiment folder) — stays available as ``mode=archive`` and as
+    the fallback when nothing editable is loaded.
+
+    Gates (independent tokens, docs/41 doctrine): chip-identity mismatch →
+    ``force_chip=1``; pending working-copy edits → ``force=1``.
+    """
     resolved = _resolve_run(uid)
     state_path = None
+    run_id = None
     if resolved:
         ds, run_id, _ = resolved
         state_path = ds.get_quam_state_path(run_id)
     if not state_path:
         return render_template("_status.html",
                                message="No quam_state in this run", level="error")
+
+    ctx = _active_ctx()
+    can_stage = (ctx is not None and ctx.get("type") == "quam"
+                 and (ctx.get("origin") or "live") == "live"
+                 and request.values.get("mode") != "archive")
+    if not can_stage:
+        try:
+            # A dataset run's quam_state is a FROZEN archive — open it
+            # read-only so save/apply routes refuse to overwrite the record.
+            _activate_quam(state_path, origin="dataset_archive")
+        except Exception as e:  # noqa: BLE001
+            return render_template("_status.html",
+                                   message=f"Failed to load state: {e}",
+                                   level="error")
+        resp = make_response()
+        resp.headers["HX-Redirect"] = "/qubits"
+        return resp
+
+    # ---- stage into the ACTIVE chip's working copy ----
+    base_url = f"/dataset/{uid}/load-state"
+    chip_label = _chip_display_name(Path(ctx["path"]))
+
+    # Gate 1 — chip identity: the run's snapshot must fingerprint-align with
+    # the loaded chip; UNKNOWN (unreadable fingerprint) also confirms.
+    if request.values.get("force_chip") != "1":
+        from quam_state_manager.core import history as _hist
+        alignment = _hist.align(_hist.fingerprint_of(ctx["path"]),
+                                _hist.fingerprint_of(state_path))
+        if alignment != _hist.ALIGN_ALIGNED:
+            reason = ("could not be verified (unreadable fingerprint)"
+                      if alignment == _hist.ALIGN_UNKNOWN
+                      else "looks like a DIFFERENT chip")
+            url = (base_url + "?force_chip=1"
+                   + ("&force=1" if request.values.get("force") == "1" else ""))
+            return render_template(
+                "_sh_confirm.html",
+                message=(f"This run's quam_state {reason} vs the loaded chip "
+                         f"({chip_label}). Loading it replaces the working "
+                         "state wholesale."),
+                action_url=url,
+                action_label="Load into working state anyway",
+                confirm=("Replace the working state with a snapshot from a "
+                         "different/unverified chip?"),
+                target="#ds-load-state-result",
+            ), 409
+
+    # Gate 2 — pending edits (mirrors /state-history/<ts>/stage).
+    store = ctx["store"]
+    with store._lock:
+        has_pending = (bool(store.change_log) or bool(ctx.get("pending_reapply"))
+                       or bool(ctx.get("working_dirty")))
+    if has_pending and request.values.get("force") != "1":
+        url = (base_url + "?force=1"
+               + ("&force_chip=1" if request.values.get("force_chip") == "1" else ""))
+        return render_template(
+            "_sh_confirm.html",
+            message=("You have unsaved edits in the working state. Loading "
+                     "this run's snapshot will replace them."),
+            action_url=url,
+            action_label="Replace working state anyway",
+            confirm="Discard your unsaved edits and load this run's state?",
+            target="#ds-load-state-result",
+        ), 409
+
     try:
-        # A dataset run's quam_state is a FROZEN archive — open it read-only
-        # so save/apply routes refuse to overwrite the experiment's record.
-        _activate_quam(state_path, origin="dataset_archive")
-    except Exception as e:
+        state, wiring = safe_io.read_state_wiring(Path(state_path))
+    except (OSError, ValueError, safe_io.LiveFileError) as exc:
         return render_template("_status.html",
-                               message=f"Failed to load state: {e}", level="error")
-    resp = make_response()
-    resp.headers["HX-Redirect"] = "/qubits"
+                               message=f"Could not read the run's quam_state: {exc}",
+                               level="error"), 500
+    wc = ctx["working_copy"]
+    try:
+        with _active_wc_lock(ctx):
+            safe_io.write_state_wiring(wc.working_folder, state, wiring)
+            _rebuild_after_working_copy_replaced(ctx)
+            ctx["working_dirty"] = True   # working now differs from live
+    except (OSError, ValueError) as exc:
+        return render_template("_status.html",
+                               message=f"Loading run state failed: {exc}",
+                               level="error"), 500
+    _clear_reapply(ctx)
+    logger.info("dataset run %s staged into the working copy of %s",
+                uid, ctx["path"])
+    msg = render_template(
+        "_status.html",
+        message=(f"Run #{run_id}'s state is now the WORKING state of "
+                 f"{chip_label} — review it, then Sync / Apply to live from "
+                 "the top bar (the live chip is untouched until then)."),
+        level="success")
+    # detail-area message + OOB tray refresh; stateRestored closes stale
+    # inspector panes open on another menu (the working copy changed wholesale).
+    resp = make_response(msg + "\n" + _tray_oob())
+    resp.headers["HX-Trigger"] = "pulses-changed, stateRestored, diagnostics-changed"
     return resp
 
 

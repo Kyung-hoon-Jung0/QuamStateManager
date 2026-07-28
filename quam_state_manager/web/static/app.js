@@ -342,6 +342,12 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
         evt.detail.shouldSwap = true;
         evt.detail.isError = false;
     }
+    // Dataset "Load State" gates (r11): chip-mismatch / pending-edits answer
+    // 409 with a confirm fragment — same pattern as state-history-detail.
+    if (t.id === 'ds-load-state-result' && status === 409) {
+        evt.detail.shouldSwap = true;
+        evt.detail.isError = false;
+    }
 });
 
 /* Surface a toast on ANY htmx error response. htmx 2.x drops error-response
