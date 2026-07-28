@@ -1282,6 +1282,25 @@ window.toggleChipStatusSub = function(btn) {
     window.toggleNavSub(btn, 'chip-status-subnav', 'quam_chipstatus_nav_collapsed');
 };
 
+/** Projects subnav cap (r8 feedback): only the first few projects render
+ *  visible; this expands/collapses the rest. Preference persists in
+ *  localStorage and is re-applied by the fragment's inline restore script
+ *  on every lazy re-load. */
+window.qualibrateSubnavToggleAll = function(btn) {
+    var ul = btn.closest('ul');
+    if (!ul) return;
+    var expand = btn.getAttribute('data-expanded') !== '1';
+    ul.querySelectorAll('[data-subnav-extra]').forEach(function(li) {
+        li.hidden = !expand;
+    });
+    btn.setAttribute('data-expanded', expand ? '1' : '0');
+    btn.textContent = expand ? '… show fewer'
+                             : (btn.getAttribute('data-label-all') || '… show all');
+    try {
+        localStorage.setItem('quam_projects_subnav_all', expand ? '1' : '0');
+    } catch (e) { /* private mode */ }
+};
+
 // Restore each sub-list's collapsed state on load. Chip Status defaults
 // expanded, the Config group defaults collapsed (the server also renders it
 // collapsed, so JS only ever *removes* the class — no flash). A sub-list

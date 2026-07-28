@@ -2279,9 +2279,17 @@ def qualibrate_subnav():
     the base-page render free of the 16 TOML reads. Passes the ctx's project
     scope explicitly (this fragment renders outside _ctx()) so a scope whose
     project vanished from qualibrate gets an honest hint row."""
+    listing = _qualibrate_listing()
+    scope = (_active_ctx() or {}).get("qualibrate_project")
+    # r8 feedback: the template caps the visible rows, so order the list
+    # relevance-first — the qualibrate-active project and the loaded SM scope
+    # must sit in the always-visible head, the rest stays alphabetical.
+    listing["projects"] = sorted(
+        listing["projects"],
+        key=lambda p: (not p["active"], p["name"] != scope,
+                       p["name"].lower()))
     return render_template("_qualibrate_subnav.html",
-                           listing=_qualibrate_listing(),
-                           project_scope=(_active_ctx() or {}).get("qualibrate_project"))
+                           listing=listing, project_scope=scope)
 
 
 @bp.route("/qualibrate")
@@ -2321,6 +2329,38 @@ def qualibrate_page():
             "quam": qualibrate_config.SUPPORTED_QUAM_VERSION,
         },
     ))
+
+
+@bp.route("/qualibrate/project-config/<name>")
+def qualibrate_project_config(name: str):
+    """Per-project config popup (r8 feedback): paths + port settings straight
+    from the landing card. Effective merge + both raw TOMLs. READ-ONLY."""
+    from quam_state_manager.core import qualibrate_config
+
+    listing = _qualibrate_listing()
+    proj = next((p for p in listing["projects"] if p["name"] == name), None)
+    if proj is None:
+        return render_template("_status.html",
+                               message=f"Unknown qualibrate project: {name!r}",
+                               level="error"), 404
+    cfg_dir = Path(listing["config_dir"])
+    eff = qualibrate_config.effective_config(name, cfg_dir=cfg_dir)
+    raws: dict[str, str] = {}
+    try:
+        raws["overlay"] = (cfg_dir / "projects" / name / "config.toml").read_text(
+            encoding="utf-8", errors="replace") \
+            or "(empty overlay — inherits everything)"
+    except OSError:
+        raws["overlay"] = "(unreadable)"
+    try:
+        raws["root"] = (cfg_dir / "config.toml").read_text(
+            encoding="utf-8", errors="replace")
+    except OSError:
+        raws["root"] = "(unreadable)"
+    return render_template(
+        "_qualibrate_project_config.html", p=proj,
+        eff_json=json.dumps(eff, indent=2, ensure_ascii=False),
+        raws=raws, cfg_dir=str(cfg_dir))
 
 
 # ---- config-location picker (docs/63 §B) -----------------------------------

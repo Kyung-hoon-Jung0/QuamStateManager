@@ -240,6 +240,26 @@ class TestSidebarReorg:
         base = self._src("quam_state_manager/web/templates/base.html")
         assert '{"label": "Projects",          "url": "/qualibrate"}' in base
 
+    def test_subnav_caps_at_three_with_show_all(self, scoped):
+        """r8 feedback: with many projects the expanded subnav buried the
+        rest of the sidebar — only 3 rows render visible; the rest hide
+        behind a '… show all (N)' toggle."""
+        body = scoped["client"].get("/qualibrate/subnav").get_data(as_text=True)
+        assert body.count("data-subnav-extra") == 1     # 4 projects → 1 hidden
+        assert "show all (4)" in body
+        assert "qualibrateSubnavToggleAll" in body
+
+    def test_subnav_orders_active_then_scope_first(self, scoped):
+        """The cap only works if the useful rows sit in the visible head:
+        qualibrate-active first, then the loaded SM scope, then the rest."""
+        import re
+        c = scoped["client"]
+        c.post("/qualibrate/open", data={"project": "gamma"})
+        body = c.get("/qualibrate/subnav").get_data(as_text=True)
+        names = re.findall(r'qualibrate-project-name">([^<]+)<', body)
+        assert names[0] == "alpha"       # qualibrate-active
+        assert names[1] == "gamma"       # explicit SM scope
+
     def test_deleted_scope_hint_renders(self, scoped):
         c = scoped["client"]
         c.post("/qualibrate/open", data={"project": "beta"})

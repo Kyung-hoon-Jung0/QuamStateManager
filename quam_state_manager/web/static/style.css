@@ -1871,6 +1871,33 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
 .landing-card-doctor { color: var(--color-warning-text); }
 .landing-card-open { margin: 0; }
 .landing-card-open .btn-sm { width: auto; margin: 0; }
+.landing-card-actions { display: flex; gap: 0.4rem; align-items: center; }
+.landing-card-actions .btn-sm { width: auto; margin: 0; }
+/* r8 feedback: per-project config popup (paths + ports, read-only). */
+.landing-config-dialog {
+    max-width: 46rem; width: min(92vw, 46rem); padding: 1rem 1.1rem;
+    border: 1px solid var(--pico-muted-border-color); border-radius: 10px;
+    background: var(--pico-background-color); color: var(--pico-color);
+}
+.landing-config-dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+.proj-config-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.6rem; }
+.proj-config-title { font-size: 1.05rem; }
+.proj-config-sub { margin: 0.15rem 0 0.5rem; font-size: 0.85rem; }
+.proj-config-close {
+    background: none; border: none; cursor: pointer; font-size: 1.3rem;
+    line-height: 1; padding: 0 0.2rem; color: var(--pico-muted-color);
+}
+.proj-config-close:hover { color: var(--pico-color); }
+.proj-config-facts { margin: 0 0 0.5rem; font-size: 0.85rem; border-collapse: collapse; }
+.proj-config-facts th { text-align: left; white-space: nowrap; padding: 0.1rem 0.7rem 0.1rem 0; color: var(--pico-muted-color); font-weight: 500; }
+.proj-config-facts td { padding: 0.1rem 0; }
+.proj-config-sec { margin-top: 0.55rem; }
+.proj-config-sec > summary { cursor: pointer; font-size: 0.9rem; }
+.proj-config-pre {
+    max-height: 38vh; overflow: auto; margin: 0.3rem 0 0; padding: 0.5rem 0.6rem;
+    font-size: 0.78rem; border-radius: 6px; white-space: pre;
+    background: var(--pico-code-background-color, rgba(128, 128, 128, 0.08));
+}
 .landing-resume { display: flex; align-items: center; gap: 0.5rem; margin: 0.6rem 0; }
 .landing-resume-form { margin: 0; }
 .landing-resume-btn { width: auto; margin: 0; }
@@ -9140,9 +9167,21 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .qualibrate-toml { max-height: 22rem; overflow: auto; font-size: .78em;
                    padding: .5rem; white-space: pre; }
 .qualibrate-open-form { margin: 0; }
+/* r8 feedback: each row is a <form> — Pico's default form margin-bottom
+   (~1rem) made the project list read triple-spaced; zero it and keep the
+   rows compact so a long list stays scannable. */
+.qualibrate-open-form { margin: 0; }
+.sidebar-nav .nav-subitems li:has(> .qualibrate-open-form) { margin-bottom: 0; }
 .qualibrate-project-row { display: flex; gap: .35rem; align-items: baseline;
-    width: 100%; background: none; border: none; padding: .12rem .3rem;
-    cursor: pointer; font: inherit; color: inherit; text-align: left; }
+    width: 100%; background: none; border: none; padding: .08rem .3rem;
+    line-height: 1.3; cursor: pointer; font: inherit; color: inherit;
+    text-align: left; }
+.qualibrate-subnav-more-li { margin-bottom: 0; }
+.qualibrate-subnav-more-btn {
+    background: none; border: none; cursor: pointer; width: 100%;
+    text-align: left; font: inherit; font-size: .8em; padding: .08rem .3rem;
+    color: var(--pico-muted-color); }
+.qualibrate-subnav-more-btn:hover { color: var(--pico-primary); }
 .qualibrate-project-row:hover { background: var(--pico-secondary-background, rgba(128,128,128,.12)); }
 .qualibrate-project-active .qualibrate-project-name { font-weight: 600; }
 .qualibrate-project-dot { font-size: .7em; }

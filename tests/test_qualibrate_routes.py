@@ -170,6 +170,7 @@ class TestReadOnlyGuarantee:
         c.get("/api/qualibrate/projects")
         c.get("/qualibrate")
         c.get("/qualibrate/subnav")
+        c.get("/qualibrate/project-config/beta")   # r8 popup — read-only
         c.post("/qualibrate/open", data={"project": "nope"})
         c.post("/qualibrate/open", data={"project": "alpha"})
         c.post("/qualibrate/open", data={"project": "beta"})
@@ -185,6 +186,30 @@ class TestReadOnlyGuarantee:
         c.get("/datasets", headers={"HX-Request": "true"})
         c.get("/trends", headers={"HX-Request": "true"})
         assert _snapshot(env["cfg"]) == before
+
+
+class TestProjectConfigPopup:
+    """r8 feedback: the landing card's Config button — a read-only popup of
+    the project's paths + port settings (effective merge + both raw TOMLs)."""
+
+    def test_returns_facts_effective_and_raws(self, env):
+        body = env["client"].get(
+            "/qualibrate/project-config/beta").get_data(as_text=True)
+        assert "project config" in body and "beta" in body
+        assert "QUAM state_path" in body                 # facts table
+        assert env["good"].as_posix() in body            # effective JSON value
+        assert "Effective (merged) values" in body
+        assert "[qualibrate]" in body                    # root raw TOML pane
+
+    def test_unknown_project_404(self, env):
+        r = env["client"].get("/qualibrate/project-config/ghost")
+        assert r.status_code == 404
+
+    def test_landing_cards_carry_config_button(self, env):
+        body = env["client"].get("/landing/projects").get_data(as_text=True)
+        assert "landing-card-config" in body
+        assert "landing-config-dialog" in body
+        assert "/qualibrate/project-config/beta" in body
 
 
 class TestTrayBadge:
