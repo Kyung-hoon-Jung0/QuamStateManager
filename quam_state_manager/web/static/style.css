@@ -968,18 +968,21 @@ html.topbar-hidden .topbar-reveal { display: block; }
 .calc-btn:hover { background: var(--pico-muted-border-color); color: var(--pico-contrast); }
 .calc-btn.calc-open { color: var(--pico-primary); }
 
+/* r8 feedback: rows compacted (tighter vertical rhythm) while the TYPE gets
+   BIGGER — 12.5px was too small to read at a glance; width grows with it so
+   rows don't flex-wrap into ragged empty space. */
 .calc-popover {
     position: absolute; right: 0; top: 100%; z-index: 98;
-    width: 320px; max-width: 92vw; max-height: min(560px, 80vh); overflow-y: auto;
+    width: 348px; max-width: 92vw; max-height: min(560px, 80vh); overflow-y: auto;
     background: var(--pico-background-color);
     border: 1px solid var(--pico-muted-border-color);
     border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.18);
-    margin-top: 0.2rem; font-size: 12.5px;
+    margin-top: 0.2rem; font-size: 13.5px;
 }
 .calc-hidden { display: none; }
 .calc-header {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 0.4rem 0.55rem; border-bottom: 1px solid var(--pico-muted-border-color);
+    padding: 0.3rem 0.55rem; border-bottom: 1px solid var(--pico-muted-border-color);
     position: sticky; top: 0; background: var(--pico-background-color); z-index: 1;
     cursor: grab; user-select: none; touch-action: none;   /* B3: drag handle */
 }
@@ -998,11 +1001,11 @@ html.topbar-hidden .topbar-reveal { display: block; }
 .calc-body { padding: 0.1rem 0.55rem; }
 /* B2: clear per-section separation — hairline top divider + a bold, full-contrast,
    readable header with a rotating caret (was a faint tiny all-caps blur). */
-.calc-sec { border-top: 1px solid var(--pico-muted-border-color); padding: 0.1rem 0 0.25rem; }
+.calc-sec { border-top: 1px solid var(--pico-muted-border-color); padding: 0.05rem 0 0.18rem; }
 .calc-sec:first-child { border-top: 0; }
 .calc-sec-label {
     font-size: 0.92em; font-weight: 700; letter-spacing: 0.01em;
-    color: var(--pico-contrast); cursor: pointer; padding: 0.3rem 0; list-style: none;
+    color: var(--pico-contrast); cursor: pointer; padding: 0.22rem 0; list-style: none;
 }
 .calc-sec-label::-webkit-details-marker { display: none; }
 .calc-sec-label::before {
@@ -1010,14 +1013,14 @@ html.topbar-hidden .topbar-reveal { display: block; }
     font-size: 0.8em; color: var(--pico-muted-color); transition: transform .12s;
 }
 .calc-sec[open] > .calc-sec-label::before { transform: rotate(90deg); }
-.calc-row { display: flex; align-items: center; gap: 0.3rem; margin: 0.12rem 0; flex-wrap: wrap; }
+.calc-row { display: flex; align-items: center; gap: 0.3rem; margin: 0.08rem 0; flex-wrap: wrap; }
 .calc-field { display: flex; align-items: center; gap: 0.3rem; flex: 1 1 auto; color: var(--pico-muted-color); }
 .calc-field-sm { flex: 0 0 auto; }
 /* Scoped under .calc-popover so the specificity beats Pico's input margin/height
    (the documented "Pico form-control margin beats a bare .class reset" gotcha). */
 .calc-popover .calc-in {
-    flex: 1 1 5rem; min-width: 3rem; width: auto; margin: 0; padding: 0.15rem 0.35rem; height: auto;
-    font-family: var(--font-mono); font-size: 12.5px; font-variant-numeric: tabular-nums;
+    flex: 1 1 5rem; min-width: 3rem; width: auto; margin: 0; padding: 0.12rem 0.35rem; height: auto;
+    font-family: var(--font-mono); font-size: inherit; font-variant-numeric: tabular-nums;
     border: 1px solid transparent; border-bottom-color: var(--pico-muted-border-color);
     background: transparent; border-radius: 3px;
 }
@@ -1025,7 +1028,7 @@ html.topbar-hidden .topbar-reveal { display: block; }
 .calc-popover .calc-in-sm { flex: 0 0 3.6rem; min-width: 2.5rem; }
 .calc-unit { color: var(--pico-muted-color); font-size: 0.78em; }
 .calc-or { color: var(--pico-muted-color); font-size: 0.82em; }
-.calc-result { display: flex; align-items: center; gap: 0.35rem; margin: 0.12rem 0; }
+.calc-result { display: flex; align-items: center; gap: 0.35rem; margin: 0.08rem 0; }
 .calc-rlabel { flex: 1 1 auto; color: var(--pico-muted-color); font-size: 0.82em; }
 .calc-rval { font-family: var(--font-mono); font-variant-numeric: tabular-nums; user-select: all; }
 .calc-rval.calc-err { color: var(--color-error-text); }
@@ -1036,15 +1039,15 @@ html.topbar-hidden .topbar-reveal { display: block; }
 .calc-result:hover .calc-copy, .calc-row:hover .calc-copy, .calc-expr-row:hover .calc-copy { opacity: 1; }
 .calc-copy:hover { color: var(--pico-primary); }
 .calc-chain { font-size: 0.78em; text-decoration: none; color: var(--diag-info-text); margin-left: 0.2rem; }
-.calc-help { margin: 0.25rem 0 0.1rem; font-size: 11px; color: var(--pico-muted-color); line-height: 1.4; }
+.calc-help { margin: 0.2rem 0 0.05rem; font-size: 11.5px; color: var(--pico-muted-color); line-height: 1.35; }
 .calc-foot {
-    padding: 0.4rem 0.55rem; border-top: 1px solid var(--pico-muted-border-color);
+    padding: 0.3rem 0.55rem; border-top: 1px solid var(--pico-muted-border-color);
     position: sticky; bottom: 0; background: var(--pico-background-color);
 }
 .calc-expr-row { display: flex; align-items: center; gap: 0.3rem; }
 .calc-popover .calc-expr {
-    flex: 1 1 auto; margin: 0; padding: 0.2rem 0.4rem; height: auto;
-    font-family: var(--font-mono); font-size: 12.5px;
+    flex: 1 1 auto; margin: 0; padding: 0.18rem 0.4rem; height: auto;
+    font-family: var(--font-mono); font-size: inherit;
     border: 1px solid var(--pico-muted-border-color); background: var(--pico-card-background-color); border-radius: 3px;
 }
 .calc-popover .calc-expr:focus { border-color: var(--pico-primary); outline: none; box-shadow: none; }

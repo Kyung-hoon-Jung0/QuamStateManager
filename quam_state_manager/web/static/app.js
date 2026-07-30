@@ -1905,16 +1905,52 @@ function _focusableIn(container) {
         .filter(function(el) { return el.offsetWidth > 0 || el.offsetHeight > 0; });
 }
 
+/* A trap whose container is hidden or gone must never keep eating keys.
+   checkVisibility (Chromium 105+/WebView2) also catches ancestor-hidden
+   containers (e.g. a card inside a display:none overlay); the fallback chain
+   covers engines without it (incl. jsdom, which has no layout, hence the
+   computed-display ancestor walk instead of offsetWidth alone). */
+function _trapContainerGone(c) {
+    if (!c.isConnected || c.hidden) return true;
+    if (typeof c.checkVisibility === "function") return !c.checkVisibility();
+    if (c.offsetWidth || c.offsetHeight) return false;
+    for (var el = c; el && el.nodeType === 1; el = el.parentElement) {
+        if (window.getComputedStyle(el).display === "none") return true;
+    }
+    return false;
+}
+
 /**
  * Trap keyboard focus inside `container` until released. Tab/Shift+Tab cycle
  * within the modal; Escape calls `onEscape` (if given). Returns a release()
  * that detaches the handler and restores focus to whatever was focused when
  * the trap was set (the opener). Stored on `container._releaseTrap` by callers.
+ *
+ * Leak-proof by construction (the "global Tab is dead" bug): a leaked CAPTURE
+ * handler whose container had been hidden used to swallow every Tab in the app
+ * (nothing focusable in a hidden container → unconditional preventDefault).
+ * Two defenses, so no caller-discipline mistake can ever kill Tab again:
+ *   1. Re-trapping an already-trapped container releases the previous trap
+ *      first (an unguarded double-open — e.g. Ctrl+K while the palette was
+ *      already up — used to overwrite the stored release and orphan the old
+ *      handler forever).
+ *   2. Self-heal: on any keydown, a trap whose container is hidden/detached
+ *      detaches itself and swallows nothing (no focus restore — the opener
+ *      context is long stale by then).
  */
 window.trapFocus = function(container, onEscape) {
     if (!container) return function() {};
+    if (container.__trapRelease) { try { container.__trapRelease(); } catch (e) {} }
     var opener = document.activeElement;
+    var released = false;
+    function detach() {
+        if (released) return;
+        released = true;
+        document.removeEventListener("keydown", onKey, true);
+        if (container.__trapRelease === release) container.__trapRelease = null;
+    }
     function onKey(e) {
+        if (_trapContainerGone(container)) { detach(); return; }
         if (e.key === "Escape" && onEscape) { e.preventDefault(); onEscape(); return; }
         if (e.key !== "Tab") return;
         var f = _focusableIn(container);
@@ -1928,19 +1964,23 @@ window.trapFocus = function(container, onEscape) {
             e.preventDefault(); first.focus();
         }
     }
+    function release() {
+        if (released) return;
+        detach();
+        if (opener && typeof opener.focus === "function" && document.body.contains(opener)) {
+            try { opener.focus(); } catch (e) {}
+        }
+    }
     document.addEventListener("keydown", onKey, true);
+    container.__trapRelease = release;
     requestAnimationFrame(function() {
+        if (released) return;
         // Don't override focus the caller already placed inside the modal.
         if (container.contains(document.activeElement)) return;
         var f = _focusableIn(container);
         try { (f[0] || container).focus(); } catch (e) {}
     });
-    return function release() {
-        document.removeEventListener("keydown", onKey, true);
-        if (opener && typeof opener.focus === "function" && document.body.contains(opener)) {
-            try { opener.focus(); } catch (e) {}
-        }
-    };
+    return release;
 };
 
 /**
@@ -9925,10 +9965,14 @@ document.addEventListener('click', function(evt) {
     };
 
     document.addEventListener('keydown', function(evt) {
-        // Open palette on Ctrl+K / Cmd+K from anywhere
+        // Toggle palette on Ctrl+K / Cmd+K from anywhere. A TOGGLE, not a bare
+        // open: re-opening while already up used to stack a second focus trap
+        // over the first (leaked on close → every Tab in the app swallowed).
         if ((evt.ctrlKey || evt.metaKey) && (evt.key === 'k' || evt.key === 'K')) {
             evt.preventDefault();
-            window.openCmdPalette();
+            var palK = document.getElementById('cmd-palette');
+            if (palK && !palK.hidden) window.closeCmdPalette();
+            else window.openCmdPalette();
             return;
         }
         var pal = document.getElementById('cmd-palette');

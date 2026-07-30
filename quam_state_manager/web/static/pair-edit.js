@@ -506,6 +506,14 @@
                     if (b && !b.disabled) BulkPairEdit.applyRow(b);
                     return;
                 }
+                if (e.key === 'Tab') {
+                    // Tab/Shift+Tab hop between edit cells, wrapping to the
+                    // adjacent row at the row edge (see bulk-edit.js — same
+                    // semantics; row-exit still commits via focusout below).
+                    var tnext = _tabMove(cell, e.shiftKey ? -1 : 1);
+                    if (tnext) { e.preventDefault(); tnext.focus(); tnext.select && tnext.select(); }
+                    return;
+                }
                 var dir = { ArrowUp: [-1, 0], ArrowDown: [1, 0] }[e.key];
                 if (e.key === 'ArrowLeft' && cell.selectionStart === 0) dir = [0, -1];
                 if (e.key === 'ArrowRight' && cell.selectionStart === cell.value.length) dir = [0, 1];
@@ -683,6 +691,29 @@
             var ci = tds.indexOf(td);
             var ntd = tds[ci + dc];
             return ntd ? ntd.querySelector('.bulk-cell') : null;
+        }
+        return null;
+    }
+
+    // Tab order (see bulk-edit.js _tabMove — kept in sync): next/prev edit
+    // cell in the row, then the adjacent visible row's first/last cell;
+    // null past the grid edge so native Tab can leave the grid.
+    function _tabMove(cell, dc) {
+        var td = cell.closest('td');
+        var tr = cell.closest('tr');
+        var sel = '.bulk-td:not(.bulk-col-hidden):not(.bulk-search-hidden)';
+        var tds = Array.prototype.slice.call(tr.querySelectorAll(sel));
+        for (var i = tds.indexOf(td) + dc; i >= 0 && i < tds.length; i += dc) {
+            var c = tds[i].querySelector('.bulk-cell');
+            if (c) return c;
+        }
+        var rows = _rows().filter(function (r) { return !r.classList.contains('bulk-row-hidden'); });
+        for (var ri = rows.indexOf(tr) + dc; ri >= 0 && ri < rows.length; ri += dc) {
+            var ntds = Array.prototype.slice.call(rows[ri].querySelectorAll(sel));
+            for (var j = dc > 0 ? 0 : ntds.length - 1; j >= 0 && j < ntds.length; j += dc) {
+                var nc = ntds[j].querySelector('.bulk-cell');
+                if (nc) return nc;
+            }
         }
         return null;
     }

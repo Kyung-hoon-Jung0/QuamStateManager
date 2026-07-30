@@ -95,6 +95,8 @@ Comparison lives in the **Compare hub** (`/compare-hub`, sidebar "Compare") — 
 
 UI state persisted in `localStorage`: `quam_font_size`, `quam_sidebar_collapsed`, `quam_tray_open`, `quam_split_sizes`, `quam_theme`, `quam_exp_list_compact`, `quam_qualibrate_nav_collapsed`, `recentFolders`.
 
+Modal focus traps (`trapFocus` in app.js) are **leak-proof at the source**: re-trapping a container releases its previous trap, and a trap whose container went hidden/detached self-heals on the next keydown — a leaked capture-phase trap (Ctrl+K double-open) used to swallow every Tab app-wide. Ctrl+K is a toggle. Tab is first-class navigation: both Live-Edit grids hop Tab/Shift+Tab between edit cells (`_tabMove`, hidden rows/cols skipped, row-edge wrap, row-exit commits), and the topbar calculator hops its visible inputs (closed sections skipped). Pinned by `tests/tab_focus_selfcheck.cjs` + `tests/test_tab_focus.py`. See `docs/64_tab_focus_calc.md`.
+
 ### Multi-Context Registry
 
 `app.config["contexts"]` maps names → context dicts with a `type` field (currently `"quam"`). Designed to accept HDF5/dataset types without restructuring. Routes use helpers (`_store()`, `_engine()`, `_modifier()`, etc.) to pull from the active context transparently.
