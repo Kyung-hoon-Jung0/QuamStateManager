@@ -356,3 +356,49 @@ class TestChipNamePrompt:
                    "chip_name_prompt": {"stale": True}}
             routes_mod._maybe_chip_name_prompt(ctx)
             assert ctx["chip_name_prompt"] is None
+
+
+class TestExtrasDataFolderPairing:
+    """extras.data_folder auto-pairs the chip with its experiment data:
+    declared roots become workspace roots on activation (existence-gated,
+    dialect-bridged); unreachable values surface as a muted note only."""
+
+    def _env(self, tmp_path, state):
+        from quam_state_manager.web.app import create_app
+        live = _write(tmp_path / "chips" / "live", state, _wiring("10.0.0.1"))
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        c = app.test_client()
+        r = c.post("/load", data={"folder": str(live)})
+        assert r.status_code in (200, 302)
+        ctx = next(iter(app.config["contexts"].values()))
+        return app, c, ctx
+
+    def test_declared_folder_becomes_workspace_root(self, tmp_path):
+        data_root = tmp_path / "data"
+        (data_root / "2026-07-01").mkdir(parents=True)
+        app, _c, ctx = self._env(tmp_path, _state(
+            "qA1", chip_name="gilboa", data_folder=str(data_root)))
+        roots = {str(p) for p in app.config["workspace"].root_folders}
+        assert str(data_root) in roots
+        assert ctx["extras_data_roots"] == [str(data_root)]
+        assert ctx["extras_data_dangling"] == []
+
+    def test_dangling_folder_muted_note_only(self, tmp_path):
+        app, c, ctx = self._env(tmp_path, _state(
+            "qA1", chip_name="gilboa",
+            data_folder=str(tmp_path / "nope" / "missing")))
+        assert ctx["extras_data_roots"] == []
+        assert len(ctx["extras_data_dangling"]) == 1
+        html = c.get("/qubits").data.decode()
+        assert "cnb-dangling" in html
+        assert "isn't reachable" in html
+
+    def test_archive_ctx_never_adopts_unit(self, tmp_path):
+        from quam_state_manager.web.app import create_app
+        from quam_state_manager.web import routes as routes_mod
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst2"))
+        with app.test_request_context("/"):
+            ctx = {"type": "quam", "origin": "dataset_archive",
+                   "path": str(tmp_path / "x"), "store": object()}
+            routes_mod._adopt_extras_data_folders(ctx)
+            assert ctx["extras_data_roots"] == []

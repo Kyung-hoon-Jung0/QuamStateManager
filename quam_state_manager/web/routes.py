@@ -867,8 +867,10 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # pinned name sticks.
         _acquire_project_scope(current)
         # docs/20 v2: re-evaluate the first-open chip-name banner on every
-        # activation (origin can flip live→archive; a staged name dismisses).
+        # activation (origin can flip live→archive; a staged name dismisses),
+        # and adopt the chip's declared data folder(s) as workspace roots.
         _maybe_chip_name_prompt(current)
+        _adopt_extras_data_folders(current)
         with _quam_cache_lock:
             current_app.config["contexts"][ctx_name] = current
             current_app.config["active_context"] = ctx_name
@@ -928,6 +930,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # reverse index, so a lost memo self-heals.
         _acquire_project_scope(ctx)
         _maybe_chip_name_prompt(ctx)
+        _adopt_extras_data_folders(ctx)
         with _quam_cache_lock:
             if key not in _quam_cache:
                 # Evict the oldest CLEAN in-memory entry if the cache is full.
@@ -1551,6 +1554,77 @@ def _chip_channel_flags(store: QuamStore | None) -> tuple[bool, bool, bool]:
     return has_resonator, has_flux, has_coupler
 
 
+# ── extras.data_folder chip↔data pairing (docs/20 v2 Step 5) ───────────────
+
+def _adopt_extras_data_folders(ctx: dict | None) -> None:
+    """Register the chip's declared data folder(s) as workspace roots.
+
+    ``extras.data_folder`` travels with the state (like ``chip_name``), so a
+    chip opened anywhere auto-pairs with its experiment data — the pairing
+    ladder is extras > qualibrate project storage (/qualibrate/open) >
+    recorded project roots. Values are RAW lab-side paths: each runs through
+    the OS-dialect bridge (a Linux-written path on this Windows host and
+    vice versa) and an existence gate; dangling values surface as a muted
+    banner note, never an error. LIVE contexts only — archive opens must not
+    grow the workspace. Idempotent (set-diffed against current roots).
+    """
+    if not ctx or ctx.get("type") != "quam":
+        return
+    ctx["extras_data_roots"] = []
+    ctx["extras_data_dangling"] = []
+    try:
+        if (ctx.get("origin") or "live") != "live":
+            return
+        store = ctx.get("store")
+        if store is None:
+            return
+        from quam_state_manager.core.history import extras_data_folder
+        with store._lock:
+            declared = extras_data_folder(store.state)
+        if not declared:
+            return
+        import os as _os
+        resolved: list[str] = []
+        for raw in declared:
+            native = raw
+            try:
+                native = qualibrate_config._to_native(raw, _os.name) or raw
+            except Exception:  # noqa: BLE001
+                pass
+            if native and Path(native).is_dir():
+                resolved.append(str(Path(native)))
+            else:
+                ctx["extras_data_dangling"].append(raw)
+        if not resolved:
+            return
+        ctx["extras_data_roots"] = resolved
+        ws = _ws()
+        existing = {str(p) for p in ws.root_folders}
+        added = 0
+        for root in resolved:
+            if root in existing:
+                continue
+            try:
+                ws.add_root(root)
+                added += 1
+            except (OSError, ValueError):
+                continue
+        if added:
+            _save_workspace_roots()
+            current_app.config.pop("dataset_store", None)
+        # Project lens interplay: when this chip ALSO carries a qualibrate
+        # scope, remember the declared roots for the Datasets/Trends
+        # folder-selection seeding (same file /qualibrate/open records to).
+        scope = ctx.get("qualibrate_project")
+        if scope:
+            try:
+                _record_project_roots(scope, resolved)
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception:  # noqa: BLE001 — pairing must never break activation
+        logger.debug("extras data-folder adoption failed", exc_info=True)
+
+
 # ── First-open chip-name prompt (docs/20 v2 — identity ladder tier 1) ──────
 
 def _chip_prompt_memo_file() -> Path:
@@ -1721,8 +1795,10 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         "project_scope": (_active_ctx() or {}).get("qualibrate_project"),
         "live_diverged": bool(_ctx_obj("live_diverged")),
         # docs/20 v2: first-open "name this chip?" banner payload (None when
-        # named / declined / archive / no chip).
+        # named / declined / archive / no chip) + declared-but-unreachable
+        # extras.data_folder values (muted note, never an error).
         "chip_name_prompt": (_active_ctx() or {}).get("chip_name_prompt"),
+        "extras_data_dangling": (_active_ctx() or {}).get("extras_data_dangling") or [],
         "wc_gc_count": _working_copy_count(),
         "wc_gc_threshold": _WC_GC_THRESHOLD,
         "qubit_names": store.qubit_names if store else [],

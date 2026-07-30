@@ -29,4 +29,13 @@
     <input type="hidden" name="token" value="{{ chip_name_prompt.token }}">
   </form>
 </div>
+{% elif extras_data_dangling %}
+<div class="chip-name-banner cnb-dangling" role="note">
+  <span class="cnb-text">
+    This chip declares a data folder that isn't reachable from here:
+    {% for raw in extras_data_dangling %}<code>{{ raw }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+    — check <code>extras.data_folder</code> in state.json (paths from another
+    machine/OS are bridged automatically when possible).
+  </span>
+</div>
 {% endif %}
