@@ -3639,6 +3639,100 @@ def field_peek():
                    expected=expected)
 
 
+def _fh_fill_string(value: Any) -> str:
+    """What the Use button types into the edit input — full precision, exactly
+    what a user would have typed to produce this value."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "True" if value else "False"
+    if isinstance(value, float):
+        return repr(value)
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, separators=(",", ":"))
+    return str(value)
+
+
+def _fh_display_string(value: Any) -> str:
+    """Compact human form for the history row (grouped digits for numbers)."""
+    if value is None:
+        return "—"
+    if isinstance(value, bool):
+        return "True" if value else "False"
+    if isinstance(value, (int, float)):
+        try:
+            from quam_state_manager.core.units import group_digits
+            return group_digits(value)
+        except Exception:  # noqa: BLE001
+            return repr(value)
+    s = _fh_fill_string(value)
+    return s if len(s) <= 42 else s[:39] + "…"
+
+
+@bp.route("/field/history", methods=["GET"])
+def field_history():
+    """Per-field value timeline popover (the 🕘 button on Live-Edit cells and
+    inspector rows). ``?path=<dot_path>`` → the ``_field_history.html`` panel:
+    value CHANGE points from Param History (SQLite index tier for tracked
+    props, capped snapshot scan for any other leaf), each row naming the
+    experiment/trigger that introduced the value, with a Use button (fills the
+    edit input — commit stays user-explicit) and, when the run folder sits
+    under a registered dataset root, a Data button that loads the run's detail
+    into #inspector-pane so value and data sit side by side."""
+    ctx = _active_ctx()
+    store = ctx.get("store") if ctx else None
+    if not ctx or ctx.get("type") != "quam" or store is None:
+        return render_template("_status.html", message="No state loaded",
+                               level="warning"), 400
+    dot_path = _normalize_dot_path((request.args.get("path") or "").strip())
+    if not dot_path:
+        return render_template("_status.html", message="path required",
+                               level="error"), 400
+    hist = _history().field_history(ctx["path"], dot_path)
+
+    from quam_state_manager.core.pointer_path import resolve_field_target
+    current = None
+    try:
+        ft = resolve_field_target(store.merged, dot_path)
+        if ft.get("resolvable"):
+            current = ft.get("resolved_value")
+    except Exception:  # noqa: BLE001
+        pass
+
+    roots: list[tuple[Path, str]] = []
+    for cand in _dataset_candidate_folders(fast=True):
+        try:
+            roots.append((Path(cand).resolve(), _folder_key(cand)))
+        except OSError:
+            continue
+    for pt in hist["points"]:
+        value = pt["value"]
+        pt["fill"] = _fh_fill_string(value)
+        pt["display"] = _fh_display_string(value)
+        pt["is_current"] = (current is not None and value == current
+                            and isinstance(value, type(current)))
+        ts = pt.get("timestamp") or ""
+        pt["when"] = (f"{ts[0:4]}-{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}"
+                      if len(ts) >= 13 else ts)
+        pt["uid"] = None
+        fp, rid = pt.get("experiment_folder_path"), pt.get("run_id")
+        if not fp or rid is None:
+            continue
+        try:
+            rp = Path(fp).resolve()
+        except OSError:
+            continue
+        for root, key in roots:
+            try:
+                if rp.is_relative_to(root):
+                    pt["uid"] = f"{key}:{int(rid)}"
+                    break
+            except (OSError, ValueError):
+                continue
+    return render_template("_field_history.html", hist=hist,
+                           current_display=_fh_display_string(current))
+
+
 def _editability_reason(store: QuamStore, target_path: str) -> str | None:
     """Durable read-only safety policy. Canonical impl is
     core.edit_policy.editability_reason — SHARED with the CLI (which used to

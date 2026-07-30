@@ -162,6 +162,29 @@ def _walk_dict(node: Any, path: tuple[str, ...]) -> Any:
     return node
 
 
+# Reverse of _VALUE_PATHS: "xy.operations.x180_DragCosine.amplitude" → the
+# SQLite property name. Lets field_history() route a Live-Edit dot-path to
+# the index tier when the leaf is one we already track per snapshot.
+_TRACKED_QUBIT_SUFFIX_TO_PROP: dict[str, str] = {
+    ".".join(path): prop for prop, path in _VALUE_PATHS.items()
+}
+
+
+def _walk_any_path(node: Any, segs: list[str]) -> tuple[bool, Any]:
+    """Walk dicts AND lists (numeric segments index lists — the same dot-form
+    grammar the typed-edit path resolver uses). ``(found, value)``."""
+    for seg in segs:
+        if isinstance(node, dict):
+            if seg not in node:
+                return False, None
+            node = node[seg]
+        elif isinstance(node, list) and seg.isdigit() and int(seg) < len(node):
+            node = node[int(seg)]
+        else:
+            return False, None
+    return True, node
+
+
 def _to_num(value: Any) -> float | None:
     """Coerce a leaf value to ``float`` if numeric; return None otherwise.
 
@@ -1618,6 +1641,153 @@ class HistoryManager:
                 conn.close()
             except Exception:  # noqa: BLE001
                 pass
+
+    # ── Per-field value history (Live-Edit revert popover, docs/20) ────────
+
+    @staticmethod
+    def _tracked_property_for(dot_path: str) -> str | None:
+        """The SQLite property name for a ``qubits.<q>.<suffix>`` dot-path
+        when the suffix is one of the tracked ``_VALUE_PATHS`` — else None."""
+        parts = dot_path.split(".")
+        if len(parts) < 3 or parts[0] != "qubits":
+            return None
+        return _TRACKED_QUBIT_SUFFIX_TO_PROP.get(".".join(parts[2:]))
+
+    def field_history(
+        self,
+        quam_state_path: str | Path,
+        dot_path: str,
+        *,
+        scan_limit: int = 150,
+        max_points: int = 20,
+    ) -> dict[str, Any]:
+        """Change-point timeline of ONE dot-path across this chip's snapshots.
+
+        Two tiers: a path mapping to a TRACKED qubit property reads the
+        SQLite index (instant, full history depth — survives snapshot
+        pruning); any other leaf parses the snapshot ``state.json`` /
+        ``wiring.json`` copies directly, newest-first, capped at
+        ``scan_limit`` (honest ``truncated`` flag). Consecutive-equal
+        snapshots collapse into the snapshot that INTRODUCED each value, so
+        rows answer "when did this value change, and which experiment set
+        it". Pointer leaves resolve per-snapshot (extractor parity;
+        self-refs stay raw) so the timeline shows the value the chip
+        actually had, never the pointer string.
+        """
+        path = Path(quam_state_path)
+        snapshots = self.list_snapshots(path)          # newest-first, cached
+        meta_by_ts = {m.timestamp: m for m in snapshots}
+        out: dict[str, Any] = {
+            "dot_path": dot_path, "points": [],
+            "total_snapshots": len(snapshots), "scanned": 0,
+            "truncated": False, "source": "scan",
+        }
+
+        # (ts, value, trigger, run_id, experiment) oldest-first
+        series: list[tuple] = []
+        prop = self._tracked_property_for(dot_path)
+        if prop is not None and snapshots:
+            try:
+                conn = self._open_index(path)
+                try:
+                    rows = conn.execute(
+                        "SELECT timestamp, value, trigger, run_id, experiment "
+                        "FROM param_history WHERE qubit=? AND property=? "
+                        "ORDER BY timestamp",
+                        (dot_path.split(".")[1], prop)).fetchall()
+                finally:
+                    conn.close()
+            except sqlite3.Error:
+                rows = []
+            if rows:
+                out["source"] = "index"
+                out["scanned"] = len(rows)
+                series = [tuple(r) for r in rows]
+        if not series:
+            out["source"] = "scan"
+            series, out["scanned"], out["truncated"] = self._scan_field_series(
+                path, snapshots, dot_path, scan_limit)
+
+        # Collapse to change points. NaN never equals itself — normalise so a
+        # stretch of NaN snapshots doesn't explode into one row each.
+        def _key(v):
+            if isinstance(v, float) and v != v:
+                return "\x00nan"
+            return v
+
+        points: list[tuple] = []
+        prev: Any = object()
+        for row in series:
+            if _key(row[1]) != prev:
+                points.append(row)
+            prev = _key(row[1])
+        points.reverse()                               # newest change first
+        if len(points) > max_points:
+            points = points[:max_points]
+            out["truncated"] = True
+
+        for ts, value, trigger, run_id, experiment in points:
+            meta = meta_by_ts.get(ts)
+            out["points"].append({
+                "timestamp": ts,
+                "value": value,
+                "trigger": trigger or (meta.trigger if meta else None),
+                "run_id": run_id if run_id is not None
+                else (meta.run_id if meta else None),
+                "experiment": experiment or (meta.experiment_name if meta else None),
+                # only the live meta knows the run folder (pruned snapshots
+                # keep their index rows but lose the meta → no data link)
+                "experiment_folder_path": (meta.experiment_folder_path
+                                           if meta else None),
+            })
+        return out
+
+    def _scan_field_series(
+        self,
+        quam_state_path: Path,
+        snapshots: list[SnapshotMeta],
+        dot_path: str,
+        scan_limit: int,
+    ) -> tuple[list[tuple], int, bool]:
+        """Direct-parse tier: (series oldest-first, scanned, truncated).
+
+        Reads each snapshot's ``state.json`` (plus ``wiring.json`` only when
+        the path's root key isn't state-side), walks the dot-path with
+        list-index support, resolves pointer leaves against that snapshot's
+        own document. Unreadable snapshots are skipped, never fatal."""
+        from quam_state_manager.core.pointer_resolver import (
+            is_pointer, is_self_ref, resolve_pointer,
+        )
+        hist_dir = self._history_dir(quam_state_path)
+        take = snapshots[:scan_limit]                  # newest-first
+        truncated = len(snapshots) > len(take)
+        segs = dot_path.split(".")
+        series: list[tuple] = []
+        for meta in reversed(take):                    # oldest-first
+            snap_dir = hist_dir / meta.timestamp
+            try:
+                root = safe_io.read_json(snap_dir / "state.json")
+            except (OSError, ValueError):
+                continue
+            if not isinstance(root, dict):
+                continue
+            if segs and segs[0] not in root:
+                try:
+                    wiring = safe_io.read_json(snap_dir / "wiring.json")
+                except (OSError, ValueError):
+                    wiring = None
+                if isinstance(wiring, dict):
+                    merged = dict(root)
+                    merged.update(wiring)
+                    root = merged
+            found, value = _walk_any_path(root, segs)
+            if not found:
+                value = None
+            elif is_pointer(value) and not is_self_ref(value):
+                value = resolve_pointer(root, value, tuple(segs))
+            series.append((meta.timestamp, value, meta.trigger,
+                           meta.run_id, meta.experiment_name))
+        return series, len(take), truncated
 
     def _open_index(self, quam_state_path: Path) -> sqlite3.Connection:
         """Open (and create on first use) the param-history SQLite index.

@@ -444,3 +444,39 @@ Web-side coverage:
    `paramHistoryRenderDrawerChart` — the rendering paths.
 4. `21_multi_chip_support.md` — chip identity, alignment, ambiguity
    prompts. Param History is multi-chip aware; that doc explains how.
+
+## Amendment (2026-07-30): per-field value-history popover (Live-Edit revert flow)
+
+User report: while editing a value in Live Edit, reverting to "the value the
+previous fit produced" meant walking to the Datasets page, reading the number
+off the run, and retyping it. Now every editable value carries a small 🕘
+button (always visible on the qubit/pair inspector rows; docked onto the
+focused cell in the bulk grids — a per-cell button would widen every column):
+
+* `HistoryManager.field_history(path, dot_path)` — change-point timeline of
+  ONE dot-path across the chip's snapshots. Two tiers: a path mapping to a
+  tracked `_VALUE_PATHS` qubit property reads the SQLite index (instant, full
+  depth, survives snapshot pruning); any other leaf direct-parses the snapshot
+  `state.json` copies newest-first (plus `wiring.json` only when the root key
+  is wiring-side), capped at `scan_limit=150` with an honest `truncated` flag.
+  Consecutive-equal snapshots collapse into the snapshot that INTRODUCED each
+  value, so rows answer "when did this change, and which experiment set it".
+  Pointer leaves resolve per-snapshot (extractor parity; self-refs stay raw).
+* `GET /field/history?path=` → `_field_history.html`, rendered into the
+  `FieldHistory` floating panel (app.js): each row shows the value (full
+  precision in the tooltip/`data-value`), the change date, the experiment
+  (`#run name`) or trigger that set it, a **Use** button that fills the
+  originating edit input — the commit stays user-explicit through the normal
+  staging flow (Enter → Save/Apply) — and, when the producing run's folder
+  sits under a registered dataset root, a **Data** button that
+  `hx-get`s `/dataset/<uid>` into the global `#inspector-pane`, so the value
+  timeline and the run's data sit side by side.
+* uid resolution is containment against `_dataset_candidate_folders(fast=True)`
+  (`experiment_folder_path` from the snapshot meta → registered root →
+  `<folder_key>:<run_id>`); pruned snapshots keep their index rows but lose
+  the meta → row renders without a Data link, never a dead button.
+
+Tests: `tests/test_field_history.py` (index tier + duplicate collapse, scan
+tier, wiring-side path, per-snapshot pointer resolution, never-present leaf,
+scan-limit truncation, panel render + Use/current marker, registered-root uid
+gating, no-chip 400, button wiring in the inspector template).

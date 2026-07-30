@@ -11287,3 +11287,139 @@ document.addEventListener("htmx:configRequest", function (evt) {
     });
 })();
 
+/* ── Per-field value history (docs/20): 🕘 on Live-Edit cells + inspector rows ──
+   Opens a floating panel of the field's past values (Param History change
+   points). "Use" fills the originating edit input — the commit stays
+   user-explicit through the normal staging flow (Enter). "Data" hx-gets the
+   producing run's detail into #inspector-pane so value + data sit together. */
+window.FieldHistory = (function () {
+    var panel = null;
+    var applyInput = null;   // the edit input "Use" fills
+
+    function ensurePanel() {
+        if (panel) return panel;
+        panel = document.createElement("div");
+        panel.id = "field-history-panel";
+        panel.className = "field-history-panel";
+        panel.setAttribute("role", "dialog");
+        panel.style.display = "none";
+        document.body.appendChild(panel);
+        document.addEventListener("mousedown", function (e) {
+            if (panel.style.display === "none") return;
+            if (panel.contains(e.target)) return;
+            if (e.target.closest && e.target.closest(".field-hist-btn, #fh-cellbtn")) return;
+            close();
+        });
+        document.addEventListener("keydown", function (e) {
+            if (e.key === "Escape" && panel.style.display !== "none") close();
+        });
+        return panel;
+    }
+
+    function position(anchor) {
+        var p = ensurePanel();
+        var r = anchor.getBoundingClientRect();
+        var w = Math.min(500, window.innerWidth - 16);
+        p.style.width = w + "px";
+        p.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) + "px";
+        p.style.top = (r.bottom + 6) + "px";
+        p.style.display = "block";
+        // flip above the anchor if the panel overflows the viewport bottom
+        requestAnimationFrame(function () {
+            var h = p.offsetHeight;
+            if (r.bottom + 6 + h > window.innerHeight - 8) {
+                p.style.top = Math.max(8, r.top - h - 6) + "px";
+            }
+        });
+    }
+
+    function open(anchor, path, input) {
+        if (!path) return;
+        applyInput = input || null;
+        var p = ensurePanel();
+        p.innerHTML = '<p class="fh-empty">Loading history…</p>';
+        position(anchor);
+        fetch("/field/history?path=" + encodeURIComponent(path))
+            .then(function (r) { return r.text(); })
+            .then(function (html) {
+                p.innerHTML = html;
+                if (window.htmx) window.htmx.process(p);
+                position(anchor);
+            })
+            .catch(function () {
+                p.innerHTML = '<p class="fh-empty">Could not load history.</p>';
+            });
+    }
+
+    function close() {
+        if (panel) panel.style.display = "none";
+    }
+
+    function useValue(btn) {
+        var v = btn.getAttribute("data-value") || "";
+        if (applyInput && document.body.contains(applyInput)) {
+            applyInput.value = v;
+            applyInput.dispatchEvent(new Event("input", { bubbles: true }));
+            applyInput.focus();
+            if (applyInput.select) applyInput.select();
+        }
+        close();
+    }
+
+    function openInspector(btn) {
+        var form = btn.closest("form.inline-edit");
+        if (!form) return;
+        var hidden = form.querySelector("input[name=dot_path]");
+        var input = form.querySelector("input[name=value]");
+        open(btn, hidden ? hidden.value : "", input);
+    }
+
+    /* Bulk-grid affordance: one shared 🕘 button that docks to the focused
+       editable cell (a per-cell button would widen every column of a dense
+       grid). mousedown + preventDefault keeps the cell focused. */
+    var cellBtn = null;
+    function ensureCellBtn() {
+        if (cellBtn) return cellBtn;
+        cellBtn = document.createElement("button");
+        cellBtn.id = "fh-cellbtn";
+        cellBtn.type = "button";
+        cellBtn.title = "Value history — past values of this field from Param History snapshots";
+        cellBtn.textContent = "🕘";
+        cellBtn.style.display = "none";
+        cellBtn.addEventListener("mousedown", function (e) {
+            e.preventDefault();
+            var input = cellBtn._input;
+            if (input) {
+                open(cellBtn, input.dataset.resolved || input.dataset.dotPath || "", input);
+            }
+        });
+        document.body.appendChild(cellBtn);
+        return cellBtn;
+    }
+    function showCellBtn(input) {
+        var b = ensureCellBtn();
+        b._input = input;
+        var r = input.getBoundingClientRect();
+        b.style.left = (r.right - 17) + "px";
+        b.style.top = (r.top + (r.height - 16) / 2) + "px";
+        b.style.display = "block";
+    }
+    function hideCellBtn() {
+        if (cellBtn) cellBtn.style.display = "none";
+    }
+    document.addEventListener("focusin", function (e) {
+        var t = e.target;
+        if (t && t.classList && t.classList.contains("bulk-cell") &&
+            !t.classList.contains("bulk-cell-ro")) {
+            showCellBtn(t);
+        } else if (!t || t.id !== "fh-cellbtn") {
+            hideCellBtn();
+        }
+    });
+    window.addEventListener("scroll", hideCellBtn, true);
+    window.addEventListener("resize", hideCellBtn);
+
+    return { open: open, close: close, useValue: useValue,
+             openInspector: openInspector };
+})();
+
