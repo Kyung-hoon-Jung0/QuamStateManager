@@ -2008,6 +2008,7 @@ class HistoryManager:
         *,
         scan_limit: int = 150,
         max_points: int = 20,
+        extra_series: list[tuple] | None = None,
     ) -> dict[str, Any]:
         """Change-point timeline of ONE dot-path across this chip's snapshots.
 
@@ -2021,6 +2022,14 @@ class HistoryManager:
         it". Pointer leaves resolve per-snapshot (extractor parity;
         self-refs stay raw) so the timeline shows the value the chip
         actually had, never the pointer string.
+
+        ``extra_series`` (docs/20 v2 runs tier): additional
+        ``(ts, value, trigger, run_id, experiment, folder)`` rows — the
+        caller's direct scan of workspace run folders — merged by timestamp
+        BEFORE the change-point collapse, so today's runs appear even when
+        Param History ingestion hasn't run. Timestamps use the
+        ingested-snapshot format (``_entry_timestamp``), so a run that WAS
+        ingested dedups naturally against its snapshot row.
         """
         path = Path(quam_state_path)
         snapshots = self.list_snapshots(path)          # newest-first, cached
@@ -2028,10 +2037,10 @@ class HistoryManager:
         out: dict[str, Any] = {
             "dot_path": dot_path, "points": [],
             "total_snapshots": len(snapshots), "scanned": 0,
-            "truncated": False, "source": "scan",
+            "truncated": False, "source": "scan", "runs_merged": 0,
         }
 
-        # (ts, value, trigger, run_id, experiment) oldest-first
+        # (ts, value, trigger, run_id, experiment, folder) oldest-first
         series: list[tuple] = []
         prop = self._tracked_property_for(dot_path)
         if prop is not None and snapshots:
@@ -2050,11 +2059,23 @@ class HistoryManager:
             if rows:
                 out["source"] = "index"
                 out["scanned"] = len(rows)
-                series = [tuple(r) for r in rows]
+                series = [tuple(r) + (None,) for r in rows]
         if not series:
             out["source"] = "scan"
             series, out["scanned"], out["truncated"] = self._scan_field_series(
                 path, snapshots, dot_path, scan_limit)
+
+        if extra_series:
+            out["runs_merged"] = len(extra_series)
+            out["source"] += "+runs"
+            # Stable sort: snapshot rows sort before run rows on an equal
+            # timestamp, so an ingested run's snapshot row wins the collapse
+            # (its meta already knows the folder) and the direct run row
+            # dedups away when values agree.
+            merged = ([(r, 0) for r in series]
+                      + [(tuple(r), 1) for r in extra_series])
+            merged.sort(key=lambda t: (t[0][0], t[1]))
+            series = [r for r, _rank in merged]
 
         # Collapse to change points. NaN never equals itself — normalise so a
         # stretch of NaN snapshots doesn't explode into one row each.
@@ -2074,7 +2095,7 @@ class HistoryManager:
             points = points[:max_points]
             out["truncated"] = True
 
-        for ts, value, trigger, run_id, experiment in points:
+        for ts, value, trigger, run_id, experiment, folder in points:
             meta = meta_by_ts.get(ts)
             out["points"].append({
                 "timestamp": ts,
@@ -2083,10 +2104,11 @@ class HistoryManager:
                 "run_id": run_id if run_id is not None
                 else (meta.run_id if meta else None),
                 "experiment": experiment or (meta.experiment_name if meta else None),
-                # only the live meta knows the run folder (pruned snapshots
-                # keep their index rows but lose the meta → no data link)
-                "experiment_folder_path": (meta.experiment_folder_path
-                                           if meta else None),
+                # run rows carry their folder directly; snapshot rows get it
+                # from the live meta (pruned snapshots keep index rows but
+                # lose the meta → no data link)
+                "experiment_folder_path": folder or (
+                    meta.experiment_folder_path if meta else None),
             })
         return out
 
@@ -2134,7 +2156,8 @@ class HistoryManager:
             elif is_pointer(value) and not is_self_ref(value):
                 value = resolve_pointer(root, value, tuple(segs))
             series.append((meta.timestamp, value, meta.trigger,
-                           meta.run_id, meta.experiment_name))
+                           meta.run_id, meta.experiment_name,
+                           meta.experiment_folder_path))
         return series, len(take), truncated
 
     def _open_index(self, quam_state_path: Path) -> sqlite3.Connection:

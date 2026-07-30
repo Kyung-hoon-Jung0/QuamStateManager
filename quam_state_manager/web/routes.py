@@ -3888,6 +3888,163 @@ def _fh_display_string(value: Any) -> str:
     return s if len(s) <= 42 else s[:39] + "…"
 
 
+# Immutable-run caches for the field-history runs tier (docs/20 v2 Step 6).
+# Runs are write-once after completion, so per-folder identity and per-
+# (folder, dot_path) values never go stale; both are size-bounded.
+_RUN_IDENT_CACHE: "OrderedDict[str, tuple]" = OrderedDict()
+_RUN_VALUE_CACHE: "OrderedDict[tuple[str, str], tuple]" = OrderedDict()
+_RUN_CACHE_MAX = 4096
+
+
+def _run_ts_stamp(run: Any) -> str:
+    """RunInfo → the ingested-snapshot timestamp format
+    (``YYYYMMDD_HHMMSS_NNN``, ``_entry_timestamp`` parity — the dedup key
+    against already-ingested snapshot rows)."""
+    folder = Path(getattr(run, "folder_path", "") or "")
+    m = re.search(r"_(\d{6})$", folder.name)
+    hhmmss = m.group(1) if m else "000000"
+    date = folder.parent.name.replace("-", "")
+    if not re.match(r"^\d{8}$", date):
+        date = "19700101"
+    rid = getattr(run, "run_id", 0) or 0
+    return f"{date}_{hhmmss}_{rid % 1000:03d}"
+
+
+def _runs_field_series(ctx: dict, dot_path: str, *,
+                       max_runs: int = 60) -> tuple[list[tuple], int]:
+    """Direct-scan tier over the workspace runs' own quam_state copies.
+
+    Every run folder IS a timestamped state snapshot with perfect run
+    linkage — so the field timeline stays fresh (today's runs included)
+    independent of Param History ingestion. Chip attribution per run:
+    extras chip names when BOTH sides declare one (definitive), else
+    hardware-fingerprint alignment; the wiring.json network is a cheap
+    pre-gate so foreign chips usually cost one small read. Newest
+    ``max_runs`` runs are examined (honest cap); roots declared in
+    ``extras.data_folder`` scan first. Returns ``(series, examined)`` with
+    series rows ``(ts, value, "experiment", run_id, experiment, folder)``.
+    """
+    from quam_state_manager.core.history import (
+        ALIGN_ALIGNED, ChipFingerprint, _normalised_network, _walk_any_path,
+        align, extras_chip_name, fingerprint_from_dicts)
+    from quam_state_manager.core.pointer_resolver import (
+        is_pointer, is_self_ref, resolve_pointer)
+
+    store = ctx.get("store")
+    if store is None:
+        return [], 0
+    with store._lock:
+        loaded_name = extras_chip_name(store.state)
+        loaded_fp = fingerprint_from_dicts(store.state, store.wiring)
+
+    roots: list[Path] = []
+    seen_roots: set[str] = set()
+    for raw in (ctx.get("extras_data_roots") or []):
+        p = Path(raw)
+        k = str(p)
+        if k not in seen_roots:
+            seen_roots.add(k)
+            roots.append(p)
+    for cand in _dataset_candidate_folders(fast=True):
+        k = str(cand)
+        if k not in seen_roots:
+            seen_roots.add(k)
+            roots.append(Path(cand))
+
+    candidates: list[tuple[str, Any]] = []      # (ts, run)
+    for root in roots:
+        st = _get_or_create_store(root, rescan=True)
+        if st is None:
+            continue
+        for run in st.runs.values():
+            candidates.append((_run_ts_stamp(run), run))
+    candidates.sort(key=lambda t: t[0], reverse=True)
+
+    series: list[tuple] = []
+    examined = 0
+    segs = dot_path.split(".")
+    for ts, run in candidates:
+        if examined >= max_runs:
+            break
+        folder = Path(getattr(run, "folder_path", "") or "")
+        qs = folder / "quam_state"
+        fkey = str(folder)
+        vkey = (fkey, dot_path)
+        cached_val = _RUN_VALUE_CACHE.get(vkey)
+        if cached_val is not None:
+            if cached_val[0]:                     # (included, value)
+                series.append((ts, cached_val[1], "experiment",
+                               getattr(run, "run_id", None),
+                               getattr(run, "experiment_name", None), fkey))
+            continue
+        if not (qs / "state.json").exists():
+            continue
+        examined += 1
+
+        run_net = _RUN_IDENT_CACHE.get(fkey)
+        wiring: Any = None
+        if run_net is None:
+            try:
+                wiring = safe_io.read_json(qs / "wiring.json")
+            except (OSError, ValueError):
+                wiring = {}
+            run_net = _normalised_network(
+                (wiring if isinstance(wiring, dict) else {}).get("network"))
+            _RUN_IDENT_CACHE[fkey] = run_net
+        # Cheap network pre-gate: a foreign chip usually stops here — but
+        # ONLY when the loaded chip is unnamed. A declared chip name is
+        # DEFINITIVE across a host move (the whole point of tier 1), so a
+        # named chip must read the run's state to compare names first.
+        if (not loaded_name and loaded_fp.network and run_net
+                and run_net != loaded_fp.network):
+            _RUN_VALUE_CACHE[vkey] = (False, None)
+            continue
+        try:
+            state = safe_io.read_json(qs / "state.json")
+        except (OSError, ValueError):
+            continue
+        if not isinstance(state, dict):
+            continue
+        run_name = extras_chip_name(state)
+        if loaded_name and run_name:
+            included = (run_name == loaded_name)
+        else:
+            # Rebuild the fingerprint from state + the cached network tuple
+            # (wiring may not have been re-read on this pass).
+            run_fp = ChipFingerprint(
+                network=run_net,
+                qubits=frozenset((state.get("qubits") or {}).keys()),
+                pairs=frozenset((state.get("qubit_pairs") or {}).keys()))
+            included = align(loaded_fp, run_fp) == ALIGN_ALIGNED
+        if not included:
+            _RUN_VALUE_CACHE[vkey] = (False, None)
+            continue
+
+        merged = dict(state)
+        if segs and segs[0] not in merged:
+            if wiring is None:
+                try:
+                    wiring = safe_io.read_json(qs / "wiring.json")
+                except (OSError, ValueError):
+                    wiring = {}
+            if isinstance(wiring, dict):
+                merged.update(wiring)
+        found, value = _walk_any_path(merged, segs)
+        if not found:
+            value = None
+        elif is_pointer(value) and not is_self_ref(value):
+            value = resolve_pointer(merged, value, tuple(segs))
+        _RUN_VALUE_CACHE[vkey] = (True, value)
+        while len(_RUN_VALUE_CACHE) > _RUN_CACHE_MAX:
+            _RUN_VALUE_CACHE.popitem(last=False)
+        while len(_RUN_IDENT_CACHE) > _RUN_CACHE_MAX:
+            _RUN_IDENT_CACHE.popitem(last=False)
+        series.append((ts, value, "experiment",
+                       getattr(run, "run_id", None),
+                       getattr(run, "experiment_name", None), fkey))
+    return series, examined
+
+
 @bp.route("/field/history", methods=["GET"])
 def field_history():
     """Per-field value timeline popover (the 🕘 button on Live-Edit cells and
@@ -3907,7 +4064,16 @@ def field_history():
     if not dot_path:
         return render_template("_status.html", message="path required",
                                level="error"), 400
-    hist = _history().field_history(ctx["path"], dot_path)
+    # Runs tier (docs/20 v2): the workspace runs' own quam_state copies keep
+    # the timeline fresh independent of Param History ingestion — today's
+    # runs appear with a guaranteed Data link.
+    try:
+        runs_series, _examined = _runs_field_series(ctx, dot_path)
+    except Exception:  # noqa: BLE001 — the popover must survive a bad root
+        logger.debug("field-history runs tier failed", exc_info=True)
+        runs_series = []
+    hist = _history().field_history(ctx["path"], dot_path,
+                                    extra_series=runs_series)
 
     from quam_state_manager.core.pointer_path import resolve_field_target
     current = None

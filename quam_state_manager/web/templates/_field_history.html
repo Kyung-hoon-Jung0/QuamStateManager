@@ -54,6 +54,6 @@
 <p class="fh-foot">
   {{ hist.points|length }} change point{{ 's' if hist.points|length != 1 }}
   &middot; {{ hist.scanned }} of {{ hist.total_snapshots }} snapshot{{ 's' if hist.total_snapshots != 1 }}
-  ({{ 'index' if hist.source == 'index' else 'scanned' }}){% if hist.truncated %} &middot; older history not shown{% endif %}
+  ({{ hist.source }}){% if hist.runs_merged %} &middot; {{ hist.runs_merged }} live run value{{ 's' if hist.runs_merged != 1 }}{% endif %}{% if hist.truncated %} &middot; older history not shown{% endif %}
 </p>
 {% endif %}
