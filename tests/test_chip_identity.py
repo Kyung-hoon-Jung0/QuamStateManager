@@ -287,3 +287,72 @@ class TestV3IndexMigration:
         assert row is not None, "a dir with folders but no index must be listed"
         assert row["snapshot_count"] == 1
         assert row["latest_timestamp"] == "20260102_000000_0002"
+
+
+class TestChipNamePrompt:
+    """First-open banner: live unnamed chips only; staging goes through the
+    working copy (live bytes untouched until Apply); declines are
+    fingerprint-keyed and never nag again."""
+
+    def _env(self, tmp_path, state=None):
+        from quam_state_manager.web.app import create_app
+        live = _write(tmp_path / "chips" / "live",
+                      state or _state("qA1"), _wiring("10.0.0.1"))
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        c = app.test_client()
+        r = c.post("/load", data={"folder": str(live)})
+        assert r.status_code in (200, 302)
+        return app, c, live
+
+    def test_banner_shows_for_unnamed_live_chip(self, tmp_path):
+        _app, c, _live = self._env(tmp_path)
+        html = c.get("/qubits").data.decode()
+        assert "chip-name-banner" in html
+        assert 'hx-post="/chip-name/set"' in html
+
+    def test_named_chip_never_prompts(self, tmp_path):
+        _app, c, _live = self._env(tmp_path, _state("qA1", chip_name="gilboa"))
+        assert "chip-name-banner" not in c.get("/qubits").data.decode()
+
+    def test_set_stages_into_working_copy_only(self, tmp_path):
+        app, c, live = self._env(tmp_path)
+        live_bytes = (live / "state.json").read_bytes()
+        r = c.post("/chip-name/set", data={"name": "gilboa",
+                                           "data_folder": "D:/data/root"})
+        assert r.status_code == 200
+        # staged in the store (working copy), live bytes untouched
+        name = app.config["contexts"]
+        ctx = next(iter(name.values()))
+        st = ctx["store"].state
+        assert st["extras"]["chip_name"] == "gilboa"
+        assert st["extras"]["data_folder"] == "D:/data/root"
+        assert (live / "state.json").read_bytes() == live_bytes, \
+            "never a direct live write — Apply is the only path"
+        # banner gone on the next full render
+        assert "chip-name-banner" not in c.get("/qubits").data.decode()
+
+    def test_decline_memo_survives_reactivation(self, tmp_path):
+        _app, c, live = self._env(tmp_path)
+        html = c.get("/qubits").data.decode()
+        import re as _re
+        token = _re.search(r'name="token" value="([^"]+)"', html).group(1)
+        c.post("/chip-name/decline", data={"token": token})
+        assert "chip-name-banner" not in c.get("/qubits").data.decode()
+        # re-activation (fresh /load) re-evaluates the gate — still declined
+        c.post("/load", data={"folder": str(live)})
+        assert "chip-name-banner" not in c.get("/qubits").data.decode()
+        memo = json.loads(
+            (tmp_path / "_inst" / "chip_name_prompts.json").read_text())
+        assert token in memo
+
+    def test_archive_ctx_never_prompts_unit(self, tmp_path):
+        """Origin gate at the unit level: an archive ctx must clear the memo."""
+        from quam_state_manager.web.app import create_app
+        from quam_state_manager.web import routes as routes_mod
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst2"))
+        with app.test_request_context("/"):
+            ctx = {"type": "quam", "origin": "dataset_archive",
+                   "path": str(tmp_path / "x"), "store": object(),
+                   "chip_name_prompt": {"stale": True}}
+            routes_mod._maybe_chip_name_prompt(ctx)
+            assert ctx["chip_name_prompt"] is None

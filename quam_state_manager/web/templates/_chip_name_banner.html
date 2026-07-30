@@ -1,0 +1,32 @@
+{# First-open chip-name prompt (docs/20 v2): the identity ladder's tier 1.
+   Shown for LIVE quam chips whose state carries no extras.chip_name.
+   "Set name" stages extras.chip_name (+ optional extras.data_folder)
+   through the normal edit machinery — working copy → Save → Apply to live;
+   future runs' quam_state copies then carry the identity automatically.
+   "Not now" writes a fingerprint-keyed decline memo (never nags again). #}
+{% if chip_name_prompt %}
+<div id="chip-name-banner" class="chip-name-banner" role="region"
+     aria-label="Chip name prompt">
+  <span class="cnb-text">
+    <strong>No chip name is set for this state.</strong>
+    Naming it (stored in <code>extras.chip_name</code>) keeps history, trends
+    and run attribution stable even when state folders move or share a parent
+    directory.
+  </span>
+  <form class="cnb-form" hx-post="/chip-name/set"
+        hx-target="#chip-name-banner" hx-swap="outerHTML">
+    <input type="text" name="name" value="{{ chip_name_prompt.suggest }}"
+           maxlength="64" required aria-label="Chip name"
+           placeholder="chip name">
+    <input type="text" name="data_folder" aria-label="Data folder (optional)"
+           placeholder="data folder (optional)"
+           title="Optional: this chip's experiment-data root — stored in extras.data_folder so Datasets auto-pairs with it">
+    <button type="submit" class="cnb-set">Set name</button>
+    <button type="button" class="cnb-no" hx-post="/chip-name/decline"
+            hx-include="closest form"
+            hx-target="#chip-name-banner" hx-swap="outerHTML"
+            title="Don't ask again for this chip">Not now</button>
+    <input type="hidden" name="token" value="{{ chip_name_prompt.token }}">
+  </form>
+</div>
+{% endif %}

@@ -866,6 +866,9 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # index may do a few stats / a rare TOML re-parse). An explicitly
         # pinned name sticks.
         _acquire_project_scope(current)
+        # docs/20 v2: re-evaluate the first-open chip-name banner on every
+        # activation (origin can flip live→archive; a staged name dismisses).
+        _maybe_chip_name_prompt(current)
         with _quam_cache_lock:
             current_app.config["contexts"][ctx_name] = current
             current_app.config["active_context"] = ctx_name
@@ -924,6 +927,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # chip without its memo); every activation path converges on the
         # reverse index, so a lost memo self-heals.
         _acquire_project_scope(ctx)
+        _maybe_chip_name_prompt(ctx)
         with _quam_cache_lock:
             if key not in _quam_cache:
                 # Evict the oldest CLEAN in-memory entry if the cache is full.
@@ -1547,6 +1551,142 @@ def _chip_channel_flags(store: QuamStore | None) -> tuple[bool, bool, bool]:
     return has_resonator, has_flux, has_coupler
 
 
+# ── First-open chip-name prompt (docs/20 v2 — identity ladder tier 1) ──────
+
+def _chip_prompt_memo_file() -> Path:
+    return Path(current_app.instance_path) / "chip_name_prompts.json"
+
+
+def _load_chip_prompt_memo() -> dict:
+    try:
+        data = safe_io.read_json(_chip_prompt_memo_file())
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _chip_prompt_token(path: str, fp: Any) -> str:
+    """Fingerprint-keyed (folder moves never re-nag); fs-key fallback."""
+    from quam_state_manager.core.history import fingerprint_token
+    tok = fingerprint_token(fp)
+    if tok:
+        return tok
+    try:
+        return "fs:" + path_match.fs_key(path)
+    except Exception:  # noqa: BLE001
+        return "path:" + str(path)
+
+
+def _maybe_chip_name_prompt(ctx: dict | None) -> None:
+    """Gate + memo for the first-open "Name this chip?" banner.
+
+    Re-evaluated on EVERY activation (the origin flag refreshes per
+    activation): live quam contexts only — never dataset archives, never
+    chips under the instance dir (autofit sim), gone as soon as the WORKING
+    copy carries a name (staging dismisses it before Apply), and never
+    after an explicit decline (fingerprint-keyed memo).
+    """
+    if not ctx or ctx.get("type") != "quam":
+        return
+    ctx["chip_name_prompt"] = None
+    try:
+        if (ctx.get("origin") or "live") != "live":
+            return
+        path = str(ctx.get("path") or "")
+        store = ctx.get("store")
+        if not path or store is None:
+            return
+        try:
+            Path(path).resolve().relative_to(
+                Path(current_app.instance_path).resolve())
+            return                      # instance-internal chip (sim etc.)
+        except (ValueError, OSError):
+            pass
+        from quam_state_manager.core.history import (
+            extras_chip_name, fingerprint_from_dicts)
+        with store._lock:
+            name = extras_chip_name(store.state)
+            fp = fingerprint_from_dicts(store.state, store.wiring)
+        if name:
+            return
+        token = _chip_prompt_token(path, fp)
+        if token in _load_chip_prompt_memo():
+            return
+        suggest = (ctx.get("qualibrate_project")
+                   or _chip_display_name(path) or "").strip()
+        ctx["chip_name_prompt"] = {"suggest": suggest, "token": token}
+    except Exception:  # noqa: BLE001 — a banner must never break activation
+        logger.debug("chip-name prompt gate failed", exc_info=True)
+
+
+@bp.route("/chip-name/set", methods=["POST"])
+def chip_name_set():
+    """Stage ``extras.chip_name`` (+ optional ``extras.data_folder``) through
+    the audited edit machinery — working copy only, never a direct live
+    write. Apply-to-live then propagates it into every future run's
+    quam_state copy, which is what makes attribution layout-proof."""
+    ctx = _active_ctx()
+    modifier = ctx.get("modifier") if ctx else None
+    if not ctx or ctx.get("type") != "quam" or modifier is None:
+        return render_template("_status.html", message="No state loaded",
+                               level="warning"), 400
+    if (ctx.get("origin") or "live") != "live":
+        return render_template(
+            "_status.html", level="warning",
+            message="Read-only archive — open the live chip to name it"), 409
+    name = (request.form.get("name") or "").strip()[:64].strip()
+    if not name:
+        return render_template("_status.html", message="Chip name required",
+                               level="error"), 400
+    data_folder = (request.form.get("data_folder") or "").strip()
+    store = modifier.store
+    try:
+        with store._lock:
+            extras = store.state.get("extras")
+        sets: dict[str, Any] = {"chip_name": name}
+        if data_folder:
+            sets["data_folder"] = data_folder
+        if not isinstance(extras, dict):
+            modifier.create_subtree("extras", sets)
+        else:
+            for leaf, value in sets.items():
+                if leaf in extras:
+                    modifier.set_value(f"extras.{leaf}", value)
+                else:
+                    modifier.create_subtree(f"extras.{leaf}", value)
+        _invalidate_engine_cache(ctx)
+    except (KeyError, TypeError, ValueError) as e:
+        return render_template("_status.html", message=str(e), level="error"), 400
+    ctx["chip_name_prompt"] = None
+    body = render_template(
+        "_status.html", level="success",
+        message=f"Chip name '{name}' staged — Save + Apply to live makes it"
+                " permanent (future runs then carry it automatically)")
+    resp = make_response(body + _tray_oob())
+    resp.headers["HX-Trigger"] = "pulses-changed"
+    return resp
+
+
+@bp.route("/chip-name/decline", methods=["POST"])
+def chip_name_decline():
+    """Remember "don't ask again" for this chip (fingerprint-keyed)."""
+    ctx = _active_ctx()
+    token = (request.form.get("token") or "").strip()
+    if token:
+        data = _load_chip_prompt_memo()
+        data[token] = {
+            "declined_at": datetime.now().isoformat(timespec="seconds"),
+            "path_hint": str((ctx or {}).get("path") or ""),
+        }
+        try:
+            safe_io.atomic_write_json(_chip_prompt_memo_file(), data)
+        except OSError:
+            logger.warning("Could not persist chip-name decline", exc_info=True)
+    if ctx:
+        ctx["chip_name_prompt"] = None
+    return ""
+
+
 def _ctx(**extra: Any) -> dict[str, Any]:
     """Base template context shared by all pages."""
     # Self-heal a missed live change (throttled ground-truth hash) so the
@@ -1580,6 +1720,9 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # None ⇒ every consumer renders exactly the pre-lens behavior.
         "project_scope": (_active_ctx() or {}).get("qualibrate_project"),
         "live_diverged": bool(_ctx_obj("live_diverged")),
+        # docs/20 v2: first-open "name this chip?" banner payload (None when
+        # named / declined / archive / no chip).
+        "chip_name_prompt": (_active_ctx() or {}).get("chip_name_prompt"),
         "wc_gc_count": _working_copy_count(),
         "wc_gc_threshold": _WC_GC_THRESHOLD,
         "qubit_names": store.qubit_names if store else [],
