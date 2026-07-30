@@ -9363,3 +9363,91 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
     font-size: .78rem; color: var(--color-text-muted);
 }
 .fh-chart { margin: 0 0 .3rem; min-height: 128px; }
+
+/* ── Column History panel + LiveEditUndo (docs/20 v2) ─────────────────── */
+.ch-overlay {
+    position: fixed; inset: 0; z-index: 9550;
+    display: flex; align-items: center; justify-content: center;
+}
+.ch-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
+.ch-card {
+    position: relative; z-index: 1;
+    background: var(--pico-card-background-color);
+    border-radius: 12px; padding: .8rem 1rem .7rem;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+    width: min(920px, 94vw); max-height: 82vh;
+    display: flex; flex-direction: column; font-size: .82rem;
+}
+.ch-head { display: flex; align-items: baseline; gap: .5rem; margin-bottom: .35rem; }
+.ch-title { font-weight: 600; }
+.ch-unit { font-weight: 400; color: var(--color-text-muted); }
+.ch-close { margin-left: auto; background: none; border: none; cursor: pointer;
+    font-size: 1.1rem; line-height: 1; padding: 0 .2rem; width: auto;
+    color: var(--color-text-muted); }
+.ch-close:hover { color: var(--pico-contrast); }
+.ch-empty { margin: .4rem 0; color: var(--color-text-muted); }
+.ch-scroll { overflow: auto; min-height: 0; }
+.ch-table { width: 100%; margin: 0; border-collapse: collapse; white-space: nowrap; }
+.ch-table th, .ch-table td { padding: .16rem .45rem; border: none;
+    border-bottom: 1px solid var(--pico-muted-border-color); text-align: left; }
+.ch-table thead th { font-size: .68rem; text-transform: uppercase;
+    letter-spacing: .04em; color: var(--color-text-muted);
+    position: sticky; top: 0; background: var(--pico-card-background-color);
+    z-index: 1; vertical-align: bottom; }
+.ch-rowhead { font-weight: 600; }
+.ch-trend { width: 108px; }
+.ch-spark { width: 100px; height: 30px; display: block; }
+.ch-nospark { color: var(--color-text-muted); }
+.ch-current code, .ch-val code { background: none; padding: 0; font-size: .8rem; }
+.ch-current { border-right: 1px solid var(--pico-muted-border-color); }
+.ch-run { white-space: nowrap; }
+.ch-run-when { display: block; font-size: .62rem; font-weight: 400;
+    text-transform: none; letter-spacing: 0; }
+.ch-run-open { text-decoration: none; }
+.ch-run-open:hover { text-decoration: underline; }
+.ch-useall {
+    display: block; margin-top: .15rem; width: auto; padding: .04rem .4rem;
+    font-size: .62rem; text-transform: none; letter-spacing: 0;
+    border: 1px solid var(--pico-muted-border-color); border-radius: .45rem;
+    background: transparent; color: var(--pico-contrast); cursor: pointer;
+    line-height: 1.3;
+}
+.ch-useall:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
+.ch-val[data-fill] { cursor: pointer; }
+.ch-val[data-fill]:hover { background: var(--history-cell-hover, rgba(128,128,128,.12)); }
+.ch-val.ch-changed code { font-weight: 700; }
+.ch-val.ch-changed { box-shadow: inset 2px 0 0 var(--pico-primary); }
+.ch-val.ch-missing { color: var(--color-text-muted); }
+.ch-foot { margin: .35rem 0 0; font-size: .66rem; color: var(--color-text-muted); }
+
+/* header clock — hover-reveal beside the resize handle (th is sticky = the
+   containing block, same anchoring trick as .bulk-resize-handle) */
+.bulk-col-hist {
+    position: absolute; top: 50%; right: 9px; transform: translateY(-50%);
+    background: none; border: none; cursor: pointer; padding: 0; margin: 0;
+    width: auto; font-size: .68rem; line-height: 1; opacity: 0;
+    transition: opacity .12s; z-index: 2;
+}
+.bulk-col-head:hover .bulk-col-hist, .bulk-col-hist:focus-visible { opacity: .6; }
+.bulk-col-hist:hover { opacity: 1; }
+
+/* undo flash on a restored/filled cell */
+@keyframes leuFlash { 0% { background: var(--pico-primary); opacity: .35; }
+                      100% { background: transparent; opacity: 1; } }
+.bulk-cell.leu-flash { animation: leuFlash .65s ease-out; }
+
+/* tray ↶ (next-undo tooltip refreshed on hover) */
+.tray-undo-btn {
+    background: none; border: 1px solid var(--pico-muted-border-color);
+    border-radius: .5rem; cursor: pointer; padding: 0 .45rem; margin: 0;
+    width: auto; font-size: .85rem; line-height: 1.5;
+    color: var(--pico-contrast);
+}
+.tray-undo-btn:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
+.tray-revert-apply {
+    background: none; border: 1px solid var(--pico-muted-border-color);
+    border-radius: .5rem; cursor: pointer; padding: 0 .5rem; margin: 0;
+    width: auto; font-size: .72rem; line-height: 1.6;
+    color: var(--pico-contrast); white-space: nowrap;
+}
+.tray-revert-apply:hover { border-color: var(--cell-ok-color, #ff7f0e); color: var(--cell-ok-color, #ff7f0e); }

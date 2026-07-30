@@ -2160,6 +2160,98 @@ class HistoryManager:
                            meta.experiment_folder_path))
         return series, len(take), truncated
 
+    def column_history(
+        self,
+        quam_state_path: str | Path,
+        path_map: dict[str, str],
+        *,
+        scan_limit: int = 40,
+    ) -> dict[str, list[tuple]]:
+        """Snapshot-tier series for a whole GRID COLUMN in one pass.
+
+        ``path_map`` maps row ids (qubit / pair names) to their dot-paths for
+        one column (docs/20 v2 Column History). Returns
+        ``{row_id: [(ts, value, trigger, run_id, exp, folder)] oldest-first}``.
+        Two tiers, mirroring :meth:`field_history`'s split (runs merging is
+        the caller's job): when every row's suffix maps to ONE tracked
+        property, a single SQL query over ``qubit IN (...)`` serves all rows
+        from the index; otherwise each snapshot's ``state.json`` is parsed
+        ONCE and every row's value extracted from it — never N separate
+        scans for an N-row column.
+        """
+        path = Path(quam_state_path)
+        snapshots = self.list_snapshots(path)          # newest-first, cached
+        out: dict[str, list[tuple]] = {row: [] for row in path_map}
+        if not path_map:
+            return out
+
+        # Index fastpath: one column = one suffix; rows are entity names.
+        props = {self._tracked_property_for(dp) for dp in path_map.values()}
+        entity_by_row = {row: dp.split(".")[1]
+                         for row, dp in path_map.items()
+                         if len(dp.split(".")) >= 3}
+        if (len(props) == 1 and None not in props and snapshots
+                and len(entity_by_row) == len(path_map)):
+            prop = next(iter(props))
+            entities = sorted(set(entity_by_row.values()))
+            try:
+                conn = self._open_index(path)
+                try:
+                    rows = conn.execute(
+                        "SELECT timestamp, qubit, value, trigger, run_id, "
+                        "experiment FROM param_history WHERE property=? AND "
+                        "qubit IN (%s) ORDER BY timestamp"
+                        % ",".join("?" * len(entities)),
+                        (prop, *entities)).fetchall()
+                finally:
+                    conn.close()
+            except sqlite3.Error:
+                rows = []
+            if rows:
+                row_by_entity: dict[str, list[str]] = {}
+                for row, ent in entity_by_row.items():
+                    row_by_entity.setdefault(ent, []).append(row)
+                for ts, ent, value, trigger, run_id, exp in rows:
+                    for row in row_by_entity.get(ent, ()):
+                        out[row].append((ts, value, trigger, run_id, exp, None))
+                return out
+
+        # Multi-path snapshot scan: one parse per snapshot, all rows extracted.
+        from quam_state_manager.core.pointer_resolver import (
+            is_pointer, is_self_ref, resolve_pointer,
+        )
+        hist_dir = self._history_dir(path)
+        take = snapshots[:scan_limit]                  # newest-first
+        segs_by_row = {row: dp.split(".") for row, dp in path_map.items()}
+        for meta in reversed(take):                    # oldest-first
+            snap_dir = hist_dir / meta.timestamp
+            try:
+                root = safe_io.read_json(snap_dir / "state.json")
+            except (OSError, ValueError):
+                continue
+            if not isinstance(root, dict):
+                continue
+            if any(segs and segs[0] not in root
+                   for segs in segs_by_row.values()):
+                try:
+                    wiring = safe_io.read_json(snap_dir / "wiring.json")
+                except (OSError, ValueError):
+                    wiring = None
+                if isinstance(wiring, dict):
+                    merged = dict(root)
+                    merged.update(wiring)
+                    root = merged
+            for row, segs in segs_by_row.items():
+                found, value = _walk_any_path(root, segs)
+                if not found:
+                    value = None
+                elif is_pointer(value) and not is_self_ref(value):
+                    value = resolve_pointer(root, value, tuple(segs))
+                out[row].append((meta.timestamp, value, meta.trigger,
+                                 meta.run_id, meta.experiment_name,
+                                 meta.experiment_folder_path))
+        return out
+
     def _open_index(self, quam_state_path: Path) -> sqlite3.Connection:
         """Open (and create on first use) the param-history SQLite index.
 

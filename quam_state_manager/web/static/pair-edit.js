@@ -474,6 +474,7 @@
 
             t.addEventListener('click', function (e) {
                 if (e.target.closest && e.target.closest('.bulk-resize-handle')) return;
+                if (e.target.closest && e.target.closest('.bulk-col-hist')) return;
                 if (_resizeJustEnded) return;
                 if (e.target.closest && e.target.closest('.bulk-ro-link')) return;
                 var th = e.target.closest && e.target.closest('thead th[data-col-key]');

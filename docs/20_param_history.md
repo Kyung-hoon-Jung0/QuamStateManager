@@ -555,3 +555,50 @@ Verified on the real instance (copy): resolver → alt dir; migration moved
 run chain (#412→…→#416=4920320533.95→…→#436) each with run attribution.
 Tests: `tests/test_chip_identity.py` (36) + `tests/test_field_history.py`
 runs-tier class + `tests/test_history.py::TestIndexFollowsRoutedDir`.
+
+## Amendment v2b (2026-07-31): Column History + LiveEditUndo (the unified Ctrl+Z)
+
+**Column History** — the bulk-grid COLUMN header's hover 🕘 (both grids; the
+delegated sort handler gains a `.bulk-col-hist` guard beside the resize-handle
+one) opens a body-mounted centered panel: rows = entities, first column = the
+Param-History sparkline (`render_sparkline_svg_inner`, snapshot tiers + runs
+merged then change-point collapsed), then the current value and the last 6
+matching runs (of ≤40 examined, newest first; run headers link the run's data
+into `#inspector-pane`; a highlighted cell marks the run that changed the
+value). The client collects `{row_id: dot_path}` from the rendered cells
+(`td[data-col-key] .bulk-cell[data-dot-path]` — both grids symmetric, no
+server re-derivation; paths feed READ-ONLY extraction) and POSTs
+`/bulk/column-history`. Engine: `HistoryManager.column_history` (tracked
+column ⇒ ONE SQL over `qubit IN (...)`; else one state.json parse per
+snapshot serving every row) + `_runs_column_series` (the runs-tier gates,
+one parse per run for all rows). Value click fills that entity's grid cell;
+each run column's **Use all** fills the whole column — both recorded as
+LiveEditUndo actions; staging stays user-explicit (Enter / Apply All).
+
+**LiveEditUndo — the unified Ctrl+Z** (r-feedback: "revert is core"):
+tiered global handler (app.js) — ① Generate-wizard undo (existing) ②
+`window.LiveEditUndo` — in-memory, value-level stack (cap 100) for
+UN-STAGED grid edits: Column-History fills (1 action per Use / per Use-all),
+🕘 popover fills into grid cells, and manual typing (focusin snapshot +
+change push, the `_wizUndo` idiom); cells addressed by `data-dot-path`
+selector so undo survives grid swaps ③ the EXISTING server `POST /undo`
+(`modifier.undo_group` — one change_log GROUP per press). The input-focus
+guard now passes for `.bulk-cell` / the panel (native text-undo elsewhere
+untouched; Escape still restores a cell). Tray gains the ↶ button running
+the same tier chain, its hover tooltip naming what the NEXT press undoes.
+
+**Review-tray sync contract** (user-critical): staged undos ride `/undo`'s
+existing atomic response (tray swap + `cellsReverted` + `quam:state-changed`)
+— one press = exactly one group gone from Review; un-staged undos are
+invisible to Review by definition (never in the change_log); Use all →
+Apply All = one `/field/edit-batch` = ONE gid = one Review bundle = one
+Ctrl+Z. Pinned by `tests/test_column_history.py::TestReviewTraySync`.
+
+**Revert last apply** (user asked "possible after apply?" — yes): both apply
+paths now capture the PRE-apply live as a snapshot BEFORE
+`working_copy.apply_to_live` (content-hash dedup ⇒ free when unchanged, and
+then the newest snapshot IS the pre-apply state), memo `ctx["last_apply"]`.
+A clean tray offers the explicit "↺ Revert last apply" button →
+`/state-history/<pre_ts>/stage` (the gated State-History machinery — review
+then Apply completes the revert; Ctrl+Z never crosses the apply boundary
+silently). Save/apply remain the hard undo boundaries.

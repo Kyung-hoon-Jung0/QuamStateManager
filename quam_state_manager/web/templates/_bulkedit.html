@@ -110,6 +110,10 @@
                         title="{{ c.section }} · click to sort · drag the right edge to resize">
                         <span class="bulk-col-label">{{ c.label }}</span>{% if c.unit %} <span class="bulk-col-unit unit">({{ c.unit }})</span>{% endif %}<span class="bulk-sort-caret" aria-hidden="true"></span>
                         <span class="bulk-col-stats muted" data-col-stats="{{ c.key }}"></span>
+                        <button type="button" class="bulk-col-hist" data-grid="qubit"
+                                data-label="{{ c.label }}" data-unit="{{ c.unit or '' }}"
+                                onclick="ColumnHistory.open(this)"
+                                title="Column history — this parameter across every qubit over the recent runs">&#128344;</button>
                         <span class="bulk-resize-handle" data-col-key="{{ c.key }}" title="Drag to resize · double-click to auto-fit" aria-hidden="true"></span>
                     </th>
                     {% endfor %}
@@ -216,6 +220,10 @@
                         title="{{ c.section }} · click to sort · drag the right edge to resize">
                         <span class="bulk-col-label">{{ c.label }}</span>{% if c.unit %} <span class="bulk-col-unit unit">({{ c.unit }})</span>{% endif %}<span class="bulk-sort-caret" aria-hidden="true"></span>
                         <span class="bulk-col-stats muted" data-col-stats="{{ c.key }}"></span>
+                        <button type="button" class="bulk-col-hist" data-grid="pair"
+                                data-label="{{ c.label }}" data-unit="{{ c.unit or '' }}"
+                                onclick="ColumnHistory.open(this)"
+                                title="Column history — this parameter across every pair over the recent runs">&#128344;</button>
                         <span class="bulk-resize-handle" data-col-key="{{ c.key }}" title="Drag to resize · double-click to auto-fit" aria-hidden="true"></span>
                     </th>
                     {% endfor %}

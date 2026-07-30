@@ -1799,6 +1799,7 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # extras.data_folder values (muted note, never an error).
         "chip_name_prompt": (_active_ctx() or {}).get("chip_name_prompt"),
         "extras_data_dangling": (_active_ctx() or {}).get("extras_data_dangling") or [],
+        "last_apply": (_active_ctx() or {}).get("last_apply"),
         "wc_gc_count": _working_copy_count(),
         "wc_gc_threshold": _WC_GC_THRESHOLD,
         "qubit_names": store.qubit_names if store else [],
@@ -3359,6 +3360,9 @@ def _render_tray(*, oob: bool) -> str:
         active_name=ident["name"] if ident else None,
         chip_origin=ident["origin"] if ident else "live",
         qualibrate_tray=_qualibrate_tray_badge(),
+        # docs/20 v2: the last apply's pre-apply snapshot ts (this session) —
+        # powers the explicit "Revert last apply…" affordance.
+        last_apply=(_active_ctx() or {}).get("last_apply"),
         oob=oob,
     )
 
@@ -4043,6 +4047,251 @@ def _runs_field_series(ctx: dict, dot_path: str, *,
                        getattr(run, "run_id", None),
                        getattr(run, "experiment_name", None), fkey))
     return series, examined
+
+
+def _runs_column_series(ctx: dict, path_map: dict[str, str], *,
+                        max_runs: int = 6, max_examine: int = 40,
+                        ) -> tuple[list[dict], int]:
+    """Vectorized runs tier for a grid COLUMN (docs/20 v2 Column History).
+
+    Same chip gates as :func:`_runs_field_series` (shared extras names are
+    definitive even across a host move — the network pre-gate only
+    short-circuits for unnamed loaded chips; else fingerprint alignment),
+    but each matching run's state.json is parsed ONCE and every row's value
+    extracted from it. Returns ``(runs newest-first, examined)`` where each
+    run is ``{run_id, experiment, ts, when, uid, values: {row_id: value}}``
+    — ``uid`` is direct (folder under its registered root), so the panel's
+    run links are always valid. Caps at ``max_runs`` MATCHING runs.
+    """
+    from quam_state_manager.core.history import (
+        ALIGN_ALIGNED, ChipFingerprint, _normalised_network, _walk_any_path,
+        align, extras_chip_name, fingerprint_from_dicts)
+    from quam_state_manager.core.pointer_resolver import (
+        is_pointer, is_self_ref, resolve_pointer)
+
+    store = ctx.get("store")
+    if store is None or not path_map:
+        return [], 0
+    with store._lock:
+        loaded_name = extras_chip_name(store.state)
+        loaded_fp = fingerprint_from_dicts(store.state, store.wiring)
+
+    roots: list[tuple[Path, str]] = []
+    seen_roots: set[str] = set()
+    for raw in (ctx.get("extras_data_roots") or []):
+        k = str(Path(raw))
+        if k not in seen_roots:
+            seen_roots.add(k)
+            roots.append((Path(raw), _folder_key(raw)))
+    for cand in _dataset_candidate_folders(fast=True):
+        k = str(cand)
+        if k not in seen_roots:
+            seen_roots.add(k)
+            roots.append((Path(cand), _folder_key(cand)))
+
+    candidates: list[tuple[str, Any, str]] = []      # (ts, run, root_key)
+    for root, rkey in roots:
+        st = _get_or_create_store(root, rescan=True)
+        if st is None:
+            continue
+        for run in st.runs.values():
+            candidates.append((_run_ts_stamp(run), run, rkey))
+    candidates.sort(key=lambda t: t[0], reverse=True)
+
+    segs_by_row = {row: dp.split(".") for row, dp in path_map.items()}
+    out: list[dict] = []
+    examined = 0
+    for ts, run, rkey in candidates:
+        if len(out) >= max_runs or examined >= max_examine:
+            break
+        folder = Path(getattr(run, "folder_path", "") or "")
+        qs = folder / "quam_state"
+        if not (qs / "state.json").exists():
+            continue
+        examined += 1
+        fkey = str(folder)
+        run_net = _RUN_IDENT_CACHE.get(fkey)
+        wiring: Any = None
+        if run_net is None:
+            try:
+                wiring = safe_io.read_json(qs / "wiring.json")
+            except (OSError, ValueError):
+                wiring = {}
+            run_net = _normalised_network(
+                (wiring if isinstance(wiring, dict) else {}).get("network"))
+            _RUN_IDENT_CACHE[fkey] = run_net
+        if (not loaded_name and loaded_fp.network and run_net
+                and run_net != loaded_fp.network):
+            continue
+        try:
+            state = safe_io.read_json(qs / "state.json")
+        except (OSError, ValueError):
+            continue
+        if not isinstance(state, dict):
+            continue
+        run_name = extras_chip_name(state)
+        if loaded_name and run_name:
+            if run_name != loaded_name:
+                continue
+        else:
+            run_fp = ChipFingerprint(
+                network=run_net,
+                qubits=frozenset((state.get("qubits") or {}).keys()),
+                pairs=frozenset((state.get("qubit_pairs") or {}).keys()))
+            if align(loaded_fp, run_fp) != ALIGN_ALIGNED:
+                continue
+
+        merged = dict(state)
+        if any(segs and segs[0] not in merged
+               for segs in segs_by_row.values()):
+            if wiring is None:
+                try:
+                    wiring = safe_io.read_json(qs / "wiring.json")
+                except (OSError, ValueError):
+                    wiring = {}
+            if isinstance(wiring, dict):
+                merged.update(wiring)
+        values: dict[str, Any] = {}
+        for row, segs in segs_by_row.items():
+            found, value = _walk_any_path(merged, segs)
+            if not found:
+                value = None
+            elif is_pointer(value) and not is_self_ref(value):
+                value = resolve_pointer(merged, value, tuple(segs))
+            values[row] = value
+        rid = getattr(run, "run_id", None)
+        out.append({
+            "run_id": rid,
+            "experiment": getattr(run, "experiment_name", None),
+            "ts": ts,
+            "when": (f"{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}"
+                     if len(ts) >= 13 else ts),
+            "uid": f"{rkey}:{int(rid)}" if rid is not None else None,
+            "folder": fkey,
+            "values": values,
+        })
+    return out, examined
+
+
+@bp.route("/bulk/column-history", methods=["POST"])
+def bulk_column_history():
+    """Column History panel (docs/20 v2): one grid column's recent story.
+
+    Body (form): ``grid`` (qubit|pair), ``label``, ``unit``,
+    ``paths`` = JSON ``{row_id: dot_path}`` — collected client-side from the
+    rendered cells (both grids symmetric; paths feed READ-ONLY extraction
+    only). Renders rows = entities, first column = Param-History-style
+    sparkline (snapshot tiers + runs merged), then the current value and the
+    last N matching runs' values (each clickable to fill the grid cell;
+    per-run 'Use all' fills the whole column — staging stays user-explicit).
+    """
+    ctx = _active_ctx()
+    store = ctx.get("store") if ctx else None
+    if not ctx or ctx.get("type") != "quam" or store is None:
+        return render_template("_status.html", message="No state loaded",
+                               level="warning"), 400
+    label = (request.form.get("label") or "").strip() or "column"
+    unit = (request.form.get("unit") or "").strip()
+    col_key = (request.form.get("col_key") or "").strip()
+    grid = (request.form.get("grid") or "qubit").strip()
+    try:
+        path_map_raw = json.loads(request.form.get("paths") or "{}")
+    except ValueError:
+        return render_template("_status.html", message="bad paths payload",
+                               level="error"), 400
+    path_map: dict[str, str] = {
+        str(k): _normalize_dot_path(str(v).strip())
+        for k, v in path_map_raw.items()
+        if isinstance(k, str) and isinstance(v, str) and str(v).strip()
+    }
+    if not path_map or len(path_map) > 200:
+        return render_template("_status.html", message="no usable paths",
+                               level="error"), 400
+
+    hm = _history()
+    snap_series = hm.column_history(ctx["path"], path_map)
+    try:
+        runs, examined = _runs_column_series(ctx, path_map)
+    except Exception:  # noqa: BLE001 — the panel must survive a bad root
+        logger.debug("column-history runs tier failed", exc_info=True)
+        runs, examined = [], 0
+
+    from quam_state_manager.core.pointer_path import resolve_field_target
+
+    def _num_or_none(v):
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return None
+        f = float(v)
+        return f if f == f and f not in (float("inf"), float("-inf")) else None
+
+    rows_out: list[dict[str, Any]] = []
+    with store._lock:
+        merged_now = store.merged
+    for row_id in sorted(path_map):
+        dp = path_map[row_id]
+        current = None
+        editable = True
+        try:
+            ft = resolve_field_target(merged_now, dp)
+            if ft.get("resolvable"):
+                current = ft.get("resolved_value")
+        except Exception:  # noqa: BLE001
+            editable = False
+        # Sparkline series: snapshot tiers + run values, time-merged, then
+        # change-point collapsed (field_history's NaN-safe key rule).
+        series = list(snap_series.get(row_id) or [])
+        for r in reversed(runs):                     # oldest-first append
+            series.append((r["ts"], r["values"].get(row_id), "experiment",
+                           r["run_id"], r["experiment"], r["folder"]))
+        series.sort(key=lambda t: t[0])
+
+        def _key(v):
+            if isinstance(v, float) and v != v:
+                return "\x00nan"
+            return v
+
+        collapsed: list[dict] = []
+        prev: Any = object()
+        for ts, value, trigger, _rid, _exp, _folder in series:
+            if _key(value) != prev:
+                collapsed.append({"value": value, "trigger": trigger or "auto"})
+            prev = _key(value)
+        spark_vals = [{"value": p["value"], "trigger": p["trigger"]}
+                      for p in collapsed
+                      if _num_or_none(p["value"]) is not None]
+        svg = ""
+        if len(spark_vals) >= 2:
+            try:
+                svg = hm.render_sparkline_svg_inner(
+                    spark_vals, current=_num_or_none(current))
+            except Exception:  # noqa: BLE001
+                svg = ""
+        # 'changed' marks a run whose value differs from the NEXT-OLDER run
+        # column (the moment this run introduced a new value).
+        cells = []
+        for i, r in enumerate(runs):                  # newest-first columns
+            v = r["values"].get(row_id)
+            older = (runs[i + 1]["values"].get(row_id)
+                     if i + 1 < len(runs) else None)
+            cells.append({
+                "display": _fh_display_string(v),
+                "fill": _fh_fill_string(v),
+                "has": v is not None,
+                "changed": i + 1 < len(runs) and v != older,
+            })
+        rows_out.append({
+            "id": row_id,
+            "dot_path": dp,
+            "svg": svg,
+            "current": _fh_display_string(current),
+            "current_fill": _fh_fill_string(current),
+            "editable": editable,
+            "cells": cells,
+        })
+
+    return render_template(
+        "_column_history.html", label=label, unit=unit, grid=grid,
+        col_key=col_key, rows=rows_out, runs=runs, examined=examined)
 
 
 @bp.route("/field/history", methods=["GET"])
@@ -7776,6 +8025,22 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False):
             }), 500
         _set_working_dirty(True)
 
+    # docs/20 v2 "Revert last apply": capture the PRE-apply live content
+    # (dedup-free when unchanged; then the newest snapshot IS pre-apply).
+    pre_apply_ts = None
+    try:
+        _pre = _history().check_and_snapshot(
+            _active_path(), "auto",
+            defer_index=not current_app.config.get("TESTING"),
+            project=_scope_for(_active_path(), _active_ctx()))
+        if _pre is not None:
+            pre_apply_ts = _pre.timestamp
+        else:
+            _snaps = _history().list_snapshots(_active_path())
+            pre_apply_ts = _snaps[0].timestamp if _snaps else None
+    except Exception:
+        logger.warning("Pre-apply snapshot failed", exc_info=True)
+
     try:
         with _active_wc_lock(ctx):
             working_copy.apply_to_live(wc, force=False)
@@ -7795,6 +8060,11 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False):
     _clear_reapply(ctx)  # edits are on the live chip now — nothing left to re-apply
     ctx["live_diverged"] = False  # live now holds the merged working content
     _reset_baseline_after_apply(ctx)  # the user's own change isn't "live drift"
+    if pre_apply_ts:
+        ctx["last_apply"] = {
+            "pre_ts": pre_apply_ts,
+            "at": datetime.now().isoformat(timespec="seconds"),
+        }
     # Snapshot files + meta SYNCHRONOUSLY (so the State-History timeline refreshed
     # by this same response's stateHistoryChanged sees the new snapshot, and the
     # content is captured before any concurrent writer can change the live files);
@@ -7865,6 +8135,23 @@ def state_apply_to_live():
             ), 500
         _set_working_dirty(True)
 
+    # docs/20 v2 "Revert last apply": capture the PRE-apply live content
+    # first (content-hash dedup makes this free when live already matches a
+    # snapshot; then the newest existing snapshot IS the pre-apply state).
+    pre_apply_ts = None
+    try:
+        _pre = _history().check_and_snapshot(
+            _active_path(), "auto",
+            defer_index=not current_app.config.get("TESTING"),
+            project=_scope_for(_active_path(), _active_ctx()))
+        if _pre is not None:
+            pre_apply_ts = _pre.timestamp
+        else:
+            _snaps = _history().list_snapshots(_active_path())
+            pre_apply_ts = _snaps[0].timestamp if _snaps else None
+    except Exception:
+        logger.warning("Pre-apply snapshot failed", exc_info=True)
+
     try:
         with _active_wc_lock(ctx):
             working_copy.apply_to_live(wc, force=force)
@@ -7877,6 +8164,11 @@ def state_apply_to_live():
     _clear_reapply(ctx)  # the edits are now on the live chip — nothing left to re-apply
     ctx["live_diverged"] = False  # live now holds the working content (incl. force)
     _reset_baseline_after_apply(ctx)  # the user's own change isn't "live drift"
+    if pre_apply_ts:
+        ctx["last_apply"] = {
+            "pre_ts": pre_apply_ts,
+            "at": datetime.now().isoformat(timespec="seconds"),
+        }
     # Snapshot files + meta synchronously; only the SQLite indexing is deferred —
     # see the pull-apply path above for the full rationale.
     try:

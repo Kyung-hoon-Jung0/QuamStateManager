@@ -1169,9 +1169,11 @@
             }
 
             // Header sort is delegated (no inline onclick) so a click on a resize
-            // handle — or a click right after a drag — never triggers a sort.
+            // handle, the column-history clock, or a click right after a drag
+            // never triggers a sort.
             t.addEventListener('click', function (e) {
                 if (e.target.closest && e.target.closest('.bulk-resize-handle')) return;
+                if (e.target.closest && e.target.closest('.bulk-col-hist')) return;
                 if (_bulkResizeJustEnded) return;
                 var th = e.target.closest && e.target.closest('thead th[data-col-key]');
                 if (th && th.getAttribute('data-col-key')) BulkEdit.sort(th.getAttribute('data-col-key'));

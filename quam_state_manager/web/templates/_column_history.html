@@ -1,0 +1,69 @@
+{# Column History panel (docs/20 v2): one bulk-grid column's recent story.
+   Injected into the ColumnHistory body-mounted modal by app.js (which
+   htmx.process()es it — the run headers' open-run links use hx-get).
+   Rows = entities; first column = Param-History-style sparkline (snapshot
+   tiers + runs, change-point collapsed); then the current value and the
+   last N matching runs. Value click = fill that entity's grid cell
+   (LiveEditUndo-recorded; staging stays user-explicit); per-run "Use all"
+   fills the whole column as ONE undoable action. #}
+<div class="ch-head">
+  <span class="ch-title">
+    &#128344; Column history — {{ label }}{% if unit %} <span class="ch-unit">({{ unit }})</span>{% endif %}
+  </span>
+  <button type="button" class="ch-close" onclick="ColumnHistory.close()"
+          title="Close (Esc)">&times;</button>
+</div>
+{% if not runs and not rows %}
+<p class="ch-empty">Nothing to show for this column.</p>
+{% else %}
+<div class="ch-scroll">
+<table class="ch-table" data-grid="{{ grid }}" data-col-key="{{ col_key }}">
+  <thead>
+    <tr>
+      <th class="ch-rowhead"></th>
+      <th class="ch-trend">trend</th>
+      <th class="ch-current">current</th>
+      {% for r in runs %}
+      <th class="ch-run">
+        {% if r.uid %}
+        <a href="#" class="ch-run-open" hx-get="/dataset/{{ r.uid }}"
+           hx-target="#inspector-pane" hx-swap="innerHTML"
+           title="{{ r.experiment or '' }} — open run #{{ r.run_id }}'s data in the inspector pane">#{{ r.run_id }}</a>
+        {% else %}<span title="{{ r.experiment or '' }}">#{{ r.run_id }}</span>{% endif %}
+        <span class="ch-run-when">{{ r.when }}</span>
+        <button type="button" class="ch-useall" data-run-index="{{ loop.index0 }}"
+                onclick="ColumnHistory.useAll(this)"
+                title="Fill EVERY row's grid cell with this run's values (one Ctrl+Z undoes the whole fill; commit stays yours)">Use all</button>
+      </th>
+      {% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+  {% for row in rows %}
+    <tr data-row="{{ row.id }}">
+      <th class="ch-rowhead" scope="row">{{ row.id }}</th>
+      <td class="ch-trend">
+        {% if row.svg %}<svg class="history-cell-spark ch-spark" viewBox="0 0 100 30" preserveAspectRatio="none">{{ row.svg | safe }}</svg>
+        {% else %}<span class="ch-nospark">—</span>{% endif %}
+      </td>
+      <td class="ch-current" title="{{ row.current_fill }}"><code>{{ row.current }}</code></td>
+      {% for c in row.cells %}
+      <td class="ch-val{% if c.changed %} ch-changed{% endif %}{% if not c.has %} ch-missing{% endif %}"
+          data-run-index="{{ loop.index0 }}"
+          {% if c.has %}title="{{ c.fill }} — click to fill {{ row.id }}'s cell (Enter there stages it)"
+          data-row="{{ row.id }}" data-fill="{{ c.fill }}"
+          onclick="ColumnHistory.useValue(this)"{% endif %}>
+        {% if c.has %}<code>{{ c.display }}</code>{% else %}—{% endif %}
+      </td>
+      {% endfor %}
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="ch-foot">
+  {{ runs|length }} matching run{{ 's' if runs|length != 1 }} (of {{ examined }} examined, newest first)
+  &middot; trend = snapshots + runs, change points
+  &middot; a highlighted cell is where that run changed the value
+</p>
+{% endif %}
