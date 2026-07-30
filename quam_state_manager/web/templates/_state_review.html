@@ -47,8 +47,10 @@
                 title="Push the working state (your saved, not-yet-applied edits) straight to the live chip.">
           <span aria-hidden="true">&#8593;</span> Apply to live chip</button>
         {% endif %}
+        {# forced=true: this button already confirms here — without it the server's
+           working_dirty needs_confirm gate (docs/65) would double-prompt. #}
         <button class="btn-sync outline" type="button"
-                onclick="if (window.confirm('Discard your saved edits and replace the working state with the live chip? This cannot be undone.')) doStateSync('discard')"
+                onclick="if (window.confirm('Discard your saved edits and replace the working state with the live chip? This cannot be undone.')) doStateSync('discard', true)"
                 title="Discard your saved edits and pull the live chip into the working state.">
           Discard &amp; pull live</button>
       </span>

@@ -7915,6 +7915,35 @@ def state_sync():
         return jsonify({"status": "error",
                         "message": "This chip was opened from a dataset run "
                                    "archive (read-only) — cannot apply to live."}), 409
+
+    # docs/65 state-roundtrip: a SAVED/STAGED working copy (working_dirty — a
+    # snapshot, a run's state, a revert, or /save'd edits; content that is NOT
+    # representable as change-log entries) must never be destroyed by this
+    # route's pull-first model:
+    #  - apply: the working copy IS the intended live content. Delegate straight
+    #    to the save+push path (the same machinery as /state/apply-to-live).
+    #    Pulling first would overwrite the staged files with the live content
+    #    and then push the live chip back onto itself — the reported "I pressed
+    #    apply and it FETCHED the live state instead" bug.
+    #  - discard/reapply: the pull would wipe the staged content — require an
+    #    explicit force token (the client turns needs_confirm into a confirm()).
+    # The stash carve-out: after an apply CONFLICT the user's edits live in
+    # ctx["pending_reapply"] and the working files are expendable — pull+replay
+    # is the designed resolution there, and short-circuiting it would retry the
+    # same stale push forever. So the protection applies only when there is no
+    # stash to replay.
+    if ctx.get("working_dirty") and not ctx.get("pending_reapply"):
+        if mode == "apply":
+            return _sync_pull_apply_to_live(ctx, None, pulled_other_changes=False)
+        if request.values.get("force") != "1":
+            return jsonify({
+                "status": "needs_confirm",
+                "mode": mode,
+                "message": ("The working state holds loaded/saved content that "
+                            "is not on the live chip yet — pulling the live "
+                            "chip will DISCARD it."),
+            })
+
     wc = ctx["working_copy"]
     store = ctx["store"]
 
@@ -8047,10 +8076,17 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False):
     except working_copy.StaleLiveError:
         # The live chip changed again while we merged. Keep the stash and hand
         # back the conflict tray so the user can retry / force / discard.
+        # staged_conflict (docs/65): no stash to replay — the working copy IS
+        # the payload (a staged snapshot / saved edits), so "pull & re-apply"
+        # would replay nothing and lose it; the tray offers only the honest
+        # choices (force-overwrite or pull-and-discard).
         return jsonify({
             "status": "conflict",
             "mode": "apply",
-            "tray_html": render_template("_state_apply_conflict.html"),
+            "tray_html": render_template(
+                "_state_apply_conflict.html",
+                staged_conflict=bool(ctx.get("working_dirty"))
+                and not ctx.get("pending_reapply")),
             "replay": replay,
         })
     except (OSError, ValueError) as exc:
@@ -8156,7 +8192,11 @@ def state_apply_to_live():
         with _active_wc_lock(ctx):
             working_copy.apply_to_live(wc, force=force)
     except working_copy.StaleLiveError:
-        return render_template("_state_apply_conflict.html")  # stash kept for the pull choice
+        # stash kept for the pull choice; staged_conflict — see the sync twin
+        return render_template(
+            "_state_apply_conflict.html",
+            staged_conflict=bool(ctx.get("working_dirty"))
+            and not ctx.get("pending_reapply"))
     except (OSError, ValueError) as exc:
         return render_template("_status.html", message=f"Apply to live failed: {exc}", level="error"), 500
 

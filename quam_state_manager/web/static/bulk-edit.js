@@ -808,8 +808,8 @@
                     _syncAppliedAcrossTable(r.body.results);
                     if (!silent && r.body.tray_html && window._swapPendingTray) {
                         window._bulkSelfEdit = true;            // suppress our own cross-surface refresh
-                        window._swapPendingTray(r.body.tray_html);
-                        window._bulkSelfEdit = false;
+                        try { window._swapPendingTray(r.body.tray_html); }
+                        finally { window._bulkSelfEdit = false; }
                     }
                     // Re-run diagnostics unconditionally — a silent (applyAll) row or a
                     // dedup'd shared-port commit may not swap the tray, but the edit DID
@@ -1159,14 +1159,22 @@
             if (t._bulkBound) { _refreshGlobal(); return; }
             t._bulkBound = true;
 
-            // Discard-intent guard: a pointerdown on Reset fires BEFORE the focused
-            // cell's focusout, so record it and let focusout skip its click-away
-            // commit (otherwise "Reset" would commit the focused row, not discard it).
-            var _rstBtn = document.getElementById('bulk-reset');
-            if (_rstBtn && !_rstBtn._resetGuardBound) {
-                _rstBtn._resetGuardBound = true;
-                _rstBtn.addEventListener('pointerdown', function () { BulkEdit._resetPressTs = Date.now(); });
-            }
+            // Toolbar-press guard (docs/65, generalizing the old Reset-only stamp):
+            // a pointerdown on ANY toolbar action fires BEFORE the focused cell's
+            // focusout, so record it and let focusout skip its click-away row
+            // commit. For Reset that commit would turn "discard" into a commit;
+            // for Apply all / Apply&sync the racing row commit shrank the dirty
+            // set and _refreshGlobal DISABLED the button before mouseup — the
+            // browser then never delivered the click ("Apply all needs two
+            // presses"). The relatedTarget check below misses this whenever the
+            // browser doesn't focus buttons on mousedown (null relatedTarget).
+            ['bulk-reset', 'bulk-apply-all', 'bulk-apply-sync'].forEach(function (bid) {
+                var b = document.getElementById(bid);
+                if (b && !b._toolbarGuardBound) {
+                    b._toolbarGuardBound = true;
+                    b.addEventListener('pointerdown', function () { BulkEdit._toolbarPressTs = Date.now(); });
+                }
+            });
 
             // Header sort is delegated (no inline onclick) so a click on a resize
             // handle, the column-history clock, or a click right after a drag
@@ -1222,8 +1230,8 @@
                 // the same row (two change-log entries for one edit). Same for the
                 // Reset button: a click-away commit would turn "discard" into a
                 // COMMIT of the focused row. relatedTarget is null in some engines,
-                // so also honour a pointerdown-on-Reset flag that fires before blur.
-                if (BulkEdit._resetPressTs && (Date.now() - BulkEdit._resetPressTs) < 1000) return;
+                // so also honour the toolbar pointerdown stamp that fires before blur.
+                if (BulkEdit._toolbarPressTs && (Date.now() - BulkEdit._toolbarPressTs) < 1000) return;
                 if (to && to.closest && to.closest('#bulk-apply-all, #bulk-apply-sync, #bulk-reset')) return;
                 var b = row && row.querySelector('.bulk-row-apply');
                 if (b && !b.disabled) BulkEdit.applyRow(b);
@@ -1358,8 +1366,8 @@
                     // rows are server-side no-ops), so lastTray is the correct final state.
                     if (lastTray && window._swapPendingTray) {
                         window._bulkSelfEdit = true;
-                        window._swapPendingTray(lastTray);
-                        window._bulkSelfEdit = false;
+                        try { window._swapPendingTray(lastTray); }
+                        finally { window._bulkSelfEdit = false; }
                     }
                     if (all) all.textContent = failures ? ('Apply all (' + failures + ' failed)') : 'Apply all';
                     _refreshGlobal(); _recomputeStats();
@@ -1511,8 +1519,8 @@
                     }
                     if (jb.tray_html && window._swapPendingTray) {
                         window._bulkSelfEdit = true;            // suppress our own refresh
-                        window._swapPendingTray(jb.tray_html);
-                        window._bulkSelfEdit = false;
+                        try { window._swapPendingTray(jb.tray_html); }
+                        finally { window._bulkSelfEdit = false; }
                     }
                     if (window._diagChanged) window._diagChanged();
                     close();

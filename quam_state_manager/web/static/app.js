@@ -348,6 +348,17 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
         evt.detail.shouldSwap = true;
         evt.detail.isError = false;
     }
+    // The tray's "Revert last apply" targets #status-bar; a stale tray can post
+    // while edits exist and the stage gate 409s with a confirm fragment —
+    // render it there instead of a dead click (docs/65). Narrowed to the
+    // state-history stage/restore endpoints.
+    if (t.id === 'status-bar' && status === 409) {
+        var _p409 = (evt.detail.requestConfig && evt.detail.requestConfig.path) || '';
+        if (_p409.indexOf('/state-history/') === 0) {
+            evt.detail.shouldSwap = true;
+            evt.detail.isError = false;
+        }
+    }
 });
 
 /* Surface a toast on ANY htmx error response. htmx 2.x drops error-response
@@ -1824,9 +1835,23 @@ window.closeInspector = function() {
    now shows pre-restore values — and the entity it described (e.g. a pulse that
    the snapshot doesn't have) may no longer exist, which would 404 the next edit.
    Clear the pane so the user can never act on stale content. The server has
-   already rebuilt every derived cache; this is purely the client catch-up. */
+   already rebuilt every derived cache; this is purely the client catch-up.
+
+   docs/65 additions:
+   - ALSO soft-refresh the main state surface: the stage routes (State History
+     stage, dataset "Load State", the tray's "Revert last apply") emit only
+     HX-Trigger events, and the Live-Edit grid re-pulls only on the DOM event
+     quam:state-changed — nothing bridged them, so /bulk kept showing
+     pre-stage values indefinitely ("Load State does nothing" report). The
+     same _softRefreshLiveSurface a sync pull uses is the bridge.
+   - Do NOT close the inspector when it hosts a DATASET DETAIL: that's an
+     immutable run archive (never stale), and it's exactly where the user just
+     pressed "Load State" — closing it would erase the confirmation they're
+     reading. */
 document.addEventListener("stateRestored", function() {
-    if (window.closeInspector) window.closeInspector();
+    var dsDetail = document.querySelector("#inspector-pane #ds-detail-root");
+    if (!dsDetail && window.closeInspector) window.closeInspector();
+    _softRefreshLiveSurface();
 });
 
 /* ------------------------------------------------------------------ */
@@ -2147,7 +2172,7 @@ function _failedPathsSummary(failed) {
     return " Affected: " + shown + ".";
 }
 
-window.doStateSync = function(mode) {
+window.doStateSync = function(mode, forced) {
     mode = mode || "discard";
     // Double-submit guard: a second click (or a grid ⚡ + tray button double-fire)
     // while one apply/sync is in flight used to queue a second /state/sync that
@@ -2163,10 +2188,21 @@ window.doStateSync = function(mode) {
     fetch("/state/sync", {
         method: "POST",
         headers: {"Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
-        body: "mode=" + encodeURIComponent(mode)
+        body: "mode=" + encodeURIComponent(mode) + (forced ? "&force=1" : "")
     })
         .then(function(r) { return r.json(); })
         .then(function(data) {
+            if (data.status === "needs_confirm") {
+                // docs/65: the working state holds staged/saved content that a
+                // pull would destroy — the server refuses until confirmed. The
+                // forced re-post runs on a MACROTASK so the finally below has
+                // already cleared the in-flight guard.
+                if (window.confirm((data.message || "Overwrite the working state?")
+                                   + "\n\nContinue and discard it?")) {
+                    setTimeout(function() { window.doStateSync(mode, true); }, 0);
+                }
+                return;
+            }
             if (data.status === "error") {
                 window.showToast("Sync failed: " + (data.message || "unknown error"), "error");
                 return;
@@ -7164,6 +7200,7 @@ function applyPlotRow(row) {
         if (r.body && r.body.ok) {
             _markPlotRowApplied(row);
             if (r.body.tray_html) _swapPendingTray(r.body.tray_html);
+            _closePlotPopupIfDone();
         } else if (r.status === 409 && r.body && r.body.chip_mismatch) {
             btn.disabled = false; btn.textContent = prevLabel;
             if (window.confirm((r.body.error || 'Different chip.') + '\n\nApply anyway?')
@@ -7221,6 +7258,7 @@ function applyAllPlotRows() {
         if (r.body && r.body.ok) {
             pending.forEach(function(row) { _markPlotRowApplied(row); });
             if (r.body.tray_html) _swapPendingTray(r.body.tray_html);
+            _closePlotPopupIfDone();
         } else if (r.status === 409 && r.body && r.body.chip_mismatch) {
             if (window.confirm((r.body.error || 'Different chip.') + '\n\nApply anyway?')
                 && _pp) { _pp.dataset.forceChip = '1'; applyAllPlotRows(); }
@@ -7263,6 +7301,26 @@ function _markPlotRowApplied(row) {
     if (btnSlot) btnSlot.innerHTML = '<span class="plot-apply-row-check">✓ applied</span>';
     var input = row.querySelector('.plot-apply-new-input');
     if (input) input.readOnly = true;
+}
+
+/* docs/65: once every row is applied, the popup's job is done — close it and
+   say so. It used to stay open showing "✓ applied", so "Apply All" appeared to
+   need a SECOND press (the second click hit the nothing-left-to-apply early
+   return, which was the only success path that closed). */
+function _closePlotPopupIfDone() {
+    var rowsBox = document.getElementById('plot-apply-rows');
+    if (!rowsBox) return;
+    var total = rowsBox.querySelectorAll('.plot-apply-row').length;
+    var left = rowsBox.querySelectorAll('.plot-apply-row:not(.plot-apply-applied)').length;
+    if (total && !left) {
+        window.closePlotApplyPopup();
+        if (window.showToast) {
+            window.showToast(
+                'Applied ' + total + ' value' + (total === 1 ? '' : 's') +
+                ' to the working state — Review (top bar) to push to the live chip.',
+                'success');
+        }
+    }
 }
 
 // Single, debounced announcer for "the active chip's state changed → the
