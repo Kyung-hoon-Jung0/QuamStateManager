@@ -9,7 +9,10 @@ point, with the user-declared ``state["extras"]["chip_name"]`` as tier 1."""
 
 from __future__ import annotations
 
+import itertools
 import json
+import os
+import time
 from pathlib import Path
 
 import pytest
@@ -38,10 +41,19 @@ def _wiring(host):
     return {"wiring": {}, "network": {"host": host, "cluster_name": "C"}}
 
 
+_MTIME_TICK = itertools.count(1)
+
+
 def _write(folder: Path, state: dict, wiring: dict) -> Path:
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "state.json").write_text(json.dumps(state), encoding="utf-8")
     (folder / "wiring.json").write_text(json.dumps(wiring), encoding="utf-8")
+    # Tests rewrite the same files within one second; advance mtimes so the
+    # identity/fingerprint mtime caches always observe the change (production
+    # rewrites go through os.replace with genuinely new mtimes).
+    t = time.time() + 2 * next(_MTIME_TICK)
+    for f in ("state.json", "wiring.json"):
+        os.utime(folder / f, (t, t))
     return folder
 
 
@@ -192,3 +204,86 @@ class TestLadderLegacyParity:
         synthetic = Path("/__chip_key__") / "labX" / "quam_state"
         assert hm._key_for(synthetic) == "labX"
         assert hm._history_dir(synthetic) == tmp_path / "inst" / "history" / "labX"
+
+
+class TestV3IndexMigration:
+    """The wild corruption, synthesized exactly: base dir holds chipA's
+    folders plus BOTH chips' index rows; the alt dir holds chipB's folders
+    and NO index. v3 moves provably-foreign rows next to their folders,
+    keeps orphans (pruned snapshots), skips ambiguous timestamps."""
+
+    TS_A = "20260101_000000_0001"      # chipA — stays in base
+    TS_B = "20260102_000000_0002"      # chipB — must move to the alt dir
+    TS_ORPHAN = "20260103_000000_0003"  # no folder anywhere — pruned, keep
+    TS_AMBIG = "20260104_000000_0004"   # folder in TWO other dirs — skip
+
+    def _insert(self, idx, ts, qubit):
+        import sqlite3
+        con = sqlite3.connect(str(idx))
+        try:
+            con.execute(
+                "INSERT OR REPLACE INTO param_history VALUES (?,?,?,?,?,?,?,?)",
+                (ts, qubit, "f_01", 5.0e9, None, "auto", None, None))
+            con.commit()
+        finally:
+            con.close()
+
+    def _ts_set(self, idx):
+        import sqlite3
+        if not idx.exists():
+            return set()
+        con = sqlite3.connect(str(idx))
+        try:
+            return {r[0] for r in con.execute(
+                "SELECT DISTINCT timestamp FROM param_history")}
+        finally:
+            con.close()
+
+    def _seed(self, tmp_path):
+        from quam_state_manager.core.history import _ensure_param_history_schema
+        inst = tmp_path / "inst"
+        root = inst / "history"
+        base, alt = root / "labX", root / "labX_alt_10_0_0_2_1q"
+        other = root / "labY"
+        for d, ts_list, qubit, host in (
+                (base, [self.TS_A], "qA1", "10.0.0.1"),
+                (alt, [self.TS_B, self.TS_AMBIG], "qB1", "10.0.0.2"),
+                (other, [self.TS_AMBIG], "qC1", "10.0.0.3")):
+            for ts in ts_list:
+                _write(d / ts, _state(qubit), _wiring(host))
+        idx = base / "index.sqlite"
+        _ensure_param_history_schema(idx)
+        for ts, q in ((self.TS_A, "qA1"), (self.TS_B, "qB1"),
+                      (self.TS_ORPHAN, "qA1"), (self.TS_AMBIG, "qA1")):
+            self._insert(idx, ts, q)
+        return inst, base, alt
+
+    def test_moves_foreign_rows_next_to_their_folders(self, tmp_path):
+        from quam_state_manager.core.history import migrate_index_attribution_v3
+        inst, base, alt = self._seed(tmp_path)
+        out = migrate_index_attribution_v3(inst)
+        assert out["status"] == "migrated"
+        assert out["moved_timestamps"] == 1
+        assert out["ambiguous_skipped"] == 1
+        base_ts = self._ts_set(base / "index.sqlite")
+        assert self.TS_B not in base_ts, "foreign rows moved out"
+        assert {self.TS_A, self.TS_ORPHAN, self.TS_AMBIG} <= base_ts, \
+            "own + orphan (pruned) + ambiguous rows all kept"
+        alt_ts = self._ts_set(alt / "index.sqlite")
+        assert alt_ts == {self.TS_B}, "alt dir gained its own index"
+        # idempotence: flag written, second run is a no-op
+        assert (inst / "migrated_v3.flag").exists()
+        again = migrate_index_attribution_v3(inst)
+        assert again["status"] == "already_migrated"
+        assert self._ts_set(base / "index.sqlite") == base_ts
+
+    def test_indexless_dir_visible_in_chip_histories(self, tmp_path):
+        hm = HistoryManager(tmp_path / "inst", max_snapshots=50, cache_size=3)
+        root = tmp_path / "inst" / "history"
+        alt = root / "labX_alt_10_0_0_2_1q"
+        _write(alt / "20260102_000000_0002", _state("qB1"), _wiring("10.0.0.2"))
+        rows = hm.list_chip_histories()
+        row = next((r for r in rows if r["key"] == alt.name), None)
+        assert row is not None, "a dir with folders but no index must be listed"
+        assert row["snapshot_count"] == 1
+        assert row["latest_timestamp"] == "20260102_000000_0002"

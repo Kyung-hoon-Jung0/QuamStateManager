@@ -10282,6 +10282,9 @@ def param_history():
             loaded_chip_key=loaded_key,
             legacy_chip_key=legacy_chip_key,
             is_loaded_chip=is_loaded_chip,
+            # One-time docs/20-v2 notice (popped: shown on the first render
+            # after the v3 index-attribution migration actually moved rows).
+            reattributed_v3=current_app.config.pop("history_reattributed_v3", None),
             active_chips=active_chips,
             archived_chips=archived_chips,
             # Back-compat alias for any code/tests still referencing the

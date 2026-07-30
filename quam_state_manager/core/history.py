@@ -1111,8 +1111,10 @@ class HistoryManager:
             except OSError:
                 mt = -1
             self._alias_cache = (mt, data)
-            # Alias content feeds dir resolution — drop every memo.
+            # Alias content feeds dir resolution AND display names — drop
+            # every memo and the chip-histories listing cache.
             self._chip_dir_memo.clear()
+            self._chip_histories_cache = None
 
     def _record_alias(self, name_key: str, dir_key: str,
                       tok: str | None, display: str) -> None:
@@ -3057,6 +3059,24 @@ class HistoryManager:
                 continue
             idx = d / "index.sqlite"
             if not idx.exists():
+                # A dir with snapshot FOLDERS but no index used to be
+                # INVISIBLE here (the fingerprint-forked alt dirs never got
+                # one pre-docs/20-v2). Report it from the folders; its index
+                # builds on first visit via _ensure_index_fresh.
+                try:
+                    snaps = sorted(
+                        s.name for s in d.iterdir()
+                        if s.is_dir() and (s / "state.json").exists())
+                except OSError:
+                    continue
+                if snaps:
+                    result.append({
+                        "key": d.name,
+                        "display": self.display_name_for_dir(d.name),
+                        "snapshot_count": len(snaps),
+                        "latest_timestamp": snaps[-1],
+                        "qubits": [],
+                    })
                 continue
             try:
                 conn = sqlite3.connect(str(idx))
@@ -3078,6 +3098,7 @@ class HistoryManager:
                 conn.close()
                 result.append({
                     "key": d.name,
+                    "display": self.display_name_for_dir(d.name),
                     "snapshot_count": snap_count,
                     "latest_timestamp": max_ts[0] if max_ts and max_ts[0] else "",
                     "qubits": [q[0] for q in qubit_rows],
@@ -3966,3 +3987,116 @@ def migrate_legacy_histories_v2(instance_path: str | Path) -> dict[str, Any]:
         "skipped": skipped_total,
         "cleared_dirs": cleared_dirs,
     }
+
+
+def migrate_index_attribution_v3(instance_path: str | Path) -> dict[str, Any]:
+    """Move MIS-ATTRIBUTED index rows next to their snapshot folders.
+
+    Pre-docs/20-v2, ``check_and_snapshot`` routed snapshot FILES via the
+    fingerprint but pinned SQLite rows to the path-derived dir: the base
+    chip's ``index.sqlite`` accumulated the alt-forked chip's rows while
+    the alt dir got no index at all (trends mixed two chips). Ground truth
+    is the snapshot FOLDERS: a timestamp whose folder exists in exactly ONE
+    other dir — and not in this one — provably belongs there.
+
+    Conservative by design: orphan timestamps (no folder anywhere) are
+    KEPT — pruned snapshots legitimately retain index rows for trend depth,
+    so they are not provably foreign. Timestamps whose folder exists in two
+    or more dirs are skipped (ambiguous). Copy-then-delete ordering keeps a
+    crash midway idempotent: ``INSERT OR IGNORE`` dedups on re-run, and the
+    flag is only written at the end.
+
+    Idempotent — gated by ``instance/migrated_v3.flag``.
+    """
+    inst = Path(instance_path)
+    flag = inst / "migrated_v3.flag"
+    if flag.exists():
+        return {"status": "already_migrated"}
+
+    history_root = inst / "history"
+    if not history_root.exists():
+        safe_io.atomic_write_json(flag, {"status": "migrated"})
+        return {"status": "no_history"}
+
+    def _chip_dirs() -> list[Path]:
+        try:
+            return [
+                d for d in history_root.iterdir()
+                if d.is_dir()
+                and not re.match(r"^pytest-\d+$", d.name)
+                and d.name != "Temp"
+            ]
+        except OSError:
+            return []
+
+    # Ground truth: which dirs hold a FOLDER for each timestamp.
+    ts_folders: dict[str, list[str]] = {}
+    dirs = _chip_dirs()
+    for d in dirs:
+        try:
+            for s in d.iterdir():
+                if s.is_dir():
+                    ts_folders.setdefault(s.name, []).append(d.name)
+        except OSError:
+            continue
+
+    moved_ts = 0
+    ambiguous = 0
+    pairs: list[dict[str, Any]] = []
+    for d in dirs:
+        src_idx = d / "index.sqlite"
+        if not src_idx.exists():
+            continue
+        try:
+            conn = sqlite3.connect(str(src_idx), timeout=10.0)
+            try:
+                index_ts = [r[0] for r in conn.execute(
+                    "SELECT DISTINCT timestamp FROM param_history")]
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            logger.warning("v3 migration could not read %s", src_idx,
+                           exc_info=True)
+            continue
+
+        by_target: dict[str, list[str]] = {}
+        for ts in index_ts:
+            holders = ts_folders.get(ts, [])
+            if d.name in holders:
+                continue                    # correctly attributed
+            if len(holders) == 0:
+                continue                    # orphan (pruned) — keep
+            if len(holders) > 1:
+                ambiguous += 1
+                continue                    # ambiguous — never guess
+            by_target.setdefault(holders[0], []).append(ts)
+
+        for target_name, ts_list in by_target.items():
+            target_idx = history_root / target_name / "index.sqlite"
+            try:
+                _merge_index_for_timestamps(src_idx, target_idx, ts_list)
+                conn = sqlite3.connect(str(src_idx), timeout=10.0)
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    for i in range(0, len(ts_list), 500):
+                        chunk = ts_list[i:i + 500]
+                        conn.execute(
+                            "DELETE FROM param_history WHERE timestamp IN (%s)"
+                            % ",".join("?" * len(chunk)), chunk)
+                    conn.execute("COMMIT")
+                finally:
+                    conn.close()
+            except (sqlite3.Error, OSError):
+                logger.warning("v3 migration move %s → %s failed",
+                               d.name, target_name, exc_info=True)
+                continue
+            moved_ts += len(ts_list)
+            pairs.append({"from": d.name, "to": target_name,
+                          "timestamps": len(ts_list)})
+
+    summary = {"status": "migrated", "moved_timestamps": moved_ts,
+               "ambiguous_skipped": ambiguous, "pairs": pairs}
+    safe_io.atomic_write_json(flag, summary)
+    if moved_ts:
+        logger.info("v3 index-attribution migration: %s", summary)
+    return summary
