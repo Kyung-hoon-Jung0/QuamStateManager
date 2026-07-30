@@ -1223,9 +1223,14 @@ class HistoryManager:
             # snapshot is still valid; index can be rebuilt later via self-heal.
             # ``state=snap_state`` (already in memory from the capture read)
             # skips a redundant on-disk re-read of the snapshot in both modes.
-            # Same target dir as _index_snapshot(path, ...) used — the PATH-derived
-            # chip dir (NOT hist_dir, which can differ under fingerprint routing).
-            index_dir = self._history_dir(path)
+            # Index rows go to the SAME routed dir as the snapshot files.
+            # Writing them to the path-derived dir instead (the old behaviour)
+            # poisoned the sibling chip's index with this chip's rows AND left
+            # the routed dir index-less — found in the wild with 7 sibling
+            # chips under one parent folder all path-keying to one name. The
+            # deferred closure below captures this dir EAGERLY: the thread
+            # must never re-resolve identity after live files moved on.
+            index_dir = hist_dir
             if defer_index:
                 def _run_index() -> None:
                     try:
