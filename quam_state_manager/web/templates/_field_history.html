@@ -16,6 +16,13 @@
 {% if current_display and current_display != '—' %}
 <div class="fh-currentline">now: <code>{{ current_display }}</code></div>
 {% endif %}
+{% if chart and chart|length >= 2 %}
+{# The parameter's own trend, right in the popover (the drawer chart's small
+   twin) — change points as a step series, trigger-colored markers. Rendered
+   by FieldHistory JS after injection; silently absent without Plotly. #}
+<div class="fh-chart" id="fh-chart" aria-label="Value trend"></div>
+<script id="fh-chart-data" type="application/json">{{ chart | tojson }}</script>
+{% endif %}
 {% if not hist.points %}
 <p class="fh-empty">
   No history for this field —
@@ -33,7 +40,8 @@
       <td class="fh-src">
         {% if pt.experiment %}
         <span class="fh-exp" title="run #{{ pt.run_id }} — {{ pt.experiment }}">#{{ pt.run_id }} {{ pt.experiment }}</span>
-        {% else %}<span class="fh-trig">{{ pt.trigger or '—' }}</span>{% endif %}
+        {% else %}<span class="fh-trig"
+              title="Not from an experiment — a {{ pt.trigger or 'unknown' }} snapshot of the live folder">{{ pt.trigger or '—' }}</span>{% endif %}
       </td>
       <td class="fh-act">
         {% if not pt.is_current %}

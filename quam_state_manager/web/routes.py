@@ -4114,8 +4114,24 @@ def field_history():
                     break
             except (OSError, ValueError):
                 continue
+    # Mini trend chart payload (docs/20 v2 Step 7): the change points as a
+    # step series, finite numerics only (a text/list field simply gets no
+    # chart). Oldest-first for plotting.
+    chart: list[dict[str, Any]] = []
+    for pt in reversed(hist["points"]):
+        v = pt["value"]
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            continue
+        f = float(v)
+        if f != f or f in (float("inf"), float("-inf")):
+            continue
+        ts = pt.get("timestamp") or ""
+        iso = (f"{ts[0:4]}-{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}:{ts[13:15]}"
+               if len(ts) >= 15 else pt.get("when") or "")
+        chart.append({"t": iso, "v": f, "trigger": pt.get("trigger") or "auto"})
     return render_template("_field_history.html", hist=hist,
-                           current_display=_fh_display_string(current))
+                           current_display=_fh_display_string(current),
+                           chart=chart)
 
 
 def _editability_reason(store: QuamStore, target_path: str) -> str | None:

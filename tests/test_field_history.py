@@ -144,6 +144,8 @@ class TestFieldHistoryRoute:
         html = r.data.decode()
         assert 'data-value="5100000000.0"' in html      # Use fills full precision
         assert "06_ramsey" in html and "#31" in html    # provenance shown
+        assert 'id="fh-chart-data"' in html             # mini trend payload
+        assert "Not from an experiment" in html         # manual-row tooltip
         # the store still holds the ORIGINAL 5.0e9 → that row is "current":
         # no Use button for it, badge present
         assert html.count("fh-use") == 1

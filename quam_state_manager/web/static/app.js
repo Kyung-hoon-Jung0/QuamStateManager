@@ -11366,11 +11366,55 @@ window.FieldHistory = (function () {
             .then(function (html) {
                 p.innerHTML = html;
                 if (window.htmx) window.htmx.process(p);
+                renderChart(p);
                 position(anchor);
             })
             .catch(function () {
                 p.innerHTML = '<p class="fh-empty">Could not load history.</p>';
             });
+    }
+
+    function renderChart(p) {
+        // The parameter's own mini trend (the Param History drawer chart's
+        // small twin): change points as a step line, trigger-colored markers.
+        var mount = p.querySelector("#fh-chart");
+        var dataEl = p.querySelector("#fh-chart-data");
+        if (!mount || !dataEl || !window.Plotly) return;
+        var pts;
+        try { pts = JSON.parse(dataEl.textContent || "[]"); }
+        catch (e) { return; }
+        if (!pts || pts.length < 2) return;
+        var cssVar = function (t) {
+            var s = getComputedStyle(document.documentElement)
+                .getPropertyValue("--trigger-" + (t || "auto"));
+            return (s || "#888").trim() || "#888";
+        };
+        var muted = (getComputedStyle(document.documentElement)
+            .getPropertyValue("--color-text-muted") || "#888").trim();
+        var trace = {
+            x: pts.map(function (d) { return d.t; }),
+            y: pts.map(function (d) { return d.v; }),
+            type: "scatter", mode: "lines+markers",
+            line: { shape: "hv", color: muted, width: 1.2 },
+            marker: {
+                size: 7,
+                color: pts.map(function (d) { return cssVar(d.trigger); }),
+            },
+            hovertemplate: "%{x}<br>%{y}<extra></extra>",
+        };
+        var layout = {
+            height: 128,
+            margin: { l: 46, r: 8, t: 6, b: 30 },
+            xaxis: { type: "date", tickfont: { size: 9 } },
+            yaxis: { tickfont: { size: 9 }, exponentformat: "SI" },
+            showlegend: false,
+            paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+            font: { color: muted },
+        };
+        try {
+            Plotly.newPlot(mount, [trace], layout,
+                           { displayModeBar: false, responsive: true });
+        } catch (e) { /* chart is a bonus — never break the panel */ }
     }
 
     function close() {

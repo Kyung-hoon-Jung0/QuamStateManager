@@ -9305,15 +9305,21 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 
 /* inspector-row button — INSIDE the edit box (search-icon pattern), never a
    separate element beside it. .fh-host scopes this to the qubit/pair detail
-   forms only — the pulse-edit inline forms keep their own layout. */
+   forms only — the pulse-edit inline forms keep their own layout.
+   HOVER-REVEAL (r-feedback: dozens of always-on icons overwhelm a long
+   parameter list — the house .bulk-td:hover idiom): visible on row hover /
+   input focus / keyboard focus only. */
 form.inline-edit.fh-host { display: block; position: relative; }
 form.inline-edit.fh-host .edit-input { padding-right: 1.15rem; }
 .field-hist-btn {
     position: absolute; right: .18rem; top: 50%; transform: translateY(-50%);
     background: none; border: none; cursor: pointer; padding: 0;
-    margin: 0; width: auto; font-size: .7rem; line-height: 1; opacity: .4;
-    display: inline-block;
+    margin: 0; width: auto; font-size: .7rem; line-height: 1; opacity: 0;
+    transition: opacity .12s; display: inline-block;
 }
+tr:hover .field-hist-btn,
+form.inline-edit.fh-host:focus-within .field-hist-btn,
+.field-hist-btn:focus-visible { opacity: .55; }
 .field-hist-btn:hover { opacity: 1; }
 
 /* bulk-grid shared cell button — docks INSIDE the focused cell's right edge,
@@ -9356,3 +9362,4 @@ form.inline-edit.fh-host .edit-input { padding-right: 1.15rem; }
     border-color: var(--cell-ok-color, #ff7f0e);
     font-size: .78rem; color: var(--color-text-muted);
 }
+.fh-chart { margin: 0 0 .3rem; min-height: 128px; }
