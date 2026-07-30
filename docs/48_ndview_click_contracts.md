@@ -201,3 +201,47 @@ archive at fix time: bit-exact) and the updated
 always runs, includes the patches-aware branch). 03 (all five figures +
 f_01/RF assign) and 08b re-verified green in the same sweep; the excluded
 05b `_iq` variant stays static-only by design.
+
+## Amendment (2026-07-29, shipped in v0.8.4): NetCDF-classic fallback in the interactive reader
+
+A runner env that loses `netCDF4`/`h5netcdf` makes xarray fall back to its
+scipy engine, which writes **NetCDF-classic bytes (`CDF…`) under the same
+`ds_*.h5` names**. h5py refuses those ("file signature not found"), silently
+degrading the whole Interactive tab to static PNGs (the entire 2026-07-29+
+IQCC days — reported via the EF power-rabi node, whose recipe was fine all
+along). `interactive_plots/h5reader.py` now sniffs the 3-byte magic and reads
+classic files natively via `scipy.io.netcdf_file(mmap=False)` — same payload
+shapes (vars/coords/attrs/dim_order), true axis names from per-variable
+`.dimensions`, 2-D char-array string coords rejoined per row, oversized-var
+guard. SM ships scipy, so no new dependency. Pinned by
+`tests/test_h5reader_netcdf.py` (probe/load/coords/dims + EF end-to-end
+1D+2D clickable). Known gap, deliberate: the ndview Data tab and the
+HDF5-plots tab remain h5py-only; the lab-side fix is `pip install netCDF4`
+in the runner env.
+
+## Amendment (2026-07-30): 20b/33 conditional-phase error-amp is a 2-D map, + fractions tile
+
+The IQCC `33_cz_conditional_phase_error_amp` run (#407) rendered as ten 1-D
+curves ("1 ops" … "10 ops") — the `cz_phase.py` conditional-phase builder's
+`pd.ndim > 1` branch drew one curve per operations count, while the node's
+own saved `phase_figure` is a **2-D heatmap** (amplitude × #-CZ-operations,
+color = `phase_diff`). The branch now builds that form: `amp_full` absolute
+x (prefactor fallback), dim-order-resolved orientation (the real ds_fit puts
+`qubit_pair` in the MIDDLE of `phase_diff`'s dims), an embedded cyclic
+`twilight_shifted` colorscale pinned 0..1 (phase lives on a circle — a
+sequential scale paints a false discontinuity at the wrap), the
+`optimal_amplitude` line (absolute-axis-gated), per-column detuning [MHz] in
+the hover, and a **Detuning [MHz] top ruler** via the house transparent-trace
+twin-axis pattern — with BOTH axis ranges pinned to the same half-cell-extended
+endpoints (a heatmap autoranges to cell edges, a scatter pads around markers;
+unpinned, the ruler sits visibly offset). The saved figure's lower panel ships
+as a companion **`control_fractions` tile**: control-qubit |g⟩/|f⟩ fractions
+vs #ops at the fitted optimum's column (`optimal_index` — a column index, the
+`amp` dim being a relative scale), `control_axis=1`, mean over `frame`;
+view-only. The amp click contract is unchanged (absolute-axis assign, verified
+identical on #407 before/after). Menu kind flips to `2d` for `error_amp`
+names only; plain 2Q_20/32 stays byte-identical 1-D. Pinned by
+`test_cz_contracts.py::TestDummyErrorAmpHeatmap` (orientation despite
+pair-middle dims, axis-range pinning, fractions math, prefactor-only
+view-only degrade, 1-D sibling regression) and re-verified live on the real
+NetCDF-classic #407 through the registry + `/interactive/plot` route.

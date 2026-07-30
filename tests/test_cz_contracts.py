@@ -448,3 +448,165 @@ class TestTransformMath:
     def test_ceil4(self):
         assert _stage({"transform": {"type": "ceil4"}}, 45.0) == 48
         assert _stage({"transform": {"type": "ceil4", "add": 20}}, 48.0) == 68
+
+
+class TestDummyErrorAmpHeatmap:
+    """20b/33 conditional-phase error amplification renders the node's own
+    saved-figure form — a 2-D heatmap (amp × #ops) — never one 1-D curve per
+    operations count (the IQCC #407 report), plus the lower-panel
+    control-fractions companion tile. Contract (amp click) unchanged."""
+
+    _OPS = np.arange(1.0, 5.0)          # 4 operation counts
+    _AMPS = np.linspace(0.99, 1.01, 5)  # relative scale (5 columns)
+
+    def _run(self, tmp_path, *, absolute=True, with_fractions=True):
+        n_ops, n_amp, n_frame = 4, 5, 6
+        # pair dim deliberately in the MIDDLE — the real ds_fit layout
+        pd = np.zeros((n_ops, 1, n_amp))
+        for i in range(n_ops):
+            for j in range(n_amp):
+                pd[i, 0, j] = (i * 10 + j) / 100
+        fit = {"phase_diff": (("number_of_operations", "qubit_pair", "amp"), pd),
+               "optimal_amplitude": (("qubit_pair",), [0.202]),
+               "optimal_index": (("qubit_pair",), [2])}
+        if absolute:
+            fit["amp_full"] = (("qubit_pair", "amp"),
+                               (0.200 + 0.001 * np.arange(n_amp)).reshape(1, -1))
+            fit["detuning"] = (("qubit_pair", "amp"),
+                               ((400 + np.arange(n_amp)) * 1e6).reshape(1, -1))
+        if with_fractions:
+            dims5 = ("qubit_pair", "number_of_operations", "amp", "frame",
+                     "control_axis")
+            g = np.full((1, n_ops, n_amp, n_frame, 2), 0.9)
+            f = np.full((1, n_ops, n_amp, n_frame, 2), 0.5)
+            for i in range(n_ops):
+                g[0, i, 2, :, 1] = 0.1 * (i + 1)   # only at optimal col, ca=1
+                f[0, i, 2, :, 1] = 0.01 * (i + 1)
+            fit["g_state_control"] = (dims5, g)
+            fit["f_state_control"] = (dims5, f)
+        coords = {"qubit_pair": [b"qA2-qA1"], "number_of_operations": self._OPS,
+                  "amp": self._AMPS, "frame": np.arange(n_frame) / n_frame,
+                  "control_axis": [0, 1]}
+        folder = _make_dummy_run(
+            tmp_path, "33_cz_conditional_phase_error_amp",
+            raw={"state_target": (("qubit_pair", "amp"), np.zeros((1, 5)))},
+            fit=fit, coords_raw={"qubit_pair": [b"qA2-qA1"], "amp": self._AMPS},
+            coords_fit=coords, params_model={"operation": "cz_unipolar"})
+        # menu-time pair names come from data.json fit_results (the ds isn't
+        # loaded yet) — real runs always carry them
+        (folder / "data.json").write_text(json.dumps(
+            {"fit_results": {"qA2-qA1": {"success": True}}}))
+        return folder
+
+    def _menu_and_run(self, folder):
+        from quam_state_manager.core.dataset import DatasetStore
+        from quam_state_manager.core.interactive_plots import (
+            list_interactive_figures)
+        store = DatasetStore(folder.parent.parent)
+        run = next(iter(store.runs.values()))
+        return list_interactive_figures(run), run
+
+    def test_menu_offers_2d_map_and_fractions_tile(self, tmp_path):
+        menu, _ = self._menu_and_run(self._run(tmp_path))
+        by_key = {m["key"]: m for m in menu if not m.get("static")}
+        phase = by_key["phase_figure::qA2-qA1"]
+        assert phase["kind"] == "2d" and phase["available"]
+        assert "error-amplified" in phase["title"]
+        frac = by_key["control_fractions::qA2-qA1"]
+        assert frac["kind"] == "1d" and frac["available"]
+
+    def test_heatmap_orientation_axes_and_contract(self, tmp_path):
+        from quam_state_manager.core.interactive_plots import (
+            build_interactive_figure)
+        menu, run = self._menu_and_run(self._run(tmp_path))
+        fig = build_interactive_figure(run, "phase_figure::qA2-qA1")
+        assert fig is not None and fig["kind"] == "2d"
+        hm = fig["data"][0]
+        assert hm["type"] == "heatmap"
+        # orientation: rows = ops, cols = amp — despite the pair-middle layout
+        z = np.asarray(hm["z"], dtype=float)
+        expect = np.array([[(i * 10 + j) / 100 for j in range(5)]
+                           for i in range(4)])
+        assert z.shape == (4, 5) and np.allclose(z, expect)
+        assert np.allclose(np.asarray(hm["x"]), 0.200 + 0.001 * np.arange(5))
+        assert np.allclose(np.asarray(hm["y"]), self._OPS)
+        # phase is cyclic: pinned 0..1 with a cyclic (endpoints-alike) scale
+        assert hm["zmin"] == 0.0 and hm["zmax"] == 1.0
+        assert isinstance(hm["colorscale"], list)
+        assert hm["colorscale"][0][1] != hm["colorscale"][6][1]
+        # detuning rides hover + the top ruler, both pinned to cell edges
+        assert np.allclose(np.asarray(hm["customdata"])[0], 400 + np.arange(5))
+        assert "detuning" in hm["hovertemplate"]
+        lay = fig["layout"]
+        assert lay["xaxis"]["range"] == pytest.approx([0.1995, 0.2045])
+        assert lay["xaxis2"]["side"] == "top"
+        assert lay["xaxis2"]["range"] == pytest.approx([399.5, 404.5])
+        twin = fig["data"][1]
+        assert twin["xaxis"] == "x2" and twin["hoverinfo"] == "skip"
+        # optimal_amplitude line + the unchanged absolute-axis click contract
+        assert lay["shapes"][0]["x0"] == pytest.approx(0.202)
+        clk = fig["clickable"]
+        t = clk["targets"][0]
+        assert t["path"] == ("qubit_pairs.qA2-qA1.macros.cz_unipolar"
+                             ".flux_pulse_qubit.amplitude")
+        assert _stage(t, 0.202) == pytest.approx(0.202)
+
+    def test_fractions_tile_math(self, tmp_path):
+        from quam_state_manager.core.interactive_plots import (
+            build_interactive_figure)
+        _, run = self._menu_and_run(self._run(tmp_path))
+        fig = build_interactive_figure(run, "control_fractions::qA2-qA1")
+        assert fig is not None and fig["kind"] == "1d"
+        by_name = {tr["name"]: tr for tr in fig["data"]}
+        # mean over frame at the optimal column (idx 2), control prepared |e>
+        assert np.allclose(np.asarray(by_name["g"]["y"]), 0.1 * self._OPS)
+        assert np.allclose(np.asarray(by_name["f"]["y"]), 0.01 * self._OPS)
+        assert np.allclose(np.asarray(by_name["g"]["x"]), self._OPS)
+        assert fig.get("clickable") is None, "fractions tile is view-only"
+
+    def test_prefactor_only_run_is_view_only(self, tmp_path):
+        """No amp_full: heatmap still renders (relative axis) but no click,
+        no optimal line (it's absolute V), no detuning ruler."""
+        from quam_state_manager.core.interactive_plots import (
+            build_interactive_figure)
+        folder = self._run(tmp_path, absolute=False, with_fractions=False)
+        menu, run = self._menu_and_run(folder)
+        by_key = {m["key"]: m for m in menu if not m.get("static")}
+        frac = by_key["control_fractions::qA2-qA1"]
+        assert not frac["available"] and "g_state_control" in frac["reason"]
+        fig = build_interactive_figure(run, "phase_figure::qA2-qA1")
+        assert fig["kind"] == "2d" and fig["data"][0]["type"] == "heatmap"
+        assert np.allclose(np.asarray(fig["data"][0]["x"]), self._AMPS)
+        assert fig.get("clickable") is None
+        assert not fig["layout"].get("shapes")
+        assert "xaxis2" not in fig["layout"]
+
+    def test_plain_conditional_phase_still_1d(self, tmp_path):
+        """The non-amplified 2Q_20/32 sibling keeps its 1-D curve untouched."""
+        from quam_state_manager.core.interactive_plots import (
+            build_interactive_figure, list_interactive_figures)
+        from quam_state_manager.core.dataset import DatasetStore
+        amps = self._AMPS
+        folder = _make_dummy_run(
+            tmp_path, "32_cz_conditional_phase",
+            raw={"state_target": (("qubit_pair", "amp"), np.zeros((1, 5)))},
+            fit={"phase_diff": (("qubit_pair", "amp"),
+                                np.linspace(0.2, 0.8, 5).reshape(1, -1)),
+                 "amp_full": (("qubit_pair", "amp"),
+                              (0.200 + 0.001 * np.arange(5)).reshape(1, -1)),
+                 "optimal_amplitude": (("qubit_pair",), [0.202])},
+            coords_raw={"qubit_pair": [b"qA2-qA1"], "amp": amps},
+            coords_fit={"qubit_pair": [b"qA2-qA1"], "amp": amps},
+            params_model={"operation": "cz_flattop"})
+        (folder / "data.json").write_text(json.dumps(
+            {"fit_results": {"qA2-qA1": {"success": True}}}))
+        store = DatasetStore(folder.parent.parent)
+        run = next(iter(store.runs.values()))
+        menu = [m for m in list_interactive_figures(run) if not m.get("static")]
+        assert all(m["kind"] == "1d" for m in menu)
+        assert not any(m["key"].startswith("control_fractions") for m in menu)
+        fig = build_interactive_figure(run, "phase_figure::qA2-qA1")
+        assert fig["kind"] == "1d"
+        assert all(tr["type"] == "scatter" for tr in fig["data"])
+        assert "xaxis2" not in fig["layout"]
+        assert fig["clickable"] is not None

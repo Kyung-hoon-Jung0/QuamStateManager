@@ -417,7 +417,8 @@ def test_cz_20_and_20b_conditional_phase():
     assert {"conditional phase", "fit"} <= {t.get("name") for t in spec.figure["data"]}
     assert len(spec.figure["layout"]["shapes"]) == 1     # optimal-amplitude vline
     json.dumps(spec.figure, allow_nan=False)
-    # 2Q_20b: phase_diff over (number_of_operations, qubit_pair, amp) → one curve per ops
+    # 2Q_20b/33 error amplification: the node's own 2-D map (amp × #ops) —
+    # never one 1-D curve per ops count (docs/48 amendment 2026-07-30)
     no, m = 4, 33; amp2 = np.linspace(0.18, 0.24, m)
     fv2 = {"phase_diff": np.linspace(0, 3, no * m).reshape(no, 1, m),
            "amp_full": amp2.reshape(1, m), "optimal_amplitude": np.array([0.209])}
@@ -426,8 +427,15 @@ def test_cz_20_and_20b_conditional_phase():
     b2 = _cz_bundle("2Q_20b_cz_conditional_phase_error_amp", fv2,
                     {"qubit_pair": ["qA2-qA1"], "number_of_operations": [1, 2, 3, 4],
                      "amp": amp2.tolist()}, dim2)
+    assert [s.key for s in cz_phase.menu(b2)] == \
+        ["phase_figure::qA2-qA1", "control_fractions::qA2-qA1"]
     spec2 = cz_phase.build(b2, "phase_figure::qA2-qA1")
-    assert [t.get("name") for t in spec2.figure["data"]] == ["1 ops", "2 ops", "3 ops", "4 ops"]
+    assert spec2.kind == "2d"
+    hm = spec2.figure["data"][0]
+    assert hm["type"] == "heatmap" and (hm["zmin"], hm["zmax"]) == (0.0, 1.0)
+    assert np.asarray(hm["z"], dtype=float).shape == (no, m)
+    assert len(spec2.figure["layout"]["shapes"]) == 1    # optimal-amplitude vline
+    assert "xaxis2" not in spec2.figure["layout"]        # no detuning persisted
     json.dumps(spec2.figure, allow_nan=False)
 
 
