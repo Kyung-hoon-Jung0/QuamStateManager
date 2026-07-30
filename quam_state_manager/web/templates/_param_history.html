@@ -4,6 +4,8 @@
 <div id="param-history-root" class="param-history"
      data-since="{{ since }}"
      data-loaded-chip-key="{{ loaded_chip_key }}"
+     data-legacy-chip-key="{{ legacy_chip_key | default('') }}"
+     data-active-chip-key="{{ active_chip_key }}"
      data-is-loaded-chip="{{ '1' if is_loaded_chip else '0' }}"
      data-snapshot-total="{{ summary.total }}"
      {# experiment-only count for the auto-backfill heuristic. Comparing

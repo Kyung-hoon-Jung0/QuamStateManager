@@ -575,6 +575,109 @@ def fingerprint_token(fp: ChipFingerprint | None) -> str | None:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
+# ── Chip identity ladder (docs/20 v2) ──────────────────────────────────────
+#
+# THE identity of a chip, in priority order:
+#   1. ``state.json``'s top-level free-form ``extras["chip_name"]`` — the
+#      user-declared name. It travels with the state into every run's
+#      bundled quam_state copy, so attribution survives any folder layout.
+#   2. Hardware fingerprint (network host/cluster + qubit/pair labels).
+#   3. The legacy path-derived name (``chip_name_for``) — sibling state
+#      folders under one parent ALL collapse onto the parent's name, which
+#      is exactly the failure mode tiers 1–2 exist to fix (7 such sibling
+#      chips found in the wild, all keying to one name).
+
+_CHIP_NAME_MAX_LEN = 64
+
+
+def extras_chip_name(state: Any) -> str | None:
+    """The user-declared chip name from ``state["extras"]["chip_name"]``.
+
+    isinstance-guarded at every level (``extras`` is free-form by design);
+    whitespace-stripped, length-capped; empty/invalid → ``None``."""
+    if not isinstance(state, dict):
+        return None
+    extras = state.get("extras")
+    if not isinstance(extras, dict):
+        return None
+    name = extras.get("chip_name")
+    if not isinstance(name, str):
+        return None
+    name = name.strip()[:_CHIP_NAME_MAX_LEN].strip()
+    return name or None
+
+
+def extras_data_folder(state: Any) -> list[str]:
+    """The user-declared data folder(s) from ``state["extras"]["data_folder"]``.
+
+    Accepts a single string or a list of strings (labs with several roots);
+    returns a cleaned list, ``[]`` when absent/invalid. Values are RAW as
+    stored — callers must run them through the OS-dialect bridge
+    (``qualibrate_config._to_native``) and existence-gate before use."""
+    if not isinstance(state, dict):
+        return []
+    extras = state.get("extras")
+    if not isinstance(extras, dict):
+        return []
+    raw = extras.get("data_folder")
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for item in raw:
+        if isinstance(item, str) and item.strip():
+            out.append(item.strip())
+    return out
+
+
+@dataclass(frozen=True, slots=True)
+class ChipIdentity:
+    """One quam_state folder as read by the identity ladder."""
+
+    name: str | None                       # tier 1 (extras), validated
+    fingerprint: ChipFingerprint | None    # tier 2
+    path_name: str                         # tier 3 (legacy chip_name_for)
+
+    @property
+    def source(self) -> str:
+        if self.name:
+            return "extras"
+        return "fingerprint" if self.fingerprint is not None else "path"
+
+
+def identity_from_dicts(state: Any, wiring: Any,
+                        quam_state_path: str | Path) -> ChipIdentity:
+    """In-memory twin of :func:`identity_of` (capture already holds the dicts)."""
+    return ChipIdentity(
+        name=extras_chip_name(state),
+        fingerprint=(fingerprint_from_dicts(state, wiring)
+                     if isinstance(state, dict) else None),
+        path_name=chip_name_for(Path(quam_state_path)),
+    )
+
+
+def identity_of(quam_state_path: str | Path) -> ChipIdentity:
+    """Read state+wiring (armored) and build the folder's :class:`ChipIdentity`.
+
+    Reads the LIVE files on purpose: snapshots capture live content, so
+    identity keying must follow what is captured — a staged-but-unapplied
+    name change takes effect at the first post-apply capture, never before."""
+    p = Path(quam_state_path)
+    state: Any = None
+    wiring: Any = {}
+    try:
+        state = safe_io.read_json(p / "state.json")
+    except (OSError, ValueError):
+        state = None
+    if state is not None:
+        try:
+            wiring = safe_io.read_json(p / "wiring.json")
+        except (OSError, ValueError):
+            wiring = {}
+    return identity_from_dicts(state, wiring, p)
+
+
 # Alignment outcomes returned by ``align``.
 ALIGN_ALIGNED = "aligned"             # network matches and qubits/pairs match
 ALIGN_RENAMED = "renamed"             # network matches but qubits/pairs differ
@@ -745,6 +848,14 @@ class HistoryManager:
         # readers on a pre-v2 chip must not both upgrade).
         self._schema_verified: set[str] = set()
         self._upgrade_locks: dict[str, threading.Lock] = {}
+        # Identity-ladder caches (docs/20 v2): per-path ChipIdentity keyed on
+        # (state_mtime, wiring_mtime); resolved-dir memo keyed on the same
+        # mtimes + alias-file mtime + the global version (any capture can
+        # create a dir that changes tier-2 answers); alias registry keyed on
+        # its file mtime.
+        self._identity_cache: dict[str, tuple[float, float, ChipIdentity]] = {}
+        self._chip_dir_memo: dict[str, tuple[Any, tuple]] = {}
+        self._alias_cache: tuple[int, dict] | None = None
 
     def _known_hashes_for_chip(self, hist_dir: Path) -> set[str]:
         """Return the set of state_hashes already present in a chip dir.
@@ -930,17 +1041,296 @@ class HistoryManager:
     # ------------------------------------------------------------------
 
     def _key_for(self, quam_state_path: Path) -> str:
-        """Derive a stable, chip-level directory key from a quam_state folder path.
+        """Canonical chip-dir key for this quam_state (the identity ladder).
 
-        Uses ``chip_name_for`` so per-experiment loads
-        (``<chip>/<date>/#N_<exp>_HHMMSS/quam_state/``) and the chip's
-        live state (``<chip>/quam_state/``) share a single key.
+        The key is ALWAYS the on-disk dir name (never the pretty display
+        name) so every persisted join — ``?chip_key=`` URLs,
+        ``hist:<chip_key>/<ts>`` compare refs, ``data-loaded-chip-key`` —
+        stays byte-compatible with what is on disk.
         """
-        return _sanitize_name(chip_name_for(quam_state_path))
+        return self.resolve_chip_dir(quam_state_path)[1]
 
     def _history_dir(self, quam_state_path: Path) -> Path:
-        """Return ``<instance>/history/<key>/`` for this quam_state."""
-        return self._root / self._key_for(quam_state_path)
+        """Return ``<instance>/history/<key>/`` for this quam_state
+        (ladder-resolved — see :meth:`resolve_chip_dir`)."""
+        return self.resolve_chip_dir(quam_state_path)[0]
+
+    # ------------------------------------------------------------------
+    # Identity ladder + alias registry (docs/20 v2)
+    # ------------------------------------------------------------------
+
+    def _alias_path(self) -> Path:
+        return self._root / "_chip_aliases.json"
+
+    def _load_aliases(self) -> dict:
+        """The alias registry, mtime-cached. Shape::
+
+            {"version": 1,
+             "names": {<sanitized name>: {"dir": <dir key>,
+                                          "fingerprint_token": str|None,
+                                          "claimed_at": iso}},
+             "dirs":  {<dir key>: {"display": <declared name>}}}
+
+        ``names`` maps a declared chip name to its canonical dir (adoption +
+        rename continuity); ``dirs`` is the reverse map for display. The
+        underscore-prefixed file name keeps it out of chip-dir enumeration
+        (``list_chip_histories`` / ``_find_matching_chip_dir`` skip non-dirs).
+        """
+        path = self._alias_path()
+        try:
+            mt = path.stat().st_mtime_ns
+        except OSError:
+            mt = -1
+        with self._lock:
+            if self._alias_cache is not None and self._alias_cache[0] == mt:
+                return self._alias_cache[1]
+        data: dict = {"version": 1, "names": {}, "dirs": {}}
+        if mt != -1:
+            try:
+                raw = safe_io.read_json(path)
+            except (OSError, ValueError):
+                raw = None
+            if isinstance(raw, dict):
+                names = raw.get("names")
+                dirs = raw.get("dirs")
+                data["names"] = names if isinstance(names, dict) else {}
+                data["dirs"] = dirs if isinstance(dirs, dict) else {}
+        with self._lock:
+            self._alias_cache = (mt, data)
+        return data
+
+    def _save_aliases(self, data: dict) -> None:
+        with self._lock:
+            try:
+                safe_io.atomic_write_json(self._alias_path(), data)
+            except OSError:
+                logger.warning("Could not persist chip aliases", exc_info=True)
+                return
+            try:
+                mt = self._alias_path().stat().st_mtime_ns
+            except OSError:
+                mt = -1
+            self._alias_cache = (mt, data)
+            # Alias content feeds dir resolution — drop every memo.
+            self._chip_dir_memo.clear()
+
+    def _record_alias(self, name_key: str, dir_key: str,
+                      tok: str | None, display: str) -> None:
+        """Idempotently record ``declared name → canonical dir``."""
+        data = self._load_aliases()
+        prev = (data.get("names") or {}).get(name_key)
+        if isinstance(prev, dict) and prev.get("dir") == dir_key \
+                and prev.get("fingerprint_token") == tok:
+            return
+        names = dict(data.get("names") or {})
+        dirs = dict(data.get("dirs") or {})
+        names[name_key] = {
+            "dir": dir_key,
+            "fingerprint_token": tok,
+            "claimed_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        dirs[dir_key] = {"display": display}
+        self._save_aliases({"version": 1, "names": names, "dirs": dirs})
+
+    def display_name_for_dir(self, dir_key: str) -> str | None:
+        """The declared chip name behind a canonical dir key, if any."""
+        entry = (self._load_aliases().get("dirs") or {}).get(dir_key)
+        if isinstance(entry, dict) and isinstance(entry.get("display"), str):
+            return entry["display"] or None
+        return None
+
+    def _cached_identity(self, path: Path) -> ChipIdentity:
+        """Mtime-cached :func:`identity_of` (the `_cached_fingerprint` twin)."""
+        key = str(path)
+        try:
+            st_mt = (path / "state.json").stat().st_mtime
+        except OSError:
+            st_mt = -1.0
+        try:
+            wir_mt = (path / "wiring.json").stat().st_mtime
+        except OSError:
+            wir_mt = -1.0
+        with self._lock:
+            cached = self._identity_cache.get(key)
+            if cached is not None and cached[0] == st_mt and cached[1] == wir_mt:
+                return cached[2]
+        ident = identity_of(path)
+        with self._lock:
+            self._identity_cache[key] = (st_mt, wir_mt, ident)
+        return ident
+
+    @staticmethod
+    def _dir_has_snapshots(chip_dir: Path) -> bool:
+        try:
+            return chip_dir.is_dir() and any(
+                s.is_dir() for s in chip_dir.iterdir())
+        except OSError:
+            return False
+
+    def resolve_chip_dir(
+        self, quam_state_path: str | Path,
+    ) -> tuple[Path, str, str, dict | None]:
+        """THE chip-identity ladder → ``(chip_dir, chip_key, source, swap_info)``.
+
+        Every read AND write path resolves through here (via the
+        ``_key_for`` / ``_history_dir`` / ``_resolve_snapshot_dir``
+        wrappers), so capture, index, backfill, the /param-history page and
+        the field-history popover always agree on which dir is this chip's.
+        Never creates dirs on disk; it may return a not-yet-existing dir
+        (honest empty reads beat reading another chip's data).
+        """
+        path = Path(quam_state_path)
+        key_s = str(path)
+        try:
+            st_mt = (path / "state.json").stat().st_mtime
+        except OSError:
+            st_mt = -1.0
+        try:
+            wir_mt = (path / "wiring.json").stat().st_mtime
+        except OSError:
+            wir_mt = -1.0
+        try:
+            alias_mt = self._alias_path().stat().st_mtime_ns
+        except OSError:
+            alias_mt = -1
+        token = (st_mt, wir_mt, alias_mt, self._global_version)
+        with self._lock:
+            memo = self._chip_dir_memo.get(key_s)
+            if memo is not None and memo[0] == token:
+                return memo[1]
+        result = self._resolve_chip_dir_uncached(path)
+        with self._lock:
+            self._chip_dir_memo[key_s] = (token, result)
+        return result
+
+    def resolve_chip_dir_for_content(
+        self, quam_state_path: str | Path, state: Any, wiring: Any,
+    ) -> tuple[Path, str, str, dict | None]:
+        """Ladder resolution from ALREADY-READ content (the capture path).
+
+        Capture must key on exactly the content it snapshots — resolving
+        from the live files again would race an experiment's rewrite (and
+        an mtime-granularity-equal rewrite would even defeat the identity
+        cache). No memo: captures are rare and the dicts are in hand."""
+        ident = identity_from_dicts(state, wiring, Path(quam_state_path))
+        return self._resolve_from_ident(ident)
+
+    def _resolve_chip_dir_uncached(
+        self, path: Path,
+    ) -> tuple[Path, str, str, dict | None]:
+        return self._resolve_from_ident(self._cached_identity(path))
+
+    def _resolve_from_ident(
+        self, ident: ChipIdentity,
+    ) -> tuple[Path, str, str, dict | None]:
+        candidate_key = _sanitize_name(ident.path_name)
+        conflict: dict | None = None
+
+        # ── tier 1: user-declared extras chip name ─────────────────────
+        if ident.name:
+            name_key = _sanitize_name(ident.name)
+            tok = fingerprint_token(ident.fingerprint)
+            entry = (self._load_aliases().get("names") or {}).get(name_key)
+            if isinstance(entry, dict) and entry.get("dir"):
+                claimed = entry.get("fingerprint_token")
+                if claimed is None or tok is None or claimed == tok:
+                    dir_key = str(entry["dir"])
+                    return self._root / dir_key, dir_key, "extras", None
+                # A DIFFERENT fingerprint owns this name — refuse tier 1 so
+                # two physical chips never silently merge into one dir.
+                conflict = {"type": "name_conflict", "name": ident.name,
+                            "claimed_dir": str(entry["dir"])}
+            else:
+                # Unclaimed name. Adopt the chip's EXISTING dir first
+                # (fingerprint continuity — naming/renaming must never
+                # orphan history), else claim a pretty name-keyed dir.
+                existing = self._existing_dir_for(ident, candidate_key)
+                if existing is not None:
+                    self._record_alias(name_key, existing.name, tok, ident.name)
+                    return existing, existing.name, "extras", None
+                claimed_key = self._claim_name_dir(name_key, tok, ident.name)
+                if claimed_key is not None:
+                    return (self._root / claimed_key, claimed_key,
+                            "extras", None)
+                conflict = {"type": "name_conflict", "name": ident.name,
+                            "claimed_dir": None}
+
+        # ── tiers 2+3: fingerprint routing over the path candidate ─────
+        dir_, swap = self._route_by_fingerprint(ident, candidate_key)
+        if conflict is not None:
+            swap = dict(swap or {})
+            swap.update(conflict)
+        source = "fingerprint" if (swap or {}).get("to_key") else "path"
+        return dir_, dir_.name, source, swap
+
+    def _existing_dir_for(self, ident: ChipIdentity,
+                          candidate_key: str) -> Path | None:
+        """An EXISTING dir already holding this chip's snapshots, or None."""
+        fp = ident.fingerprint
+        candidate = self._root / candidate_key
+        if self._dir_has_snapshots(candidate):
+            if fp is None:
+                return candidate
+            sample = self._sample_fingerprint(candidate)
+            if sample is None or align(fp, sample) == ALIGN_ALIGNED:
+                return candidate
+        if fp is None:
+            return None
+        return self._find_matching_chip_dir(fp, exclude=candidate)
+
+    def _claim_name_dir(self, name_key: str, tok: str | None,
+                        display: str) -> str | None:
+        """Claim a name-keyed dir for a newly named chip.
+
+        Prefers the bare name; a dir already holding a DIFFERENT chip's
+        snapshots forces a ``__2``/``__3``… suffix. Returns the claimed dir
+        key (alias recorded), or None when unresolvable."""
+        for suffix in ("", "__2", "__3", "__4"):
+            dir_key = name_key + suffix
+            d = self._root / dir_key
+            if not self._dir_has_snapshots(d):
+                self._record_alias(name_key, dir_key, tok, display)
+                return dir_key
+            sample = self._sample_fingerprint(d)
+            if tok is not None and fingerprint_token(sample) == tok:
+                self._record_alias(name_key, dir_key, tok, display)
+                return dir_key
+        return None
+
+    def _route_by_fingerprint(
+        self, ident: ChipIdentity, candidate_key: str,
+    ) -> tuple[Path, dict | None]:
+        """Legacy tiers: fingerprint routing over the path-derived candidate."""
+        candidate_dir = self._root / candidate_key
+        if not self._dir_has_snapshots(candidate_dir):
+            # The literal dir is absent/empty — a legacy or renamed key may
+            # be alias-mapped to a canonical dir (old ?chip_key= URLs,
+            # hist: refs). Only then; a populated literal dir always wins.
+            entry = (self._load_aliases().get("names") or {}).get(candidate_key)
+            if isinstance(entry, dict) and entry.get("dir"):
+                aliased = self._root / str(entry["dir"])
+                if self._dir_has_snapshots(aliased):
+                    return aliased, None
+        fp = ident.fingerprint
+        if fp is None or not self._dir_has_snapshots(candidate_dir):
+            return candidate_dir, None
+        sample = self._sample_fingerprint(candidate_dir)
+        if sample is None or align(fp, sample) == ALIGN_ALIGNED:
+            return candidate_dir, None
+        # Fingerprint mismatch — chip swap detected.
+        matching = self._find_matching_chip_dir(fp, exclude=candidate_dir)
+        if matching is not None:
+            return matching, {
+                "type": "swap_to_existing",
+                "from_key": candidate_key,
+                "to_key": matching.name,
+            }
+        new_key = self._fingerprint_derived_key(candidate_key, fp)
+        return self._root / new_key, {
+            "type": "swap_to_new",
+            "from_key": candidate_key,
+            "to_key": new_key,
+        }
 
     # ------------------------------------------------------------------
     # Fingerprint-aware routing (live chip-swap detection)
@@ -1003,60 +1393,6 @@ class HistoryManager:
         qcount = len(fp.qubits)
         return _sanitize_name(f"{base_key}_alt_{host}_{qcount}q")
 
-    def _resolve_snapshot_dir(
-        self, loaded_path: Path,
-    ) -> tuple[Path, dict | None]:
-        """Decide which chip dir a NEW snapshot for ``loaded_path`` should go.
-
-        Returns ``(target_dir, swap_info)``.  ``swap_info`` is None for the
-        normal case (path-based candidate matches the current content's
-        fingerprint).  Otherwise it describes what was detected:
-
-            {
-              "type": "swap_to_existing" | "swap_to_new",
-              "from_key": <path-based key the user thinks they're loading>,
-              "to_key":   <actual key of the chip the snapshot was routed to>,
-            }
-        """
-        fp_now = fingerprint_of(loaded_path)
-        candidate_key = self._key_for(loaded_path)
-        candidate_dir = self._root / candidate_key
-
-        if fp_now is None:
-            # Can't compare; fall back to path-based.
-            return candidate_dir, None
-
-        # If candidate is empty / non-existent, this is the first snapshot for
-        # this path — just use it.
-        try:
-            has_snapshots = candidate_dir.is_dir() and any(
-                s.is_dir() for s in candidate_dir.iterdir()
-            )
-        except OSError:
-            has_snapshots = False
-        if not has_snapshots:
-            return candidate_dir, None
-
-        sample = self._sample_fingerprint(candidate_dir)
-        if sample is None or align(fp_now, sample) == ALIGN_ALIGNED:
-            return candidate_dir, None
-
-        # Fingerprint mismatch — chip swap detected.
-        # 1. Look for any other existing chip dir whose fingerprint matches.
-        matching = self._find_matching_chip_dir(fp_now, exclude=candidate_dir)
-        if matching is not None:
-            return matching, {
-                "type": "swap_to_existing",
-                "from_key": candidate_key,
-                "to_key": matching.name,
-            }
-        # 2. No match — fork into a new fingerprint-derived dir.
-        new_key = self._fingerprint_derived_key(candidate_key, fp_now)
-        return self._root / new_key, {
-            "type": "swap_to_new",
-            "from_key": candidate_key,
-            "to_key": new_key,
-        }
 
     # ------------------------------------------------------------------
     # mtime helpers
@@ -1127,20 +1463,25 @@ class HistoryManager:
                 return None
 
             ts = _ts_stamp()
-            # Fingerprint-aware routing: if the current state's content
-            # diverges from the path-based candidate dir's existing
-            # fingerprint, route to a different (existing or new) chip dir.
-            hist_dir, swap_info = self._resolve_snapshot_dir(path)
-            snap_dir = hist_dir / ts
-            snap_dir.mkdir(parents=True, exist_ok=True)
-
-            # Capture the state files conflict-safely: an armored read never
-            # blocks a concurrent experiment writer (see core.safe_io).  Only
-            # proceed to meta.json if both succeed.
+            # Capture the state files conflict-safely FIRST: an armored read
+            # never blocks a concurrent experiment writer (see core.safe_io).
             state_src = path / "state.json"
             wiring_src = path / "wiring.json"
             try:
                 snap_state, snap_wiring = safe_io.read_state_wiring(path)
+            except (OSError, ValueError) as exc:
+                logger.warning("Snapshot capture failed for %s: %s", ts, exc)
+                return None
+
+            # Identity-ladder routing FROM THE CAPTURED CONTENT (extras chip
+            # name > fingerprint > path): keying must follow exactly what is
+            # snapshotted — re-reading the live files here would race an
+            # experiment's rewrite.
+            hist_dir, _key, _source, swap_info = self.resolve_chip_dir_for_content(
+                path, snap_state, snap_wiring)
+            snap_dir = hist_dir / ts
+            snap_dir.mkdir(parents=True, exist_ok=True)
+            try:
                 safe_io.write_state_wiring(snap_dir, snap_state, snap_wiring)
             except (OSError, ValueError) as exc:
                 logger.warning("Snapshot capture failed for %s: %s", ts, exc)
@@ -3009,6 +3350,10 @@ class HistoryManager:
         """
         path = Path(quam_state_path)
         chip_key = self._key_for(path)
+        # Decisions persisted before the identity ladder are keyed by the
+        # PATH-derived name — look both up so an adopted/named chip never
+        # re-prompts "same/different" for folders the user already decided.
+        legacy_chip_key = _sanitize_name(chip_name_for(path))
         loaded_data_folder = _data_folder_name(path)
 
         # Resolve instance_path for chip_decisions persistence
@@ -3042,6 +3387,8 @@ class HistoryManager:
                 entries.extend(group)
                 continue
             decision = decisions.get(_decision_key(chip_key, df))
+            if decision is None and legacy_chip_key != chip_key:
+                decision = decisions.get(_decision_key(legacy_chip_key, df))
             if decision == "same":
                 entries.extend(group)
             elif decision == "different":
@@ -3079,7 +3426,8 @@ class HistoryManager:
         # plus auto-routed cross-chip groups).
         failures: list[dict[str, Any]] = []
 
-        # Loaded-chip group: ingest into the path-derived dir.
+        # Loaded-chip group: ingest into the ladder-resolved dir (same dir
+        # capture routes to — backfill and check_and_snapshot must agree).
         loaded_dir = self._history_dir(path)
         loaded_report = self._ingest_entries_into(
             loaded_dir, entries,
@@ -3097,6 +3445,7 @@ class HistoryManager:
         # Previously these were silently dropped, leaving the alignment
         # banner's "view <other_chip>" link going to an empty dashboard.
         other_chips: dict[str, dict[str, int]] = {}
+        label_to_key: dict[str, str] = {}
         progress_cursor = len(entries)
         for chip_label, chip_entries in scan["different_chip"].items():
             chip_entries_sorted = sorted(chip_entries, key=lambda e: (
@@ -3104,7 +3453,15 @@ class HistoryManager:
                 getattr(e, "run_id", 0) or 0,
                 getattr(e, "timestamp", "") or "",
             ))
+            # Route through the identity ladder using a representative
+            # entry's quam_state (an extras-named sibling chip lands in its
+            # name-keyed dir, not chip_name_for's collapsed parent name).
             target_key = _sanitize_name(chip_label)
+            for e in chip_entries_sorted:
+                rep = Path(getattr(e, "quam_state_path", "") or "")
+                if rep and (rep / "state.json").exists():
+                    target_key = self.resolve_chip_dir(rep)[1]
+                    break
             target_dir = self._root / target_key
             report = self._ingest_entries_into(
                 target_dir, chip_entries_sorted,
@@ -3114,6 +3471,7 @@ class HistoryManager:
                 progress_total=progress_total,
                 failures=failures,
             )
+            label_to_key[chip_label] = target_key
             other_chips[target_key] = report
             progress_cursor += len(chip_entries_sorted)
 
@@ -3130,7 +3488,7 @@ class HistoryManager:
             self._snapshot_list_cache.pop(str(path.resolve()), None)
 
         skipped_different_after_routing = sum(
-            len(v) - other_chips[_sanitize_name(k)]["ingested"]
+            len(v) - other_chips[label_to_key.get(k, _sanitize_name(k))]["ingested"]
             for k, v in scan["different_chip"].items()
         )
         return {

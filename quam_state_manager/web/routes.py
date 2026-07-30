@@ -10070,6 +10070,12 @@ def param_history():
     hm = _history()
     loaded_path = Path(_active_path())
     loaded_key = hm._key_for(loaded_path)
+    # Pre-ladder path-derived key: the client's localStorage/sessionStorage
+    # backfill guards were written under it — emitted as data-legacy-chip-key
+    # so an adopted/named chip doesn't re-fire a redundant auto-backfill.
+    from quam_state_manager.core.history import (
+        _sanitize_name as _hist_sanitize, chip_name_for as _chip_name_for)
+    legacy_chip_key = _hist_sanitize(_chip_name_for(loaded_path))
 
     # Raw user selections (preserve empty list as "user explicitly cleared")
     raw_props = request.args.getlist("props")
@@ -10274,6 +10280,7 @@ def param_history():
             # Multi-chip:
             active_chip_key=active_chip_key,
             loaded_chip_key=loaded_key,
+            legacy_chip_key=legacy_chip_key,
             is_loaded_chip=is_loaded_chip,
             active_chips=active_chips,
             archived_chips=archived_chips,
@@ -10376,19 +10383,29 @@ def param_history_expand():
         return jsonify({"error": "qubit and prop required"}), 400
 
     hm = _history()
+    # Optional ``?chip_key=`` targets another chip's dir — the grid supports
+    # chip_key but the drawer used to silently chart the LOADED chip when
+    # opened from an archived chip's grid.
+    chip_key = (request.args.get("chip_key") or "").strip()
+    target_path = _active_path()
+    is_loaded = True
+    if chip_key and chip_key != hm._key_for(Path(target_path)):
+        target_path = _path_for_chip_key(chip_key)
+        is_loaded = False
     rows = hm.extract_property_history(
-        _active_path(), [prop],
+        target_path, [prop],
         qubit_filter=[qubit], downsample=None,
     )
     row = rows[0] if rows else {"qubit": qubit, "property": prop, "raw_pointer": None, "values": []}
 
-    engine = _engine()
     current_value = None
-    if engine:
-        try:
-            current_value = engine.get_qubit(qubit).get(prop)
-        except Exception:
-            pass
+    if is_loaded:
+        engine = _engine()
+        if engine:
+            try:
+                current_value = engine.get_qubit(qubit).get(prop)
+            except Exception:
+                pass
 
     return render_template(
         "_param_history_drawer.html",

@@ -9056,6 +9056,11 @@ function paramHistoryOpenDrawer(qubit, prop) {
     drawer.innerHTML = '<p class="muted" style="padding:1rem">Loading…</p>';
     var url = '/param-history/expand?qubit=' + encodeURIComponent(qubit)
             + '&prop=' + encodeURIComponent(prop);
+    // Chart the chip the GRID is showing (archived chips included) — the
+    // drawer used to silently chart the loaded chip regardless.
+    var root = document.getElementById('param-history-root');
+    var activeKey = root && (root.getAttribute('data-active-chip-key') || '');
+    if (activeKey) url += '&chip_key=' + encodeURIComponent(activeKey);
     fetch(url).then(function(r) { return r.text(); }).then(function(html) {
         drawer.innerHTML = html;
         // Manually evaluate inline scripts (fetch doesn't run them)
@@ -9427,8 +9432,20 @@ function _paramHistoryMarkImported() {
     if (!chipKey) return;
     try { localStorage.setItem(_paramHistoryImportedKey(chipKey), '1'); } catch(e) {}
 }
+function _paramHistoryLegacyChipKey() {
+    // Pre-identity-ladder path-derived key: existing localStorage /
+    // sessionStorage guards were written under it. Accept either key so an
+    // adopted/named chip doesn't re-fire a redundant auto-backfill.
+    var root = document.getElementById('param-history-root');
+    return (root && root.getAttribute('data-legacy-chip-key')) || '';
+}
 function _paramHistoryHasImportedBefore(chipKey) {
-    try { return localStorage.getItem(_paramHistoryImportedKey(chipKey)) === '1'; }
+    try {
+        if (localStorage.getItem(_paramHistoryImportedKey(chipKey)) === '1') return true;
+        var legacy = _paramHistoryLegacyChipKey();
+        return !!legacy && legacy !== chipKey &&
+            localStorage.getItem(_paramHistoryImportedKey(legacy)) === '1';
+    }
     catch(e) { return false; }
 }
 
@@ -9449,7 +9466,12 @@ function _paramHistoryMarkSessionAttempt() {
     try { sessionStorage.setItem(_paramHistorySessionAttemptKey(chipKey), String(Date.now())); } catch(e) {}
 }
 function _paramHistorySessionAttemptedAlready(chipKey) {
-    try { return !!sessionStorage.getItem(_paramHistorySessionAttemptKey(chipKey)); }
+    try {
+        if (sessionStorage.getItem(_paramHistorySessionAttemptKey(chipKey))) return true;
+        var legacy = _paramHistoryLegacyChipKey();
+        return !!legacy && legacy !== chipKey &&
+            !!sessionStorage.getItem(_paramHistorySessionAttemptKey(legacy));
+    }
     catch(e) { return false; }
 }
 function _paramHistoryClearSessionAttempt(chipKey) {
