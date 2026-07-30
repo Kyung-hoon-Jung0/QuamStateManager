@@ -480,3 +480,78 @@ Tests: `tests/test_field_history.py` (index tier + duplicate collapse, scan
 tier, wiring-side path, per-snapshot pointer resolution, never-present leaf,
 scan-limit truncation, panel render + Use/current marker, registered-root uid
 gating, no-chip 400, button wiring in the inspector template).
+
+## Amendment v2 (2026-07-30): chip-identity ladder — extras chip_name, full re-key, runs tier
+
+Forensics on a real instance (7 different chips as SIBLING state folders under
+one parent `iqcc\` — gilboa 15q@10.1.1.18, a 21q@10.1.1.6, five more) found
+three compounding failures: `chip_name_for` collapsed all seven onto the
+parent's name; capture fingerprint-forked snapshot FILES into
+`iqcc_alt_10_1_1_18_15q` while pinning index ROWS to the path-derived dir
+(21q's index carried gilboa's rows; the alt dir had no index and was invisible
+even in the other-chips list); and every READ path (/param-history page,
+drawer, field-history popover) used the raw path key — showing the WRONG
+chip's history. Experiment ingestion (page-open backfill, once per tab) had
+never run for the day, so 33 same-day runs appeared nowhere.
+
+**The identity ladder** (user decision): a chip's identity is, in priority
+order — ① `state.json` top-level free-form `extras["chip_name"]` (travels
+into every run's bundled quam_state copy: attribution survives ANY folder
+layout, and QUAM designates `extras` for exactly this kind of user data),
+② hardware fingerprint (network host/cluster + qubit/pair labels),
+③ legacy path-derived name. `HistoryManager.resolve_chip_dir` is the ONE
+choke point (`_key_for`/`_history_dir`/`_resolve_snapshot_dir` are wrappers)
+so capture, index, backfill, page, drawer, field-history and prune always
+agree. Capture routes FROM THE CAPTURED CONTENT (`resolve_chip_dir_for_content`
+on the just-read dicts — re-reading live races an experiment's rewrite).
+chip_key is ALWAYS the canonical on-disk dir name; the pretty name is display
+only.
+
+**Alias registry, no dir renames**: `instance/history/_chip_aliases.json`
+(`names` → canonical dir + claiming fingerprint token; `dirs` → display).
+Naming a chip with an existing fingerprint-matched dir ADOPTS that dir
+(history continuity — renames follow the fingerprint, old-name URLs and
+`hist:` refs keep resolving via the alias, with compare_sources doing an
+alias fallback AFTER its traversal guard); new chips claim pretty name-keyed
+dirs; a name claimed by a DIFFERENT fingerprint is refused (`name_conflict`)
+so two chips never merge. Dirs never move on disk (open WAL files on Windows;
+every persisted `?chip_key=` contract stays byte-valid). Legacy client
+storage guards accept the old path key via `data-legacy-chip-key`.
+
+**v3 migration** (`migrate_index_attribution_v3`, flag `migrated_v3.flag`):
+index timestamps whose snapshot FOLDER exists in exactly one other dir move
+there (`_merge_index_for_timestamps` + delete-at-source); orphans (pruned
+snapshots' trend depth) kept, ambiguous skipped, crash-idempotent. First
+/param-history render after a real move shows a one-time "History
+re-attributed" notice. `list_chip_histories` now also lists dirs with
+snapshot folders but no index (they self-heal one on first visit).
+
+**First-open prompt**: activating a LIVE chip whose state has no
+`extras.chip_name` shows a banner ("No chip name is set…", suggestion =
+qualibrate project > folder display name, optional data-folder field);
+`POST /chip-name/set` stages `extras.chip_name` (+`extras.data_folder`)
+through the modifier into the WORKING COPY only — Apply-to-live is the only
+path to the live file; "Not now" writes a fingerprint-keyed decline memo
+(`chip_name_prompts.json`) that survives folder moves. Never prompts for
+archives or instance-internal (sim) chips.
+
+**extras.data_folder pairing**: declared data roots (string or list;
+OS-dialect-bridged via `_to_native`, existence-gated) auto-register as
+workspace roots on activation — ladder: extras > qualibrate project storage >
+recorded roots; unreachable values render a muted note. LIVE contexts only.
+
+**field-history runs tier**: the popover merges a direct scan of the
+workspace runs' own quam_state copies (newest 60; extras-declared roots
+first; per-run attribution = shared extras names definitive even across a
+host move, else fingerprint; immutable-run caches) into the snapshot
+timeline BEFORE the change-point collapse — today's runs appear with
+guaranteed Data links regardless of ingestion, deduping against ingested
+snapshots via the `_entry_timestamp` format. Popover also gained the mini
+trend chart (trigger-colored step series), hover-reveal inspector icons, and
+"Not from an experiment" tooltips on manual/auto rows.
+
+Verified on the real instance (copy): resolver → alt dir; migration moved
+11/11 contaminated rows, 0 leaked; qC1 f_01 timeline shows the full same-day
+run chain (#412→…→#416=4920320533.95→…→#436) each with run attribution.
+Tests: `tests/test_chip_identity.py` (36) + `tests/test_field_history.py`
+runs-tier class + `tests/test_history.py::TestIndexFollowsRoutedDir`.

@@ -353,3 +353,14 @@ A typical multi-chip session:
    `instance/history/superconducting/`.
 7. Both chips browsable from the Param History chip selector. Each has
    its own snapshot stream, properties, and trigger breakdown.
+
+## Amendment (2026-07-30): superseded keying — see docs/20 Amendment v2
+
+The path-derived `_key_for` + capture-only fingerprint routing described
+above is superseded by the **chip-identity ladder** (docs/20 v2):
+`extras["chip_name"]` > hardware fingerprint > path-derived name, resolved
+through the single `HistoryManager.resolve_chip_dir` choke point for BOTH
+reads and writes (this doc's mechanisms remain as tiers 2–3 of that ladder).
+The index-attribution divergence this section's design allowed (snapshot
+files fingerprint-routed, index rows path-pinned) is fixed and its damage
+repaired by `migrate_index_attribution_v3`.
