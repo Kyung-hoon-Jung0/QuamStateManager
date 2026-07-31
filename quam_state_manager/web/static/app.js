@@ -2973,9 +2973,14 @@ window.initPathAutocomplete = function(inputEl) {
     }
 
     var _browseKind = "";   // "" = quam-state highlighting; "dataset" = run folders
+    var _browseNoSubmit = false;   // r12: Select fills without submitting the form
 
-    window.openFolderBrowser = function(targetInputId, kind) {
+    window.openFolderBrowser = function(targetInputId, kind, opts) {
         _targetInputId = targetInputId;
+        // r12: opts.autoSubmit === false keeps Select as a pure fill — the
+        // name-prompt's Browse must not submit the whole identity form on
+        // folder pick (the dangling-fix form WANTS the auto-submit).
+        _browseNoSubmit = !!(opts && opts.autoSubmit === false);
         // What the caller is hunting decides what the dialog highlights:
         // dataset pickers mark run folders (node.json/data.json), everything
         // else keeps the quam_state highlighting.
@@ -3267,7 +3272,7 @@ window.initPathAutocomplete = function(inputEl) {
         }
         var dialog = document.getElementById("folder-browser");
         if (dialog) dialog.close();
-        if (target) {
+        if (target && !_browseNoSubmit) {
             var form = target.closest("form");
             if (form) form.requestSubmit();
         }

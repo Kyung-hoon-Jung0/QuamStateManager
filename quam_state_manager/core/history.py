@@ -1414,6 +1414,63 @@ class HistoryManager:
                     return fp
         return None
 
+    def remembered_identity(self, quam_state_path: str | Path) -> dict | None:
+        """The identity this chip's HISTORY remembers — for the conservative
+        "Is this chip 'X'?" confirm banner (docs/20 r12).
+
+        When a state regeneration wipes ``extras`` (the gilboa incident),
+        the snapshots still hold the pre-wipe state verbatim. Resolve the
+        chip dir for the CURRENT content (the chip is unnamed now, so the
+        fingerprint tiers decide); if the resolved dir holds no snapshots,
+        fall back to an explicit global fingerprint scan (the ladder itself
+        skips that scan for empty path-derived dirs). Returns
+        ``{name, data_folder, display, snapshot_ts, dir_key}`` from the
+        newest readable snapshot that still carries a name, or None.
+        NEVER writes anything — the banner asks, the user decides."""
+        path = Path(quam_state_path)
+        try:
+            chip_dir, dir_key, _source, _swap = self.resolve_chip_dir(path)
+        except Exception:  # noqa: BLE001
+            return None
+        if not self._dir_has_snapshots(chip_dir):
+            try:
+                ident = self._cached_identity(path)
+            except Exception:  # noqa: BLE001
+                return None
+            fp = ident.fingerprint if ident else None
+            if fp is None:
+                return None
+            matching = self._find_matching_chip_dir(fp, exclude=chip_dir)
+            if matching is None:
+                return None
+            chip_dir, dir_key = matching, matching.name
+        try:
+            snaps = sorted((s for s in chip_dir.iterdir() if s.is_dir()),
+                           key=lambda s: s.name, reverse=True)
+        except OSError:
+            return None
+        # Recent snapshots may already hold the WIPED state — walk back to
+        # the newest one that still carries the declared name (capped).
+        for snap in snaps[:20]:
+            try:
+                state = safe_io.read_json(snap / "state.json")
+            except (OSError, ValueError):
+                continue
+            if not isinstance(state, dict):
+                continue
+            name = extras_chip_name(state)
+            if not name:
+                continue
+            df = extras_data_folder(state)
+            return {
+                "name": name,
+                "data_folder": df[0] if df else None,
+                "display": self.display_name_for_dir(dir_key) or name,
+                "snapshot_ts": snap.name,
+                "dir_key": dir_key,
+            }
+        return None
+
     def _find_matching_chip_dir(
         self, fp: ChipFingerprint, *, exclude: Path | None = None,
     ) -> Path | None:
