@@ -328,8 +328,11 @@ class TestChipNamePrompt:
         assert st["extras"]["data_folder"] == "D:/data/root"
         assert (live / "state.json").read_bytes() == live_bytes, \
             "never a direct live write — Apply is the only path"
-        # banner gone on the next full render
-        assert "chip-name-banner" not in c.get("/qubits").data.decode()
+        # the NAME prompt is gone on the next render; the unreachable folder
+        # staged above now surfaces the r10 FIXABLE dangling strip instead
+        html = c.get("/qubits").data.decode()
+        assert 'hx-post="/chip-name/set"' not in html
+        assert "cnb-df-form" in html
 
     def test_decline_memo_survives_reactivation(self, tmp_path):
         _app, c, live = self._env(tmp_path)
@@ -402,3 +405,311 @@ class TestExtrasDataFolderPairing:
                    "path": str(tmp_path / "x"), "store": object()}
             routes_mod._adopt_extras_data_folders(ctx)
             assert ctx["extras_data_roots"] == []
+
+
+# ── r10: data-folder validate / fix / suggest ──────────────────────────────
+
+def _qcfg(tmp_path, monkeypatch, live, storage):
+    """Fabricate a qualibrate config whose active project 'alpha' points at
+    *live* with *storage* as its data location (as_posix — backslashes are
+    TOML escapes)."""
+    import quam_state_manager.core.qualibrate_config as qc
+    cfg = tmp_path / ".qualibrate"
+    (cfg / "projects" / "alpha").mkdir(parents=True, exist_ok=True)
+    (cfg / "config.toml").write_text(f'''
+[qualibrate]
+project = "alpha"
+version = 5
+
+[qualibrate.storage]
+location = "{storage.as_posix()}"
+
+[quam]
+state_path = "{live.as_posix()}"
+version = 3
+''', encoding="utf-8")
+    (cfg / "projects" / "alpha" / "config.toml").write_text(
+        f'[quam]\nstate_path = "{live.as_posix()}"\n', encoding="utf-8")
+    monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(cfg))
+    monkeypatch.delenv("QUALIBRATE_CONFIG_DIR", raising=False)
+    qc._state_index_cache.clear()
+
+
+def _df_env(tmp_path, state, *, monkeypatch=None, storage=None):
+    """App + loaded live chip; optionally under a qualibrate project scope."""
+    from quam_state_manager.web.app import create_app
+    live = _write(tmp_path / "chips" / "live", state, _wiring("10.0.0.1"))
+    if monkeypatch is not None and storage is not None:
+        _qcfg(tmp_path, monkeypatch, live, storage)
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    c = app.test_client()
+    r = c.post("/load", data={"folder": str(live)})
+    assert r.status_code in (200, 302)
+    ctx = next(iter(app.config["contexts"].values()))
+    return app, c, live, ctx
+
+
+class TestDataFolderValidator:
+    def test_kinds(self, tmp_path):
+        from quam_state_manager.web.app import create_app
+        from quam_state_manager.web import routes as routes_mod
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+        with app.test_request_context("/"):
+            v = routes_mod._validate_data_folder(str(tmp_path))
+            assert v["ok"] and v["kind"] == "ok"
+            assert routes_mod._validate_data_folder(
+                "gilboa_iqcc")["kind"] == "not_a_path"
+            assert routes_mod._validate_data_folder(
+                "data/sub")["kind"] == "not_a_path"
+            assert routes_mod._validate_data_folder(
+                "/nonexistent_xyz_123/gilboa")["kind"] == "cross_machine"
+            assert routes_mod._validate_data_folder("")["kind"] == "not_a_path"
+            assert routes_mod._validate_data_folder(
+                "C:" + "\\" + "no_such_dir_zz")["kind"] == "cross_machine"
+            # garbage must classify, never raise
+            weird = "/bad" + chr(0) + "byte"
+            assert routes_mod._validate_data_folder(weird)["kind"] in (
+                "not_a_path", "cross_machine")
+
+
+class TestChipDataFolderSet:
+    def test_valid_dir_stages_and_adopts(self, tmp_path):
+        data_root = tmp_path / "data"
+        (data_root / "2026-07-01").mkdir(parents=True)
+        app, c, live, ctx = _df_env(tmp_path, _state("qA1", chip_name="g"))
+        live_bytes = (live / "state.json").read_bytes()
+        r = c.post("/chip-data-folder/set", data={"value": str(data_root)})
+        assert r.status_code == 200, r.data
+        assert ctx["store"].state["extras"]["data_folder"] == str(data_root)
+        assert (live / "state.json").read_bytes() == live_bytes, \
+            "stage only — Apply is the only live write"
+        roots = {str(p) for p in app.config["workspace"].root_folders}
+        assert str(data_root) in roots, "reachable value pairs Datasets NOW"
+        assert ctx["extras_data_dangling"] == []
+
+    def test_cross_machine_confirm_roundtrip(self, tmp_path):
+        app, c, _live, ctx = _df_env(tmp_path, _state("qA1", chip_name="g"))
+        missing = str(tmp_path / "missing_zz")
+        r = c.post("/chip-data-folder/set", data={"value": missing})
+        assert r.status_code == 409
+        body = r.data.decode()
+        assert "force_cross" in body and missing in body
+        assert len(ctx["store"].change_log) == 0, "nothing staged pre-confirm"
+        r2 = c.post("/chip-data-folder/set",
+                    data={"value": missing, "force_cross": "1"})
+        assert r2.status_code == 200
+        assert ctx["store"].state["extras"]["data_folder"] == missing
+        html = c.get("/qubits").data.decode()
+        assert "cnb-df-form" in html, "dangling banner now carries the fix form"
+
+    def test_not_a_path_rejected(self, tmp_path):
+        _app, c, _live, ctx = _df_env(tmp_path, _state("qA1", chip_name="g"))
+        r = c.post("/chip-data-folder/set", data={"value": "gilboa_iqcc"})
+        assert r.status_code == 400
+        assert "looks like a name" in r.data.decode()
+        assert len(ctx["store"].change_log) == 0
+        # force never overrides the not-a-path gate
+        r2 = c.post("/chip-data-folder/set",
+                    data={"value": "gilboa_iqcc", "force_cross": "1"})
+        assert r2.status_code == 400
+
+    def test_clear_deletes_and_memoizes(self, tmp_path):
+        data_root = tmp_path / "data"
+        data_root.mkdir()
+        _app, c, _live, ctx = _df_env(
+            tmp_path, _state("qA1", chip_name="g", data_folder=str(data_root)))
+        r = c.post("/chip-data-folder/set", data={"clear": "1"})
+        assert r.status_code == 200
+        assert "data_folder" not in ctx["store"].state.get("extras", {})
+        memo = json.loads(
+            (tmp_path / "_inst" / "chip_name_prompts.json").read_text())
+        assert any(k.endswith("::datafolder") for k in memo), \
+            "explicit clear must not immediately re-suggest"
+        assert "cnb-suggest" not in c.get("/qubits").data.decode()
+
+    def test_clear_without_key_is_noop(self, tmp_path):
+        _app, c, _live, ctx = _df_env(tmp_path, _state("qA1", chip_name="g"))
+        r = c.post("/chip-data-folder/set", data={"clear": "1"})
+        assert r.status_code == 200
+        assert "nothing to clear" in r.data.decode()
+        assert len(ctx["store"].change_log) == 0
+
+    def test_empty_submit_is_never_a_clear(self, tmp_path):
+        data_root = tmp_path / "data"
+        data_root.mkdir()
+        _app, c, _live, ctx = _df_env(
+            tmp_path, _state("qA1", chip_name="g", data_folder=str(data_root)))
+        r = c.post("/chip-data-folder/set", data={"value": ""})
+        assert r.status_code == 400
+        assert ctx["store"].state["extras"]["data_folder"] == str(data_root)
+
+    def test_archive_origin_409(self, tmp_path):
+        _app, c, _live, ctx = _df_env(tmp_path, _state("qA1", chip_name="g"))
+        ctx["origin"] = "dataset_archive"
+        r = c.post("/chip-data-folder/set", data={"value": str(tmp_path)})
+        assert r.status_code == 409
+
+    def test_list_value_replaced_wholesale(self, tmp_path):
+        data_root = tmp_path / "data"
+        data_root.mkdir()
+        _app, c, _live, ctx = _df_env(
+            tmp_path, _state("qA1", chip_name="g",
+                             data_folder=["nameA", "nameB"]))
+        r = c.post("/chip-data-folder/set", data={"value": str(data_root)})
+        assert r.status_code == 200, r.data
+        assert ctx["store"].state["extras"]["data_folder"] == str(data_root)
+
+
+class TestDanglingBannerActions:
+    def test_fix_form_with_project_candidate(self, tmp_path, monkeypatch):
+        storage = tmp_path / "datasets"
+        storage.mkdir()
+        _app, c, _live, ctx = _df_env(
+            tmp_path, _state("qA1", chip_name="g", data_folder="gilboa_iqcc"),
+            monkeypatch=monkeypatch, storage=storage)
+        assert ctx.get("qualibrate_project") == "alpha"
+        html = c.get("/qubits").data.decode()
+        assert 'hx-post="/chip-data-folder/set"' in html
+        assert 'name="use"' in html
+        assert storage.as_posix() in html
+        assert "Browse" in html and "Clear" in html
+
+    def test_fixable_without_candidates(self, tmp_path):
+        _app, c, _live, _ctx = _df_env(
+            tmp_path, _state("qA1", chip_name="g", data_folder="gilboa_iqcc"))
+        html = c.get("/qubits").data.decode()
+        assert "cnb-df-form" in html
+        assert 'name="use"' not in html
+
+    def test_unnamed_dangling_shows_name_prompt_only(self, tmp_path):
+        _app, c, _live, _ctx = _df_env(
+            tmp_path, _state("qA1", data_folder="gilboa_iqcc"))
+        html = c.get("/qubits").data.decode()
+        assert 'hx-post="/chip-name/set"' in html
+        assert "cnb-df-form" not in html
+
+
+class TestDataFolderSuggest:
+    def test_suggest_banner_renders(self, tmp_path, monkeypatch):
+        storage = tmp_path / "datasets"
+        storage.mkdir()
+        _app, c, _live, _ctx = _df_env(
+            tmp_path, _state("qA1", chip_name="g"),
+            monkeypatch=monkeypatch, storage=storage)
+        html = c.get("/qubits").data.decode()
+        assert "cnb-suggest" in html
+        assert storage.as_posix() in html
+        assert "Record" in html
+
+    def test_record_stages_candidate(self, tmp_path, monkeypatch):
+        storage = tmp_path / "datasets"
+        storage.mkdir()
+        _app, c, _live, ctx = _df_env(
+            tmp_path, _state("qA1", chip_name="g"),
+            monkeypatch=monkeypatch, storage=storage)
+        html = c.get("/qubits").data.decode()
+        import re as _re
+        use = _re.search(r'name="use" value="([^"]+)"', html).group(1)
+        r = c.post("/chip-data-folder/set", data={"use": use})
+        assert r.status_code == 200, r.data
+        assert ctx["store"].state["extras"]["data_folder"] == use
+        assert "cnb-suggest" not in c.get("/qubits").data.decode()
+
+    def test_decline_memo_survives_reload(self, tmp_path, monkeypatch):
+        storage = tmp_path / "datasets"
+        storage.mkdir()
+        _app, c, live, _ctx = _df_env(
+            tmp_path, _state("qA1", chip_name="g"),
+            monkeypatch=monkeypatch, storage=storage)
+        html = c.get("/qubits").data.decode()
+        import re as _re
+        token = _re.search(r'name="token" value="([^"]+)"', html).group(1)
+        c.post("/chip-data-folder/decline", data={"token": token})
+        assert "cnb-suggest" not in c.get("/qubits").data.decode()
+        c.post("/load", data={"folder": str(live)})
+        assert "cnb-suggest" not in c.get("/qubits").data.decode()
+        memo = json.loads(
+            (tmp_path / "_inst" / "chip_name_prompts.json").read_text())
+        assert f"{token}::datafolder" in memo
+        assert token not in memo, "the NAME decline memo is untouched"
+
+    def test_unnamed_gets_name_prompt_not_suggest(self, tmp_path, monkeypatch):
+        storage = tmp_path / "datasets"
+        storage.mkdir()
+        _app, c, _live, _ctx = _df_env(
+            tmp_path, _state("qA1"), monkeypatch=monkeypatch, storage=storage)
+        html = c.get("/qubits").data.decode()
+        assert 'hx-post="/chip-name/set"' in html
+        assert "cnb-suggest" not in html
+
+    def test_no_candidates_no_banner(self, tmp_path):
+        _app, c, _live, _ctx = _df_env(tmp_path, _state("qA1", chip_name="g"))
+        assert "cnb-suggest" not in c.get("/qubits").data.decode()
+
+    def test_candidates_exclude_adopted_roots(self, tmp_path, monkeypatch):
+        storage = tmp_path / "datasets"
+        storage.mkdir()
+        from quam_state_manager.web import routes as routes_mod
+        app, _c, _live, _ctx = _df_env(
+            tmp_path, _state("qA1", chip_name="g"),
+            monkeypatch=monkeypatch, storage=storage)
+        with app.test_request_context("/"):
+            cands = routes_mod._data_folder_candidates(
+                {"qualibrate_project": "alpha",
+                 "extras_data_roots": [str(storage)]})
+            assert all(c_["value"] != str(storage)
+                       and c_["value"] != storage.as_posix()
+                       for c_ in cands)
+
+
+class TestChipNameSetHardening:
+    def test_rejects_bare_name_folder(self, tmp_path):
+        _app, c, _live, ctx = _df_env(tmp_path, _state("qA1"))
+        r = c.post("/chip-name/set",
+                   data={"name": "gilboa", "data_folder": "gilboa_iqcc"})
+        assert r.status_code == 400
+        assert "looks like a name" in r.data.decode()
+        assert "extras" not in ctx["store"].state or \
+            "chip_name" not in ctx["store"].state.get("extras", {}), \
+            "nothing staged on rejection"
+
+    def test_cross_machine_stages_with_note(self, tmp_path):
+        _app, c, _live, ctx = _df_env(tmp_path, _state("qA1"))
+        missing = str(tmp_path / "missing_zz")
+        r = c.post("/chip-name/set",
+                   data={"name": "gilboa", "data_folder": missing})
+        assert r.status_code == 200
+        assert "not reachable" in r.data.decode()
+        assert ctx["store"].state["extras"]["data_folder"] == missing
+
+    def test_datalist_offers_candidates(self, tmp_path, monkeypatch):
+        storage = tmp_path / "datasets"
+        storage.mkdir()
+        _app, c, _live, _ctx = _df_env(
+            tmp_path, _state("qA1"), monkeypatch=monkeypatch, storage=storage)
+        html = c.get("/qubits").data.decode()
+        assert "cnb-df-options" in html
+        assert storage.as_posix() in html
+
+
+class TestAdoptBridgeUsesPublicNativePath:
+    def test_home_style_value_bridged(self, tmp_path, monkeypatch):
+        """A non-/mnt POSIX value must go through the PUBLIC native_path
+        (wsl_root share anchoring) — the old private _to_native call never
+        bridged it (fails on the pre-r10 code)."""
+        import quam_state_manager.core.qualibrate_config as qc
+        real = tmp_path / "bridged_data"
+        real.mkdir()
+        orig = qc.native_path
+
+        def fake(raw):
+            if raw == "/home/lab/data":
+                return real
+            return orig(raw)
+
+        monkeypatch.setattr(qc, "native_path", fake)
+        _app, _c, _live, ctx = _df_env(
+            tmp_path, _state("qA1", chip_name="g",
+                             data_folder="/home/lab/data"))
+        assert ctx["extras_data_roots"] == [str(real)]
+        assert ctx["extras_data_dangling"] == []

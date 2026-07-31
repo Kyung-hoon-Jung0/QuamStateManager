@@ -9369,6 +9369,19 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
     border-color: var(--cell-ok-color, #ff7f0e);
     font-size: .78rem; color: var(--color-text-muted);
 }
+/* r10: dangling-fix + record-suggestion forms */
+.cnb-note { display: block; font-size: .72rem; }
+.cnb-form .cnb-use, .cnb-form .cnb-clear {
+    width: auto; margin: 0; padding: .18rem .55rem; font-size: .74rem;
+    border-radius: .5rem; line-height: 1.3;
+    background: transparent; border: 1px solid var(--pico-primary);
+    color: var(--pico-primary); max-width: 24rem; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+}
+.cnb-form .cnb-clear { border-color: var(--pico-muted-border-color);
+    color: var(--pico-contrast); }
+.cnb-df-form input[type=text] { width: 16rem; }
+.chip-name-banner.cnb-suggest { border-color: var(--pico-primary); }
 .fh-chart { margin: 0 0 .3rem; min-height: 128px; }
 
 /* ── Column History panel + LiveEditUndo (docs/20 v2) ─────────────────── */

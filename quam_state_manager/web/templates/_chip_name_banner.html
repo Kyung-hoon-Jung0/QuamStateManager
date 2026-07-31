@@ -1,9 +1,16 @@
-{# First-open chip-name prompt (docs/20 v2): the identity ladder's tier 1.
-   Shown for LIVE quam chips whose state carries no extras.chip_name.
-   "Set name" stages extras.chip_name (+ optional extras.data_folder)
-   through the normal edit machinery — working copy → Save → Apply to live;
-   future runs' quam_state copies then carry the identity automatically.
-   "Not now" writes a fingerprint-keyed decline memo (never nags again). #}
+{# Chip banner strip (docs/20 v2 + r10) — three mutually-exclusive branches
+   sharing id="chip-name-banner" (all posts swap the whole strip):
+   1. first-open name prompt (unnamed live chip) — its data-folder field now
+      validates server-side and offers known candidates via a datalist;
+   2. dangling data folder — the declared value isn't reachable from here;
+      r10 makes it FIXABLE in place (Use-candidate / type+Set / Browse /
+      Clear; everything stages through the working copy, Apply publishes);
+   3. record-suggestion — a NAMED chip with no declared data folder while a
+      known source (project storage / recorded roots / workspace) exists.
+   Field-name discipline (r10 E1/E2): suggestion buttons are name="use"
+   (never "value" — werkzeug takes the FIRST body occurrence and the empty
+   text input precedes the buttons); [Set] is the first submit button so
+   Enter submits the typed value. #}
 {% if chip_name_prompt %}
 <div id="chip-name-banner" class="chip-name-banner" role="region"
      aria-label="Chip name prompt">
@@ -19,8 +26,12 @@
            maxlength="64" required aria-label="Chip name"
            placeholder="chip name">
     <input type="text" name="data_folder" aria-label="Data folder (optional)"
-           placeholder="data folder (optional)"
-           title="Optional: this chip's experiment-data root — stored in extras.data_folder so Datasets auto-pairs with it">
+           placeholder="data folder — e.g. D:\data\myproject"
+           list="cnb-df-options"
+           title="Optional: this chip's experiment-data root (an ABSOLUTE path) — stored in extras.data_folder so Datasets auto-pairs with it">
+    <datalist id="cnb-df-options">
+      {% for c in data_folder_candidates %}<option value="{{ c.value }}">{{ c.label }}</option>{% endfor %}
+    </datalist>
     <button type="submit" class="cnb-set">Set name</button>
     <button type="button" class="cnb-no" hx-post="/chip-name/decline"
             hx-include="closest form"
@@ -30,12 +41,53 @@
   </form>
 </div>
 {% elif extras_data_dangling %}
-<div class="chip-name-banner cnb-dangling" role="note">
+<div id="chip-name-banner" class="chip-name-banner cnb-dangling" role="region"
+     aria-label="Data folder not reachable">
   <span class="cnb-text">
     This chip declares a data folder that isn't reachable from here:
     {% for raw in extras_data_dangling %}<code>{{ raw }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
-    — check <code>extras.data_folder</code> in state.json (paths from another
-    machine/OS are bridged automatically when possible).
+    (<code>extras.data_folder</code> — paths from another machine/OS are
+    bridged automatically when possible). Fix it here:
+    {% if extras_data_dangling | length > 1 %}<span class="cnb-note">setting a folder replaces all {{ extras_data_dangling | length }} declared values.</span>{% endif %}
   </span>
+  <form class="cnb-form cnb-df-form" hx-post="/chip-data-folder/set"
+        hx-target="#chip-name-banner" hx-swap="outerHTML">
+    <input type="text" id="cnb-df-input" name="value"
+           aria-label="Data folder path" placeholder="e.g. D:\data\myproject"
+           list="cnb-df-options">
+    <datalist id="cnb-df-options">
+      {% for c in data_folder_candidates %}<option value="{{ c.value }}">{{ c.label }}</option>{% endfor %}
+    </datalist>
+    <button type="submit" class="cnb-set">Set</button>
+    {% for c in data_folder_candidates[:2] %}
+    <button type="submit" class="cnb-use" name="use" value="{{ c.value }}"
+            title="{{ c.value }}">Use {{ c.label | truncate(46) }}</button>
+    {% endfor %}
+    <button type="button" class="cnb-no"
+            onclick="openFolderBrowser('cnb-df-input','dataset')"
+            title="Pick the folder — selecting stages it immediately">Browse…</button>
+    <button type="submit" class="cnb-no cnb-clear" name="clear" value="1"
+            hx-confirm="Remove extras.data_folder from the working state?"
+            title="Remove the declared data folder">Clear</button>
+  </form>
+</div>
+{% elif data_folder_suggest %}
+<div id="chip-name-banner" class="chip-name-banner cnb-suggest" role="region"
+     aria-label="Data folder suggestion">
+  <span class="cnb-text">
+    Record <code>{{ data_folder_suggest.candidate.value }}</code> as this
+    chip's data folder (<code>extras.data_folder</code>)? Datasets and run
+    attribution then pair with it wherever the chip is opened.
+  </span>
+  <form class="cnb-form" hx-post="/chip-data-folder/set"
+        hx-target="#chip-name-banner" hx-swap="outerHTML">
+    <input type="hidden" name="use" value="{{ data_folder_suggest.candidate.value }}">
+    <button type="submit" class="cnb-set">Record</button>
+    <button type="button" class="cnb-no" hx-post="/chip-data-folder/decline"
+            hx-include="closest form"
+            hx-target="#chip-name-banner" hx-swap="outerHTML"
+            title="Don't ask again for this chip">Not now</button>
+    <input type="hidden" name="token" value="{{ data_folder_suggest.token }}">
+  </form>
 </div>
 {% endif %}

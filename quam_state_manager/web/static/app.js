@@ -359,6 +359,15 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
             evt.detail.isError = false;
         }
     }
+    // Data-folder cross-machine confirm (docs/20 r10): /chip-data-folder/set
+    // answers 409 with _data_folder_confirm.html into the banner strip.
+    if (t.id === 'chip-name-banner' && status === 409) {
+        var _pdf = (evt.detail.requestConfig && evt.detail.requestConfig.path) || '';
+        if (_pdf.indexOf('/chip-data-folder/') === 0) {
+            evt.detail.shouldSwap = true;
+            evt.detail.isError = false;
+        }
+    }
 });
 
 /* Surface a toast on ANY htmx error response. htmx 2.x drops error-response

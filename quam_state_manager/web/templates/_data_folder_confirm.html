@@ -1,0 +1,23 @@
+{# Cross-machine confirm for /chip-data-folder/set (docs/20 r10): the value
+   is path-SHAPED but not reachable from this machine — labs share one state
+   across OSes, so storing it is legitimate; it pairs where it is visible.
+   Swapped into #chip-name-banner (the 409 is allow-listed in app.js).
+   force_cross only overrides reachability — a not-a-path value can never
+   reach this fragment (one ack never collapses two gates). #}
+<div id="chip-name-banner" class="chip-name-banner cnb-dangling" role="region"
+     aria-label="Data folder confirmation">
+  <span class="cnb-text">
+    <code>{{ value }}</code> isn't reachable from this machine. Labs share
+    state across OSes — store it anyway? (It is bridged automatically
+    wherever it IS visible.)
+  </span>
+  <form class="cnb-form" hx-post="/chip-data-folder/set"
+        hx-target="#chip-name-banner" hx-swap="outerHTML">
+    <input type="hidden" name="value" value="{{ value }}">
+    <input type="hidden" name="force_cross" value="1">
+    <button type="submit" class="cnb-set">Store anyway</button>
+    <button type="button" class="cnb-no"
+            hx-get="/chip-name/banner"
+            hx-target="#chip-name-banner" hx-swap="outerHTML">Cancel</button>
+  </form>
+</div>

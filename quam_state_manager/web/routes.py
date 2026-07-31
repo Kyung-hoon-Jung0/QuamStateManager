@@ -871,6 +871,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # and adopt the chip's declared data folder(s) as workspace roots.
         _maybe_chip_name_prompt(current)
         _adopt_extras_data_folders(current)
+        _maybe_data_folder_suggest(current)
         with _quam_cache_lock:
             current_app.config["contexts"][ctx_name] = current
             current_app.config["active_context"] = ctx_name
@@ -931,6 +932,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         _acquire_project_scope(ctx)
         _maybe_chip_name_prompt(ctx)
         _adopt_extras_data_folders(ctx)
+        _maybe_data_folder_suggest(ctx)
         with _quam_cache_lock:
             if key not in _quam_cache:
                 # Evict the oldest CLEAN in-memory entry if the cache is full.
@@ -1583,12 +1585,14 @@ def _adopt_extras_data_folders(ctx: dict | None) -> None:
             declared = extras_data_folder(store.state)
         if not declared:
             return
-        import os as _os
         resolved: list[str] = []
         for raw in declared:
+            # PUBLIC native_path (r10): unlike the bare 2-arg _to_native it
+            # anchors non-/mnt POSIX values onto the config's distro share
+            # (wsl_root) — a /home/... value was previously never bridged.
             native = raw
             try:
-                native = qualibrate_config._to_native(raw, _os.name) or raw
+                native = str(qualibrate_config.native_path(raw) or raw)
             except Exception:  # noqa: BLE001
                 pass
             if native and Path(native).is_dir():
@@ -1623,6 +1627,132 @@ def _adopt_extras_data_folders(ctx: dict | None) -> None:
                 pass
     except Exception:  # noqa: BLE001 — pairing must never break activation
         logger.debug("extras data-folder adoption failed", exc_info=True)
+
+
+_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+def _validate_data_folder(raw: str) -> dict:
+    """Classify a candidate ``extras.data_folder`` value (docs/20 r10).
+
+    Returns ``{"ok", "kind", "native"}`` with kind one of:
+    - ``ok``           — bridges to a directory reachable from here;
+    - ``cross_machine``— path-SHAPED (rooted) but not reachable — storeable
+      after an explicit confirm (labs share state across OSes; the reader
+      bridges at read time);
+    - ``not_a_path``   — a bare name / relative fragment ("gilboa_iqcc",
+      "data/sub") — never storeable (this is the mistake class that produced
+      the un-fixable dangling banner).
+    """
+    raw = (raw or "").strip()
+    if not raw or len(raw) > 1024:
+        return {"ok": False, "kind": "not_a_path", "native": None}
+    rooted = (raw.startswith("/") or raw.startswith("\\")
+              or bool(_DRIVE_RE.match(raw)))
+    if not rooted:
+        return {"ok": False, "kind": "not_a_path", "native": None}
+    try:
+        native = qualibrate_config.native_path(raw)
+        if native and native.is_dir():
+            return {"ok": True, "kind": "ok", "native": str(native)}
+    except (OSError, ValueError):
+        pass
+    return {"ok": False, "kind": "cross_machine", "native": None}
+
+
+def _data_folder_candidates(ctx: dict | None) -> list[dict]:
+    """Known data-folder sources for THIS chip, best first, cap 3.
+
+    ① the qualibrate project scope's resolved storage location (exists only)
+    ② roots previously recorded for that project (project_dataset_roots.json)
+    ③ the workspace's registered dataset roots.
+    fs_key-deduped; anything already adopted from extras is excluded."""
+    out: list[dict] = []
+    seen: set[str] = set()
+
+    def _key(p: str) -> str:
+        try:
+            return path_match.fs_key(p) or str(Path(p).resolve()).lower()
+        except (OSError, ValueError):
+            return str(p).lower()
+
+    for r in (ctx or {}).get("extras_data_roots") or []:
+        seen.add(_key(r))
+
+    def _add(value: str, label: str, source: str) -> None:
+        if len(out) >= 3 or not value:
+            return
+        k = _key(value)
+        if k in seen:
+            return
+        seen.add(k)
+        out.append({"value": value, "label": label, "source": source})
+
+    scope = (ctx or {}).get("qualibrate_project")
+    if scope:
+        try:
+            st = qualibrate_config.project_storage(scope)
+            if st.get("exists") and st.get("native"):
+                _add(st.get("raw") or st["native"],
+                     f"{scope} project storage ({st['native']})", "project")
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            for r in _load_project_roots().get(scope, []):
+                if Path(r).is_dir():
+                    _add(r, r, "project_roots")
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        for entry in _active_dataset_stores(fast=True):
+            _add(str(entry["path"]), str(entry.get("label") or entry["path"]),
+                 "workspace")
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+def _maybe_data_folder_suggest(ctx: dict | None) -> None:
+    """Compute the banner memos: candidates (always, for datalists/actions)
+    and the record-suggestion (only for a NAMED live chip with NO declared
+    data folder + at least one candidate + no ::datafolder decline memo).
+    Never breaks activation."""
+    if not ctx or ctx.get("type") != "quam":
+        return
+    ctx["data_folder_candidates"] = []
+    ctx["data_folder_suggest"] = None
+    try:
+        if (ctx.get("origin") or "live") != "live":
+            return
+        store = ctx.get("store")
+        path = ctx.get("path")
+        if store is None or not path:
+            return
+        try:
+            if Path(path).resolve().is_relative_to(
+                    Path(current_app.instance_path).resolve()):
+                return   # SM-internal folders (working copies etc.)
+        except (OSError, ValueError):
+            pass
+        ctx["data_folder_candidates"] = _data_folder_candidates(ctx)
+        from quam_state_manager.core.history import (
+            extras_chip_name, extras_data_folder, fingerprint_from_dicts,
+        )
+        with store._lock:
+            named = bool(extras_chip_name(store.state))
+            declared = extras_data_folder(store.state)
+            fp = fingerprint_from_dicts(store.state, store.wiring)
+        if not named or declared or not ctx["data_folder_candidates"]:
+            return
+        token = _chip_prompt_token(str(path), fp)
+        if f"{token}::datafolder" in _load_chip_prompt_memo():
+            return
+        ctx["data_folder_suggest"] = {
+            "candidate": ctx["data_folder_candidates"][0],
+            "token": token,
+        }
+    except Exception:  # noqa: BLE001
+        logger.debug("data-folder suggest failed", exc_info=True)
 
 
 # ── First-open chip-name prompt (docs/20 v2 — identity ladder tier 1) ──────
@@ -1713,6 +1843,23 @@ def chip_name_set():
         return render_template("_status.html", message="Chip name required",
                                level="error"), 400
     data_folder = (request.form.get("data_folder") or "").strip()
+    cross_note = ""
+    if data_folder:
+        # r10: "gilboa_iqcc"-class values (a NAME typed into the path field)
+        # used to be stored verbatim and only failed later as an un-fixable
+        # dangling banner. Reject them at the door; path-shaped values that
+        # aren't reachable HERE stay storeable (labs share state across OSes).
+        v = _validate_data_folder(data_folder)
+        if v["kind"] == "not_a_path":
+            return render_template(
+                "_status.html", level="error",
+                message=(f"'{data_folder}' looks like a name, not a folder — "
+                         "the data folder must be an absolute path (e.g. "
+                         "D:\\data\\myproject). Pick a suggestion or leave it "
+                         "empty for now.")), 400
+        if v["kind"] == "cross_machine":
+            cross_note = (" — note: that folder is not reachable from this "
+                          "machine; it will pair where it is visible")
     store = modifier.store
     try:
         with store._lock:
@@ -1732,10 +1879,12 @@ def chip_name_set():
     except (KeyError, TypeError, ValueError) as e:
         return render_template("_status.html", message=str(e), level="error"), 400
     ctx["chip_name_prompt"] = None
+    _adopt_extras_data_folders(ctx)
+    _maybe_data_folder_suggest(ctx)
     body = render_template(
         "_status.html", level="success",
         message=f"Chip name '{name}' staged — Save + Apply to live makes it"
-                " permanent (future runs then carry it automatically)")
+                f" permanent (future runs then carry it automatically){cross_note}")
     resp = make_response(body + _tray_oob())
     resp.headers["HX-Trigger"] = "pulses-changed"
     return resp
@@ -1759,6 +1908,139 @@ def chip_name_decline():
     if ctx:
         ctx["chip_name_prompt"] = None
     return ""
+
+
+def _write_datafolder_memo(token: str, ctx: dict | None) -> None:
+    data = _load_chip_prompt_memo()
+    data[f"{token}::datafolder"] = {
+        "declined_at": datetime.now().isoformat(timespec="seconds"),
+        "path_hint": str((ctx or {}).get("path") or ""),
+    }
+    try:
+        safe_io.atomic_write_json(_chip_prompt_memo_file(), data)
+    except OSError:
+        logger.warning("Could not persist data-folder decline", exc_info=True)
+
+
+@bp.route("/chip-data-folder/set", methods=["POST"])
+def chip_data_folder_set():
+    """Set / clear ``extras.data_folder`` on the open chip (docs/20 r10).
+
+    Always a STAGE through the audited edit machinery (working copy only —
+    Apply-to-live publishes). Form: ``use`` (a suggestion button's value,
+    wins over the text input), ``value``, ``clear=1``, ``force_cross=1``
+    (accept a path-shaped value that isn't reachable from this machine —
+    never overrides the not-a-path rejection: one ack never collapses two
+    gates)."""
+    ctx = _active_ctx()
+    modifier = ctx.get("modifier") if ctx else None
+    if not ctx or ctx.get("type") != "quam" or modifier is None:
+        return render_template("_status.html", message="No state loaded",
+                               level="warning"), 400
+    if (ctx.get("origin") or "live") != "live":
+        return render_template(
+            "_status.html", level="warning",
+            message="Read-only archive — open the live chip to edit it"), 409
+    store = modifier.store
+    value = (request.form.get("use") or request.form.get("value") or "").strip()
+    clear = request.form.get("clear") == "1"
+
+    if clear:
+        try:
+            with store._lock:
+                extras = store.state.get("extras")
+            had = isinstance(extras, dict) and "data_folder" in extras
+            if had:
+                modifier.delete_subtree("extras.data_folder")
+                _invalidate_engine_cache(ctx)
+        except (KeyError, TypeError, ValueError) as e:
+            return render_template("_status.html", message=str(e),
+                                   level="error"), 400
+        # An explicit clear is an answer — don't immediately re-suggest.
+        try:
+            from quam_state_manager.core.history import fingerprint_from_dicts
+            with store._lock:
+                fp = fingerprint_from_dicts(store.state, store.wiring)
+            _write_datafolder_memo(_chip_prompt_token(str(ctx.get("path") or ""), fp), ctx)
+        except Exception:  # noqa: BLE001
+            pass
+        ctx["data_folder_suggest"] = None
+        _adopt_extras_data_folders(ctx)
+        _maybe_data_folder_suggest(ctx)
+        body = render_template(
+            "_status.html", level="success",
+            message=("Data folder cleared from the working state — Save + "
+                     "Apply to live makes it permanent"
+                     if had else "No data folder was declared — nothing to clear"))
+        resp = make_response(body + _tray_oob())
+        resp.headers["HX-Trigger"] = "pulses-changed"
+        return resp
+
+    if not value:
+        # Guards the folder picker's unconditional auto-submit: an empty
+        # submit must never turn into a silent clear.
+        return render_template("_status.html", level="error",
+                               message="Pick a folder (or use Clear)"), 400
+
+    v = _validate_data_folder(value)
+    if v["kind"] == "not_a_path":
+        return render_template(
+            "_status.html", level="error",
+            message=(f"'{value}' looks like a name, not a folder — enter an "
+                     "absolute path (e.g. D:\\data\\myproject), pick a "
+                     "suggestion, or Browse.")), 400
+    if v["kind"] == "cross_machine" and request.form.get("force_cross") != "1":
+        return render_template("_data_folder_confirm.html", value=value), 409
+
+    try:
+        with store._lock:
+            extras = store.state.get("extras")
+        if not isinstance(extras, dict):
+            modifier.create_subtree("extras", {"data_folder": value})
+        elif "data_folder" in extras:
+            # coerce=False: a list-valued data_folder would TypeError under
+            # list→str coercion; replacement is wholesale and typed-correct.
+            modifier.set_value("extras.data_folder", value, coerce=False)
+        else:
+            modifier.create_subtree("extras.data_folder", value)
+        _invalidate_engine_cache(ctx)
+    except (KeyError, TypeError, ValueError) as e:
+        return render_template("_status.html", message=str(e), level="error"), 400
+
+    ctx["data_folder_suggest"] = None
+    _adopt_extras_data_folders(ctx)   # reachable value pairs Datasets NOW
+    _maybe_data_folder_suggest(ctx)
+    adopted = value not in (ctx.get("extras_data_dangling") or [])
+    body = render_template(
+        "_status.html", level="success",
+        message=("Data folder staged — Save + Apply to live makes it permanent"
+                 + (" (and it is now a registered dataset root)"
+                    if adopted and v["ok"] else "")))
+    resp = make_response(body + _tray_oob())
+    resp.headers["HX-Trigger"] = "pulses-changed"
+    return resp
+
+
+@bp.route("/chip-data-folder/decline", methods=["POST"])
+def chip_data_folder_decline():
+    """"Not now" for the record-suggestion banner (::datafolder memo)."""
+    ctx = _active_ctx()
+    token = (request.form.get("token") or "").strip()
+    if token:
+        _write_datafolder_memo(token, ctx)
+    if ctx:
+        ctx["data_folder_suggest"] = None
+    return ""
+
+
+@bp.route("/chip-name/banner", methods=["GET"])
+def chip_name_banner():
+    """Re-render the chip banner strip (the confirm fragment's Cancel and a
+    generic freshness refresh)."""
+    ctx = _active_ctx()
+    if ctx:
+        _maybe_data_folder_suggest(ctx)
+    return render_template("_chip_name_banner.html", **_ctx())
 
 
 def _ctx(**extra: Any) -> dict[str, Any]:
@@ -1799,6 +2081,8 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # extras.data_folder values (muted note, never an error).
         "chip_name_prompt": (_active_ctx() or {}).get("chip_name_prompt"),
         "extras_data_dangling": (_active_ctx() or {}).get("extras_data_dangling") or [],
+        "data_folder_suggest": (_active_ctx() or {}).get("data_folder_suggest"),
+        "data_folder_candidates": (_active_ctx() or {}).get("data_folder_candidates") or [],
         "last_apply": (_active_ctx() or {}).get("last_apply"),
         "wc_gc_count": _working_copy_count(),
         "wc_gc_threshold": _WC_GC_THRESHOLD,

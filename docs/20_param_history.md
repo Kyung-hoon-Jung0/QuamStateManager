@@ -556,6 +556,55 @@ run chain (#412→…→#416=4920320533.95→…→#436) each with run attributi
 Tests: `tests/test_chip_identity.py` (36) + `tests/test_field_history.py`
 runs-tier class + `tests/test_history.py::TestIndexFollowsRoutedDir`.
 
+## Amendment r10 (2026-07-31): the extras.data_folder lifecycle
+
+The gilboa incident: the chip-name banner's optional data-folder field stored
+whatever was typed, verbatim — the user entered a NAME ("gilboa_iqcc"), and
+the only feedback was a later dangling banner with no fix affordance ("check
+state.json"). r10 closes the loop, always ask-first (click-to-stage through
+the working copy; Apply publishes; never auto-written):
+
+- **`_validate_data_folder(raw)`** (routes.py, shared by every write path):
+  `ok` (bridges to a reachable directory) / `cross_machine` (path-SHAPED —
+  rooted `/`, `\`, or drive prefix — but not reachable HERE; storeable after
+  an explicit 409 confirm, because labs share one state across OSes and the
+  reader bridges at read time) / `not_a_path` (no root at all — the
+  "gilboa_iqcc" mistake class; always rejected with suggestions, `force_cross`
+  never overrides it — one ack never collapses two gates).
+- **`POST /chip-data-folder/set`** (value | use | clear=1 | force_cross=1):
+  live-origin gate; stages via modifier (`create_subtree` / `set_value(...,
+  coerce=False)` — a list-valued key must not TypeError under list→str
+  coercion / `delete_subtree` for clear); re-runs the adopt + suggest gates
+  in-request so a reachable value pairs Datasets NOW and the banner strip
+  refreshes truthfully; empty submit without `clear=1` is a 400 (the folder
+  picker auto-submits — an empty pick must never become a silent clear); an
+  explicit clear writes the decline memo (an answer, not a nag reset).
+  `POST /chip-data-folder/decline` + `GET /chip-name/banner` (confirm-Cancel
+  re-render) complete the trio.
+- **The dangling banner is FIXABLE in place**: type+Set (path autocomplete
+  datalist), "Use <candidate>" buttons (≤2), Browse… (the global folder
+  picker, kind=dataset — its select-auto-submit is the desired commit), Clear.
+  Candidates = `_data_folder_candidates`: ① the qualibrate project scope's
+  resolved storage (`qualibrate_config.project_storage()` — a new public
+  one-project variant of `list_projects()`'s storage entry) ② recorded
+  project roots ③ registered workspace dataset roots — fs_key-deduped, cap 3,
+  already-adopted roots excluded.
+- **The record-suggestion banner** (the user's core ask): a NAMED live chip
+  with NO declared data folder + ≥1 candidate → "Record <path> as this
+  chip's data folder?" [Record] [Not now]; declines memo as
+  `token::datafolder` in `instance/chip_name_prompts.json` (same fingerprint
+  lifecycle as the name prompt, collision-free suffix). Branch precedence in
+  `_chip_name_banner.html`: name prompt (its data-folder field now validates
+  + offers the datalist) > dangling-fix > suggestion.
+- **Bridge fix**: `_adopt_extras_data_folders` now uses the public
+  `native_path()` (the private 2-arg `_to_native` missed the `wsl_root` share
+  anchoring — `/home/...` values were never bridged).
+
+Pinned by `tests/test_chip_identity.py` (validator kinds; set/clear/confirm
+round-trips incl. the list-value and archive gates; banner actions +
+candidates; suggestion gates + `::datafolder` memo; chip-name/set hardening;
+the native_path bridge regression test).
+
 ## Amendment v2b (2026-07-31): Column History + LiveEditUndo (the unified Ctrl+Z)
 
 **Column History** — the bulk-grid COLUMN header's hover 🕘 (both grids; the
