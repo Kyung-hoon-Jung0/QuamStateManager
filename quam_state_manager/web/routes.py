@@ -4161,6 +4161,17 @@ def field_edit():
         _ro = _editability_reason(modifier.store, target_path)
         if _ro is not None:
             raise ValueError(_ro)
+        # docs/20 r12-B: an FSP edit NEVER silently changes amplitudes — and
+        # never commits before the user saw the compensation offer. Without
+        # an ack the plan comes back 409; the popup then applies FSP+amps in
+        # ONE /field/edit-batch (fsp_ack=comp) or FSP alone (fsp_ack=solo).
+        if request.form.get("fsp_ack") not in ("comp", "solo"):
+            plan = _fsp_plan_for(modifier.store, target_path, raw_value)
+            if plan is not None:
+                return jsonify(
+                    ok=False, fsp_compensation=plan,
+                    error=("This edit changes a port's full-scale power — "
+                           "confirm the amplitude compensation first")), 409
         parsed = _parse_for_target(modifier.store, target_path, raw_value)
         modifier.set_value(target_path, parsed)
         _invalidate_engine_cache(ctx)
@@ -4170,6 +4181,23 @@ def field_edit():
         return jsonify(ok=False, error=str(e)), 400
 
     return jsonify(ok=True, tray_html=_tray_html())
+
+
+def _fsp_plan_for(store, target_path: str, raw_value) -> dict | None:
+    """The r12-B compensation plan for an FSP target, else None (non-FSP
+    paths, non-numeric values, unchanged FSP — the edit proceeds normally).
+    Read-only; never raises (a plan bug must never brick port edits)."""
+    if not isinstance(target_path, str) \
+            or not target_path.endswith(".full_scale_power_dbm"):
+        return None
+    try:
+        from quam_state_manager.core import mw_fem
+        with store._lock:
+            merged = store.merged
+        return mw_fem.fsp_compensation_plan(merged, target_path, raw_value)
+    except Exception:  # noqa: BLE001
+        logger.debug("fsp plan computation failed", exc_info=True)
+        return None
 
 
 def _parse_for_target(store, target_path: str, raw_value: str):
@@ -5263,6 +5291,30 @@ def field_edit_batch():
         return jsonify(ok=False, error="No updates supplied"), 400
 
     independent = bool(_pj.get("independent"))
+
+    # docs/20 r12-B: an FSP edit never silently changes amplitudes — and
+    # never commits before the compensation offer was seen. Batches without
+    # the ack get the FIRST FSP entry's plan back as a 409; the popup then
+    # resends the whole batch with the compensated amps included and
+    # fsp_ack=comp (one gid = one Review bundle = one Ctrl+Z) or
+    # fsp_ack=solo (FSP alone).
+    _fsp_ack = str(_pj.get("fsp_ack") or request.form.get("fsp_ack") or "")
+    if _fsp_ack not in ("comp", "solo"):
+        for _dp, _rv, _c in pairs:
+            try:
+                _tgt = _resolve_edit_path(modifier.store, _dp)
+            except Exception:  # noqa: BLE001
+                continue
+            plan = _fsp_plan_for(modifier.store, _tgt, _rv)
+            if plan is not None:
+                fsp_paths = sum(
+                    1 for (p2, _v2, _c2) in pairs
+                    if str(p2).endswith("full_scale_power_dbm"))
+                plan["more_fsp_in_batch"] = fsp_paths > 1
+                return jsonify(
+                    ok=False, fsp_compensation=plan, fsp_dot_path=_dp,
+                    error=("This batch changes a port's full-scale power — "
+                           "confirm the amplitude compensation first")), 409
 
     results: list[dict[str, Any]] = []
     applied_entries: list[Any] = []

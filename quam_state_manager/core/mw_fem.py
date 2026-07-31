@@ -102,3 +102,133 @@ def port_of_resolved(resolved_path: Any) -> Optional[tuple[str, str, int, int, s
             return x
 
     return (kind, con, _int(fem), _int(port), field)
+
+
+# ── FSP → pulse-amplitude compensation (docs/20 r12-B) ──────────────────────
+
+_FSP_LEAF = ".full_scale_power_dbm"
+
+
+def _walk_dots(root: Any, dot_path: str) -> Any:
+    node = root
+    for seg in dot_path.split("."):
+        if not isinstance(node, dict) or seg not in node:
+            return None
+        node = node[seg]
+    return node
+
+
+def fsp_compensation_plan(merged: dict, resolved_fsp_path: str,
+                          new_fsp: Any) -> Optional[dict]:
+    """The compensation OFFER for a ``full_scale_power_dbm`` edit.
+
+    NEVER applied silently — the /field/edit(+batch) gates return this plan
+    to the UI, which lists every amplitude old→new and asks; only an
+    explicit ack commits (FSP + amps in one atomic batch, or FSP alone).
+
+    Physics: ``P_dBm = FSP + 20·log10|amp|`` — keeping every pulse's real
+    output power constant across an FSP change means
+    ``amp' = amp · 10^((FSP_old − FSP_new)/20)`` (the identity autofit's
+    power_rows pins bit-exact against real archives). Lowering FSP GROWS
+    amplitudes; any ``|amp'| > 1.0`` clips at the DAC → per-row + top-level
+    warnings.
+
+    Channels are found by reverse-pointer traversal: the port node ←
+    ``*.opx_output`` referrers, one extra hop through wiring nodes (the
+    standard 2-hop ``qubits.qX.rr.opx_output → #/wiring/... → #/ports/...``
+    chain). MW outputs only — LF flux/coupler amps are volts, never
+    FSP-scaled. Alias operations (string pointers to a sibling op) are
+    skipped silently (double-write guard); pointer/non-numeric amplitudes
+    become disclosed ``skipped`` rows.
+
+    Returns None when the path is not an MW-output FSP leaf, values are
+    non-numeric, or the FSP is unchanged — the edit then proceeds normally.
+    """
+    if not isinstance(resolved_fsp_path, str)             or not resolved_fsp_path.endswith(_FSP_LEAF):
+        return None
+    parsed = port_of_resolved(resolved_fsp_path)
+    if parsed is None or parsed[0] != "mw_outputs":
+        return None
+    _kind, con, fem, port, _field = parsed
+    old = _walk_dots(merged, resolved_fsp_path)
+    if isinstance(old, bool) or not isinstance(old, (int, float)):
+        return None
+    try:
+        new = float(new_fsp)
+    except (TypeError, ValueError):
+        return None
+    if float(old) == new:
+        return None
+
+    from quam_state_manager.core.pointer_resolver import is_pointer
+    from quam_state_manager.core.pulse_index import build_reverse_pointer_index
+
+    factor = 10.0 ** ((float(old) - new) / 20.0)
+    port_node = resolved_fsp_path[:-len(_FSP_LEAF)]
+    index = build_reverse_pointer_index(merged)
+
+    channels: set = set()
+    for ref in index.get(port_node, []):
+        if not ref.endswith(".opx_output"):
+            continue
+        owner = ref[: -len(".opx_output")]
+        if ref.startswith("wiring."):
+            # 2-hop chain: channel.opx_output → wiring node → port
+            for ref2 in index.get(ref, []):
+                if ref2.endswith(".opx_output"):
+                    channels.add(ref2[: -len(".opx_output")])
+        else:
+            channels.add(owner)
+
+    amps: list[dict] = []
+    skipped: list[dict] = []
+    for chan in sorted(channels):
+        ops = _walk_dots(merged, chan + ".operations")
+        if not isinstance(ops, dict):
+            continue
+        for op_name, op_val in sorted(ops.items()):
+            if isinstance(op_val, str):
+                continue                     # alias op → target compensated once
+            if not isinstance(op_val, dict) or "amplitude" not in op_val:
+                continue
+            amp = op_val["amplitude"]
+            apath = f"{chan}.operations.{op_name}.amplitude"
+            if is_pointer(amp):
+                skipped.append({"path": apath,
+                                "reason": "amplitude is a pointer — edit its target"})
+                continue
+            if isinstance(amp, bool) or not isinstance(amp, (int, float)):
+                skipped.append({"path": apath, "reason": "not a number"})
+                continue
+            new_amp = float(amp) * factor
+            amps.append({
+                "path": apath,
+                "channel": chan,
+                "op": op_name,
+                "old": amp,
+                "new": new_amp,
+                "clips": abs(new_amp) > 1.0,
+            })
+
+    range_warn = None
+    try:
+        from quam_state_manager.core.spec_constraints import (
+            FULL_SCALE_POWER_DBM_RANGE)
+        lo, hi = FULL_SCALE_POWER_DBM_RANGE
+        if not (lo <= new <= hi):
+            range_warn = (f"FSP {new:g} dBm is outside the hardware range "
+                          f"[{lo}, {hi}]")
+    except Exception:  # noqa: BLE001
+        pass
+
+    return {
+        "fsp_path": resolved_fsp_path,
+        "port": f"{con}/{fem}/{port}",
+        "fsp_old": old,
+        "fsp_new": new,
+        "factor": factor,
+        "amps": amps,
+        "skipped": skipped,
+        "clip_count": sum(1 for a in amps if a["clips"]),
+        "range_warn": range_warn,
+    }

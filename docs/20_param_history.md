@@ -556,6 +556,53 @@ run chain (#412→…→#416=4920320533.95→…→#436) each with run attributi
 Tests: `tests/test_chip_identity.py` (36) + `tests/test_field_history.py`
 runs-tier class + `tests/test_history.py::TestIndexFollowsRoutedDir`.
 
+## Amendment r12 (2026-07-31): identity confirm + FSP↔amplitude compensation
+
+**A — conservative identity confirm.** The gilboa incident: a lab-side state
+regeneration (graph restart bootstrapping a fresh Quam) wiped `extras` while
+15 hours of runs (#471→#495) proved the field round-trips QUAlibrate's normal
+save cycle. Since snapshots hold the pre-wipe state verbatim,
+`HistoryManager.remembered_identity` recovers `{name, data_folder}` — chip
+dir resolved for the CURRENT content, with an explicit
+`_find_matching_chip_dir` fallback (the ladder skips the global scan for
+empty path-derived dirs), walking back to the newest snapshot still carrying
+a name. The banner is deliberately a QUESTION, never a restore
+(same-architecture chips can be many; even data folders can coincide):
+"**This chip appears to be 'X' (data folder Y) — same hardware fingerprint
+as that chip's history. Is this correct?**" — [Yes] is a hidden-field form
+through the EXISTING validated `/chip-name/set` (stage-only; Apply
+publishes; a remembered not-a-path folder like "gilboa_iqcc" is never
+re-offered); [No — different chip] memoizes `token::identity` and the
+response IS the fill-in prompt, which now carries a Browse… button
+(`openFolderBrowser` gained `opts.autoSubmit=false` so a folder pick fills
+the box without submitting the identity form). Pinned by
+`TestIdentityConfirm`.
+
+**B — FSP → amplitude compensation (NEVER silent).** Editing a port's
+`full_scale_power_dbm` must keep every pulse's real output power constant —
+`P_dBm = FSP + 20·log10|amp|` ⇒ `amp' = amp · 10^((FSP_old−FSP_new)/20)`
+(the identity `autofit/power_rows` pins bit-exact on real archives). The
+hard contract, per user: **amps are never updated quietly, and the FSP edit
+itself never commits before the user saw the offer.**
+`mw_fem.fsp_compensation_plan` builds the offer: reverse-pointer traversal
+(port node ← `*.opx_output` referrers, one extra hop through wiring — the
+standard 2-hop chain), MW outputs only (LF flux/coupler amps are volts),
+alias ops skipped (double-write guard), pointer/non-numeric amps disclosed
+as `skipped`; per-row + top-level **DAC-clip warnings when a compensated
+`|amp| > 1.0`** ("do not lower FSP this far…") and a hardware-range warning.
+`/field/edit` and `/field/edit-batch` 409 with the plan unless
+`fsp_ack=comp|solo`; the shared `_openFspPopup` lists every amplitude
+old→new ("SM will update these amplitudes WITH the port change") and only
+an explicit choice commits — `comp` = FSP+amps in ONE batch (one gid = one
+Review bundle = one Ctrl+Z), `solo` = FSP alone, Cancel = nothing written
+(every popup exit notifies the caller exactly once, so grid apply chains
+never hang). Wired in the Explorer inline editor, both grids' `_applyCells`
+and All-values' `applyOne`; un-wired callers get the honest 409 `error`
+string instead of a silent failure. The diagnostics DAC linter re-runs
+after commit as the second net. Pinned by `tests/test_fsp_compensation.py`
+(plan traversal/factor/clip/range; the never-silent gates; the one-group
+undo; non-FSP paths unaffected; JS wiring pins).
+
 ## Amendment r11 (2026-07-31): the cell 🕘 anchors to the VALUE TEXT
 
 The r10 td-anchored clock still rendered "far right or invisible". Root
