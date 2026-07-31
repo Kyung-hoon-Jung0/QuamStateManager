@@ -9313,11 +9313,11 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
    parameter list — the house .bulk-td:hover idiom): visible on row hover /
    input focus / keyboard focus only. */
 form.inline-edit.fh-host { display: block; position: relative; }
-form.inline-edit.fh-host .edit-input { padding-right: 1.15rem; }
+form.inline-edit.fh-host .edit-input { padding-right: 1.5rem; }
 .field-hist-btn {
     position: absolute; right: .18rem; top: 50%; transform: translateY(-50%);
     background: none; border: none; cursor: pointer; padding: 0;
-    margin: 0; width: auto; font-size: .7rem; line-height: 1; opacity: 0;
+    margin: 0; width: auto; font-size: .9rem; line-height: 1; opacity: 0;
     transition: opacity .12s; display: inline-block;
 }
 tr:hover .field-hist-btn,
@@ -9325,17 +9325,21 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .field-hist-btn:focus-visible { opacity: .55; }
 .field-hist-btn:hover { opacity: 1; }
 
-/* bulk-grid shared cell button — docks INSIDE the focused cell's right edge,
-   styled as an in-input icon (no border/chip look), matching the input bg so
-   it reads as part of the edit box. */
+/* bulk-grid shared cell button — r10: ANCHORED INSIDE the focused cell's td
+   (absolute in the relatively-positioned .bulk-td), so it moves with the cell
+   through resize/scroll/scale — the fixed-position float used stale viewport
+   coords and drifted outside the box. Styled as an in-input icon. */
+.bulk-td { position: relative; }
 #fh-cellbtn {
-    position: fixed; z-index: 9550; display: none;
+    position: absolute; right: .18rem; top: 50%; transform: translateY(-50%);
+    z-index: 3; display: none;
     background: var(--pico-form-element-background-color, transparent);
     border: none; border-radius: .35rem;
-    width: 16px; height: 16px; padding: 0; margin: 0;
-    font-size: .62rem; line-height: 1; cursor: pointer; opacity: .6;
+    width: 20px; height: 20px; padding: 0; margin: 0;
+    font-size: .9rem; line-height: 1; cursor: pointer; opacity: .65;
 }
 #fh-cellbtn:hover { opacity: 1; }
+.bulk-cell.fh-docked { padding-right: 1.5rem; }
 
 /* ── First-open chip-name banner (docs/20 v2) ─────────────────────────── */
 .chip-name-banner {
@@ -9475,7 +9479,7 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .bulk-col-hist {
     position: absolute; top: 50%; right: 9px; transform: translateY(-50%);
     background: none; border: none; cursor: pointer; padding: 0; margin: 0;
-    width: auto; font-size: .68rem; line-height: 1; opacity: 0;
+    width: auto; font-size: .85rem; line-height: 1; opacity: 0;
     transition: opacity .12s; z-index: 2;
 }
 .bulk-col-head:hover .bulk-col-hist, .bulk-col-hist:focus-visible { opacity: .6; }

@@ -11562,9 +11562,15 @@ window.FieldHistory = (function () {
         open(btn, hidden ? hidden.value : "", input);
     }
 
-    /* Bulk-grid affordance: one shared 🕘 button that docks to the focused
-       editable cell (a per-cell button would widen every column of a dense
-       grid). mousedown + preventDefault keeps the cell focused. */
+    /* Bulk-grid affordance: one shared 🕘 button that docks INSIDE the focused
+       cell's <td> (r10): the td is the containing block, so the button moves
+       with the cell through column resize/autofit, font scaling, scrolling and
+       reflow. The old approach — a body-mounted position:fixed float pinned to
+       the focusin-time getBoundingClientRect() — kept STALE viewport coords
+       whenever layout shifted afterwards and visibly drifted outside the box
+       (the "clock escaped the cell again" report). A per-cell button would
+       widen every column of a dense grid, so the single shared button stays.
+       mousedown + preventDefault keeps the cell focused. */
     var cellBtn = null;
     function ensureCellBtn() {
         if (cellBtn) return cellBtn;
@@ -11586,14 +11592,28 @@ window.FieldHistory = (function () {
     }
     function showCellBtn(input) {
         var b = ensureCellBtn();
+        var td = input.closest("td");
+        if (!td) return;
+        if (b._input && b._input !== input) {
+            b._input.classList.remove("fh-docked");   // cell-to-cell move
+        }
         b._input = input;
-        var r = input.getBoundingClientRect();
-        b.style.left = (r.right - 17) + "px";
-        b.style.top = (r.top + (r.height - 16) / 2) + "px";
+        td.appendChild(b);               // appendChild MOVES the shared button
+        input.classList.add("fh-docked"); // pads the text away from the icon
         b.style.display = "block";
     }
     function hideCellBtn() {
-        if (cellBtn) cellBtn.style.display = "none";
+        if (!cellBtn) return;
+        cellBtn.style.display = "none";
+        if (cellBtn._input) {
+            cellBtn._input.classList.remove("fh-docked");
+            cellBtn._input = null;
+        }
+        // Park on <body> so a grid re-render can't destroy the shared button
+        // (and the td's search/sort surface stays byte-clean while unfocused).
+        if (cellBtn.parentElement && cellBtn.parentElement !== document.body) {
+            document.body.appendChild(cellBtn);
+        }
     }
     document.addEventListener("focusin", function (e) {
         var t = e.target;
@@ -11604,8 +11624,6 @@ window.FieldHistory = (function () {
             hideCellBtn();
         }
     });
-    window.addEventListener("scroll", hideCellBtn, true);
-    window.addEventListener("resize", hideCellBtn);
 
     return { open: open, close: close, useValue: useValue,
              openInspector: openInspector };

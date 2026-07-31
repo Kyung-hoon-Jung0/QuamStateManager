@@ -29,6 +29,25 @@ def _node() -> str | None:
 
 
 @pytest.mark.skipif(_node() is None, reason="node not available")
+def test_cellbtn_docking_selfcheck():
+    """r10: the bulk-grid value-history 🕘 must dock INSIDE the focused
+    cell's td (absolute in the td — moves with the cell), never a
+    body-mounted fixed-position float with stale viewport coords (the
+    "clock escaped the cell again" regression). Also pins the enlarged
+    icon sizes."""
+    try:
+        subprocess.run([_node(), "-e", "require('jsdom')"],
+                       check=True, capture_output=True, timeout=30)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        pytest.skip("jsdom not installed for node")
+    res = subprocess.run(
+        [_node(), str(_ROOT / "tests" / "cellbtn_selfcheck.cjs")],
+        capture_output=True, text=True, timeout=120)
+    assert res.returncode == 0, f"cellbtn selfcheck failed:\n{res.stdout}\n{res.stderr}"
+    assert res.stdout.count("ok - ") >= 14, res.stdout
+
+
+@pytest.mark.skipif(_node() is None, reason="node not available")
 def test_tab_focus_selfcheck():
     try:
         subprocess.run([_node(), "-e", "require('jsdom')"],
