@@ -230,10 +230,15 @@ def _bulk_column_groups(columns: list[dict]) -> list[dict[str, Any]]:
 
 
 def _bulk_col_maxlen(columns: list[dict], grid: dict, ids: list[str]) -> None:
-    """Per-column display width = the widest value IN THAT COLUMN (uniform cells)."""
+    """Per-column display width = the widest value IN THAT COLUMN (uniform cells).
+
+    r11: +4 (not +1) — ~3ch beyond the widest value reserves room for the
+    focused cell's 🕘 value-history icon (20px) right after the text, so the
+    NATURAL column width is already "value + clock, tight" (the dblclick
+    auto-fit resets to this). Cap 26→28 keeps the reserve on long values."""
     for ci, col in enumerate(columns):
         widest = max((len(grid[i][ci]["display"]) for i in ids), default=4)
-        col["maxlen"] = min(max(widest + 1, len(col["label"]) // 2 + 4, 6), 26)
+        col["maxlen"] = min(max(widest + 4, len(col["label"]) // 2 + 4, 6), 28)
 
 
 # ======================================================================

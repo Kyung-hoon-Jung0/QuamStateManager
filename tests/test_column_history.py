@@ -160,6 +160,22 @@ class TestColumnHistoryPanel:
         assert ".bulk-col-hist" in pjs
 
 
+class TestBulkColMaxlen:
+    def test_reserves_clock_room(self):
+        """r11: natural column width = widest value + ~3ch reserve so the
+        focused cell's 🕘 fits right after the text (cap 28 keeps the
+        reserve on long values)."""
+        cols = [{"label": "f 01", "section": "Qubit"}]
+        grid = {"q1": [{"display": "5,100,000,000"}],
+                "q2": [{"display": "6,000,000,000.25"}]}
+        routes_mod._bulk_col_maxlen(cols, grid, ["q1", "q2"])
+        assert cols[0]["maxlen"] == len("6,000,000,000.25") + 4
+        long_grid = {"q1": [{"display": "x" * 60}]}
+        cols2 = [{"label": "f 01", "section": "Qubit"}]
+        routes_mod._bulk_col_maxlen(cols2, long_grid, ["q1"])
+        assert cols2[0]["maxlen"] == 28
+
+
 def _changes(html: str) -> str:
     """The Changes tab's slice of the panel (everything before the By-run
     wrapper) — lets asserts target one tab unambiguously."""

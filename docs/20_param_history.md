@@ -556,6 +556,28 @@ run chain (#412→…→#416=4920320533.95→…→#436) each with run attributi
 Tests: `tests/test_chip_identity.py` (36) + `tests/test_field_history.py`
 runs-tier class + `tests/test_history.py::TestIndexFollowsRoutedDir`.
 
+## Amendment r11 (2026-07-31): the cell 🕘 anchors to the VALUE TEXT
+
+The r10 td-anchored clock still rendered "far right or invisible". Root
+causes (both structural): the focused input carries `z-index: 4` and its
+opaque background painted OVER the z-3 icon whenever the input box reached
+the td's right edge (the invisible case); and values are left-aligned
+monospace while the icon pinned to the td's RIGHT edge — wide/drag-widened
+columns put them far apart (the bias case; the right sticky Apply column
+and horizontal scroll compounded it).
+
+r11: the icon's `left` is JS-managed at the value's tail —
+`FieldHistory._cellTextWidth` (shared canvas `measureText` with a
+letter-spacing correction; a length×char-width monospace fallback where
+canvas is unavailable), repositioned on focus AND on every input event,
+clamped to the input's right edge; `.fh-docked` padding applies ONLY when
+clamped (restoring the "never resize on focus" invariant); `z-index: 5`
+beats the focused input. Server-side, `_bulk_col_maxlen` reserves the icon:
+`widest + 4` (cap 28), so the NATURAL column width — and the dblclick
+auto-fit, which resets to it — is already "value + clock, tight"; manual
+drag widths stay respected. Pinned by `tests/cellbtn_selfcheck.cjs` (23)
++ `TestBulkColMaxlen`.
+
 ## Amendment r10 (2026-07-31): the extras.data_folder lifecycle
 
 The gilboa incident: the chip-name banner's optional data-folder field stored

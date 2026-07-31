@@ -11622,6 +11622,60 @@ window.FieldHistory = (function () {
         document.body.appendChild(cellBtn);
         return cellBtn;
     }
+    /* r11: the icon sits right AFTER the value text, not at the td's right
+       edge — a wide column put it far from the value, and the focused
+       input's opaque background (z-index 4) painted OVER a td-edge icon
+       whenever the input box reached that far ("clock invisible"). Width is
+       measured off-DOM (canvas measureText + letter-spacing correction; a
+       length×char-width monospace fallback where canvas is unavailable). */
+    var _measureCanvas = null;
+    function _cellTextWidth(input) {
+        var value = input.value || "";
+        var cs = null;
+        try { cs = window.getComputedStyle(input); } catch (e) {}
+        var fontPx = 14;
+        if (cs) {
+            var fp = parseFloat(cs.fontSize);
+            if (fp > 0) fontPx = fp;
+        }
+        if (_measureCanvas === null) {
+            // Cache the 2d context (or false) — engines without canvas
+            // (jsdom) must not throw per keystroke.
+            try {
+                var cnv = document.createElement("canvas");
+                _measureCanvas = (cnv.getContext && cnv.getContext("2d")) || false;
+            } catch (e) { _measureCanvas = false; }
+        }
+        if (_measureCanvas && cs) {
+            try {
+                _measureCanvas.font = (cs.fontWeight || "500") + " " + fontPx
+                    + "px " + (cs.fontFamily || "monospace");
+                var w = _measureCanvas.measureText(value).width;
+                var ls = parseFloat(cs.letterSpacing);
+                if (ls > 0 && value.length > 1) w += ls * (value.length - 1);
+                return w;
+            } catch (e) { /* fall through to the approximation */ }
+        }
+        return value.length * fontPx * 0.62;   // monospace approximation
+    }
+    function _positionCellBtn() {
+        var b = cellBtn, input = b && b._input;
+        if (!b || !input || !input.isConnected) return;
+        var padL = 4;
+        try {
+            var pl = parseFloat(window.getComputedStyle(input).paddingLeft);
+            if (pl >= 0) padL = pl;
+        } catch (e) {}
+        var want = input.offsetLeft + padL + _cellTextWidth(input) + 4;
+        var max = input.offsetLeft + input.offsetWidth - 20;
+        var clamped = want > max;
+        b.style.left = Math.max(input.offsetLeft + 2,
+                                Math.min(want, max)) + "px";
+        // Only a FULL cell needs the text padded away from the icon — the
+        // unclamped icon sits in the input's empty tail (and the cell never
+        // resizes on plain focus, restoring the style.css invariant).
+        input.classList.toggle("fh-docked", clamped);
+    }
     function showCellBtn(input) {
         var b = ensureCellBtn();
         var td = input.closest("td");
@@ -11631,12 +11685,13 @@ window.FieldHistory = (function () {
         }
         b._input = input;
         td.appendChild(b);               // appendChild MOVES the shared button
-        input.classList.add("fh-docked"); // pads the text away from the icon
         b.style.display = "block";
+        _positionCellBtn();
     }
     function hideCellBtn() {
         if (!cellBtn) return;
         cellBtn.style.display = "none";
+        cellBtn.style.left = "";
         if (cellBtn._input) {
             cellBtn._input.classList.remove("fh-docked");
             cellBtn._input = null;
@@ -11656,9 +11711,14 @@ window.FieldHistory = (function () {
             hideCellBtn();
         }
     });
+    // Typing changes the text length — the icon follows the value's tail.
+    document.addEventListener("input", function (e) {
+        if (cellBtn && e.target === cellBtn._input) _positionCellBtn();
+    });
 
     return { open: open, close: close, useValue: useValue,
-             openInspector: openInspector };
+             openInspector: openInspector,
+             _cellTextWidth: _cellTextWidth };   // r11 test seam
 })();
 
 /* ── LiveEditUndo (docs/20 v2): in-memory undo for UN-STAGED grid edits ──
