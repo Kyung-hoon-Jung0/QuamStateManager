@@ -460,7 +460,7 @@
         }
         state.etag = null;   // structure may have changed → next activation re-pulls rows
         if (jb.tray_html && window._swapPendingTray) {
-            window._bulkSelfEdit = true; window._swapPendingTray(jb.tray_html); window._bulkSelfEdit = false;
+            window._bulkSelfEdit = true; try { window._swapPendingTray(jb.tray_html); } finally { window._bulkSelfEdit = false; }
         }
         if (window._diagChanged) window._diagChanged();
         state.lastFirst = -1; renderWindow(true);
@@ -637,7 +637,7 @@
             if (!jb.ok) { setApplying(false); applyError(jb, start); return; }   // start = edits already committed
             reconcile(jb.results);
             if (jb.tray_html && window._swapPendingTray) {
-                window._bulkSelfEdit = true; window._swapPendingTray(jb.tray_html); window._bulkSelfEdit = false;
+                window._bulkSelfEdit = true; try { window._swapPendingTray(jb.tray_html); } finally { window._bulkSelfEdit = false; }
             }
             applyChunks(updates, start + CHUNK);
         }).catch(function (err) {
@@ -708,7 +708,7 @@
             if (!jb.ok) { applyError(jb); return; }
             reconcile(jb.results);
             if (jb.tray_html && window._swapPendingTray) {
-                window._bulkSelfEdit = true; window._swapPendingTray(jb.tray_html); window._bulkSelfEdit = false;
+                window._bulkSelfEdit = true; try { window._swapPendingTray(jb.tray_html); } finally { window._bulkSelfEdit = false; }
             }
             if (window._diagChanged) window._diagChanged();
             updateDirtyUI();

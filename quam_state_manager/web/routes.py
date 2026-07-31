@@ -866,6 +866,12 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # index may do a few stats / a rare TOML re-parse). An explicitly
         # pinned name sticks.
         _acquire_project_scope(current)
+        # docs/20 v2: re-evaluate the first-open chip-name banner on every
+        # activation (origin can flip live→archive; a staged name dismisses),
+        # and adopt the chip's declared data folder(s) as workspace roots.
+        _maybe_chip_name_prompt(current)
+        _adopt_extras_data_folders(current)
+        _maybe_data_folder_suggest(current)
         with _quam_cache_lock:
             current_app.config["contexts"][ctx_name] = current
             current_app.config["active_context"] = ctx_name
@@ -924,6 +930,9 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # chip without its memo); every activation path converges on the
         # reverse index, so a lost memo self-heals.
         _acquire_project_scope(ctx)
+        _maybe_chip_name_prompt(ctx)
+        _adopt_extras_data_folders(ctx)
+        _maybe_data_folder_suggest(ctx)
         with _quam_cache_lock:
             if key not in _quam_cache:
                 # Evict the oldest CLEAN in-memory entry if the cache is full.
@@ -1102,6 +1111,9 @@ def _rebuild_after_working_copy_replaced(ctx: dict) -> None:
     _invalidate_engine_cache()
     ctx["working_dirty"] = False
     ctx["live_diverged"] = False
+    # audit-r10: a wholesale replace resolves any prior staged base (a pull
+    # consumed it; a fresh stage re-sets the flag right after this call).
+    ctx["staged_base"] = False
     _reseed_drift_baseline_if_chip_changed(ctx)
 
 
@@ -1547,6 +1559,510 @@ def _chip_channel_flags(store: QuamStore | None) -> tuple[bool, bool, bool]:
     return has_resonator, has_flux, has_coupler
 
 
+# ── extras.data_folder chip↔data pairing (docs/20 v2 Step 5) ───────────────
+
+def _adopt_extras_data_folders(ctx: dict | None) -> None:
+    """Register the chip's declared data folder(s) as workspace roots.
+
+    ``extras.data_folder`` travels with the state (like ``chip_name``), so a
+    chip opened anywhere auto-pairs with its experiment data — the pairing
+    ladder is extras > qualibrate project storage (/qualibrate/open) >
+    recorded project roots. Values are RAW lab-side paths: each runs through
+    the OS-dialect bridge (a Linux-written path on this Windows host and
+    vice versa) and an existence gate; dangling values surface as a muted
+    banner note, never an error. LIVE contexts only — archive opens must not
+    grow the workspace. Idempotent (set-diffed against current roots).
+    """
+    if not ctx or ctx.get("type") != "quam":
+        return
+    ctx["extras_data_roots"] = []
+    ctx["extras_data_dangling"] = []
+    try:
+        if (ctx.get("origin") or "live") != "live":
+            return
+        store = ctx.get("store")
+        if store is None:
+            return
+        from quam_state_manager.core.history import extras_data_folder
+        with store._lock:
+            declared = extras_data_folder(store.state)
+        if not declared:
+            return
+        resolved: list[str] = []
+        for raw in declared:
+            # PUBLIC native_path (r10): unlike the bare 2-arg _to_native it
+            # anchors non-/mnt POSIX values onto the config's distro share
+            # (wsl_root) — a /home/... value was previously never bridged.
+            native = raw
+            try:
+                native = str(qualibrate_config.native_path(raw) or raw)
+            except Exception:  # noqa: BLE001
+                pass
+            if native and Path(native).is_dir():
+                resolved.append(str(Path(native)))
+            else:
+                ctx["extras_data_dangling"].append(raw)
+        if not resolved:
+            return
+        ctx["extras_data_roots"] = resolved
+        ws = _ws()
+        existing = {str(p) for p in ws.root_folders}
+        added = 0
+        for root in resolved:
+            if root in existing:
+                continue
+            try:
+                ws.add_root(root)
+                added += 1
+            except (OSError, ValueError):
+                continue
+        if added:
+            _save_workspace_roots()
+            current_app.config.pop("dataset_store", None)
+        # Project lens interplay: when this chip ALSO carries a qualibrate
+        # scope, remember the declared roots for the Datasets/Trends
+        # folder-selection seeding (same file /qualibrate/open records to).
+        scope = ctx.get("qualibrate_project")
+        if scope:
+            try:
+                _record_project_roots(scope, resolved)
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception:  # noqa: BLE001 — pairing must never break activation
+        logger.debug("extras data-folder adoption failed", exc_info=True)
+
+
+_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+def _validate_data_folder(raw: str) -> dict:
+    """Classify a candidate ``extras.data_folder`` value (docs/20 r10).
+
+    Returns ``{"ok", "kind", "native"}`` with kind one of:
+    - ``ok``           — bridges to a directory reachable from here;
+    - ``cross_machine``— path-SHAPED (rooted) but not reachable — storeable
+      after an explicit confirm (labs share state across OSes; the reader
+      bridges at read time);
+    - ``not_a_path``   — a bare name / relative fragment ("gilboa_iqcc",
+      "data/sub") — never storeable (this is the mistake class that produced
+      the un-fixable dangling banner).
+    """
+    raw = (raw or "").strip()
+    if not raw or len(raw) > 1024:
+        return {"ok": False, "kind": "not_a_path", "native": None}
+    rooted = (raw.startswith("/") or raw.startswith("\\")
+              or bool(_DRIVE_RE.match(raw)))
+    if not rooted:
+        return {"ok": False, "kind": "not_a_path", "native": None}
+    try:
+        native = qualibrate_config.native_path(raw)
+        if native and native.is_dir():
+            return {"ok": True, "kind": "ok", "native": str(native)}
+    except (OSError, ValueError):
+        pass
+    return {"ok": False, "kind": "cross_machine", "native": None}
+
+
+def _data_folder_candidates(ctx: dict | None) -> list[dict]:
+    """Known data-folder sources for THIS chip, best first, cap 3.
+
+    ① the qualibrate project scope's resolved storage location (exists only)
+    ② roots previously recorded for that project (project_dataset_roots.json)
+    ③ the workspace's registered dataset roots.
+    fs_key-deduped; anything already adopted from extras is excluded."""
+    out: list[dict] = []
+    seen: set[str] = set()
+
+    def _key(p: str) -> str:
+        try:
+            return path_match.fs_key(p) or str(Path(p).resolve()).lower()
+        except (OSError, ValueError):
+            return str(p).lower()
+
+    for r in (ctx or {}).get("extras_data_roots") or []:
+        seen.add(_key(r))
+
+    def _add(value: str, label: str, source: str) -> None:
+        if len(out) >= 3 or not value:
+            return
+        k = _key(value)
+        if k in seen:
+            return
+        seen.add(k)
+        out.append({"value": value, "label": label, "source": source})
+
+    scope = (ctx or {}).get("qualibrate_project")
+    if scope:
+        try:
+            st = qualibrate_config.project_storage(scope)
+            if st.get("exists") and st.get("native"):
+                _add(st.get("raw") or st["native"],
+                     f"{scope} project storage ({st['native']})", "project")
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            for r in _load_project_roots().get(scope, []):
+                if Path(r).is_dir():
+                    _add(r, r, "project_roots")
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        for entry in _active_dataset_stores(fast=True):
+            _add(str(entry["path"]), str(entry.get("label") or entry["path"]),
+                 "workspace")
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+def _maybe_data_folder_suggest(ctx: dict | None) -> None:
+    """Compute the banner memos: candidates (always, for datalists/actions)
+    and the record-suggestion (only for a NAMED live chip with NO declared
+    data folder + at least one candidate + no ::datafolder decline memo).
+    Never breaks activation."""
+    if not ctx or ctx.get("type") != "quam":
+        return
+    ctx["data_folder_candidates"] = []
+    ctx["data_folder_suggest"] = None
+    try:
+        if (ctx.get("origin") or "live") != "live":
+            return
+        store = ctx.get("store")
+        path = ctx.get("path")
+        if store is None or not path:
+            return
+        try:
+            if Path(path).resolve().is_relative_to(
+                    Path(current_app.instance_path).resolve()):
+                return   # SM-internal folders (working copies etc.)
+        except (OSError, ValueError):
+            pass
+        from quam_state_manager.core.history import (
+            extras_chip_name, extras_data_folder, fingerprint_from_dicts,
+        )
+        with store._lock:
+            named = bool(extras_chip_name(store.state))
+            declared = extras_data_folder(store.state)
+            fp = fingerprint_from_dicts(store.state, store.wiring)
+        # audit-r10 perf gate: the common fully-configured chip (named +
+        # declared + reachable) needs NO candidates — skip the dataset-store
+        # sweep + TOML parse on its every activation. Candidates are needed
+        # only when a banner/datalist will actually consume them: unnamed
+        # (name prompt), dangling (fix form), or named-without-declared
+        # (the record suggestion).
+        needs_candidates = (not named or bool(ctx.get("extras_data_dangling"))
+                            or not declared)
+        if not needs_candidates:
+            return
+        ctx["data_folder_candidates"] = _data_folder_candidates(ctx)
+        if not named or declared or not ctx["data_folder_candidates"]:
+            return
+        token = _chip_prompt_token(str(path), fp)
+        if f"{token}::datafolder" in _load_chip_prompt_memo():
+            return
+        ctx["data_folder_suggest"] = {
+            "candidate": ctx["data_folder_candidates"][0],
+            "token": token,
+        }
+    except Exception:  # noqa: BLE001
+        logger.debug("data-folder suggest failed", exc_info=True)
+
+
+# ── First-open chip-name prompt (docs/20 v2 — identity ladder tier 1) ──────
+
+_chip_prompt_memo_lock = threading.Lock()   # audit-r10: R-M-W writers race
+
+
+def _chip_prompt_memo_file() -> Path:
+    return Path(current_app.instance_path) / "chip_name_prompts.json"
+
+
+def _load_chip_prompt_memo() -> dict:
+    try:
+        data = safe_io.read_json(_chip_prompt_memo_file())
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _chip_prompt_token(path: str, fp: Any) -> str:
+    """Fingerprint-keyed (folder moves never re-nag); fs-key fallback."""
+    from quam_state_manager.core.history import fingerprint_token
+    tok = fingerprint_token(fp)
+    if tok:
+        return tok
+    try:
+        return "fs:" + path_match.fs_key(path)
+    except Exception:  # noqa: BLE001
+        return "path:" + str(path)
+
+
+def _maybe_chip_name_prompt(ctx: dict | None) -> None:
+    """Gate + memo for the first-open "Name this chip?" banner.
+
+    Re-evaluated on EVERY activation (the origin flag refreshes per
+    activation): live quam contexts only — never dataset archives, never
+    chips under the instance dir (autofit sim), gone as soon as the WORKING
+    copy carries a name (staging dismisses it before Apply), and never
+    after an explicit decline (fingerprint-keyed memo).
+    """
+    if not ctx or ctx.get("type") != "quam":
+        return
+    ctx["chip_name_prompt"] = None
+    try:
+        if (ctx.get("origin") or "live") != "live":
+            return
+        path = str(ctx.get("path") or "")
+        store = ctx.get("store")
+        if not path or store is None:
+            return
+        try:
+            Path(path).resolve().relative_to(
+                Path(current_app.instance_path).resolve())
+            return                      # instance-internal chip (sim etc.)
+        except (ValueError, OSError):
+            pass
+        from quam_state_manager.core.history import (
+            extras_chip_name, fingerprint_from_dicts)
+        with store._lock:
+            name = extras_chip_name(store.state)
+            fp = fingerprint_from_dicts(store.state, store.wiring)
+        if name:
+            return
+        token = _chip_prompt_token(path, fp)
+        if token in _load_chip_prompt_memo():
+            return
+        suggest = (ctx.get("qualibrate_project")
+                   or _chip_display_name(path) or "").strip()
+        ctx["chip_name_prompt"] = {"suggest": suggest, "token": token}
+    except Exception:  # noqa: BLE001 — a banner must never break activation
+        logger.debug("chip-name prompt gate failed", exc_info=True)
+
+
+@bp.route("/chip-name/set", methods=["POST"])
+def chip_name_set():
+    """Stage ``extras.chip_name`` (+ optional ``extras.data_folder``) through
+    the audited edit machinery — working copy only, never a direct live
+    write. Apply-to-live then propagates it into every future run's
+    quam_state copy, which is what makes attribution layout-proof."""
+    ctx = _active_ctx()
+    modifier = ctx.get("modifier") if ctx else None
+    if not ctx or ctx.get("type") != "quam" or modifier is None:
+        return render_template("_status.html", message="No state loaded",
+                               level="warning"), 400
+    if (ctx.get("origin") or "live") != "live":
+        return render_template(
+            "_status.html", level="warning",
+            message="Read-only archive — open the live chip to name it"), 409
+    name = (request.form.get("name") or "").strip()[:64].strip()
+    if not name:
+        return render_template("_status.html", message="Chip name required",
+                               level="error"), 400
+    data_folder = (request.form.get("data_folder") or "").strip()
+    cross_note = ""
+    if data_folder:
+        # r10: "gilboa_iqcc"-class values (a NAME typed into the path field)
+        # used to be stored verbatim and only failed later as an un-fixable
+        # dangling banner. Reject them at the door; path-shaped values that
+        # aren't reachable HERE stay storeable (labs share state across OSes).
+        v = _validate_data_folder(data_folder)
+        if v["kind"] == "not_a_path":
+            return render_template(
+                "_status.html", level="error",
+                message=(f"'{data_folder}' looks like a name, not a folder — "
+                         "the data folder must be an absolute path (e.g. "
+                         "D:\\data\\myproject). Pick a suggestion or leave it "
+                         "empty for now.")), 400
+        if v["kind"] == "cross_machine":
+            cross_note = (" — note: that folder is not reachable from this "
+                          "machine; it will pair where it is visible")
+    store = modifier.store
+    try:
+        with store._lock:
+            extras = store.state.get("extras")
+        sets: dict[str, Any] = {"chip_name": name}
+        if data_folder:
+            sets["data_folder"] = data_folder
+        if not isinstance(extras, dict):
+            modifier.create_subtree("extras", sets)
+        else:
+            for leaf, value in sets.items():
+                if leaf in extras:
+                    modifier.set_value(f"extras.{leaf}", value)
+                else:
+                    modifier.create_subtree(f"extras.{leaf}", value)
+        _invalidate_engine_cache(ctx)
+    except (KeyError, TypeError, ValueError) as e:
+        return render_template("_status.html", message=str(e), level="error"), 400
+    ctx["chip_name_prompt"] = None
+    _adopt_extras_data_folders(ctx)
+    _maybe_data_folder_suggest(ctx)
+    body = render_template(
+        "_status.html", level="success",
+        message=f"Chip name '{name}' staged — Save + Apply to live makes it"
+                f" permanent (future runs then carry it automatically){cross_note}")
+    resp = make_response(body + _tray_oob())
+    resp.headers["HX-Trigger"] = "pulses-changed"
+    return resp
+
+
+@bp.route("/chip-name/decline", methods=["POST"])
+def chip_name_decline():
+    """Remember "don't ask again" for this chip (fingerprint-keyed)."""
+    ctx = _active_ctx()
+    token = (request.form.get("token") or "").strip()
+    if token:
+        with _chip_prompt_memo_lock:
+            data = _load_chip_prompt_memo()
+            data[token] = {
+                "declined_at": datetime.now().isoformat(timespec="seconds"),
+                "path_hint": str((ctx or {}).get("path") or ""),
+            }
+            try:
+                safe_io.atomic_write_json(_chip_prompt_memo_file(), data)
+            except OSError:
+                logger.warning("Could not persist chip-name decline",
+                               exc_info=True)
+    if ctx:
+        ctx["chip_name_prompt"] = None
+    return ""
+
+
+def _write_datafolder_memo(token: str, ctx: dict | None) -> None:
+    with _chip_prompt_memo_lock:
+        data = _load_chip_prompt_memo()
+        data[f"{token}::datafolder"] = {
+            "declined_at": datetime.now().isoformat(timespec="seconds"),
+            "path_hint": str((ctx or {}).get("path") or ""),
+        }
+        try:
+            safe_io.atomic_write_json(_chip_prompt_memo_file(), data)
+        except OSError:
+            logger.warning("Could not persist data-folder decline",
+                           exc_info=True)
+
+
+@bp.route("/chip-data-folder/set", methods=["POST"])
+def chip_data_folder_set():
+    """Set / clear ``extras.data_folder`` on the open chip (docs/20 r10).
+
+    Always a STAGE through the audited edit machinery (working copy only —
+    Apply-to-live publishes). Form: ``use`` (a suggestion button's value,
+    wins over the text input), ``value``, ``clear=1``, ``force_cross=1``
+    (accept a path-shaped value that isn't reachable from this machine —
+    never overrides the not-a-path rejection: one ack never collapses two
+    gates)."""
+    ctx = _active_ctx()
+    modifier = ctx.get("modifier") if ctx else None
+    if not ctx or ctx.get("type") != "quam" or modifier is None:
+        return render_template("_status.html", message="No state loaded",
+                               level="warning"), 400
+    if (ctx.get("origin") or "live") != "live":
+        return render_template(
+            "_status.html", level="warning",
+            message="Read-only archive — open the live chip to edit it"), 409
+    store = modifier.store
+    value = (request.form.get("use") or request.form.get("value") or "").strip()
+    clear = request.form.get("clear") == "1"
+
+    if clear:
+        try:
+            with store._lock:
+                extras = store.state.get("extras")
+            had = isinstance(extras, dict) and "data_folder" in extras
+            if had:
+                modifier.delete_subtree("extras.data_folder")
+                _invalidate_engine_cache(ctx)
+        except (KeyError, TypeError, ValueError) as e:
+            return render_template("_status.html", message=str(e),
+                                   level="error"), 400
+        # An explicit clear is an answer — don't immediately re-suggest.
+        try:
+            from quam_state_manager.core.history import fingerprint_from_dicts
+            with store._lock:
+                fp = fingerprint_from_dicts(store.state, store.wiring)
+            _write_datafolder_memo(_chip_prompt_token(str(ctx.get("path") or ""), fp), ctx)
+        except Exception:  # noqa: BLE001
+            pass
+        ctx["data_folder_suggest"] = None
+        _adopt_extras_data_folders(ctx)
+        _maybe_data_folder_suggest(ctx)
+        body = render_template(
+            "_status.html", level="success",
+            message=("Data folder cleared from the working state — Save + "
+                     "Apply to live makes it permanent"
+                     if had else "No data folder was declared — nothing to clear"))
+        resp = make_response(body + _tray_oob())
+        resp.headers["HX-Trigger"] = "pulses-changed"
+        return resp
+
+    if not value:
+        # Guards the folder picker's unconditional auto-submit: an empty
+        # submit must never turn into a silent clear.
+        return render_template("_status.html", level="error",
+                               message="Pick a folder (or use Clear)"), 400
+
+    v = _validate_data_folder(value)
+    if v["kind"] == "not_a_path":
+        return render_template(
+            "_status.html", level="error",
+            message=(f"'{value}' looks like a name, not a folder — enter an "
+                     "absolute path (e.g. D:\\data\\myproject), pick a "
+                     "suggestion, or Browse.")), 400
+    if v["kind"] == "cross_machine" and request.form.get("force_cross") != "1":
+        return render_template("_data_folder_confirm.html", value=value), 409
+
+    try:
+        with store._lock:
+            extras = store.state.get("extras")
+        if not isinstance(extras, dict):
+            modifier.create_subtree("extras", {"data_folder": value})
+        elif "data_folder" in extras:
+            # coerce=False: a list-valued data_folder would TypeError under
+            # list→str coercion; replacement is wholesale and typed-correct.
+            modifier.set_value("extras.data_folder", value, coerce=False)
+        else:
+            modifier.create_subtree("extras.data_folder", value)
+        _invalidate_engine_cache(ctx)
+    except (KeyError, TypeError, ValueError) as e:
+        return render_template("_status.html", message=str(e), level="error"), 400
+
+    ctx["data_folder_suggest"] = None
+    _adopt_extras_data_folders(ctx)   # reachable value pairs Datasets NOW
+    _maybe_data_folder_suggest(ctx)
+    adopted = value not in (ctx.get("extras_data_dangling") or [])
+    body = render_template(
+        "_status.html", level="success",
+        message=("Data folder staged — Save + Apply to live makes it permanent"
+                 + (" (and it is now a registered dataset root)"
+                    if adopted and v["ok"] else "")))
+    resp = make_response(body + _tray_oob())
+    resp.headers["HX-Trigger"] = "pulses-changed"
+    return resp
+
+
+@bp.route("/chip-data-folder/decline", methods=["POST"])
+def chip_data_folder_decline():
+    """"Not now" for the record-suggestion banner (::datafolder memo)."""
+    ctx = _active_ctx()
+    token = (request.form.get("token") or "").strip()
+    if token:
+        _write_datafolder_memo(token, ctx)
+    if ctx:
+        ctx["data_folder_suggest"] = None
+    return ""
+
+
+@bp.route("/chip-name/banner", methods=["GET"])
+def chip_name_banner():
+    """Re-render the chip banner strip (the confirm fragment's Cancel and a
+    generic freshness refresh)."""
+    ctx = _active_ctx()
+    if ctx:
+        _maybe_data_folder_suggest(ctx)
+    return render_template("_chip_name_banner.html", **_ctx())
+
+
 def _ctx(**extra: Any) -> dict[str, Any]:
     """Base template context shared by all pages."""
     # Self-heal a missed live change (throttled ground-truth hash) so the
@@ -1580,6 +2096,14 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # None ⇒ every consumer renders exactly the pre-lens behavior.
         "project_scope": (_active_ctx() or {}).get("qualibrate_project"),
         "live_diverged": bool(_ctx_obj("live_diverged")),
+        # docs/20 v2: first-open "name this chip?" banner payload (None when
+        # named / declined / archive / no chip) + declared-but-unreachable
+        # extras.data_folder values (muted note, never an error).
+        "chip_name_prompt": (_active_ctx() or {}).get("chip_name_prompt"),
+        "extras_data_dangling": (_active_ctx() or {}).get("extras_data_dangling") or [],
+        "data_folder_suggest": (_active_ctx() or {}).get("data_folder_suggest"),
+        "data_folder_candidates": (_active_ctx() or {}).get("data_folder_candidates") or [],
+        "last_apply": (_active_ctx() or {}).get("last_apply"),
         "wc_gc_count": _working_copy_count(),
         "wc_gc_threshold": _WC_GC_THRESHOLD,
         "qubit_names": store.qubit_names if store else [],
@@ -3140,6 +3664,9 @@ def _render_tray(*, oob: bool) -> str:
         active_name=ident["name"] if ident else None,
         chip_origin=ident["origin"] if ident else "live",
         qualibrate_tray=_qualibrate_tray_badge(),
+        # docs/20 v2: the last apply's pre-apply snapshot ts (this session) —
+        # powers the explicit "Revert last apply…" affordance.
+        last_apply=(_active_ctx() or {}).get("last_apply"),
         oob=oob,
     )
 
@@ -3637,6 +4164,637 @@ def field_peek():
                 continue
     return jsonify(ok=True, values=values, errors=errors, resolved=resolved,
                    expected=expected)
+
+
+def _fh_fill_string(value: Any) -> str:
+    """What the Use button types into the edit input — full precision, exactly
+    what a user would have typed to produce this value."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "True" if value else "False"
+    if isinstance(value, float):
+        return repr(value)
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, separators=(",", ":"))
+    return str(value)
+
+
+def _fh_display_string(value: Any) -> str:
+    """Compact human form for the history row (grouped digits for numbers)."""
+    if value is None:
+        return "—"
+    if isinstance(value, bool):
+        return "True" if value else "False"
+    if isinstance(value, (int, float)):
+        try:
+            from quam_state_manager.core.units import group_digits
+            return group_digits(value)
+        except Exception:  # noqa: BLE001
+            return repr(value)
+    s = _fh_fill_string(value)
+    return s if len(s) <= 42 else s[:39] + "…"
+
+
+def _uid_roots() -> list[tuple[Path, str]]:
+    """Registered dataset roots as (resolved path, folder key) pairs — the
+    containment table for run-uid resolution (shared by /field/history and
+    /bulk/column-history).
+
+    audit-r10: DEEPEST root first. In the nested layout
+    ``<ws-root>/<chip>/<date>/#N_run`` both the workspace root and the chip
+    dir are candidates; the shallow root would win first-match containment
+    and mint a uid whose DatasetStore holds zero runs (dead Data links —
+    runs are keyed by their date-dir's parent)."""
+    roots: list[tuple[Path, str]] = []
+    for cand in _dataset_candidate_folders(fast=True):
+        try:
+            roots.append((Path(cand).resolve(), _folder_key(cand)))
+        except OSError:
+            continue
+    roots.sort(key=lambda t: len(t[0].parts), reverse=True)
+    return roots
+
+
+def _uid_for_run_ref(fp: Any, rid: Any, roots: list[tuple[Path, str]]) -> str | None:
+    """Resolve a history row's (experiment_folder_path, run_id) to a dataset
+    uid via root containment — None when unresolvable (no Data link)."""
+    if not fp or rid is None:
+        return None
+    try:
+        rp = Path(fp).resolve()
+    except OSError:
+        return None
+    for root, key in roots:
+        try:
+            if rp.is_relative_to(root):
+                return f"{key}:{int(rid)}"
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+# Immutable-run caches for the field-history runs tier (docs/20 v2 Step 6).
+# Runs are write-once after completion, so per-folder identity and per-
+# (folder, dot_path) values never go stale; both are size-bounded.
+_RUN_IDENT_CACHE: "OrderedDict[str, tuple]" = OrderedDict()
+# audit-r10: run-fact caches hold ONLY chip-INDEPENDENT immutable facts —
+# the run's own declared name + entity sets, and per-path extraction results.
+# The include/exclude VERDICT is chip-relative and is re-derived on every
+# call from these facts + the CURRENTLY loaded chip; caching the verdict
+# (the pre-audit shape) leaked chip A's values into chip B's popover after
+# a chip switch (Use buttons and all) and suppressed B's own runs.
+_RUN_CHIP_CACHE: "OrderedDict[str, tuple]" = OrderedDict()
+_RUN_VALUE_CACHE: "OrderedDict[tuple[str, str], tuple]" = OrderedDict()
+_RUN_CACHE_MAX = 4096
+
+
+def _trim_run_caches() -> None:
+    for cache in (_RUN_IDENT_CACHE, _RUN_CHIP_CACHE, _RUN_VALUE_CACHE):
+        while len(cache) > _RUN_CACHE_MAX:
+            cache.popitem(last=False)
+
+
+def _run_ts_stamp(run: Any) -> str:
+    """RunInfo → the ingested-snapshot timestamp format
+    (``YYYYMMDD_HHMMSS_NNN``, ``_entry_timestamp`` parity — the dedup key
+    against already-ingested snapshot rows)."""
+    folder = Path(getattr(run, "folder_path", "") or "")
+    m = re.search(r"_(\d{6})$", folder.name)
+    hhmmss = m.group(1) if m else "000000"
+    date = folder.parent.name.replace("-", "")
+    if not re.match(r"^\d{8}$", date):
+        date = "19700101"
+    rid = getattr(run, "run_id", 0) or 0
+    return f"{date}_{hhmmss}_{rid % 1000:03d}"
+
+
+def _runs_field_series(ctx: dict, dot_path: str, *,
+                       max_runs: int = 60) -> tuple[list[tuple], int]:
+    """Direct-scan tier over the workspace runs' own quam_state copies.
+
+    Every run folder IS a timestamped state snapshot with perfect run
+    linkage — so the field timeline stays fresh (today's runs included)
+    independent of Param History ingestion. Chip attribution per run:
+    extras chip names when BOTH sides declare one (definitive), else
+    hardware-fingerprint alignment; the wiring.json network is a cheap
+    pre-gate so foreign chips usually cost one small read. Newest
+    ``max_runs`` runs are examined (honest cap); roots declared in
+    ``extras.data_folder`` scan first. Returns ``(series, examined)`` with
+    series rows ``(ts, value, "experiment", run_id, experiment, folder)``.
+    """
+    from quam_state_manager.core.history import (
+        ALIGN_ALIGNED, ChipFingerprint, _normalised_network, _walk_any_path,
+        align, extras_chip_name, fingerprint_from_dicts)
+    from quam_state_manager.core.pointer_resolver import (
+        is_pointer, is_self_ref, resolve_pointer)
+
+    store = ctx.get("store")
+    if store is None:
+        return [], 0
+    with store._lock:
+        loaded_name = extras_chip_name(store.state)
+        loaded_fp = fingerprint_from_dicts(store.state, store.wiring)
+
+    roots: list[Path] = []
+    seen_roots: set[str] = set()
+    for raw in (ctx.get("extras_data_roots") or []):
+        p = Path(raw)
+        k = str(p)
+        if k not in seen_roots:
+            seen_roots.add(k)
+            roots.append(p)
+    for cand in _dataset_candidate_folders(fast=True):
+        k = str(cand)
+        if k not in seen_roots:
+            seen_roots.add(k)
+            roots.append(Path(cand))
+
+    candidates: list[tuple[str, Any]] = []      # (ts, run)
+    for root in roots:
+        st = _get_or_create_store(root, rescan=True)
+        if st is None:
+            continue
+        for run in st.runs.values():
+            candidates.append((_run_ts_stamp(run), run))
+    candidates.sort(key=lambda t: t[0], reverse=True)
+
+    series: list[tuple] = []
+    examined = 0
+    segs = dot_path.split(".")
+    for ts, run in candidates:
+        if examined >= max_runs:
+            break
+        folder = Path(getattr(run, "folder_path", "") or "")
+        qs = folder / "quam_state"
+        fkey = str(folder)
+        chip = _RUN_CHIP_CACHE.get(fkey)
+        # A cached chip-fact entry proves the run HAD quam_state (runs are
+        # write-once) — skip the stat. examined counts uniformly (cache hits
+        # included), so the newest-N window has one meaning warm or cold.
+        if chip is None and not (qs / "state.json").exists():
+            continue
+        examined += 1
+
+        run_net = _RUN_IDENT_CACHE.get(fkey)
+        wiring: Any = None
+        if run_net is None:
+            try:
+                wiring = safe_io.read_json(qs / "wiring.json")
+            except (OSError, ValueError):
+                wiring = {}
+            run_net = _normalised_network(
+                (wiring if isinstance(wiring, dict) else {}).get("network"))
+            _RUN_IDENT_CACHE[fkey] = run_net
+        # Cheap network pre-gate: a foreign chip usually stops here — but
+        # ONLY when the loaded chip is unnamed. A declared chip name is
+        # DEFINITIVE across a host move (the whole point of tier 1), so a
+        # named chip must read the run's state to compare names first.
+        if (not loaded_name and loaded_fp.network and run_net
+                and run_net != loaded_fp.network):
+            continue
+        state: Any = None
+        if chip is None:
+            try:
+                state = safe_io.read_json(qs / "state.json")
+            except (OSError, ValueError):
+                continue
+            if not isinstance(state, dict):
+                continue
+            chip = (extras_chip_name(state),
+                    frozenset((state.get("qubits") or {}).keys()),
+                    frozenset((state.get("qubit_pairs") or {}).keys()))
+            _RUN_CHIP_CACHE[fkey] = chip
+        run_name, run_qubits, run_pairs = chip
+        # Identity gate — re-derived EVERY call against the CURRENT chip
+        # (never cached: the verdict is chip-relative).
+        if loaded_name and run_name:
+            included = (run_name == loaded_name)
+        else:
+            run_fp = ChipFingerprint(
+                network=run_net, qubits=run_qubits, pairs=run_pairs)
+            included = align(loaded_fp, run_fp) == ALIGN_ALIGNED
+        if not included:
+            continue
+
+        vkey = (fkey, dot_path)
+        cached_val = _RUN_VALUE_CACHE.get(vkey)
+        if cached_val is not None:
+            value = cached_val[1]
+        else:
+            if state is None:
+                try:
+                    state = safe_io.read_json(qs / "state.json")
+                except (OSError, ValueError):
+                    continue
+                if not isinstance(state, dict):
+                    continue
+            merged = dict(state)
+            if segs and segs[0] not in merged:
+                if wiring is None:
+                    try:
+                        wiring = safe_io.read_json(qs / "wiring.json")
+                    except (OSError, ValueError):
+                        wiring = {}
+                if isinstance(wiring, dict):
+                    merged.update(wiring)
+            found, value = _walk_any_path(merged, segs)
+            if not found:
+                value = None
+            elif is_pointer(value) and not is_self_ref(value):
+                value = resolve_pointer(merged, value, tuple(segs))
+            _RUN_VALUE_CACHE[vkey] = (found, value)
+            _trim_run_caches()
+        series.append((ts, value, "experiment",
+                       getattr(run, "run_id", None),
+                       getattr(run, "experiment_name", None), fkey))
+    return series, examined
+
+
+def _runs_column_series(ctx: dict, path_map: dict[str, str], *,
+                        max_runs: int = 6, max_examine: int = 40,
+                        ) -> tuple[list[dict], int]:
+    """Vectorized runs tier for a grid COLUMN (docs/20 v2 Column History).
+
+    Same chip gates as :func:`_runs_field_series` (shared extras names are
+    definitive even across a host move — the network pre-gate only
+    short-circuits for unnamed loaded chips; else fingerprint alignment),
+    but each matching run's state.json is parsed ONCE and every row's value
+    extracted from it. Returns ``(runs newest-first, examined)`` where each
+    run is ``{run_id, experiment, ts, when, uid, values: {row_id: value}}``
+    — ``uid`` is direct (folder under its registered root), so the panel's
+    run links are always valid. Caps at ``max_runs`` MATCHING runs.
+    """
+    from quam_state_manager.core.history import (
+        ALIGN_ALIGNED, ChipFingerprint, _normalised_network, _walk_any_path,
+        align, extras_chip_name, fingerprint_from_dicts)
+    from quam_state_manager.core.pointer_resolver import (
+        is_pointer, is_self_ref, resolve_pointer)
+
+    store = ctx.get("store")
+    if store is None or not path_map:
+        return [], 0
+    with store._lock:
+        loaded_name = extras_chip_name(store.state)
+        loaded_fp = fingerprint_from_dicts(store.state, store.wiring)
+
+    roots: list[tuple[Path, str]] = []
+    seen_roots: set[str] = set()
+    for raw in (ctx.get("extras_data_roots") or []):
+        k = str(Path(raw))
+        if k not in seen_roots:
+            seen_roots.add(k)
+            roots.append((Path(raw), _folder_key(raw)))
+    for cand in _dataset_candidate_folders(fast=True):
+        k = str(cand)
+        if k not in seen_roots:
+            seen_roots.add(k)
+            roots.append((Path(cand), _folder_key(cand)))
+
+    candidates: list[tuple[str, Any, str]] = []      # (ts, run, root_key)
+    for root, rkey in roots:
+        st = _get_or_create_store(root, rescan=True)
+        if st is None:
+            continue
+        for run in st.runs.values():
+            candidates.append((_run_ts_stamp(run), run, rkey))
+    candidates.sort(key=lambda t: t[0], reverse=True)
+
+    segs_by_row = {row: dp.split(".") for row, dp in path_map.items()}
+    out: list[dict] = []
+    examined = 0
+    for ts, run, rkey in candidates:
+        if len(out) >= max_runs or examined >= max_examine:
+            break
+        folder = Path(getattr(run, "folder_path", "") or "")
+        qs = folder / "quam_state"
+        fkey = str(folder)
+        chip = _RUN_CHIP_CACHE.get(fkey)
+        if chip is None and not (qs / "state.json").exists():
+            continue
+        examined += 1
+        run_net = _RUN_IDENT_CACHE.get(fkey)
+        wiring: Any = None
+        if run_net is None:
+            try:
+                wiring = safe_io.read_json(qs / "wiring.json")
+            except (OSError, ValueError):
+                wiring = {}
+            run_net = _normalised_network(
+                (wiring if isinstance(wiring, dict) else {}).get("network"))
+            _RUN_IDENT_CACHE[fkey] = run_net
+            _trim_run_caches()
+        if (not loaded_name and loaded_fp.network and run_net
+                and run_net != loaded_fp.network):
+            continue
+        # Gate from cached chip facts when possible — a known-foreign run
+        # skips the state parse entirely (verdict itself is never cached).
+        state: Any = None
+        if chip is None:
+            try:
+                state = safe_io.read_json(qs / "state.json")
+            except (OSError, ValueError):
+                continue
+            if not isinstance(state, dict):
+                continue
+            chip = (extras_chip_name(state),
+                    frozenset((state.get("qubits") or {}).keys()),
+                    frozenset((state.get("qubit_pairs") or {}).keys()))
+            _RUN_CHIP_CACHE[fkey] = chip
+            _trim_run_caches()
+        run_name, run_qubits, run_pairs = chip
+        if loaded_name and run_name:
+            if run_name != loaded_name:
+                continue
+        else:
+            run_fp = ChipFingerprint(
+                network=run_net, qubits=run_qubits, pairs=run_pairs)
+            if align(loaded_fp, run_fp) != ALIGN_ALIGNED:
+                continue
+        if state is None:
+            try:
+                state = safe_io.read_json(qs / "state.json")
+            except (OSError, ValueError):
+                continue
+            if not isinstance(state, dict):
+                continue
+
+        merged = dict(state)
+        if any(segs and segs[0] not in merged
+               for segs in segs_by_row.values()):
+            if wiring is None:
+                try:
+                    wiring = safe_io.read_json(qs / "wiring.json")
+                except (OSError, ValueError):
+                    wiring = {}
+            if isinstance(wiring, dict):
+                merged.update(wiring)
+        values: dict[str, Any] = {}
+        for row, segs in segs_by_row.items():
+            found, value = _walk_any_path(merged, segs)
+            if not found:
+                value = None
+            elif is_pointer(value) and not is_self_ref(value):
+                value = resolve_pointer(merged, value, tuple(segs))
+            values[row] = value
+        rid = getattr(run, "run_id", None)
+        out.append({
+            "run_id": rid,
+            "experiment": getattr(run, "experiment_name", None),
+            "ts": ts,
+            "when": (f"{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}"
+                     if len(ts) >= 13 else ts),
+            "uid": f"{rkey}:{int(rid)}" if rid is not None else None,
+            "folder": fkey,
+            "values": values,
+        })
+    return out, examined
+
+
+CH_MAX_CHIPS = 6       # per-row change-point chips shown in the Changes tab
+CH_BYRUN_COLS = 6      # run columns displayed in the By-run tab
+# The Changes series merges MORE runs than the By-run tab displays: a value
+# introduced by a run just outside the 6-column window would otherwise lose
+# its attribution to a later auto snapshot. Window = the cell popover's
+# newest-60 scan EXACTLY (live-verified: one busy day of newer runs pushed
+# the introducers out of a 24-run window while the cell popover still
+# attributed them). One parse per run serves every row, so the cost equals
+# one cell-popover open.
+CH_SERIES_RUNS = 60
+CH_SERIES_EXAMINE = 60
+
+
+@bp.route("/bulk/column-history", methods=["POST"])
+def bulk_column_history():
+    """Column History panel (docs/20 v2 + the r9 Changes amendment).
+
+    Body (form): ``grid`` (qubit|pair), ``label``, ``unit``,
+    ``paths`` = JSON ``{row_id: dot_path}`` — collected client-side from the
+    rendered cells (both grids symmetric; paths feed READ-ONLY extraction
+    only). One response renders BOTH tabs: **Changes** (default — per-row
+    change-point chips over the merged snapshot+runs series, so manual
+    applied edits (trigger "save") appear alongside run-set values, each chip
+    clickable to fill the grid cell and hover-revealing its run's Data link)
+    and **By run** (the original rows × last-N-matching-runs table with the
+    per-run 'Use all'). Staging stays user-explicit in both.
+    """
+    ctx = _active_ctx()
+    store = ctx.get("store") if ctx else None
+    if not ctx or ctx.get("type") != "quam" or store is None:
+        return render_template("_status.html", message="No state loaded",
+                               level="warning"), 400
+    label = (request.form.get("label") or "").strip() or "column"
+    unit = (request.form.get("unit") or "").strip()
+    col_key = (request.form.get("col_key") or "").strip()
+    grid = (request.form.get("grid") or "qubit").strip()
+    try:
+        path_map_raw = json.loads(request.form.get("paths") or "{}")
+    except ValueError:
+        return render_template("_status.html", message="bad paths payload",
+                               level="error"), 400
+    path_map: dict[str, str] = {
+        str(k): _normalize_dot_path(str(v).strip())
+        for k, v in path_map_raw.items()
+        if isinstance(k, str) and isinstance(v, str) and str(v).strip()
+    }
+    if not path_map or len(path_map) > 200:
+        return render_template("_status.html", message="no usable paths",
+                               level="error"), 400
+
+    hm = _history()
+    snap_series = hm.column_history(ctx["path"], path_map)
+    try:
+        runs_all, examined = _runs_column_series(
+            ctx, path_map, max_runs=CH_SERIES_RUNS,
+            max_examine=CH_SERIES_EXAMINE)
+    except Exception:  # noqa: BLE001 — the panel must survive a bad root
+        logger.debug("column-history runs tier failed", exc_info=True)
+        runs_all, examined = [], 0
+    runs = runs_all[:CH_BYRUN_COLS]     # By-run tab shows the newest few
+
+    from quam_state_manager.core.pointer_path import resolve_field_target
+
+    def _num_or_none(v):
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return None
+        f = float(v)
+        return f if f == f and f not in (float("inf"), float("-inf")) else None
+
+    rows_out: list[dict[str, Any]] = []
+    uid_roots = _uid_roots()
+    with store._lock:
+        merged_now = store.merged
+    for row_id in sorted(path_map):
+        dp = path_map[row_id]
+        current = None
+        editable = True
+        try:
+            ft = resolve_field_target(merged_now, dp)
+            if ft.get("resolvable"):
+                current = ft.get("resolved_value")
+        except Exception:  # noqa: BLE001
+            editable = False
+        # Merged series: snapshot tiers + run values, time-merged, then
+        # change-point collapsed (field_history's NaN-safe key rule). The
+        # snapshot-rows-first build + STABLE sort on ts alone reproduces
+        # field_history's (ts, rank) ordering — an ingested run's snapshot
+        # row wins over the direct run row at equal ts, so equal values
+        # dedup in the collapse. Do not change the build order or sort key
+        # (a full-tuple sort would also crash on None<str at slot 4/5).
+        # 7th slot = the run tier's ready uid (snapshot rows resolve via
+        # folder containment below). The series merges runs_all (wider than
+        # the By-run columns) so attribution matches the cell popover.
+        series = [t + (None,) for t in (snap_series.get(row_id) or [])]
+        for r in reversed(runs_all):                 # oldest-first append
+            series.append((r["ts"], r["values"].get(row_id), "experiment",
+                           r["run_id"], r["experiment"], r["folder"],
+                           r["uid"]))
+        series.sort(key=lambda t: t[0])
+
+        def _key(v):
+            if isinstance(v, float) and v != v:
+                return "\x00nan"
+            return v
+
+        collapsed: list[dict] = []
+        prev: Any = object()
+        for ts, value, trigger, rid, exp, folder, run_uid in series:
+            if _key(value) != prev:
+                collapsed.append({"value": value, "trigger": trigger or "auto",
+                                  "ts": ts, "run_id": rid, "experiment": exp,
+                                  "folder": folder, "uid": run_uid})
+            prev = _key(value)
+        spark_vals = [{"value": p["value"], "trigger": p["trigger"]}
+                      for p in collapsed
+                      if _num_or_none(p["value"]) is not None]
+        svg = ""
+        if len(spark_vals) >= 2:
+            try:
+                svg = hm.render_sparkline_svg_inner(
+                    spark_vals, current=_num_or_none(current))
+            except Exception:  # noqa: BLE001
+                svg = ""
+        # 'changed' marks a run whose value differs from the NEXT-OLDER run
+        # column (the moment this run introduced a new value).
+        cells = []
+        for i, r in enumerate(runs):                  # newest-first columns
+            v = r["values"].get(row_id)
+            older = (runs[i + 1]["values"].get(row_id)
+                     if i + 1 < len(runs) else None)
+            cells.append({
+                "display": _fh_display_string(v),
+                "fill": _fh_fill_string(v),
+                "has": v is not None,
+                "changed": i + 1 < len(runs) and v != older,
+            })
+        # Changes tab: this row's OWN change points, newest first. The oldest
+        # known value stays (a never-changed row still shows "this value
+        # since {when}"); deeper history falls off the cap naturally.
+        chips = []
+        for p in list(reversed(collapsed))[:CH_MAX_CHIPS]:
+            ts = p["ts"]
+            chips.append({
+                "display": _fh_display_string(p["value"]),
+                "fill": _fh_fill_string(p["value"]),
+                "has": p["value"] is not None,
+                "when": (f"{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}"
+                         if len(ts) >= 13 else ts),
+                "trigger": p["trigger"],
+                "run_id": p["run_id"],
+                "experiment": p["experiment"],
+                "uid": p["uid"] or _uid_for_run_ref(p["folder"], p["run_id"],
+                                                    uid_roots),
+            })
+        if chips:
+            v0 = collapsed[-1]["value"]
+            chips[0]["is_current"] = (current is not None and v0 == current
+                                      and isinstance(v0, type(current)))
+        rows_out.append({
+            "id": row_id,
+            "dot_path": dp,
+            "svg": svg,
+            "current": _fh_display_string(current),
+            "current_fill": _fh_fill_string(current),
+            "editable": editable,
+            "cells": cells,
+            "chips": chips,
+        })
+
+    return render_template(
+        "_column_history.html", label=label, unit=unit, grid=grid,
+        col_key=col_key, rows=rows_out, runs=runs, examined=examined,
+        matched=len(runs_all), chip_cap=CH_MAX_CHIPS)
+
+
+@bp.route("/field/history", methods=["GET"])
+def field_history():
+    """Per-field value timeline popover (the 🕘 button on Live-Edit cells and
+    inspector rows). ``?path=<dot_path>`` → the ``_field_history.html`` panel:
+    value CHANGE points from Param History (SQLite index tier for tracked
+    props, capped snapshot scan for any other leaf), each row naming the
+    experiment/trigger that introduced the value, with a Use button (fills the
+    edit input — commit stays user-explicit) and, when the run folder sits
+    under a registered dataset root, a Data button that loads the run's detail
+    into #inspector-pane so value and data sit side by side."""
+    ctx = _active_ctx()
+    store = ctx.get("store") if ctx else None
+    if not ctx or ctx.get("type") != "quam" or store is None:
+        return render_template("_status.html", message="No state loaded",
+                               level="warning"), 400
+    dot_path = _normalize_dot_path((request.args.get("path") or "").strip())
+    if not dot_path:
+        return render_template("_status.html", message="path required",
+                               level="error"), 400
+    # Runs tier (docs/20 v2): the workspace runs' own quam_state copies keep
+    # the timeline fresh independent of Param History ingestion — today's
+    # runs appear with a guaranteed Data link.
+    try:
+        runs_series, _examined = _runs_field_series(ctx, dot_path)
+    except Exception:  # noqa: BLE001 — the popover must survive a bad root
+        logger.debug("field-history runs tier failed", exc_info=True)
+        runs_series = []
+    hist = _history().field_history(ctx["path"], dot_path,
+                                    extra_series=runs_series)
+
+    from quam_state_manager.core.pointer_path import resolve_field_target
+    current = None
+    try:
+        ft = resolve_field_target(store.merged, dot_path)
+        if ft.get("resolvable"):
+            current = ft.get("resolved_value")
+    except Exception:  # noqa: BLE001
+        pass
+
+    roots = _uid_roots()
+    for pt in hist["points"]:
+        value = pt["value"]
+        pt["fill"] = _fh_fill_string(value)
+        pt["display"] = _fh_display_string(value)
+        pt["is_current"] = (current is not None and value == current
+                            and isinstance(value, type(current)))
+        ts = pt.get("timestamp") or ""
+        pt["when"] = (f"{ts[0:4]}-{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}"
+                      if len(ts) >= 13 else ts)
+        pt["uid"] = _uid_for_run_ref(pt.get("experiment_folder_path"),
+                                     pt.get("run_id"), roots)
+    # Mini trend chart payload (docs/20 v2 Step 7): the change points as a
+    # step series, finite numerics only (a text/list field simply gets no
+    # chart). Oldest-first for plotting.
+    chart: list[dict[str, Any]] = []
+    for pt in reversed(hist["points"]):
+        v = pt["value"]
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            continue
+        f = float(v)
+        if f != f or f in (float("inf"), float("-inf")):
+            continue
+        ts = pt.get("timestamp") or ""
+        iso = (f"{ts[0:4]}-{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}:{ts[13:15]}"
+               if len(ts) >= 15 else pt.get("when") or "")
+        chart.append({"t": iso, "v": f, "trigger": pt.get("trigger") or "auto"})
+    return render_template("_field_history.html", hist=hist,
+                           current_display=_fh_display_string(current),
+                           chart=chart)
 
 
 def _editability_reason(store: QuamStore, target_path: str) -> str | None:
@@ -4954,13 +6112,21 @@ def state_history_stage(timestamp: str):
         has_pending = (bool(store.change_log) or bool(ctx.get("pending_reapply"))
                        or bool(ctx.get("working_dirty")))
     if has_pending and request.values.get("force") != "1":
+        # audit-r10: the fragment's force button must target an element that
+        # EXISTS where the fragment lands. From the tray's "Revert last
+        # apply" (from=tray) that is #status-bar — the default
+        # #state-history-detail exists only on the State History page, so
+        # the button was a guaranteed htmx targetError (dead click) there.
+        _from_tray = request.values.get("from") == "tray"
         return render_template(
             "_sh_confirm.html",
             message=("You have unsaved edits in the working state. Loading this "
                      "snapshot will replace them."),
-            action_url=f"/state-history/{timestamp}/stage?force=1",
+            action_url=(f"/state-history/{timestamp}/stage?force=1"
+                        + ("&from=tray" if _from_tray else "")),
             action_label="Replace working state anyway",
             confirm="Discard your unsaved edits in the working state and load this snapshot?",
+            **({"target": "#status-bar"} if _from_tray else {}),
         ), 409
 
     try:
@@ -4974,10 +6140,16 @@ def state_history_stage(timestamp: str):
             safe_io.write_state_wiring(wc.working_folder, state, wiring)
             _rebuild_after_working_copy_replaced(ctx)
             ctx["working_dirty"] = True   # working now differs from live
+            # audit-r10: mark the STAGED BASE — content not representable as
+            # change-log entries. The sync guard/conflict tray key on this,
+            # not on stash emptiness (a later /save or conflict fills the
+            # stash with only the EDITS and would flip a stash-based check).
+            ctx["staged_base"] = True
+            _clear_reapply(ctx)   # in-lock: no window for a concurrent
+                                  # sync to read dirty+stale-stash (audit-r10)
     except (OSError, ValueError) as exc:
         return render_template("_status.html",
                                message=f"Staging failed: {exc}", level="error"), 500
-    _clear_reapply(ctx)
     logger.info("State History: staged snapshot %s into working copy", timestamp)
     msg = render_template(
         "_status.html",
@@ -7171,6 +8343,40 @@ def state_sync():
         return jsonify({"status": "error",
                         "message": "This chip was opened from a dataset run "
                                    "archive (read-only) — cannot apply to live."}), 409
+
+    # docs/65 state-roundtrip: a SAVED/STAGED working copy (working_dirty — a
+    # snapshot, a run's state, a revert, or /save'd edits; content that is NOT
+    # representable as change-log entries) must never be destroyed by this
+    # route's pull-first model:
+    #  - apply: the working copy IS the intended live content. Delegate straight
+    #    to the save+push path (the same machinery as /state/apply-to-live).
+    #    Pulling first would overwrite the staged files with the live content
+    #    and then push the live chip back onto itself — the reported "I pressed
+    #    apply and it FETCHED the live state instead" bug.
+    #  - discard/reapply: the pull would wipe the staged content — require an
+    #    explicit force token (the client turns needs_confirm into a confirm()).
+    # The stash carve-out: after an apply CONFLICT the user's edits live in
+    # ctx["pending_reapply"] and the working files are expendable — pull+replay
+    # is the designed resolution there, and short-circuiting it would retry the
+    # same stale push forever. So the protection applies only when there is no
+    # stash to replay — UNLESS a STAGED BASE is present (audit-r10): a stage
+    # followed by edits fills the stash with only the EDITS while the staged
+    # snapshot lives solely in the working files, so a stash-based carve-out
+    # would pull-destroy it. staged_base is set by the stage routes and
+    # cleared on apply-success / wholesale pull.
+    if ctx.get("working_dirty") and (
+            ctx.get("staged_base") or not ctx.get("pending_reapply")):
+        if mode == "apply":
+            return _sync_pull_apply_to_live(ctx, None, pulled_other_changes=False)
+        if request.values.get("force") != "1":
+            return jsonify({
+                "status": "needs_confirm",
+                "mode": mode,
+                "message": ("The working state holds loaded/saved content that "
+                            "is not on the live chip yet — pulling the live "
+                            "chip will DISCARD it."),
+            })
+
     wc = ctx["working_copy"]
     store = ctx["store"]
 
@@ -7281,25 +8487,63 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False):
             }), 500
         _set_working_dirty(True)
 
+    # docs/20 v2 "Revert last apply": capture the PRE-apply live content.
+    # audit-r10: pinned to the CAPTURED ctx (a concurrent /load must never
+    # divert the snapshot to another chip), and a None return is resolved by
+    # CONTENT MATCH — check_and_snapshot dedups against every hash ever seen,
+    # so "newest snapshot" is the wrong revert target after an A-B-A cycle.
+    pre_apply_ts = None
+    try:
+        _hm = _history()
+        _pre = _hm.check_and_snapshot(
+            ctx["path"], "auto",
+            defer_index=not current_app.config.get("TESTING"),
+            project=_scope_for(ctx["path"], ctx))
+        if _pre is not None:
+            pre_apply_ts = _pre.timestamp
+        else:
+            pre_apply_ts = _hm.snapshot_ts_for_current_content(ctx["path"])
+    except Exception:
+        logger.warning("Pre-apply snapshot failed", exc_info=True)
+
     try:
         with _active_wc_lock(ctx):
             working_copy.apply_to_live(wc, force=False)
     except working_copy.StaleLiveError:
         # The live chip changed again while we merged. Keep the stash and hand
         # back the conflict tray so the user can retry / force / discard.
+        # staged_conflict (docs/65): no stash to replay — the working copy IS
+        # the payload (a staged snapshot / saved edits), so "pull & re-apply"
+        # would replay nothing and lose it; the tray offers only the honest
+        # choices (force-overwrite or pull-and-discard).
         return jsonify({
             "status": "conflict",
             "mode": "apply",
-            "tray_html": render_template("_state_apply_conflict.html"),
+            "tray_html": render_template(
+                "_state_apply_conflict.html",
+                staged_conflict=bool(ctx.get("working_dirty"))
+                and (bool(ctx.get("staged_base"))
+                     or not ctx.get("pending_reapply"))),
             "replay": replay,
         })
     except (OSError, ValueError) as exc:
         return jsonify({"status": "error", "message": f"Apply to live failed: {exc}"}), 500
 
     _set_working_dirty(False)
+    ctx["staged_base"] = False   # the staged content reached live (audit-r10)
     _clear_reapply(ctx)  # edits are on the live chip now — nothing left to re-apply
     ctx["live_diverged"] = False  # live now holds the merged working content
     _reset_baseline_after_apply(ctx)  # the user's own change isn't "live drift"
+    if pre_apply_ts:
+        ctx["last_apply"] = {
+            "pre_ts": pre_apply_ts,
+            "at": datetime.now().isoformat(timespec="seconds"),
+        }
+    else:
+        # audit-r10: no trustworthy pre-apply target — an honestly missing
+        # button beats offering a stale/wrong revert (the previous apply's
+        # memo must not survive this one).
+        ctx.pop("last_apply", None)
     # Snapshot files + meta SYNCHRONOUSLY (so the State-History timeline refreshed
     # by this same response's stateHistoryChanged sees the new snapshot, and the
     # content is captured before any concurrent writer can change the live files);
@@ -7370,18 +8614,51 @@ def state_apply_to_live():
             ), 500
         _set_working_dirty(True)
 
+    # docs/20 v2 "Revert last apply": capture the PRE-apply live content.
+    # audit-r10: ctx-pinned + content-matched fallback (see the sync twin —
+    # "newest snapshot" is wrong after an A-B-A revert cycle).
+    pre_apply_ts = None
+    try:
+        _hm = _history()
+        _pre = _hm.check_and_snapshot(
+            ctx["path"], "auto",
+            defer_index=not current_app.config.get("TESTING"),
+            project=_scope_for(ctx["path"], ctx))
+        if _pre is not None:
+            pre_apply_ts = _pre.timestamp
+        else:
+            pre_apply_ts = _hm.snapshot_ts_for_current_content(ctx["path"])
+    except Exception:
+        logger.warning("Pre-apply snapshot failed", exc_info=True)
+
     try:
         with _active_wc_lock(ctx):
             working_copy.apply_to_live(wc, force=force)
     except working_copy.StaleLiveError:
-        return render_template("_state_apply_conflict.html")  # stash kept for the pull choice
+        # stash kept for the pull choice; staged_conflict — see the sync twin
+        return render_template(
+            "_state_apply_conflict.html",
+            staged_conflict=bool(ctx.get("working_dirty"))
+            and (bool(ctx.get("staged_base"))
+                 or not ctx.get("pending_reapply")))
     except (OSError, ValueError) as exc:
         return render_template("_status.html", message=f"Apply to live failed: {exc}", level="error"), 500
 
     _set_working_dirty(False)
+    ctx["staged_base"] = False   # the staged content reached live (audit-r10)
     _clear_reapply(ctx)  # the edits are now on the live chip — nothing left to re-apply
     ctx["live_diverged"] = False  # live now holds the working content (incl. force)
     _reset_baseline_after_apply(ctx)  # the user's own change isn't "live drift"
+    if pre_apply_ts:
+        ctx["last_apply"] = {
+            "pre_ts": pre_apply_ts,
+            "at": datetime.now().isoformat(timespec="seconds"),
+        }
+    else:
+        # audit-r10: no trustworthy pre-apply target — an honestly missing
+        # button beats offering a stale/wrong revert (the previous apply's
+        # memo must not survive this one).
+        ctx.pop("last_apply", None)
     # Snapshot files + meta synchronously; only the SQLite indexing is deferred —
     # see the pull-apply path above for the full rationale.
     try:
@@ -9976,6 +11253,12 @@ def param_history():
     hm = _history()
     loaded_path = Path(_active_path())
     loaded_key = hm._key_for(loaded_path)
+    # Pre-ladder path-derived key: the client's localStorage/sessionStorage
+    # backfill guards were written under it — emitted as data-legacy-chip-key
+    # so an adopted/named chip doesn't re-fire a redundant auto-backfill.
+    from quam_state_manager.core.history import (
+        _sanitize_name as _hist_sanitize, chip_name_for as _chip_name_for)
+    legacy_chip_key = _hist_sanitize(_chip_name_for(loaded_path))
 
     # Raw user selections (preserve empty list as "user explicitly cleared")
     raw_props = request.args.getlist("props")
@@ -10180,7 +11463,11 @@ def param_history():
             # Multi-chip:
             active_chip_key=active_chip_key,
             loaded_chip_key=loaded_key,
+            legacy_chip_key=legacy_chip_key,
             is_loaded_chip=is_loaded_chip,
+            # One-time docs/20-v2 notice (popped: shown on the first render
+            # after the v3 index-attribution migration actually moved rows).
+            reattributed_v3=current_app.config.pop("history_reattributed_v3", None),
             active_chips=active_chips,
             archived_chips=archived_chips,
             # Back-compat alias for any code/tests still referencing the
@@ -10282,19 +11569,29 @@ def param_history_expand():
         return jsonify({"error": "qubit and prop required"}), 400
 
     hm = _history()
+    # Optional ``?chip_key=`` targets another chip's dir — the grid supports
+    # chip_key but the drawer used to silently chart the LOADED chip when
+    # opened from an archived chip's grid.
+    chip_key = (request.args.get("chip_key") or "").strip()
+    target_path = _active_path()
+    is_loaded = True
+    if chip_key and chip_key != hm._key_for(Path(target_path)):
+        target_path = _path_for_chip_key(chip_key)
+        is_loaded = False
     rows = hm.extract_property_history(
-        _active_path(), [prop],
+        target_path, [prop],
         qubit_filter=[qubit], downsample=None,
     )
     row = rows[0] if rows else {"qubit": qubit, "property": prop, "raw_pointer": None, "values": []}
 
-    engine = _engine()
     current_value = None
-    if engine:
-        try:
-            current_value = engine.get_qubit(qubit).get(prop)
-        except Exception:
-            pass
+    if is_loaded:
+        engine = _engine()
+        if engine:
+            try:
+                current_value = engine.get_qubit(qubit).get(prop)
+            except Exception:
+                pass
 
     return render_template(
         "_param_history_drawer.html",
@@ -12128,11 +13425,12 @@ def dataset_load_state(uid):
             safe_io.write_state_wiring(wc.working_folder, state, wiring)
             _rebuild_after_working_copy_replaced(ctx)
             ctx["working_dirty"] = True   # working now differs from live
+            ctx["staged_base"] = True     # audit-r10 (see state_history_stage)
+            _clear_reapply(ctx)
     except (OSError, ValueError) as exc:
         return render_template("_status.html",
                                message=f"Loading run state failed: {exc}",
                                level="error"), 500
-    _clear_reapply(ctx)
     logger.info("dataset run %s staged into the working copy of %s",
                 uid, ctx["path"])
     msg = render_template(
@@ -14073,6 +15371,10 @@ _SCHEDULER_MUTATOR_ENDPOINTS = {
     # working-copy / live writers
     "main.save", "main.state_sync", "main.state_apply_to_live",
     "main.undo", "main.discard", "main.diagnostics_apply_fix",
+    # extras identity editors (audit-r10: these stage through the modifier
+    # too — un-reviewed extras must not ride an autofit plan's next apply,
+    # and a mid-plan chip_name flip would re-route snapshot attribution)
+    "main.chip_name_set", "main.chip_data_folder_set",
     # QM-subprocess spawners (a 2nd OPX connection during a run = collision)
     "main.generate_build", "main.generate_allocate",
     "main.generate_preview_config", "main.generate_load",

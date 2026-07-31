@@ -420,6 +420,24 @@ def resolve_source(
             raise SourcePermanentError(
                 f"hist: ref segments are path-shaped, got {ref!r}", ref=ref)
         folder = Path(history_root) / chip_key / ts_dir
+        if not folder.is_dir():
+            # Alias fallback (docs/20 v2): a ref minted under an old declared
+            # chip name keeps resolving after a rename — the alias registry
+            # maps name → canonical dir. Runs AFTER the traversal guard, and
+            # the mapped dir key gets the same bare-name check.
+            try:
+                raw = safe_io.read_json(
+                    Path(history_root) / "_chip_aliases.json")
+                names = raw.get("names") if isinstance(raw, dict) else None
+                entry = (names or {}).get(chip_key)
+                mapped = str(entry.get("dir")) if isinstance(entry, dict) else ""
+                if mapped and "/" not in mapped and "\\" not in mapped \
+                        and ".." not in mapped:
+                    cand = Path(history_root) / mapped / ts_dir
+                    if cand.is_dir():
+                        folder = cand
+            except (OSError, ValueError):
+                pass   # no registry / unreadable — the honest 404 stands
         state, wiring, wmiss = _read_folder(folder, ref)
         chash = content_hash(state, wiring)
         pool.put(chash, state, wiring, wiring_missing=wmiss)

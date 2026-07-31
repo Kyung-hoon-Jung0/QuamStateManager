@@ -404,6 +404,21 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
         logging.getLogger(__name__).warning(
             "Legacy v2 migration failed", exc_info=True,
         )
+    #   v3: index-attribution correction (docs/20 v2 — pre-ladder captures
+    #       routed snapshot FILES by fingerprint but pinned SQLite rows to
+    #       the path-derived dir; rows move next to their folders).
+    try:
+        from quam_state_manager.core.history import migrate_index_attribution_v3
+        _v3 = migrate_index_attribution_v3(app.instance_path)
+        if _v3.get("moved_timestamps"):
+            # Param History surfaces a one-time "history re-attributed"
+            # notice — the re-key is correct but changes what users see.
+            app.config["history_reattributed_v3"] = _v3
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning(
+            "v3 index-attribution migration failed", exc_info=True,
+        )
 
     app.config["workspace"] = Workspace()
     app.config["history_manager"] = HistoryManager(app.instance_path)

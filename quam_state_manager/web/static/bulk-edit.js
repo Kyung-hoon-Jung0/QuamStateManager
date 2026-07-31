@@ -808,8 +808,8 @@
                     _syncAppliedAcrossTable(r.body.results);
                     if (!silent && r.body.tray_html && window._swapPendingTray) {
                         window._bulkSelfEdit = true;            // suppress our own cross-surface refresh
-                        window._swapPendingTray(r.body.tray_html);
-                        window._bulkSelfEdit = false;
+                        try { window._swapPendingTray(r.body.tray_html); }
+                        finally { window._bulkSelfEdit = false; }
                     }
                     // Re-run diagnostics unconditionally — a silent (applyAll) row or a
                     // dedup'd shared-port commit may not swap the tray, but the edit DID
@@ -1159,19 +1159,29 @@
             if (t._bulkBound) { _refreshGlobal(); return; }
             t._bulkBound = true;
 
-            // Discard-intent guard: a pointerdown on Reset fires BEFORE the focused
-            // cell's focusout, so record it and let focusout skip its click-away
-            // commit (otherwise "Reset" would commit the focused row, not discard it).
-            var _rstBtn = document.getElementById('bulk-reset');
-            if (_rstBtn && !_rstBtn._resetGuardBound) {
-                _rstBtn._resetGuardBound = true;
-                _rstBtn.addEventListener('pointerdown', function () { BulkEdit._resetPressTs = Date.now(); });
-            }
+            // Toolbar-press guard (docs/65, generalizing the old Reset-only stamp):
+            // a pointerdown on ANY toolbar action fires BEFORE the focused cell's
+            // focusout, so record it and let focusout skip its click-away row
+            // commit. For Reset that commit would turn "discard" into a commit;
+            // for Apply all / Apply&sync the racing row commit shrank the dirty
+            // set and _refreshGlobal DISABLED the button before mouseup — the
+            // browser then never delivered the click ("Apply all needs two
+            // presses"). The relatedTarget check below misses this whenever the
+            // browser doesn't focus buttons on mousedown (null relatedTarget).
+            ['bulk-reset', 'bulk-apply-all', 'bulk-apply-sync'].forEach(function (bid) {
+                var b = document.getElementById(bid);
+                if (b && !b._toolbarGuardBound) {
+                    b._toolbarGuardBound = true;
+                    b.addEventListener('pointerdown', function () { BulkEdit._toolbarPressTs = Date.now(); });
+                }
+            });
 
             // Header sort is delegated (no inline onclick) so a click on a resize
-            // handle — or a click right after a drag — never triggers a sort.
+            // handle, the column-history clock, or a click right after a drag
+            // never triggers a sort.
             t.addEventListener('click', function (e) {
                 if (e.target.closest && e.target.closest('.bulk-resize-handle')) return;
+                if (e.target.closest && e.target.closest('.bulk-col-hist')) return;
                 if (_bulkResizeJustEnded) return;
                 var th = e.target.closest && e.target.closest('thead th[data-col-key]');
                 if (th && th.getAttribute('data-col-key')) BulkEdit.sort(th.getAttribute('data-col-key'));
@@ -1220,8 +1230,8 @@
                 // the same row (two change-log entries for one edit). Same for the
                 // Reset button: a click-away commit would turn "discard" into a
                 // COMMIT of the focused row. relatedTarget is null in some engines,
-                // so also honour a pointerdown-on-Reset flag that fires before blur.
-                if (BulkEdit._resetPressTs && (Date.now() - BulkEdit._resetPressTs) < 1000) return;
+                // so also honour the toolbar pointerdown stamp that fires before blur.
+                if (BulkEdit._toolbarPressTs && (Date.now() - BulkEdit._toolbarPressTs) < 1000) return;
                 if (to && to.closest && to.closest('#bulk-apply-all, #bulk-apply-sync, #bulk-reset')) return;
                 var b = row && row.querySelector('.bulk-row-apply');
                 if (b && !b.disabled) BulkEdit.applyRow(b);
@@ -1234,6 +1244,17 @@
                     e.preventDefault();
                     var b = _rowOf(cell).querySelector('.bulk-row-apply');
                     if (b && !b.disabled) BulkEdit.applyRow(b);
+                    return;
+                }
+                if (e.key === 'Tab') {
+                    // Tab/Shift+Tab hop between EDIT CELLS (spreadsheet
+                    // convention) — never through the hover-reveal buttons in
+                    // between — wrapping to the next/prev row at the row edge.
+                    // Leaving the row commits it via the focusout handler above
+                    // (same as click-away). At the grid's very first/last cell
+                    // native Tab proceeds out of the grid.
+                    var tnext = _tabMove(cell, e.shiftKey ? -1 : 1);
+                    if (tnext) { e.preventDefault(); tnext.focus(); tnext.select && tnext.select(); }
                     return;
                 }
                 var dir = { ArrowUp: [-1, 0], ArrowDown: [1, 0] }[e.key];
@@ -1269,6 +1290,11 @@
                     var tt = table();
                     if (tt && ev.detail && ev.detail.target && ev.detail.target.id === 'table-pane'
                         && _cells(tt).some(_isDirty)) {
+                        // audit-r10: a stage/restore just replaced the state
+                        // wholesale — typed text belongs to the OLD state, so
+                        // the refresh proceeds without a veto prompt.
+                        if (window._stateRestoredRefresh
+                            && Date.now() - window._stateRestoredRefresh < 4000) return;
                         if (!window.confirm('You have unapplied edits in Live State Edit. Leave and discard them?')) {
                             ev.preventDefault();
                         }
@@ -1345,8 +1371,8 @@
                     // rows are server-side no-ops), so lastTray is the correct final state.
                     if (lastTray && window._swapPendingTray) {
                         window._bulkSelfEdit = true;
-                        window._swapPendingTray(lastTray);
-                        window._bulkSelfEdit = false;
+                        try { window._swapPendingTray(lastTray); }
+                        finally { window._bulkSelfEdit = false; }
                     }
                     if (all) all.textContent = failures ? ('Apply all (' + failures + ' failed)') : 'Apply all';
                     _refreshGlobal(); _recomputeStats();
@@ -1498,8 +1524,8 @@
                     }
                     if (jb.tray_html && window._swapPendingTray) {
                         window._bulkSelfEdit = true;            // suppress our own refresh
-                        window._swapPendingTray(jb.tray_html);
-                        window._bulkSelfEdit = false;
+                        try { window._swapPendingTray(jb.tray_html); }
+                        finally { window._bulkSelfEdit = false; }
                     }
                     if (window._diagChanged) window._diagChanged();
                     close();
@@ -1583,6 +1609,29 @@
             var ci = tds.indexOf(td);
             var ntd = tds[ci + dc];
             return ntd ? ntd.querySelector('.bulk-cell') : null;
+        }
+        return null;
+    }
+
+    // Tab order: next/prev edit cell in the row (skipping visible tds with no
+    // cell), then the adjacent visible row's first/last cell. null past the
+    // grid's edge so native Tab can leave the grid.
+    function _tabMove(cell, dc) {
+        var td = cell.closest('td');
+        var tr = cell.closest('tr');
+        var sel = '.bulk-td:not(.bulk-col-hidden):not(.bulk-search-hidden)';
+        var tds = Array.prototype.slice.call(tr.querySelectorAll(sel));
+        for (var i = tds.indexOf(td) + dc; i >= 0 && i < tds.length; i += dc) {
+            var c = tds[i].querySelector('.bulk-cell');
+            if (c) return c;
+        }
+        var rows = _rows().filter(function (r) { return !r.classList.contains('bulk-row-hidden'); });
+        for (var ri = rows.indexOf(tr) + dc; ri >= 0 && ri < rows.length; ri += dc) {
+            var ntds = Array.prototype.slice.call(rows[ri].querySelectorAll(sel));
+            for (var j = dc > 0 ? 0 : ntds.length - 1; j >= 0 && j < ntds.length; j += dc) {
+                var nc = ntds[j].querySelector('.bulk-cell');
+                if (nc) return nc;
+            }
         }
         return null;
     }

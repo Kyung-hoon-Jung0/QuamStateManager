@@ -38,6 +38,27 @@
     {% if active_name %}<span class="state-status-name" title="{{ active_name }}">{{ active_name }}</span>{% endif %}
 </button>
 {% endif %}
+{% if active_name and not _archive %}
+{# docs/20 v2 LiveEditUndo: one ↶ = one event, exactly mirrored in the Review
+   list (staged undos swap this whole tray via /undo's response; un-staged
+   fill undos leave it untouched — they were never in the change_log).
+   Hidden until there is something to undo (JS toggles). #}
+<button type="button" id="tray-undo-btn" class="tray-undo-btn" style="display:none"
+        onclick="LiveEditUndo.trigger()" onmouseenter="LiveEditUndo.refreshTip(this)"
+        title="Undo last edit (Ctrl+Z)" aria-label="Undo last edit">&#8630;</button>
+{% endif %}
+{% if last_apply is defined and last_apply and change_count == 0 and not working_dirty and not _archive %}
+{# docs/20 v2 "Revert last apply": EXPLICIT + confirmed — never Ctrl+Z. Stages
+   the pre-apply snapshot back into the working copy for review; the user then
+   Applies to live to complete the revert (the same gated State-History
+   machinery, nothing new). Rendered only while there is nothing pending. #}
+<button type="button" class="tray-revert-apply"
+        hx-post="/state-history/{{ last_apply.pre_ts }}/stage?from=tray"
+        hx-target="#status-bar" hx-swap="innerHTML"
+        hx-confirm="Load the state as it was BEFORE your last Apply back into the working copy? You review it first — Apply to live completes the revert."
+        title="Revert last apply (done {{ last_apply.at }}) — stages the pre-apply state for review; nothing touches the live chip until you Apply.">
+  &#8634; Revert last apply</button>
+{% endif %}
 {% if change_count > 0 or working_dirty %}
   <div class="tray-bar">
     {% if change_count > 0 %}
@@ -84,6 +105,7 @@
               hx-swap="outerHTML"
               hx-disabled-elt="this"
               hx-confirm="Apply the working state to the live chip's state.json / wiring.json now?"
+              hx-on::after-request="if(window.LiveEditUndo)LiveEditUndo.clear()"
               title="Push the working state (your saved, not-yet-applied edits) to the live chip.">
         <span aria-hidden="true">&#8593;</span> Apply to live chip</button>
       {% endif %}

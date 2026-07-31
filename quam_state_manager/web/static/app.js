@@ -348,6 +348,26 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
         evt.detail.shouldSwap = true;
         evt.detail.isError = false;
     }
+    // The tray's "Revert last apply" targets #status-bar; a stale tray can post
+    // while edits exist and the stage gate 409s with a confirm fragment —
+    // render it there instead of a dead click (docs/65). Narrowed to the
+    // state-history stage/restore endpoints.
+    if (t.id === 'status-bar' && status === 409) {
+        var _p409 = (evt.detail.requestConfig && evt.detail.requestConfig.path) || '';
+        if (_p409.indexOf('/state-history/') === 0) {
+            evt.detail.shouldSwap = true;
+            evt.detail.isError = false;
+        }
+    }
+    // Data-folder cross-machine confirm (docs/20 r10): /chip-data-folder/set
+    // answers 409 with _data_folder_confirm.html into the banner strip.
+    if (t.id === 'chip-name-banner' && status === 409) {
+        var _pdf = (evt.detail.requestConfig && evt.detail.requestConfig.path) || '';
+        if (_pdf.indexOf('/chip-data-folder/') === 0) {
+            evt.detail.shouldSwap = true;
+            evt.detail.isError = false;
+        }
+    }
 });
 
 /* Surface a toast on ANY htmx error response. htmx 2.x drops error-response
@@ -1824,9 +1844,28 @@ window.closeInspector = function() {
    now shows pre-restore values — and the entity it described (e.g. a pulse that
    the snapshot doesn't have) may no longer exist, which would 404 the next edit.
    Clear the pane so the user can never act on stale content. The server has
-   already rebuilt every derived cache; this is purely the client catch-up. */
+   already rebuilt every derived cache; this is purely the client catch-up.
+
+   docs/65 additions:
+   - ALSO soft-refresh the main state surface: the stage routes (State History
+     stage, dataset "Load State", the tray's "Revert last apply") emit only
+     HX-Trigger events, and the Live-Edit grid re-pulls only on the DOM event
+     quam:state-changed — nothing bridged them, so /bulk kept showing
+     pre-stage values indefinitely ("Load State does nothing" report). The
+     same _softRefreshLiveSurface a sync pull uses is the bridge.
+   - Do NOT close the inspector when it hosts a DATASET DETAIL: that's an
+     immutable run archive (never stale), and it's exactly where the user just
+     pressed "Load State" — closing it would erase the confirmation they're
+     reading. */
 document.addEventListener("stateRestored", function() {
-    if (window.closeInspector) window.closeInspector();
+    var dsDetail = document.querySelector("#inspector-pane #ds-detail-root");
+    if (!dsDetail && window.closeInspector) window.closeInspector();
+    // audit-r10: the stage already force-gated any pending edits; typed-but-
+    // uncommitted grid text belongs to the REPLACED state, so the grids'
+    // dirty-cell confirm must not veto (or double-prompt) this refresh —
+    // time-boxed flag consumed by the beforeSwap guards.
+    window._stateRestoredRefresh = Date.now();
+    _softRefreshLiveSurface();
 });
 
 /* ------------------------------------------------------------------ */
@@ -1905,16 +1944,52 @@ function _focusableIn(container) {
         .filter(function(el) { return el.offsetWidth > 0 || el.offsetHeight > 0; });
 }
 
+/* A trap whose container is hidden or gone must never keep eating keys.
+   checkVisibility (Chromium 105+/WebView2) also catches ancestor-hidden
+   containers (e.g. a card inside a display:none overlay); the fallback chain
+   covers engines without it (incl. jsdom, which has no layout, hence the
+   computed-display ancestor walk instead of offsetWidth alone). */
+function _trapContainerGone(c) {
+    if (!c.isConnected || c.hidden) return true;
+    if (typeof c.checkVisibility === "function") return !c.checkVisibility();
+    if (c.offsetWidth || c.offsetHeight) return false;
+    for (var el = c; el && el.nodeType === 1; el = el.parentElement) {
+        if (window.getComputedStyle(el).display === "none") return true;
+    }
+    return false;
+}
+
 /**
  * Trap keyboard focus inside `container` until released. Tab/Shift+Tab cycle
  * within the modal; Escape calls `onEscape` (if given). Returns a release()
  * that detaches the handler and restores focus to whatever was focused when
  * the trap was set (the opener). Stored on `container._releaseTrap` by callers.
+ *
+ * Leak-proof by construction (the "global Tab is dead" bug): a leaked CAPTURE
+ * handler whose container had been hidden used to swallow every Tab in the app
+ * (nothing focusable in a hidden container → unconditional preventDefault).
+ * Two defenses, so no caller-discipline mistake can ever kill Tab again:
+ *   1. Re-trapping an already-trapped container releases the previous trap
+ *      first (an unguarded double-open — e.g. Ctrl+K while the palette was
+ *      already up — used to overwrite the stored release and orphan the old
+ *      handler forever).
+ *   2. Self-heal: on any keydown, a trap whose container is hidden/detached
+ *      detaches itself and swallows nothing (no focus restore — the opener
+ *      context is long stale by then).
  */
 window.trapFocus = function(container, onEscape) {
     if (!container) return function() {};
+    if (container.__trapRelease) { try { container.__trapRelease(); } catch (e) {} }
     var opener = document.activeElement;
+    var released = false;
+    function detach() {
+        if (released) return;
+        released = true;
+        document.removeEventListener("keydown", onKey, true);
+        if (container.__trapRelease === release) container.__trapRelease = null;
+    }
     function onKey(e) {
+        if (_trapContainerGone(container)) { detach(); return; }
         if (e.key === "Escape" && onEscape) { e.preventDefault(); onEscape(); return; }
         if (e.key !== "Tab") return;
         var f = _focusableIn(container);
@@ -1928,19 +2003,23 @@ window.trapFocus = function(container, onEscape) {
             e.preventDefault(); first.focus();
         }
     }
+    function release() {
+        if (released) return;
+        detach();
+        if (opener && typeof opener.focus === "function" && document.body.contains(opener)) {
+            try { opener.focus(); } catch (e) {}
+        }
+    }
     document.addEventListener("keydown", onKey, true);
+    container.__trapRelease = release;
     requestAnimationFrame(function() {
+        if (released) return;
         // Don't override focus the caller already placed inside the modal.
         if (container.contains(document.activeElement)) return;
         var f = _focusableIn(container);
         try { (f[0] || container).focus(); } catch (e) {}
     });
-    return function release() {
-        document.removeEventListener("keydown", onKey, true);
-        if (opener && typeof opener.focus === "function" && document.body.contains(opener)) {
-            try { opener.focus(); } catch (e) {}
-        }
-    };
+    return release;
 };
 
 /**
@@ -2107,7 +2186,7 @@ function _failedPathsSummary(failed) {
     return " Affected: " + shown + ".";
 }
 
-window.doStateSync = function(mode) {
+window.doStateSync = function(mode, forced) {
     mode = mode || "discard";
     // Double-submit guard: a second click (or a grid ⚡ + tray button double-fire)
     // while one apply/sync is in flight used to queue a second /state/sync that
@@ -2123,10 +2202,21 @@ window.doStateSync = function(mode) {
     fetch("/state/sync", {
         method: "POST",
         headers: {"Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
-        body: "mode=" + encodeURIComponent(mode)
+        body: "mode=" + encodeURIComponent(mode) + (forced ? "&force=1" : "")
     })
         .then(function(r) { return r.json(); })
         .then(function(data) {
+            if (data.status === "needs_confirm") {
+                // docs/65: the working state holds staged/saved content that a
+                // pull would destroy — the server refuses until confirmed. The
+                // forced re-post runs on a MACROTASK so the finally below has
+                // already cleared the in-flight guard.
+                if (window.confirm((data.message || "Overwrite the working state?")
+                                   + "\n\nContinue and discard it?")) {
+                    setTimeout(function() { window.doStateSync(mode, true); }, 0);
+                }
+                return;
+            }
             if (data.status === "error") {
                 window.showToast("Sync failed: " + (data.message || "unknown error"), "error");
                 return;
@@ -2144,6 +2234,10 @@ window.doStateSync = function(mode) {
                 try { _swapPendingTray(data.tray_html); }
                 finally { window._bulkSelfEdit = false; }
             }
+            // audit-r10 boundary: a completed sync (pull OR apply) resolves
+            // every un-staged in-memory edit — reverting them afterwards
+            // would cross the apply/pull boundary.
+            if (window.LiveEditUndo) LiveEditUndo.clear();
             // A sync pull/apply replaces the working copy wholesale (store.reload()
             // bumps mutation_seq), so the linter must re-run — fire unconditionally,
             // never relying on a tray_html being present in the response.
@@ -2631,20 +2725,41 @@ document.addEventListener("focusout", function(evt) {
     form.requestSubmit();
 });
 
-// Global Ctrl/⌘+Z → undo the last in-SM modification (LIFO, server-side, race-safe).
-// Scope: works on the pending edits made in Explorer / Live-State-Edit / Pulses
-// BEFORE they're saved or applied to live (Save/apply clear the change log — the
-// intended undo boundary). We do NOT hijack Ctrl+Z while the user is typing INSIDE
-// a field — native text-undo must keep working there; document-level undo only
-// kicks in once focus is outside an editable field (e.g. after a Tab/blur commit).
+// Global Ctrl/⌘+Z → undo the last in-SM modification. Tiered (docs/20 v2):
+//   1. Generate-Config wizard (when mounted — wizard-scoped, never chip edits)
+//   2. LiveEditUndo — un-staged grid fills/typing (in-memory, value-level)
+//   3. server /undo — staged edits, one change_log GROUP per press; the
+//      response swaps the whole Review tray, so one press = exactly one
+//      event's parameters disappearing from Review (the sync contract).
+// Save/apply clear the change log — the intended hard undo boundary
+// ("Revert last apply" is the explicit, confirmed path across it).
+// Input focus: we do NOT hijack Ctrl+Z inside ordinary fields (native
+// text-undo keeps working) — EXCEPT bulk-grid cells and the Column History
+// panel, where LiveEditUndo owns the history (Escape still restores a
+// cell's original value).
 document.addEventListener("keydown", function(evt) {
     if (!((evt.ctrlKey || evt.metaKey) && (evt.key === "z" || evt.key === "Z")
           && !evt.shiftKey && !evt.altKey)) return;
     var a = document.activeElement;
-    if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)) return;
+    var inGridCell = !!(a && a.classList && a.classList.contains("bulk-cell"));
+    var inChPanel = !!(a && a.closest && a.closest(".ch-overlay"));
+    if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)
+        && !inGridCell && !inChPanel) return;
     // Generate-Config wizard mounted → Ctrl+Z is WIZARD-scoped (undoes the last
     // committed wizard field, never a chip edit behind the user's back).
     if (window._wizUndo && window._wizUndo.tryUndo()) { evt.preventDefault(); return; }
+    if (window.LiveEditUndo && window.LiveEditUndo.tryUndo()) { evt.preventDefault(); return; }
+    // audit-r10: mid-typing in a DIRTY cell with an empty in-memory stack —
+    // the user means "undo my keystrokes", not "delete a staged group".
+    // Restore the cell to its committed value and stop; a CLEAN focused
+    // cell falls through to the server tier as designed.
+    if (inGridCell && a.value !== a.getAttribute("data-orig")
+        && a.getAttribute("data-orig") !== null) {
+        evt.preventDefault();
+        a.value = a.getAttribute("data-orig");
+        a.dispatchEvent(new Event("input", { bubbles: true }));
+        return;
+    }
     if (!window.htmx || !document.getElementById("pending-tray")) return;
     evt.preventDefault();
     htmx.ajax("POST", "/undo", {source: "#pending-tray", target: "#pending-tray", swap: "outerHTML"});
@@ -7114,6 +7229,7 @@ function applyPlotRow(row) {
         if (r.body && r.body.ok) {
             _markPlotRowApplied(row);
             if (r.body.tray_html) _swapPendingTray(r.body.tray_html);
+            _closePlotPopupIfDone();
         } else if (r.status === 409 && r.body && r.body.chip_mismatch) {
             btn.disabled = false; btn.textContent = prevLabel;
             if (window.confirm((r.body.error || 'Different chip.') + '\n\nApply anyway?')
@@ -7171,6 +7287,7 @@ function applyAllPlotRows() {
         if (r.body && r.body.ok) {
             pending.forEach(function(row) { _markPlotRowApplied(row); });
             if (r.body.tray_html) _swapPendingTray(r.body.tray_html);
+            _closePlotPopupIfDone();
         } else if (r.status === 409 && r.body && r.body.chip_mismatch) {
             if (window.confirm((r.body.error || 'Different chip.') + '\n\nApply anyway?')
                 && _pp) { _pp.dataset.forceChip = '1'; applyAllPlotRows(); }
@@ -7215,6 +7332,26 @@ function _markPlotRowApplied(row) {
     if (input) input.readOnly = true;
 }
 
+/* docs/65: once every row is applied, the popup's job is done — close it and
+   say so. It used to stay open showing "✓ applied", so "Apply All" appeared to
+   need a SECOND press (the second click hit the nothing-left-to-apply early
+   return, which was the only success path that closed). */
+function _closePlotPopupIfDone() {
+    var rowsBox = document.getElementById('plot-apply-rows');
+    if (!rowsBox) return;
+    var total = rowsBox.querySelectorAll('.plot-apply-row').length;
+    var left = rowsBox.querySelectorAll('.plot-apply-row:not(.plot-apply-applied)').length;
+    if (total && !left) {
+        window.closePlotApplyPopup();
+        if (window.showToast) {
+            window.showToast(
+                'Applied ' + total + ' value' + (total === 1 ? '' : 's') +
+                ' to the working state — Review (top bar) to push to the live chip.',
+                'success');
+        }
+    }
+}
+
 // Single, debounced announcer for "the active chip's state changed → the
 // diagnostics linter must re-run". The badge (#diag-tray-slot) and the auto
 // error-banner (#diagnostics-banner-slot) both listen for `diagnostics-changed
@@ -7252,6 +7389,9 @@ function _swapPendingTray(html) {
     // drawer state + clear stale sidebar pending markers here too (audit P1) — all 7
     // JS edit callers funnel through this one place.
     if (window._restoreTrayState) window._restoreTrayState();
+    // audit-r10: same reason — re-evaluate the LiveEditUndo ↶ visibility
+    // (the fresh tray arrives with the button display:none).
+    if (window.LiveEditUndo) LiveEditUndo._updateTrayBtn();
     var saveBtn = document.querySelector('.btn-save');
     if (saveBtn) saveBtn.disabled = false;
     // Cross-surface consistency: every edit path funnels through here, so this is
@@ -9056,6 +9196,11 @@ function paramHistoryOpenDrawer(qubit, prop) {
     drawer.innerHTML = '<p class="muted" style="padding:1rem">Loading…</p>';
     var url = '/param-history/expand?qubit=' + encodeURIComponent(qubit)
             + '&prop=' + encodeURIComponent(prop);
+    // Chart the chip the GRID is showing (archived chips included) — the
+    // drawer used to silently chart the loaded chip regardless.
+    var root = document.getElementById('param-history-root');
+    var activeKey = root && (root.getAttribute('data-active-chip-key') || '');
+    if (activeKey) url += '&chip_key=' + encodeURIComponent(activeKey);
     fetch(url).then(function(r) { return r.text(); }).then(function(html) {
         drawer.innerHTML = html;
         // Manually evaluate inline scripts (fetch doesn't run them)
@@ -9427,8 +9572,20 @@ function _paramHistoryMarkImported() {
     if (!chipKey) return;
     try { localStorage.setItem(_paramHistoryImportedKey(chipKey), '1'); } catch(e) {}
 }
+function _paramHistoryLegacyChipKey() {
+    // Pre-identity-ladder path-derived key: existing localStorage /
+    // sessionStorage guards were written under it. Accept either key so an
+    // adopted/named chip doesn't re-fire a redundant auto-backfill.
+    var root = document.getElementById('param-history-root');
+    return (root && root.getAttribute('data-legacy-chip-key')) || '';
+}
 function _paramHistoryHasImportedBefore(chipKey) {
-    try { return localStorage.getItem(_paramHistoryImportedKey(chipKey)) === '1'; }
+    try {
+        if (localStorage.getItem(_paramHistoryImportedKey(chipKey)) === '1') return true;
+        var legacy = _paramHistoryLegacyChipKey();
+        return !!legacy && legacy !== chipKey &&
+            localStorage.getItem(_paramHistoryImportedKey(legacy)) === '1';
+    }
     catch(e) { return false; }
 }
 
@@ -9449,7 +9606,12 @@ function _paramHistoryMarkSessionAttempt() {
     try { sessionStorage.setItem(_paramHistorySessionAttemptKey(chipKey), String(Date.now())); } catch(e) {}
 }
 function _paramHistorySessionAttemptedAlready(chipKey) {
-    try { return !!sessionStorage.getItem(_paramHistorySessionAttemptKey(chipKey)); }
+    try {
+        if (sessionStorage.getItem(_paramHistorySessionAttemptKey(chipKey))) return true;
+        var legacy = _paramHistoryLegacyChipKey();
+        return !!legacy && legacy !== chipKey &&
+            !!sessionStorage.getItem(_paramHistorySessionAttemptKey(legacy));
+    }
     catch(e) { return false; }
 }
 function _paramHistoryClearSessionAttempt(chipKey) {
@@ -9893,10 +10055,14 @@ document.addEventListener('click', function(evt) {
     };
 
     document.addEventListener('keydown', function(evt) {
-        // Open palette on Ctrl+K / Cmd+K from anywhere
+        // Toggle palette on Ctrl+K / Cmd+K from anywhere. A TOGGLE, not a bare
+        // open: re-opening while already up used to stack a second focus trap
+        // over the first (leaked on close → every Tab in the app swallowed).
         if ((evt.ctrlKey || evt.metaKey) && (evt.key === 'k' || evt.key === 'K')) {
             evt.preventDefault();
-            window.openCmdPalette();
+            var palK = document.getElementById('cmd-palette');
+            if (palK && !palK.hidden) window.closeCmdPalette();
+            else window.openCmdPalette();
             return;
         }
         var pal = document.getElementById('cmd-palette');
@@ -11285,5 +11451,558 @@ document.addEventListener("htmx:configRequest", function (evt) {
         } catch (e) {}
         _drag = null;
     });
+})();
+
+/* ── Per-field value history (docs/20): 🕘 on Live-Edit cells + inspector rows ──
+   Opens a floating panel of the field's past values (Param History change
+   points). "Use" fills the originating edit input — the commit stays
+   user-explicit through the normal staging flow (Enter). "Data" hx-gets the
+   producing run's detail into #inspector-pane so value + data sit together. */
+window.FieldHistory = (function () {
+    var panel = null;
+    var applyInput = null;   // the edit input "Use" fills
+
+    function ensurePanel() {
+        if (panel) return panel;
+        panel = document.createElement("div");
+        panel.id = "field-history-panel";
+        panel.className = "field-history-panel";
+        panel.setAttribute("role", "dialog");
+        panel.style.display = "none";
+        document.body.appendChild(panel);
+        document.addEventListener("mousedown", function (e) {
+            if (panel.style.display === "none") return;
+            if (panel.contains(e.target)) return;
+            if (e.target.closest && e.target.closest(".field-hist-btn, #fh-cellbtn")) return;
+            close();
+        });
+        document.addEventListener("keydown", function (e) {
+            if (e.key === "Escape" && panel.style.display !== "none") close();
+        });
+        return panel;
+    }
+
+    function position(anchor) {
+        var p = ensurePanel();
+        var r = anchor.getBoundingClientRect();
+        var w = Math.min(500, window.innerWidth - 16);
+        p.style.width = w + "px";
+        p.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) + "px";
+        p.style.top = (r.bottom + 6) + "px";
+        p.style.display = "block";
+        // flip above the anchor if the panel overflows the viewport bottom
+        requestAnimationFrame(function () {
+            var h = p.offsetHeight;
+            if (r.bottom + 6 + h > window.innerHeight - 8) {
+                p.style.top = Math.max(8, r.top - h - 6) + "px";
+            }
+        });
+    }
+
+    function open(anchor, path, input) {
+        if (!path) return;
+        applyInput = input || null;
+        var p = ensurePanel();
+        p.innerHTML = '<p class="fh-empty">Loading history…</p>';
+        position(anchor);
+        fetch("/field/history?path=" + encodeURIComponent(path))
+            .then(function (r) { return r.text(); })
+            .then(function (html) {
+                p.innerHTML = html;
+                if (window.htmx) window.htmx.process(p);
+                renderChart(p);
+                position(anchor);
+            })
+            .catch(function () {
+                p.innerHTML = '<p class="fh-empty">Could not load history.</p>';
+            });
+    }
+
+    function renderChart(p) {
+        // The parameter's own mini trend (the Param History drawer chart's
+        // small twin): change points as a step line, trigger-colored markers.
+        var mount = p.querySelector("#fh-chart");
+        var dataEl = p.querySelector("#fh-chart-data");
+        if (!mount || !dataEl || !window.Plotly) return;
+        var pts;
+        try { pts = JSON.parse(dataEl.textContent || "[]"); }
+        catch (e) { return; }
+        if (!pts || pts.length < 2) return;
+        var cssVar = function (t) {
+            var s = getComputedStyle(document.documentElement)
+                .getPropertyValue("--trigger-" + (t || "auto"));
+            return (s || "#888").trim() || "#888";
+        };
+        var muted = (getComputedStyle(document.documentElement)
+            .getPropertyValue("--color-text-muted") || "#888").trim();
+        var trace = {
+            x: pts.map(function (d) { return d.t; }),
+            y: pts.map(function (d) { return d.v; }),
+            type: "scatter", mode: "lines+markers",
+            line: { shape: "hv", color: muted, width: 1.2 },
+            marker: {
+                size: 7,
+                color: pts.map(function (d) { return cssVar(d.trigger); }),
+            },
+            hovertemplate: "%{x}<br>%{y}<extra></extra>",
+        };
+        var layout = {
+            height: 128,
+            margin: { l: 46, r: 8, t: 6, b: 30 },
+            xaxis: { type: "date", tickfont: { size: 9 } },
+            yaxis: { tickfont: { size: 9 }, exponentformat: "SI" },
+            showlegend: false,
+            paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+            font: { color: muted },
+        };
+        try {
+            Plotly.newPlot(mount, [trace], layout,
+                           { displayModeBar: false, responsive: true });
+        } catch (e) { /* chart is a bonus — never break the panel */ }
+    }
+
+    function close() {
+        if (panel) panel.style.display = "none";
+    }
+
+    function useValue(btn) {
+        var v = btn.getAttribute("data-value") || "";
+        if (applyInput && document.body.contains(applyInput)) {
+            // Grid cells join the LiveEditUndo stack (docs/20 v2) so one
+            // Ctrl+Z reverts this fill before it is ever staged.
+            if (window.LiveEditUndo && applyInput.classList
+                    && applyInput.classList.contains("bulk-cell")
+                    && applyInput.dataset.dotPath) {
+                window.LiveEditUndo.record("history fill (1 cell)", [{
+                    dp: applyInput.dataset.dotPath,
+                    prev: applyInput.value, next: v,
+                }]);
+            }
+            applyInput.value = v;
+            applyInput.dispatchEvent(new Event("input", { bubbles: true }));
+            applyInput.focus();
+            if (applyInput.select) applyInput.select();
+        }
+        close();
+    }
+
+    function openInspector(btn) {
+        var form = btn.closest("form.inline-edit");
+        if (!form) return;
+        var hidden = form.querySelector("input[name=dot_path]");
+        var input = form.querySelector("input[name=value]");
+        open(btn, hidden ? hidden.value : "", input);
+    }
+
+    /* Bulk-grid affordance: one shared 🕘 button that docks INSIDE the focused
+       cell's <td> (r10): the td is the containing block, so the button moves
+       with the cell through column resize/autofit, font scaling, scrolling and
+       reflow. The old approach — a body-mounted position:fixed float pinned to
+       the focusin-time getBoundingClientRect() — kept STALE viewport coords
+       whenever layout shifted afterwards and visibly drifted outside the box
+       (the "clock escaped the cell again" report). A per-cell button would
+       widen every column of a dense grid, so the single shared button stays.
+       mousedown + preventDefault keeps the cell focused. */
+    var cellBtn = null;
+    function ensureCellBtn() {
+        if (cellBtn) return cellBtn;
+        cellBtn = document.createElement("button");
+        cellBtn.id = "fh-cellbtn";
+        cellBtn.type = "button";
+        cellBtn.title = "Value history — past values of this field from Param History snapshots";
+        cellBtn.textContent = "🕘";
+        cellBtn.style.display = "none";
+        cellBtn.addEventListener("mousedown", function (e) {
+            e.preventDefault();
+            var input = cellBtn._input;
+            if (input) {
+                open(cellBtn, input.dataset.resolved || input.dataset.dotPath || "", input);
+            }
+        });
+        document.body.appendChild(cellBtn);
+        return cellBtn;
+    }
+    function showCellBtn(input) {
+        var b = ensureCellBtn();
+        var td = input.closest("td");
+        if (!td) return;
+        if (b._input && b._input !== input) {
+            b._input.classList.remove("fh-docked");   // cell-to-cell move
+        }
+        b._input = input;
+        td.appendChild(b);               // appendChild MOVES the shared button
+        input.classList.add("fh-docked"); // pads the text away from the icon
+        b.style.display = "block";
+    }
+    function hideCellBtn() {
+        if (!cellBtn) return;
+        cellBtn.style.display = "none";
+        if (cellBtn._input) {
+            cellBtn._input.classList.remove("fh-docked");
+            cellBtn._input = null;
+        }
+        // Park on <body> so a grid re-render can't destroy the shared button
+        // (and the td's search/sort surface stays byte-clean while unfocused).
+        if (cellBtn.parentElement && cellBtn.parentElement !== document.body) {
+            document.body.appendChild(cellBtn);
+        }
+    }
+    document.addEventListener("focusin", function (e) {
+        var t = e.target;
+        if (t && t.classList && t.classList.contains("bulk-cell") &&
+            !t.classList.contains("bulk-cell-ro")) {
+            showCellBtn(t);
+        } else if (!t || t.id !== "fh-cellbtn") {
+            hideCellBtn();
+        }
+    });
+
+    return { open: open, close: close, useValue: useValue,
+             openInspector: openInspector };
+})();
+
+/* ── LiveEditUndo (docs/20 v2): in-memory undo for UN-STAGED grid edits ──
+   The clipboard-fast tier of the unified Ctrl+Z: programmatic fills
+   (Column History Use / Use all, 🕘 history fills) and manual typing in
+   bulk-grid cells, value-level, selector-addressed (survives grid swaps).
+   Staged edits are the SERVER's undo (POST /undo, one change_log group per
+   press — the Review tray swaps atomically with it); save/apply stay hard
+   boundaries. */
+window.LiveEditUndo = (function () {
+    var stack = [];        // {label, cells: [{dp, prev, next}]}
+    var CAP = 100;
+
+    function _esc(s) {
+        return (window.CSS && CSS.escape) ? CSS.escape(s) : s;
+    }
+    function _input(dp) {
+        try {
+            return document.querySelector(
+                '.bulk-cell[data-dot-path="' + _esc(dp) + '"]');
+        } catch (e) { return null; }
+    }
+
+    function record(label, cells) {
+        cells = (cells || []).filter(function (c) {
+            return c && c.dp && c.prev !== c.next;
+        });
+        if (!cells.length) return;
+        stack.push({ label: label, cells: cells });
+        if (stack.length > CAP) stack.shift();
+        _updateTrayBtn();
+    }
+
+    function tryUndo() {
+        // audit-r10 discipline: an entry only "succeeds" when it actually
+        // RESTORED at least one on-screen, un-staged cell. Cells that are
+        // gone (grid navigated away) or whose value was COMMITTED since
+        // (data-orig == the recorded next → the server tier owns that undo
+        // now) are skipped; a fully-stale entry is dropped silently and the
+        // loop continues — so stale entries can never eat Ctrl+Z presses or
+        // block the server tier, and a fill that got staged can't be
+        // half-undone into a phantom dirty edit.
+        while (stack.length) {
+            var a = stack.pop();
+            var restored = 0, gone = 0, staged = 0;
+            a.cells.forEach(function (c) {
+                var input = _input(c.dp);
+                if (!input || input.readOnly) { gone++; return; }
+                if (input.getAttribute("data-orig") === String(c.next)) {
+                    staged++; return;
+                }
+                input.value = c.prev;
+                input.dispatchEvent(new Event("input", { bubbles: true }));
+                input.classList.add("leu-flash");
+                (function (el) {
+                    setTimeout(function () { el.classList.remove("leu-flash"); }, 650);
+                })(input);
+                restored++;
+            });
+            _updateTrayBtn();
+            if (restored) {
+                if (window.showToast) {
+                    var extra = [];
+                    if (gone) extra.push(gone + " no longer on screen");
+                    if (staged) extra.push(staged + " already staged");
+                    window.showToast("Undid " + a.label
+                        + (extra.length ? " (" + extra.join(", ") + ")" : ""));
+                }
+                return true;
+            }
+            // fully stale (gone/staged) — drop and keep looking
+        }
+        _updateTrayBtn();
+        return false;
+    }
+
+    // Hard boundaries (audit-r10): once content reached the live chip (or
+    // was replaced wholesale by a stage/pull), reverting cells from memory
+    // would cross the apply boundary — the module's own contract forbids it.
+    function clear() {
+        stack = [];
+        _updateTrayBtn();
+    }
+    document.addEventListener("stateRestored", function () { clear(); });
+
+    /* Manual typing joins the stack (the _wizUndo idiom): snapshot the
+       cell's value on focusin, push one action per committed change. A
+       programmatic fill dispatches only 'input' (never 'change'), so fills
+       are never double-recorded. */
+    var _snap = null;
+    document.addEventListener("focusin", function (e) {
+        var t = e.target;
+        if (t && t.classList && t.classList.contains("bulk-cell") && !t.readOnly) {
+            _snap = { dp: t.dataset.dotPath || "", value: t.value };
+        }
+    });
+    document.addEventListener("change", function (e) {
+        var t = e.target;
+        if (!t || !t.classList || !t.classList.contains("bulk-cell")) return;
+        var dp = t.dataset.dotPath || "";
+        if (!_snap || _snap.dp !== dp || _snap.value === t.value) return;
+        var leaf = dp.split(".").slice(-1)[0] || "cell";
+        record("typed edit (" + leaf + ")",
+               [{ dp: dp, prev: _snap.value, next: t.value }]);
+        _snap = { dp: dp, value: t.value };
+    });
+
+    /* The tray ↶ runs the SAME tier chain as Ctrl+Z. */
+    function trigger() {
+        if (window._wizUndo && window._wizUndo.tryUndo()) return;
+        if (tryUndo()) return;
+        if (window.htmx && document.getElementById("pending-tray")) {
+            htmx.ajax("POST", "/undo", {
+                source: "#pending-tray", target: "#pending-tray",
+                swap: "outerHTML",
+            });
+        }
+    }
+
+    function _changeCount() {
+        var tray = document.getElementById("pending-tray");
+        return tray ? parseInt(tray.getAttribute("data-change-count") || "0", 10) : 0;
+    }
+    function _updateTrayBtn() {
+        var btn = document.getElementById("tray-undo-btn");
+        if (!btn) return;
+        btn.style.display = (stack.length || _changeCount() > 0) ? "" : "none";
+    }
+    function refreshTip(btn) {
+        // Transparency contract: the tooltip names what the NEXT press does.
+        var tip;
+        if (stack.length) {
+            tip = "Undo " + stack[stack.length - 1].label + " (Ctrl+Z)";
+        } else if (_changeCount() > 0) {
+            tip = "Undo last staged change — removes exactly that entry group "
+                + "from Review (Ctrl+Z)";
+        } else {
+            tip = "Nothing to undo";
+        }
+        btn.title = tip;
+    }
+
+    // The tray re-renders on every staged mutation — re-evaluate the button.
+    // audit-r10: ALSO on oobAfterSwap (every server _tray_oob() rides OOB,
+    // which never fires afterSwap) — without it the ↶ stayed display:none
+    // after nearly every staging path.
+    function _onTraySwap(e) {
+        var t = e.target;
+        if (t && (t.id === "pending-tray"
+                  || (t.querySelector && t.querySelector("#pending-tray")))) {
+            _updateTrayBtn();
+        }
+    }
+    document.addEventListener("htmx:afterSwap", _onTraySwap);
+    document.addEventListener("htmx:oobAfterSwap", _onTraySwap);
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", _updateTrayBtn);
+    } else {
+        _updateTrayBtn();
+    }
+
+    return { record: record, tryUndo: tryUndo, trigger: trigger, clear: clear,
+             refreshTip: refreshTip, _updateTrayBtn: _updateTrayBtn };
+})();
+
+/* ── Column History (docs/20 v2): 🕘 on a bulk-grid COLUMN HEADER ──
+   Opens a centered comparison panel: rows = entities, first column = the
+   Param-History-style trend sparkline, then the current value and the last
+   N matching runs. Value click / per-run "Use all" fill the grid cells
+   (LiveEditUndo-recorded; staging stays user-explicit via the normal
+   Enter / Apply All flow). Body-mounted (swap-proof), plot-apply-popup
+   structure + trapFocus. */
+window.ColumnHistory = (function () {
+    var overlay = null;
+    var _paths = {};       // row_id → dot_path (as POSTed)
+    var _label = "";
+
+    function _esc(s) {
+        return (window.CSS && CSS.escape) ? CSS.escape(s) : s;
+    }
+
+    function ensureOverlay() {
+        if (overlay) return overlay;
+        overlay = document.createElement("div");
+        overlay.className = "ch-overlay";
+        overlay.style.display = "none";
+        var backdrop = document.createElement("div");
+        backdrop.className = "ch-backdrop";
+        backdrop.addEventListener("click", close);
+        var card = document.createElement("div");
+        card.className = "ch-card";
+        card.setAttribute("role", "dialog");
+        card.setAttribute("aria-modal", "true");
+        overlay.appendChild(backdrop);
+        overlay.appendChild(card);
+        document.body.appendChild(overlay);
+        return overlay;
+    }
+
+    function open(btn) {
+        var th = btn.closest("th");
+        var table = btn.closest("table");
+        if (!th || !table) return;
+        var colKey = th.getAttribute("data-col-key") || "";
+        var grid = btn.getAttribute("data-grid") || "qubit";
+        _label = btn.getAttribute("data-label") || colKey;
+        _paths = {};
+        table.querySelectorAll("tbody tr[data-qubit]").forEach(function (tr) {
+            var row = tr.getAttribute("data-qubit");
+            var input = tr.querySelector(
+                'td[data-col-key="' + _esc(colKey) + '"] .bulk-cell');
+            if (row && input && input.dataset.dotPath) {
+                _paths[row] = input.dataset.dotPath;
+            }
+        });
+        if (!Object.keys(_paths).length) {
+            if (window.showToast) showToast("No history-capable cells in this column");
+            return;
+        }
+        var o = ensureOverlay();
+        var card = o.querySelector(".ch-card");
+        card.innerHTML = '<p class="ch-empty">Loading column history…</p>';
+        o.style.display = "flex";
+        if (window.trapFocus) o._releaseTrap = window.trapFocus(card, close);
+        var body = new URLSearchParams();
+        body.set("grid", grid);
+        body.set("col_key", colKey);
+        body.set("label", _label);
+        body.set("unit", btn.getAttribute("data-unit") || "");
+        body.set("paths", JSON.stringify(_paths));
+        fetch("/bulk/column-history", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: body.toString(),
+        })
+            .then(function (r) { return r.text(); })
+            .then(function (html) {
+                card.innerHTML = html;
+                if (window.htmx) window.htmx.process(card);
+                _applyView(card);
+            })
+            .catch(function () {
+                card.innerHTML =
+                    '<p class="ch-empty">Could not load column history.</p>';
+            });
+    }
+
+    function close() {
+        if (!overlay) return;
+        if (overlay._releaseTrap) {
+            try { overlay._releaseTrap(); } catch (e) {}
+            overlay._releaseTrap = null;
+        }
+        overlay.style.display = "none";
+    }
+
+    // r9: Changes (default) ⇄ By run tab, remembered across opens. Applied
+    // synchronously right after inject — no flicker; no-ops on the empty /
+    // error branches (no .ch-view nodes there).
+    var VIEW_KEY = "quam_colhist_view";
+    function _applyView(card) {
+        var v = safeLSGet(VIEW_KEY) === "byrun" ? "byrun" : "changes";
+        card.querySelectorAll(".ch-view").forEach(function (sec) {
+            sec.hidden = !sec.classList.contains("ch-view-" + v);
+        });
+        card.querySelectorAll(".ch-tab").forEach(function (b) {
+            b.setAttribute("aria-pressed",
+                b.getAttribute("data-view") === v ? "true" : "false");
+        });
+    }
+    function switchView(btn) {
+        safeLSSet(VIEW_KEY, btn.getAttribute("data-view") || "changes");
+        var card = btn.closest(".ch-card");
+        if (card) _applyView(card);
+    }
+
+    function _gridInput(row) {
+        var dp = _paths[row];
+        if (!dp) return null;
+        try {
+            return document.querySelector(
+                '.bulk-cell[data-dot-path="' + _esc(dp) + '"]');
+        } catch (e) { return null; }
+    }
+
+    function _fill(input, value) {
+        input.value = value;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.classList.add("leu-flash");
+        setTimeout(function () { input.classList.remove("leu-flash"); }, 650);
+    }
+
+    function useValue(td) {
+        var row = td.getAttribute("data-row");
+        var v = td.getAttribute("data-fill");
+        if (!row || v === null) return;
+        var input = _gridInput(row);
+        if (!input || input.readOnly) {
+            if (window.showToast) showToast(row + ": cell is not editable here");
+            return;
+        }
+        if (input.value === v) {
+            if (window.showToast) showToast(row + ": already this value");
+            return;
+        }
+        if (window.LiveEditUndo) {
+            LiveEditUndo.record("column fill (" + row + " " + _label + ")",
+                [{ dp: input.dataset.dotPath, prev: input.value, next: v }]);
+        }
+        _fill(input, v);
+        // Panel stays open (fill several rows in a row) — Esc/backdrop/× close.
+    }
+
+    function useAll(btn) {
+        var idx = btn.getAttribute("data-run-index");
+        var tableEl = btn.closest("table");
+        if (idx === null || !tableEl) return;
+        var cells = [];
+        var filled = 0, skipped = 0;
+        tableEl.querySelectorAll(
+            'td.ch-val[data-run-index="' + _esc(idx) + '"][data-fill]'
+        ).forEach(function (td) {
+            var row = td.getAttribute("data-row");
+            var v = td.getAttribute("data-fill");
+            var input = row ? _gridInput(row) : null;
+            if (!input || input.readOnly) { skipped++; return; }
+            if (input.value === v) return;          // already there — no-op
+            cells.push({ dp: input.dataset.dotPath, prev: input.value, next: v });
+            _fill(input, v);
+            filled++;
+        });
+        if (window.LiveEditUndo && cells.length) {
+            LiveEditUndo.record(
+                "column fill (" + filled + " cells, " + _label + ")", cells);
+        }
+        if (window.showToast) {
+            showToast(filled
+                ? "Filled " + filled + " cell(s) from this run — one Ctrl+Z "
+                  + "undoes the whole fill; Enter / Apply All stages them"
+                : "Nothing to fill" + (skipped ? " (" + skipped + " read-only)" : ""));
+        }
+    }
+
+    return { open: open, close: close, useValue: useValue, useAll: useAll,
+             switchView: switchView };
 })();
 

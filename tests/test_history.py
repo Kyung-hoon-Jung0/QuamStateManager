@@ -2640,3 +2640,68 @@ class TestPairTrendRows:
             conn.close()
         assert ver == _INDEX_SCHEMA_VERSION
         assert n_pair > 0
+
+
+class TestIndexFollowsRoutedDir:
+    """Fingerprint-routed snapshots must index into the SAME routed dir.
+
+    The old behaviour pinned index rows to the PATH-derived dir: with sibling
+    chips under one parent folder (all path-keying to one name) the base
+    chip's index silently accumulated the alt chip's rows while the alt dir
+    stayed index-less — the wild corruption behind the gilboa report
+    (docs/20 amendment v2). Covers both the sync and deferred index lanes."""
+
+    def _mk_chip(self, tmp_path, name, host, qubit):
+        state = {"qubits": {qubit: {"id": qubit, "f_01": 5.0e9}},
+                 "qubit_pairs": {}}
+        wiring = {"wiring": {}, "network": {"host": host, "cluster_name": "C"}}
+        path = tmp_path / "labX" / name
+        _write_quam_state(path, state, wiring)
+        return path
+
+    @staticmethod
+    def _index_timestamps(chip_dir: Path) -> set[str]:
+        import sqlite3
+        idx = chip_dir / "index.sqlite"
+        if not idx.exists():
+            return set()
+        con = sqlite3.connect(str(idx))
+        try:
+            return {r[0] for r in con.execute(
+                "SELECT DISTINCT timestamp FROM param_history")}
+        except sqlite3.OperationalError:
+            return set()   # schema mid-creation (deferred lane) — poll again
+        finally:
+            con.close()
+
+    @pytest.mark.parametrize("defer", [False, True])
+    def test_alt_routed_snapshot_indexes_into_alt_dir(self, tmp_path, defer):
+        hm = HistoryManager(tmp_path / "inst", max_snapshots=50, cache_size=3)
+        chip_a = self._mk_chip(tmp_path, "quam_a", "10.0.0.1", "qA1")
+        chip_b = self._mk_chip(tmp_path, "quam_b", "10.0.0.2", "qB1")
+        ma = hm.check_and_snapshot(chip_a, "manual", force=True)
+        assert ma is not None
+        mb = hm.check_and_snapshot(chip_b, "manual", force=True,
+                                   defer_index=defer)
+        assert mb is not None
+
+        root = tmp_path / "inst" / "history"
+        base = root / "labX"
+        assert (base / ma.timestamp).is_dir()
+        alt_dirs = [d for d in root.iterdir()
+                    if d.is_dir() and d.name != "labX"]
+        assert len(alt_dirs) == 1, "chipB must fork an alt dir"
+        alt = alt_dirs[0]
+        assert (alt / mb.timestamp).is_dir(), "snapshot files in the alt dir"
+
+        # Index rows must live NEXT TO the snapshot files, never in the
+        # path-derived base dir (the deferred lane is async — poll briefly).
+        deadline = time.time() + 5.0
+        while defer and time.time() < deadline \
+                and mb.timestamp not in self._index_timestamps(alt):
+            time.sleep(0.05)
+        assert mb.timestamp in self._index_timestamps(alt), \
+            "alt chip's rows must land in the alt dir's own index"
+        assert mb.timestamp not in self._index_timestamps(base), \
+            "base chip's index must never carry the alt chip's rows"
+        assert ma.timestamp in self._index_timestamps(base)

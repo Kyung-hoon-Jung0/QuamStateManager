@@ -110,3 +110,13 @@ See [`00_overview.md`](00_overview.md) for the full module inventory, architectu
 - The `ChangeEntry` dataclass is defined in `loader.py` (not here) because it's shared with `saver.py`. The `Modifier` imports it.
 
 - Undo is stack-based (LIFO). There's no redo -- once you undo and then make a new edit, the undone change is gone. This matches the "research notebook" mental model where you don't need complex undo trees.
+
+## Amendment (2026-07-31): the unified Ctrl+Z tiers
+
+The store-side undo here is tier 3 of the app-wide Ctrl+Z (docs/20 v2b):
+① Generate-wizard field undo (wizard pages only) → ② `LiveEditUndo`
+(client, in-memory — UN-staged bulk-grid fills/typing) → ③ `POST /undo` →
+`modifier.undo_group()` (one change_log group per press; the Review tray
+swaps atomically with the response). Save/apply still clear the log — the
+hard boundary; the explicit "Revert last apply" button (pre-apply snapshot
++ State-History stage) is the confirmed path across it. Still no redo.

@@ -284,6 +284,22 @@
         });
         pop.addEventListener('keydown', function (e) {
             if (e.key === 'Escape') { e.preventDefault(); window.toggleCalc(); }
+            else if (e.key === 'Tab' && e.target.matches &&
+                     e.target.matches('input.calc-in, input.calc-expr')) {
+                // Field-to-field hop: visible calc inputs only — skip the
+                // summaries / hover-reveal copy buttons between them, and the
+                // inputs inside closed <details> sections (the popover's only
+                // hide mechanism). Wraps (Escape closes; Shift+Tab reverses).
+                var ins = Array.prototype.slice.call(
+                    pop.querySelectorAll('input.calc-in, input.calc-expr')
+                ).filter(function (el) { return !el.closest('details:not([open])'); });
+                var i = ins.indexOf(e.target);
+                if (i < 0 || !ins.length) return;
+                e.preventDefault();
+                var nxt = ins[(i + (e.shiftKey ? -1 : 1) + ins.length) % ins.length];
+                nxt.focus();
+                if (nxt.select) nxt.select();
+            }
             else if (e.key === 'Enter' && e.target.id === 'calc-expr') {
                 e.preventDefault();
                 var out = document.getElementById('calc-expr-res');

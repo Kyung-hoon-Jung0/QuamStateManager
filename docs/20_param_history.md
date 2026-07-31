@@ -444,3 +444,239 @@ Web-side coverage:
    `paramHistoryRenderDrawerChart` — the rendering paths.
 4. `21_multi_chip_support.md` — chip identity, alignment, ambiguity
    prompts. Param History is multi-chip aware; that doc explains how.
+
+## Amendment (2026-07-30): per-field value-history popover (Live-Edit revert flow)
+
+User report: while editing a value in Live Edit, reverting to "the value the
+previous fit produced" meant walking to the Datasets page, reading the number
+off the run, and retyping it. Now every editable value carries a small 🕘
+button (always visible on the qubit/pair inspector rows; docked onto the
+focused cell in the bulk grids — a per-cell button would widen every column):
+
+* `HistoryManager.field_history(path, dot_path)` — change-point timeline of
+  ONE dot-path across the chip's snapshots. Two tiers: a path mapping to a
+  tracked `_VALUE_PATHS` qubit property reads the SQLite index (instant, full
+  depth, survives snapshot pruning); any other leaf direct-parses the snapshot
+  `state.json` copies newest-first (plus `wiring.json` only when the root key
+  is wiring-side), capped at `scan_limit=150` with an honest `truncated` flag.
+  Consecutive-equal snapshots collapse into the snapshot that INTRODUCED each
+  value, so rows answer "when did this change, and which experiment set it".
+  Pointer leaves resolve per-snapshot (extractor parity; self-refs stay raw).
+* `GET /field/history?path=` → `_field_history.html`, rendered into the
+  `FieldHistory` floating panel (app.js): each row shows the value (full
+  precision in the tooltip/`data-value`), the change date, the experiment
+  (`#run name`) or trigger that set it, a **Use** button that fills the
+  originating edit input — the commit stays user-explicit through the normal
+  staging flow (Enter → Save/Apply) — and, when the producing run's folder
+  sits under a registered dataset root, a **Data** button that
+  `hx-get`s `/dataset/<uid>` into the global `#inspector-pane`, so the value
+  timeline and the run's data sit side by side.
+* uid resolution is containment against `_dataset_candidate_folders(fast=True)`
+  (`experiment_folder_path` from the snapshot meta → registered root →
+  `<folder_key>:<run_id>`); pruned snapshots keep their index rows but lose
+  the meta → row renders without a Data link, never a dead button.
+
+Tests: `tests/test_field_history.py` (index tier + duplicate collapse, scan
+tier, wiring-side path, per-snapshot pointer resolution, never-present leaf,
+scan-limit truncation, panel render + Use/current marker, registered-root uid
+gating, no-chip 400, button wiring in the inspector template).
+
+## Amendment v2 (2026-07-30): chip-identity ladder — extras chip_name, full re-key, runs tier
+
+Forensics on a real instance (7 different chips as SIBLING state folders under
+one parent `iqcc\` — gilboa 15q@10.1.1.18, a 21q@10.1.1.6, five more) found
+three compounding failures: `chip_name_for` collapsed all seven onto the
+parent's name; capture fingerprint-forked snapshot FILES into
+`iqcc_alt_10_1_1_18_15q` while pinning index ROWS to the path-derived dir
+(21q's index carried gilboa's rows; the alt dir had no index and was invisible
+even in the other-chips list); and every READ path (/param-history page,
+drawer, field-history popover) used the raw path key — showing the WRONG
+chip's history. Experiment ingestion (page-open backfill, once per tab) had
+never run for the day, so 33 same-day runs appeared nowhere.
+
+**The identity ladder** (user decision): a chip's identity is, in priority
+order — ① `state.json` top-level free-form `extras["chip_name"]` (travels
+into every run's bundled quam_state copy: attribution survives ANY folder
+layout, and QUAM designates `extras` for exactly this kind of user data),
+② hardware fingerprint (network host/cluster + qubit/pair labels),
+③ legacy path-derived name. `HistoryManager.resolve_chip_dir` is the ONE
+choke point (`_key_for`/`_history_dir`/`_resolve_snapshot_dir` are wrappers)
+so capture, index, backfill, page, drawer, field-history and prune always
+agree. Capture routes FROM THE CAPTURED CONTENT (`resolve_chip_dir_for_content`
+on the just-read dicts — re-reading live races an experiment's rewrite).
+chip_key is ALWAYS the canonical on-disk dir name; the pretty name is display
+only.
+
+**Alias registry, no dir renames**: `instance/history/_chip_aliases.json`
+(`names` → canonical dir + claiming fingerprint token; `dirs` → display).
+Naming a chip with an existing fingerprint-matched dir ADOPTS that dir
+(history continuity — renames follow the fingerprint, old-name URLs and
+`hist:` refs keep resolving via the alias, with compare_sources doing an
+alias fallback AFTER its traversal guard); new chips claim pretty name-keyed
+dirs; a name claimed by a DIFFERENT fingerprint is refused (`name_conflict`)
+so two chips never merge. Dirs never move on disk (open WAL files on Windows;
+every persisted `?chip_key=` contract stays byte-valid). Legacy client
+storage guards accept the old path key via `data-legacy-chip-key`.
+
+**v3 migration** (`migrate_index_attribution_v3`, flag `migrated_v3.flag`):
+index timestamps whose snapshot FOLDER exists in exactly one other dir move
+there (`_merge_index_for_timestamps` + delete-at-source); orphans (pruned
+snapshots' trend depth) kept, ambiguous skipped, crash-idempotent. First
+/param-history render after a real move shows a one-time "History
+re-attributed" notice. `list_chip_histories` now also lists dirs with
+snapshot folders but no index (they self-heal one on first visit).
+
+**First-open prompt**: activating a LIVE chip whose state has no
+`extras.chip_name` shows a banner ("No chip name is set…", suggestion =
+qualibrate project > folder display name, optional data-folder field);
+`POST /chip-name/set` stages `extras.chip_name` (+`extras.data_folder`)
+through the modifier into the WORKING COPY only — Apply-to-live is the only
+path to the live file; "Not now" writes a fingerprint-keyed decline memo
+(`chip_name_prompts.json`) that survives folder moves. Never prompts for
+archives or instance-internal (sim) chips.
+
+**extras.data_folder pairing**: declared data roots (string or list;
+OS-dialect-bridged via `_to_native`, existence-gated) auto-register as
+workspace roots on activation — ladder: extras > qualibrate project storage >
+recorded roots; unreachable values render a muted note. LIVE contexts only.
+
+**field-history runs tier**: the popover merges a direct scan of the
+workspace runs' own quam_state copies (newest 60; extras-declared roots
+first; per-run attribution = shared extras names definitive even across a
+host move, else fingerprint; immutable-run caches) into the snapshot
+timeline BEFORE the change-point collapse — today's runs appear with
+guaranteed Data links regardless of ingestion, deduping against ingested
+snapshots via the `_entry_timestamp` format. Popover also gained the mini
+trend chart (trigger-colored step series), hover-reveal inspector icons, and
+"Not from an experiment" tooltips on manual/auto rows.
+
+Verified on the real instance (copy): resolver → alt dir; migration moved
+11/11 contaminated rows, 0 leaked; qC1 f_01 timeline shows the full same-day
+run chain (#412→…→#416=4920320533.95→…→#436) each with run attribution.
+Tests: `tests/test_chip_identity.py` (36) + `tests/test_field_history.py`
+runs-tier class + `tests/test_history.py::TestIndexFollowsRoutedDir`.
+
+## Amendment r10 (2026-07-31): the extras.data_folder lifecycle
+
+The gilboa incident: the chip-name banner's optional data-folder field stored
+whatever was typed, verbatim — the user entered a NAME ("gilboa_iqcc"), and
+the only feedback was a later dangling banner with no fix affordance ("check
+state.json"). r10 closes the loop, always ask-first (click-to-stage through
+the working copy; Apply publishes; never auto-written):
+
+- **`_validate_data_folder(raw)`** (routes.py, shared by every write path):
+  `ok` (bridges to a reachable directory) / `cross_machine` (path-SHAPED —
+  rooted `/`, `\`, or drive prefix — but not reachable HERE; storeable after
+  an explicit 409 confirm, because labs share one state across OSes and the
+  reader bridges at read time) / `not_a_path` (no root at all — the
+  "gilboa_iqcc" mistake class; always rejected with suggestions, `force_cross`
+  never overrides it — one ack never collapses two gates).
+- **`POST /chip-data-folder/set`** (value | use | clear=1 | force_cross=1):
+  live-origin gate; stages via modifier (`create_subtree` / `set_value(...,
+  coerce=False)` — a list-valued key must not TypeError under list→str
+  coercion / `delete_subtree` for clear); re-runs the adopt + suggest gates
+  in-request so a reachable value pairs Datasets NOW and the banner strip
+  refreshes truthfully; empty submit without `clear=1` is a 400 (the folder
+  picker auto-submits — an empty pick must never become a silent clear); an
+  explicit clear writes the decline memo (an answer, not a nag reset).
+  `POST /chip-data-folder/decline` + `GET /chip-name/banner` (confirm-Cancel
+  re-render) complete the trio.
+- **The dangling banner is FIXABLE in place**: type+Set (path autocomplete
+  datalist), "Use <candidate>" buttons (≤2), Browse… (the global folder
+  picker, kind=dataset — its select-auto-submit is the desired commit), Clear.
+  Candidates = `_data_folder_candidates`: ① the qualibrate project scope's
+  resolved storage (`qualibrate_config.project_storage()` — a new public
+  one-project variant of `list_projects()`'s storage entry) ② recorded
+  project roots ③ registered workspace dataset roots — fs_key-deduped, cap 3,
+  already-adopted roots excluded.
+- **The record-suggestion banner** (the user's core ask): a NAMED live chip
+  with NO declared data folder + ≥1 candidate → "Record <path> as this
+  chip's data folder?" [Record] [Not now]; declines memo as
+  `token::datafolder` in `instance/chip_name_prompts.json` (same fingerprint
+  lifecycle as the name prompt, collision-free suffix). Branch precedence in
+  `_chip_name_banner.html`: name prompt (its data-folder field now validates
+  + offers the datalist) > dangling-fix > suggestion.
+- **Bridge fix**: `_adopt_extras_data_folders` now uses the public
+  `native_path()` (the private 2-arg `_to_native` missed the `wsl_root` share
+  anchoring — `/home/...` values were never bridged).
+
+Pinned by `tests/test_chip_identity.py` (validator kinds; set/clear/confirm
+round-trips incl. the list-value and archive gates; banner actions +
+candidates; suggestion gates + `::datafolder` memo; chip-name/set hardening;
+the native_path bridge regression test).
+
+## Amendment v2b (2026-07-31): Column History + LiveEditUndo (the unified Ctrl+Z)
+
+**Column History** — the bulk-grid COLUMN header's hover 🕘 (both grids; the
+delegated sort handler gains a `.bulk-col-hist` guard beside the resize-handle
+one) opens a body-mounted centered panel: rows = entities, first column = the
+Param-History sparkline (`render_sparkline_svg_inner`, snapshot tiers + runs
+merged then change-point collapsed), then the current value and the last 6
+matching runs (of ≤40 examined, newest first; run headers link the run's data
+into `#inspector-pane`; a highlighted cell marks the run that changed the
+value). The client collects `{row_id: dot_path}` from the rendered cells
+(`td[data-col-key] .bulk-cell[data-dot-path]` — both grids symmetric, no
+server re-derivation; paths feed READ-ONLY extraction) and POSTs
+`/bulk/column-history`. Engine: `HistoryManager.column_history` (tracked
+column ⇒ ONE SQL over `qubit IN (...)`; else one state.json parse per
+snapshot serving every row) + `_runs_column_series` (the runs-tier gates,
+one parse per run for all rows). Value click fills that entity's grid cell;
+each run column's **Use all** fills the whole column — both recorded as
+LiveEditUndo actions; staging stays user-explicit (Enter / Apply All).
+
+**r9 amendment (2026-07-31) — the Changes tab.** The run-columns table showed
+values "in run order even when nothing changed" (walls of identical values)
+and never surfaced MANUAL applied edits (the value grid was runs-only; the
+snapshot tier fed only the sparkline). The panel now renders **two tabs in
+one response**: **Changes** (default) — per-row change-point chips over the
+SAME merged snapshot+runs series the sparkline collapses (the handler stops
+discarding ts/run_id/experiment/folder), newest first, cap
+`CH_MAX_CHIPS = 6`; each chip = trigger-colored dot + value + when
+(+`current` badge on the newest-equals-current chip; the oldest known value
+stays — a never-changed row reads "this value since {when}"). Manual applies
+appear as their trigger-**"save"** snapshots ("manual" is only the explicit
+snapshot buttons — copy must never say it). Chip click fills the row's cell
+(same useValue contract); hover reveals a **Data** button when the change is
+run-attributed (`hx-get /dataset/<uid>` → `#inspector-pane`), else the
+"Not from an experiment — a {trigger} snapshot of the live folder" tooltip.
+uid resolution is shared with the cell popover via `_uid_roots()` /
+`_uid_for_run_ref()` (extracted from `/field/history`); the tracked-SQL
+fastpath now coalesces the experiment folder from snapshot meta by timestamp
+(index rows store none — field_history parity), so tracked columns get Data
+links too. **By run** keeps the original table + per-run Use all verbatim.
+Toggle is client-only (`ColumnHistory.switchView`, persisted as
+`quam_colhist_view`). Ordering/dedup discipline: snapshot rows are appended
+before run rows and the sort key stays `t[0]` — the stable sort reproduces
+field_history's `(ts, rank)` so ingested-run duplicates collapse; changing
+the sort key would also crash on `None<str`. Pinned by
+`tests/test_column_history.py::TestColumnHistoryChanges` (manual-save chip +
+tooltip, introducer-run Data link, identical-runs collapse to ONE chip,
+tracked-fastpath uid via meta, tab markup, pair-grid paths).
+
+**LiveEditUndo — the unified Ctrl+Z** (r-feedback: "revert is core"):
+tiered global handler (app.js) — ① Generate-wizard undo (existing) ②
+`window.LiveEditUndo` — in-memory, value-level stack (cap 100) for
+UN-STAGED grid edits: Column-History fills (1 action per Use / per Use-all),
+🕘 popover fills into grid cells, and manual typing (focusin snapshot +
+change push, the `_wizUndo` idiom); cells addressed by `data-dot-path`
+selector so undo survives grid swaps ③ the EXISTING server `POST /undo`
+(`modifier.undo_group` — one change_log GROUP per press). The input-focus
+guard now passes for `.bulk-cell` / the panel (native text-undo elsewhere
+untouched; Escape still restores a cell). Tray gains the ↶ button running
+the same tier chain, its hover tooltip naming what the NEXT press undoes.
+
+**Review-tray sync contract** (user-critical): staged undos ride `/undo`'s
+existing atomic response (tray swap + `cellsReverted` + `quam:state-changed`)
+— one press = exactly one group gone from Review; un-staged undos are
+invisible to Review by definition (never in the change_log); Use all →
+Apply All = one `/field/edit-batch` = ONE gid = one Review bundle = one
+Ctrl+Z. Pinned by `tests/test_column_history.py::TestReviewTraySync`.
+
+**Revert last apply** (user asked "possible after apply?" — yes): both apply
+paths now capture the PRE-apply live as a snapshot BEFORE
+`working_copy.apply_to_live` (content-hash dedup ⇒ free when unchanged, and
+then the newest snapshot IS the pre-apply state), memo `ctx["last_apply"]`.
+A clean tray offers the explicit "↺ Revert last apply" button →
+`/state-history/<pre_ts>/stage` (the gated State-History machinery — review
+then Apply completes the revert; Ctrl+Z never crosses the apply boundary
+silently). Save/apply remain the hard undo boundaries.

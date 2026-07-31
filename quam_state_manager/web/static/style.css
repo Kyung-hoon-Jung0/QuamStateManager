@@ -968,18 +968,21 @@ html.topbar-hidden .topbar-reveal { display: block; }
 .calc-btn:hover { background: var(--pico-muted-border-color); color: var(--pico-contrast); }
 .calc-btn.calc-open { color: var(--pico-primary); }
 
+/* r8 feedback: rows compacted (tighter vertical rhythm) while the TYPE gets
+   BIGGER — 12.5px was too small to read at a glance; width grows with it so
+   rows don't flex-wrap into ragged empty space. */
 .calc-popover {
     position: absolute; right: 0; top: 100%; z-index: 98;
-    width: 320px; max-width: 92vw; max-height: min(560px, 80vh); overflow-y: auto;
+    width: 348px; max-width: 92vw; max-height: min(560px, 80vh); overflow-y: auto;
     background: var(--pico-background-color);
     border: 1px solid var(--pico-muted-border-color);
     border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.18);
-    margin-top: 0.2rem; font-size: 12.5px;
+    margin-top: 0.2rem; font-size: 13.5px;
 }
 .calc-hidden { display: none; }
 .calc-header {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 0.4rem 0.55rem; border-bottom: 1px solid var(--pico-muted-border-color);
+    padding: 0.3rem 0.55rem; border-bottom: 1px solid var(--pico-muted-border-color);
     position: sticky; top: 0; background: var(--pico-background-color); z-index: 1;
     cursor: grab; user-select: none; touch-action: none;   /* B3: drag handle */
 }
@@ -998,11 +1001,11 @@ html.topbar-hidden .topbar-reveal { display: block; }
 .calc-body { padding: 0.1rem 0.55rem; }
 /* B2: clear per-section separation — hairline top divider + a bold, full-contrast,
    readable header with a rotating caret (was a faint tiny all-caps blur). */
-.calc-sec { border-top: 1px solid var(--pico-muted-border-color); padding: 0.1rem 0 0.25rem; }
+.calc-sec { border-top: 1px solid var(--pico-muted-border-color); padding: 0.05rem 0 0.18rem; }
 .calc-sec:first-child { border-top: 0; }
 .calc-sec-label {
     font-size: 0.92em; font-weight: 700; letter-spacing: 0.01em;
-    color: var(--pico-contrast); cursor: pointer; padding: 0.3rem 0; list-style: none;
+    color: var(--pico-contrast); cursor: pointer; padding: 0.22rem 0; list-style: none;
 }
 .calc-sec-label::-webkit-details-marker { display: none; }
 .calc-sec-label::before {
@@ -1010,14 +1013,14 @@ html.topbar-hidden .topbar-reveal { display: block; }
     font-size: 0.8em; color: var(--pico-muted-color); transition: transform .12s;
 }
 .calc-sec[open] > .calc-sec-label::before { transform: rotate(90deg); }
-.calc-row { display: flex; align-items: center; gap: 0.3rem; margin: 0.12rem 0; flex-wrap: wrap; }
+.calc-row { display: flex; align-items: center; gap: 0.3rem; margin: 0.08rem 0; flex-wrap: wrap; }
 .calc-field { display: flex; align-items: center; gap: 0.3rem; flex: 1 1 auto; color: var(--pico-muted-color); }
 .calc-field-sm { flex: 0 0 auto; }
 /* Scoped under .calc-popover so the specificity beats Pico's input margin/height
    (the documented "Pico form-control margin beats a bare .class reset" gotcha). */
 .calc-popover .calc-in {
-    flex: 1 1 5rem; min-width: 3rem; width: auto; margin: 0; padding: 0.15rem 0.35rem; height: auto;
-    font-family: var(--font-mono); font-size: 12.5px; font-variant-numeric: tabular-nums;
+    flex: 1 1 5rem; min-width: 3rem; width: auto; margin: 0; padding: 0.12rem 0.35rem; height: auto;
+    font-family: var(--font-mono); font-size: inherit; font-variant-numeric: tabular-nums;
     border: 1px solid transparent; border-bottom-color: var(--pico-muted-border-color);
     background: transparent; border-radius: 3px;
 }
@@ -1025,7 +1028,7 @@ html.topbar-hidden .topbar-reveal { display: block; }
 .calc-popover .calc-in-sm { flex: 0 0 3.6rem; min-width: 2.5rem; }
 .calc-unit { color: var(--pico-muted-color); font-size: 0.78em; }
 .calc-or { color: var(--pico-muted-color); font-size: 0.82em; }
-.calc-result { display: flex; align-items: center; gap: 0.35rem; margin: 0.12rem 0; }
+.calc-result { display: flex; align-items: center; gap: 0.35rem; margin: 0.08rem 0; }
 .calc-rlabel { flex: 1 1 auto; color: var(--pico-muted-color); font-size: 0.82em; }
 .calc-rval { font-family: var(--font-mono); font-variant-numeric: tabular-nums; user-select: all; }
 .calc-rval.calc-err { color: var(--color-error-text); }
@@ -1036,15 +1039,15 @@ html.topbar-hidden .topbar-reveal { display: block; }
 .calc-result:hover .calc-copy, .calc-row:hover .calc-copy, .calc-expr-row:hover .calc-copy { opacity: 1; }
 .calc-copy:hover { color: var(--pico-primary); }
 .calc-chain { font-size: 0.78em; text-decoration: none; color: var(--diag-info-text); margin-left: 0.2rem; }
-.calc-help { margin: 0.25rem 0 0.1rem; font-size: 11px; color: var(--pico-muted-color); line-height: 1.4; }
+.calc-help { margin: 0.2rem 0 0.05rem; font-size: 11.5px; color: var(--pico-muted-color); line-height: 1.35; }
 .calc-foot {
-    padding: 0.4rem 0.55rem; border-top: 1px solid var(--pico-muted-border-color);
+    padding: 0.3rem 0.55rem; border-top: 1px solid var(--pico-muted-border-color);
     position: sticky; bottom: 0; background: var(--pico-background-color);
 }
 .calc-expr-row { display: flex; align-items: center; gap: 0.3rem; }
 .calc-popover .calc-expr {
-    flex: 1 1 auto; margin: 0; padding: 0.2rem 0.4rem; height: auto;
-    font-family: var(--font-mono); font-size: 12.5px;
+    flex: 1 1 auto; margin: 0; padding: 0.18rem 0.4rem; height: auto;
+    font-family: var(--font-mono); font-size: inherit;
     border: 1px solid var(--pico-muted-border-color); background: var(--pico-card-background-color); border-radius: 3px;
 }
 .calc-popover .calc-expr:focus { border-color: var(--pico-primary); outline: none; box-shadow: none; }
@@ -9258,3 +9261,260 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
     animation: schedPulse 1.4s ease-in-out infinite; }
 .autofit-nav-review { background: var(--cell-ok-color, #ff7f0e); color: #fff; }
 .autofit-cell-skipped { opacity: .5; }
+
+/* ── Per-field value-history popover (docs/20) ────────────────────────── */
+.field-history-panel {
+    position: fixed; z-index: 9600; display: none;
+    background: var(--pico-card-background-color);
+    border: 1px solid var(--pico-muted-border-color);
+    border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,0.28);
+    padding: .5rem .65rem .45rem; max-height: 62vh; overflow: auto;
+    font-size: .8rem;
+}
+.fh-head { display: flex; align-items: baseline; gap: .5rem; margin-bottom: .25rem; }
+.fh-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fh-path { font-weight: 400; font-size: .68rem; color: var(--color-text-muted); margin-left: .35rem; }
+.fh-close { margin-left: auto; background: none; border: none; cursor: pointer;
+    font-size: 1rem; line-height: 1; padding: 0 .2rem; color: var(--color-text-muted); }
+.fh-close:hover { color: var(--pico-contrast); }
+.fh-currentline { font-size: .72rem; color: var(--color-text-muted); margin: 0 0 .3rem; }
+.fh-currentline code { font-size: .74rem; }
+.fh-empty { margin: .4rem 0; color: var(--color-text-muted); font-size: .78rem; }
+.fh-table { width: 100%; margin: 0; border-collapse: collapse; }
+.fh-table th { font-size: .66rem; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--color-text-muted); text-align: left; padding: .1rem .35rem; border: none; }
+.fh-table td { padding: .18rem .35rem; border: none;
+    border-top: 1px solid var(--pico-muted-border-color); vertical-align: middle; }
+.fh-val code { font-size: .78rem; background: none; padding: 0; }
+.fh-now { font-size: .62rem; background: var(--pico-primary); color: #fff;
+    border-radius: .55rem; padding: 0 .35rem; margin-left: .25rem; vertical-align: middle; }
+.fh-current .fh-val { font-weight: 600; }
+.fh-ts { white-space: nowrap; font-size: .72rem; color: var(--color-text-muted); }
+.fh-src { max-width: 150px; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; font-size: .72rem; }
+.fh-trig { color: var(--color-text-muted); }
+.fh-act { white-space: nowrap; text-align: right; }
+.fh-use, .fh-data {
+    font-size: .68rem; padding: .06rem .45rem; margin: 0 0 0 .25rem; width: auto;
+    border-radius: .5rem; border: 1px solid var(--pico-muted-border-color);
+    background: var(--pico-card-sectioning-background-color, transparent);
+    /* --pico-contrast, never --pico-color: Pico rescopes the latter to white
+       on <button>, which vanishes on the light theme (TestThemeContrastGuard) */
+    color: var(--pico-contrast); cursor: pointer; line-height: 1.3; display: inline-block;
+}
+.fh-use:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
+.fh-data:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
+.fh-foot { margin: .3rem 0 0; font-size: .66rem; color: var(--color-text-muted); }
+
+/* inspector-row button — INSIDE the edit box (search-icon pattern), never a
+   separate element beside it. .fh-host scopes this to the qubit/pair detail
+   forms only — the pulse-edit inline forms keep their own layout.
+   HOVER-REVEAL (r-feedback: dozens of always-on icons overwhelm a long
+   parameter list — the house .bulk-td:hover idiom): visible on row hover /
+   input focus / keyboard focus only. */
+form.inline-edit.fh-host { display: block; position: relative; }
+form.inline-edit.fh-host .edit-input { padding-right: 1.5rem; }
+.field-hist-btn {
+    position: absolute; right: .18rem; top: 50%; transform: translateY(-50%);
+    background: none; border: none; cursor: pointer; padding: 0;
+    margin: 0; width: auto; font-size: .9rem; line-height: 1; opacity: 0;
+    transition: opacity .12s; display: inline-block;
+}
+tr:hover .field-hist-btn,
+form.inline-edit.fh-host:focus-within .field-hist-btn,
+.field-hist-btn:focus-visible { opacity: .55; }
+.field-hist-btn:hover { opacity: 1; }
+
+/* bulk-grid shared cell button — r10: ANCHORED INSIDE the focused cell's td
+   (absolute in the relatively-positioned .bulk-td), so it moves with the cell
+   through resize/scroll/scale — the fixed-position float used stale viewport
+   coords and drifted outside the box. Styled as an in-input icon. */
+.bulk-td { position: relative; }
+#fh-cellbtn {
+    position: absolute; right: .18rem; top: 50%; transform: translateY(-50%);
+    z-index: 3; display: none;
+    background: var(--pico-form-element-background-color, transparent);
+    border: none; border-radius: .35rem;
+    width: 20px; height: 20px; padding: 0; margin: 0;
+    font-size: .9rem; line-height: 1; cursor: pointer; opacity: .65;
+}
+#fh-cellbtn:hover { opacity: 1; }
+.bulk-cell.fh-docked { padding-right: 1.5rem; }
+
+/* ── First-open chip-name banner (docs/20 v2) ─────────────────────────── */
+.chip-name-banner {
+    display: flex; align-items: center; gap: .8rem; flex-wrap: wrap;
+    margin: .45rem .75rem 0; padding: .45rem .7rem;
+    border: 1px solid var(--pico-primary);
+    border-left-width: 4px; border-radius: 8px;
+    background: var(--pico-card-background-color);
+    font-size: .84rem;
+}
+.cnb-text { flex: 1 1 320px; min-width: 240px; }
+.cnb-text code { font-size: .8em; }
+.cnb-form { display: flex; align-items: center; gap: .35rem; margin: 0; flex-wrap: wrap; }
+.cnb-form input[type=text] {
+    width: 12rem; margin: 0; padding: .15rem .45rem; height: 1.9rem;
+    font-size: .82rem;
+}
+.cnb-form .cnb-set, .cnb-form .cnb-no {
+    width: auto; margin: 0; padding: .18rem .7rem; font-size: .78rem;
+    border-radius: .5rem; line-height: 1.3;
+}
+.cnb-form .cnb-no {
+    background: transparent; border: 1px solid var(--pico-muted-border-color);
+    color: var(--pico-contrast);
+}
+.chip-name-banner.cnb-dangling {
+    border-color: var(--cell-ok-color, #ff7f0e);
+    font-size: .78rem; color: var(--color-text-muted);
+}
+/* r10: dangling-fix + record-suggestion forms */
+.cnb-note { display: block; font-size: .72rem; }
+.cnb-form .cnb-use, .cnb-form .cnb-clear {
+    width: auto; margin: 0; padding: .18rem .55rem; font-size: .74rem;
+    border-radius: .5rem; line-height: 1.3;
+    background: transparent; border: 1px solid var(--pico-primary);
+    color: var(--pico-primary); max-width: 24rem; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+}
+.cnb-form .cnb-clear { border-color: var(--pico-muted-border-color);
+    color: var(--pico-contrast); }
+.cnb-df-form input[type=text] { width: 16rem; }
+.chip-name-banner.cnb-suggest { border-color: var(--pico-primary); }
+.fh-chart { margin: 0 0 .3rem; min-height: 128px; }
+
+/* ── Column History panel + LiveEditUndo (docs/20 v2) ─────────────────── */
+.ch-overlay {
+    position: fixed; inset: 0; z-index: 9550;
+    display: flex; align-items: center; justify-content: center;
+}
+.ch-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
+.ch-card {
+    position: relative; z-index: 1;
+    background: var(--pico-card-background-color);
+    border-radius: 12px; padding: .8rem 1rem .7rem;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+    width: min(920px, 94vw); max-height: 82vh;
+    display: flex; flex-direction: column; font-size: .82rem;
+}
+.ch-head { display: flex; align-items: baseline; gap: .5rem; margin-bottom: .35rem; }
+.ch-title { font-weight: 600; }
+.ch-unit { font-weight: 400; color: var(--color-text-muted); }
+.ch-close { margin-left: auto; background: none; border: none; cursor: pointer;
+    font-size: 1.1rem; line-height: 1; padding: 0 .2rem; width: auto;
+    color: var(--color-text-muted); }
+.ch-close:hover { color: var(--pico-contrast); }
+.ch-empty { margin: .4rem 0; color: var(--color-text-muted); }
+.ch-scroll { overflow: auto; min-height: 0; }
+.ch-table { width: 100%; margin: 0; border-collapse: collapse; white-space: nowrap; }
+.ch-table th, .ch-table td { padding: .16rem .45rem; border: none;
+    border-bottom: 1px solid var(--pico-muted-border-color); text-align: left; }
+.ch-table thead th { font-size: .68rem; text-transform: uppercase;
+    letter-spacing: .04em; color: var(--color-text-muted);
+    position: sticky; top: 0; background: var(--pico-card-background-color);
+    z-index: 1; vertical-align: bottom; }
+.ch-rowhead { font-weight: 600; }
+.ch-trend { width: 108px; }
+.ch-spark { width: 100px; height: 30px; display: block; }
+.ch-nospark { color: var(--color-text-muted); }
+.ch-current code, .ch-val code { background: none; padding: 0; font-size: .8rem; }
+.ch-current { border-right: 1px solid var(--pico-muted-border-color); }
+.ch-run { white-space: nowrap; }
+.ch-run-when { display: block; font-size: .62rem; font-weight: 400;
+    text-transform: none; letter-spacing: 0; }
+.ch-run-open { text-decoration: none; }
+.ch-run-open:hover { text-decoration: underline; }
+.ch-useall {
+    display: block; margin-top: .15rem; width: auto; padding: .04rem .4rem;
+    font-size: .62rem; text-transform: none; letter-spacing: 0;
+    border: 1px solid var(--pico-muted-border-color); border-radius: .45rem;
+    background: transparent; color: var(--pico-contrast); cursor: pointer;
+    line-height: 1.3;
+}
+.ch-useall:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
+.ch-val[data-fill] { cursor: pointer; }
+.ch-val[data-fill]:hover { background: var(--history-cell-hover, rgba(128,128,128,.12)); }
+.ch-val.ch-changed code { font-weight: 700; }
+.ch-val.ch-changed { box-shadow: inset 2px 0 0 var(--pico-primary); }
+.ch-val.ch-missing { color: var(--color-text-muted); }
+.ch-foot { margin: .35rem 0 0; font-size: .66rem; color: var(--color-text-muted); }
+
+/* r9 Changes tab: tabs in the head + per-row change-point chips */
+.ch-tabs { display: inline-flex; gap: .25rem; margin-left: .6rem; align-self: center; }
+.ch-tab {
+    width: auto; padding: .1rem .55rem; font-size: .68rem; line-height: 1.5;
+    border: 1px solid var(--pico-muted-border-color); border-radius: .6rem;
+    background: transparent; color: var(--color-text-muted); cursor: pointer;
+}
+.ch-tab:hover { color: var(--pico-contrast); border-color: var(--pico-contrast); }
+.ch-tab[aria-pressed="true"] {
+    color: var(--pico-primary); border-color: var(--pico-primary); font-weight: 600;
+}
+.ch-view[hidden] { display: none; }
+.ch-chg-table .ch-chips { white-space: normal; }
+.ch-chipwrap { display: inline-flex; align-items: center; margin: .1rem .35rem .1rem 0; }
+.ch-chip {
+    display: inline-flex; align-items: center; gap: .3rem; width: auto;
+    padding: .1rem .45rem; font-size: .78rem; line-height: 1.4;
+    border: 1px solid var(--history-cell-border, var(--pico-muted-border-color));
+    border-radius: .5rem; background: var(--history-cell-bg, transparent);
+    color: inherit; cursor: default;
+}
+.ch-chip code { background: none; padding: 0; font-size: .78rem; }
+.ch-chip[data-fill] { cursor: pointer; }
+.ch-chip[data-fill]:hover { background: var(--history-cell-hover, rgba(128,128,128,.12));
+    border-color: var(--pico-primary); }
+.ch-chip-when { font-size: .62rem; color: var(--color-text-muted); }
+.ch-chip-now { font-size: .58rem; background: var(--pico-primary); color: #fff;
+    border-radius: .5rem; padding: 0 .3rem; }
+.ch-chip-miss { color: var(--color-text-muted); }
+.ch-chip-dot { width: .45em; height: .45em; border-radius: 50%;
+    background: var(--trigger-auto); flex: 0 0 auto; }
+.ch-dot-save { background: var(--trigger-save); }
+.ch-dot-manual { background: var(--trigger-manual); }
+.ch-dot-experiment { background: var(--trigger-experiment); }
+.ch-dot-restore { background: var(--color-error-text); }
+.ch-chip-data {
+    width: auto; margin-left: .15rem; padding: .04rem .35rem;
+    font-size: .62rem; line-height: 1.3;
+    border: 1px solid var(--pico-muted-border-color); border-radius: .45rem;
+    background: transparent; color: var(--pico-contrast); cursor: pointer;
+    opacity: 0; transition: opacity .12s;
+}
+.ch-chipwrap:hover .ch-chip-data, .ch-chip-data:focus-visible { opacity: .85; }
+.ch-chip-data:hover { opacity: 1; border-color: var(--pico-primary);
+    color: var(--pico-primary); }
+.ch-nochips { color: var(--color-text-muted); }
+
+/* header clock — hover-reveal beside the resize handle (th is sticky = the
+   containing block, same anchoring trick as .bulk-resize-handle) */
+.bulk-col-hist {
+    position: absolute; top: 50%; right: 9px; transform: translateY(-50%);
+    background: none; border: none; cursor: pointer; padding: 0; margin: 0;
+    width: auto; font-size: .85rem; line-height: 1; opacity: 0;
+    transition: opacity .12s; z-index: 2;
+}
+.bulk-col-head:hover .bulk-col-hist, .bulk-col-hist:focus-visible { opacity: .6; }
+.bulk-col-hist:hover { opacity: 1; }
+
+/* undo flash on a restored/filled cell */
+@keyframes leuFlash { 0% { background: var(--pico-primary); opacity: .35; }
+                      100% { background: transparent; opacity: 1; } }
+.bulk-cell.leu-flash { animation: leuFlash .65s ease-out; }
+
+/* tray ↶ (next-undo tooltip refreshed on hover) */
+.tray-undo-btn {
+    background: none; border: 1px solid var(--pico-muted-border-color);
+    border-radius: .5rem; cursor: pointer; padding: 0 .45rem; margin: 0;
+    width: auto; font-size: .85rem; line-height: 1.5;
+    color: var(--pico-contrast);
+}
+.tray-undo-btn:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
+.tray-revert-apply {
+    background: none; border: 1px solid var(--pico-muted-border-color);
+    border-radius: .5rem; cursor: pointer; padding: 0 .5rem; margin: 0;
+    width: auto; font-size: .72rem; line-height: 1.6;
+    color: var(--pico-contrast); white-space: nowrap;
+}
+.tray-revert-apply:hover { border-color: var(--cell-ok-color, #ff7f0e); color: var(--cell-ok-color, #ff7f0e); }

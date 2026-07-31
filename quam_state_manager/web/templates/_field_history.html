@@ -1,0 +1,67 @@
+{# Per-field value-history panel (the 🕘 button on Live-Edit cells and
+   inspector rows). Injected into the FieldHistory floating container by
+   app.js — which htmx.process()es it so the Data buttons' hx-get works.
+   Rows are VALUE CHANGE points, newest first: "when did this value change,
+   and which experiment set it". Use fills the originating edit input (the
+   commit stays user-explicit through the normal staging flow); Data loads
+   the run's detail into #inspector-pane so value and data sit side by side. #}
+<div class="fh-head">
+  <span class="fh-title" title="{{ hist.dot_path }}">
+    &#128344; {{ hist.dot_path.split('.')[-1] }}
+    <span class="fh-path">{{ hist.dot_path }}</span>
+  </span>
+  <button type="button" class="fh-close" onclick="FieldHistory.close()"
+          title="Close (Esc)">&times;</button>
+</div>
+{% if current_display and current_display != '—' %}
+<div class="fh-currentline">now: <code>{{ current_display }}</code></div>
+{% endif %}
+{% if chart and chart|length >= 2 %}
+{# The parameter's own trend, right in the popover (the drawer chart's small
+   twin) — change points as a step series, trigger-colored markers. Rendered
+   by FieldHistory JS after injection; silently absent without Plotly. #}
+<div class="fh-chart" id="fh-chart" aria-label="Value trend"></div>
+<script id="fh-chart-data" type="application/json">{{ chart | tojson }}</script>
+{% endif %}
+{% if not hist.points %}
+<p class="fh-empty">
+  No history for this field —
+  {% if hist.total_snapshots == 0 %}this chip has no Param History snapshots yet.
+  {% else %}none of the {{ hist.scanned }} scanned snapshot{{ 's' if hist.scanned != 1 }} carried it.{% endif %}
+</p>
+{% else %}
+<table class="fh-table">
+  <thead><tr><th>Value</th><th>Since</th><th>Set by</th><th></th></tr></thead>
+  <tbody>
+  {% for pt in hist.points %}
+    <tr{% if pt.is_current %} class="fh-current"{% endif %}>
+      <td class="fh-val" title="{{ pt.fill }}"><code>{{ pt.display }}</code>{% if pt.is_current %} <span class="fh-now">current</span>{% endif %}</td>
+      <td class="fh-ts">{{ pt.when }}</td>
+      <td class="fh-src">
+        {% if pt.experiment %}
+        <span class="fh-exp" title="{% if pt.run_id is not none %}run #{{ pt.run_id }} — {% endif %}{{ pt.experiment }}">{% if pt.run_id is not none %}#{{ pt.run_id }} {% endif %}{{ pt.experiment }}</span>
+        {% else %}<span class="fh-trig"
+              title="Not from an experiment — a {{ pt.trigger or 'unknown' }} snapshot of the live folder">{{ pt.trigger or '—' }}</span>{% endif %}
+      </td>
+      <td class="fh-act">
+        {% if not pt.is_current %}
+        <button type="button" class="fh-use" data-value="{{ pt.fill }}"
+                onclick="FieldHistory.useValue(this)"
+                title="Fill the edit field with this value (press Enter there to stage it)">Use</button>
+        {% endif %}
+        {% if pt.uid %}
+        <button type="button" class="fh-data" hx-get="/dataset/{{ pt.uid }}"
+                hx-target="#inspector-pane" hx-swap="innerHTML"
+                title="Open run #{{ pt.run_id }}'s data in the inspector pane">Data</button>
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="fh-foot">
+  {{ hist.points|length }} change point{{ 's' if hist.points|length != 1 }}
+  &middot; {{ hist.scanned }} of {{ hist.total_snapshots }} snapshot{{ 's' if hist.total_snapshots != 1 }}
+  ({{ hist.source }}){% if hist.runs_merged %} &middot; {{ hist.runs_merged }} live run value{{ 's' if hist.runs_merged != 1 }}{% endif %}{% if hist.truncated %} &middot; older history not shown{% endif %}
+</p>
+{% endif %}

@@ -8,6 +8,27 @@
       <button class="btn-sm" onclick="openReview()">Review changes</button>
     </div>
   </div>
+  {% set _staged = staged_conflict is defined and staged_conflict %}
+  {% if _staged %}
+  {# docs/65: nothing in the re-apply stash — the working state IS the payload
+     (a loaded snapshot / saved edits). "Pull & re-apply" would replay nothing
+     and silently destroy it, so offer only the honest choices. #}
+  <p class="tray-conflict-note">
+    An experiment program updated the live state after you loaded it. Your
+    working state holds loaded/saved content &mdash; choose which side wins:
+  </p>
+  <div class="tray-actions tray-conflict-choices">
+    <button class="btn-sm primary tray-force-btn"
+            hx-post="/state/apply-to-live?force=1"
+            hx-target="#pending-tray"
+            hx-swap="outerHTML"
+            hx-confirm="Overwrite the live chip with your working state? Changes written by an experiment program will be lost.">
+      &#8593; Apply my working state (overwrite live)</button>
+    <button class="btn-sm outline" onclick="doStateSync('discard')"
+            title="Pull the latest live state into the working state — discards the loaded/saved content (asks first).">
+      &#8595; Pull latest &amp; discard mine</button>
+  </div>
+  {% else %}
   <p class="tray-conflict-note">
     An experiment program updated the live state after you loaded it. Pull the
     latest live state &mdash; choose what happens to the edits you made:
@@ -29,4 +50,5 @@
             hx-confirm="Overwrite the live chip with your version? Changes written by an experiment program will be lost.">
       Overwrite live (force)</button>
   </div>
+  {% endif %}
 </div>

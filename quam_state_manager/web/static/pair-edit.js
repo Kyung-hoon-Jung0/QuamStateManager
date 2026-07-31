@@ -308,8 +308,8 @@
                     _syncAppliedAcrossTable(r.body.results);
                     if (!silent && r.body.tray_html && window._swapPendingTray) {
                         window._bulkSelfEdit = true;
-                        window._swapPendingTray(r.body.tray_html);
-                        window._bulkSelfEdit = false;
+                        try { window._swapPendingTray(r.body.tray_html); }
+                        finally { window._bulkSelfEdit = false; }
                     }
                     // Re-run diagnostics unconditionally (see bulk-edit.js) — a silent
                     // or dedup'd pair-grid commit must still refresh the safety linter.
@@ -463,17 +463,22 @@
             if (t._pairBound) { _refreshGlobal(); return; }
             t._pairBound = true;
 
-            // Discard-intent guard (see bulk-edit.js): a pointerdown on Reset fires
-            // before the focused cell's focusout, so record it and let focusout skip
-            // its click-away commit — otherwise "Reset" commits the focused row.
-            var _pRstBtn = document.getElementById('bulk-pair-reset');
-            if (_pRstBtn && !_pRstBtn._resetGuardBound) {
-                _pRstBtn._resetGuardBound = true;
-                _pRstBtn.addEventListener('pointerdown', function () { BulkPairEdit._resetPressTs = Date.now(); });
-            }
+            // Toolbar-press guard (docs/65 — see bulk-edit.js, kept in sync): a
+            // pointerdown on any toolbar action fires before the focused cell's
+            // focusout; the stamp lets focusout skip its click-away row commit so
+            // Reset stays a discard and Apply all's button isn't disabled by the
+            // racing commit before mouseup (the "needs two presses" bug).
+            ['bulk-pair-reset', 'bulk-pair-apply-all', 'bulk-pair-apply-sync'].forEach(function (bid) {
+                var b = document.getElementById(bid);
+                if (b && !b._toolbarGuardBound) {
+                    b._toolbarGuardBound = true;
+                    b.addEventListener('pointerdown', function () { BulkPairEdit._toolbarPressTs = Date.now(); });
+                }
+            });
 
             t.addEventListener('click', function (e) {
                 if (e.target.closest && e.target.closest('.bulk-resize-handle')) return;
+                if (e.target.closest && e.target.closest('.bulk-col-hist')) return;
                 if (_resizeJustEnded) return;
                 if (e.target.closest && e.target.closest('.bulk-ro-link')) return;
                 var th = e.target.closest && e.target.closest('thead th[data-col-key]');
@@ -505,6 +510,14 @@
                     if (b && !b.disabled) BulkPairEdit.applyRow(b);
                     return;
                 }
+                if (e.key === 'Tab') {
+                    // Tab/Shift+Tab hop between edit cells, wrapping to the
+                    // adjacent row at the row edge (see bulk-edit.js — same
+                    // semantics; row-exit still commits via focusout below).
+                    var tnext = _tabMove(cell, e.shiftKey ? -1 : 1);
+                    if (tnext) { e.preventDefault(); tnext.focus(); tnext.select && tnext.select(); }
+                    return;
+                }
                 var dir = { ArrowUp: [-1, 0], ArrowDown: [1, 0] }[e.key];
                 if (e.key === 'ArrowLeft' && cell.selectionStart === 0) dir = [0, -1];
                 if (e.key === 'ArrowRight' && cell.selectionStart === cell.value.length) dir = [0, 1];
@@ -523,7 +536,7 @@
                 if (to && row && row.contains(to)) return;
                 // Let an "Apply all" / "Apply to live" button commit the whole set;
                 // and never let a click on Reset commit the focused row (discard intent).
-                if (BulkPairEdit._resetPressTs && (Date.now() - BulkPairEdit._resetPressTs) < 1000) return;
+                if (BulkPairEdit._toolbarPressTs && (Date.now() - BulkPairEdit._toolbarPressTs) < 1000) return;
                 if (to && to.closest && to.closest('#bulk-pair-apply-all, #bulk-pair-apply-sync, #bulk-pair-reset')) return;
                 var b = row && row.querySelector('.bulk-row-apply');
                 if (b && !b.disabled) BulkPairEdit.applyRow(b);
@@ -558,6 +571,10 @@
                     var tt = table();
                     if (tt && ev.detail && ev.detail.target && ev.detail.target.id === 'table-pane'
                         && _cells(tt).some(_isDirty)) {
+                        // audit-r10: see bulk-edit.js — a stage/restore refresh
+                        // must not be vetoed by stale typed text.
+                        if (window._stateRestoredRefresh
+                            && Date.now() - window._stateRestoredRefresh < 4000) return;
                         if (!window.confirm('You have unapplied pair edits in Live State Edit. Leave and discard them?')) {
                             ev.preventDefault();
                         }
@@ -598,8 +615,8 @@
                 if (i >= rows.length) {
                     if (lastTray && window._swapPendingTray) {
                         window._bulkSelfEdit = true;
-                        window._swapPendingTray(lastTray);
-                        window._bulkSelfEdit = false;
+                        try { window._swapPendingTray(lastTray); }
+                        finally { window._bulkSelfEdit = false; }
                     }
                     if (all) all.textContent = failures ? ('Apply all (' + failures + ' failed)') : 'Apply all (pairs)';
                     _refreshGlobal(); _recomputeStats();
@@ -682,6 +699,29 @@
             var ci = tds.indexOf(td);
             var ntd = tds[ci + dc];
             return ntd ? ntd.querySelector('.bulk-cell') : null;
+        }
+        return null;
+    }
+
+    // Tab order (see bulk-edit.js _tabMove — kept in sync): next/prev edit
+    // cell in the row, then the adjacent visible row's first/last cell;
+    // null past the grid edge so native Tab can leave the grid.
+    function _tabMove(cell, dc) {
+        var td = cell.closest('td');
+        var tr = cell.closest('tr');
+        var sel = '.bulk-td:not(.bulk-col-hidden):not(.bulk-search-hidden)';
+        var tds = Array.prototype.slice.call(tr.querySelectorAll(sel));
+        for (var i = tds.indexOf(td) + dc; i >= 0 && i < tds.length; i += dc) {
+            var c = tds[i].querySelector('.bulk-cell');
+            if (c) return c;
+        }
+        var rows = _rows().filter(function (r) { return !r.classList.contains('bulk-row-hidden'); });
+        for (var ri = rows.indexOf(tr) + dc; ri >= 0 && ri < rows.length; ri += dc) {
+            var ntds = Array.prototype.slice.call(rows[ri].querySelectorAll(sel));
+            for (var j = dc > 0 ? 0 : ntds.length - 1; j >= 0 && j < ntds.length; j += dc) {
+                var nc = ntds[j].querySelector('.bulk-cell');
+                if (nc) return nc;
+            }
         }
         return null;
     }

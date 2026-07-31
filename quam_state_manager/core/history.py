@@ -162,6 +162,29 @@ def _walk_dict(node: Any, path: tuple[str, ...]) -> Any:
     return node
 
 
+# Reverse of _VALUE_PATHS: "xy.operations.x180_DragCosine.amplitude" → the
+# SQLite property name. Lets field_history() route a Live-Edit dot-path to
+# the index tier when the leaf is one we already track per snapshot.
+_TRACKED_QUBIT_SUFFIX_TO_PROP: dict[str, str] = {
+    ".".join(path): prop for prop, path in _VALUE_PATHS.items()
+}
+
+
+def _walk_any_path(node: Any, segs: list[str]) -> tuple[bool, Any]:
+    """Walk dicts AND lists (numeric segments index lists — the same dot-form
+    grammar the typed-edit path resolver uses). ``(found, value)``."""
+    for seg in segs:
+        if isinstance(node, dict):
+            if seg not in node:
+                return False, None
+            node = node[seg]
+        elif isinstance(node, list) and seg.isdigit() and int(seg) < len(node):
+            node = node[int(seg)]
+        else:
+            return False, None
+    return True, node
+
+
 def _to_num(value: Any) -> float | None:
     """Coerce a leaf value to ``float`` if numeric; return None otherwise.
 
@@ -552,6 +575,109 @@ def fingerprint_token(fp: ChipFingerprint | None) -> str | None:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
+# ── Chip identity ladder (docs/20 v2) ──────────────────────────────────────
+#
+# THE identity of a chip, in priority order:
+#   1. ``state.json``'s top-level free-form ``extras["chip_name"]`` — the
+#      user-declared name. It travels with the state into every run's
+#      bundled quam_state copy, so attribution survives any folder layout.
+#   2. Hardware fingerprint (network host/cluster + qubit/pair labels).
+#   3. The legacy path-derived name (``chip_name_for``) — sibling state
+#      folders under one parent ALL collapse onto the parent's name, which
+#      is exactly the failure mode tiers 1–2 exist to fix (7 such sibling
+#      chips found in the wild, all keying to one name).
+
+_CHIP_NAME_MAX_LEN = 64
+
+
+def extras_chip_name(state: Any) -> str | None:
+    """The user-declared chip name from ``state["extras"]["chip_name"]``.
+
+    isinstance-guarded at every level (``extras`` is free-form by design);
+    whitespace-stripped, length-capped; empty/invalid → ``None``."""
+    if not isinstance(state, dict):
+        return None
+    extras = state.get("extras")
+    if not isinstance(extras, dict):
+        return None
+    name = extras.get("chip_name")
+    if not isinstance(name, str):
+        return None
+    name = name.strip()[:_CHIP_NAME_MAX_LEN].strip()
+    return name or None
+
+
+def extras_data_folder(state: Any) -> list[str]:
+    """The user-declared data folder(s) from ``state["extras"]["data_folder"]``.
+
+    Accepts a single string or a list of strings (labs with several roots);
+    returns a cleaned list, ``[]`` when absent/invalid. Values are RAW as
+    stored — callers must run them through the OS-dialect bridge
+    (``qualibrate_config._to_native``) and existence-gate before use."""
+    if not isinstance(state, dict):
+        return []
+    extras = state.get("extras")
+    if not isinstance(extras, dict):
+        return []
+    raw = extras.get("data_folder")
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for item in raw:
+        if isinstance(item, str) and item.strip():
+            out.append(item.strip())
+    return out
+
+
+@dataclass(frozen=True, slots=True)
+class ChipIdentity:
+    """One quam_state folder as read by the identity ladder."""
+
+    name: str | None                       # tier 1 (extras), validated
+    fingerprint: ChipFingerprint | None    # tier 2
+    path_name: str                         # tier 3 (legacy chip_name_for)
+
+    @property
+    def source(self) -> str:
+        if self.name:
+            return "extras"
+        return "fingerprint" if self.fingerprint is not None else "path"
+
+
+def identity_from_dicts(state: Any, wiring: Any,
+                        quam_state_path: str | Path) -> ChipIdentity:
+    """In-memory twin of :func:`identity_of` (capture already holds the dicts)."""
+    return ChipIdentity(
+        name=extras_chip_name(state),
+        fingerprint=(fingerprint_from_dicts(state, wiring)
+                     if isinstance(state, dict) else None),
+        path_name=chip_name_for(Path(quam_state_path)),
+    )
+
+
+def identity_of(quam_state_path: str | Path) -> ChipIdentity:
+    """Read state+wiring (armored) and build the folder's :class:`ChipIdentity`.
+
+    Reads the LIVE files on purpose: snapshots capture live content, so
+    identity keying must follow what is captured — a staged-but-unapplied
+    name change takes effect at the first post-apply capture, never before."""
+    p = Path(quam_state_path)
+    state: Any = None
+    wiring: Any = {}
+    try:
+        state = safe_io.read_json(p / "state.json")
+    except (OSError, ValueError):
+        state = None
+    if state is not None:
+        try:
+            wiring = safe_io.read_json(p / "wiring.json")
+        except (OSError, ValueError):
+            wiring = {}
+    return identity_from_dicts(state, wiring, p)
+
+
 # Alignment outcomes returned by ``align``.
 ALIGN_ALIGNED = "aligned"             # network matches and qubits/pairs match
 ALIGN_RENAMED = "renamed"             # network matches but qubits/pairs differ
@@ -722,6 +848,38 @@ class HistoryManager:
         # readers on a pre-v2 chip must not both upgrade).
         self._schema_verified: set[str] = set()
         self._upgrade_locks: dict[str, threading.Lock] = {}
+        # Identity-ladder caches (docs/20 v2): per-path ChipIdentity keyed on
+        # (state_mtime, wiring_mtime); resolved-dir memo keyed on the same
+        # mtimes + alias-file mtime + the global version (any capture can
+        # create a dir that changes tier-2 answers); alias registry keyed on
+        # its file mtime.
+        self._identity_cache: dict[str, tuple[float, float, ChipIdentity]] = {}
+        self._chip_dir_memo: dict[str, tuple[Any, tuple]] = {}
+        self._alias_cache: tuple[int, dict] | None = None
+
+    def snapshot_ts_for_current_content(
+            self, quam_state_path: str | Path) -> str | None:
+        """Timestamp of the newest snapshot whose stored ``state_hash``
+        equals the live folder's CURRENT content.
+
+        The only trustworthy "this snapshot IS the pre-apply state" witness
+        when :meth:`check_and_snapshot` returns None — its dedup matches
+        against EVERY hash ever seen (not the newest snapshot), so after an
+        A-B-A revert cycle the newest snapshot can hold the WRONG content
+        (audit-r10 finding). None when the live pair is unreadable or no
+        snapshot hash matches."""
+        path = Path(quam_state_path)
+        try:
+            h = _canonical_content_hash(path / "state.json",
+                                        path / "wiring.json")
+        except Exception:  # noqa: BLE001
+            return None
+        if h is None:
+            return None
+        for meta in self.list_snapshots(path):
+            if meta.state_hash == h:
+                return meta.timestamp
+        return None
 
     def _known_hashes_for_chip(self, hist_dir: Path) -> set[str]:
         """Return the set of state_hashes already present in a chip dir.
@@ -907,17 +1065,327 @@ class HistoryManager:
     # ------------------------------------------------------------------
 
     def _key_for(self, quam_state_path: Path) -> str:
-        """Derive a stable, chip-level directory key from a quam_state folder path.
+        """Canonical chip-dir key for this quam_state (the identity ladder).
 
-        Uses ``chip_name_for`` so per-experiment loads
-        (``<chip>/<date>/#N_<exp>_HHMMSS/quam_state/``) and the chip's
-        live state (``<chip>/quam_state/``) share a single key.
+        The key is ALWAYS the on-disk dir name (never the pretty display
+        name) so every persisted join — ``?chip_key=`` URLs,
+        ``hist:<chip_key>/<ts>`` compare refs, ``data-loaded-chip-key`` —
+        stays byte-compatible with what is on disk.
         """
-        return _sanitize_name(chip_name_for(quam_state_path))
+        return self.resolve_chip_dir(quam_state_path)[1]
 
     def _history_dir(self, quam_state_path: Path) -> Path:
-        """Return ``<instance>/history/<key>/`` for this quam_state."""
-        return self._root / self._key_for(quam_state_path)
+        """Return ``<instance>/history/<key>/`` for this quam_state
+        (ladder-resolved — see :meth:`resolve_chip_dir`)."""
+        return self.resolve_chip_dir(quam_state_path)[0]
+
+    # ------------------------------------------------------------------
+    # Identity ladder + alias registry (docs/20 v2)
+    # ------------------------------------------------------------------
+
+    def _alias_path(self) -> Path:
+        return self._root / "_chip_aliases.json"
+
+    def _load_aliases(self) -> dict:
+        """The alias registry, mtime-cached. Shape::
+
+            {"version": 1,
+             "names": {<sanitized name>: {"dir": <dir key>,
+                                          "fingerprint_token": str|None,
+                                          "claimed_at": iso}},
+             "dirs":  {<dir key>: {"display": <declared name>}}}
+
+        ``names`` maps a declared chip name to its canonical dir (adoption +
+        rename continuity); ``dirs`` is the reverse map for display. The
+        underscore-prefixed file name keeps it out of chip-dir enumeration
+        (``list_chip_histories`` / ``_find_matching_chip_dir`` skip non-dirs).
+        """
+        path = self._alias_path()
+        try:
+            mt = path.stat().st_mtime_ns
+        except OSError:
+            mt = -1
+        with self._lock:
+            if self._alias_cache is not None and self._alias_cache[0] == mt:
+                return self._alias_cache[1]
+        data: dict = {"version": 1, "names": {}, "dirs": {}}
+        if mt != -1:
+            try:
+                raw = safe_io.read_json(path)
+            except (OSError, ValueError):
+                raw = None
+            if isinstance(raw, dict):
+                names = raw.get("names")
+                dirs = raw.get("dirs")
+                data["names"] = names if isinstance(names, dict) else {}
+                data["dirs"] = dirs if isinstance(dirs, dict) else {}
+        with self._lock:
+            self._alias_cache = (mt, data)
+        return data
+
+    def _save_aliases(self, data: dict) -> None:
+        with self._lock:
+            try:
+                safe_io.atomic_write_json(self._alias_path(), data)
+            except OSError:
+                logger.warning("Could not persist chip aliases", exc_info=True)
+                return
+            try:
+                mt = self._alias_path().stat().st_mtime_ns
+            except OSError:
+                mt = -1
+            self._alias_cache = (mt, data)
+            # Alias content feeds dir resolution AND display names — drop
+            # every memo and the chip-histories listing cache.
+            self._chip_dir_memo.clear()
+            self._chip_histories_cache = None
+
+    def _record_alias(self, name_key: str, dir_key: str,
+                      tok: str | None, display: str) -> None:
+        """Idempotently record ``declared name → canonical dir``."""
+        data = self._load_aliases()
+        prev = (data.get("names") or {}).get(name_key)
+        if isinstance(prev, dict) and prev.get("dir") == dir_key \
+                and prev.get("fingerprint_token") == tok:
+            return
+        names = dict(data.get("names") or {})
+        dirs = dict(data.get("dirs") or {})
+        names[name_key] = {
+            "dir": dir_key,
+            "fingerprint_token": tok,
+            "claimed_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        dirs[dir_key] = {"display": display}
+        self._save_aliases({"version": 1, "names": names, "dirs": dirs})
+
+    def display_name_for_dir(self, dir_key: str) -> str | None:
+        """The declared chip name behind a canonical dir key, if any."""
+        entry = (self._load_aliases().get("dirs") or {}).get(dir_key)
+        if isinstance(entry, dict) and isinstance(entry.get("display"), str):
+            return entry["display"] or None
+        return None
+
+    def _cached_identity(self, path: Path) -> ChipIdentity:
+        """Mtime-cached :func:`identity_of` (the `_cached_fingerprint` twin)."""
+        key = str(path)
+        try:
+            st_mt = (path / "state.json").stat().st_mtime
+        except OSError:
+            st_mt = -1.0
+        try:
+            wir_mt = (path / "wiring.json").stat().st_mtime
+        except OSError:
+            wir_mt = -1.0
+        with self._lock:
+            cached = self._identity_cache.get(key)
+            if cached is not None and cached[0] == st_mt and cached[1] == wir_mt:
+                return cached[2]
+        ident = identity_of(path)
+        with self._lock:
+            self._identity_cache[key] = (st_mt, wir_mt, ident)
+        return ident
+
+    @staticmethod
+    def _dir_has_snapshots(chip_dir: Path) -> bool:
+        try:
+            return chip_dir.is_dir() and any(
+                s.is_dir() for s in chip_dir.iterdir())
+        except OSError:
+            return False
+
+    def resolve_chip_dir(
+        self, quam_state_path: str | Path,
+    ) -> tuple[Path, str, str, dict | None]:
+        """THE chip-identity ladder → ``(chip_dir, chip_key, source, swap_info)``.
+
+        Every read AND write path resolves through here (via the
+        ``_key_for`` / ``_history_dir`` / ``_resolve_snapshot_dir``
+        wrappers), so capture, index, backfill, the /param-history page and
+        the field-history popover always agree on which dir is this chip's.
+        Never creates dirs on disk; it may return a not-yet-existing dir
+        (honest empty reads beat reading another chip's data).
+        """
+        path = Path(quam_state_path)
+        key_s = str(path)
+        try:
+            st_mt = (path / "state.json").stat().st_mtime
+        except OSError:
+            st_mt = -1.0
+        try:
+            wir_mt = (path / "wiring.json").stat().st_mtime
+        except OSError:
+            wir_mt = -1.0
+        try:
+            alias_mt = self._alias_path().stat().st_mtime_ns
+        except OSError:
+            alias_mt = -1
+        token = (st_mt, wir_mt, alias_mt, self._global_version)
+        with self._lock:
+            memo = self._chip_dir_memo.get(key_s)
+            if memo is not None and memo[0] == token:
+                return memo[1]
+        result = self._resolve_chip_dir_uncached(path)
+        with self._lock:
+            self._chip_dir_memo[key_s] = (token, result)
+        return result
+
+    def resolve_chip_dir_for_content(
+        self, quam_state_path: str | Path, state: Any, wiring: Any,
+    ) -> tuple[Path, str, str, dict | None]:
+        """Ladder resolution from ALREADY-READ content (the capture path).
+
+        Capture must key on exactly the content it snapshots — resolving
+        from the live files again would race an experiment's rewrite (and
+        an mtime-granularity-equal rewrite would even defeat the identity
+        cache). No memo: captures are rare and the dicts are in hand."""
+        ident = identity_from_dicts(state, wiring, Path(quam_state_path))
+        return self._resolve_from_ident(ident)
+
+    def _resolve_chip_dir_uncached(
+        self, path: Path,
+    ) -> tuple[Path, str, str, dict | None]:
+        return self._resolve_from_ident(self._cached_identity(path))
+
+    def _resolve_from_ident(
+        self, ident: ChipIdentity,
+    ) -> tuple[Path, str, str, dict | None]:
+        candidate_key = _sanitize_name(ident.path_name)
+        conflict: dict | None = None
+
+        # ── tier 1: user-declared extras chip name ─────────────────────
+        if ident.name:
+            name_key = _sanitize_name(ident.name)
+            tok = fingerprint_token(ident.fingerprint)
+            entry = (self._load_aliases().get("names") or {}).get(name_key)
+            if isinstance(entry, dict) and entry.get("dir"):
+                claimed = entry.get("fingerprint_token")
+                if claimed is None or tok is None or claimed == tok:
+                    dir_key = str(entry["dir"])
+                    return self._root / dir_key, dir_key, "extras", None
+                # Token mismatch. audit-r10: routine SAME-chip evolution —
+                # adding/removing a qubit or pair, moving host/cluster —
+                # changes the token too; a strict-equality refusal here
+                # permanently forked a NAMED chip's history on the exact
+                # events tier 1 exists to survive. Judge by alignment
+                # against the claimed dir's newest snapshot instead:
+                #   - ALIGNED / RENAMED (same network)      → same chip
+                #   - networks differ but qubit/pair labels
+                #     identical (a host move)               → same chip
+                #     (name + labels = two independent identity witnesses)
+                #   - unverifiable dir (no readable sample) → the name is
+                #     definitive (the runs-tier doctrine)
+                # Only a provably different chip — different network AND
+                # different labels — still refuses, so two physical chips
+                # never merge. Acceptance refreshes the stored token.
+                claimed_dir_key = str(entry["dir"])
+                sample = self._sample_fingerprint(self._root / claimed_dir_key)
+                verdict = align(ident.fingerprint, sample)
+                same_labels = (
+                    sample is not None and ident.fingerprint is not None
+                    and ident.fingerprint.qubits == sample.qubits
+                    and ident.fingerprint.pairs == sample.pairs)
+                if (sample is None
+                        or verdict in (ALIGN_ALIGNED, ALIGN_RENAMED)
+                        or same_labels):
+                    self._record_alias(name_key, claimed_dir_key, tok,
+                                       ident.name)
+                    return (self._root / claimed_dir_key, claimed_dir_key,
+                            "extras", None)
+                # A provably DIFFERENT chip owns this name — refuse tier 1
+                # so two physical chips never silently merge into one dir.
+                conflict = {"type": "name_conflict", "name": ident.name,
+                            "claimed_dir": claimed_dir_key}
+            else:
+                # Unclaimed name. Adopt the chip's EXISTING dir first
+                # (fingerprint continuity — naming/renaming must never
+                # orphan history), else claim a pretty name-keyed dir.
+                existing = self._existing_dir_for(ident, candidate_key)
+                if existing is not None:
+                    self._record_alias(name_key, existing.name, tok, ident.name)
+                    return existing, existing.name, "extras", None
+                claimed_key = self._claim_name_dir(name_key, tok, ident.name)
+                if claimed_key is not None:
+                    return (self._root / claimed_key, claimed_key,
+                            "extras", None)
+                conflict = {"type": "name_conflict", "name": ident.name,
+                            "claimed_dir": None}
+
+        # ── tiers 2+3: fingerprint routing over the path candidate ─────
+        dir_, swap = self._route_by_fingerprint(ident, candidate_key)
+        if conflict is not None:
+            swap = dict(swap or {})
+            swap.update(conflict)
+        source = "fingerprint" if (swap or {}).get("to_key") else "path"
+        return dir_, dir_.name, source, swap
+
+    def _existing_dir_for(self, ident: ChipIdentity,
+                          candidate_key: str) -> Path | None:
+        """An EXISTING dir already holding this chip's snapshots, or None."""
+        fp = ident.fingerprint
+        candidate = self._root / candidate_key
+        if self._dir_has_snapshots(candidate):
+            if fp is None:
+                return candidate
+            sample = self._sample_fingerprint(candidate)
+            if sample is None or align(fp, sample) == ALIGN_ALIGNED:
+                return candidate
+        if fp is None:
+            return None
+        return self._find_matching_chip_dir(fp, exclude=candidate)
+
+    def _claim_name_dir(self, name_key: str, tok: str | None,
+                        display: str) -> str | None:
+        """Claim a name-keyed dir for a newly named chip.
+
+        Prefers the bare name; a dir already holding a DIFFERENT chip's
+        snapshots forces a ``__2``/``__3``… suffix. Returns the claimed dir
+        key (alias recorded), or None when unresolvable."""
+        for suffix in ("", "__2", "__3", "__4"):
+            dir_key = name_key + suffix
+            d = self._root / dir_key
+            if not self._dir_has_snapshots(d):
+                self._record_alias(name_key, dir_key, tok, display)
+                return dir_key
+            sample = self._sample_fingerprint(d)
+            if tok is not None and fingerprint_token(sample) == tok:
+                self._record_alias(name_key, dir_key, tok, display)
+                return dir_key
+        return None
+
+    def _route_by_fingerprint(
+        self, ident: ChipIdentity, candidate_key: str,
+    ) -> tuple[Path, dict | None]:
+        """Legacy tiers: fingerprint routing over the path-derived candidate."""
+        candidate_dir = self._root / candidate_key
+        if not self._dir_has_snapshots(candidate_dir):
+            # The literal dir is absent/empty — a legacy or renamed key may
+            # be alias-mapped to a canonical dir (old ?chip_key= URLs,
+            # hist: refs). Only then; a populated literal dir always wins.
+            entry = (self._load_aliases().get("names") or {}).get(candidate_key)
+            if isinstance(entry, dict) and entry.get("dir"):
+                aliased = self._root / str(entry["dir"])
+                if self._dir_has_snapshots(aliased):
+                    return aliased, None
+        fp = ident.fingerprint
+        if fp is None or not self._dir_has_snapshots(candidate_dir):
+            return candidate_dir, None
+        sample = self._sample_fingerprint(candidate_dir)
+        if sample is None or align(fp, sample) == ALIGN_ALIGNED:
+            return candidate_dir, None
+        # Fingerprint mismatch — chip swap detected.
+        matching = self._find_matching_chip_dir(fp, exclude=candidate_dir)
+        if matching is not None:
+            return matching, {
+                "type": "swap_to_existing",
+                "from_key": candidate_key,
+                "to_key": matching.name,
+            }
+        new_key = self._fingerprint_derived_key(candidate_key, fp)
+        return self._root / new_key, {
+            "type": "swap_to_new",
+            "from_key": candidate_key,
+            "to_key": new_key,
+        }
 
     # ------------------------------------------------------------------
     # Fingerprint-aware routing (live chip-swap detection)
@@ -980,60 +1448,6 @@ class HistoryManager:
         qcount = len(fp.qubits)
         return _sanitize_name(f"{base_key}_alt_{host}_{qcount}q")
 
-    def _resolve_snapshot_dir(
-        self, loaded_path: Path,
-    ) -> tuple[Path, dict | None]:
-        """Decide which chip dir a NEW snapshot for ``loaded_path`` should go.
-
-        Returns ``(target_dir, swap_info)``.  ``swap_info`` is None for the
-        normal case (path-based candidate matches the current content's
-        fingerprint).  Otherwise it describes what was detected:
-
-            {
-              "type": "swap_to_existing" | "swap_to_new",
-              "from_key": <path-based key the user thinks they're loading>,
-              "to_key":   <actual key of the chip the snapshot was routed to>,
-            }
-        """
-        fp_now = fingerprint_of(loaded_path)
-        candidate_key = self._key_for(loaded_path)
-        candidate_dir = self._root / candidate_key
-
-        if fp_now is None:
-            # Can't compare; fall back to path-based.
-            return candidate_dir, None
-
-        # If candidate is empty / non-existent, this is the first snapshot for
-        # this path — just use it.
-        try:
-            has_snapshots = candidate_dir.is_dir() and any(
-                s.is_dir() for s in candidate_dir.iterdir()
-            )
-        except OSError:
-            has_snapshots = False
-        if not has_snapshots:
-            return candidate_dir, None
-
-        sample = self._sample_fingerprint(candidate_dir)
-        if sample is None or align(fp_now, sample) == ALIGN_ALIGNED:
-            return candidate_dir, None
-
-        # Fingerprint mismatch — chip swap detected.
-        # 1. Look for any other existing chip dir whose fingerprint matches.
-        matching = self._find_matching_chip_dir(fp_now, exclude=candidate_dir)
-        if matching is not None:
-            return matching, {
-                "type": "swap_to_existing",
-                "from_key": candidate_key,
-                "to_key": matching.name,
-            }
-        # 2. No match — fork into a new fingerprint-derived dir.
-        new_key = self._fingerprint_derived_key(candidate_key, fp_now)
-        return self._root / new_key, {
-            "type": "swap_to_new",
-            "from_key": candidate_key,
-            "to_key": new_key,
-        }
 
     # ------------------------------------------------------------------
     # mtime helpers
@@ -1104,20 +1518,25 @@ class HistoryManager:
                 return None
 
             ts = _ts_stamp()
-            # Fingerprint-aware routing: if the current state's content
-            # diverges from the path-based candidate dir's existing
-            # fingerprint, route to a different (existing or new) chip dir.
-            hist_dir, swap_info = self._resolve_snapshot_dir(path)
-            snap_dir = hist_dir / ts
-            snap_dir.mkdir(parents=True, exist_ok=True)
-
-            # Capture the state files conflict-safely: an armored read never
-            # blocks a concurrent experiment writer (see core.safe_io).  Only
-            # proceed to meta.json if both succeed.
+            # Capture the state files conflict-safely FIRST: an armored read
+            # never blocks a concurrent experiment writer (see core.safe_io).
             state_src = path / "state.json"
             wiring_src = path / "wiring.json"
             try:
                 snap_state, snap_wiring = safe_io.read_state_wiring(path)
+            except (OSError, ValueError) as exc:
+                logger.warning("Snapshot capture failed for %s: %s", ts, exc)
+                return None
+
+            # Identity-ladder routing FROM THE CAPTURED CONTENT (extras chip
+            # name > fingerprint > path): keying must follow exactly what is
+            # snapshotted — re-reading the live files here would race an
+            # experiment's rewrite.
+            hist_dir, _key, _source, swap_info = self.resolve_chip_dir_for_content(
+                path, snap_state, snap_wiring)
+            snap_dir = hist_dir / ts
+            snap_dir.mkdir(parents=True, exist_ok=True)
+            try:
                 safe_io.write_state_wiring(snap_dir, snap_state, snap_wiring)
             except (OSError, ValueError) as exc:
                 logger.warning("Snapshot capture failed for %s: %s", ts, exc)
@@ -1200,9 +1619,14 @@ class HistoryManager:
             # snapshot is still valid; index can be rebuilt later via self-heal.
             # ``state=snap_state`` (already in memory from the capture read)
             # skips a redundant on-disk re-read of the snapshot in both modes.
-            # Same target dir as _index_snapshot(path, ...) used — the PATH-derived
-            # chip dir (NOT hist_dir, which can differ under fingerprint routing).
-            index_dir = self._history_dir(path)
+            # Index rows go to the SAME routed dir as the snapshot files.
+            # Writing them to the path-derived dir instead (the old behaviour)
+            # poisoned the sibling chip's index with this chip's rows AND left
+            # the routed dir index-less — found in the wild with 7 sibling
+            # chips under one parent folder all path-keying to one name. The
+            # deferred closure below captures this dir EAGERLY: the thread
+            # must never re-resolve identity after live files moved on.
+            index_dir = hist_dir
             if defer_index:
                 def _run_index() -> None:
                     try:
@@ -1618,6 +2042,277 @@ class HistoryManager:
                 conn.close()
             except Exception:  # noqa: BLE001
                 pass
+
+    # ── Per-field value history (Live-Edit revert popover, docs/20) ────────
+
+    @staticmethod
+    def _tracked_property_for(dot_path: str) -> str | None:
+        """The SQLite property name for a ``qubits.<q>.<suffix>`` dot-path
+        when the suffix is one of the tracked ``_VALUE_PATHS`` — else None."""
+        parts = dot_path.split(".")
+        if len(parts) < 3 or parts[0] != "qubits":
+            return None
+        return _TRACKED_QUBIT_SUFFIX_TO_PROP.get(".".join(parts[2:]))
+
+    def field_history(
+        self,
+        quam_state_path: str | Path,
+        dot_path: str,
+        *,
+        scan_limit: int = 150,
+        max_points: int = 20,
+        extra_series: list[tuple] | None = None,
+    ) -> dict[str, Any]:
+        """Change-point timeline of ONE dot-path across this chip's snapshots.
+
+        Two tiers: a path mapping to a TRACKED qubit property reads the
+        SQLite index (instant, full history depth — survives snapshot
+        pruning); any other leaf parses the snapshot ``state.json`` /
+        ``wiring.json`` copies directly, newest-first, capped at
+        ``scan_limit`` (honest ``truncated`` flag). Consecutive-equal
+        snapshots collapse into the snapshot that INTRODUCED each value, so
+        rows answer "when did this value change, and which experiment set
+        it". Pointer leaves resolve per-snapshot (extractor parity;
+        self-refs stay raw) so the timeline shows the value the chip
+        actually had, never the pointer string.
+
+        ``extra_series`` (docs/20 v2 runs tier): additional
+        ``(ts, value, trigger, run_id, experiment, folder)`` rows — the
+        caller's direct scan of workspace run folders — merged by timestamp
+        BEFORE the change-point collapse, so today's runs appear even when
+        Param History ingestion hasn't run. Timestamps use the
+        ingested-snapshot format (``_entry_timestamp``), so a run that WAS
+        ingested dedups naturally against its snapshot row.
+        """
+        path = Path(quam_state_path)
+        snapshots = self.list_snapshots(path)          # newest-first, cached
+        meta_by_ts = {m.timestamp: m for m in snapshots}
+        out: dict[str, Any] = {
+            "dot_path": dot_path, "points": [],
+            "total_snapshots": len(snapshots), "scanned": 0,
+            "truncated": False, "source": "scan", "runs_merged": 0,
+        }
+
+        # (ts, value, trigger, run_id, experiment, folder) oldest-first
+        series: list[tuple] = []
+        prop = self._tracked_property_for(dot_path)
+        if prop is not None and snapshots:
+            try:
+                conn = self._open_index(path)
+                try:
+                    rows = conn.execute(
+                        "SELECT timestamp, value, trigger, run_id, experiment "
+                        "FROM param_history WHERE qubit=? AND property=? "
+                        "ORDER BY timestamp",
+                        (dot_path.split(".")[1], prop)).fetchall()
+                finally:
+                    conn.close()
+            except sqlite3.Error:
+                rows = []
+            if rows:
+                out["source"] = "index"
+                out["scanned"] = len(rows)
+                series = [tuple(r) + (None,) for r in rows]
+        if not series:
+            out["source"] = "scan"
+            series, out["scanned"], out["truncated"] = self._scan_field_series(
+                path, snapshots, dot_path, scan_limit)
+
+        if extra_series:
+            out["runs_merged"] = len(extra_series)
+            out["source"] += "+runs"
+            # Stable sort: snapshot rows sort before run rows on an equal
+            # timestamp, so an ingested run's snapshot row wins the collapse
+            # (its meta already knows the folder) and the direct run row
+            # dedups away when values agree.
+            merged = ([(r, 0) for r in series]
+                      + [(tuple(r), 1) for r in extra_series])
+            merged.sort(key=lambda t: (t[0][0], t[1]))
+            series = [r for r, _rank in merged]
+
+        # Collapse to change points. NaN never equals itself — normalise so a
+        # stretch of NaN snapshots doesn't explode into one row each.
+        def _key(v):
+            if isinstance(v, float) and v != v:
+                return "\x00nan"
+            return v
+
+        points: list[tuple] = []
+        prev: Any = object()
+        for row in series:
+            if _key(row[1]) != prev:
+                points.append(row)
+            prev = _key(row[1])
+        points.reverse()                               # newest change first
+        if len(points) > max_points:
+            points = points[:max_points]
+            out["truncated"] = True
+
+        for ts, value, trigger, run_id, experiment, folder in points:
+            meta = meta_by_ts.get(ts)
+            out["points"].append({
+                "timestamp": ts,
+                "value": value,
+                "trigger": trigger or (meta.trigger if meta else None),
+                "run_id": run_id if run_id is not None
+                else (meta.run_id if meta else None),
+                "experiment": experiment or (meta.experiment_name if meta else None),
+                # run rows carry their folder directly; snapshot rows get it
+                # from the live meta (pruned snapshots keep index rows but
+                # lose the meta → no data link)
+                "experiment_folder_path": folder or (
+                    meta.experiment_folder_path if meta else None),
+            })
+        return out
+
+    def _scan_field_series(
+        self,
+        quam_state_path: Path,
+        snapshots: list[SnapshotMeta],
+        dot_path: str,
+        scan_limit: int,
+    ) -> tuple[list[tuple], int, bool]:
+        """Direct-parse tier: (series oldest-first, scanned, truncated).
+
+        Reads each snapshot's ``state.json`` (plus ``wiring.json`` only when
+        the path's root key isn't state-side), walks the dot-path with
+        list-index support, resolves pointer leaves against that snapshot's
+        own document. Unreadable snapshots are skipped, never fatal."""
+        from quam_state_manager.core.pointer_resolver import (
+            is_pointer, is_self_ref, resolve_pointer,
+        )
+        hist_dir = self._history_dir(quam_state_path)
+        take = snapshots[:scan_limit]                  # newest-first
+        truncated = len(snapshots) > len(take)
+        segs = dot_path.split(".")
+        series: list[tuple] = []
+        for meta in reversed(take):                    # oldest-first
+            snap_dir = hist_dir / meta.timestamp
+            try:
+                root = safe_io.read_json(snap_dir / "state.json")
+            except (OSError, ValueError):
+                continue
+            if not isinstance(root, dict):
+                continue
+            if segs and segs[0] not in root:
+                try:
+                    wiring = safe_io.read_json(snap_dir / "wiring.json")
+                except (OSError, ValueError):
+                    wiring = None
+                if isinstance(wiring, dict):
+                    merged = dict(root)
+                    merged.update(wiring)
+                    root = merged
+            found, value = _walk_any_path(root, segs)
+            if not found:
+                value = None
+            elif is_pointer(value) and not is_self_ref(value):
+                value = resolve_pointer(root, value, tuple(segs))
+            series.append((meta.timestamp, value, meta.trigger,
+                           meta.run_id, meta.experiment_name,
+                           meta.experiment_folder_path))
+        return series, len(take), truncated
+
+    def column_history(
+        self,
+        quam_state_path: str | Path,
+        path_map: dict[str, str],
+        *,
+        scan_limit: int = 40,
+    ) -> dict[str, list[tuple]]:
+        """Snapshot-tier series for a whole GRID COLUMN in one pass.
+
+        ``path_map`` maps row ids (qubit / pair names) to their dot-paths for
+        one column (docs/20 v2 Column History). Returns
+        ``{row_id: [(ts, value, trigger, run_id, exp, folder)] oldest-first}``.
+        Two tiers, mirroring :meth:`field_history`'s split (runs merging is
+        the caller's job): when every row's suffix maps to ONE tracked
+        property, a single SQL query over ``qubit IN (...)`` serves all rows
+        from the index; otherwise each snapshot's ``state.json`` is parsed
+        ONCE and every row's value extracted from it — never N separate
+        scans for an N-row column.
+
+        Index rows don't store the experiment folder, so the fastpath
+        coalesces it from the snapshot meta by timestamp (field_history
+        parity) — that's what gives tracked columns their Data links. A
+        pruned snapshot keeps its index row but loses the meta → folder None
+        (honest: attribution survives, the link doesn't).
+        """
+        path = Path(quam_state_path)
+        snapshots = self.list_snapshots(path)          # newest-first, cached
+        meta_by_ts = {m.timestamp: m for m in snapshots}
+        out: dict[str, list[tuple]] = {row: [] for row in path_map}
+        if not path_map:
+            return out
+
+        # Index fastpath: one column = one suffix; rows are entity names.
+        props = {self._tracked_property_for(dp) for dp in path_map.values()}
+        entity_by_row = {row: dp.split(".")[1]
+                         for row, dp in path_map.items()
+                         if len(dp.split(".")) >= 3}
+        if (len(props) == 1 and None not in props and snapshots
+                and len(entity_by_row) == len(path_map)):
+            prop = next(iter(props))
+            entities = sorted(set(entity_by_row.values()))
+            try:
+                conn = self._open_index(path)
+                try:
+                    rows = conn.execute(
+                        "SELECT timestamp, qubit, value, trigger, run_id, "
+                        "experiment FROM param_history WHERE property=? AND "
+                        "qubit IN (%s) ORDER BY timestamp"
+                        % ",".join("?" * len(entities)),
+                        (prop, *entities)).fetchall()
+                finally:
+                    conn.close()
+            except sqlite3.Error:
+                rows = []
+            if rows:
+                row_by_entity: dict[str, list[str]] = {}
+                for row, ent in entity_by_row.items():
+                    row_by_entity.setdefault(ent, []).append(row)
+                for ts, ent, value, trigger, run_id, exp in rows:
+                    meta = meta_by_ts.get(ts)
+                    folder = meta.experiment_folder_path if meta else None
+                    for row in row_by_entity.get(ent, ()):
+                        out[row].append((ts, value, trigger, run_id, exp, folder))
+                return out
+
+        # Multi-path snapshot scan: one parse per snapshot, all rows extracted.
+        from quam_state_manager.core.pointer_resolver import (
+            is_pointer, is_self_ref, resolve_pointer,
+        )
+        hist_dir = self._history_dir(path)
+        take = snapshots[:scan_limit]                  # newest-first
+        segs_by_row = {row: dp.split(".") for row, dp in path_map.items()}
+        for meta in reversed(take):                    # oldest-first
+            snap_dir = hist_dir / meta.timestamp
+            try:
+                root = safe_io.read_json(snap_dir / "state.json")
+            except (OSError, ValueError):
+                continue
+            if not isinstance(root, dict):
+                continue
+            if any(segs and segs[0] not in root
+                   for segs in segs_by_row.values()):
+                try:
+                    wiring = safe_io.read_json(snap_dir / "wiring.json")
+                except (OSError, ValueError):
+                    wiring = None
+                if isinstance(wiring, dict):
+                    merged = dict(root)
+                    merged.update(wiring)
+                    root = merged
+            for row, segs in segs_by_row.items():
+                found, value = _walk_any_path(root, segs)
+                if not found:
+                    value = None
+                elif is_pointer(value) and not is_self_ref(value):
+                    value = resolve_pointer(root, value, tuple(segs))
+                out[row].append((meta.timestamp, value, meta.trigger,
+                                 meta.run_id, meta.experiment_name,
+                                 meta.experiment_folder_path))
+        return out
 
     def _open_index(self, quam_state_path: Path) -> sqlite3.Connection:
         """Open (and create on first use) the param-history SQLite index.
@@ -2071,6 +2766,11 @@ class HistoryManager:
             x = (i / (n - 1)) * width if n > 1 else 0.0
             y = height - ((v - vmin) / rng) * (height - 4) - 2
             trigger = p.get("trigger") or "auto"
+            # audit-r10: the trigger round-trips through on-disk meta/SQLite
+            # and lands raw in an f-string SVG rendered |safe — allowlist it.
+            if trigger not in ("save", "manual", "auto", "experiment",
+                               "restore"):
+                trigger = "auto"
             coords.append((x, y, trigger))
         if len(coords) < 2:
             return ""
@@ -2541,6 +3241,24 @@ class HistoryManager:
                 continue
             idx = d / "index.sqlite"
             if not idx.exists():
+                # A dir with snapshot FOLDERS but no index used to be
+                # INVISIBLE here (the fingerprint-forked alt dirs never got
+                # one pre-docs/20-v2). Report it from the folders; its index
+                # builds on first visit via _ensure_index_fresh.
+                try:
+                    snaps = sorted(
+                        s.name for s in d.iterdir()
+                        if s.is_dir() and (s / "state.json").exists())
+                except OSError:
+                    continue
+                if snaps:
+                    result.append({
+                        "key": d.name,
+                        "display": self.display_name_for_dir(d.name),
+                        "snapshot_count": len(snaps),
+                        "latest_timestamp": snaps[-1],
+                        "qubits": [],
+                    })
                 continue
             try:
                 conn = sqlite3.connect(str(idx))
@@ -2562,6 +3280,7 @@ class HistoryManager:
                 conn.close()
                 result.append({
                     "key": d.name,
+                    "display": self.display_name_for_dir(d.name),
                     "snapshot_count": snap_count,
                     "latest_timestamp": max_ts[0] if max_ts and max_ts[0] else "",
                     "qubits": [q[0] for q in qubit_rows],
@@ -2834,6 +3553,10 @@ class HistoryManager:
         """
         path = Path(quam_state_path)
         chip_key = self._key_for(path)
+        # Decisions persisted before the identity ladder are keyed by the
+        # PATH-derived name — look both up so an adopted/named chip never
+        # re-prompts "same/different" for folders the user already decided.
+        legacy_chip_key = _sanitize_name(chip_name_for(path))
         loaded_data_folder = _data_folder_name(path)
 
         # Resolve instance_path for chip_decisions persistence
@@ -2867,6 +3590,8 @@ class HistoryManager:
                 entries.extend(group)
                 continue
             decision = decisions.get(_decision_key(chip_key, df))
+            if decision is None and legacy_chip_key != chip_key:
+                decision = decisions.get(_decision_key(legacy_chip_key, df))
             if decision == "same":
                 entries.extend(group)
             elif decision == "different":
@@ -2904,7 +3629,8 @@ class HistoryManager:
         # plus auto-routed cross-chip groups).
         failures: list[dict[str, Any]] = []
 
-        # Loaded-chip group: ingest into the path-derived dir.
+        # Loaded-chip group: ingest into the ladder-resolved dir (same dir
+        # capture routes to — backfill and check_and_snapshot must agree).
         loaded_dir = self._history_dir(path)
         loaded_report = self._ingest_entries_into(
             loaded_dir, entries,
@@ -2922,6 +3648,7 @@ class HistoryManager:
         # Previously these were silently dropped, leaving the alignment
         # banner's "view <other_chip>" link going to an empty dashboard.
         other_chips: dict[str, dict[str, int]] = {}
+        label_to_key: dict[str, str] = {}
         progress_cursor = len(entries)
         for chip_label, chip_entries in scan["different_chip"].items():
             chip_entries_sorted = sorted(chip_entries, key=lambda e: (
@@ -2929,7 +3656,15 @@ class HistoryManager:
                 getattr(e, "run_id", 0) or 0,
                 getattr(e, "timestamp", "") or "",
             ))
+            # Route through the identity ladder using a representative
+            # entry's quam_state (an extras-named sibling chip lands in its
+            # name-keyed dir, not chip_name_for's collapsed parent name).
             target_key = _sanitize_name(chip_label)
+            for e in chip_entries_sorted:
+                rep = Path(getattr(e, "quam_state_path", "") or "")
+                if rep and (rep / "state.json").exists():
+                    target_key = self.resolve_chip_dir(rep)[1]
+                    break
             target_dir = self._root / target_key
             report = self._ingest_entries_into(
                 target_dir, chip_entries_sorted,
@@ -2939,6 +3674,7 @@ class HistoryManager:
                 progress_total=progress_total,
                 failures=failures,
             )
+            label_to_key[chip_label] = target_key
             other_chips[target_key] = report
             progress_cursor += len(chip_entries_sorted)
 
@@ -2955,7 +3691,7 @@ class HistoryManager:
             self._snapshot_list_cache.pop(str(path.resolve()), None)
 
         skipped_different_after_routing = sum(
-            len(v) - other_chips[_sanitize_name(k)]["ingested"]
+            len(v) - other_chips[label_to_key.get(k, _sanitize_name(k))]["ingested"]
             for k, v in scan["different_chip"].items()
         )
         return {
@@ -3433,3 +4169,116 @@ def migrate_legacy_histories_v2(instance_path: str | Path) -> dict[str, Any]:
         "skipped": skipped_total,
         "cleared_dirs": cleared_dirs,
     }
+
+
+def migrate_index_attribution_v3(instance_path: str | Path) -> dict[str, Any]:
+    """Move MIS-ATTRIBUTED index rows next to their snapshot folders.
+
+    Pre-docs/20-v2, ``check_and_snapshot`` routed snapshot FILES via the
+    fingerprint but pinned SQLite rows to the path-derived dir: the base
+    chip's ``index.sqlite`` accumulated the alt-forked chip's rows while
+    the alt dir got no index at all (trends mixed two chips). Ground truth
+    is the snapshot FOLDERS: a timestamp whose folder exists in exactly ONE
+    other dir — and not in this one — provably belongs there.
+
+    Conservative by design: orphan timestamps (no folder anywhere) are
+    KEPT — pruned snapshots legitimately retain index rows for trend depth,
+    so they are not provably foreign. Timestamps whose folder exists in two
+    or more dirs are skipped (ambiguous). Copy-then-delete ordering keeps a
+    crash midway idempotent: ``INSERT OR IGNORE`` dedups on re-run, and the
+    flag is only written at the end.
+
+    Idempotent — gated by ``instance/migrated_v3.flag``.
+    """
+    inst = Path(instance_path)
+    flag = inst / "migrated_v3.flag"
+    if flag.exists():
+        return {"status": "already_migrated"}
+
+    history_root = inst / "history"
+    if not history_root.exists():
+        safe_io.atomic_write_json(flag, {"status": "migrated"})
+        return {"status": "no_history"}
+
+    def _chip_dirs() -> list[Path]:
+        try:
+            return [
+                d for d in history_root.iterdir()
+                if d.is_dir()
+                and not re.match(r"^pytest-\d+$", d.name)
+                and d.name != "Temp"
+            ]
+        except OSError:
+            return []
+
+    # Ground truth: which dirs hold a FOLDER for each timestamp.
+    ts_folders: dict[str, list[str]] = {}
+    dirs = _chip_dirs()
+    for d in dirs:
+        try:
+            for s in d.iterdir():
+                if s.is_dir():
+                    ts_folders.setdefault(s.name, []).append(d.name)
+        except OSError:
+            continue
+
+    moved_ts = 0
+    ambiguous = 0
+    pairs: list[dict[str, Any]] = []
+    for d in dirs:
+        src_idx = d / "index.sqlite"
+        if not src_idx.exists():
+            continue
+        try:
+            conn = sqlite3.connect(str(src_idx), timeout=10.0)
+            try:
+                index_ts = [r[0] for r in conn.execute(
+                    "SELECT DISTINCT timestamp FROM param_history")]
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            logger.warning("v3 migration could not read %s", src_idx,
+                           exc_info=True)
+            continue
+
+        by_target: dict[str, list[str]] = {}
+        for ts in index_ts:
+            holders = ts_folders.get(ts, [])
+            if d.name in holders:
+                continue                    # correctly attributed
+            if len(holders) == 0:
+                continue                    # orphan (pruned) — keep
+            if len(holders) > 1:
+                ambiguous += 1
+                continue                    # ambiguous — never guess
+            by_target.setdefault(holders[0], []).append(ts)
+
+        for target_name, ts_list in by_target.items():
+            target_idx = history_root / target_name / "index.sqlite"
+            try:
+                _merge_index_for_timestamps(src_idx, target_idx, ts_list)
+                conn = sqlite3.connect(str(src_idx), timeout=10.0)
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    for i in range(0, len(ts_list), 500):
+                        chunk = ts_list[i:i + 500]
+                        conn.execute(
+                            "DELETE FROM param_history WHERE timestamp IN (%s)"
+                            % ",".join("?" * len(chunk)), chunk)
+                    conn.execute("COMMIT")
+                finally:
+                    conn.close()
+            except (sqlite3.Error, OSError):
+                logger.warning("v3 migration move %s → %s failed",
+                               d.name, target_name, exc_info=True)
+                continue
+            moved_ts += len(ts_list)
+            pairs.append({"from": d.name, "to": target_name,
+                          "timestamps": len(ts_list)})
+
+    summary = {"status": "migrated", "moved_timestamps": moved_ts,
+               "ambiguous_skipped": ambiguous, "pairs": pairs}
+    safe_io.atomic_write_json(flag, summary)
+    if moved_ts:
+        logger.info("v3 index-attribution migration: %s", summary)
+    return summary
