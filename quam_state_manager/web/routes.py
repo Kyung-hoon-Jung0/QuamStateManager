@@ -4208,9 +4208,12 @@ CH_MAX_CHIPS = 6       # per-row change-point chips shown in the Changes tab
 CH_BYRUN_COLS = 6      # run columns displayed in the By-run tab
 # The Changes series merges MORE runs than the By-run tab displays: a value
 # introduced by a run just outside the 6-column window would otherwise lose
-# its attribution to a later auto snapshot (the cell popover scans 60 runs —
-# this keeps the two consistent). One parse per run serves every row.
-CH_SERIES_RUNS = 24
+# its attribution to a later auto snapshot. Window = the cell popover's
+# newest-60 scan EXACTLY (live-verified: one busy day of newer runs pushed
+# the introducers out of a 24-run window while the cell popover still
+# attributed them). One parse per run serves every row, so the cost equals
+# one cell-popover open.
+CH_SERIES_RUNS = 60
 CH_SERIES_EXAMINE = 60
 
 
