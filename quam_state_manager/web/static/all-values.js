@@ -697,14 +697,28 @@
     // A5: Enter in a scalar input applies THAT one field to the working copy (matches
     // Live Grid's Enter-applies-row). Same /field/edit-batch + reconcile + tray-swap
     // path as Apply-all, isolated to one dot-path; no full rebuild so focus survives.
-    function applyOne(path, inputEl) {
+    function applyOne(path, inputEl, fspAck, extraUpdates) {
         var d = state.dirty.get(path);
-        if (!d || state.applying) return;
+        if (!d || (state.applying && !fspAck)) return;
         state.applying = true;   // in-flight guard: an Enter + quick blur can fire two
+        var payload = { updates: [{ dot_path: path, value: d.value }]
+                            .concat(extraUpdates || []),
+                        expect_chip: window.__chipToken || '' };
+        if (fspAck) payload.fsp_ack = fspAck;
         fetch('/field/edit-batch', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ updates: [{ dot_path: path, value: d.value }], expect_chip: window.__chipToken || '' })
+            body: JSON.stringify(payload)
         }).then(function (r) { return r.json(); }).then(function (jb) {
+            // r12-B: FSP edits get the compensation offer first — never silent.
+            if (!jb.ok && jb.fsp_compensation && window._openFspPopup) {
+                state.applying = false;
+                window._openFspPopup(jb.fsp_compensation, function (mode, plan) {
+                    if (mode === 'cancel') return;
+                    applyOne(path, inputEl, mode,
+                             mode === 'comp' ? window._fspCompUpdates(plan) : []);
+                });
+                return;
+            }
             if (!jb.ok) { applyError(jb); return; }
             reconcile(jb.results);
             if (jb.tray_html && window._swapPendingTray) {

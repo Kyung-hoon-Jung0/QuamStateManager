@@ -2973,9 +2973,14 @@ window.initPathAutocomplete = function(inputEl) {
     }
 
     var _browseKind = "";   // "" = quam-state highlighting; "dataset" = run folders
+    var _browseNoSubmit = false;   // r12: Select fills without submitting the form
 
-    window.openFolderBrowser = function(targetInputId, kind) {
+    window.openFolderBrowser = function(targetInputId, kind, opts) {
         _targetInputId = targetInputId;
+        // r12: opts.autoSubmit === false keeps Select as a pure fill — the
+        // name-prompt's Browse must not submit the whole identity form on
+        // folder pick (the dangling-fix form WANTS the auto-submit).
+        _browseNoSubmit = !!(opts && opts.autoSubmit === false);
         // What the caller is hunting decides what the dialog highlights:
         // dataset pickers mark run folders (node.json/data.json), everything
         // else keeps the quam_state highlighting.
@@ -3267,7 +3272,7 @@ window.initPathAutocomplete = function(inputEl) {
         }
         var dialog = document.getElementById("folder-browser");
         if (dialog) dialog.close();
-        if (target) {
+        if (target && !_browseNoSubmit) {
             var form = target.closest("form");
             if (form) form.requestSubmit();
         }
@@ -4306,13 +4311,41 @@ window.clearDetailPanelSearch = function(btnEl) {
             body.append("value", newVal);
             body.append("expect_chip", window.__chipToken || "");   // wrong-chip 409 gate
 
-            fetch("/field/edit", {
-                method: "POST",
-                headers: {"Content-Type": "application/x-www-form-urlencoded"},
-                body: body.toString()
-            })
-            .then(function(resp) { return resp.json(); })
-            .then(function(data) {
+            var _post = function(extraBody) {
+                var b2 = new URLSearchParams(body);
+                if (extraBody) Object.keys(extraBody).forEach(function(k) {
+                    b2.append(k, extraBody[k]);
+                });
+                return fetch("/field/edit", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/x-www-form-urlencoded"},
+                    body: b2.toString()
+                }).then(function(resp) { return resp.json(); });
+            };
+            _post(null)
+            .then(function handleData(data) {
+                if (!data.ok && data.fsp_compensation) {
+                    // r12-B: never silent — the compensation offer first.
+                    window._openFspPopup(data.fsp_compensation, function(mode, plan) {
+                        if (mode === "cancel") return;   // nothing committed
+                        if (mode === "solo") {
+                            _post({fsp_ack: "solo"}).then(handleData);
+                            return;
+                        }
+                        fetch("/field/edit-batch", {
+                            method: "POST",
+                            headers: {"Content-Type": "application/json"},
+                            body: JSON.stringify({
+                                updates: [{dot_path: dotPath, value: newVal}]
+                                    .concat(window._fspCompUpdates(plan)),
+                                fsp_ack: "comp",
+                                expect_chip: window.__chipToken || "",
+                            })
+                        }).then(function(r) { return r.json(); })
+                          .then(handleData);
+                    });
+                    return;
+                }
                 if (!data.ok) {
                     valEl.classList.add("tree-val-error");
                     setTimeout(function() { valEl.classList.remove("tree-val-error"); }, 2000);
@@ -7331,6 +7364,158 @@ function _markPlotRowApplied(row) {
     var input = row.querySelector('.plot-apply-new-input');
     if (input) input.readOnly = true;
 }
+
+/* ── FSP → amplitude compensation popup (docs/20 r12-B) ──
+   NEVER silent: any /field/edit(-batch) that would change a port's
+   full_scale_power_dbm without an ack gets a 409 carrying the compensation
+   plan; this popup lists EVERY amplitude old→new ("SM will update these
+   amplitudes WITH the port change") plus DAC-clip warnings, and only an
+   explicit choice commits:
+     [Apply FSP + compensate N] → resend('comp')  (one batch: FSP + amps
+                                  = one Review bundle = one Ctrl+Z)
+     [Apply FSP only]           → resend('solo')
+     [Cancel]                   → nothing written. */
+window._openFspPopup = (function () {
+    var overlay = null;
+    function _el(tag, cls, text) {
+        var e = document.createElement(tag);
+        if (cls) e.className = cls;
+        if (text !== undefined) e.textContent = text;
+        return e;
+    }
+    function _fmt(v) {
+        if (typeof v === "number" && window._groupDigits) return window._groupDigits(v);
+        return String(v);
+    }
+    function ensure() {
+        if (overlay) return overlay;
+        overlay = document.createElement("div");
+        overlay.className = "ch-overlay";
+        overlay.style.display = "none";
+        var backdrop = _el("div", "ch-backdrop");
+        backdrop.addEventListener("click", close);
+        var card = _el("div", "ch-card fsp-card");
+        card.setAttribute("role", "dialog");
+        card.setAttribute("aria-modal", "true");
+        overlay.appendChild(backdrop);
+        overlay.appendChild(card);
+        document.body.appendChild(overlay);
+        return overlay;
+    }
+    function close() {
+        if (!overlay) return;
+        if (overlay._releaseTrap) {
+            try { overlay._releaseTrap(); } catch (e) {}
+            overlay._releaseTrap = null;
+        }
+        overlay.style.display = "none";
+    }
+    function open(plan, resend) {
+        var o = ensure();
+        var card = o.querySelector(".fsp-card");
+        card.textContent = "";
+        // Every exit notifies the caller exactly once — a dangling promise in
+        // a row-apply chain would freeze the grid's Apply-all otherwise.
+        var done = false;
+        function finish(mode) {
+            if (done) return;
+            done = true;
+            close();
+            resend(mode, plan);
+        }
+        o.querySelector(".ch-backdrop").onclick = function () { finish("cancel"); };
+        var head = _el("div", "ch-head");
+        head.appendChild(_el("span", "ch-title",
+            "⚡ Full-scale power change — port " + (plan.port || "?")));
+        var x = _el("button", "ch-close", "×");
+        x.type = "button"; x.title = "Close (Esc)";
+        x.addEventListener("click", function () { finish("cancel"); });
+        head.appendChild(x);
+        card.appendChild(head);
+        card.appendChild(_el("p", "fsp-line",
+            "full_scale_power_dbm: " + _fmt(plan.fsp_old) + " → "
+            + _fmt(plan.fsp_new) + " dBm  (amplitude factor ×"
+            + Number(plan.factor).toPrecision(6) + ")"));
+        card.appendChild(_el("p", "fsp-note",
+            "To keep every pulse's real output power constant, SM will update "
+            + "these amplitudes WITH the port change. Nothing is written until "
+            + "you choose below."));
+        if (plan.clip_count) {
+            var lowering = Number(plan.fsp_new) < Number(plan.fsp_old);
+            card.appendChild(_el("p", "fsp-warn",
+                "⚠ " + plan.clip_count + " compensated amplitude"
+                + (plan.clip_count === 1 ? "" : "s") + " would exceed 1.0 — the "
+                + "DAC clips. "
+                + (lowering
+                   ? "Do not lower FSP this far (or reduce those pulses' powers first)."
+                   : "Those pulses already sit past DAC full scale — fix them first.")));
+        }
+        if (plan.range_warn) card.appendChild(_el("p", "fsp-warn", "⚠ " + plan.range_warn));
+        if (plan.more_fsp_in_batch) {
+            card.appendChild(_el("p", "fsp-note",
+                "This batch edits more than one FSP — they are confirmed one at a time."));
+        }
+        var wrap = _el("div", "ch-scroll");
+        var table = _el("table", "ch-table");
+        var thead = document.createElement("thead");
+        var hr = document.createElement("tr");
+        ["pulse", "amplitude now", "", "compensated", ""].forEach(function (t) {
+            hr.appendChild(_el("th", null, t));
+        });
+        thead.appendChild(hr);
+        table.appendChild(thead);
+        var tbody = document.createElement("tbody");
+        (plan.amps || []).forEach(function (a) {
+            var tr = document.createElement("tr");
+            tr.appendChild(_el("td", "fsp-pulse", (a.channel || "") + " · " + (a.op || "")));
+            tr.appendChild(_el("td", null, _fmt(a.old)));
+            tr.appendChild(_el("td", "fsp-arrow", "→"));
+            tr.appendChild(_el("td", a.clips ? "fsp-clip" : null, _fmt(a.new)));
+            tr.appendChild(_el("td", "fsp-clipmark", a.clips ? "⚠ >1.0" : ""));
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        wrap.appendChild(table);
+        card.appendChild(wrap);
+        if ((plan.skipped || []).length) {
+            var sk = _el("p", "fsp-skipped",
+                "Not compensated: " + plan.skipped.map(function (s) {
+                    return s.path + " (" + s.reason + ")";
+                }).join("; "));
+            card.appendChild(sk);
+        }
+        var foot = _el("div", "fsp-actions");
+        var n = (plan.amps || []).length;
+        var bComp = _el("button", "cnb-set", "Apply FSP + compensate "
+            + n + " amplitude" + (n === 1 ? "" : "s"));
+        bComp.type = "button";
+        bComp.addEventListener("click", function () { finish("comp"); });
+        var bSolo = _el("button", "cnb-no", "Apply FSP only");
+        bSolo.type = "button";
+        bSolo.title = "Change the port power WITHOUT touching amplitudes — every pulse's real output power shifts by the FSP delta";
+        bSolo.addEventListener("click", function () { finish("solo"); });
+        var bCancel = _el("button", "cnb-no", "Cancel");
+        bCancel.type = "button";
+        bCancel.addEventListener("click", function () { finish("cancel"); });
+        if (n === 0) bComp.disabled = true;
+        foot.appendChild(bComp);
+        foot.appendChild(bSolo);
+        foot.appendChild(bCancel);
+        card.appendChild(foot);
+        o.style.display = "flex";
+        if (window.trapFocus) {
+            o._releaseTrap = window.trapFocus(card, function () { finish("cancel"); });
+        }
+    }
+    return open;
+})();
+
+/* Build the compensated-amp updates a 'comp' resend appends to the batch. */
+window._fspCompUpdates = function (plan) {
+    return (plan && plan.amps ? plan.amps : []).map(function (a) {
+        return { dot_path: a.path, value: String(a.new) };
+    });
+};
 
 /* docs/65: once every row is applied, the popup's job is done — close it and
    say so. It used to stay open showing "✓ applied", so "Apply All" appeared to

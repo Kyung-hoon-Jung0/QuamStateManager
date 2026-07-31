@@ -11,7 +11,33 @@
    (never "value" — werkzeug takes the FIRST body occurrence and the empty
    text input precedes the buttons); [Set] is the first submit button so
    Enter submits the typed value. #}
-{% if chip_name_prompt %}
+{% if identity_confirm %}
+{# r12 branch 0 — CONSERVATIVE identity confirm: same-architecture chips can
+   be many (and even share a data folder), so this only ever ASKS. Yes stages
+   through the validated /chip-name/set path (stage-only; Apply publishes);
+   No memoizes token::identity and the fill-in prompt takes over. #}
+<div id="chip-name-banner" class="chip-name-banner cnb-suggest" role="region"
+     aria-label="Chip identity confirmation">
+  <span class="cnb-text">
+    <strong>This chip appears to be &lsquo;{{ identity_confirm.name }}&rsquo;</strong>{% if identity_confirm.data_folder %} (data folder <code>{{ identity_confirm.data_folder }}</code>){% endif %}
+    — same hardware fingerprint as that chip's history (last recorded
+    {{ identity_confirm.when }}). Its <code>extras</code> identity was wiped
+    (e.g. a regenerated state). <strong>Is this correct?</strong>
+  </span>
+  <form class="cnb-form" hx-post="/chip-name/set"
+        hx-target="#chip-name-banner" hx-swap="outerHTML">
+    <input type="hidden" name="name" value="{{ identity_confirm.name }}">
+    {% if identity_confirm.data_folder %}<input type="hidden" name="data_folder" value="{{ identity_confirm.data_folder }}">{% endif %}
+    <button type="submit" class="cnb-set"
+            title="Stages extras.chip_name{% if identity_confirm.data_folder %} + extras.data_folder{% endif %} into the working state — Apply to live publishes it">Yes — restore this identity</button>
+    <button type="button" class="cnb-no" hx-post="/chip-identity/decline"
+            hx-include="closest form"
+            hx-target="#chip-name-banner" hx-swap="outerHTML"
+            title="Not this chip — switch to entering the name / data folder yourself">No — different chip</button>
+    <input type="hidden" name="token" value="{{ identity_confirm.token }}">
+  </form>
+</div>
+{% elif chip_name_prompt %}
 <div id="chip-name-banner" class="chip-name-banner" role="region"
      aria-label="Chip name prompt">
   <span class="cnb-text">
@@ -25,7 +51,8 @@
     <input type="text" name="name" value="{{ chip_name_prompt.suggest }}"
            maxlength="64" required aria-label="Chip name"
            placeholder="chip name">
-    <input type="text" name="data_folder" aria-label="Data folder (optional)"
+    <input type="text" name="data_folder" id="cnb-name-df"
+           aria-label="Data folder (optional)"
            placeholder="data folder — e.g. D:\data\myproject"
            list="cnb-df-options"
            title="Optional: this chip's experiment-data root (an ABSOLUTE path) — stored in extras.data_folder so Datasets auto-pairs with it">
@@ -33,6 +60,9 @@
       {% for c in data_folder_candidates %}<option value="{{ c.value }}">{{ c.label }}</option>{% endfor %}
     </datalist>
     <button type="submit" class="cnb-set">Set name</button>
+    <button type="button" class="cnb-no"
+            onclick="openFolderBrowser('cnb-name-df','dataset',{autoSubmit:false})"
+            title="Pick the data folder — fills the box only; Set name commits">Browse&hellip;</button>
     <button type="button" class="cnb-no" hx-post="/chip-name/decline"
             hx-include="closest form"
             hx-target="#chip-name-banner" hx-swap="outerHTML"

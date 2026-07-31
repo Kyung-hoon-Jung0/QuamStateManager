@@ -874,6 +874,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # docs/20 v2: re-evaluate the first-open chip-name banner on every
         # activation (origin can flip live→archive; a staged name dismisses),
         # and adopt the chip's declared data folder(s) as workspace roots.
+        _maybe_identity_confirm(current)
         _maybe_chip_name_prompt(current)
         _adopt_extras_data_folders(current)
         _maybe_data_folder_suggest(current)
@@ -935,6 +936,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # chip without its memo); every activation path converges on the
         # reverse index, so a lost memo self-heals.
         _acquire_project_scope(ctx)
+        _maybe_identity_confirm(ctx)
         _maybe_chip_name_prompt(ctx)
         _adopt_extras_data_folders(ctx)
         _maybe_data_folder_suggest(ctx)
@@ -1802,6 +1804,66 @@ def _chip_prompt_token(path: str, fp: Any) -> str:
         return "path:" + str(path)
 
 
+def _maybe_identity_confirm(ctx: dict | None) -> None:
+    """Gate for the CONSERVATIVE identity-confirm banner (docs/20 r12).
+
+    An UNNAMED live chip whose history remembers a declared identity (the
+    gilboa incident: a lab-side state regeneration wiped extras while the
+    snapshots kept it) gets "This chip appears to be 'X' — is this
+    correct?" INSTEAD of the blank name prompt. Same-architecture chips can
+    be many and even share a data folder, so this only ever ASKS — Yes
+    stages through the normal validated /chip-name/set path; No memoizes
+    (``token::identity``) and falls back to the fill-in prompt. The
+    remembered data folder is offered only when it passes the validator
+    (a remembered not-a-path mistake is never re-suggested)."""
+    if not ctx or ctx.get("type") != "quam":
+        return
+    ctx["identity_confirm"] = None
+    try:
+        if (ctx.get("origin") or "live") != "live":
+            return
+        path = str(ctx.get("path") or "")
+        store = ctx.get("store")
+        if not path or store is None:
+            return
+        try:
+            Path(path).resolve().relative_to(
+                Path(current_app.instance_path).resolve())
+            return
+        except (ValueError, OSError):
+            pass
+        from quam_state_manager.core.history import (
+            extras_chip_name, fingerprint_from_dicts)
+        with store._lock:
+            if extras_chip_name(store.state):
+                return                      # named — nothing to confirm
+            fp = fingerprint_from_dicts(store.state, store.wiring)
+        token = _chip_prompt_token(path, fp)
+        if f"{token}::identity" in _load_chip_prompt_memo():
+            return
+        hm = current_app.config.get("history_manager")
+        if hm is None:
+            return
+        remembered = hm.remembered_identity(path)
+        if not remembered or not remembered.get("name"):
+            return
+        df = remembered.get("data_folder")
+        offer_df = None
+        if df and _validate_data_folder(str(df))["kind"] != "not_a_path":
+            offer_df = str(df)
+        ts = str(remembered.get("snapshot_ts") or "")
+        when = (f"{ts[0:4]}-{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}"
+                if len(ts) >= 13 else ts)
+        ctx["identity_confirm"] = {
+            "name": remembered["name"],
+            "data_folder": offer_df,
+            "when": when,
+            "token": token,
+        }
+    except Exception:  # noqa: BLE001 — a banner must never break activation
+        logger.debug("identity-confirm gate failed", exc_info=True)
+
+
 def _maybe_chip_name_prompt(ctx: dict | None) -> None:
     """Gate + memo for the first-open "Name this chip?" banner.
 
@@ -1900,6 +1962,7 @@ def chip_name_set():
     except (KeyError, TypeError, ValueError) as e:
         return render_template("_status.html", message=str(e), level="error"), 400
     ctx["chip_name_prompt"] = None
+    ctx["identity_confirm"] = None   # the Yes button routes through here (r12)
     _adopt_extras_data_folders(ctx)
     _maybe_data_folder_suggest(ctx)
     body = render_template(
@@ -2046,6 +2109,32 @@ def chip_data_folder_set():
     return resp
 
 
+@bp.route("/chip-identity/decline", methods=["POST"])
+def chip_identity_decline():
+    """"No — different chip" on the identity-confirm banner (docs/20 r12):
+    memoize ``token::identity`` so the conservative question never re-nags,
+    then re-render the strip — which now falls through to the plain fill-in
+    name prompt (the user types/browses the right values themselves)."""
+    ctx = _active_ctx()
+    token = (request.form.get("token") or "").strip()
+    if token:
+        with _chip_prompt_memo_lock:
+            data = _load_chip_prompt_memo()
+            data[f"{token}::identity"] = {
+                "declined_at": datetime.now().isoformat(timespec="seconds"),
+                "path_hint": str((ctx or {}).get("path") or ""),
+            }
+            try:
+                safe_io.atomic_write_json(_chip_prompt_memo_file(), data)
+            except OSError:
+                logger.warning("Could not persist identity decline",
+                               exc_info=True)
+    if ctx:
+        ctx["identity_confirm"] = None
+        _maybe_chip_name_prompt(ctx)   # the fill-in prompt takes over NOW
+    return render_template("_chip_name_banner.html", **_ctx())
+
+
 @bp.route("/chip-data-folder/decline", methods=["POST"])
 def chip_data_folder_decline():
     """"Not now" for the record-suggestion banner (::datafolder memo)."""
@@ -2105,6 +2194,7 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # named / declined / archive / no chip) + declared-but-unreachable
         # extras.data_folder values (muted note, never an error).
         "chip_name_prompt": (_active_ctx() or {}).get("chip_name_prompt"),
+        "identity_confirm": (_active_ctx() or {}).get("identity_confirm"),
         "extras_data_dangling": (_active_ctx() or {}).get("extras_data_dangling") or [],
         "data_folder_suggest": (_active_ctx() or {}).get("data_folder_suggest"),
         "data_folder_candidates": (_active_ctx() or {}).get("data_folder_candidates") or [],
@@ -4071,6 +4161,17 @@ def field_edit():
         _ro = _editability_reason(modifier.store, target_path)
         if _ro is not None:
             raise ValueError(_ro)
+        # docs/20 r12-B: an FSP edit NEVER silently changes amplitudes — and
+        # never commits before the user saw the compensation offer. Without
+        # an ack the plan comes back 409; the popup then applies FSP+amps in
+        # ONE /field/edit-batch (fsp_ack=comp) or FSP alone (fsp_ack=solo).
+        if request.form.get("fsp_ack") not in ("comp", "solo"):
+            plan = _fsp_plan_for(modifier.store, target_path, raw_value)
+            if plan is not None:
+                return jsonify(
+                    ok=False, fsp_compensation=plan,
+                    error=("This edit changes a port's full-scale power — "
+                           "confirm the amplitude compensation first")), 409
         parsed = _parse_for_target(modifier.store, target_path, raw_value)
         modifier.set_value(target_path, parsed)
         _invalidate_engine_cache(ctx)
@@ -4080,6 +4181,23 @@ def field_edit():
         return jsonify(ok=False, error=str(e)), 400
 
     return jsonify(ok=True, tray_html=_tray_html())
+
+
+def _fsp_plan_for(store, target_path: str, raw_value) -> dict | None:
+    """The r12-B compensation plan for an FSP target, else None (non-FSP
+    paths, non-numeric values, unchanged FSP — the edit proceeds normally).
+    Read-only; never raises (a plan bug must never brick port edits)."""
+    if not isinstance(target_path, str) \
+            or not target_path.endswith(".full_scale_power_dbm"):
+        return None
+    try:
+        from quam_state_manager.core import mw_fem
+        with store._lock:
+            merged = store.merged
+        return mw_fem.fsp_compensation_plan(merged, target_path, raw_value)
+    except Exception:  # noqa: BLE001
+        logger.debug("fsp plan computation failed", exc_info=True)
+        return None
 
 
 def _parse_for_target(store, target_path: str, raw_value: str):
@@ -5173,6 +5291,30 @@ def field_edit_batch():
         return jsonify(ok=False, error="No updates supplied"), 400
 
     independent = bool(_pj.get("independent"))
+
+    # docs/20 r12-B: an FSP edit never silently changes amplitudes — and
+    # never commits before the compensation offer was seen. Batches without
+    # the ack get the FIRST FSP entry's plan back as a 409; the popup then
+    # resends the whole batch with the compensated amps included and
+    # fsp_ack=comp (one gid = one Review bundle = one Ctrl+Z) or
+    # fsp_ack=solo (FSP alone).
+    _fsp_ack = str(_pj.get("fsp_ack") or request.form.get("fsp_ack") or "")
+    if _fsp_ack not in ("comp", "solo"):
+        for _dp, _rv, _c in pairs:
+            try:
+                _tgt = _resolve_edit_path(modifier.store, _dp)
+            except Exception:  # noqa: BLE001
+                continue
+            plan = _fsp_plan_for(modifier.store, _tgt, _rv)
+            if plan is not None:
+                fsp_paths = sum(
+                    1 for (p2, _v2, _c2) in pairs
+                    if str(p2).endswith("full_scale_power_dbm"))
+                plan["more_fsp_in_batch"] = fsp_paths > 1
+                return jsonify(
+                    ok=False, fsp_compensation=plan, fsp_dot_path=_dp,
+                    error=("This batch changes a port's full-scale power — "
+                           "confirm the amplitude compensation first")), 409
 
     results: list[dict[str, Any]] = []
     applied_entries: list[Any] = []

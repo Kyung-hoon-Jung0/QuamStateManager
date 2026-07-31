@@ -758,6 +758,96 @@ class TestLadderDriftHeal:
         assert not (root / "gilboa" / mb.timestamp).is_dir(),             "two physical chips must never merge into one dir"
 
 
+class TestIdentityConfirm:
+    """r12: an unnamed live chip whose HISTORY remembers a declared identity
+    gets the conservative "Is this chip 'X'?" banner — never an automatic
+    restore (same-architecture chips can be many; even data folders can
+    coincide). Yes stages via the validated /chip-name/set; No memoizes and
+    falls back to the fill-in prompt."""
+
+    def _wiped_env(self, tmp_path, *, data_folder=None):
+        """Chip named + snapshotted, then extras WIPED on disk (the gilboa
+        regeneration incident), then loaded fresh."""
+        from quam_state_manager.web.app import create_app
+        named = _state("qA1", chip_name="gilboa", data_folder=data_folder)
+        live = _write(tmp_path / "chips" / "live", named, _wiring("10.0.0.7"))
+        app0 = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        hm = app0.config["history_manager"]
+        hm.check_and_snapshot(str(live), "manual", force=True)
+        wiped = _state("qA1")
+        wiped["extras"] = {}
+        _write(tmp_path / "chips" / "live", wiped, _wiring("10.0.0.7"))
+        c = app0.test_client()
+        r = c.post("/load", data={"folder": str(live)})
+        assert r.status_code in (200, 302)
+        ctx = next(iter(app0.config["contexts"].values()))
+        return app0, c, live, ctx, hm
+
+    def test_remembered_identity_from_snapshots(self, tmp_path):
+        data_root = tmp_path / "df"
+        data_root.mkdir()
+        _app, _c, live, _ctx, hm = self._wiped_env(
+            tmp_path, data_folder=str(data_root))
+        rem = hm.remembered_identity(str(live))
+        assert rem and rem["name"] == "gilboa"
+        assert rem["data_folder"] == str(data_root)
+
+    def test_confirm_banner_renders_and_yes_stages(self, tmp_path):
+        data_root = tmp_path / "df"
+        data_root.mkdir()
+        _app, c, _live, ctx, _hm = self._wiped_env(
+            tmp_path, data_folder=str(data_root))
+        html = c.get("/qubits").data.decode()
+        assert "This chip appears to be" in html
+        assert "gilboa" in html and "Is this correct?" in html
+        assert 'hx-post="/chip-identity/decline"' in html
+        # the Yes form routes through the EXISTING validated path
+        assert 'hx-post="/chip-name/set"' in html
+        r = c.post("/chip-name/set", data={"name": "gilboa",
+                                           "data_folder": str(data_root)})
+        assert r.status_code == 200
+        assert ctx["store"].state["extras"]["chip_name"] == "gilboa"
+        assert "This chip appears to be" not in c.get("/qubits").data.decode()
+
+    def test_not_a_path_data_folder_never_reoffered(self, tmp_path):
+        _app, c, _live, ctx, _hm = self._wiped_env(
+            tmp_path, data_folder="gilboa_iqcc")
+        html = c.get("/qubits").data.decode()
+        assert "This chip appears to be" in html
+        assert ctx["identity_confirm"]["data_folder"] is None, \
+            "a remembered not-a-path mistake must not be re-suggested"
+        assert 'name="data_folder" value="gilboa_iqcc"' not in html
+
+    def test_no_falls_back_to_fill_in_prompt(self, tmp_path):
+        _app, c, live, _ctx, _hm = self._wiped_env(tmp_path)
+        html = c.get("/qubits").data.decode()
+        import re as _re
+        token = _re.search(r'name="token" value="([^"]+)"', html).group(1)
+        r = c.post("/chip-identity/decline", data={"token": token})
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert "This chip appears to be" not in body
+        assert 'hx-post="/chip-name/set"' in body, \
+            "the decline response IS the fill-in prompt"
+        assert "Browse" in body, "manual path picking is offered"
+        # survives a fresh re-activation
+        c.post("/load", data={"folder": str(live)})
+        html2 = c.get("/qubits").data.decode()
+        assert "This chip appears to be" not in html2
+        assert 'hx-post="/chip-name/set"' in html2
+
+    def test_never_for_chips_without_history(self, tmp_path):
+        from quam_state_manager.web.app import create_app
+        live = _write(tmp_path / "chips" / "live", _state("qA1"),
+                      _wiring("10.0.0.8"))
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(live)})
+        html = c.get("/qubits").data.decode()
+        assert "This chip appears to be" not in html
+        assert 'hx-post="/chip-name/set"' in html   # plain prompt instead
+
+
 class TestAuditR10Pins:
     def test_extras_editors_in_scheduler_mutator_set(self):
         from quam_state_manager.web import routes as routes_mod

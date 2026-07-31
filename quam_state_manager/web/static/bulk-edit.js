@@ -776,11 +776,34 @@
             updates.push({ dot_path: c.getAttribute('data-dot-path'), value: c.value });
         });
         if (!updates.length) return Promise.resolve({ ok: true, tray_html: null });
-        return fetch('/field/edit-batch', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ updates: updates, expect_chip: window.__chipToken || '' })
-        }).then(function (resp) { return resp.json().then(function (j) { return { status: resp.status, body: j }; }); })
-            .then(function (r) {
+        var _postBatch = function (ups, fspAck) {
+            var payload = { updates: ups, expect_chip: window.__chipToken || '' };
+            if (fspAck) payload.fsp_ack = fspAck;
+            return fetch('/field/edit-batch', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            }).then(function (resp) { return resp.json().then(function (j) { return { status: resp.status, body: j }; }); });
+        };
+        return _postBatch(updates, null)
+            .then(function handleR(r) {
+                // r12-B: an FSP cell in this batch → the compensation offer
+                // first; nothing was committed. comp = resend everything plus
+                // the compensated amps in ONE batch (one gid, one Ctrl+Z).
+                if (r.status === 409 && r.body && r.body.fsp_compensation
+                    && window._openFspPopup) {
+                    return new Promise(function (resolve) {
+                        window._openFspPopup(r.body.fsp_compensation, function (mode, plan) {
+                            if (mode === 'cancel') {
+                                resolve({ ok: false, cancelled: true });
+                                return;    // nothing committed; cells stay dirty
+                            }
+                            var ups = mode === 'comp'
+                                ? updates.concat(window._fspCompUpdates(plan))
+                                : updates;
+                            _postBatch(ups, mode).then(handleR).then(resolve);
+                        });
+                    });
+                }
                 var byPath = {};
                 (r.body && r.body.results || []).forEach(function (res) { byPath[res.dot_path] = res; });
                 if (r.body && r.body.ok) {
