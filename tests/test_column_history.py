@@ -160,6 +160,121 @@ class TestColumnHistoryPanel:
         assert ".bulk-col-hist" in pjs
 
 
+def _changes(html: str) -> str:
+    """The Changes tab's slice of the panel (everything before the By-run
+    wrapper) — lets asserts target one tab unambiguously."""
+    return html.split("ch-view-byrun")[0]
+
+
+class TestColumnHistoryChanges:
+    """r9 amendment: the default tab shows each row's OWN change points from
+    the merged snapshot+runs series — manual applied edits included — instead
+    of a wall of per-run values that mostly never changed."""
+
+    def test_manual_applied_edit_appears_as_save_chip(self, env):
+        """THE report: '수동으로 수정한 건 컬럼 시계에 안 나온다'. A manual
+        edit applied to live produces a trigger-'save' snapshot — it must
+        surface as a chip with the not-from-an-experiment tooltip."""
+        c = env["client"]
+        hm = env["app"].config["history_manager"]
+        hm.check_and_snapshot(str(env["live"]), "manual", force=True)  # 0.08
+        r = c.post("/field/edit-batch", json={
+            "updates": [{"dot_path": "qubits.qA1.z.joint_offset",
+                         "value": "0.09"}],
+            "expect_chip": "",
+        })
+        assert r.get_json()["ok"]
+        assert c.post("/state/apply-to-live").status_code == 200
+        ch = _changes(_post_column(c, _COL).data.decode())
+        assert 'data-fill="0.09"' in ch and 'data-fill="0.08"' in ch, \
+            "both the old and the manually-applied value must be chips"
+        assert "a save snapshot of the live folder" in ch
+        assert "ch-dot-save" in ch
+        assert "ch-chip-now" in ch, "newest chip == current gets the badge"
+
+    def test_run_attributed_chip_carries_data_link(self, env):
+        c = env["client"]
+        data_root = env["tmp"] / "data_chg"
+        _seed_run(data_root, 31, _state(off_a=0.079, off_b=0.110))
+        _seed_run(data_root, 32, _state(off_a=0.081, off_b=0.110))
+        _seed_run(data_root, 33, _state(off_a=0.081, off_b=0.110))
+        c.post("/workspace/add", data={"folder": str(data_root)})
+        ch = _changes(_post_column(c, _COL).data.decode())
+        key = routes_mod._folder_key(data_root)
+        # 0.079 was INTRODUCED by run 31 — the chip links to that run, and
+        # the hover Data affordance exists.
+        assert "ch-chip-data" in ch
+        assert f'hx-get="/dataset/{key}:31"' in ch
+
+    def test_repeated_run_values_collapse_to_one_chip(self, env):
+        """3 runs with the same value → ONE chip (the wall of identical
+        values was the original complaint)."""
+        c = env["client"]
+        data_root = env["tmp"] / "data_same"
+        for rid in (41, 42, 43):
+            _seed_run(data_root, rid, _state(off_a=0.081, off_b=0.110))
+        c.post("/workspace/add", data={"folder": str(data_root)})
+        ch = _changes(_post_column(c, _COL).data.decode())
+        assert ch.count('data-fill="0.081"') == 1
+
+    def test_tracked_fastpath_chip_gets_uid_from_meta(self, env):
+        """Tracked columns come from the SQLite index whose rows carry no
+        folder — the meta-by-timestamp coalesce must supply it so the Data
+        link renders (fails without the history.column_history fix)."""
+        c = env["client"]
+        hm = env["app"].config["history_manager"]
+        data_root = env["tmp"] / "data_trk"
+        run = _seed_run(data_root, 77, _state())
+        (run / "quam_state" / "state.json").unlink()   # runs tier can't serve it
+        c.post("/workspace/add", data={"folder": str(data_root)})
+        _write_chip(env["live"], _state(f01_a=5.1e9))
+        hm.check_and_snapshot(str(env["live"]), "manual", force=True)
+        _write_chip(env["live"], _state(f01_a=5.2e9))
+        hm.check_and_snapshot(str(env["live"]), "experiment", force=True,
+                              experiment_name="08_spec", run_id=77,
+                              experiment_folder_path=str(run))
+        ch = _changes(_post_column(c, {"qA1": "qubits.qA1.f_01",
+                                       "qA2": "qubits.qA2.f_01"},
+                                   label="f 01", unit="Hz").data.decode())
+        key = routes_mod._folder_key(data_root)
+        assert f'hx-get="/dataset/{key}:77"' in ch
+
+    def test_tab_markup_and_js_pins(self, env):
+        c = env["client"]
+        html = _post_column(c, _COL).data.decode()
+        assert 'data-view="changes"' in html and 'data-view="byrun"' in html
+        assert "ColumnHistory.switchView" in html
+        assert "ch-view ch-view-changes" in html
+        assert 'ch-view ch-view-byrun" hidden' in html, \
+            "By-run starts hidden; JS applies the remembered choice"
+        js = Path("quam_state_manager/web/static/app.js").read_text(
+            encoding="utf-8")
+        assert "quam_colhist_view" in js and "switchView" in js
+
+    def test_pair_grid_chips_safe(self, tmp_path):
+        live = tmp_path / "chips" / "live"
+        state = _state()
+        state["qubit_pairs"] = {"qA1-qA2": {"gates": {"cz": {"amp": 0.25}}}}
+        _write_chip(live, state)
+        from quam_state_manager.web.app import create_app as _ca
+        app = _ca(testing=True, instance_path=str(tmp_path / "_inst"))
+        c = app.test_client()
+        assert c.post("/load", data={"folder": str(live)}).status_code in (200, 302)
+        hm = app.config["history_manager"]
+        hm.check_and_snapshot(str(live), "manual", force=True)      # 0.25
+        state["qubit_pairs"]["qA1-qA2"]["gates"]["cz"]["amp"] = 0.30
+        _write_chip(live, state)
+        hm.check_and_snapshot(str(live), "manual", force=True)      # 0.30
+        r = c.post("/bulk/column-history", data={
+            "grid": "pair", "label": "cz amp", "unit": "", "col_key": "cz_amp",
+            "paths": json.dumps({"qA1-qA2": "qubit_pairs.qA1-qA2.gates.cz.amp"}),
+        })
+        assert r.status_code == 200
+        ch = _changes(r.data.decode())
+        assert 'data-row="qA1-qA2"' in ch
+        assert 'data-fill="0.25"' in ch and 'data-fill="0.3"' in ch
+
+
 class TestReviewTraySync:
     """docs/20 v2 sync contract: one undo press = exactly one change_log
     GROUP disappearing from the Review tray."""

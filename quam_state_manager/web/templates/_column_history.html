@@ -1,21 +1,87 @@
-{# Column History panel (docs/20 v2): one bulk-grid column's recent story.
+{# Column History panel (docs/20 v2 + r9 Changes amendment): one bulk-grid
+   column's recent story, TWO tabs in one response (toggle is client-only,
+   remembered in localStorage — ColumnHistory.switchView):
+   - "Changes" (default): per-row change-point chips over the merged
+     snapshot+runs series — manual applied edits (trigger "save") appear
+     alongside run-set values; chip click fills that row's grid cell
+     (LiveEditUndo-recorded; staging stays user-explicit); hovering a
+     run-attributed chip reveals its Data link.
+   - "By run": the original rows × last-N-matching-runs table with the
+     per-run "Use all" (fills the whole column as ONE undoable action).
    Injected into the ColumnHistory body-mounted modal by app.js (which
-   htmx.process()es it — the run headers' open-run links use hx-get).
-   Rows = entities; first column = Param-History-style sparkline (snapshot
-   tiers + runs, change-point collapsed); then the current value and the
-   last N matching runs. Value click = fill that entity's grid cell
-   (LiveEditUndo-recorded; staging stays user-explicit); per-run "Use all"
-   fills the whole column as ONE undoable action. #}
+   htmx.process()es it — Data links / run headers use hx-get). #}
 <div class="ch-head">
   <span class="ch-title">
     &#128344; Column history — {{ label }}{% if unit %} <span class="ch-unit">({{ unit }})</span>{% endif %}
   </span>
+  <div class="ch-tabs" role="tablist">
+    <button type="button" class="ch-tab" data-view="changes" aria-pressed="true"
+            onclick="ColumnHistory.switchView(this)"
+            title="Per-row change points — when each value changed and what set it (manual applies included)">Changes</button>
+    <button type="button" class="ch-tab" data-view="byrun" aria-pressed="false"
+            onclick="ColumnHistory.switchView(this)"
+            title="The last matching runs side by side, with per-run Use all">By run</button>
+  </div>
   <button type="button" class="ch-close" onclick="ColumnHistory.close()"
           title="Close (Esc)">&times;</button>
 </div>
 {% if not runs and not rows %}
 <p class="ch-empty">Nothing to show for this column.</p>
 {% else %}
+<div class="ch-view ch-view-changes">
+<div class="ch-scroll">
+<table class="ch-table ch-chg-table" data-grid="{{ grid }}" data-col-key="{{ col_key }}">
+  <thead>
+    <tr>
+      <th class="ch-rowhead"></th>
+      <th class="ch-trend">trend</th>
+      <th class="ch-current">current</th>
+      <th class="ch-chg-head">changes (newest first)</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for row in rows %}
+    <tr data-row="{{ row.id }}">
+      <th class="ch-rowhead" scope="row">{{ row.id }}</th>
+      <td class="ch-trend">
+        {% if row.svg %}<svg class="history-cell-spark ch-spark" viewBox="0 0 100 30" preserveAspectRatio="none">{{ row.svg | safe }}</svg>
+        {% else %}<span class="ch-nospark">—</span>{% endif %}
+      </td>
+      <td class="ch-current" title="{{ row.current_fill }}"><code>{{ row.current }}</code></td>
+      <td class="ch-chips">
+        {% for p in row.chips %}
+        <span class="ch-chipwrap">
+          <button type="button"
+                  class="ch-chip{% if p.is_current %} ch-chip-cur{% endif %}{% if not p.has %} ch-chip-miss{% endif %}"
+                  {% if p.has %}data-row="{{ row.id }}" data-fill="{{ p.fill }}"
+                  onclick="ColumnHistory.useValue(this)"{% endif %}
+                  title="{% if p.run_id is not none or p.experiment %}run #{{ p.run_id }} — {{ p.experiment or '' }}{% else %}Not from an experiment — a {{ p.trigger }} snapshot of the live folder{% endif %}{% if p.has %} &middot; click to fill {{ row.id }}'s cell (Enter there stages it){% endif %}">
+            <span class="ch-chip-dot ch-dot-{{ p.trigger }}" aria-hidden="true"></span>
+            <code>{% if p.has %}{{ p.display }}{% else %}—{% endif %}</code>
+            <span class="ch-chip-when">{{ p.when }}</span>
+            {% if p.is_current %}<span class="ch-chip-now">current</span>{% endif %}
+          </button>
+          {% if p.uid %}
+          <button type="button" class="ch-chip-data" hx-get="/dataset/{{ p.uid }}"
+                  hx-target="#inspector-pane" hx-swap="innerHTML"
+                  title="Open run #{{ p.run_id }}'s data in the inspector pane">Data</button>
+          {% endif %}
+        </span>
+        {% else %}<span class="ch-nochips">—</span>{% endfor %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="ch-foot ch-chg-foot">
+  each row's own change points, newest first (last {{ chip_cap }} shown)
+  &middot; from the last 40 snapshots + {{ runs|length }} run{{ 's' if runs|length != 1 }}
+  &middot; snapshots are captured on Apply — your applied edits appear as &ldquo;save&rdquo;
+  &middot; hover a run-set chip for its Data link
+</p>
+</div>
+<div class="ch-view ch-view-byrun" hidden>
 <div class="ch-scroll">
 <table class="ch-table" data-grid="{{ grid }}" data-col-key="{{ col_key }}">
   <thead>
@@ -66,4 +132,5 @@
   &middot; trend = snapshots + runs, change points
   &middot; a highlighted cell is where that run changed the value
 </p>
+</div>
 {% endif %}

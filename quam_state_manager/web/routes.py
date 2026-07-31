@@ -3892,6 +3892,37 @@ def _fh_display_string(value: Any) -> str:
     return s if len(s) <= 42 else s[:39] + "…"
 
 
+def _uid_roots() -> list[tuple[Path, str]]:
+    """Registered dataset roots as (resolved path, folder key) pairs — the
+    containment table for run-uid resolution (shared by /field/history and
+    /bulk/column-history)."""
+    roots: list[tuple[Path, str]] = []
+    for cand in _dataset_candidate_folders(fast=True):
+        try:
+            roots.append((Path(cand).resolve(), _folder_key(cand)))
+        except OSError:
+            continue
+    return roots
+
+
+def _uid_for_run_ref(fp: Any, rid: Any, roots: list[tuple[Path, str]]) -> str | None:
+    """Resolve a history row's (experiment_folder_path, run_id) to a dataset
+    uid via root containment — None when unresolvable (no Data link)."""
+    if not fp or rid is None:
+        return None
+    try:
+        rp = Path(fp).resolve()
+    except OSError:
+        return None
+    for root, key in roots:
+        try:
+            if rp.is_relative_to(root):
+                return f"{key}:{int(rid)}"
+        except (OSError, ValueError):
+            continue
+    return None
+
+
 # Immutable-run caches for the field-history runs tier (docs/20 v2 Step 6).
 # Runs are write-once after completion, so per-folder identity and per-
 # (folder, dot_path) values never go stale; both are size-bounded.
@@ -4173,17 +4204,22 @@ def _runs_column_series(ctx: dict, path_map: dict[str, str], *,
     return out, examined
 
 
+CH_MAX_CHIPS = 6   # per-row change-point chips shown in the Changes tab
+
+
 @bp.route("/bulk/column-history", methods=["POST"])
 def bulk_column_history():
-    """Column History panel (docs/20 v2): one grid column's recent story.
+    """Column History panel (docs/20 v2 + the r9 Changes amendment).
 
     Body (form): ``grid`` (qubit|pair), ``label``, ``unit``,
     ``paths`` = JSON ``{row_id: dot_path}`` — collected client-side from the
     rendered cells (both grids symmetric; paths feed READ-ONLY extraction
-    only). Renders rows = entities, first column = Param-History-style
-    sparkline (snapshot tiers + runs merged), then the current value and the
-    last N matching runs' values (each clickable to fill the grid cell;
-    per-run 'Use all' fills the whole column — staging stays user-explicit).
+    only). One response renders BOTH tabs: **Changes** (default — per-row
+    change-point chips over the merged snapshot+runs series, so manual
+    applied edits (trigger "save") appear alongside run-set values, each chip
+    clickable to fill the grid cell and hover-revealing its run's Data link)
+    and **By run** (the original rows × last-N-matching-runs table with the
+    per-run 'Use all'). Staging stays user-explicit in both.
     """
     ctx = _active_ctx()
     store = ctx.get("store") if ctx else None
@@ -4225,6 +4261,7 @@ def bulk_column_history():
         return f if f == f and f not in (float("inf"), float("-inf")) else None
 
     rows_out: list[dict[str, Any]] = []
+    uid_roots = _uid_roots()
     with store._lock:
         merged_now = store.merged
     for row_id in sorted(path_map):
@@ -4237,12 +4274,20 @@ def bulk_column_history():
                 current = ft.get("resolved_value")
         except Exception:  # noqa: BLE001
             editable = False
-        # Sparkline series: snapshot tiers + run values, time-merged, then
-        # change-point collapsed (field_history's NaN-safe key rule).
-        series = list(snap_series.get(row_id) or [])
+        # Merged series: snapshot tiers + run values, time-merged, then
+        # change-point collapsed (field_history's NaN-safe key rule). The
+        # snapshot-rows-first build + STABLE sort on ts alone reproduces
+        # field_history's (ts, rank) ordering — an ingested run's snapshot
+        # row wins over the direct run row at equal ts, so equal values
+        # dedup in the collapse. Do not change the build order or sort key
+        # (a full-tuple sort would also crash on None<str at slot 4/5).
+        # 7th slot = the run tier's ready uid (snapshot rows resolve via
+        # folder containment below).
+        series = [t + (None,) for t in (snap_series.get(row_id) or [])]
         for r in reversed(runs):                     # oldest-first append
             series.append((r["ts"], r["values"].get(row_id), "experiment",
-                           r["run_id"], r["experiment"], r["folder"]))
+                           r["run_id"], r["experiment"], r["folder"],
+                           r["uid"]))
         series.sort(key=lambda t: t[0])
 
         def _key(v):
@@ -4252,9 +4297,11 @@ def bulk_column_history():
 
         collapsed: list[dict] = []
         prev: Any = object()
-        for ts, value, trigger, _rid, _exp, _folder in series:
+        for ts, value, trigger, rid, exp, folder, run_uid in series:
             if _key(value) != prev:
-                collapsed.append({"value": value, "trigger": trigger or "auto"})
+                collapsed.append({"value": value, "trigger": trigger or "auto",
+                                  "ts": ts, "run_id": rid, "experiment": exp,
+                                  "folder": folder, "uid": run_uid})
             prev = _key(value)
         spark_vals = [{"value": p["value"], "trigger": p["trigger"]}
                       for p in collapsed
@@ -4279,6 +4326,28 @@ def bulk_column_history():
                 "has": v is not None,
                 "changed": i + 1 < len(runs) and v != older,
             })
+        # Changes tab: this row's OWN change points, newest first. The oldest
+        # known value stays (a never-changed row still shows "this value
+        # since {when}"); deeper history falls off the cap naturally.
+        chips = []
+        for p in list(reversed(collapsed))[:CH_MAX_CHIPS]:
+            ts = p["ts"]
+            chips.append({
+                "display": _fh_display_string(p["value"]),
+                "fill": _fh_fill_string(p["value"]),
+                "has": p["value"] is not None,
+                "when": (f"{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}"
+                         if len(ts) >= 13 else ts),
+                "trigger": p["trigger"],
+                "run_id": p["run_id"],
+                "experiment": p["experiment"],
+                "uid": p["uid"] or _uid_for_run_ref(p["folder"], p["run_id"],
+                                                    uid_roots),
+            })
+        if chips:
+            v0 = collapsed[-1]["value"]
+            chips[0]["is_current"] = (current is not None and v0 == current
+                                      and isinstance(v0, type(current)))
         rows_out.append({
             "id": row_id,
             "dot_path": dp,
@@ -4287,11 +4356,13 @@ def bulk_column_history():
             "current_fill": _fh_fill_string(current),
             "editable": editable,
             "cells": cells,
+            "chips": chips,
         })
 
     return render_template(
         "_column_history.html", label=label, unit=unit, grid=grid,
-        col_key=col_key, rows=rows_out, runs=runs, examined=examined)
+        col_key=col_key, rows=rows_out, runs=runs, examined=examined,
+        chip_cap=CH_MAX_CHIPS)
 
 
 @bp.route("/field/history", methods=["GET"])
@@ -4333,12 +4404,7 @@ def field_history():
     except Exception:  # noqa: BLE001
         pass
 
-    roots: list[tuple[Path, str]] = []
-    for cand in _dataset_candidate_folders(fast=True):
-        try:
-            roots.append((Path(cand).resolve(), _folder_key(cand)))
-        except OSError:
-            continue
+    roots = _uid_roots()
     for pt in hist["points"]:
         value = pt["value"]
         pt["fill"] = _fh_fill_string(value)
@@ -4348,21 +4414,8 @@ def field_history():
         ts = pt.get("timestamp") or ""
         pt["when"] = (f"{ts[0:4]}-{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}"
                       if len(ts) >= 13 else ts)
-        pt["uid"] = None
-        fp, rid = pt.get("experiment_folder_path"), pt.get("run_id")
-        if not fp or rid is None:
-            continue
-        try:
-            rp = Path(fp).resolve()
-        except OSError:
-            continue
-        for root, key in roots:
-            try:
-                if rp.is_relative_to(root):
-                    pt["uid"] = f"{key}:{int(rid)}"
-                    break
-            except (OSError, ValueError):
-                continue
+        pt["uid"] = _uid_for_run_ref(pt.get("experiment_folder_path"),
+                                     pt.get("run_id"), roots)
     # Mini trend chart payload (docs/20 v2 Step 7): the change points as a
     # step series, finite numerics only (a text/list field simply gets no
     # chart). Oldest-first for plotting.

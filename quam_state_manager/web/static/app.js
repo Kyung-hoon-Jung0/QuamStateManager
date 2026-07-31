@@ -11820,6 +11820,7 @@ window.ColumnHistory = (function () {
             .then(function (html) {
                 card.innerHTML = html;
                 if (window.htmx) window.htmx.process(card);
+                _applyView(card);
             })
             .catch(function () {
                 card.innerHTML =
@@ -11834,6 +11835,26 @@ window.ColumnHistory = (function () {
             overlay._releaseTrap = null;
         }
         overlay.style.display = "none";
+    }
+
+    // r9: Changes (default) ⇄ By run tab, remembered across opens. Applied
+    // synchronously right after inject — no flicker; no-ops on the empty /
+    // error branches (no .ch-view nodes there).
+    var VIEW_KEY = "quam_colhist_view";
+    function _applyView(card) {
+        var v = safeLSGet(VIEW_KEY) === "byrun" ? "byrun" : "changes";
+        card.querySelectorAll(".ch-view").forEach(function (sec) {
+            sec.hidden = !sec.classList.contains("ch-view-" + v);
+        });
+        card.querySelectorAll(".ch-tab").forEach(function (b) {
+            b.setAttribute("aria-pressed",
+                b.getAttribute("data-view") === v ? "true" : "false");
+        });
+    }
+    function switchView(btn) {
+        safeLSSet(VIEW_KEY, btn.getAttribute("data-view") || "changes");
+        var card = btn.closest(".ch-card");
+        if (card) _applyView(card);
     }
 
     function _gridInput(row) {
@@ -11903,6 +11924,7 @@ window.ColumnHistory = (function () {
         }
     }
 
-    return { open: open, close: close, useValue: useValue, useAll: useAll };
+    return { open: open, close: close, useValue: useValue, useAll: useAll,
+             switchView: switchView };
 })();
 

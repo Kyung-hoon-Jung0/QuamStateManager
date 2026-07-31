@@ -2178,9 +2178,16 @@ class HistoryManager:
         from the index; otherwise each snapshot's ``state.json`` is parsed
         ONCE and every row's value extracted from it — never N separate
         scans for an N-row column.
+
+        Index rows don't store the experiment folder, so the fastpath
+        coalesces it from the snapshot meta by timestamp (field_history
+        parity) — that's what gives tracked columns their Data links. A
+        pruned snapshot keeps its index row but loses the meta → folder None
+        (honest: attribution survives, the link doesn't).
         """
         path = Path(quam_state_path)
         snapshots = self.list_snapshots(path)          # newest-first, cached
+        meta_by_ts = {m.timestamp: m for m in snapshots}
         out: dict[str, list[tuple]] = {row: [] for row in path_map}
         if not path_map:
             return out
@@ -2212,8 +2219,10 @@ class HistoryManager:
                 for row, ent in entity_by_row.items():
                     row_by_entity.setdefault(ent, []).append(row)
                 for ts, ent, value, trigger, run_id, exp in rows:
+                    meta = meta_by_ts.get(ts)
+                    folder = meta.experiment_folder_path if meta else None
                     for row in row_by_entity.get(ent, ()):
-                        out[row].append((ts, value, trigger, run_id, exp, None))
+                        out[row].append((ts, value, trigger, run_id, exp, folder))
                 return out
 
         # Multi-path snapshot scan: one parse per snapshot, all rows extracted.

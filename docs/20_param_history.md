@@ -575,6 +575,35 @@ one parse per run for all rows). Value click fills that entity's grid cell;
 each run column's **Use all** fills the whole column — both recorded as
 LiveEditUndo actions; staging stays user-explicit (Enter / Apply All).
 
+**r9 amendment (2026-07-31) — the Changes tab.** The run-columns table showed
+values "in run order even when nothing changed" (walls of identical values)
+and never surfaced MANUAL applied edits (the value grid was runs-only; the
+snapshot tier fed only the sparkline). The panel now renders **two tabs in
+one response**: **Changes** (default) — per-row change-point chips over the
+SAME merged snapshot+runs series the sparkline collapses (the handler stops
+discarding ts/run_id/experiment/folder), newest first, cap
+`CH_MAX_CHIPS = 6`; each chip = trigger-colored dot + value + when
+(+`current` badge on the newest-equals-current chip; the oldest known value
+stays — a never-changed row reads "this value since {when}"). Manual applies
+appear as their trigger-**"save"** snapshots ("manual" is only the explicit
+snapshot buttons — copy must never say it). Chip click fills the row's cell
+(same useValue contract); hover reveals a **Data** button when the change is
+run-attributed (`hx-get /dataset/<uid>` → `#inspector-pane`), else the
+"Not from an experiment — a {trigger} snapshot of the live folder" tooltip.
+uid resolution is shared with the cell popover via `_uid_roots()` /
+`_uid_for_run_ref()` (extracted from `/field/history`); the tracked-SQL
+fastpath now coalesces the experiment folder from snapshot meta by timestamp
+(index rows store none — field_history parity), so tracked columns get Data
+links too. **By run** keeps the original table + per-run Use all verbatim.
+Toggle is client-only (`ColumnHistory.switchView`, persisted as
+`quam_colhist_view`). Ordering/dedup discipline: snapshot rows are appended
+before run rows and the sort key stays `t[0]` — the stable sort reproduces
+field_history's `(ts, rank)` so ingested-run duplicates collapse; changing
+the sort key would also crash on `None<str`. Pinned by
+`tests/test_column_history.py::TestColumnHistoryChanges` (manual-save chip +
+tooltip, introducer-run Data link, identical-runs collapse to ONE chip,
+tracked-fastpath uid via meta, tab markup, pair-grid paths).
+
 **LiveEditUndo — the unified Ctrl+Z** (r-feedback: "revert is core"):
 tiered global handler (app.js) — ① Generate-wizard undo (existing) ②
 `window.LiveEditUndo` — in-memory, value-level stack (cap 100) for

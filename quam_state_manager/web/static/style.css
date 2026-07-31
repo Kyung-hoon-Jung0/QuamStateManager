@@ -9423,6 +9423,53 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .ch-val.ch-missing { color: var(--color-text-muted); }
 .ch-foot { margin: .35rem 0 0; font-size: .66rem; color: var(--color-text-muted); }
 
+/* r9 Changes tab: tabs in the head + per-row change-point chips */
+.ch-tabs { display: inline-flex; gap: .25rem; margin-left: .6rem; align-self: center; }
+.ch-tab {
+    width: auto; padding: .1rem .55rem; font-size: .68rem; line-height: 1.5;
+    border: 1px solid var(--pico-muted-border-color); border-radius: .6rem;
+    background: transparent; color: var(--color-text-muted); cursor: pointer;
+}
+.ch-tab:hover { color: var(--pico-contrast); border-color: var(--pico-contrast); }
+.ch-tab[aria-pressed="true"] {
+    color: var(--pico-primary); border-color: var(--pico-primary); font-weight: 600;
+}
+.ch-view[hidden] { display: none; }
+.ch-chg-table .ch-chips { white-space: normal; }
+.ch-chipwrap { display: inline-flex; align-items: center; margin: .1rem .35rem .1rem 0; }
+.ch-chip {
+    display: inline-flex; align-items: center; gap: .3rem; width: auto;
+    padding: .1rem .45rem; font-size: .78rem; line-height: 1.4;
+    border: 1px solid var(--history-cell-border, var(--pico-muted-border-color));
+    border-radius: .5rem; background: var(--history-cell-bg, transparent);
+    color: inherit; cursor: default;
+}
+.ch-chip code { background: none; padding: 0; font-size: .78rem; }
+.ch-chip[data-fill] { cursor: pointer; }
+.ch-chip[data-fill]:hover { background: var(--history-cell-hover, rgba(128,128,128,.12));
+    border-color: var(--pico-primary); }
+.ch-chip-when { font-size: .62rem; color: var(--color-text-muted); }
+.ch-chip-now { font-size: .58rem; background: var(--pico-primary); color: #fff;
+    border-radius: .5rem; padding: 0 .3rem; }
+.ch-chip-miss { color: var(--color-text-muted); }
+.ch-chip-dot { width: .45em; height: .45em; border-radius: 50%;
+    background: var(--trigger-auto); flex: 0 0 auto; }
+.ch-dot-save { background: var(--trigger-save); }
+.ch-dot-manual { background: var(--trigger-manual); }
+.ch-dot-experiment { background: var(--trigger-experiment); }
+.ch-dot-restore { background: var(--color-error-text); }
+.ch-chip-data {
+    width: auto; margin-left: .15rem; padding: .04rem .35rem;
+    font-size: .62rem; line-height: 1.3;
+    border: 1px solid var(--pico-muted-border-color); border-radius: .45rem;
+    background: transparent; color: var(--pico-contrast); cursor: pointer;
+    opacity: 0; transition: opacity .12s;
+}
+.ch-chipwrap:hover .ch-chip-data, .ch-chip-data:focus-visible { opacity: .85; }
+.ch-chip-data:hover { opacity: 1; border-color: var(--pico-primary);
+    color: var(--pico-primary); }
+.ch-nochips { color: var(--color-text-muted); }
+
 /* header clock — hover-reveal beside the resize handle (th is sticky = the
    containing block, same anchoring trick as .bulk-resize-handle) */
 .bulk-col-hist {
