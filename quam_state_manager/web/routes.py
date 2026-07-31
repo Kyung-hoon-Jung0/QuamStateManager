@@ -4204,7 +4204,14 @@ def _runs_column_series(ctx: dict, path_map: dict[str, str], *,
     return out, examined
 
 
-CH_MAX_CHIPS = 6   # per-row change-point chips shown in the Changes tab
+CH_MAX_CHIPS = 6       # per-row change-point chips shown in the Changes tab
+CH_BYRUN_COLS = 6      # run columns displayed in the By-run tab
+# The Changes series merges MORE runs than the By-run tab displays: a value
+# introduced by a run just outside the 6-column window would otherwise lose
+# its attribution to a later auto snapshot (the cell popover scans 60 runs —
+# this keeps the two consistent). One parse per run serves every row.
+CH_SERIES_RUNS = 24
+CH_SERIES_EXAMINE = 60
 
 
 @bp.route("/bulk/column-history", methods=["POST"])
@@ -4247,10 +4254,13 @@ def bulk_column_history():
     hm = _history()
     snap_series = hm.column_history(ctx["path"], path_map)
     try:
-        runs, examined = _runs_column_series(ctx, path_map)
+        runs_all, examined = _runs_column_series(
+            ctx, path_map, max_runs=CH_SERIES_RUNS,
+            max_examine=CH_SERIES_EXAMINE)
     except Exception:  # noqa: BLE001 — the panel must survive a bad root
         logger.debug("column-history runs tier failed", exc_info=True)
-        runs, examined = [], 0
+        runs_all, examined = [], 0
+    runs = runs_all[:CH_BYRUN_COLS]     # By-run tab shows the newest few
 
     from quam_state_manager.core.pointer_path import resolve_field_target
 
@@ -4282,9 +4292,10 @@ def bulk_column_history():
         # dedup in the collapse. Do not change the build order or sort key
         # (a full-tuple sort would also crash on None<str at slot 4/5).
         # 7th slot = the run tier's ready uid (snapshot rows resolve via
-        # folder containment below).
+        # folder containment below). The series merges runs_all (wider than
+        # the By-run columns) so attribution matches the cell popover.
         series = [t + (None,) for t in (snap_series.get(row_id) or [])]
-        for r in reversed(runs):                     # oldest-first append
+        for r in reversed(runs_all):                 # oldest-first append
             series.append((r["ts"], r["values"].get(row_id), "experiment",
                            r["run_id"], r["experiment"], r["folder"],
                            r["uid"]))
@@ -4362,7 +4373,7 @@ def bulk_column_history():
     return render_template(
         "_column_history.html", label=label, unit=unit, grid=grid,
         col_key=col_key, rows=rows_out, runs=runs, examined=examined,
-        chip_cap=CH_MAX_CHIPS)
+        matched=len(runs_all), chip_cap=CH_MAX_CHIPS)
 
 
 @bp.route("/field/history", methods=["GET"])

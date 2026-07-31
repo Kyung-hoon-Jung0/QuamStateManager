@@ -76,7 +76,7 @@
 </div>
 <p class="ch-foot ch-chg-foot">
   each row's own change points, newest first (last {{ chip_cap }} shown)
-  &middot; from the last 40 snapshots + {{ runs|length }} run{{ 's' if runs|length != 1 }}
+  &middot; from the last 40 snapshots + {{ matched }} run{{ 's' if matched != 1 }}
   &middot; snapshots are captured on Apply — your applied edits appear as &ldquo;save&rdquo;
   &middot; hover a run-set chip for its Data link
 </p>
@@ -128,7 +128,7 @@
 </table>
 </div>
 <p class="ch-foot">
-  {{ runs|length }} matching run{{ 's' if runs|length != 1 }} (of {{ examined }} examined, newest first)
+  {% if matched > runs|length %}newest {{ runs|length }} of {{ matched }} matching runs (of {{ examined }} examined){% else %}{{ runs|length }} matching run{{ 's' if runs|length != 1 }} (of {{ examined }} examined, newest first){% endif %}
   &middot; trend = snapshots + runs, change points
   &middot; a highlighted cell is where that run changed the value
 </p>

@@ -217,6 +217,26 @@ class TestColumnHistoryChanges:
         ch = _changes(_post_column(c, _COL).data.decode())
         assert ch.count('data-fill="0.081"') == 1
 
+    def test_attribution_survives_beyond_byrun_window(self, env):
+        """The Changes series merges MORE runs than the By-run tab shows: a
+        value introduced by a run older than the 6 displayed columns keeps
+        its run attribution (cell-popover consistency) instead of degrading
+        to a later snapshot."""
+        c = env["client"]
+        data_root = env["tmp"] / "data_wide"
+        _seed_run(data_root, 51, _state(off_a=0.077, off_b=0.110))
+        for rid in range(52, 59):                     # 52..58 keep the value
+            _seed_run(data_root, rid, _state(off_a=0.081, off_b=0.110))
+        c.post("/workspace/add", data={"folder": str(data_root)})
+        html = _post_column(c, _COL).data.decode()
+        ch, byrun = html.split("ch-view-byrun")
+        key = routes_mod._folder_key(data_root)
+        # introducers 51 + 52 are OUTSIDE the newest-6 (53..58) By-run window
+        assert f'hx-get="/dataset/{key}:51"' in ch
+        assert f'hx-get="/dataset/{key}:52"' in ch
+        assert f'/dataset/{key}:51"' not in byrun
+        assert "newest 6 of 8 matching runs" in byrun
+
     def test_tracked_fastpath_chip_gets_uid_from_meta(self, env):
         """Tracked columns come from the SQLite index whose rows carry no
         folder — the meta-by-timestamp coalesce must supply it so the Data
