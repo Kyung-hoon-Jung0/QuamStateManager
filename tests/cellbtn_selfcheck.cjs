@@ -92,14 +92,38 @@ c3.focus();
 ok(btn.style.display === 'none' && btn.parentElement === d.body,
    'readonly cell does not dock the button');
 
-// 5. CSS pins — td anchoring + enlarged icons
+// 5. r11: TEXT-anchored positioning — left is JS-managed and follows the value
+c1.focus();
+btn = d.getElementById('fh-cellbtn');
+ok(/^\d+(\.\d+)?px$/.test(btn.style.left), 'style.left is set on dock (' + btn.style.left + ')');
+c1.value = '5,123,456,789.123456';
+c1.dispatchEvent(new window.Event('input', { bubbles: true }));
+ok(/^\d+(\.\d+)?px$/.test(btn.style.left), 'reposition on typing keeps a valid left');
+d.getElementById('outside').focus();
+ok(btn.style.left === '', 'hide clears the managed left');
+
+// the measurer itself grows with text length (canvas or fallback path)
+const mw = window.FieldHistory && window.FieldHistory._cellTextWidth;
+ok(typeof mw === 'function', 'measure seam exported');
+c1.value = 'abc';
+const w3 = mw(c1);
+c1.value = 'abcdefghijkl';
+const w12 = mw(c1);
+ok(w12 > w3 && w3 > 0, 'text width grows with length (' + w3.toFixed(1) + ' -> ' + w12.toFixed(1) + ')');
+
+// 6. CSS pins — text-anchor contract + enlarged icons
 const css = fs.readFileSync(path.join(STATIC, 'style.css'), 'utf8');
-ok(/\.bulk-td \{ position: relative; \}/.test(css), 'td is the containing block');
-const cellBtnRule = css.split('#fh-cellbtn {')[1] || '';
+ok((css.match(/\.bulk-td \{ position: relative; \}/g) || []).length === 1,
+   'td containing-block rule declared exactly once');
+const cellBtnRule = (css.split('#fh-cellbtn {')[1] || '').split('}')[0];
 ok(cellBtnRule.indexOf('position: absolute') >= 0, '#fh-cellbtn is absolute (not fixed)');
+ok(cellBtnRule.indexOf('z-index: 5') >= 0,
+   'icon paints ABOVE the focused input (z4) — the invisibility root cause');
+ok(cellBtnRule.indexOf('right:') === -1,
+   'no td-edge right anchor — left is JS-managed at the value tail');
 ok(cellBtnRule.indexOf('width: 20px') >= 0, 'cell clock enlarged to 20px');
 ok(css.indexOf('.bulk-cell.fh-docked { padding-right: 1.5rem; }') >= 0,
-   'docked input padding rule present');
+   'docked input padding rule present (clamped case only)');
 const inspRule = css.split('.field-hist-btn {')[1] || '';
 ok(inspRule.indexOf('font-size: .9rem') >= 0, 'inspector clock enlarged');
 
