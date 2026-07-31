@@ -571,6 +571,10 @@
                     var tt = table();
                     if (tt && ev.detail && ev.detail.target && ev.detail.target.id === 'table-pane'
                         && _cells(tt).some(_isDirty)) {
+                        // audit-r10: see bulk-edit.js — a stage/restore refresh
+                        // must not be vetoed by stale typed text.
+                        if (window._stateRestoredRefresh
+                            && Date.now() - window._stateRestoredRefresh < 4000) return;
                         if (!window.confirm('You have unapplied pair edits in Live State Edit. Leave and discard them?')) {
                             ev.preventDefault();
                         }

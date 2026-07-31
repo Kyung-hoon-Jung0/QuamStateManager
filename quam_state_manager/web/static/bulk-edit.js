@@ -1290,6 +1290,11 @@
                     var tt = table();
                     if (tt && ev.detail && ev.detail.target && ev.detail.target.id === 'table-pane'
                         && _cells(tt).some(_isDirty)) {
+                        // audit-r10: a stage/restore just replaced the state
+                        // wholesale — typed text belongs to the OLD state, so
+                        // the refresh proceeds without a veto prompt.
+                        if (window._stateRestoredRefresh
+                            && Date.now() - window._stateRestoredRefresh < 4000) return;
                         if (!window.confirm('You have unapplied edits in Live State Edit. Leave and discard them?')) {
                             ev.preventDefault();
                         }

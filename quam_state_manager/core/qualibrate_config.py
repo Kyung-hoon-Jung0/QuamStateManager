@@ -343,11 +343,13 @@ def _storage_location(effective: dict, project: str,
 def project_storage(project: str, cfg_dir: Path | None = None) -> dict[str, Any]:
     """One project's resolved storage (data) location, READ-ONLY.
 
-    Same shape as ``list_projects()``'s per-project ``storage`` entry —
+    Same PATH fields as ``list_projects()``'s per-project ``storage`` entry —
     ``{"raw", "native", "exists", "source"}`` with the lazy
     ``${#/qualibrate/project}`` template substituted and the value bridged
     through :func:`native_path` — without the N-project TOML sweep (this
-    runs on chip activation, docs/20 r10 data-folder suggestions)."""
+    runs on chip activation, docs/20 r10 data-folder suggestions).
+    ``source`` here is only ``"config"``/``"default"`` (the own-vs-inherited
+    split needs the overlay pass ``list_projects`` does)."""
     cfg_dir = cfg_dir or _config_dir()
     eff = effective_config(project, cfg_dir=cfg_dir)
     loc, source = _storage_location(eff, project, cfg_dir)

@@ -1860,6 +1860,11 @@ window.closeInspector = function() {
 document.addEventListener("stateRestored", function() {
     var dsDetail = document.querySelector("#inspector-pane #ds-detail-root");
     if (!dsDetail && window.closeInspector) window.closeInspector();
+    // audit-r10: the stage already force-gated any pending edits; typed-but-
+    // uncommitted grid text belongs to the REPLACED state, so the grids'
+    // dirty-cell confirm must not veto (or double-prompt) this refresh —
+    // time-boxed flag consumed by the beforeSwap guards.
+    window._stateRestoredRefresh = Date.now();
     _softRefreshLiveSurface();
 });
 
@@ -2229,6 +2234,10 @@ window.doStateSync = function(mode, forced) {
                 try { _swapPendingTray(data.tray_html); }
                 finally { window._bulkSelfEdit = false; }
             }
+            // audit-r10 boundary: a completed sync (pull OR apply) resolves
+            // every un-staged in-memory edit — reverting them afterwards
+            // would cross the apply/pull boundary.
+            if (window.LiveEditUndo) LiveEditUndo.clear();
             // A sync pull/apply replaces the working copy wholesale (store.reload()
             // bumps mutation_seq), so the linter must re-run — fire unconditionally,
             // never relying on a tray_html being present in the response.
@@ -2740,6 +2749,17 @@ document.addEventListener("keydown", function(evt) {
     // committed wizard field, never a chip edit behind the user's back).
     if (window._wizUndo && window._wizUndo.tryUndo()) { evt.preventDefault(); return; }
     if (window.LiveEditUndo && window.LiveEditUndo.tryUndo()) { evt.preventDefault(); return; }
+    // audit-r10: mid-typing in a DIRTY cell with an empty in-memory stack —
+    // the user means "undo my keystrokes", not "delete a staged group".
+    // Restore the cell to its committed value and stop; a CLEAN focused
+    // cell falls through to the server tier as designed.
+    if (inGridCell && a.value !== a.getAttribute("data-orig")
+        && a.getAttribute("data-orig") !== null) {
+        evt.preventDefault();
+        a.value = a.getAttribute("data-orig");
+        a.dispatchEvent(new Event("input", { bubbles: true }));
+        return;
+    }
     if (!window.htmx || !document.getElementById("pending-tray")) return;
     evt.preventDefault();
     htmx.ajax("POST", "/undo", {source: "#pending-tray", target: "#pending-tray", swap: "outerHTML"});
@@ -7369,6 +7389,9 @@ function _swapPendingTray(html) {
     // drawer state + clear stale sidebar pending markers here too (audit P1) — all 7
     // JS edit callers funnel through this one place.
     if (window._restoreTrayState) window._restoreTrayState();
+    // audit-r10: same reason — re-evaluate the LiveEditUndo ↶ visibility
+    // (the fresh tray arrives with the button display:none).
+    if (window.LiveEditUndo) LiveEditUndo._updateTrayBtn();
     var saveBtn = document.querySelector('.btn-save');
     if (saveBtn) saveBtn.disabled = false;
     // Cross-surface consistency: every edit path funnels through here, so this is
@@ -11670,12 +11693,23 @@ window.LiveEditUndo = (function () {
     }
 
     function tryUndo() {
+        // audit-r10 discipline: an entry only "succeeds" when it actually
+        // RESTORED at least one on-screen, un-staged cell. Cells that are
+        // gone (grid navigated away) or whose value was COMMITTED since
+        // (data-orig == the recorded next → the server tier owns that undo
+        // now) are skipped; a fully-stale entry is dropped silently and the
+        // loop continues — so stale entries can never eat Ctrl+Z presses or
+        // block the server tier, and a fill that got staged can't be
+        // half-undone into a phantom dirty edit.
         while (stack.length) {
             var a = stack.pop();
-            var restored = 0, gone = 0;
+            var restored = 0, gone = 0, staged = 0;
             a.cells.forEach(function (c) {
                 var input = _input(c.dp);
                 if (!input || input.readOnly) { gone++; return; }
+                if (input.getAttribute("data-orig") === String(c.next)) {
+                    staged++; return;
+                }
                 input.value = c.prev;
                 input.dispatchEvent(new Event("input", { bubbles: true }));
                 input.classList.add("leu-flash");
@@ -11685,18 +11719,30 @@ window.LiveEditUndo = (function () {
                 restored++;
             });
             _updateTrayBtn();
-            if (restored || gone) {
+            if (restored) {
                 if (window.showToast) {
-                    showToast("Undid " + a.label
-                        + (gone ? " (" + gone + " cell(s) no longer on screen)" : ""));
+                    var extra = [];
+                    if (gone) extra.push(gone + " no longer on screen");
+                    if (staged) extra.push(staged + " already staged");
+                    window.showToast("Undid " + a.label
+                        + (extra.length ? " (" + extra.join(", ") + ")" : ""));
                 }
                 return true;
             }
-            // every cell vanished (grid re-rendered away) — fall through
+            // fully stale (gone/staged) — drop and keep looking
         }
         _updateTrayBtn();
         return false;
     }
+
+    // Hard boundaries (audit-r10): once content reached the live chip (or
+    // was replaced wholesale by a stage/pull), reverting cells from memory
+    // would cross the apply boundary — the module's own contract forbids it.
+    function clear() {
+        stack = [];
+        _updateTrayBtn();
+    }
+    document.addEventListener("stateRestored", function () { clear(); });
 
     /* Manual typing joins the stack (the _wizUndo idiom): snapshot the
        cell's value on focusin, push one action per committed change. A
@@ -11756,20 +11802,25 @@ window.LiveEditUndo = (function () {
     }
 
     // The tray re-renders on every staged mutation — re-evaluate the button.
-    document.body && document.addEventListener("htmx:afterSwap", function (e) {
+    // audit-r10: ALSO on oobAfterSwap (every server _tray_oob() rides OOB,
+    // which never fires afterSwap) — without it the ↶ stayed display:none
+    // after nearly every staging path.
+    function _onTraySwap(e) {
         var t = e.target;
         if (t && (t.id === "pending-tray"
                   || (t.querySelector && t.querySelector("#pending-tray")))) {
             _updateTrayBtn();
         }
-    });
+    }
+    document.addEventListener("htmx:afterSwap", _onTraySwap);
+    document.addEventListener("htmx:oobAfterSwap", _onTraySwap);
     if (document.readyState === "loading") {
         document.addEventListener("DOMContentLoaded", _updateTrayBtn);
     } else {
         _updateTrayBtn();
     }
 
-    return { record: record, tryUndo: tryUndo, trigger: trigger,
+    return { record: record, tryUndo: tryUndo, trigger: trigger, clear: clear,
              refreshTip: refreshTip, _updateTrayBtn: _updateTrayBtn };
 })();
 

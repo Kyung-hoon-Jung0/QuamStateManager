@@ -55,7 +55,7 @@
                   class="ch-chip{% if p.is_current %} ch-chip-cur{% endif %}{% if not p.has %} ch-chip-miss{% endif %}"
                   {% if p.has %}data-row="{{ row.id }}" data-fill="{{ p.fill }}"
                   onclick="ColumnHistory.useValue(this)"{% endif %}
-                  title="{% if p.run_id is not none or p.experiment %}run #{{ p.run_id }} — {{ p.experiment or '' }}{% else %}Not from an experiment — a {{ p.trigger }} snapshot of the live folder{% endif %}{% if p.has %} &middot; click to fill {{ row.id }}'s cell (Enter there stages it){% endif %}">
+                  title="{% if p.run_id is not none %}run #{{ p.run_id }} — {{ p.experiment or '' }}{% elif p.experiment %}{{ p.experiment }}{% else %}Not from an experiment — a {{ p.trigger }} snapshot of the live folder{% endif %}{% if p.has %} &middot; click to fill {{ row.id }}'s cell (Enter there stages it){% endif %}">
             <span class="ch-chip-dot ch-dot-{{ p.trigger }}" aria-hidden="true"></span>
             <code>{% if p.has %}{{ p.display }}{% else %}—{% endif %}</code>
             <span class="ch-chip-when">{{ p.when }}</span>

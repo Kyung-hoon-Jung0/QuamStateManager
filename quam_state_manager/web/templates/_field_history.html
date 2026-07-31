@@ -39,7 +39,7 @@
       <td class="fh-ts">{{ pt.when }}</td>
       <td class="fh-src">
         {% if pt.experiment %}
-        <span class="fh-exp" title="run #{{ pt.run_id }} — {{ pt.experiment }}">#{{ pt.run_id }} {{ pt.experiment }}</span>
+        <span class="fh-exp" title="{% if pt.run_id is not none %}run #{{ pt.run_id }} — {% endif %}{{ pt.experiment }}">{% if pt.run_id is not none %}#{{ pt.run_id }} {% endif %}{{ pt.experiment }}</span>
         {% else %}<span class="fh-trig"
               title="Not from an experiment — a {{ pt.trigger or 'unknown' }} snapshot of the live folder">{{ pt.trigger or '—' }}</span>{% endif %}
       </td>

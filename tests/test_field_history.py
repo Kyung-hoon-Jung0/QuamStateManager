@@ -253,3 +253,58 @@ class TestRunsTier:
         i_snap = html.find('title="5000000000.0"')
         assert i_run != -1 and i_snap != -1
         assert i_run < i_snap, "newest (run) row renders first"
+
+
+class TestRunCacheChipIndependence:
+    def test_switching_chips_regates_run_verdicts(self, tmp_path):
+        """audit-r10 F-A (repro-confirmed): the run caches hold only
+        chip-independent facts — the include verdict is re-derived per call,
+        so chip A's runs never leak into chip B's popover after a chip
+        switch, and B's own runs are never suppressed by A's warm cache."""
+        from quam_state_manager.web.app import create_app
+        root = tmp_path / "data"
+        st_a = _state(f01=7.1e9); st_a["extras"] = {"chip_name": "alpha"}
+        st_b = _state(f01=7.2e9); st_b["extras"] = {"chip_name": "beta"}
+        _seed_run(root, 31, quam_state=st_a, hhmmss="010000")
+        _seed_run(root, 32, quam_state=st_b, hhmmss="020000")
+        live_a = tmp_path / "chips" / "a"
+        live_b = tmp_path / "chips" / "b"
+        sa = _state(); sa["extras"] = {"chip_name": "alpha"}
+        sb = _state(); sb["extras"] = {"chip_name": "beta"}
+        _write_chip(live_a, sa)
+        _write_chip(live_b, sb)
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        c = app.test_client()
+        assert c.post("/load", data={"folder": str(live_a)}).status_code in (200, 302)
+        c.post("/workspace/add", data={"folder": str(root)})
+        h1 = c.get("/field/history?path=qubits.qA1.f_01").data.decode()
+        assert 'data-value="7100000000.0"' in h1
+        assert 'data-value="7200000000.0"' not in h1
+        assert c.post("/load", data={"folder": str(live_b)}).status_code in (200, 302)
+        h2 = c.get("/field/history?path=qubits.qA1.f_01").data.decode()
+        assert 'data-value="7200000000.0"' in h2, "B's own run suppressed by A's cache"
+        assert 'data-value="7100000000.0"' not in h2, "A's value leaked into B"
+
+
+class TestUidDeepestRoot:
+    def test_uid_prefers_deepest_containing_root(self, tmp_path):
+        """audit-r10 F-G: with nested registered roots the run's Data uid
+        must key the DEEPEST one — the shallow root's DatasetStore holds no
+        runs at depth 3, so its uid would 404."""
+        from quam_state_manager.web.app import create_app
+        from quam_state_manager.web import routes as routes_mod
+        outer = tmp_path / "ws"
+        chip_root = outer / "chipX"
+        _seed_run(chip_root, 61, quam_state=_state(f01=7.3e9), hhmmss="030000")
+        live = tmp_path / "chips" / "live"
+        _write_chip(live, _state())
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        c = app.test_client()
+        assert c.post("/load", data={"folder": str(live)}).status_code in (200, 302)
+        c.post("/workspace/add", data={"folder": str(outer)})
+        c.post("/workspace/add", data={"folder": str(chip_root)})
+        html = c.get("/field/history?path=qubits.qA1.f_01").data.decode()
+        deep = routes_mod._folder_key(chip_root)
+        shallow = routes_mod._folder_key(outer)
+        assert f"/dataset/{deep}:61" in html
+        assert f"/dataset/{shallow}:61" not in html

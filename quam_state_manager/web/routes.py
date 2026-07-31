@@ -1111,6 +1111,9 @@ def _rebuild_after_working_copy_replaced(ctx: dict) -> None:
     _invalidate_engine_cache()
     ctx["working_dirty"] = False
     ctx["live_diverged"] = False
+    # audit-r10: a wholesale replace resolves any prior staged base (a pull
+    # consumed it; a fresh stage re-sets the flag right after this call).
+    ctx["staged_base"] = False
     _reseed_drift_baseline_if_chip_changed(ctx)
 
 
@@ -1734,7 +1737,6 @@ def _maybe_data_folder_suggest(ctx: dict | None) -> None:
                 return   # SM-internal folders (working copies etc.)
         except (OSError, ValueError):
             pass
-        ctx["data_folder_candidates"] = _data_folder_candidates(ctx)
         from quam_state_manager.core.history import (
             extras_chip_name, extras_data_folder, fingerprint_from_dicts,
         )
@@ -1742,6 +1744,17 @@ def _maybe_data_folder_suggest(ctx: dict | None) -> None:
             named = bool(extras_chip_name(store.state))
             declared = extras_data_folder(store.state)
             fp = fingerprint_from_dicts(store.state, store.wiring)
+        # audit-r10 perf gate: the common fully-configured chip (named +
+        # declared + reachable) needs NO candidates — skip the dataset-store
+        # sweep + TOML parse on its every activation. Candidates are needed
+        # only when a banner/datalist will actually consume them: unnamed
+        # (name prompt), dangling (fix form), or named-without-declared
+        # (the record suggestion).
+        needs_candidates = (not named or bool(ctx.get("extras_data_dangling"))
+                            or not declared)
+        if not needs_candidates:
+            return
+        ctx["data_folder_candidates"] = _data_folder_candidates(ctx)
         if not named or declared or not ctx["data_folder_candidates"]:
             return
         token = _chip_prompt_token(str(path), fp)
@@ -1756,6 +1769,9 @@ def _maybe_data_folder_suggest(ctx: dict | None) -> None:
 
 
 # ── First-open chip-name prompt (docs/20 v2 — identity ladder tier 1) ──────
+
+_chip_prompt_memo_lock = threading.Lock()   # audit-r10: R-M-W writers race
+
 
 def _chip_prompt_memo_file() -> Path:
     return Path(current_app.instance_path) / "chip_name_prompts.json"
@@ -1896,30 +1912,34 @@ def chip_name_decline():
     ctx = _active_ctx()
     token = (request.form.get("token") or "").strip()
     if token:
-        data = _load_chip_prompt_memo()
-        data[token] = {
-            "declined_at": datetime.now().isoformat(timespec="seconds"),
-            "path_hint": str((ctx or {}).get("path") or ""),
-        }
-        try:
-            safe_io.atomic_write_json(_chip_prompt_memo_file(), data)
-        except OSError:
-            logger.warning("Could not persist chip-name decline", exc_info=True)
+        with _chip_prompt_memo_lock:
+            data = _load_chip_prompt_memo()
+            data[token] = {
+                "declined_at": datetime.now().isoformat(timespec="seconds"),
+                "path_hint": str((ctx or {}).get("path") or ""),
+            }
+            try:
+                safe_io.atomic_write_json(_chip_prompt_memo_file(), data)
+            except OSError:
+                logger.warning("Could not persist chip-name decline",
+                               exc_info=True)
     if ctx:
         ctx["chip_name_prompt"] = None
     return ""
 
 
 def _write_datafolder_memo(token: str, ctx: dict | None) -> None:
-    data = _load_chip_prompt_memo()
-    data[f"{token}::datafolder"] = {
-        "declined_at": datetime.now().isoformat(timespec="seconds"),
-        "path_hint": str((ctx or {}).get("path") or ""),
-    }
-    try:
-        safe_io.atomic_write_json(_chip_prompt_memo_file(), data)
-    except OSError:
-        logger.warning("Could not persist data-folder decline", exc_info=True)
+    with _chip_prompt_memo_lock:
+        data = _load_chip_prompt_memo()
+        data[f"{token}::datafolder"] = {
+            "declined_at": datetime.now().isoformat(timespec="seconds"),
+            "path_hint": str((ctx or {}).get("path") or ""),
+        }
+        try:
+            safe_io.atomic_write_json(_chip_prompt_memo_file(), data)
+        except OSError:
+            logger.warning("Could not persist data-folder decline",
+                           exc_info=True)
 
 
 @bp.route("/chip-data-folder/set", methods=["POST"])
@@ -4179,13 +4199,20 @@ def _fh_display_string(value: Any) -> str:
 def _uid_roots() -> list[tuple[Path, str]]:
     """Registered dataset roots as (resolved path, folder key) pairs — the
     containment table for run-uid resolution (shared by /field/history and
-    /bulk/column-history)."""
+    /bulk/column-history).
+
+    audit-r10: DEEPEST root first. In the nested layout
+    ``<ws-root>/<chip>/<date>/#N_run`` both the workspace root and the chip
+    dir are candidates; the shallow root would win first-match containment
+    and mint a uid whose DatasetStore holds zero runs (dead Data links —
+    runs are keyed by their date-dir's parent)."""
     roots: list[tuple[Path, str]] = []
     for cand in _dataset_candidate_folders(fast=True):
         try:
             roots.append((Path(cand).resolve(), _folder_key(cand)))
         except OSError:
             continue
+    roots.sort(key=lambda t: len(t[0].parts), reverse=True)
     return roots
 
 
@@ -4211,8 +4238,21 @@ def _uid_for_run_ref(fp: Any, rid: Any, roots: list[tuple[Path, str]]) -> str | 
 # Runs are write-once after completion, so per-folder identity and per-
 # (folder, dot_path) values never go stale; both are size-bounded.
 _RUN_IDENT_CACHE: "OrderedDict[str, tuple]" = OrderedDict()
+# audit-r10: run-fact caches hold ONLY chip-INDEPENDENT immutable facts —
+# the run's own declared name + entity sets, and per-path extraction results.
+# The include/exclude VERDICT is chip-relative and is re-derived on every
+# call from these facts + the CURRENTLY loaded chip; caching the verdict
+# (the pre-audit shape) leaked chip A's values into chip B's popover after
+# a chip switch (Use buttons and all) and suppressed B's own runs.
+_RUN_CHIP_CACHE: "OrderedDict[str, tuple]" = OrderedDict()
 _RUN_VALUE_CACHE: "OrderedDict[tuple[str, str], tuple]" = OrderedDict()
 _RUN_CACHE_MAX = 4096
+
+
+def _trim_run_caches() -> None:
+    for cache in (_RUN_IDENT_CACHE, _RUN_CHIP_CACHE, _RUN_VALUE_CACHE):
+        while len(cache) > _RUN_CACHE_MAX:
+            cache.popitem(last=False)
 
 
 def _run_ts_stamp(run: Any) -> str:
@@ -4288,15 +4328,11 @@ def _runs_field_series(ctx: dict, dot_path: str, *,
         folder = Path(getattr(run, "folder_path", "") or "")
         qs = folder / "quam_state"
         fkey = str(folder)
-        vkey = (fkey, dot_path)
-        cached_val = _RUN_VALUE_CACHE.get(vkey)
-        if cached_val is not None:
-            if cached_val[0]:                     # (included, value)
-                series.append((ts, cached_val[1], "experiment",
-                               getattr(run, "run_id", None),
-                               getattr(run, "experiment_name", None), fkey))
-            continue
-        if not (qs / "state.json").exists():
+        chip = _RUN_CHIP_CACHE.get(fkey)
+        # A cached chip-fact entry proves the run HAD quam_state (runs are
+        # write-once) — skip the stat. examined counts uniformly (cache hits
+        # included), so the newest-N window has one meaning warm or cold.
+        if chip is None and not (qs / "state.json").exists():
             continue
         examined += 1
 
@@ -4316,48 +4352,59 @@ def _runs_field_series(ctx: dict, dot_path: str, *,
         # named chip must read the run's state to compare names first.
         if (not loaded_name and loaded_fp.network and run_net
                 and run_net != loaded_fp.network):
-            _RUN_VALUE_CACHE[vkey] = (False, None)
             continue
-        try:
-            state = safe_io.read_json(qs / "state.json")
-        except (OSError, ValueError):
-            continue
-        if not isinstance(state, dict):
-            continue
-        run_name = extras_chip_name(state)
+        state: Any = None
+        if chip is None:
+            try:
+                state = safe_io.read_json(qs / "state.json")
+            except (OSError, ValueError):
+                continue
+            if not isinstance(state, dict):
+                continue
+            chip = (extras_chip_name(state),
+                    frozenset((state.get("qubits") or {}).keys()),
+                    frozenset((state.get("qubit_pairs") or {}).keys()))
+            _RUN_CHIP_CACHE[fkey] = chip
+        run_name, run_qubits, run_pairs = chip
+        # Identity gate — re-derived EVERY call against the CURRENT chip
+        # (never cached: the verdict is chip-relative).
         if loaded_name and run_name:
             included = (run_name == loaded_name)
         else:
-            # Rebuild the fingerprint from state + the cached network tuple
-            # (wiring may not have been re-read on this pass).
             run_fp = ChipFingerprint(
-                network=run_net,
-                qubits=frozenset((state.get("qubits") or {}).keys()),
-                pairs=frozenset((state.get("qubit_pairs") or {}).keys()))
+                network=run_net, qubits=run_qubits, pairs=run_pairs)
             included = align(loaded_fp, run_fp) == ALIGN_ALIGNED
         if not included:
-            _RUN_VALUE_CACHE[vkey] = (False, None)
             continue
 
-        merged = dict(state)
-        if segs and segs[0] not in merged:
-            if wiring is None:
+        vkey = (fkey, dot_path)
+        cached_val = _RUN_VALUE_CACHE.get(vkey)
+        if cached_val is not None:
+            value = cached_val[1]
+        else:
+            if state is None:
                 try:
-                    wiring = safe_io.read_json(qs / "wiring.json")
+                    state = safe_io.read_json(qs / "state.json")
                 except (OSError, ValueError):
-                    wiring = {}
-            if isinstance(wiring, dict):
-                merged.update(wiring)
-        found, value = _walk_any_path(merged, segs)
-        if not found:
-            value = None
-        elif is_pointer(value) and not is_self_ref(value):
-            value = resolve_pointer(merged, value, tuple(segs))
-        _RUN_VALUE_CACHE[vkey] = (True, value)
-        while len(_RUN_VALUE_CACHE) > _RUN_CACHE_MAX:
-            _RUN_VALUE_CACHE.popitem(last=False)
-        while len(_RUN_IDENT_CACHE) > _RUN_CACHE_MAX:
-            _RUN_IDENT_CACHE.popitem(last=False)
+                    continue
+                if not isinstance(state, dict):
+                    continue
+            merged = dict(state)
+            if segs and segs[0] not in merged:
+                if wiring is None:
+                    try:
+                        wiring = safe_io.read_json(qs / "wiring.json")
+                    except (OSError, ValueError):
+                        wiring = {}
+                if isinstance(wiring, dict):
+                    merged.update(wiring)
+            found, value = _walk_any_path(merged, segs)
+            if not found:
+                value = None
+            elif is_pointer(value) and not is_self_ref(value):
+                value = resolve_pointer(merged, value, tuple(segs))
+            _RUN_VALUE_CACHE[vkey] = (found, value)
+            _trim_run_caches()
         series.append((ts, value, "experiment",
                        getattr(run, "run_id", None),
                        getattr(run, "experiment_name", None), fkey))
@@ -4421,10 +4468,11 @@ def _runs_column_series(ctx: dict, path_map: dict[str, str], *,
             break
         folder = Path(getattr(run, "folder_path", "") or "")
         qs = folder / "quam_state"
-        if not (qs / "state.json").exists():
+        fkey = str(folder)
+        chip = _RUN_CHIP_CACHE.get(fkey)
+        if chip is None and not (qs / "state.json").exists():
             continue
         examined += 1
-        fkey = str(folder)
         run_net = _RUN_IDENT_CACHE.get(fkey)
         wiring: Any = None
         if run_net is None:
@@ -4435,25 +4483,40 @@ def _runs_column_series(ctx: dict, path_map: dict[str, str], *,
             run_net = _normalised_network(
                 (wiring if isinstance(wiring, dict) else {}).get("network"))
             _RUN_IDENT_CACHE[fkey] = run_net
+            _trim_run_caches()
         if (not loaded_name and loaded_fp.network and run_net
                 and run_net != loaded_fp.network):
             continue
-        try:
-            state = safe_io.read_json(qs / "state.json")
-        except (OSError, ValueError):
-            continue
-        if not isinstance(state, dict):
-            continue
-        run_name = extras_chip_name(state)
+        # Gate from cached chip facts when possible — a known-foreign run
+        # skips the state parse entirely (verdict itself is never cached).
+        state: Any = None
+        if chip is None:
+            try:
+                state = safe_io.read_json(qs / "state.json")
+            except (OSError, ValueError):
+                continue
+            if not isinstance(state, dict):
+                continue
+            chip = (extras_chip_name(state),
+                    frozenset((state.get("qubits") or {}).keys()),
+                    frozenset((state.get("qubit_pairs") or {}).keys()))
+            _RUN_CHIP_CACHE[fkey] = chip
+            _trim_run_caches()
+        run_name, run_qubits, run_pairs = chip
         if loaded_name and run_name:
             if run_name != loaded_name:
                 continue
         else:
             run_fp = ChipFingerprint(
-                network=run_net,
-                qubits=frozenset((state.get("qubits") or {}).keys()),
-                pairs=frozenset((state.get("qubit_pairs") or {}).keys()))
+                network=run_net, qubits=run_qubits, pairs=run_pairs)
             if align(loaded_fp, run_fp) != ALIGN_ALIGNED:
+                continue
+        if state is None:
+            try:
+                state = safe_io.read_json(qs / "state.json")
+            except (OSError, ValueError):
+                continue
+            if not isinstance(state, dict):
                 continue
 
         merged = dict(state)
@@ -6049,13 +6112,21 @@ def state_history_stage(timestamp: str):
         has_pending = (bool(store.change_log) or bool(ctx.get("pending_reapply"))
                        or bool(ctx.get("working_dirty")))
     if has_pending and request.values.get("force") != "1":
+        # audit-r10: the fragment's force button must target an element that
+        # EXISTS where the fragment lands. From the tray's "Revert last
+        # apply" (from=tray) that is #status-bar — the default
+        # #state-history-detail exists only on the State History page, so
+        # the button was a guaranteed htmx targetError (dead click) there.
+        _from_tray = request.values.get("from") == "tray"
         return render_template(
             "_sh_confirm.html",
             message=("You have unsaved edits in the working state. Loading this "
                      "snapshot will replace them."),
-            action_url=f"/state-history/{timestamp}/stage?force=1",
+            action_url=(f"/state-history/{timestamp}/stage?force=1"
+                        + ("&from=tray" if _from_tray else "")),
             action_label="Replace working state anyway",
             confirm="Discard your unsaved edits in the working state and load this snapshot?",
+            **({"target": "#status-bar"} if _from_tray else {}),
         ), 409
 
     try:
@@ -6069,10 +6140,16 @@ def state_history_stage(timestamp: str):
             safe_io.write_state_wiring(wc.working_folder, state, wiring)
             _rebuild_after_working_copy_replaced(ctx)
             ctx["working_dirty"] = True   # working now differs from live
+            # audit-r10: mark the STAGED BASE — content not representable as
+            # change-log entries. The sync guard/conflict tray key on this,
+            # not on stash emptiness (a later /save or conflict fills the
+            # stash with only the EDITS and would flip a stash-based check).
+            ctx["staged_base"] = True
+            _clear_reapply(ctx)   # in-lock: no window for a concurrent
+                                  # sync to read dirty+stale-stash (audit-r10)
     except (OSError, ValueError) as exc:
         return render_template("_status.html",
                                message=f"Staging failed: {exc}", level="error"), 500
-    _clear_reapply(ctx)
     logger.info("State History: staged snapshot %s into working copy", timestamp)
     msg = render_template(
         "_status.html",
@@ -8282,8 +8359,13 @@ def state_sync():
     # ctx["pending_reapply"] and the working files are expendable — pull+replay
     # is the designed resolution there, and short-circuiting it would retry the
     # same stale push forever. So the protection applies only when there is no
-    # stash to replay.
-    if ctx.get("working_dirty") and not ctx.get("pending_reapply"):
+    # stash to replay — UNLESS a STAGED BASE is present (audit-r10): a stage
+    # followed by edits fills the stash with only the EDITS while the staged
+    # snapshot lives solely in the working files, so a stash-based carve-out
+    # would pull-destroy it. staged_base is set by the stage routes and
+    # cleared on apply-success / wholesale pull.
+    if ctx.get("working_dirty") and (
+            ctx.get("staged_base") or not ctx.get("pending_reapply")):
         if mode == "apply":
             return _sync_pull_apply_to_live(ctx, None, pulled_other_changes=False)
         if request.values.get("force") != "1":
@@ -8405,19 +8487,22 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False):
             }), 500
         _set_working_dirty(True)
 
-    # docs/20 v2 "Revert last apply": capture the PRE-apply live content
-    # (dedup-free when unchanged; then the newest snapshot IS pre-apply).
+    # docs/20 v2 "Revert last apply": capture the PRE-apply live content.
+    # audit-r10: pinned to the CAPTURED ctx (a concurrent /load must never
+    # divert the snapshot to another chip), and a None return is resolved by
+    # CONTENT MATCH — check_and_snapshot dedups against every hash ever seen,
+    # so "newest snapshot" is the wrong revert target after an A-B-A cycle.
     pre_apply_ts = None
     try:
-        _pre = _history().check_and_snapshot(
-            _active_path(), "auto",
+        _hm = _history()
+        _pre = _hm.check_and_snapshot(
+            ctx["path"], "auto",
             defer_index=not current_app.config.get("TESTING"),
-            project=_scope_for(_active_path(), _active_ctx()))
+            project=_scope_for(ctx["path"], ctx))
         if _pre is not None:
             pre_apply_ts = _pre.timestamp
         else:
-            _snaps = _history().list_snapshots(_active_path())
-            pre_apply_ts = _snaps[0].timestamp if _snaps else None
+            pre_apply_ts = _hm.snapshot_ts_for_current_content(ctx["path"])
     except Exception:
         logger.warning("Pre-apply snapshot failed", exc_info=True)
 
@@ -8437,13 +8522,15 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False):
             "tray_html": render_template(
                 "_state_apply_conflict.html",
                 staged_conflict=bool(ctx.get("working_dirty"))
-                and not ctx.get("pending_reapply")),
+                and (bool(ctx.get("staged_base"))
+                     or not ctx.get("pending_reapply"))),
             "replay": replay,
         })
     except (OSError, ValueError) as exc:
         return jsonify({"status": "error", "message": f"Apply to live failed: {exc}"}), 500
 
     _set_working_dirty(False)
+    ctx["staged_base"] = False   # the staged content reached live (audit-r10)
     _clear_reapply(ctx)  # edits are on the live chip now — nothing left to re-apply
     ctx["live_diverged"] = False  # live now holds the merged working content
     _reset_baseline_after_apply(ctx)  # the user's own change isn't "live drift"
@@ -8452,6 +8539,11 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False):
             "pre_ts": pre_apply_ts,
             "at": datetime.now().isoformat(timespec="seconds"),
         }
+    else:
+        # audit-r10: no trustworthy pre-apply target — an honestly missing
+        # button beats offering a stale/wrong revert (the previous apply's
+        # memo must not survive this one).
+        ctx.pop("last_apply", None)
     # Snapshot files + meta SYNCHRONOUSLY (so the State-History timeline refreshed
     # by this same response's stateHistoryChanged sees the new snapshot, and the
     # content is captured before any concurrent writer can change the live files);
@@ -8522,20 +8614,20 @@ def state_apply_to_live():
             ), 500
         _set_working_dirty(True)
 
-    # docs/20 v2 "Revert last apply": capture the PRE-apply live content
-    # first (content-hash dedup makes this free when live already matches a
-    # snapshot; then the newest existing snapshot IS the pre-apply state).
+    # docs/20 v2 "Revert last apply": capture the PRE-apply live content.
+    # audit-r10: ctx-pinned + content-matched fallback (see the sync twin —
+    # "newest snapshot" is wrong after an A-B-A revert cycle).
     pre_apply_ts = None
     try:
-        _pre = _history().check_and_snapshot(
-            _active_path(), "auto",
+        _hm = _history()
+        _pre = _hm.check_and_snapshot(
+            ctx["path"], "auto",
             defer_index=not current_app.config.get("TESTING"),
-            project=_scope_for(_active_path(), _active_ctx()))
+            project=_scope_for(ctx["path"], ctx))
         if _pre is not None:
             pre_apply_ts = _pre.timestamp
         else:
-            _snaps = _history().list_snapshots(_active_path())
-            pre_apply_ts = _snaps[0].timestamp if _snaps else None
+            pre_apply_ts = _hm.snapshot_ts_for_current_content(ctx["path"])
     except Exception:
         logger.warning("Pre-apply snapshot failed", exc_info=True)
 
@@ -8547,11 +8639,13 @@ def state_apply_to_live():
         return render_template(
             "_state_apply_conflict.html",
             staged_conflict=bool(ctx.get("working_dirty"))
-            and not ctx.get("pending_reapply"))
+            and (bool(ctx.get("staged_base"))
+                 or not ctx.get("pending_reapply")))
     except (OSError, ValueError) as exc:
         return render_template("_status.html", message=f"Apply to live failed: {exc}", level="error"), 500
 
     _set_working_dirty(False)
+    ctx["staged_base"] = False   # the staged content reached live (audit-r10)
     _clear_reapply(ctx)  # the edits are now on the live chip — nothing left to re-apply
     ctx["live_diverged"] = False  # live now holds the working content (incl. force)
     _reset_baseline_after_apply(ctx)  # the user's own change isn't "live drift"
@@ -8560,6 +8654,11 @@ def state_apply_to_live():
             "pre_ts": pre_apply_ts,
             "at": datetime.now().isoformat(timespec="seconds"),
         }
+    else:
+        # audit-r10: no trustworthy pre-apply target — an honestly missing
+        # button beats offering a stale/wrong revert (the previous apply's
+        # memo must not survive this one).
+        ctx.pop("last_apply", None)
     # Snapshot files + meta synchronously; only the SQLite indexing is deferred —
     # see the pull-apply path above for the full rationale.
     try:
@@ -13326,11 +13425,12 @@ def dataset_load_state(uid):
             safe_io.write_state_wiring(wc.working_folder, state, wiring)
             _rebuild_after_working_copy_replaced(ctx)
             ctx["working_dirty"] = True   # working now differs from live
+            ctx["staged_base"] = True     # audit-r10 (see state_history_stage)
+            _clear_reapply(ctx)
     except (OSError, ValueError) as exc:
         return render_template("_status.html",
                                message=f"Loading run state failed: {exc}",
                                level="error"), 500
-    _clear_reapply(ctx)
     logger.info("dataset run %s staged into the working copy of %s",
                 uid, ctx["path"])
     msg = render_template(
@@ -15271,6 +15371,10 @@ _SCHEDULER_MUTATOR_ENDPOINTS = {
     # working-copy / live writers
     "main.save", "main.state_sync", "main.state_apply_to_live",
     "main.undo", "main.discard", "main.diagnostics_apply_fix",
+    # extras identity editors (audit-r10: these stage through the modifier
+    # too — un-reviewed extras must not ride an autofit plan's next apply,
+    # and a mid-plan chip_name flip would re-route snapshot attribution)
+    "main.chip_name_set", "main.chip_data_folder_set",
     # QM-subprocess spawners (a 2nd OPX connection during a run = collision)
     "main.generate_build", "main.generate_allocate",
     "main.generate_preview_config", "main.generate_load",

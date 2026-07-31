@@ -255,6 +255,95 @@ class TestStagedStalenessConflict:
         assert r3.get_json()["status"] == "ok"
         assert _working_off(env) == 0.070
 
+    def test_staged_base_survives_stash(self, env):
+        """audit-r10 F-C: stage → edit → /save fills the re-apply stash with
+        only the EDIT; a stash-based carve-out would then pull-destroy the
+        staged base. The staged_base marker must keep the push delegation:
+        live gets base + edit."""
+        c = env["client"]
+        _stage_pre_apply(env)                       # working=0.08 staged
+        _edit(c, 6.0e9, dot_path="qubits.qA1.f_01")
+        assert c.post("/save").status_code == 200   # stash now non-empty
+        r = c.post("/state/sync", data={"mode": "apply"})
+        assert r.get_json()["status"] == "ok", r.get_json()
+        live = json.loads((env["live"] / "state.json").read_text(encoding="utf-8"))
+        assert live["qubits"]["qA1"]["z"]["joint_offset"] == 0.08, \
+            "the STAGED BASE must reach live (not be pulled away)"
+        assert live["qubits"]["qA1"]["f_01"] == 6.0e9
+
+    def test_staged_then_edited_conflict_stays_honest(self, env):
+        """audit-r10 F-C: with a staged base + saved edit + live drift, the
+        conflict tray must stay the HONEST staged variant and pull stays
+        confirm-gated."""
+        c = env["client"]
+        _stage_pre_apply(env)
+        _edit(c, 6.0e9, dot_path="qubits.qA1.f_01")
+        assert c.post("/save").status_code == 200
+        _write_chip(env["live"], _state(off_a=0.070))   # out-of-band drift
+        r = c.post("/state/sync", data={"mode": "apply"})
+        body = r.get_json()
+        assert body["status"] == "conflict", body
+        assert "Apply my working state" in body["tray_html"]
+        assert "Pull &amp; apply my edits" not in body["tray_html"]
+        r2 = c.post("/state/sync", data={"mode": "discard"})
+        assert r2.get_json()["status"] == "needs_confirm"
+
+    def test_second_revert_cycle_targets_true_pre_apply(self, env):
+        """audit-r10 F-B: after an A-B-A content cycle the dedup makes the
+        NEWEST snapshot the wrong revert target — pre_ts must be resolved by
+        content match."""
+        c = env["client"]
+        hm = env["app"].config["history_manager"]
+        ctx = _stage_pre_apply(env)                 # live=0.095, staged 0.08
+        assert c.post("/state/sync",
+                      data={"mode": "apply"}).get_json()["status"] == "ok"
+        assert _live_off(env) == 0.08               # reverted (A-B-A complete)
+        _edit(c, 0.099)
+        assert c.post("/state/apply-to-live").status_code == 200
+        pre_ts = ctx["last_apply"]["pre_ts"]
+        hist_dir = hm._history_dir(Path(str(env["live"])))
+        snap = json.loads((hist_dir / pre_ts / "state.json").read_text(
+            encoding="utf-8"))
+        assert snap["qubits"]["qA1"]["z"]["joint_offset"] == 0.08, \
+            "pre_ts must hold the TRUE pre-apply content, not the newest snap"
+
+    def test_no_trustworthy_target_drops_last_apply(self, env):
+        """audit-r10 F-D: a failed capture must not leave the PREVIOUS
+        apply's memo offering a two-applies-deep revert."""
+        c = env["client"]
+        _edit(c, 0.095)
+        assert c.post("/state/apply-to-live").status_code == 200
+        ctx = next(iter(env["app"].config["contexts"].values()))
+        assert ctx.get("last_apply")
+        hm = env["app"].config["history_manager"]
+
+        def _boom(*a, **k):
+            raise RuntimeError("capture failed")
+
+        env["app"].config["history_manager"].check_and_snapshot = _boom  # type: ignore
+        try:
+            _edit(c, 0.097)
+            assert c.post("/state/apply-to-live").status_code == 200
+            assert "last_apply" not in ctx, \
+                "stale memo must be dropped when no trustworthy target exists"
+        finally:
+            env["app"].config["history_manager"] = hm
+
+    def test_stage_confirm_from_tray_targets_status_bar(self, env):
+        """audit-r10 F-I: the tray's revert 409 confirm must target an
+        element that exists outside the State History page."""
+        c = env["client"]
+        _edit(c, 0.095)
+        assert c.post("/state/apply-to-live").status_code == 200
+        ctx = next(iter(env["app"].config["contexts"].values()))
+        pre_ts = ctx["last_apply"]["pre_ts"]
+        _edit(c, 0.091)                              # pending → 409 gate
+        r = c.post(f"/state-history/{pre_ts}/stage?from=tray")
+        assert r.status_code == 409
+        body = r.data.decode()
+        assert 'hx-target="#status-bar"' in body
+        assert "from=tray" in body
+
     def test_saved_edits_keep_stash_replay_flow(self, env):
         """The carve-out: /save stashes the edits, so a dirty-but-stashed
         working copy keeps the pull-first merge — an out-of-band live change
@@ -288,4 +377,4 @@ def test_state_sync_client_wiring():
         [node, str(Path(__file__).resolve().parent / "state_sync_selfcheck.cjs")],
         capture_output=True, text=True, timeout=120)
     assert res.returncode == 0, f"selfcheck failed:\n{res.stdout}\n{res.stderr}"
-    assert res.stdout.count("ok - ") >= 14, res.stdout
+    assert res.stdout.count("ok - ") >= 20, res.stdout

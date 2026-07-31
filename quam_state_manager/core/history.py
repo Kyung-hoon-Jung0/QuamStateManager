@@ -857,6 +857,30 @@ class HistoryManager:
         self._chip_dir_memo: dict[str, tuple[Any, tuple]] = {}
         self._alias_cache: tuple[int, dict] | None = None
 
+    def snapshot_ts_for_current_content(
+            self, quam_state_path: str | Path) -> str | None:
+        """Timestamp of the newest snapshot whose stored ``state_hash``
+        equals the live folder's CURRENT content.
+
+        The only trustworthy "this snapshot IS the pre-apply state" witness
+        when :meth:`check_and_snapshot` returns None — its dedup matches
+        against EVERY hash ever seen (not the newest snapshot), so after an
+        A-B-A revert cycle the newest snapshot can hold the WRONG content
+        (audit-r10 finding). None when the live pair is unreadable or no
+        snapshot hash matches."""
+        path = Path(quam_state_path)
+        try:
+            h = _canonical_content_hash(path / "state.json",
+                                        path / "wiring.json")
+        except Exception:  # noqa: BLE001
+            return None
+        if h is None:
+            return None
+        for meta in self.list_snapshots(path):
+            if meta.state_hash == h:
+                return meta.timestamp
+        return None
+
     def _known_hashes_for_chip(self, hist_dir: Path) -> set[str]:
         """Return the set of state_hashes already present in a chip dir.
 
@@ -1238,10 +1262,39 @@ class HistoryManager:
                 if claimed is None or tok is None or claimed == tok:
                     dir_key = str(entry["dir"])
                     return self._root / dir_key, dir_key, "extras", None
-                # A DIFFERENT fingerprint owns this name — refuse tier 1 so
-                # two physical chips never silently merge into one dir.
+                # Token mismatch. audit-r10: routine SAME-chip evolution —
+                # adding/removing a qubit or pair, moving host/cluster —
+                # changes the token too; a strict-equality refusal here
+                # permanently forked a NAMED chip's history on the exact
+                # events tier 1 exists to survive. Judge by alignment
+                # against the claimed dir's newest snapshot instead:
+                #   - ALIGNED / RENAMED (same network)      → same chip
+                #   - networks differ but qubit/pair labels
+                #     identical (a host move)               → same chip
+                #     (name + labels = two independent identity witnesses)
+                #   - unverifiable dir (no readable sample) → the name is
+                #     definitive (the runs-tier doctrine)
+                # Only a provably different chip — different network AND
+                # different labels — still refuses, so two physical chips
+                # never merge. Acceptance refreshes the stored token.
+                claimed_dir_key = str(entry["dir"])
+                sample = self._sample_fingerprint(self._root / claimed_dir_key)
+                verdict = align(ident.fingerprint, sample)
+                same_labels = (
+                    sample is not None and ident.fingerprint is not None
+                    and ident.fingerprint.qubits == sample.qubits
+                    and ident.fingerprint.pairs == sample.pairs)
+                if (sample is None
+                        or verdict in (ALIGN_ALIGNED, ALIGN_RENAMED)
+                        or same_labels):
+                    self._record_alias(name_key, claimed_dir_key, tok,
+                                       ident.name)
+                    return (self._root / claimed_dir_key, claimed_dir_key,
+                            "extras", None)
+                # A provably DIFFERENT chip owns this name — refuse tier 1
+                # so two physical chips never silently merge into one dir.
                 conflict = {"type": "name_conflict", "name": ident.name,
-                            "claimed_dir": str(entry["dir"])}
+                            "claimed_dir": claimed_dir_key}
             else:
                 # Unclaimed name. Adopt the chip's EXISTING dir first
                 # (fingerprint continuity — naming/renaming must never
@@ -2713,6 +2766,11 @@ class HistoryManager:
             x = (i / (n - 1)) * width if n > 1 else 0.0
             y = height - ((v - vmin) / rng) * (height - 4) - 2
             trigger = p.get("trigger") or "auto"
+            # audit-r10: the trigger round-trips through on-disk meta/SQLite
+            # and lands raw in an f-string SVG rendered |safe — allowlist it.
+            if trigger not in ("save", "manual", "auto", "experiment",
+                               "restore"):
+                trigger = "auto"
             coords.append((x, y, trigger))
         if len(coords) < 2:
             return ""

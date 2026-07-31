@@ -713,3 +713,59 @@ class TestAdoptBridgeUsesPublicNativePath:
                              data_folder="/home/lab/data"))
         assert ctx["extras_data_roots"] == [str(real)]
         assert ctx["extras_data_dangling"] == []
+
+
+class TestLadderDriftHeal:
+    """audit-r10 F-F: routine same-chip evolution (add a qubit, move host)
+    changes the fingerprint token — tier 1 must HEAL (align/label-judged,
+    token refreshed), never fork a named chip's history. A provably
+    different chip claiming the name still refuses."""
+
+    def test_add_qubit_keeps_named_dir(self, hm, tmp_path):
+        p = _write(tmp_path / "labX" / "quam_a",
+                   _state("qA1", chip_name="gilboa"), _wiring("10.0.0.1"))
+        m1 = hm.check_and_snapshot(p, "manual", force=True)
+        st = _state("qA1", chip_name="gilboa")
+        st["qubits"]["qB1"] = {"id": "qB1", "f_01": 6.0e9}
+        _write(tmp_path / "labX" / "quam_a", st, _wiring("10.0.0.1"))
+        m2 = hm.check_and_snapshot(p, "manual", force=True)
+        root = tmp_path / "inst" / "history"
+        assert (root / "gilboa" / m1.timestamp).is_dir()
+        assert (root / "gilboa" / m2.timestamp).is_dir(),             "adding a qubit must not fork the named chip's history"
+        assert hm._key_for(p) == "gilboa"
+
+    def test_host_move_keeps_named_dir(self, hm, tmp_path):
+        p = _write(tmp_path / "labX" / "quam_a",
+                   _state("qA1", chip_name="gilboa"), _wiring("10.0.0.1"))
+        m1 = hm.check_and_snapshot(p, "manual", force=True)
+        _write(tmp_path / "labX" / "quam_a",
+               _state("qA1", chip_name="gilboa"), _wiring("10.9.9.9"))
+        m2 = hm.check_and_snapshot(p, "manual", force=True)
+        root = tmp_path / "inst" / "history"
+        assert (root / "gilboa" / m1.timestamp).is_dir()
+        assert (root / "gilboa" / m2.timestamp).is_dir(),             "a host/cluster move must not fork the named chip's history"
+
+    def test_provably_different_chip_still_refused(self, hm, tmp_path):
+        pa = _write(tmp_path / "labX" / "quam_a",
+                    _state("qA1", chip_name="gilboa"), _wiring("10.0.0.1"))
+        ma = hm.check_and_snapshot(pa, "manual", force=True)
+        # different network AND different labels — a true impostor
+        pb = _write(tmp_path / "labY" / "quam_z",
+                    _state("qZ9", chip_name="gilboa"), _wiring("172.16.0.9"))
+        mb = hm.check_and_snapshot(pb, "manual", force=True)
+        root = tmp_path / "inst" / "history"
+        assert (root / "gilboa" / ma.timestamp).is_dir()
+        assert not (root / "gilboa" / mb.timestamp).is_dir(),             "two physical chips must never merge into one dir"
+
+
+class TestAuditR10Pins:
+    def test_extras_editors_in_scheduler_mutator_set(self):
+        from quam_state_manager.web import routes as routes_mod
+        s = routes_mod._SCHEDULER_MUTATOR_ENDPOINTS
+        assert "main.chip_name_set" in s
+        assert "main.chip_data_folder_set" in s
+
+    def test_chip_name_banner_route(self, tmp_path):
+        _app, c, _live, _ctx = _df_env(tmp_path, _state("qA1", chip_name="g"))
+        r = c.get("/chip-name/banner")
+        assert r.status_code == 200

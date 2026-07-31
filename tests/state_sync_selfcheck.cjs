@@ -133,6 +133,44 @@ window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
     ip.innerHTML = '';
     window.closeInspector = realClose;
 
+    /* ── 2b. LiveEditUndo boundary discipline (audit-r10) ─────────────── */
+    {
+        const td = window.document.createElement('td');
+        td.innerHTML = '<input class="bulk-cell" data-dot-path="qubits.qX.f_01"'
+            + ' data-orig="1.0" value="1.0">';
+        window.document.body.appendChild(td);
+        const cell = td.querySelector('.bulk-cell');
+        // staged entry (data-orig advanced to next by the commit) is dropped —
+        // the server tier owns that undo now
+        window.LiveEditUndo.record('fill', [{ dp: 'qubits.qX.f_01', prev: '1.0', next: '2.0' }]);
+        cell.value = '2.0';
+        cell.setAttribute('data-orig', '2.0');
+        ok(window.LiveEditUndo.tryUndo() === false,
+           'staged LiveEditUndo entry is dropped (falls through to the server tier)');
+        ok(cell.value === '2.0', 'a staged value is never half-reverted from memory');
+        // un-staged entry still restores
+        cell.setAttribute('data-orig', '1.0');
+        window.LiveEditUndo.record('fill2', [{ dp: 'qubits.qX.f_01', prev: '1.0', next: '2.0' }]);
+        ok(window.LiveEditUndo.tryUndo() === true, 'un-staged entry restores');
+        ok(cell.value === '1.0', 'restored to the recorded prev');
+        // stateRestored is a hard boundary — the stack clears
+        window.LiveEditUndo.record('fill3', [{ dp: 'qubits.qX.f_01', prev: '1.0', next: '3.0' }]);
+        window.document.dispatchEvent(new window.CustomEvent('stateRestored', { bubbles: true }));
+        ok(window.LiveEditUndo.tryUndo() === false,
+           'stateRestored clears the in-memory undo stack');
+        // Ctrl+Z mid-typing in a DIRTY cell restores the committed value and
+        // never deletes a staged group behind the user's back
+        cell.value = '9.9';
+        cell.focus();
+        ajaxCalls.length = 0;
+        cell.dispatchEvent(new window.KeyboardEvent('keydown',
+            { key: 'z', ctrlKey: true, bubbles: true, cancelable: true }));
+        ok(cell.value === '1.0', 'Ctrl+Z in a dirty cell restores data-orig');
+        ok(!ajaxCalls.some(function (c2) { return c2.url === '/undo'; }),
+           'keystroke-level undo never posts the server /undo');
+        td.remove();
+    }
+
     /* ── 3. plot-apply popup closes after one successful Apply All ────── */
     const rowsBox = window.document.getElementById('plot-apply-rows');
     function mkRow(dp) {
