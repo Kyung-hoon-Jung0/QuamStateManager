@@ -24,8 +24,12 @@ _APP_JS = (Path(__file__).resolve().parent.parent
 
 
 def _do_state_sync_body() -> str:
+    # Slice to the NEXT top-level function, not a fixed char count — the
+    # audit-r10 needs_confirm branch grew the head past the old 6500 window
+    # and silently truncated the contract lines out of the tripwire.
     i = _APP_JS.index("window.doStateSync = function")
-    return _APP_JS[i:i + 6500]
+    j = _APP_JS.index("window.applyEditsToLive", i)
+    return _APP_JS[i:j]
 
 
 class TestCleanApplyPreservesSurface:
