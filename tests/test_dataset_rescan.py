@@ -55,8 +55,8 @@ def test_new_run_in_new_date_dir_is_found(tmp_path):
     # New run lands in a brand-new date dir; the root + new dir mtimes move,
     # so rescan_if_stale must detect it.
     _seed_run(root, 2, date="2026-05-02")
-    _bump_mtime(root, store._last_mtime + 10)
-    _bump_mtime(root / "2026-05-02", store._last_mtime + 10)
+    _bump_mtime(root, store._last_mtime[0] + 10)
+    _bump_mtime(root / "2026-05-02", store._last_mtime[0] + 10)
 
     found_new = store.rescan_if_stale()
     assert set(store.runs.keys()) == {1, 2}
@@ -73,8 +73,8 @@ def test_new_run_in_existing_date_dir_is_found(tmp_path):
     # date dir's mtime, so the unchanged-dir short-circuit must NOT hide it.
     _seed_run(root, 2, date="2026-05-01", hhmmss="020000")
     date_dir = root / "2026-05-01"
-    _bump_mtime(date_dir, store._last_mtime + 10)
-    _bump_mtime(root, store._last_mtime + 10)
+    _bump_mtime(date_dir, store._last_mtime[0] + 10)
+    _bump_mtime(root, store._last_mtime[0] + 10)
 
     store.rescan_if_stale()
     assert set(store.runs.keys()) == {1, 2}
@@ -91,8 +91,8 @@ def test_vanished_run_in_touched_date_dir_is_dropped(tmp_path):
 
     shutil.rmtree(r2)  # deleting a child bumps the date dir mtime
     date_dir = root / "2026-05-01"
-    _bump_mtime(date_dir, store._last_mtime + 10)
-    _bump_mtime(root, store._last_mtime + 10)
+    _bump_mtime(date_dir, store._last_mtime[0] + 10)
+    _bump_mtime(root, store._last_mtime[0] + 10)
 
     store.rescan_if_stale()
     assert set(store.runs.keys()) == {1}
@@ -127,8 +127,8 @@ def test_untouched_date_dirs_are_not_rewalked(tmp_path, monkeypatch):
     # Touch only one new run inside ONE date dir.
     _seed_run(root, 99, date="2026-05-03", hhmmss="030000")
     touched = root / "2026-05-03"
-    _bump_mtime(touched, store._last_mtime + 10)
-    _bump_mtime(root, store._last_mtime + 10)
+    _bump_mtime(touched, store._last_mtime[0] + 10)
+    _bump_mtime(root, store._last_mtime[0] + 10)
 
     store.rescan_if_stale()
     assert 99 in store.runs
@@ -200,8 +200,8 @@ def test_same_mtime_different_size_rewrite_is_detected(tmp_path):
 
     # Make the date dir walk (B27 would otherwise skip it) — the per-run
     # fingerprint alone decides whether the rewrite is seen.
-    _bump_mtime(root / "2026-05-01", store._last_mtime + 10)
-    _bump_mtime(root, store._last_mtime + 10)
+    _bump_mtime(root / "2026-05-01", store._last_mtime[0] + 10)
+    _bump_mtime(root, store._last_mtime[0] + 10)
     store.rescan_if_stale()
     assert store.runs[1].fit_results["q1"]["T1"] == pytest.approx(9.25e-6)
 

@@ -9138,6 +9138,18 @@ def _filter_tree(tree: dict, text: str) -> dict:
     return result
 
 
+def _tree_render_ctx(tree: dict) -> dict:
+    """Template context for _sidebar_tree.html: the flat tree (root iteration,
+    empty checks) + the per-root NESTED render model (r13 hierarchy — real
+    folder levels between root and runs, newest-first)."""
+    from quam_state_manager.core.scanner import build_nested_tree
+    nested = {}
+    for root_path, groups in (tree or {}).items():
+        entries = [e for g in groups for e in g.entries]
+        nested[root_path] = build_nested_tree(Path(root_path), entries)
+    return {"tree": tree or {}, "nested": nested}
+
+
 @bp.route("/workspace/add", methods=["POST"])
 def workspace_add():
     folder = request.form.get("folder", "").strip()
@@ -9157,7 +9169,8 @@ def workspace_add():
     _dataset_candidates_cache.pop(id(current_app._get_current_object()), None)
     _save_workspace_roots()
 
-    return render_template("_sidebar_tree.html", tree=ws.tree, message=f"Added {len(entries)} experiment(s)")
+    return render_template("_sidebar_tree.html", **_tree_render_ctx(ws.tree),
+                           message=f"Added {len(entries)} experiment(s)")
 
 
 @bp.route("/workspace/remove", methods=["POST"])
@@ -9200,7 +9213,7 @@ def workspace_remove():
                 ),
                 level="warning",
             )
-    return render_template("_sidebar_tree.html", tree=ws.tree)
+    return render_template("_sidebar_tree.html", **_tree_render_ctx(ws.tree))
 
 
 @bp.route("/workspace/tree")
@@ -9212,31 +9225,45 @@ def workspace_tree():
 
     if name_filter:
         return render_template("_sidebar_tree.html",
-                               tree=_filter_tree(ws.tree, name_filter),
+                               **_tree_render_ctx(_filter_tree(ws.tree, name_filter)),
                                name_filter=name_filter)
 
-    return render_template("_sidebar_tree.html", tree=ws.tree if ws else {})
+    return render_template("_sidebar_tree.html",
+                           **_tree_render_ctx(ws.tree if ws else {}))
 
 
 @bp.route("/workspace/tree/group")
 def workspace_tree_group():
-    """Render the full (uncapped) entry list for one date group.
+    """Render the full (uncapped) entry list for one container group.
 
     Backs the sidebar's "Show all N" button: the main tree renders only the
-    first N entries per group to bound the DOM at scale, and this fragment
+    newest N entries per group to bound the DOM at scale, and this fragment
     swaps in the complete list for one group on demand. Honours the active
     name filter so expanding a group never reveals filtered-out entries.
+    r13: groups are addressed by ``tpath`` (the container's /-joined relative
+    path from the nested tree); ``date`` stays as a legacy alias — for the
+    flat layout the pseudo-container's tpath IS the date string.
     """
     ws = _ws()
     root = request.args.get("root", "")
-    date = request.args.get("date", "")
+    tpath = request.args.get("tpath", "") or request.args.get("date", "")
     name_filter = request.args.get("name", "").strip()
     tree = _filter_tree(ws.tree, name_filter) if (name_filter and ws) else (ws.tree if ws else {})
-    entries: list = []
-    for dg in tree.get(root, []):
-        if dg.date_str == date:
-            entries = dg.entries
-            break
+    from quam_state_manager.core.scanner import build_nested_tree
+    all_entries = [e for g in tree.get(root, []) for e in g.entries]
+    nodes = build_nested_tree(Path(root), all_entries)
+
+    def _find(nodes_: list) -> dict | None:
+        for n in nodes_:
+            if n["tpath"] == tpath:
+                return n
+            hit = _find(n["children"])
+            if hit is not None:
+                return hit
+        return None
+
+    node = _find(nodes)
+    entries = node["entries"] if node else []
     return render_template("_sidebar_tree_entries.html", entries=entries)
 
 
@@ -9264,7 +9291,8 @@ def workspace_refresh():
     ws = _ws()
     ws.rescan_all()
     current_app.config.pop("dataset_store", None)  # keep Datasets tab in sync
-    return render_template("_sidebar_tree.html", tree=ws.tree if ws else {})
+    return render_template("_sidebar_tree.html",
+                           **_tree_render_ctx(ws.tree if ws else {}))
 
 
 @bp.route("/workspace/select", methods=["POST"])
@@ -12399,7 +12427,8 @@ _dataset_lru_lock = threading.Lock()
 
 
 def _dataset_store_lru() -> OrderedDict[Path, DatasetStore]:
-    """LRU cache (max 5) of DatasetStore instances keyed by data folder.
+    """LRU cache (``_DATASET_STORE_LRU_MAX`` = 32) of DatasetStore instances
+    keyed by data folder.
 
     Survives invalidation of the active-pointer slot ``dataset_store``,
     so revisiting the same workspace after a rescan or workspace toggle
@@ -12983,7 +13012,16 @@ def datasets_changes_since():
     date = request.args.get("date") or None
     updated: list[dict] = []
     vanished: list[str] = []
-    now = 0.0
+    # r13 audit D7: the single client cursor must be the MINIMUM of the
+    # per-folder samples, not the max. Folders are polled sequentially and
+    # each stamps its own `now` at the END of its changes_since — with max,
+    # the next poll queried folder A with a ts LATER than A's own sample, so
+    # any run stamped into A during the loop window (a concurrent
+    # /datasets/poll or page render also rescans) was skipped forever. min
+    # only re-emits a few rows (client merges by id — harmless). A folder
+    # whose rescan failed returns now == ts (D8) and correctly holds the
+    # cursor back until it heals.
+    now: float | None = None
     for fol in active:
         delta = fol["store"].changes_since(ts, date=date)
         for row in delta.get("updated", []):
@@ -12991,8 +13029,9 @@ def datasets_changes_since():
             updated.append(row)
         for rid in delta.get("vanished", []):
             vanished.append(_dataset_uid(fol["key"], rid))
-        now = max(now, delta.get("now", 0.0))
-    return jsonify({"updated": updated, "vanished": vanished, "now": now})
+        sample = delta.get("now", 0.0)
+        now = sample if now is None else min(now, sample)
+    return jsonify({"updated": updated, "vanished": vanished, "now": now or 0.0})
 
 
 @bp.route("/datasets/rescan", methods=["POST"])

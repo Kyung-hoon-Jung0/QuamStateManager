@@ -580,20 +580,39 @@
                         // In-flight guard + visibility gating (audit B24).
                         if (_treePolling || document.hidden) return;
                         _treePolling = true;
-                        fetch('/workspace/tree/poll').then(function(r){ return r.json(); }).then(function(d){
+                        // 10 s abort (r13 audit D5): a hung socket used to pin
+                        // _treePolling=true and silently kill every later tick.
+                        var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+                        var tm = ctrl ? setTimeout(function(){ ctrl.abort(); }, 10000) : null;
+                        fetch('/workspace/tree/poll', ctrl ? { signal: ctrl.signal } : undefined)
+                          .then(function(r){ return r.json(); }).then(function(d){
                             if (!d || typeof d.v === 'undefined') return;
-                            if (lastV !== null && d.v !== lastV && window.htmx) {
+                            if (lastV === null) { lastV = d.v; return; }  // baseline
+                            if (d.v !== lastV && window.htmx) {
                                 var f = document.getElementById('sidebar-filter-input');
+                                var v = d.v;
+                                // r13 audit D4: advance lastV only after the tree
+                                // swap SUCCEEDED — fire-and-forget used to strand
+                                // a stale DOM forever when the swap failed/aborted.
                                 htmx.ajax('GET', '/workspace/tree', {
                                     target: '#sidebar-tree', swap: 'innerHTML',
                                     values: { name: (f && f.value) || '' }
-                                });
+                                }).then(function(){ lastV = v; }).catch(function(){});
                             }
-                            lastV = d.v;  // baseline on first poll; updates after each refresh
-                        }).catch(function(){}).then(function(){ _treePolling = false; });
+                        }).catch(function(){}).then(function(){
+                            if (tm) clearTimeout(tm);
+                            _treePolling = false;
+                        });
                     }
                     poll();                       // establish baseline after the load render
                     setInterval(poll, secs * 1000);
+                    // r13 audit D5: catch-up poll when the window becomes visible
+                    // again — pywebview/WebView2 suspends timers while minimized,
+                    // leaving up to a full interval of dead time on restore. Same
+                    // pattern as dataset-virtual.js / the new-run popup poller.
+                    document.addEventListener('visibilitychange', function() {
+                        if (!document.hidden) poll();
+                    });
                 });
                 </script>
                 {# Scroll-past-end spacer: lets the last experiment folders be

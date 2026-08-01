@@ -1371,10 +1371,10 @@ class TestSidebarFeatures:
         compare-selection must stay independent: the row is a <div> and the
         checkbox is toggled only by a deliberate click on the checkbox itself.
         """
-        # The entry-row markup lives in the _sidebar_tree_entries.html partial
-        # (shared by the capped inline render and the "Show all N" fragment).
+        # The entry-row markup lives in the entry_rows macro (r13 — shared by
+        # the recursive tree and the "Show all N" fragment so they can't drift).
         tpl = (Path(__file__).resolve().parent.parent
-               / "quam_state_manager" / "web" / "templates" / "_sidebar_tree_entries.html")
+               / "quam_state_manager" / "web" / "templates" / "_sidebar_tree_macros.html")
         text = tpl.read_text(encoding="utf-8")
         assert 'class="tree-entry-label"' in text, "sidebar entry row markup changed unexpectedly"
         assert '<label class="tree-entry-label"' not in text, (
@@ -1383,30 +1383,52 @@ class TestSidebarFeatures:
             "compare checkbox. Keep viewing and compare-selection independent."
         )
 
-    def test_sidebar_tree_caps_date_group_and_offers_show_all(self, app):
-        """A date group with more than the cap (50) entries renders only the
-        first 50 rows + a "Show all N" control, and still shows the true total.
-        Bounds the DOM at scale (3,000-run workspaces) without losing entries.
-        """
-        from flask import render_template
-        from quam_state_manager.core.scanner import DateGroup
+    @staticmethod
+    def _fake_entries(n, date="2026-05-30", chip=None):
+        from pathlib import Path as _P
 
         class _E:
             def __init__(self, i):
-                self.quam_state_path = f"/ws/r{i}/quam_state"
+                base = f"/ws/{chip}/{date}" if chip else f"/ws/{date}"
+                self.folder_path = _P(f"{base}/#{i}_exp_{i}_120000")
+                self.quam_state_path = f"{base}/#{i}_exp_{i}_120000/quam_state"
                 self.experiment_name = f"exp_{i}"
                 self.run_id = i
-                self.timestamp = "2026-05-30T14:23:00"
+                self.timestamp = f"{date}T14:23:00"
                 self.status = "successful"
+                self.date_str = date
 
-        entries = [_E(i) for i in range(60)]
-        tree = {"/ws": [DateGroup(date_str="2026-05-30", entries=entries)]}
+        return [_E(i) for i in range(n)]
+
+    @staticmethod
+    def _render_ctx(entries, date="2026-05-30"):
+        from pathlib import Path as _P
+        from quam_state_manager.core.scanner import DateGroup, build_nested_tree
+        return {"tree": {"/ws": [DateGroup(date_str=date, entries=list(entries))]},
+                "nested": {"/ws": build_nested_tree(_P("/ws"), list(entries))}}
+
+    def test_sidebar_tree_caps_group_newest_first_and_offers_show_all(self, app):
+        """r13 (audit D1): entries render NEWEST-first and the 50-cap keeps the
+        NEWEST 50 — the old oldest-50 slice made every new run on a >50-run day
+        invisible while the (N) count ticked up, the reported "sidebar sometimes
+        doesn't refresh". Show-all still offers the full list; total stays true.
+        """
+        from flask import render_template
+
+        entries = self._fake_entries(60)
         with app.test_request_context("/"):
-            html = render_template("_sidebar_tree.html", tree=tree, name_filter="")
+            html = render_template("_sidebar_tree.html",
+                                   **self._render_ctx(entries), name_filter="")
             # Capped to 50 clickable rows, true total shown, show-all present.
             assert html.count("tree-entry-click") == 50
             assert "(60)" in html
             assert "Show all 60" in html
+            # The cap keeps the NEWEST 50 (runs 10..59) — newest renders first.
+            assert ">#59</span>" in html and ">#10</span>" in html
+            assert ">#9</span>" not in html and ">#0</span>" not in html
+            assert html.index(">#59</span>") < html.index(">#10</span>")
+            # The container carries its stable tpath key.
+            assert 'data-tpath="2026-05-30"' in html
             # The fragment route renders the full, uncapped list.
             frag = render_template("_sidebar_tree_entries.html", entries=entries)
             assert frag.count("tree-entry-click") == 60
@@ -1414,21 +1436,87 @@ class TestSidebarFeatures:
     def test_sidebar_tree_no_show_all_under_cap(self, app):
         """A small date group (<= cap) renders every entry and no show-all."""
         from flask import render_template
-        from quam_state_manager.core.scanner import DateGroup
 
-        class _E:
-            def __init__(self, i):
-                self.quam_state_path = f"/ws/r{i}/quam_state"
-                self.experiment_name = f"exp_{i}"
-                self.run_id = i
-                self.timestamp = "2026-05-30T14:23:00"
-                self.status = "successful"
-
-        tree = {"/ws": [DateGroup(date_str="2026-05-30", entries=[_E(i) for i in range(5)])]}
+        entries = self._fake_entries(5)
         with app.test_request_context("/"):
-            html = render_template("_sidebar_tree.html", tree=tree, name_filter="")
+            html = render_template("_sidebar_tree.html",
+                                   **self._render_ctx(entries), name_filter="")
             assert html.count("tree-entry-click") == 5
             assert "tree-show-more" not in html
+
+    def test_sidebar_tree_nested_chip_levels(self, app):
+        """r13 hierarchy: a root/<chip>/<date>/#N layout exposes the chip level
+        as an OPEN folder node above collapsed date nodes (VS-Code-style),
+        date-like siblings newest-first, with per-node totals."""
+        from flask import render_template
+        from pathlib import Path as _P
+        from quam_state_manager.core.scanner import DateGroup, build_nested_tree
+
+        ea = self._fake_entries(2, date="2026-05-30", chip="chipA")
+        eb = self._fake_entries(1, date="2026-05-31", chip="chipA")
+        ec = self._fake_entries(1, date="2026-05-30", chip="chipB")
+        entries = ea + eb + ec
+        ctx = {"tree": {"/ws": [DateGroup(date_str="d", entries=entries)]},
+               "nested": {"/ws": build_nested_tree(_P("/ws"), entries)}}
+        with app.test_request_context("/"):
+            html = render_template("_sidebar_tree.html", **ctx, name_filter="")
+        # Chip containers render as open folder nodes with recursive totals.
+        assert 'data-tpath="chipA"' in html and 'data-tpath="chipB"' in html
+        assert 'data-tpath="chipA/2026-05-30"' in html
+        assert 'data-tpath="chipB/2026-05-30"' in html
+        assert "tree-dirname" in html          # non-date container styling hook
+        i_a = html.index('data-tpath="chipA"')
+        seg = html[i_a:html.index('data-tpath="chipB"')]
+        assert "(3)" in seg                     # chipA recursive total
+        # Date children of one chip sort newest-first.
+        assert (seg.index('data-tpath="chipA/2026-05-31"')
+                < seg.index('data-tpath="chipA/2026-05-30"'))
+        # A chip container is open by default; date containers stay collapsed
+        # (attribute order is fixed by the macro: data-tpath then the open flag).
+        assert 'data-tpath="chipA" open>' in html
+        assert 'data-tpath="chipA/2026-05-30">' in html      # no open flag
+
+    def test_tree_group_endpoint_by_tpath(self, tmp_path):
+        """The "Show all" fragment addresses its group by tpath — including a
+        chip-nested one — and returns the full entry list."""
+        root = tmp_path / "ws"
+        for i in range(3):
+            exp = root / "chipA" / "2026-05-30" / f"#{i}_exp_{i}_1200{i:02d}" / "quam_state"
+            exp.mkdir(parents=True)
+            (exp / "state.json").write_text(json.dumps(_make_state()), encoding="utf-8")
+            (exp / "wiring.json").write_text(json.dumps(_make_wiring()), encoding="utf-8")
+        app = create_app(testing=True)
+        c = app.test_client()
+        c.post("/workspace/add", data={"folder": str(root)})
+        tree_html = c.get("/workspace/tree").data.decode()
+        assert 'data-tpath="chipA/2026-05-30"' in tree_html
+        frag = c.get("/workspace/tree/group",
+                     query_string={"root": str(root.resolve()),
+                                   "tpath": "chipA/2026-05-30"}).data.decode()
+        assert frag.count("tree-entry-click") == 3
+
+    def test_sidebar_poller_hardening_pins(self):
+        """r13 audit D4/D5 pins on the base.html tree poller: lastV only
+        advances after a SUCCESSFUL tree swap; a 10 s abort guards the fetch;
+        visibilitychange fires a catch-up poll (pywebview suspends timers)."""
+        base = (Path(__file__).resolve().parent.parent
+                / "quam_state_manager" / "web" / "templates" / "base.html")
+        text = base.read_text(encoding="utf-8")
+        assert ".then(function(){ lastV = v; })" in text
+        assert "AbortController" in text
+        assert "visibilitychange" in text
+
+    def test_active_branch_highlight_wiring(self):
+        """r13: marking the active run also tints its ancestor folders
+        (_markActiveTreeBranch), re-derived after every tree swap."""
+        appjs = (Path(__file__).resolve().parent.parent
+                 / "quam_state_manager" / "web" / "static" / "app.js")
+        text = appjs.read_text(encoding="utf-8")
+        assert "_markActiveTreeBranch" in text
+        assert text.count("window._markActiveTreeBranch(") >= 3
+        css = (Path(__file__).resolve().parent.parent
+               / "quam_state_manager" / "web" / "static" / "style.css")
+        assert "tree-branch-active > summary" in css.read_text(encoding="utf-8")
 
     def test_split_set_icons_and_presets_present(self):
         """The gutter resize-preset controls and their localStorage keys must
@@ -5999,7 +6087,8 @@ class TestRound12Wiring:
         return base.joinpath(*parts).read_text(encoding="utf-8")
 
     def test_sidebar_entry_exposes_folder_path(self):
-        html = self._read("web", "templates", "_sidebar_tree_entries.html")
+        # r13: the entry-row markup lives in the shared entry_rows macro.
+        html = self._read("web", "templates", "_sidebar_tree_macros.html")
         assert 'data-folder-path="{{ entry.folder_path | string }}"' in html
 
     def test_contextmenu_handler_bound(self):

@@ -856,3 +856,112 @@ def test_scan_dir_cap_bounds_runaway_symlink_walks(tmp_path, monkeypatch, caplog
     assert any("stopped at" in r.message for r in caplog.records)
     # the walk terminated early instead of visiting all ~60 big-tree dirs
     assert len(entries) <= 1
+
+
+class TestNestedTreeAndSpine:
+    """r13 (docs/68): the nested render model + the structure-spine staleness
+    probe. The old depth-1 probe statted only root+children, so a new run
+    inside an existing date dir of a grandparent-registered root
+    (root/<chip>/<date>/#N) was invisible until the next new DAY; and the old
+    flat tree merged same-date runs of different chips."""
+
+    def _deep(self, tmp_path):
+        root = tmp_path / "ws"
+        _make_exp(root / "chipA" / "2026-02-19", 1)
+        _make_exp(root / "chipA" / "2026-02-19", 2, name="t1")
+        _make_exp(root / "chipA" / "2026-02-20", 3, name="t2")
+        _make_exp(root / "chipB" / "2026-02-19", 7, name="t3")
+        _make_exp(root / "2026-02-20", 9, name="flatty")     # flat sibling
+        return root
+
+    def test_build_nested_tree_shape(self, tmp_path):
+        from quam_state_manager.core.scanner import build_nested_tree
+        root = self._deep(tmp_path)
+        entries = _scan_root(root)
+        nodes = build_nested_tree(root, entries)
+        by_name = {n["name"]: n for n in nodes}
+        assert set(by_name) == {"chipA", "chipB", "2026-02-20"}
+        # Date-like children first (newest-first), then folder names.
+        assert nodes[0]["name"] == "2026-02-20"
+        chip_a = by_name["chipA"]
+        assert chip_a["is_date"] is False
+        assert chip_a["n_total"] == 3                       # recursive count
+        assert [c["name"] for c in chip_a["children"]] == [
+            "2026-02-20", "2026-02-19"]                     # newest first
+        d19 = chip_a["children"][1]
+        assert d19["tpath"] == "chipA/2026-02-19"
+        assert [e.run_id for e in d19["entries"]] == [2, 1]  # newest first
+        # chipB's same-date runs are NOT merged into chipA's group.
+        assert by_name["chipB"]["children"][0]["tpath"] == "chipB/2026-02-19"
+
+    def test_flat_layout_unchanged_shape(self, tmp_path):
+        from quam_state_manager.core.scanner import build_nested_tree
+        root = tmp_path / "flat"
+        _make_exp(root / "2026-02-19", 1)
+        _make_exp(root / "2026-02-19", 2, name="t1")
+        nodes = build_nested_tree(root, _scan_root(root))
+        assert len(nodes) == 1
+        assert nodes[0]["name"] == "2026-02-19" and nodes[0]["is_date"] is True
+        assert nodes[0]["tpath"] == "2026-02-19"
+        assert [e.run_id for e in nodes[0]["entries"]] == [2, 1]
+
+    def test_spine_detects_deep_add(self, tmp_path):
+        """THE old blind spot: a new run in an EXISTING date dir two levels
+        below the root moves only that date dir's mtime — depth-1 probing
+        never saw it."""
+        root = self._deep(tmp_path)
+        ws = Workspace()
+        ws.add_root(root)
+        assert len(ws.all_entries) == 5
+        assert ws._is_root_stale(root) is False
+        time.sleep(0.02)
+        _make_exp(root / "chipA" / "2026-02-19", 10, name="late")
+        assert ws._is_root_stale(root) is True
+        assert ws.rescan_if_stale() is True
+        assert len(ws.all_entries) == 6
+
+    def test_spine_survives_future_dated_sibling(self, tmp_path):
+        """A future-dated dir used to pin the aggregate max() forever; the
+        per-dir map compare doesn't aggregate, so later changes still read."""
+        root = self._deep(tmp_path)
+        far_future = time.time() + 10 * 365 * 24 * 3600
+        os.utime(root / "chipB", (far_future, far_future))
+        ws = Workspace()
+        ws.add_root(root)
+        assert ws._is_root_stale(root) is False
+        time.sleep(0.02)
+        _make_exp(root / "chipA" / "2026-02-20", 11, name="post")
+        assert ws._is_root_stale(root) is True
+
+    def test_rescan_root_never_publishes_empty_tree(self, tmp_path, monkeypatch):
+        """r13 audit D2: rescan used to be remove_root+add_root — lock-free
+        readers rendering during the walk saw NO root at all ('No workspace
+        roots added yet'). The root must stay in ws.tree THROUGHOUT."""
+        import quam_state_manager.core.scanner as scanner_mod
+        root = self._deep(tmp_path)
+        ws = Workspace()
+        ws.add_root(root)
+        key = str(root)
+        seen: list[bool] = []
+        real = scanner_mod._scan_root
+
+        def spy(p):
+            seen.append(key in ws.tree)      # visible DURING the slow scan?
+            return real(p)
+
+        monkeypatch.setattr(scanner_mod, "_scan_root", spy)
+        ws.rescan_root(root)
+        assert seen == [True]
+        assert key in ws.tree
+        assert len(ws.all_entries) == 5
+
+    def test_rescan_root_drops_vanished_entries(self, tmp_path):
+        import shutil
+        root = self._deep(tmp_path)
+        ws = Workspace()
+        ws.add_root(root)
+        assert len(ws.all_entries) == 5
+        shutil.rmtree(root / "chipB")
+        ws.rescan_root(root)
+        assert len(ws.all_entries) == 4
+        assert all("chipB" not in str(e.folder_path) for e in ws.all_entries)

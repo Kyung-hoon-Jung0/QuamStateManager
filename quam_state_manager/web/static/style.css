@@ -1407,6 +1407,18 @@ hr.sidebar-section-divider { margin: 0.6rem 0; border-color: var(--pico-muted-bo
 }
 .tree-date { margin-left: .2rem; margin-top: 0; margin-bottom: 0; border-top: 1px solid var(--tree-date-divider-color); padding-top: .1rem; }
 .tree-date:first-of-type { border-top: none; padding-top: 0; }
+/* r13 hierarchy: nested container levels (chip dirs above date dirs) indent
+   VS-Code-style; non-date container names read as folders, not dates. */
+details.tree-dir details.tree-dir { margin-left: .55rem; }
+.tree-dirname { color: var(--pico-contrast); font-weight: 600; }
+.tree-dirname::before { content: "\1F4C1\00A0"; font-size: .85em; }
+/* r13: the open experiment's whole folder chain stays visible — a subtle tint
+   on every ancestor <details> summary (the entry itself keeps
+   .tree-entry-active). Works collapsed: the summary row is what tints. */
+details.tree-branch-active > summary {
+    background: color-mix(in srgb, var(--pico-primary) 12%, transparent);
+    border-radius: 3px;
+}
 .tree-collapse-btn {
     display: block; width: 100%; background: none; border: none;
     color: var(--pico-muted-color); font-size: var(--tree-collapse-btn-font); text-align: center;

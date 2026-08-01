@@ -1,4 +1,12 @@
+{# Workspace sidebar tree (r13: nested hierarchy — docs/68).
+
+   `tree` stays the flat {root: [DateGroup]} data model (all_entries, filter
+   and bookkeeping consumers untouched); `nested` is the per-root render model
+   from scanner.build_nested_tree — real folder levels (chip dirs etc.)
+   between the root and its runs, date-like levels newest-first, entries
+   newest-first with a newest-50 cap per group. #}
 {% if tree %}
+{% from '_sidebar_tree_macros.html' import dir_node %}
 {% for root_path, date_groups in tree.items() %}
 <details class="tree-root" open>
     <summary class="tree-root-label">
@@ -8,33 +16,8 @@
        pins it to the summary row. #}
     <button type="button" hx-post="/workspace/remove" hx-target="#sidebar-tree"
             hx-vals='{"folder": {{ root_path | string | tojson }}}' class="btn-remove" title="Remove">&times;</button>
-    {% for dg in date_groups %}
-    {# Cap each date group to the first N entries so a 3,000-run workspace
-       doesn't build tens of thousands of <li> nodes (rebuilt on every 60s
-       auto-refresh). The full list loads on demand via "Show all N". #}
-    {% set _cap = 50 %}
-    {% set _total = dg.entries | length %}
-    <details class="tree-date">
-        <summary class="tree-date-label">{{ dg.date_str }} <small class="muted">({{ _total }})</small></summary>
-        <ul class="tree-entries">
-        {% set entries = dg.entries[:_cap] %}
-        {% include '_sidebar_tree_entries.html' %}
-        {% if _total > _cap %}
-            <li class="tree-entry tree-show-more">
-                <button type="button" class="tree-show-more-btn"
-                        hx-get="/workspace/tree/group"
-                        hx-vals='{"root": {{ root_path | string | tojson }}, "date": {{ dg.date_str | string | tojson }}, "name": {{ (name_filter or "") | string | tojson }}}'
-                        hx-target="closest ul" hx-swap="innerHTML"
-                        title="Load the remaining {{ _total - _cap }} entries in this date group">
-                    Show all {{ _total }}
-                </button>
-            </li>
-        {% endif %}
-        </ul>
-        <button class="tree-collapse-btn" type="button"
-                onclick="this.closest('details').open=false"
-                title="Collapse this date group">&#8593; collapse</button>
-    </details>
+    {% for node in (nested or {}).get(root_path, []) %}
+    {{ dir_node(root_path, node, name_filter or "") }}
     {% endfor %}
 </details>
 {% endfor %}
@@ -43,4 +26,3 @@
 {% else %}
 <p class="muted"><small>No workspace roots added yet.</small></p>
 {% endif %}
-

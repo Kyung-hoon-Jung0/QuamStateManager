@@ -323,7 +323,7 @@ class DatasetStore:
         # reader that snapshots under it can also trigger a rescan. See
         # docs/40_scheduler.md §dataset-integration.
         self._scan_lock = threading.RLock()
-        self._last_mtime: float = 0.0
+        self._last_mtime: tuple[float, int] = (0.0, -1)
         # Per-folder fingerprint cache for incremental rescans.
         # path → (folder_fp, node_fp, data_fp, run_id) where each component is
         # a (st_mtime_ns, st_size) tuple (see ``_stat_fp``). On rescan we
@@ -534,7 +534,7 @@ class DatasetStore:
             self._date_fp.clear()
             self.dates = []
             self.experiment_types = []
-            self._last_mtime = 0.0
+            self._last_mtime = (0.0, -1)
             return
 
         # Discovery pass — walks the date/run hierarchy, classifies each
@@ -706,22 +706,33 @@ class DatasetStore:
                 len(self.dates),
             )
 
-    def _current_mtime(self) -> float:
-        """Return the newest mtime of the data root and its latest date subfolder."""
+    def _current_mtime(self) -> tuple[float, int]:
+        """Staleness fingerprint of the root: (newest root/date-dir mtime,
+        number of date dirs).
+
+        The count rider (r13 audit D6) exists because a single future-dated
+        date dir — clock-skewed acquisition host, copied-forward archive —
+        pins the max() forever, and every later change compares equal. A new
+        date dir still changes the COUNT, so the gate re-opens; changes inside
+        existing date dirs move that dir's mtime which moves the max whenever
+        it isn't pinned (and the pinned dir itself moving also changes it).
+        """
         try:
             best = self.folder_path.stat().st_mtime
         except OSError:
-            return 0.0
-        # Also check the latest date subfolder — new runs land inside it
+            return (0.0, -1)
+        n_dates = 0
+        # Also check the date subfolders — new runs land inside them
         for entry in self.folder_path.iterdir():
             if entry.is_dir() and _DATE_FOLDER_RE.match(entry.name):
+                n_dates += 1
                 try:
                     mt = entry.stat().st_mtime
                     if mt > best:
                         best = mt
                 except OSError:
                     pass
-        return best
+        return (best, n_dates)
 
     def rescan_if_stale(self) -> bool:
         """Re-scan if folder mtimes changed.  Returns True if new runs found.
@@ -790,9 +801,11 @@ class DatasetStore:
         Triggers an incremental rescan first so newly-arrived folders show up.
         Caller passes the previous response's ``now`` field as ``ts``.
         """
+        scan_ok = True
         try:
             self.rescan_if_stale()
         except Exception:
+            scan_ok = False
             logger.exception("changes_since: incremental rescan failed")
         updated = []
         # Snapshot under the scan lock so a concurrent worker rescan can't
@@ -809,7 +822,12 @@ class DatasetStore:
         return {
             "updated": updated,
             "vanished": vanished,
-            "now": _time.time(),
+            # r13 audit D8: a FAILED rescan must not advance the cursor — the
+            # old fresh-now response moved the client past a window that was
+            # never scanned, permanently skipping any run that landed in it.
+            # Standing still just re-emits already-sent rows next poll (the
+            # client merges by id — harmless).
+            "now": _time.time() if scan_ok else ts,
         }
 
     def list_runs_compact(self, date: str | None = None) -> list[dict]:
