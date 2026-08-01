@@ -298,22 +298,6 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     }
 });
 
-/* Tear down any still-zoomed figure inside a swapped-out container. toggleFigureZoom
-   attaches two capture-phase document listeners (Esc + outside-pointerdown) cleaned up
-   by imgEl._zoomCleanup; if an htmx swap detaches the zoomed <img> while it is still
-   zoomed, that cleanup would otherwise never run and the listeners would dangle on a
-   detached node until the next pointer/key event. Run it deterministically here. */
-document.addEventListener('htmx:beforeSwap', function(evt) {
-    if (!evt.detail) return;
-    if (evt.detail.shouldSwap === false) return;   // no swap → don't tear down (see above)
-    var el = evt.detail.target || evt.detail.elt;   // the container being replaced
-    if (!el || !el.querySelectorAll) return;
-    var zoomed = el.querySelectorAll('img.figure-zoomed');
-    for (var i = 0; i < zoomed.length; i++) {
-        if (typeof zoomed[i]._zoomCleanup === 'function') zoomed[i]._zoomCleanup();
-    }
-});
-
 /* /config/regenerate returns its error banner with a 4xx/5xx status; htmx 2.x
    drops error-response bodies by default (responseHandling), so the banner
    silently never rendered. Allow the swap for config-status hosts only — no
@@ -6229,34 +6213,135 @@ window.loadPrevDiff = function(btn, runId, vs, compact) {
 };
 
 /**
- * Toggle figure zoom on click. When zoomed the <img> becomes a near-full-viewport
- * position:fixed; z-index:9999 layer over #table-pane, so it MUST be dismissable by
- * more than re-clicking the image — otherwise the run table is left under an
- * undismissable layer (clicks hit the image, not the rows). Add Escape + outside-click
- * dismissal, cleaned up when un-zoomed.
+ * Figure lightbox. Entry point for every figure <img onclick="toggleFigureZoom(this)">
+ * (dataset detail / compare / interactive / trends).
  */
 window.toggleFigureZoom = function(imgEl) {
-    var zoomed = imgEl.classList.toggle('figure-zoomed');
-    if (!zoomed) {
-        if (imgEl._zoomCleanup) imgEl._zoomCleanup();
-        return;
+    // r13 feedback: the old class-toggle only pinned the <img> over the page —
+    // "the popup opens but how do I zoom in/out?". Real viewer now:
+    // wheel = cursor-anchored zoom (fit ×1 … ×12), drag = pan,
+    // double-click = fit↔250%, +/−/⟲/× buttons with a live % readout,
+    // Esc (trapFocus) / backdrop click / × close. The overlay holds a CLONE on
+    // <body>, so the figure grid never reflows and htmx swaps underneath are
+    // harmless (the old in-place approach needed a beforeSwap teardown sweep).
+    var existing = document.getElementById('figure-lightbox');
+    if (existing) { if (existing._close) existing._close(); return; }
+    if (!imgEl) return;
+
+    var box = document.createElement('div');
+    box.id = 'figure-lightbox';
+    box.className = 'fig-lightbox';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-label', 'Figure viewer');
+
+    var img = document.createElement('img');
+    img.className = 'fig-lightbox-img';
+    img.src = imgEl.getAttribute('src') || imgEl.src;
+    img.alt = imgEl.alt || '';
+    img.draggable = false;
+    box.appendChild(img);
+
+    var bar = document.createElement('div');
+    bar.className = 'fig-lightbox-bar';
+    var zoomLabel = document.createElement('span');
+    zoomLabel.className = 'fig-lightbox-zoom';
+    bar.appendChild(zoomLabel);
+    [['out', '−', 'Zoom out'], ['in', '+', 'Zoom in'],
+     ['reset', '⟲', 'Reset zoom'], ['close', '×', 'Close  (Esc)']]
+        .forEach(function(b) {
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'fig-lightbox-btn';
+            btn.setAttribute('data-act', b[0]);
+            btn.textContent = b[1];
+            btn.title = b[2];
+            bar.appendChild(btn);
+        });
+    box.appendChild(bar);
+
+    var hint = document.createElement('div');
+    hint.className = 'fig-lightbox-hint';
+    hint.textContent = 'scroll to zoom · drag to pan · double-click to zoom · Esc to close';
+    box.appendChild(hint);
+
+    // transform = translate(tx,ty) scale(s), origin center. zoomAt keeps the
+    // content point under the cursor fixed: with the img's visual center at
+    // rect-center, cursor→content is (cursor − center)/s, so the translate
+    // shifts by p·(s − s') when s changes.
+    var s = 1, tx = 0, ty = 0;
+    function apply() {
+        img.style.transform = 'translate(' + tx + 'px, ' + ty + 'px) scale(' + s + ')';
+        zoomLabel.textContent = Math.round(s * 100) + '%';
     }
-    var off = function() {
-        imgEl.classList.remove('figure-zoomed');
-        if (imgEl._zoomCleanup) imgEl._zoomCleanup();
-    };
-    var onKey = function(e) { if (e.key === 'Escape') off(); };
-    // A pointerdown anywhere but the image dismisses (the triggering click already
-    // happened, so this only fires on the NEXT interaction). Capture phase so it wins
-    // before the underlying row handler — the user then clicks again to act on the row.
-    var onDown = function(e) { if (e.target !== imgEl) off(); };
-    imgEl._zoomCleanup = function() {
-        document.removeEventListener('keydown', onKey, true);
-        document.removeEventListener('pointerdown', onDown, true);
-        imgEl._zoomCleanup = null;
-    };
-    document.addEventListener('keydown', onKey, true);
-    document.addEventListener('pointerdown', onDown, true);
+    function zoomAt(cx, cy, factor) {
+        var ns = Math.min(12, Math.max(1, s * factor));
+        if (ns === s) return;
+        var r = img.getBoundingClientRect();
+        var px = (cx - (r.left + r.width / 2)) / s;
+        var py = (cy - (r.top + r.height / 2)) / s;
+        tx += px * (s - ns); ty += py * (s - ns);
+        s = ns;
+        if (s === 1) { tx = 0; ty = 0; }   // back at fit → recenter
+        apply();
+    }
+    apply();
+
+    var release = null;
+    function close() {
+        if (release) { try { release(); } catch (e) {} release = null; }
+        if (box.parentNode) box.parentNode.removeChild(box);
+    }
+    box._close = close;
+
+    box.addEventListener('wheel', function(e) {
+        e.preventDefault();
+        zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0015));
+    }, { passive: false });
+
+    var drag = null;
+    img.addEventListener('pointerdown', function(e) {
+        if (e.button !== undefined && e.button !== 0) return;
+        drag = { x: e.clientX, y: e.clientY };
+        img.classList.add('dragging');
+        if (img.setPointerCapture && e.pointerId !== undefined) {
+            try { img.setPointerCapture(e.pointerId); } catch (err) {}
+        }
+        e.preventDefault();
+    });
+    img.addEventListener('pointermove', function(e) {
+        if (!drag) return;
+        tx += e.clientX - drag.x;
+        ty += e.clientY - drag.y;
+        drag = { x: e.clientX, y: e.clientY };
+        apply();
+    });
+    function endDrag() { drag = null; img.classList.remove('dragging'); }
+    img.addEventListener('pointerup', endDrag);
+    img.addEventListener('pointercancel', endDrag);
+
+    img.addEventListener('dblclick', function(e) {
+        if (s > 1.01) { s = 1; tx = 0; ty = 0; apply(); }
+        else zoomAt(e.clientX, e.clientY, 2.5);
+    });
+
+    box.addEventListener('click', function(e) {
+        var b = e.target.closest ? e.target.closest('.fig-lightbox-btn') : null;
+        if (b) {
+            var act = b.getAttribute('data-act');
+            var cx = window.innerWidth / 2, cy = window.innerHeight / 2;
+            if (act === 'in') zoomAt(cx, cy, 1.4);
+            else if (act === 'out') zoomAt(cx, cy, 1 / 1.4);
+            else if (act === 'reset') { s = 1; tx = 0; ty = 0; apply(); }
+            else if (act === 'close') close();
+            return;
+        }
+        if (e.target === box) close();   // backdrop (drags start on the img)
+    });
+
+    document.body.appendChild(box);
+    release = window.trapFocus ? window.trapFocus(box, close) : null;
+    var closeBtn = bar.querySelector('[data-act="close"]');
+    if (closeBtn) closeBtn.focus();
 };
 
 /**
@@ -8908,6 +8993,10 @@ document.addEventListener('htmx:afterSwap', function(evt) {
 
     var pane = document.getElementById('inspector-pane');
     if (!pane) return;
+    // r13: one-shot fresh-open flag (new-run popup). Consumed on ANY inspector
+    // swap so a failed detail render can never leak it onto a later navigation.
+    var freshOpen = window._dsOpenAtTop === true;
+    window._dsOpenAtTop = false;
     var root = pane.querySelector('#ds-detail-root');
     if (!root) return;
 
@@ -8918,11 +9007,22 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     // action that would reload the chip).
     syncSidebarTreeHighlight(newRunId, root.dataset.date);
 
-    if (newRunId === _dsSticky.currentRunId) return; // Same run — skip
+    if (newRunId === _dsSticky.currentRunId) {
+        if (freshOpen) pane.scrollTop = 0;   // re-opened the same run from the popup
+        return;
+    }
 
     var hadPrevious = !!_dsSticky.currentRunId;
     _dsSticky.currentRunId = newRunId;
     window._dsLastPlot = null;
+
+    if (freshOpen) {
+        // New-run popup open: Full View is the template default; land at the
+        // TOP and restore nothing (params trees / section anchors / State
+        // sub-tabs belong to the previous run's viewing session).
+        pane.scrollTop = 0;
+        return;
+    }
 
     if (!hadPrevious) return; // First dataset ever opened — Full View is the default
 
@@ -9292,16 +9392,15 @@ document.addEventListener('htmx:afterSwap', function(evt) {
         // sidebar-tree-entry click behavior.
         var inspectorPane = document.getElementById("inspector-pane");
         if (inspectorPane) {
-            htmx.ajax('GET', '/dataset/' + runId, {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'}).then(function() {
-                setTimeout(function() {
-                    var dataLink = document.querySelector('.dataset-tabs a[onclick*="\'data\'"]');
-                    if (dataLink) window.switchDatasetTab('data', dataLink);
-
-                    // ndview auto-opens the first variable on mount — nothing
-                    // more to do here (the legacy h5-vars-table observer is gone;
-                    // it would watch forever against the new DOM and leak).
-                }, 150);
-            });
+            // r13 feedback: a NEW run opens FRESH — Full View, scrolled to the
+            // top (the template default). This used to force-switch to the Raw
+            // Data tab (a relic of the legacy h5 pipeline) and the sticky
+            // restore then re-applied the previous run's scroll anchor on top —
+            // users landed mid-page in an expanded Raw Data view. The one-shot
+            // flag is consumed by the afterSwap restore handler, which skips
+            // every sticky restore for this open only.
+            window._dsOpenAtTop = true;
+            htmx.ajax('GET', '/dataset/' + runId, {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'});
         } else {
             // Fallback: no inspector pane → navigate to Datasets
             htmx.ajax('GET', '/datasets', {target: '#table-pane', swap: 'innerHTML'}).then(function() {
@@ -9309,6 +9408,7 @@ document.addEventListener('htmx:afterSwap', function(evt) {
                     a.classList.toggle('active', a.getAttribute('href') === '/datasets');
                 });
                 history.pushState({}, '', '/datasets');
+                window._dsOpenAtTop = true;
                 htmx.ajax('GET', '/dataset/' + runId, {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'});
             });
         }

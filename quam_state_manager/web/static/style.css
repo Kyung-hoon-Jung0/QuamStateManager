@@ -4630,7 +4630,41 @@ input.tree-edit-input {
 .figure-card { border: 1px solid var(--pico-muted-border-color); border-radius: 4px; overflow: hidden; }
 .figure-label { padding: .3rem .5rem; background: var(--pico-card-background-color); font-size: .8rem; border-bottom: 1px solid var(--pico-muted-border-color); }
 .figure-card img { width: 100%; cursor: pointer; transition: max-height .2s; }
-.figure-card img.figure-zoomed { position: fixed; top: 2rem; left: 2rem; right: 2rem; bottom: 2rem; width: auto; height: auto; max-width: calc(100vw - 4rem); max-height: calc(100vh - 4rem); object-fit: contain; background: rgba(0,0,0,.85); z-index: 9999; border-radius: 8px; padding: 1rem; }
+/* Figure lightbox (r13) — a real viewer replacing the old .figure-zoomed
+   class-toggle (which pinned the img over the page with no way to zoom).
+   Dark backdrop works in both themes; the img transform is JS-managed. */
+.fig-lightbox {
+    position: fixed; inset: 0; z-index: 9999;
+    background: rgba(0, 0, 0, .88);
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+}
+.fig-lightbox-img {
+    max-width: calc(100vw - 3rem); max-height: calc(100vh - 3rem);
+    object-fit: contain; cursor: grab; user-select: none;
+    will-change: transform; background: #fff; border-radius: 4px;
+}
+.fig-lightbox-img.dragging { cursor: grabbing; }
+.fig-lightbox-bar {
+    position: fixed; top: .6rem; right: .8rem; z-index: 2;
+    display: flex; gap: .3rem; align-items: center;
+}
+.fig-lightbox-btn {
+    width: 2rem; height: 2rem; margin: 0; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: rgba(255, 255, 255, .12); color: #fff;
+    border: 1px solid rgba(255, 255, 255, .25); border-radius: 4px;
+    font-size: 1.05rem; line-height: 1; cursor: pointer;
+}
+.fig-lightbox-btn:hover { background: rgba(255, 255, 255, .25); }
+.fig-lightbox-zoom {
+    color: #eee; font-size: .8rem; font-family: var(--font-mono);
+    min-width: 3.4em; text-align: center;
+}
+.fig-lightbox-hint {
+    position: fixed; bottom: .6rem; left: 0; right: 0; text-align: center;
+    color: rgba(255, 255, 255, .65); font-size: .75rem; pointer-events: none;
+}
 
 /* HDF5 summary */
 .h5-summary { padding: .15rem .2rem; }

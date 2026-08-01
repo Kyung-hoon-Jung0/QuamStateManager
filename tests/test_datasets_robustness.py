@@ -94,16 +94,29 @@ class TestDatasetDetailScanFree:
 
 
 class TestOverlaysAndPanels:
-    def test_zoom_dismisses_on_escape_and_outside_click(self):
-        tz = _fn(_APP, "window.toggleFigureZoom", 1000)
-        assert "'Escape'" in tz and "pointerdown" in tz
+    def test_figure_lightbox_contract(self):
+        # r13: toggleFigureZoom is a real lightbox (wheel cursor-zoom, drag pan,
+        # buttons, trapFocus Esc). The interaction mechanics are pinned by
+        # tests/figure_lightbox_selfcheck.cjs; here just the load-bearing shape:
+        # a body-mounted CLONE overlay (so htmx swaps underneath are harmless —
+        # the old in-place class-toggle needed a beforeSwap teardown sweep, now
+        # gone) with focus containment.
+        tz = _fn(_APP, "window.toggleFigureZoom", 4600)
+        assert "figure-lightbox" in tz
+        assert "trapFocus" in tz
+        assert "zoomAt" in tz and "wheel" in tz
+        assert "img.figure-zoomed" not in _APP     # legacy path fully removed
 
-    def test_zoom_listeners_torn_down_on_htmx_swap(self):
-        # If an htmx swap detaches a still-zoomed <img>, its capture-phase document
-        # listeners must be cleaned up deterministically (not left dangling until the
-        # next pointer/key event).
-        assert "img.figure-zoomed" in _APP
-        assert "_zoomCleanup()" in _APP
+    def test_new_run_popup_opens_full_view_top(self):
+        # r13 feedback: "Show Now" on the new-run popup must land on the TOP of
+        # the Full View — it used to force-switch to the Raw Data tab (legacy h5
+        # relic) and the sticky restore then re-applied the previous run's
+        # scroll anchor. The one-shot _dsOpenAtTop flag skips every restore.
+        assert "switchDatasetTab('data', dataLink)" not in _APP
+        sn = _fn(_APP, "window.showNewRun", 1600)
+        assert "_dsOpenAtTop = true" in sn
+        assert "_dsOpenAtTop === true" in _APP     # consumed in the restore handler
+        assert "pane.scrollTop = 0" in _APP
 
     def test_empty_review_overlay_cannot_trap_clicks(self):
         assert ".state-review-host > *)) { display: none" in _CSS

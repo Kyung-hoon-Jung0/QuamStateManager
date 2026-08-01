@@ -422,3 +422,30 @@ run was open without digging into Overview.
 - Pinned by `test_web.py`: `test_dataset_header_runid_prefix` + the
   figures-before-overview order assert in
   `test_detail_view_exposes_prev_state_tab`.
+
+---
+
+## Amendment (2026-08-01, r13 ⑤⑥): new-run popup lands on Full View top + figure lightbox
+
+- **New-run popup → fresh open**: "Show Now" used to force-switch the detail
+  to the Raw Data tab (`switchDatasetTab('data')` — a relic of the legacy h5
+  pipeline) and the sticky restore then re-applied the previous run's scroll
+  anchor on top, so users landed mid-page in an expanded Raw Data view.
+  `showNewRun` now sets a one-shot `window._dsOpenAtTop` flag; the afterSwap
+  restore handler consumes it on ANY inspector swap (leak-proof) and, for that
+  open only, skips every sticky restore (params trees, section anchors, State
+  sub-tabs) and scrolls the pane to the top — Full View is the template
+  default. Normal run-to-run navigation keeps the sticky behavior untouched.
+- **Figure lightbox**: clicking a figure used to class-toggle the `<img>` into
+  a fixed overlay with no way to actually zoom ("팝업까지는 되는데 zoom
+  in/out을 어떻게 하는지 모르겠음"). `toggleFigureZoom` is now a real viewer:
+  a body-mounted overlay with a CLONE of the image (grid never reflows; htmx
+  swaps underneath are harmless — the old in-place approach needed a
+  beforeSwap teardown sweep, now deleted), wheel = cursor-anchored zoom
+  (fit ×1 … ×12), drag = pan, double-click = fit↔250%, +/−/⟲/× buttons with a
+  live % readout, a bottom hint line, `trapFocus` containment, and
+  Esc / backdrop-click / × close. Same entry point — all four calling
+  templates (detail / compare / interactive / trends) unchanged.
+- Pinned by `tests/figure_lightbox_selfcheck.cjs` (driven by
+  `tests/test_figure_lightbox.py`) + the rewritten
+  `test_datasets_robustness.py::TestOverlaysAndPanels` pins.
