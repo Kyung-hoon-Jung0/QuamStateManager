@@ -1,13 +1,19 @@
 """N-D dataset viewer core — the "cube-to-client" engine.
 
-Reads a run's xarray-flavoured HDF5 (netCDF4-style, written by h5netcdf) with
-PLAIN h5py, resolves real dimension names via ``DIMENSION_LIST`` object
+Reads a run's xarray-flavoured data file in EITHER on-disk format behind one
+reader adapter (``_open_reader``): netCDF4-style HDF5 (written by h5netcdf)
+with plain h5py, resolving real dimension names via ``DIMENSION_LIST`` object
 references (the files carry NO ``_ARRAY_DIMENSIONS`` — the legacy pipeline's
-length-guessing was wrong on every same-size dim), classifies each dimension,
-infers a sensible default view, decimates oversized arrays, and returns a
-JSON-ready *cube*: data + coordinates + semantics. The client (ndview.js)
-builds the Plotly traces — every interaction after the single cube fetch
-(slider, axis swap, facet/overlay toggle, theme) is client-side.
+length-guessing was wrong on every same-size dim); or NetCDF-classic
+(``CDF\\x01``/``CDF\\x02`` magic — a runner env without netCDF4/h5netcdf makes
+xarray fall back to its scipy engine, which writes NetCDF3 bytes under the
+same ``ds_*.h5`` names; the whole 2026-07-29+ IQCC archive is this) with
+scipy.io.netcdf_file, where dimension names are native per-variable metadata.
+Then classifies each dimension, infers a sensible default view, decimates
+oversized arrays, and returns a JSON-ready *cube*: data + coordinates +
+semantics. The client (ndview.js) builds the Plotly traces — every interaction
+after the single cube fetch (slider, axis swap, facet/overlay toggle, theme)
+is client-side.
 
 Design contract (audited):
   * NEVER raises to the caller — every failure is a classified fallback dict
@@ -34,6 +40,7 @@ import json
 import logging
 import threading
 from collections import OrderedDict
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -221,6 +228,217 @@ def _read_coord(f: h5py.File, name: str) -> np.ndarray | None:
         return None
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# Reader adapter — one surface over the two on-disk formats.
+#
+# The pipeline below (classification, decimation, byte budget, serialization)
+# is pure numpy and must never care which library produced the arrays. The
+# h5py side DELEGATES verbatim to the module helpers above so HDF5 behavior
+# stays byte-identical (pinned by the corpus-invariant tests over the real
+# archives); the NetCDF-classic side mirrors the proven pattern in
+# interactive_plots/h5reader.py. Callers hold ``_h5_lock_for(path)`` around
+# ``_open_reader`` — the lock is a plain non-reentrant Lock, so the adapter
+# itself must never re-acquire it.
+# ──────────────────────────────────────────────────────────────────────────
+
+
+class _H5Reader:
+    """h5py-backed adapter. Handles ARE ``h5py.Dataset`` objects (they carry
+    .shape/.ndim/.dtype natively); ``get`` folds the isinstance checks the
+    call sites used to repeat, returning None for groups and absentees."""
+
+    def __init__(self, f: h5py.File):
+        self._f = f
+
+    def keys(self) -> list:
+        return list(self._f.keys())
+
+    def get(self, name: str):
+        ds = self._f.get(name)
+        return ds if isinstance(ds, h5py.Dataset) else None
+
+    def dim_meta(self, h) -> list[dict]:
+        return _dim_names_for(self._f, h)
+
+    def read(self, h):
+        return h[()]
+
+    def read_coord(self, name: str):
+        return _read_coord(self._f, name)
+
+    def var_attr(self, h, name: str):
+        return _attr(h, name)
+
+    def coord_attr(self, name: str, attr: str):
+        ds = self._f.get(name)
+        return _attr(ds, attr) if isinstance(ds, h5py.Dataset) else None
+
+    def is_dim_coord(self, key: str, h) -> bool:
+        return _is_dimension_scale(h)
+
+    def is_placeholder(self, h) -> bool:
+        return _is_placeholder_scale(h)
+
+    def root_attrs(self) -> dict:
+        out = {}
+        for k in self._f.attrs:
+            try:
+                out[str(k)] = _decode(self._f.attrs[k])
+            except Exception:   # noqa: BLE001 — one bad attr must not kill probe
+                continue
+        return out
+
+
+class _NcVar:
+    """Handle over a scipy ``netcdf_variable`` exposing the .shape/.ndim/.dtype
+    triple the pipeline reads (scipy's object has only .shape). Attributes are
+    read via ``_attributes.get`` ONLY — scipy injects NC attrs into the
+    instance ``__dict__`` after ``data``, so a file attr literally named
+    ``data``/``dimensions`` would clobber the field under ``getattr``."""
+
+    __slots__ = ("name", "_v", "shape", "ndim", "dtype")
+
+    def __init__(self, name: str, v):
+        self.name = name
+        self._v = v
+        self.shape = tuple(int(s) for s in v.shape)
+        self.ndim = len(self.shape)
+        self.dtype = np.dtype(v.data.dtype.newbyteorder("="))   # native-order view
+
+
+class _NcReader:
+    """NetCDF-classic adapter over ``scipy.io.netcdf_file``.
+
+    ``mmap=False`` is an EAGER whole-file read in scipy (arrays are owned
+    copies — nothing dangles after close), so a cheap ``st_size`` pre-guard
+    stands in for the per-variable element guard that, here, would fire only
+    after the RAM was already spent. Dimension names are native
+    (``var.dimensions``) — no DIMENSION_LIST dance; a dimension WITHOUT a
+    same-named variable is the h5py "placeholder scale" equivalent
+    (has_coord=False → classified synthetic)."""
+
+    def __init__(self, path: Path):
+        try:
+            from scipy.io import netcdf_file
+        except ImportError as exc:                      # pragma: no cover
+            raise OSError(f"scipy is required to read NetCDF-classic data files: {exc}")
+        st_size = path.stat().st_size
+        if st_size > _MAX_RAW_ELEMENTS * 8:
+            raise OSError(f"NetCDF file too large to load ({st_size:,} bytes)")
+        self._f = netcdf_file(str(path), "r", mmap=False)
+
+    def close(self) -> None:
+        try:
+            self._f.close()
+        except Exception:   # noqa: BLE001
+            pass
+
+    def keys(self) -> list:
+        return list(self._f.variables)
+
+    def get(self, name: str):
+        v = self._f.variables.get(name)
+        return _NcVar(name, v) if v is not None else None
+
+    def dim_meta(self, h: _NcVar) -> list[dict]:
+        return [{"name": str(d), "has_coord": str(d) in self._f.variables}
+                for d in h._v.dimensions]
+
+    def read(self, h: _NcVar):
+        arr = np.asarray(h._v.data)
+        if arr.dtype.byteorder == ">":
+            arr = arr.astype(arr.dtype.newbyteorder("="))
+        # h5py's ds[()] unwraps 0-d datasets to a numpy SCALAR; [()] is the
+        # identity for ndim>0 — keeps the scalar-cube branch format-agnostic.
+        return arr[()]
+
+    def read_coord(self, name: str):
+        v = self._f.variables.get(name)
+        if v is None:
+            return None
+        try:
+            a = np.asarray(v.data)
+            if a.size > 1_000_000:
+                return None
+            if a.dtype.kind == "S" and a.ndim == 2:
+                # NetCDF3 has no string type — xarray writes string coords as
+                # 2-D char matrices (coord × strlen); join each row back.
+                vals = [b"".join(bytes(c) for c in row).decode("utf-8", "replace")
+                        .rstrip(chr(0)).strip() for row in a]
+                return np.array(vals, dtype=object)
+            if a.ndim != 1:
+                return None
+            if a.dtype.kind in ("S", "O"):
+                return np.array([_decode(x) for x in a], dtype=object)
+            if a.dtype.byteorder == ">":
+                a = a.astype(a.dtype.newbyteorder("="))
+            return a
+        except Exception:   # noqa: BLE001 — mirrors _read_coord's never-raise
+            return None
+
+    def _attrs_of(self, v) -> dict:
+        return getattr(v, "_attributes", {}) or {}
+
+    def var_attr(self, h: _NcVar, name: str):
+        try:
+            return _decode(self._attrs_of(h._v).get(name))
+        except Exception:   # noqa: BLE001
+            return None
+
+    def coord_attr(self, name: str, attr: str):
+        v = self._f.variables.get(name)
+        if v is None:
+            return None
+        try:
+            return _decode(self._attrs_of(v).get(attr))
+        except Exception:   # noqa: BLE001
+            return None
+
+    def is_dim_coord(self, key: str, h: _NcVar) -> bool:
+        return key in self._f.dimensions
+
+    def is_placeholder(self, h: _NcVar) -> bool:
+        return False   # var-less dims never appear in keys() at all
+
+    def root_attrs(self) -> dict:
+        out = {}
+        for k, v in (getattr(self._f, "_attributes", {}) or {}).items():
+            if k == "_NCProperties":
+                continue
+            try:
+                out[_decode(k)] = _decode(v.tolist() if hasattr(v, "tolist") else v)
+            except Exception:   # noqa: BLE001
+                continue
+        return out
+
+
+def _is_netcdf_classic(path: Path) -> bool:
+    """3-byte magic sniff (b"CDF"). Never raises; anything that is NOT
+    NetCDF-classic routes to h5py so garbage keeps today's canonical
+    "file signature not found" OSError (and HDF5 userblock files, whose
+    signature sits at offset 512/1024, are never misrouted)."""
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(3) == b"CDF"
+    except OSError:
+        return False
+
+
+@contextmanager
+def _open_reader(h5_path: Path):
+    """Yield the right adapter for the file's ACTUAL bytes. The caller must
+    already hold ``_h5_lock_for(h5_path)``."""
+    if _is_netcdf_classic(h5_path):
+        r = _NcReader(h5_path)
+        try:
+            yield r
+        finally:
+            r.close()
+    else:
+        with h5py.File(h5_path, "r") as f:
+            yield _H5Reader(f)
+
+
 def probe_file(h5_path: Path) -> dict:
     """List every plottable entry in the file: data variables AND non-dim
     coordinate variables (fit results ride as coords in real files — a
@@ -228,45 +446,44 @@ def probe_file(h5_path: Path) -> dict:
     out: dict = {"ok": True, "vars": [], "attrs": {}}
     try:
         with _h5_lock_for(str(h5_path)):
-            with h5py.File(h5_path, "r") as f:
+            with _open_reader(h5_path) as r:
                 # Non-dim coords referenced by any variable's `coordinates` attr.
                 coord_names: set[str] = set()
-                for key in f.keys():
-                    ds = f[key]
-                    if isinstance(ds, h5py.Dataset):
-                        c = _attr(ds, "coordinates")
+                for key in r.keys():
+                    h = r.get(key)
+                    if h is not None:
+                        c = r.var_attr(h, "coordinates")
                         if isinstance(c, str):
                             coord_names.update(c.split())
-                for key in sorted(f.keys()):
-                    ds = f[key]
-                    if not isinstance(ds, h5py.Dataset):
+                for key in sorted(r.keys()):
+                    h = r.get(key)
+                    if h is None:
                         continue
-                    is_scale = _is_dimension_scale(ds)
+                    is_scale = r.is_dim_coord(key, h)
                     if is_scale and key not in coord_names:
                         continue   # plain dim coord — an axis, not a plottable
-                    if is_scale and _is_placeholder_scale(ds):
+                    if is_scale and r.is_placeholder(h):
                         continue
                     # Coord-var = a dimension scale OR any var referenced by a
                     # sibling's `coordinates` attr (aux 2-D coords like
                     # full_freq/amp_full are plain datasets, not scales).
                     is_coord = is_scale or key in coord_names
-                    dims = _dim_names_for(f, ds)
+                    dims = r.dim_meta(h)
                     out["vars"].append({
                         "name": key,
-                        "shape": list(ds.shape),
-                        "ndim": ds.ndim,
-                        "dtype": str(ds.dtype),
+                        "shape": list(h.shape),
+                        "ndim": h.ndim,
+                        "dtype": str(h.dtype),
                         "dims": [d["name"] for d in dims],
-                        "units": _attr(ds, "units"),
-                        "long_name": _attr(ds, "long_name"),
+                        "units": r.var_attr(h, "units"),
+                        "long_name": r.var_attr(h, "long_name"),
                         "is_coord_var": is_coord,
-                        "elements": int(np.prod(ds.shape)) if ds.ndim else 1,
+                        "elements": int(np.prod(h.shape)) if h.ndim else 1,
                     })
                 # Data variables first, fit-coord vars after (the shell auto-
                 # opens the first card — it should be real data, not a coord).
                 out["vars"].sort(key=lambda v: (v["is_coord_var"], v["name"]))
-                for k in f.attrs:
-                    v = _decode(f.attrs[k])
+                for k, v in r.root_attrs().items():
                     if isinstance(v, (str, int, float, np.integer, np.floating)):
                         out["attrs"][str(k)] = (float(v) if isinstance(v, (np.integer, np.floating))
                                                 else v)
@@ -565,9 +782,9 @@ def _build_cube_uncached(h5_path: Path, var: str, *,
     ``dim_budgets`` overrides are the byte-shrink pass's knobs (defaults
     reproduce the plain first-pass build)."""
     with _h5_lock_for(str(h5_path)):
-        with h5py.File(h5_path, "r") as f:
-            ds = f.get(var)
-            if ds is None or not isinstance(ds, h5py.Dataset):
+        with _open_reader(h5_path) as r:
+            ds = r.get(var)
+            if ds is None:
                 return {"ok": False, "error": f"No variable named {var!r} in this file.",
                         "fallback": None}
             if ds.ndim and int(np.prod(ds.shape)) > _MAX_RAW_ELEMENTS:
@@ -575,8 +792,8 @@ def _build_cube_uncached(h5_path: Path, var: str, *,
                         "error": f"{var} is too large to load ({int(np.prod(ds.shape)):,} elements).",
                         "fallback": None}
 
-            dim_meta = _dim_names_for(f, ds)
-            data = ds[()]
+            dim_meta = r.dim_meta(ds)
+            data = r.read(ds)
 
             # 0-d / string / object → table-style fallback, not a plot.
             if ds.ndim == 0 or ds.dtype.kind in ("S", "O", "U"):
@@ -589,7 +806,8 @@ def _build_cube_uncached(h5_path: Path, var: str, *,
                     return {"ok": True, "var": var, "scalar": val if isinstance(
                         val, (str, int, float, type(None))) else str(val),
                         "dims": [], "data": None, "default_view": None,
-                        "units": _attr(ds, "units"), "long_name": _attr(ds, "long_name")}
+                        "units": r.var_attr(ds, "units"),
+                        "long_name": r.var_attr(ds, "long_name")}
                 return {"ok": False, "error": f"{var} holds text data — shown as a table.",
                         "fallback": _table_fallback(np.array(
                             [_decode(x) for x in data.reshape(-1)], dtype=object),
@@ -605,20 +823,19 @@ def _build_cube_uncached(h5_path: Path, var: str, *,
             # Dim descriptors + coords.
             dims: list[dict] = []
             for axis, (dm, size) in enumerate(zip(dim_meta, ds.shape)):
-                coord = _read_coord(f, dm["name"]) if dm["has_coord"] else None
+                coord = r.read_coord(dm["name"]) if dm["has_coord"] else None
                 if coord is not None and coord.shape[0] != size:
                     coord = None
                 kind = _classify_dim(dm["name"], size, coord, dm["has_coord"])
-                coord_scale = f.get(dm["name"]) if dm["has_coord"] else None
                 dims.append({
                     "name": dm["name"], "size": int(size), "kind": kind,
                     "coord": (_nan_to_none_list(coord) if coord is not None
                               and coord.dtype != object else
                               (list(coord) if coord is not None else None)),
-                    "units": (_attr(coord_scale, "units")
-                              if isinstance(coord_scale, h5py.Dataset) else None),
-                    "long_name": (_attr(coord_scale, "long_name")
-                                  if isinstance(coord_scale, h5py.Dataset) else None),
+                    "units": (r.coord_attr(dm["name"], "units")
+                              if dm["has_coord"] else None),
+                    "long_name": (r.coord_attr(dm["name"], "long_name")
+                                  if dm["has_coord"] else None),
                     "decimated": False,
                 })
 
@@ -630,7 +847,7 @@ def _build_cube_uncached(h5_path: Path, var: str, *,
             # the SAME kept indices as the dims they map to).
             aux_axes: list[dict] = []
 
-            all_names = set(f.keys())
+            all_names = set(r.keys())
             partner = _iq_partner(var, all_names)
 
             # Decimation to budget — sweep dims only, largest first.
@@ -653,11 +870,11 @@ def _build_cube_uncached(h5_path: Path, var: str, *,
                 partner_data = None
                 if partner is not None:
                     try:
-                        pds = f.get(partner)
-                        if (isinstance(pds, h5py.Dataset) and pds.shape == ds.shape
-                                and [m["name"] for m in _dim_names_for(f, pds)]
+                        pds = r.get(partner)
+                        if (pds is not None and pds.shape == ds.shape
+                                and [m["name"] for m in r.dim_meta(pds)]
                                     == [m["name"] for m in dim_meta]):
-                            partner_data = pds[()]
+                            partner_data = r.read(pds)
                             if partner_data.dtype.kind in ("i", "u", "b"):
                                 partner_data = partner_data.astype(np.float64, copy=False)
                             if partner_data.dtype.kind == "c":
@@ -721,8 +938,8 @@ def _build_cube_uncached(h5_path: Path, var: str, *,
                 "ok": True,
                 "var": var,
                 "dtype": str(ds.dtype),
-                "units": _attr(ds, "units"),
-                "long_name": _attr(ds, "long_name"),
+                "units": r.var_attr(ds, "units"),
+                "long_name": r.var_attr(ds, "long_name"),
                 "dims": dims,
                 "data": _nan_to_none_list(data),
                 "kept": kept or None,

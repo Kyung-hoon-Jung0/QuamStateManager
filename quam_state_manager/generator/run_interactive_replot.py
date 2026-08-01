@@ -165,7 +165,17 @@ def main() -> int:
         try:
             return xr.open_dataset(p)
         except Exception:
-            return xr.open_dataset(p, engine="h5netcdf")
+            # Autodetect failed. NetCDF-classic bytes under the .h5 name
+            # (xarray's scipy engine wrote them in an env without netCDF4)
+            # can NEVER be read by h5netcdf — pick the fallback by magic.
+            eng = "h5netcdf"
+            try:
+                with open(p, "rb") as _fh:
+                    if _fh.read(3) == b"CDF":
+                        eng = "scipy"
+            except OSError:
+                pass
+            return xr.open_dataset(p, engine=eng)
     try:
         ds_raw = _open("ds_raw")
         ds_fit = _open("ds_fit")

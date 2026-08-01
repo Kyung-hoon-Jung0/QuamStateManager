@@ -215,9 +215,14 @@ shapes (vars/coords/attrs/dim_order), true axis names from per-variable
 `.dimensions`, 2-D char-array string coords rejoined per row, oversized-var
 guard. SM ships scipy, so no new dependency. Pinned by
 `tests/test_h5reader_netcdf.py` (probe/load/coords/dims + EF end-to-end
-1D+2D clickable). Known gap, deliberate: the ndview Data tab and the
+1D+2D clickable). ~~Known gap, deliberate: the ndview Data tab and the
 HDF5-plots tab remain h5py-only; the lab-side fix is `pip install netCDF4`
-in the runner env.
+in the runner env.~~ **Closed in r13** — user demand made SM read them
+directly: the ndview Data tab now routes through a format adapter (see
+`docs/67_raw_netcdf_ndview.md`), and the replot/fit-audit/autofit-replay
+runner scripts sniff the magic to pick xarray's `scipy` engine as the
+fallback. Only the dead legacy `/h5` routes stay h5py-only (they are behind
+the TODO(remove-legacy-h5) marker).
 
 ## Amendment (2026-07-30): 20b/33 conditional-phase error-amp is a 2-D map, + fractions tile
 

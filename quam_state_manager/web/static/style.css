@@ -8704,7 +8704,8 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 }
 .ndv-vars { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
 .ndv-var-card {
-    display: inline-flex; align-items: baseline; gap: 0.4rem;
+    display: inline-flex; align-items: baseline; gap: 0.1rem 0.4rem;
+    flex-wrap: wrap;   /* r13: the dims line wraps to its own row */
     background: var(--pico-card-background-color);
     border: 1px solid var(--pico-muted-border-color); border-radius: 0.35rem;
     padding: 0.2rem 0.55rem; cursor: pointer; width: auto; margin: 0;
@@ -8715,6 +8716,12 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .ndv-var-name { font-weight: 600; font-family: var(--pico-font-family-monospace, monospace); }
 .ndv-var-shape { color: var(--pico-muted-color); font-size: 0.72rem; }
 .ndv-var-units { color: var(--pico-muted-color); font-size: 0.72rem; font-style: italic; }
+/* r13: dim names ride visibly on the card (structure-first browsing), one
+   quiet full-width line; overflow ellipsizes, the title attr keeps the rest. */
+.ndv-var-dims {
+    flex-basis: 100%; color: var(--pico-muted-color); font-size: 0.66rem;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 .ndv-controls { display: flex; gap: 0.8rem; flex-wrap: wrap; align-items: center;
                 margin: 0.35rem 0 0.45rem; }
