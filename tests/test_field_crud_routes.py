@@ -127,7 +127,7 @@ class TestMissingKeys:
         j2 = client.get("/schema/missing-keys?scope=qubits.qA1.xy").get_json()
         m = {x["key"]: x for x in j2["missing"]}
         assert "intermediate_frequency" in m
-        assert m["intermediate_frequency"]["expected_type"] == "number"
+        assert m["intermediate_frequency"]["expected_type"] == "real"
 
     def test_cold_manifest(self, tmp_path):
         from quam_state_manager.web.app import create_app

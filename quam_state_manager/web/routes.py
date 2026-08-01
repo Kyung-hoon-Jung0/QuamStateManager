@@ -136,6 +136,18 @@ def _bulk_display(v: Any) -> str:
     return units.group_digits(v)
 
 
+def _is_numeric_string(v: Any) -> bool:
+    """True for a str leaf that parses as a number — the "0.13" stored as text
+    anomaly (r14). Pointers are their own kind, never flagged."""
+    if not isinstance(v, str) or v.startswith("#"):
+        return False
+    try:
+        float(v)
+        return True
+    except ValueError:
+        return False
+
+
 # LO-coupled MW-FEM port fields — these cells get peer/band metadata in the 2nd pass.
 _LO_FIELDS = ("band", "upconverter_frequency", "downconverter_frequency")
 
@@ -188,6 +200,11 @@ def _build_bulk_cell(merged: dict, alias: str, modified: dict,
         # a resolved LIST can't be a text input — the caller swaps in the ✎
         # JSON-preview cell (dynamic listedit columns; curated defensively)
         "is_list": is_list,
+        # r14 honesty: a STRING that reads like a number ("0.13") used to be
+        # byte-identical to the float in the input — flag it so the cell can
+        # show the quotes + a stored-as-text warning (the user literally could
+        # not see, let alone fix, an externally string-ified value).
+        "str_numeric": _is_numeric_string(val),
         "_port": p,
     }
 
@@ -1996,6 +2013,68 @@ def chip_name_decline():
     return ""
 
 
+def _type_alarm_payload(ctx: dict | None) -> dict | None:
+    """r14 ⑨: the ACTIVE stored-as-text alarm payload, else None.
+
+    Numeric-looking string leaves ("0.13") usually mean an external state
+    regeneration string-ified values wholesale; SM used to detect this only as
+    a passive Explorer row mark the user had to find. Memoized on the store's
+    ``mutation_seq`` (one whole-state walk per content change — external pulls
+    and syncs rebuild the store, so they re-scan automatically) and
+    delta-gated against the per-chip dismissed signature (dismiss silences
+    THIS set; any new anomaly re-raises the banner)."""
+    if not ctx:
+        return None
+    store = ctx.get("store")
+    if store is None:
+        return None
+    try:
+        seq = getattr(store, "mutation_seq", None)
+        memo = ctx.get("_type_alarm_memo")
+        if not isinstance(memo, dict) or memo.get("seq") != seq:
+            from quam_state_manager.core import diagnostics as _diag
+            with store._lock:
+                state = store.state
+            paths = _diag.numeric_string_leaves(state)
+            sig = (hashlib.sha1("\n".join(sorted(paths)).encode("utf-8"))
+                   .hexdigest()[:16] if paths else "")
+            memo = {"seq": seq, "paths": paths, "sig": sig}
+            ctx["_type_alarm_memo"] = memo
+        if not memo["paths"]:
+            return None
+        token = _active_chip_token() or ("path:" + str(ctx.get("path") or ""))
+        dismissed = _load_chip_prompt_memo().get(f"{token}::typealarm") or {}
+        if dismissed.get("sig") == memo["sig"]:
+            return None
+        return {"count": len(memo["paths"]), "first": memo["paths"][0],
+                "paths": memo["paths"][:6], "sig": memo["sig"],
+                "token": token}
+    except Exception:  # noqa: BLE001 — an alarm bug must never break rendering
+        logger.debug("type-alarm computation failed", exc_info=True)
+        return None
+
+
+@bp.route("/type-alarm/dismiss", methods=["POST"])
+def type_alarm_dismiss():
+    """Memo the CURRENT anomaly signature as seen (per chip token) — the
+    banner stays gone for this exact set and re-raises on any new anomaly."""
+    sig = (request.form.get("sig") or "").strip()
+    token = (request.form.get("token") or "").strip()
+    if sig and token:
+        with _chip_prompt_memo_lock:
+            data = _load_chip_prompt_memo()
+            data[f"{token}::typealarm"] = {
+                "sig": sig,
+                "dismissed_at": datetime.now().isoformat(timespec="seconds"),
+            }
+            try:
+                safe_io.atomic_write_json(_chip_prompt_memo_file(), data)
+            except OSError:
+                logger.warning("Could not persist type-alarm dismissal",
+                               exc_info=True)
+    return ""
+
+
 def _write_datafolder_memo(token: str, ctx: dict | None) -> None:
     with _chip_prompt_memo_lock:
         data = _load_chip_prompt_memo()
@@ -2199,6 +2278,10 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         "data_folder_suggest": (_active_ctx() or {}).get("data_folder_suggest"),
         "data_folder_candidates": (_active_ctx() or {}).get("data_folder_candidates") or [],
         "last_apply": (_active_ctx() or {}).get("last_apply"),
+        # r14 ⑨: ACTIVE stored-as-text alarm — numeric-looking string leaves
+        # (external regen wholesale-string-ifies values; SM used to detect this
+        # only as a passive Explorer mark). None when clean or dismissed-as-is.
+        "type_alarm": _type_alarm_payload(_active_ctx()),
         "wc_gc_count": _working_copy_count(),
         "wc_gc_threshold": _WC_GC_THRESHOLD,
         "qubit_names": store.qubit_names if store else [],
@@ -4172,6 +4255,31 @@ def field_edit():
                     ok=False, fsp_compensation=plan,
                     error=("This edit changes a port's full-scale power — "
                            "confirm the amplitude compensation first")), 409
+        # r14 ⑩: a field stored as TEXT that reads like a number ("0.13") is
+        # un-fixable through the legacy coercer (old-type-preserving — typing
+        # 0.14 quietly stayed text, forever). Never silent, never blocked:
+        # without an ack the offer comes back 409; type_fix=convert assigns
+        # the number type at the USER layer (persisted — future edits stay
+        # typed) and stores the number; type_fix=keep proceeds as text.
+        _type_fix = request.form.get("type_fix", "")
+        if _type_fix not in ("convert", "keep"):
+            offer = _type_fix_offer(modifier.store, target_path, raw_value)
+            if offer is not None:
+                return jsonify(
+                    ok=False, type_fix=offer,
+                    error=(f"{target_path} is stored as TEXT "
+                           f"({offer['current_display']}), not a "
+                           f"{offer['proposed']} — convert the type to store "
+                           f"the number, or keep text (wrap the value in "
+                           'quotes "…" to keep text without asking)')), 409
+        if _type_fix == "convert":
+            offer = _type_fix_offer(modifier.store, target_path, raw_value)
+            if offer is not None:
+                _tp.save_assignment(
+                    current_app.instance_path, ctx["path"], target_path,
+                    {"type": offer["proposed"], "override_env": False,
+                     "note": "converted from text via edit (r14)"})
+                _attach_type_policy(ctx)
         parsed = _parse_for_target(modifier.store, target_path, raw_value)
         modifier.set_value(target_path, parsed)
         _invalidate_engine_cache(ctx)
@@ -4180,7 +4288,17 @@ def field_edit():
     except (KeyError, TypeError, ValueError, IndexError) as e:
         return jsonify(ok=False, error=str(e)), 400
 
-    return jsonify(ok=True, tray_html=_tray_html())
+    # Echo what was ACTUALLY committed (the coercer may have kept the old
+    # type) so the client can re-render the value with honest type styling.
+    try:
+        committed = modifier.store.get_value(target_path)
+        if isinstance(committed, float) and (
+                committed != committed or committed in (float("inf"), float("-inf"))):
+            raise ValueError("non-finite echo would break JSON.parse")
+        return jsonify(ok=True, tray_html=_tray_html(),
+                       stored=committed, stored_kind=_kind_of(committed))
+    except Exception:  # noqa: BLE001 — echo is a bonus, never a failure
+        return jsonify(ok=True, tray_html=_tray_html())
 
 
 def _fsp_plan_for(store, target_path: str, raw_value) -> dict | None:
@@ -4197,6 +4315,56 @@ def _fsp_plan_for(store, target_path: str, raw_value) -> dict | None:
         return mw_fem.fsp_compensation_plan(merged, target_path, raw_value)
     except Exception:  # noqa: BLE001
         logger.debug("fsp plan computation failed", exc_info=True)
+        return None
+
+
+def _kind_of(v: Any) -> str:
+    """Display kind of a committed value for the edit echo (r14)."""
+    if v is None:
+        return "null"
+    if isinstance(v, bool):
+        return "bool"
+    if isinstance(v, int):
+        return "int"
+    if isinstance(v, float):
+        return "real"
+    if isinstance(v, str):
+        return "str"
+    return "list" if isinstance(v, list) else "dict"
+
+
+def _type_fix_offer(store, target_path: str, raw_value: str) -> dict | None:
+    """The r14 stored-as-text repair offer, else None (edit proceeds normally).
+
+    Fires only when EVERY leg holds: the current value is a string that reads
+    like a number; the typed input is an UNQUOTED number (explicit quotes mean
+    "I want text" — no gate); and no enforced expectation covers the path (an
+    env schema / user assignment already repairs the type on plain edits).
+    Read-only; never raises."""
+    try:
+        from quam_state_manager.core import type_policy as _tp
+        raw = (raw_value or "").strip()
+        if raw.startswith('"') or raw.startswith("'"):
+            return None
+        old = store.get_value(target_path)
+        if not _is_numeric_string(old):
+            return None
+        parsed = _tp.parse_value(raw)
+        if isinstance(parsed, bool) or not isinstance(parsed, (int, float)):
+            return None
+        policy = getattr(store, "type_policy", None)
+        if policy is not None:
+            expected = policy.expected_for(store.merged, target_path,
+                                           infer=False)
+            if expected is not None and expected.enforced:
+                return None
+        return {
+            "path": target_path,
+            "current_display": f'"{old}"',
+            "proposed": "int" if isinstance(parsed, int) else "real",
+        }
+    except Exception:  # noqa: BLE001 — the offer must never brick edits
+        logger.debug("type-fix offer computation failed", exc_info=True)
         return None
 
 
@@ -5315,6 +5483,42 @@ def field_edit_batch():
                     ok=False, fsp_compensation=plan, fsp_dot_path=_dp,
                     error=("This batch changes a port's full-scale power — "
                            "confirm the amplitude compensation first")), 409
+
+    # r14 ⑩ (same never-silent shape as the FSP gate): rows whose target is a
+    # numeric-looking STRING get the conversion offer — 409 with the first
+    # offender unless acked; type_fix=convert assigns the number type for
+    # EVERY offending row (persisted), type_fix=keep proceeds as text.
+    _type_fix = str(_pj.get("type_fix") or request.form.get("type_fix") or "")
+    _tf_offers: list[tuple[str, dict]] = []
+    for _dp, _rv, _c in pairs:
+        if not isinstance(_rv, str):
+            continue
+        try:
+            _tgt = _resolve_edit_path(modifier.store, _dp)
+        except Exception:  # noqa: BLE001
+            continue
+        offer = _type_fix_offer(modifier.store, _tgt, _rv)
+        if offer is not None:
+            _tf_offers.append((_dp, offer))
+    if _tf_offers and _type_fix not in ("convert", "keep"):
+        _dp0, _off0 = _tf_offers[0]
+        _off0["more_in_batch"] = len(_tf_offers) - 1
+        return jsonify(
+            ok=False, type_fix=_off0, type_fix_dot_path=_dp0,
+            error=(f"{len(_tf_offers)} field(s) in this batch are stored as "
+                   f"TEXT (e.g. {_off0['path']} = {_off0['current_display']}) "
+                   "— convert their type to store numbers, or keep text")), 409
+    if _tf_offers and _type_fix == "convert":
+        from quam_state_manager.core import type_policy as _tp2
+        for _dp, _off in _tf_offers:
+            try:
+                _tp2.save_assignment(
+                    current_app.instance_path, ctx["path"], _off["path"],
+                    {"type": _off["proposed"], "override_env": False,
+                     "note": "converted from text via edit (r14)"})
+            except ValueError:
+                continue
+        _attach_type_policy(ctx)
 
     results: list[dict[str, Any]] = []
     applied_entries: list[Any] = []
@@ -15073,8 +15277,13 @@ def diagnostics_findings_json():
     if not store:
         return jsonify(empty)
     findings = _active_chip_findings(store)
+    # r14 ⑨: value_type/value_nan were excluded (the startswith("value_spec")
+    # accident), so the stored-as-text warnings never marked an Explorer row —
+    # exactly the passive-detection complaint. All value_* findings with a
+    # jump path now feed the marks.
     spec = [f.as_dict() for f in findings
-            if f.category.startswith(("value_spec", "waveform"))]
+            if f.category.startswith(("value_spec", "value_type", "value_nan",
+                                      "waveform"))]
     # env_* findings carry jump_paths into the Explorer too — a field the
     # selected env's class doesn't know gets the same ⚠ row mark treatment.
     spec += [f.as_dict() for f in findings

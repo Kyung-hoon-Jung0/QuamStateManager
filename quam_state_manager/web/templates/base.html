@@ -272,6 +272,9 @@
        hx-swap-oob copy of this slot, so loading a chip via HTMX updates the
        banner here instead of rendering a duplicate inside the pane. #}
     <div id="live-diverged-slot">{% include '_live_diverged_banner.html' %}</div>
+    {# r14 ⑨ — active stored-as-text alarm (base-level slot: survives pane
+       navigation, same reasoning as the diverged banner above). #}
+    <div id="type-alarm-slot">{% include '_type_alarm_banner.html' %}</div>
     {# The accumulating live-drift ALARM banner used to live here — removed
        (docs/58): users rarely acted on it. The same data now lives in the
        "Live changes since baseline" panels on Param History + State History;

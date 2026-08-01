@@ -122,7 +122,7 @@ class TestV2RowShape:
         # /load attaches a TypePolicy (manifest None in tests → inference layer)
         rows = {r[0]: r for r in _decode(client.get("/bulk/all-values"))["rows"]}
         f01 = rows["qubits.qA1.f_01"]
-        assert len(f01) == 5 and f01[4]["ty"] == {"t": "number", "s": "inferred"}
+        assert len(f01) == 5 and f01[4]["ty"] == {"t": "real", "s": "inferred"}
         marker = rows["qubits.qA1.xy.operations.x180_DragCosine.digital_marker"]
         assert marker[4]["ty"] == {"t": "str", "s": "inferred"}
         # null scalar is un-inferable → NO ty extra

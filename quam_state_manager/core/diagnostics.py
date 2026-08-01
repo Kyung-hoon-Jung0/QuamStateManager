@@ -129,7 +129,8 @@ def domain_of(category: str) -> str:
         return "connectivity"
     if c.startswith("waveform"):
         return "waveforms"
-    if c.startswith("value_spec") or c in ("value_nan", "value_type", "value_freq_consistency"):
+    if c.startswith(("value_spec", "value_type")) or c in (
+            "value_nan", "value_freq_consistency"):
         return "values"
     if c == "dangling_pointer":
         return "references"
@@ -176,6 +177,7 @@ _CHECK_CATALOG: list[tuple[str, list[tuple[str, str, str]]]] = [
         ("warning", "Readout IF demod floor", "A readout intermediate frequency is above the MW-FEM 5 MHz demodulation floor (|IF| ≤ 5 MHz can't be measured)."),
         ("warning", "Hardware value specs", "Catalogued hardware fields are in range/step: time_of_flight (mult-of-4), pulse length, full_scale_power_dbm (−11..18 dBm), band ∈ {1,2,3}, gain_db, sampling_rate, output/upsampling/lo_mode, Octave LO/gain/enums."),
         ("warning", "Field type consistency", "A field that is numeric on most siblings isn't a stray text value on one."),
+        ("warning", "Numbers stored as text", "No state leaf holds a numeric-looking STRING (\"0.13\") — external regeneration string-ifies values wholesale, and SM edits then keep text unless the type is converted (r14)."),
     ]),
     ("waveforms", [
         ("error", "Sample within DAC range", "Every synthesized pulse sample stays inside its output's range (MW ±1, LF direct ±0.5 V / amplified ±2.5 V) — a sample outside it makes generate_config() reject the whole config."),
@@ -258,6 +260,7 @@ def _lint_state_uncached(store) -> list[Finding]:
     findings.extend(_dangling_pointer_findings(store))
     findings.extend(_value_findings(root, "qubits"))
     findings.extend(_value_findings(root, "qubit_pairs"))
+    findings.extend(_strnum_findings(root))
     findings.extend(_frequency_consistency_findings(store))
     findings.extend(_downconverter_findings(root))
     findings.extend(_spec_findings(root))
@@ -774,6 +777,65 @@ def _dangling_pointer_findings(store) -> list[Finding]:
             "JSON pointer does not resolve to anything",
             detail=w.pointer, jump_path=w.dot_path,
         ))
+    return findings
+
+
+# Whole-state stored-as-text scan cap: a pathological regen that string-ified
+# everything must not flood the page — the overflow collapses into one summary.
+_STRNUM_CAP = 100
+
+
+def numeric_string_leaves(root: dict) -> list[str]:
+    """Dot-paths of every STATE leaf whose value is a string that parses as a
+    number — the '"0.13" stored as text' anomaly (r14 ⑨/⑩). External state
+    regeneration is the usual culprit; the legacy coercer then preserves the
+    wrong type on every SM edit, so these must be surfaced actively. Skips
+    ``extras`` (user-declared free-form), pointers, and non-state sections."""
+    out: list[str] = []
+
+    def _scan(node: Any, path: str) -> None:
+        if isinstance(node, dict):
+            for k, v in node.items():
+                _scan(v, f"{path}.{k}" if path else str(k))
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                _scan(v, f"{path}.{i}")
+        elif isinstance(node, str) and node and not node.startswith("#"):
+            try:
+                float(node)
+            except ValueError:
+                return
+            out.append(path)
+
+    for key, sub in (root or {}).items():
+        if key in ("extras", "__class__", "__package_versions__", "wiring",
+                   "network"):
+            continue
+        _scan(sub, str(key))
+    return out
+
+
+def _strnum_findings(root: dict) -> list[Finding]:
+    """r14: schema-free stored-as-text warnings for the whole state. The
+    sibling-based ``value_type`` check misses the bulk case (an external regen
+    string-ifies EVERY sibling at once — zero numeric peers left to vote), so
+    this flags each numeric-looking string leaf directly. Category prefix
+    ``value_type`` puts them on the Explorer row marks + the values domain."""
+    findings: list[Finding] = []
+    paths = numeric_string_leaves(root)
+    for dp in paths[:_STRNUM_CAP]:
+        findings.append(Finding(
+            "warning", "value_type_strnum", dp,
+            "stored as TEXT but reads like a number — SM edits keep text "
+            "unless the type is converted (edit the field and choose "
+            "convert, or Explorer ⚙ → real)",
+            jump_path=dp,
+        ))
+    if len(paths) > _STRNUM_CAP:
+        findings.append(Finding(
+            "warning", "value_type_strnum", "qubits",
+            f"{len(paths) - _STRNUM_CAP} more numeric-looking TEXT values "
+            f"beyond the first {_STRNUM_CAP} shown"))
     return findings
 
 

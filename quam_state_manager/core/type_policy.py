@@ -78,8 +78,12 @@ class TypeMismatchError(TypeError):
 # user type-expression grammar  ⇄  TypeSpec
 # ---------------------------------------------------------------------------
 
-_SCALARS = {"int": "int", "number": "float", "str": "str", "bool": "bool"}
-_VALID_EXPRS = ("int", "number", "str", "bool", "dict", "list", "list<T>",
+# r14: floats DISPLAY as "real" (physicists' vocabulary — "number" was too
+# broad a label for ℝ). Both "real" and the legacy "number" PARSE to float so
+# every stored assignment / sidecar / script keeps working.
+_SCALARS = {"int": "int", "number": "float", "real": "float",
+            "str": "str", "bool": "bool"}
+_VALID_EXPRS = ("int", "real", "str", "bool", "dict", "list", "list<T>",
                 "matrix", "matrix<T>")
 
 
@@ -120,7 +124,7 @@ def format_type(ts: dict | None) -> str:
         return "unknown"
     base = ts.get("base") or "any"
     if base == "float":
-        return "number"
+        return "real"
     if base == "list":
         item = ts.get("item")
         if isinstance(item, dict) and item.get("base") == "list":
@@ -180,7 +184,7 @@ def _infer_spec(value: Any) -> dict | None:
                 "union": None, "class": None, "raw": "bool (from value)"}
     if isinstance(value, (int, float)):
         return {"base": "float", "optional": True, "item": None, "enum": None,
-                "union": None, "class": None, "raw": "number (from value)"}
+                "union": None, "class": None, "raw": "real (from value)"}
     if isinstance(value, str):
         return {"base": "str", "optional": True, "item": None, "enum": None,
                 "union": None, "class": None, "raw": "str (from value)"}

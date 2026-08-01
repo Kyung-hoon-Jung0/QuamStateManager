@@ -401,8 +401,8 @@ class TestParse:
             tp.parse_with_expected("1,2,3", self._exp("list"))
 
     def test_grammar_round_trip(self):
-        for expr in ("int", "number", "str", "bool", "dict", "list",
-                     "list<int>", "matrix", "matrix<number>"):
+        for expr in ("int", "real", "str", "bool", "dict", "list",
+                     "list<int>", "matrix", "matrix<real>"):
             ts = tp.parse_type(expr)
             assert isinstance(ts, dict) and ts["base"]
         with pytest.raises(ValueError):
@@ -418,8 +418,12 @@ class TestSidecar:
         live = tmp_path / "chip"
         live.mkdir()
         (live / "state.json").write_text('{"qubits": {}}', encoding="utf-8")
-        rec = tp.save_assignment(tmp_path, live, "a.b", {"type": "number"})
-        assert rec["type"] == "number"
+        rec = tp.save_assignment(tmp_path, live, "a.b", {"type": "real"})
+        assert rec["type"] == "real"
+        # legacy token stays accepted verbatim (stored raws must keep loading)
+        rec2 = tp.save_assignment(tmp_path, live, "a.c", {"type": "number"})
+        assert rec2["type"] == "number"
+        assert tp.delete_assignment(tmp_path, live, "a.c") is True
         pol = tp.load_policy(tmp_path, live, None)
         assert "a.b" in pol.assignments
         assert tp.delete_assignment(tmp_path, live, "a.b") is True
@@ -479,7 +483,7 @@ class TestRoutes:
         j = client.get("/field/peek?dot_path=qubits.qA1.f_01"
                        "&dot_path=qubits.qA1.extras.free_form").get_json()
         exp = j["expected"]
-        assert exp["qubits.qA1.f_01"]["type"] == "number"
+        assert exp["qubits.qA1.f_01"]["type"] == "real"
         assert exp["qubits.qA1.f_01"]["source"] == "env"
         assert exp["qubits.qA1.extras.free_form"]["source"] == "inferred"
 

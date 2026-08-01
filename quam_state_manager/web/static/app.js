@@ -4350,14 +4350,36 @@ window.clearDetailPanelSearch = function(btnEl) {
                     });
                     return;
                 }
+                if (!data.ok && data.type_fix) {
+                    // r14 ⑩: the field is stored as TEXT ("0.13") — the legacy
+                    // coercer would keep it text forever. Never silent: ask.
+                    var conv = window._confirmTypeFix(data.type_fix);
+                    _post({type_fix: conv ? "convert" : "keep"}).then(handleData);
+                    return;
+                }
                 if (!data.ok) {
                     valEl.classList.add("tree-val-error");
                     setTimeout(function() { valEl.classList.remove("tree-val-error"); }, 2000);
                     _showEditError(valEl, data.error);
                     return;
                 }
-                valEl.textContent = newVal;
-                valEl.dataset.editVal = newVal;
+                // r14 honesty: re-render from the COMMITTED value the server
+                // echoes (the coercer may have kept the old type) — the old
+                // raw-text write-back showed "0.13"-the-string as bare 0.13
+                // and mis-kept the number/string colour class.
+                if (data.stored_kind !== undefined) {
+                    valEl.textContent = _formatValue(data.stored);
+                    valEl.dataset.editVal = (typeof data.stored === "string")
+                        ? data.stored : _formatValue(data.stored);
+                    valEl.className = valEl.className
+                        .replace(/tree-val-(string|number|boolean|null|pointer)/g, "")
+                        .trim();
+                    valEl.classList.add("tree-val-" + _typeOf(data.stored));
+                    if (_isPointer(data.stored)) valEl.classList.add("tree-val-pointer");
+                } else {
+                    valEl.textContent = newVal;
+                    valEl.dataset.editVal = newVal;
+                }
                 var row = valEl.closest(".tree-row");
                 if (row) row.classList.add("tree-row-pending");
                 // If this field was part of an incoming live diff, inline-editing it
@@ -4613,15 +4635,41 @@ window.clearDetailPanelSearch = function(btnEl) {
         row.classList.remove("tree-row-pending");
         var valEl = row.querySelector(".tree-val");
         if (!valEl) return;
-        // Re-format using tree conventions: try numeric first, then fall back
-        var num = Number(oldValueStr);
-        if (oldValueStr !== "" && oldValueStr !== "null" && !isNaN(num)) {
-            valEl.textContent = _formatValue(num);
-            valEl.dataset.editVal = _formatValue(num);
-        } else {
-            valEl.textContent = oldValueStr === "" ? "null" : _formatValue(oldValueStr);
-            valEl.dataset.editVal = oldValueStr;
+
+        function paint(v) {
+            valEl.textContent = _formatValue(v);
+            valEl.dataset.editVal = (typeof v === "string") ? v : _formatValue(v);
+            valEl.className = valEl.className
+                .replace(/tree-val-(string|number|boolean|null|pointer)/g, "")
+                .trim();
+            valEl.classList.add("tree-val-" + _typeOf(v));
+            if (_isPointer(v)) valEl.classList.add("tree-val-pointer");
         }
+
+        // r14 honesty: the old numeric-first guess repainted a reverted STRING
+        // "0.13" as bare 0.13 (wrong text AND wrong colour). Ask the server for
+        // the actual typed value; the guess only remains as a fetch-failure
+        // fallback.
+        fetch("/field/peek?dot_path=" + encodeURIComponent(dotPath))
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d && d.ok && d.values && dotPath in d.values) {
+                    paint(d.values[dotPath]);
+                    return;
+                }
+                throw new Error("peek miss");
+            })
+            .catch(function() {
+                var num = Number(oldValueStr);
+                if (oldValueStr !== "" && oldValueStr !== "null" && !isNaN(num)) {
+                    paint(num);
+                } else if (oldValueStr === "") {
+                    valEl.textContent = "null";
+                    valEl.dataset.editVal = "";
+                } else {
+                    paint(oldValueStr);
+                }
+            });
     };
 
     /* ── Explorer structural CRUD + type picker ─────────────────────────
@@ -4629,7 +4677,8 @@ window.clearDetailPanelSearch = function(btnEl) {
        picker on leaves), lazily attached via ONE delegated mouseover per
        crud-enabled container — no build cost across 10k idle rows. */
 
-    var _TYPE_CHOICES = ["infer", "int", "number", "str", "bool", "list",
+    // "real" (not "number") for floats — r14; the server accepts both tokens.
+    var _TYPE_CHOICES = ["infer", "int", "real", "str", "bool", "list",
                          "matrix", "dict"];
 
     function _attachCrudHover(container) {
@@ -4738,7 +4787,8 @@ window.clearDetailPanelSearch = function(btnEl) {
         keyIn.addEventListener("change", function () {
             var s = suggestions[keyIn.value];
             if (!s) return;
-            var t = s.expected_type === "number" ? "number" : s.expected_type;
+            // legacy manifests may still say "number" — map onto the "real" choice
+            var t = s.expected_type === "number" ? "real" : s.expected_type;
             if (_TYPE_CHOICES.indexOf(t) >= 0) typeSel.value = t;
             if (s.default !== null && s.default !== undefined && valIn.value === "") {
                 valIn.value = typeof s.default === "string" ? s.default : JSON.stringify(s.default);
@@ -4855,7 +4905,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         panel.innerHTML =
             '<div class="tree-type-head muted">loading expected type…</div>' +
             '<div class="tree-type-opts">' +
-            ["int", "number", "str", "bool", "list", "matrix", "dict"].map(function (t) {
+            ["int", "real", "str", "bool", "list", "matrix", "dict"].map(function (t) {
                 return '<label><input type="radio" name="tp" value="' + t + '"> ' + t + "</label>";
             }).join("") + "</div>" +
             '<button type="button" class="btn-sm tree-type-assign">Assign</button>' +
@@ -7620,6 +7670,20 @@ window._fspCompUpdates = function (plan) {
     return (plan && plan.amps ? plan.amps : []).map(function (a) {
         return { dot_path: a.path, value: String(a.new) };
     });
+};
+
+/* r14 ⑩: shared stored-as-TEXT conversion confirm (the /field/edit[-batch]
+ * type_fix 409). true = convert the field type and store the number;
+ * false = keep text. Every edit surface funnels through this so the wording
+ * can't drift. */
+window._confirmTypeFix = function (tf) {
+    var extra = tf && tf.more_in_batch
+        ? "\n(+" + tf.more_in_batch + " more field(s) in this batch)" : "";
+    return window.confirm(
+        "Stored as TEXT: " + (tf.path || "") + " = " + (tf.current_display || "") + extra +
+        "\n\nOK — convert the field type to " + tf.proposed +
+        " and store the number (persisted: future edits stay " + tf.proposed + ")" +
+        "\nCancel — keep it text");
 };
 
 /* docs/65: once every row is applied, the popup's job is done — close it and
@@ -10956,6 +11020,18 @@ document.addEventListener('click', function(evt) {
             ic.className = 'tree-warn-icon';
             ic.textContent = '⚠';
             ic.title = message || 'Hardware spec warning';
+            ic.setAttribute('role', 'button');
+            ic.setAttribute('tabindex', '0');
+            // r14 ⑨: the mark used to be a bare tooltip span — clicking it now
+            // reveals + highlights the finding's row (same treatment the
+            // Diagnostics "Go to field" navigation applies), so a spotted red
+            // mark is one click from the exact field.
+            ic.addEventListener('click', function (e) {
+                e.stopPropagation();
+                if (window._navigateToExplorerPath) {
+                    window._navigateToExplorerPath(dotPath);
+                }
+            });
             row.appendChild(ic);
         } else if (message && ic.title.indexOf(message) === -1) {
             ic.title += '\n' + message;
@@ -11464,6 +11540,12 @@ document.addEventListener('click', function(evt) {
     function _diagInitOnLoad() {
         if (window._refreshSidebarDiagDots) window._refreshSidebarDiagDots();
         _applyDiagFilter();
+        // r14 ⑨: a FULL-page load of /explorer never applied the row marks
+        // (only the #table-pane afterSwap path did) — apply them on load too.
+        if (window._applyExplorerSpecMarks &&
+                document.getElementById('explorer-tree-state')) {
+            window._applyExplorerSpecMarks();
+        }
     }
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', _diagInitOnLoad);
