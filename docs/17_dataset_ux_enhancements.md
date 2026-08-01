@@ -399,3 +399,26 @@ A pencil icon (✎) next to each bookmark in the sidebar panel. Hovering shows t
 | `0f05b7b` | fix: execute embedded scripts after loadDatasetH5 innerHTML injection |
 | `2952aa4` | feat: load dataset detail in inspector when clicking sidebar run entry |
 | `b951fd2` | feat: add inline note editor to bookmark panel entries |
+
+---
+
+## Amendment (2026-08-01, r13): Full View leads with figures + run-id prefix
+
+User feedback: researchers open a run to see the PLOTS, and couldn't tell which
+run was open without digging into Overview.
+
+- **Section order**: in `_dataset_detail.html`'s combined container the
+  `data-fvsec="figures"` section now sits directly below the "Changes from
+  previous run" strip and ABOVE `overview`. Tab toggling and the scroll-restore
+  anchor are keyed on `data-fvsec` (order-independent); only the Full-View
+  reading order changed. The Full-View section-label divider rule in
+  `style.css` is now positional (`.ds-fv-section:first-of-type::before`)
+  instead of hardcoding "overview is first".
+- **Run id**: `_inspector_header.html` renders a plain
+  `<span class="inspector-runid">#NN</span>` prefix before the dataset title
+  (the class already existed, styled for exactly this spot). History: an
+  earlier round removed a "Dataset" pill badge as wasted space — this is
+  deliberately text, not a pill.
+- Pinned by `test_web.py`: `test_dataset_header_runid_prefix` + the
+  figures-before-overview order assert in
+  `test_detail_view_exposes_prev_state_tab`.

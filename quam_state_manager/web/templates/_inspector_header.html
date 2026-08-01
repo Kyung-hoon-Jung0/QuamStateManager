@@ -1,10 +1,13 @@
 <div class="inspector-header inspector-header-{{ inspector_type }}">
     <div class="inspector-title">
         {% if inspector_runid is defined and inspector_runid is not none %}
-        {# Datasets: no leading badge at all (removed per user request — the run-id
-           "#NN" pill was wasted space; the run id still lives in the Overview tab
-           and the #ds-detail-root data-run-id attr). The else-branch badge is kept
-           for qubit/pair inspectors, which DON'T set inspector_runid. #}
+        {# Datasets: a plain "#NN" run-id prefix before the title (r13 feedback —
+           users open a run and can't see WHICH run it is without digging into
+           Overview). History: an earlier "Dataset" pill badge was removed as
+           wasted space; this is deliberately just text, not a pill. The
+           else-branch badge is kept for qubit/pair inspectors, which DON'T set
+           inspector_runid. #}
+        <span class="inspector-runid">#{{ inspector_runid }}</span>
         {% else %}
         <span class="inspector-badge inspector-badge-{{ inspector_type }}">{{ inspector_type | capitalize }}</span>
         {% endif %}

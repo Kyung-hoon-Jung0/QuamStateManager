@@ -4588,7 +4588,9 @@ input.tree-edit-input {
     padding: 0.15rem 0.1rem; margin: 0.1rem 0 0.25rem;
     border-top: 1px solid var(--pico-muted-border-color);
 }
-#ds-tab-combined[data-view="full"] .ds-fv-section[data-fvsec="overview"]::before { border-top: none; }
+/* No divider above the FIRST section, whichever one leads — keyed on position,
+   not on a section name, so reordering the Full View can't strand the rule. */
+#ds-tab-combined[data-view="full"] .ds-fv-section:first-of-type::before { border-top: none; }
 #ds-tab-combined[data-view="full"] .ds-fig-context { display: none; }
 
 /* Prev-state diff — the Prev State tab + the Full-View "Changes from previous
