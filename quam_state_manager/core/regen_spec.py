@@ -431,6 +431,20 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
     # not from wiring: a fixed-coupler / CR chip has no coupler wiring channel,
     # so reading pairs off wiring would miss them entirely. The coupler wiring
     # constraint (tunable-coupler chips only) is pulled from wiring when present.
+    #
+    # Membership gate: real chips carry DANGLING pairs — a cut-down layout
+    # keeps qubit_pairs entries whose member qubit was removed (deviceC ships
+    # qB3-qA4 / qD4-qA3 against 15 real qubits). The tail-split below would
+    # happily emit the phantom name, and a spec.qubit_pairs member outside
+    # spec.qubits hard-blocks BOTH the wizard's step-4 gate and validate_spec
+    # (there is nothing to build the pair against). Drop such pairs here with
+    # a visible note — the compare engine's pair_orphans treats the same data
+    # the same way — and keep their ids so the populate overrides extracted
+    # later are dropped too, not silently carried under a phantom key.
+    qubit_names = (list((wire.get("qubits") or {}).keys())
+                   or list((state.get("qubits") or {}).keys()))
+    known_qubits = set(qubit_names)
+    dropped_pairs: set[str] = set()
     pairs: list[list[str]] = []
     cr_total = 0                 # CR lines seen / sharing the control xy port
     cr_shared = 0
@@ -448,6 +462,12 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
             tgt = str(c.get("target_qubit", "")).split("/")[-1]
         if not (ctrl and tgt):
             notes.append(f"pair {pid!r}: could not read control/target qubits")
+            continue
+        missing = [q for q in (ctrl, tgt) if q not in known_qubits]
+        if missing:
+            dropped_pairs.add(pid)
+            notes.append(f"pair {pid!r} dropped — references qubit(s) not on "
+                         f"this chip: {', '.join(missing)}")
             continue
         pairs.append([ctrl, tgt])
         cp = _parse_port(c.get("opx_output")) if c else None
@@ -526,7 +546,7 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
         notes.append(f"chip uses multiple gate families; rebuilt with '{pair_gate}', "
                      "per-pair variants preserved by the merge graft.")
 
-    qubits = list((wire.get("qubits") or {}).keys()) or list((state.get("qubits") or {}).keys())
+    qubits = qubit_names   # same wiring-first/state-fallback source as the gate above
 
     # Full populate extraction so the re-opened wizard's Populate step is
     # PRE-FILLED (RF · anharm · LO · FSP · grid, readout, flux), not blank —
@@ -534,6 +554,13 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
     merged = dict(state)
     merged["wiring"] = wiring.get("wiring", {})
     populate = _extract_populate(state, merged)
+    if dropped_pairs and isinstance(populate.get("pairs"), dict):
+        # A dropped pair's calibration overrides must not ride under a phantom
+        # key (run_build would only warn-and-ignore them anyway).
+        for pid in dropped_pairs:
+            populate["pairs"].pop(pid, None)
+        if not populate["pairs"]:
+            populate.pop("pairs")
 
     # Wiring-only pairs: a wiring.qubit_pairs entry with a live channel whose
     # state pair was deleted (partial edit) would otherwise vanish SILENTLY —
@@ -556,6 +583,13 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
                     f"pair {pid!r} exists only in wiring and its {ltype} "
                     "channel names no qubits — its port is NOT carried into "
                     "the rebuild.")
+                continue
+            if not {ctrl, tgt} <= known_qubits:
+                # Same dangling gate as the state-pair loop — a wiring-only
+                # pair naming a removed qubit must not ship a phantom either.
+                notes.append(
+                    f"pair {pid!r} exists only in wiring and references "
+                    "qubit(s) not on this chip — dropped.")
                 continue
             if [ctrl, tgt] not in pairs:
                 pairs.append([ctrl, tgt])

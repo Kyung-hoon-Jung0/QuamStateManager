@@ -189,3 +189,40 @@ rules, pair-id reconciliation, superseded/lost classification, redundant-op prun
 fixed pairs branch, emitter validity + real-chip round-trip, exact-spec sidecar
 (written, preferred, hash-invalidated), orchestration guards (output ≠ source).
 Real-data cases auto-skip when the chip folders are absent.
+
+---
+
+## Amendment (2026-08-01, r13): dangling pairs dropped at reconstruct + sidecar reachability
+
+Real chips carry **dangling pairs** — a cut-down layout keeps `qubit_pairs`
+entries whose member qubit was removed (deviceC ships `qB3-qA4` / `qD4-qA3`
+against 15 real qubits). `reconstruct_spec` used to tail-split the pointer and
+emit the phantom name into `spec.qubit_pairs` while `spec.qubits` (sourced from
+wiring) held only the real ids — the wizard's step-4 gate then blocked with "A
+pair references a qubit that no longer exists (qB3–qA4)" and every forward rail
+click bounced back to step 4, with no way through.
+
+- **Membership gate** in the pair inversion (`regen_spec.py`): the qubit-name
+  set (same wiring-first/state-fallback source as `spec.qubits`) is built
+  before the pair loop; a pair with a member outside it is **dropped with a
+  visible note** (`pair 'qB3-qA4' dropped — references qubit(s) not on this
+  chip: qA4`), matching the compare engine's `pair_orphans` treatment of the
+  same data. Its `populate.pairs` overrides are pruned too (run_build would
+  only warn-and-ignore them under a phantom key). The wiring-only recovery
+  path gets the same gate.
+- **Wizard honesty**: a pair `<select>` whose model value matches no current
+  qubit used to silently render the "—" placeholder while the model kept the
+  phantom. `qubitOptions` now emits an explicit `<name> (missing)` selected
+  option and the select tints red (`.gen-pair-missing`) — the in-wizard
+  deletion flow shows exactly what the step-4 message names.
+- **Sidecar reachability**: the reconstruct route reads the WORKING COPY, but
+  the `.regen/generate_spec.json` sidecar only ever lands in the chip's real
+  folder — so it was unreachable for any loaded chip. `reconstruct_from_folder`
+  gained `sidecar_dirs` (the route passes the live folder), hash-gated on the
+  content actually read, so a diverged working copy never picks up a stale
+  sidecar.
+
+Pinned by `test_regen_spec.py` (drop + note + populate prune + wiring-only +
+JS pin) and `test_regenerate.py::test_sidecar_found_via_fallback_dir`.
+Verified against the real 15-qubit chip: 21 → 19 pairs, 2 notes,
+`validate_spec == []`.
