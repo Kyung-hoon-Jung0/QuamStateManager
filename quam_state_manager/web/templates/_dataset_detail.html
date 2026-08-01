@@ -106,6 +106,118 @@
 </details>
 {% endif %}
 
+{# ── Section: Figures — moved ABOVE Overview in source order (r13 feedback:
+   users read the plots first; Full View renders sections in DOM order). Tab
+   toggling + scroll restore are keyed on data-fvsec, so only the Full-View
+   reading order changes. ── #}
+<section class="ds-fv-section" data-fvsec="figures">
+
+    {# ── Top row: Fit Results (left) + Parameters (right) in 2 columns ──
+       Duplicates Overview/Results, so it's hidden in Full View (.ds-fig-context)
+       and only shown when the Figures tab is viewed on its own. ── #}
+    {% if run.fit_results or run.parameters %}
+    <div class="fig-info-row ds-fig-context">
+        <div class="fig-info-col">
+            {% if run.fit_results %}
+            <details open class="detail-section">
+                <summary class="section-header">Fit Results</summary>
+                {% for qname, qresults in run.fit_results.items() %}
+                <details open class="detail-section" style="margin-left:.5rem">
+                    <summary class="section-header">{{ qname }}<button type="button" class="btn-sm outline section-copy-btn" title="Copy this table as tab-separated rows (paste into Excel/Sheets)" onclick="event.stopPropagation(); copyPropTable(this, 'tsv')">Copy</button></summary>
+                    <table class="prop-table" role="grid">
+                        <thead><tr><th class="col-prop">Property</th><th class="col-val">Value</th></tr></thead>
+                        <tbody>
+                        {% if qresults is mapping %}
+                        {% for key, val in qresults.items() %}
+                        <tr>
+                            <td class="col-prop"><code>{{ key }}</code></td>
+                            <td class="col-val"{% if val is number and val is float %} data-copy="{{ val }}"{% endif %}>
+                                {% if val is none %}
+                                    <em class="null-value">not set</em>
+                                {% elif val is sameas true %}
+                                    <span class="outcome-badge outcome-ok">true</span>
+                                {% elif val is sameas false %}
+                                    <span class="outcome-badge outcome-fail">false</span>
+                                {% elif val is number and val is float and (val|abs >= 1e6 or (0 < val|abs < 1e-3)) %}
+                                    {{ "%.6e" | format(val) }}
+                                {% elif val is number and val is float %}
+                                    {{ "%.6f" | format(val) }}
+                                {% elif val is mapping %}
+                                    <div class="ds-inline-tree" id="ds-fig-tree-{{ qname }}-{{ key }}"></div>
+                                    <script>
+                                    (function(){
+                                        var c = document.getElementById('ds-fig-tree-{{ qname }}-{{ key }}');
+                                        if (c && typeof renderJsonTree === 'function') renderJsonTree('ds-fig-tree-{{ qname }}-{{ key }}', {{ val | tojson }}, {defaultDepth: 2, valueClick: 'copy'});
+                                    })();
+                                    </script>
+                                {% elif val is iterable and val is not string %}
+                                    <code>{{ val | join(', ') }}</code>
+                                {% else %}
+                                    {{ val }}
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        {% else %}
+                        <tr><td class="col-prop"><code>value</code></td><td class="col-val">{{ qresults }}</td></tr>
+                        {% endif %}
+                        </tbody>
+                    </table>
+                </details>
+                {% endfor %}
+            </details>
+            {% else %}
+            <p class="muted" style="padding:.5rem">No fit results.</p>
+            {% endif %}
+        </div>
+        <div class="fig-info-col">
+            {% if run.parameters %}
+            <details open class="detail-section">
+                <summary class="section-header">Parameters<button type="button" class="btn-sm outline section-copy-btn" title="Copy these parameters as JSON" data-json='{{ run.parameters | tojson }}' onclick="event.stopPropagation(); window.copyWithFeedback(this.getAttribute('data-json'), this, 'Copied parameters as JSON.')">Copy JSON</button></summary>
+                <div id="ds-fig-params-tree" style="padding:.5rem 1rem"></div>
+                <script>
+                    (function() {
+                        if (document.getElementById('ds-fig-params-tree') && typeof renderJsonTree === 'function') {
+                            renderJsonTree('ds-fig-params-tree', {{ run.parameters | tojson }}, {defaultDepth: 2, valueClick: 'copy'});
+                        }
+                    })();
+                </script>
+            </details>
+            {% else %}
+            <p class="muted" style="padding:.5rem">No parameters.</p>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    {# ── Figures grid (2 columns) ── #}
+    {% if run.figure_names %}
+    <div class="figure-grid">
+        {% for fig_name in run.figure_names %}
+        <div class="figure-card">
+            <div class="figure-label">
+                <code>{{ fig_name }}</code>
+                {% if run.qubits %}
+                <span class="figure-qubit-actions">
+                    {% for q in run.qubits %}
+                    <button class="btn-sm outline" onclick="event.stopPropagation(); (function(){ var m = _resolveExperimentPath('{{ run.experiment_name }}', '{{ q }}'); _navigateToExplorerPath(m ? m[0].path : 'qubits.{{ q }}'); })()" title="Edit {{ q }}">{{ q }}</button>
+                    {% endfor %}
+                </span>
+                {% endif %}
+            </div>
+            <img src="/dataset/{{ uid }}/fig/{{ fig_name }}"
+                 alt="{{ fig_name }}"
+                 loading="lazy"
+                 onclick="toggleFigureZoom(this)"
+                 title="Click to zoom">
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+        <p class="muted" style="padding:1rem;text-align:center">No figures saved for this run.</p>
+    {% endif %}
+</section>
+
 {# ── Section: Overview ── #}
 <section class="ds-fv-section" data-fvsec="overview">
     <details open class="detail-section">
@@ -243,114 +355,6 @@
     {% endif %}
 </section>
 
-{# ── Section: Figures ── #}
-<section class="ds-fv-section" data-fvsec="figures">
-
-    {# ── Top row: Fit Results (left) + Parameters (right) in 2 columns ──
-       Duplicates Overview/Results, so it's hidden in Full View (.ds-fig-context)
-       and only shown when the Figures tab is viewed on its own. ── #}
-    {% if run.fit_results or run.parameters %}
-    <div class="fig-info-row ds-fig-context">
-        <div class="fig-info-col">
-            {% if run.fit_results %}
-            <details open class="detail-section">
-                <summary class="section-header">Fit Results</summary>
-                {% for qname, qresults in run.fit_results.items() %}
-                <details open class="detail-section" style="margin-left:.5rem">
-                    <summary class="section-header">{{ qname }}<button type="button" class="btn-sm outline section-copy-btn" title="Copy this table as tab-separated rows (paste into Excel/Sheets)" onclick="event.stopPropagation(); copyPropTable(this, 'tsv')">Copy</button></summary>
-                    <table class="prop-table" role="grid">
-                        <thead><tr><th class="col-prop">Property</th><th class="col-val">Value</th></tr></thead>
-                        <tbody>
-                        {% if qresults is mapping %}
-                        {% for key, val in qresults.items() %}
-                        <tr>
-                            <td class="col-prop"><code>{{ key }}</code></td>
-                            <td class="col-val"{% if val is number and val is float %} data-copy="{{ val }}"{% endif %}>
-                                {% if val is none %}
-                                    <em class="null-value">not set</em>
-                                {% elif val is sameas true %}
-                                    <span class="outcome-badge outcome-ok">true</span>
-                                {% elif val is sameas false %}
-                                    <span class="outcome-badge outcome-fail">false</span>
-                                {% elif val is number and val is float and (val|abs >= 1e6 or (0 < val|abs < 1e-3)) %}
-                                    {{ "%.6e" | format(val) }}
-                                {% elif val is number and val is float %}
-                                    {{ "%.6f" | format(val) }}
-                                {% elif val is mapping %}
-                                    <div class="ds-inline-tree" id="ds-fig-tree-{{ qname }}-{{ key }}"></div>
-                                    <script>
-                                    (function(){
-                                        var c = document.getElementById('ds-fig-tree-{{ qname }}-{{ key }}');
-                                        if (c && typeof renderJsonTree === 'function') renderJsonTree('ds-fig-tree-{{ qname }}-{{ key }}', {{ val | tojson }}, {defaultDepth: 2, valueClick: 'copy'});
-                                    })();
-                                    </script>
-                                {% elif val is iterable and val is not string %}
-                                    <code>{{ val | join(', ') }}</code>
-                                {% else %}
-                                    {{ val }}
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% endfor %}
-                        {% else %}
-                        <tr><td class="col-prop"><code>value</code></td><td class="col-val">{{ qresults }}</td></tr>
-                        {% endif %}
-                        </tbody>
-                    </table>
-                </details>
-                {% endfor %}
-            </details>
-            {% else %}
-            <p class="muted" style="padding:.5rem">No fit results.</p>
-            {% endif %}
-        </div>
-        <div class="fig-info-col">
-            {% if run.parameters %}
-            <details open class="detail-section">
-                <summary class="section-header">Parameters<button type="button" class="btn-sm outline section-copy-btn" title="Copy these parameters as JSON" data-json='{{ run.parameters | tojson }}' onclick="event.stopPropagation(); window.copyWithFeedback(this.getAttribute('data-json'), this, 'Copied parameters as JSON.')">Copy JSON</button></summary>
-                <div id="ds-fig-params-tree" style="padding:.5rem 1rem"></div>
-                <script>
-                    (function() {
-                        if (document.getElementById('ds-fig-params-tree') && typeof renderJsonTree === 'function') {
-                            renderJsonTree('ds-fig-params-tree', {{ run.parameters | tojson }}, {defaultDepth: 2, valueClick: 'copy'});
-                        }
-                    })();
-                </script>
-            </details>
-            {% else %}
-            <p class="muted" style="padding:.5rem">No parameters.</p>
-            {% endif %}
-        </div>
-    </div>
-    {% endif %}
-
-    {# ── Figures grid (2 columns) ── #}
-    {% if run.figure_names %}
-    <div class="figure-grid">
-        {% for fig_name in run.figure_names %}
-        <div class="figure-card">
-            <div class="figure-label">
-                <code>{{ fig_name }}</code>
-                {% if run.qubits %}
-                <span class="figure-qubit-actions">
-                    {% for q in run.qubits %}
-                    <button class="btn-sm outline" onclick="event.stopPropagation(); (function(){ var m = _resolveExperimentPath('{{ run.experiment_name }}', '{{ q }}'); _navigateToExplorerPath(m ? m[0].path : 'qubits.{{ q }}'); })()" title="Edit {{ q }}">{{ q }}</button>
-                    {% endfor %}
-                </span>
-                {% endif %}
-            </div>
-            <img src="/dataset/{{ uid }}/fig/{{ fig_name }}"
-                 alt="{{ fig_name }}"
-                 loading="lazy"
-                 onclick="toggleFigureZoom(this)"
-                 title="Click to zoom">
-        </div>
-        {% endfor %}
-    </div>
-    {% else %}
-        <p class="muted" style="padding:1rem;text-align:center">No figures saved for this run.</p>
-    {% endif %}
-</section>
 </div>{# /#ds-tab-combined #}
 
 {# ── Tab: Prev State (lazy) — full diff vs the previous run + older/newer stepper ── #}

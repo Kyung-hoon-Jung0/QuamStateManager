@@ -217,8 +217,8 @@ class TestRound15ChromeHiding:
 
 
 class TestRound15PairDisplay:
-    """Round 15 Item 6: display sites prefer the intact pair name; 1b dropped the
-    dataset header run-id badge."""
+    """Round 15 Item 6: display sites prefer the intact pair name. (1b dropped
+    the dataset header run-id badge; r13 restored a plain-text #NN prefix.)"""
 
     def _read(self, *parts):
         base = Path(__file__).resolve().parent.parent / "quam_state_manager"
@@ -236,11 +236,13 @@ class TestRound15PairDisplay:
         html = self._read("web", "templates", "_dataset_detail.html")
         assert "run.qubit_pairs if run.qubit_pairs else run.qubits" in html
 
-    def test_dataset_header_runid_badge_removed(self):
-        # The leading inspector-runid "#NN" span is gone from the header (the
-        # else-branch badge stays for qubit/pair inspectors).
+    def test_dataset_header_runid_prefix(self):
+        # r13: the plain "#NN" run-id text prefix is BACK in the dataset header
+        # (users open a run and couldn't tell which run it was without digging
+        # into Overview). Deliberately text, not the old pill badge; the
+        # else-branch badge stays for qubit/pair inspectors.
         html = self._read("web", "templates", "_inspector_header.html")
-        assert "inspector-runid" not in html
+        assert '<span class="inspector-runid">#{{ inspector_runid }}</span>' in html
         assert "inspector-badge-" in html       # else-branch (qubit/pair) preserved
 
 
@@ -5388,6 +5390,12 @@ class TestDatasetPrevStateDiff:
         assert "switchDatasetTab('prev'" in body       # Prev State tab present
         assert 'id="ds-tab-combined"' in body          # Full View container
         assert "switchDatasetTab('full'" in body
+        # r13: Full View leads with the figures section (users read plots first)
+        # — figures renders BEFORE overview; toggling stays key-based so the
+        # single-section tabs are unaffected by source order.
+        assert body.index('data-fvsec="figures"') < body.index('data-fvsec="overview"')
+        # r13: the header carries the plain "#NN" run-id prefix.
+        assert 'class="inspector-runid">#3' in body
 
 
 # ---------------------------------------------------------------------------
