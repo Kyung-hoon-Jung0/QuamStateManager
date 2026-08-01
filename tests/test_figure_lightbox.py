@@ -17,9 +17,11 @@ _SELFCHECK = Path(__file__).parent / "figure_lightbox_selfcheck.cjs"
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_figure_lightbox_selfcheck():
+    # 180 s: node + jsdom loading the ~9k-line app.js through WSL's 9p mount
+    # measured ~58 s cold — a 60 s ceiling flaked on exactly that.
     proc = subprocess.run(
         ["node", str(_SELFCHECK)],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, timeout=180,
     )
     assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
     assert "ALL OK" in proc.stdout

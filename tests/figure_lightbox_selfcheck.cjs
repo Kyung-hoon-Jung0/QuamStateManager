@@ -155,3 +155,7 @@ for (const t of ['_dataset_detail.html', '_dataset_compare.html',
 
 if (fails) { console.error(fails + ' FAILURES'); process.exit(1); }
 console.log('ALL OK');
+// Explicit exit (matches ndview_selfcheck): jsdom's pretendToBeVisual RAF
+// scheduler keeps the node event loop alive on some platforms (hung 60 s on
+// WSL while exiting cleanly on Windows) — never rely on a drained loop.
+process.exit(0);
