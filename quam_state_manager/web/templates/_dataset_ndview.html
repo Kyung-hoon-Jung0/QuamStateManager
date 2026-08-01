@@ -26,6 +26,9 @@
       <span class="ndv-var-name">{{ v.name }}</span>
       <span class="ndv-var-shape">{{ v.shape | join('×') if v.shape else 'scalar' }}</span>
       {% if v.units %}<span class="ndv-var-units">{{ v.units }}</span>{% endif %}
+      {# r13: dimension NAMES always visible (was tooltip-only) — the card is
+         the "inspect keys + structure first, then plot" surface. #}
+      {% if v.dims %}<span class="ndv-var-dims">{{ v.dims | join(' × ') }}</span>{% endif %}
     </button>
     {% endfor %}
   </div>

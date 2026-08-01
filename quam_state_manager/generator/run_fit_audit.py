@@ -265,7 +265,16 @@ def main() -> int:
         try:
             ds_raw = xr.open_dataset(p)
         except Exception:
-            ds_raw = xr.open_dataset(p, engine="h5netcdf")
+            # NetCDF-classic under the .h5 name → h5netcdf can never read it;
+            # sniff the magic to pick the working fallback engine.
+            eng = "h5netcdf"
+            try:
+                with open(p, "rb") as _fh:
+                    if _fh.read(3) == b"CDF":
+                        eng = "scipy"
+            except OSError:
+                pass
+            ds_raw = xr.open_dataset(p, engine=eng)
     except Exception:
         result["errors"].append({"stage": "datasets", "trace": traceback.format_exc()})
         return _emit(result, args.out)
