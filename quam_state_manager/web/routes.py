@@ -14278,8 +14278,14 @@ def regenerate_reconstruct():
     folder = (data.get("folder") or "").strip() or _ctx_path()
     if not folder:
         return jsonify({"ok": False, "error": "No chip loaded and no folder given."}), 400
+    # The exact-spec sidecar lives in the chip's REAL folder, never in the
+    # working copy — offer the live folder as a fallback lookup (hash-gated
+    # against the working-copy content, so it only applies while equivalent).
+    _ctx = _active_ctx()
+    _live = (_ctx or {}).get("path")
+    sidecar_dirs = (str(_live),) if _live and str(_live) != str(folder) else ()
     try:
-        rec = regenerate.reconstruct_from_folder(folder)
+        rec = regenerate.reconstruct_from_folder(folder, sidecar_dirs=sidecar_dirs)
     except (OSError, ValueError) as exc:
         return jsonify({"ok": False, "error": f"Could not read {folder}: {exc}"}), 400
     ident = _active_chip_identity()

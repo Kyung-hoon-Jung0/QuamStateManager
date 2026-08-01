@@ -1279,10 +1279,23 @@
   }
 
   function qubitOptions(selected) {
-    return state.spec.qubits.map(function (q) {
+    var opts = state.spec.qubits.map(function (q) {
       return '<option value="' + q + '"' +
         (q === selected ? " selected" : "") + ">" + q + "</option>";
-    }).join("");
+    });
+    // A model value that matches no current qubit (deleted on the board — the
+    // reconstruct path drops dangling pairs server-side, so this is the
+    // in-wizard deletion case) must stay VISIBLE: without an explicit option
+    // the browser silently falls back to the "—" placeholder while the model
+    // still holds the phantom, and the step-4 "references a qubit that no
+    // longer exists (qX–qY)" message names something the user can't see.
+    if (selected && state.spec.qubits.indexOf(selected) === -1) {
+      var safe = String(selected).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+      opts.push('<option value="' + safe + '" selected>' + safe +
+        " (missing)</option>");
+    }
+    return opts.join("");
   }
 
   // Live confirmation caption: count + the feedline grouping the mux size
@@ -1362,6 +1375,13 @@
             'hand — frequency auto-assignment skips this pair">manual</span>'
           : "") +
         '<button type="button" class="gen-row-del">×</button>';
+      // Tint a select whose model value is a phantom (see qubitOptions) so the
+      // broken member is findable at a glance among many rows.
+      ["gen-pair-c", "gen-pair-t"].forEach(function (cls, side) {
+        if (pair[side] && state.spec.qubits.indexOf(pair[side]) === -1) {
+          row.querySelector("." + cls).classList.add("gen-pair-missing");
+        }
+      });
       row.querySelector(".gen-pair-c").addEventListener("change", function (e) {
         pair[0] = e.target.value;
         state.pairsTouched = true;

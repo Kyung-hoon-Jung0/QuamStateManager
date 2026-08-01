@@ -136,6 +136,31 @@ def test_sidecar_ignored_when_chip_changed(tmp_path):
     assert rec(tmp_path).exact is False                  # inferred, not from sidecar
 
 
+def test_sidecar_found_via_fallback_dir(tmp_path):
+    # r13: the reconstruct route reads the WORKING COPY, but the exact-spec
+    # sidecar only ever lands in the chip's real folder — ``sidecar_dirs`` lets
+    # the caller offer the live folder, hash-gated on the CONTENT actually read
+    # (so a diverged working copy never picks up a stale live sidecar).
+    from quam_state_manager.core import regen_spec
+    state = {"qubits": {"q1": {"f_01": 5.0e9}}}
+    wiring = {"wiring": {}, "network": {}}
+    live = tmp_path / "live"
+    wc = tmp_path / "wc"
+    for d in (live, wc):
+        d.mkdir()
+        (d / "state.json").write_text(json.dumps(state))
+        (d / "wiring.json").write_text(json.dumps(wiring))
+    regen_spec.write_spec_sidecar(
+        live, {"qubits": ["q1"], "_marker": "live-sc"}, state, wiring)
+    assert regenerate.reconstruct_from_folder(wc).exact is False   # wc alone: no sidecar
+    rec = regenerate.reconstruct_from_folder(wc, sidecar_dirs=(live,))
+    assert rec.exact is True
+    assert rec.spec["_marker"] == "live-sc"
+    # Working copy diverges → the hash gate refuses the live sidecar.
+    (wc / "state.json").write_text(json.dumps({"qubits": {"q1": {"f_01": 1.0}}}))
+    assert regenerate.reconstruct_from_folder(wc, sidecar_dirs=(live,)).exact is False
+
+
 # --- real rebuilt output from the P2 probe (auto-skip when absent) ----------
 _OLD = Path("<quam-states>/gen_2x3_cz_tunable")
 _REBUILT = Path("/mnt/d/Work/state-manager/.tmp_p2/rebuilt")

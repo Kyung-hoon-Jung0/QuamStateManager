@@ -23,24 +23,36 @@ from typing import Any
 from . import config_generator, path_match, regen_merge, regen_script, regen_spec, safe_io
 
 
-def reconstruct_from_folder(folder: Path | str) -> regen_spec.ReconstructedSpec:
+def reconstruct_from_folder(
+    folder: Path | str,
+    sidecar_dirs: tuple[Path | str, ...] = (),
+) -> regen_spec.ReconstructedSpec:
     """Read a chip folder's state+wiring and reconstruct its build spec.
 
     Used to pre-fill the wizard when the user re-generates a chip (the currently
     loaded live chip by default, or any folder via the Load button). Prefers an
     EXACT spec sidecar (written by a prior rebuild) over the best-effort
     reconstruction when it exists and its hash still matches the chip.
+
+    ``sidecar_dirs``: extra directories to consult for the sidecar. The default
+    reconstruct reads the WORKING COPY (so it carries in-app edits), but the
+    ``.regen/generate_spec.json`` sidecar only ever lands in the chip's real
+    folder — without this the sidecar was unreachable for any loaded chip. The
+    hash gate inside :func:`regen_spec.load_spec_sidecar` keys on the CONTENT
+    read here, so a live-folder sidecar is only used while the working copy is
+    byte-equivalent to the state the sidecar was written for.
     """
     folder = Path(folder)
     state, wiring = safe_io.read_state_wiring(folder)
-    sidecar = regen_spec.load_spec_sidecar(folder, state, wiring)
-    if sidecar is not None:
-        # Exact structure from the sidecar; refresh populate from the CURRENT
-        # state so displayed seeds reflect any in-app value edits since the build.
-        merged = dict(state)
-        merged["wiring"] = wiring.get("wiring", {})
-        sidecar["populate"] = regen_spec._extract_populate(state, merged)
-        return regen_spec.ReconstructedSpec(spec=sidecar, exact=True)
+    for cand in (folder, *(Path(d) for d in sidecar_dirs)):
+        sidecar = regen_spec.load_spec_sidecar(cand, state, wiring)
+        if sidecar is not None:
+            # Exact structure from the sidecar; refresh populate from the CURRENT
+            # state so displayed seeds reflect any in-app value edits since the build.
+            merged = dict(state)
+            merged["wiring"] = wiring.get("wiring", {})
+            sidecar["populate"] = regen_spec._extract_populate(state, merged)
+            return regen_spec.ReconstructedSpec(spec=sidecar, exact=True)
     return regen_spec.reconstruct_spec(state, wiring)
 
 

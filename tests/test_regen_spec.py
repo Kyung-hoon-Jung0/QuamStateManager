@@ -97,6 +97,53 @@ def test_reconstructed_spec_is_valid():
     assert config_generator.validate_spec(r.spec) == []
 
 
+def test_dangling_pairs_dropped_with_note():
+    # deviceC-class chip (r13): a cut-down layout keeps qubit_pairs entries
+    # whose member qubit was removed (real data: qB3-qA4 / qD4-qA3 against 15
+    # real qubits). The reconstruct must DROP them — a phantom member
+    # hard-blocks BOTH the wizard's step-4 gate and validate_spec — say so in
+    # notes, and drop their populate overrides too (run_build would only
+    # warn-and-ignore them under a phantom key).
+    state, wiring = _tiny()
+    state["qubit_pairs"]["q1-qGone"] = {
+        "qubit_control": "#/qubits/q1", "qubit_target": "#/qubits/qGone",
+        "coupler": {"x": 1}, "macros": {"cz_unipolar": {}},
+    }
+    r = reconstruct_spec(state, wiring)
+    assert r.spec["qubit_pairs"] == [["q1", "q2"]]          # phantom dropped
+    assert any("q1-qGone" in n and "dropped" in n for n in r.notes)
+    assert "q1-qGone" not in ((r.spec.get("populate") or {}).get("pairs") or {})
+    assert config_generator.validate_spec(r.spec) == []     # step-4 unblocked
+
+
+def test_wiring_only_dangling_pair_not_resurrected():
+    # The wiring-only recovery path (state pair deleted, wiring channel kept)
+    # used to append its tail-split members unchecked — same phantom hazard.
+    state, wiring = _tiny()
+    wiring["wiring"]["qubit_pairs"]["ghost"] = {
+        "c": {"control_qubit": "#/qubits/q1",
+              "target_qubit": "#/qubits/qNope",
+              "opx_output": "#/ports/analog_outputs/con1/4/8"}}
+    r = reconstruct_spec(state, wiring)
+    assert ["q1", "qNope"] not in r.spec["qubit_pairs"]
+    assert any("ghost" in n and "not on this chip" in n for n in r.notes)
+    assert config_generator.validate_spec(r.spec) == []
+
+
+def test_wizard_missing_pair_member_stays_visible():
+    # r13 companion of the drop: when a pair's model value names a qubit that
+    # no longer exists (in-wizard deletion — the server path drops dangling
+    # pairs before hydrate), the select must render an explicit
+    # "<name> (missing)" option instead of silently showing the "—"
+    # placeholder while the model still holds the phantom.
+    base = Path(__file__).resolve().parent.parent / "quam_state_manager" / "web"
+    js = (base / "static" / "generate.js").read_text(encoding="utf-8")
+    assert '" (missing)</option>"' in js
+    assert "gen-pair-missing" in js
+    css = (base / "static" / "style.css").read_text(encoding="utf-8")
+    assert "select.gen-pair-missing" in css
+
+
 def test_mixed_gates_flagged():
     state = {"qubit_pairs": {
         "a": {"coupler": {"x": 1}, "macros": {"cz_unipolar": {}}},
