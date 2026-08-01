@@ -449,3 +449,20 @@ run was open without digging into Overview.
 - Pinned by `tests/figure_lightbox_selfcheck.cjs` (driven by
   `tests/test_figure_lightbox.py`) + the rewritten
   `test_datasets_robustness.py::TestOverlaysAndPanels` pins.
+
+---
+
+## Amendment (2026-08-01, r13 ⑦): menu navigation auto-collapses an expanded dataset panel
+
+Navigating to another menu (Chip Status, Pulses, …) while a dataset detail sat
+EXPANDED in the inspector left the new page squeezed under a huge data panel —
+"자동으로 data 패널은 축소되게 하자" was a frequent ask. A capture-phase click
+listener in base.html's split IIFE now calls `_applySplitPreset("collapsed")`
+(the user's own ⤓-configured preset — no hardcoded ratio) on sidebar MENU
+clicks, gated tightly: real menu links only (`.sidebar-nav a[href]`, submenu
+toggles are buttons), only when the inspector holds a DATASET detail
+(`#ds-detail-root` — qubit/pair inspectors keep the sticky-inspector
+doctrine), only while expanded, and never for the Datasets menu itself (the
+detail pane is native there). The panel CONTENT stays — ▲ or the gutter
+restores it full-height. Pinned in `test_web.py::
+test_menu_nav_collapses_expanded_dataset_panel`.

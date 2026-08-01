@@ -1024,6 +1024,25 @@
             window._restoreTrayState && window._restoreTrayState();
         });
 
+        // r13 feedback ⑦: navigating to another MENU while a dataset detail
+        // sits EXPANDED in the inspector squeezes the new page under a huge
+        // data panel — auto-collapse it on main-menu navigation. Scoped
+        // tightly: sidebar MENU links only; only when the inspector holds a
+        // DATASET detail (qubit/pair inspectors keep the sticky-inspector
+        // doctrine untouched); only when currently expanded; and never for
+        // the Datasets menu itself (the detail pane is native there). The
+        // detail CONTENT stays — ▲ / the gutter brings it back full-height.
+        document.addEventListener("click", function(e) {
+            var a = e.target.closest && e.target.closest(".sidebar-nav a[href]");
+            if (!a) return;
+            var href = a.getAttribute("href") || "";
+            if (href === "#" || href.indexOf("/datasets") === 0) return;
+            if (!inspectorExpanded) return;
+            var pane = document.getElementById("inspector-pane");
+            if (!pane || !pane.querySelector("#ds-detail-root")) return;
+            window._applySplitPreset("collapsed");
+        });
+
         function restorePrefs() {
             try {
                 if (localStorage.getItem("quam_sidebar_collapsed") === "1") {

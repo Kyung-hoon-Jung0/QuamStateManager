@@ -1495,6 +1495,33 @@ class TestSidebarFeatures:
                                    "tpath": "chipA/2026-05-30"}).data.decode()
         assert frag.count("tree-entry-click") == 3
 
+    def test_menu_nav_collapses_expanded_dataset_panel(self):
+        """r13 feedback ⑦: clicking another MENU while a dataset detail sits
+        expanded in the inspector must auto-collapse the data panel (the new
+        page was squeezed under it). Gated: menu links only, dataset detail
+        only (#ds-detail-root — qubit/pair inspectors keep sticky), expanded
+        only, and never the Datasets menu itself."""
+        base = (Path(__file__).resolve().parent.parent
+                / "quam_state_manager" / "web" / "templates" / "base.html")
+        text = base.read_text(encoding="utf-8")
+        assert '.sidebar-nav a[href]' in text
+        assert 'querySelector("#ds-detail-root")' in text
+        assert '_applySplitPreset("collapsed")' in text
+        assert 'href.indexOf("/datasets") === 0' in text
+
+    def test_ndview_axis_title_shows_dim_name_when_metadata_lies(self):
+        """r13 feedback ⑧: a lab node copy-pasted long_name='readout
+        frequency' onto the qubit-DRIVE detuning axis; the axis label must
+        carry the on-disk dim NAME alongside a differing long_name
+        ("readout frequency (detuning) [Hz]") while cosmetic-only differences
+        (flux bias vs flux_bias) stay single."""
+        nd = (Path(__file__).resolve().parent.parent
+              / "quam_state_manager" / "web" / "static" / "ndview.js")
+        text = nd.read_text(encoding="utf-8")
+        assert "function normName" in text
+        assert "normName(dim.long_name) !== normName(dim.name)" in text
+        assert "dim.long_name + ' (' + dim.name + ')'" in text
+
     def test_sidebar_poller_hardening_pins(self):
         """r13 audit D4/D5 pins on the base.html tree poller: lastV only
         advances after a SUCCESSFUL tree swap; a 10 s abort guards the fetch;

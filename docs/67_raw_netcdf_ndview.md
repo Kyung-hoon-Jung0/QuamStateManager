@@ -141,3 +141,18 @@ it). Inline per file — the runner scripts are standalone by design.
   actually emits such refs in NetCDF form.
 - CDF-5 (`CDF\x05`) does not occur in the archive; scipy cannot read it — it
   would classify as "Unreadable data file", which is the honest answer.
+
+---
+
+## Amendment (2026-08-01, r13 ⑧): axis titles carry the dim name when file metadata lies
+
+A user asked why qubit spectroscopy's Raw Data x-axis said "readout
+frequency". SM was displaying exactly what the file declares: the lab's own
+v2 node (`08_qubit_spectroscopy.py`, sweep-axes block) copy-pasted
+`attrs={"long_name": "readout frequency"}` from the resonator-spec nodes onto
+the qubit-DRIVE detuning axis — the on-disk metadata is wrong, and only the
+lab can fix the node. SM-side hardening: `ndview.js`'s `axisTitle` now shows
+the raw dim NAME alongside any long_name that differs meaningfully after
+normalization — `readout frequency (detuning) [Hz]` — while cosmetic-only
+differences (`flux bias` vs `flux_bias`) stay single. Pinned behaviorally in
+`ndview_selfcheck.cjs` §8 and as source pins in `test_web.py`.
