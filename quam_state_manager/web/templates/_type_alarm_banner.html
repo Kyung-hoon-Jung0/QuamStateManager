@@ -1,0 +1,22 @@
+{# r14 ⑨ — ACTIVE stored-as-text alarm. An external state regeneration can
+   string-ify numeric values wholesale ("0.13"); SM used to detect this only
+   as a passive ⚠ mark inside the Explorer that users had to find themselves.
+   This banner announces it on every page, jumps to the first offending field,
+   and dismisses per anomaly-SET (a new anomaly re-raises it). #}
+{% if type_alarm %}
+<div id="type-alarm-banner" class="topo-change-banner type-alarm-banner" role="alert">
+  <span class="type-alarm-text">&#9888;
+    <strong>{{ type_alarm.count }} value{{ 's' if type_alarm.count != 1 }} stored as TEXT</strong>
+    but read{{ 's' if type_alarm.count == 1 }} like a number
+    (e.g. <code>{{ type_alarm.first }}</code>) — usually an external state
+    regeneration. SM edits keep text until the type is converted.
+  </span>
+  <button type="button" class="btn-sm" data-path="{{ type_alarm.first }}"
+          onclick="window._navigateToExplorerPath && window._navigateToExplorerPath(this.getAttribute('data-path'))"
+          title="Open the Explorer at the first offending field">Show in Explorer</button>
+  <button type="button" class="btn-sm outline" hx-post="/type-alarm/dismiss"
+          hx-vals='{"sig": {{ type_alarm.sig | tojson }}, "token": {{ type_alarm.token | tojson }}}'
+          hx-target="#type-alarm-slot" hx-swap="innerHTML"
+          title="Hide for this exact set — any NEW text-typed value raises it again">Dismiss</button>
+</div>
+{% endif %}

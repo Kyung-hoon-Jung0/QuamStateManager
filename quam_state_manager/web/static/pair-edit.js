@@ -284,9 +284,10 @@
             updates.push({ dot_path: c.getAttribute('data-dot-path'), value: c.value });
         });
         if (!updates.length) return Promise.resolve({ ok: true, tray_html: null });
-        var _postBatch = function (ups, fspAck) {
+        var _postBatch = function (ups, fspAck, typeFix) {
             var payload = { updates: ups, expect_chip: window.__chipToken || '' };
             if (fspAck) payload.fsp_ack = fspAck;
+            if (typeFix) payload.type_fix = typeFix;
             return fetch('/field/edit-batch', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -294,6 +295,13 @@
         };
         return _postBatch(updates, null)
             .then(function handleR(r) {
+                // r14 ⑩ stored-as-TEXT offer (see bulk-edit.js — kept in sync)
+                if (r.status === 409 && r.body && r.body.type_fix) {
+                    var conv = window._confirmTypeFix
+                        ? window._confirmTypeFix(r.body.type_fix)
+                        : window.confirm(r.body.error || 'Convert stored text to a number?');
+                    return _postBatch(updates, null, conv ? 'convert' : 'keep').then(handleR);
+                }
                 // r12-B FSP compensation offer (see bulk-edit.js — kept in sync)
                 if (r.status === 409 && r.body && r.body.fsp_compensation
                     && window._openFspPopup) {

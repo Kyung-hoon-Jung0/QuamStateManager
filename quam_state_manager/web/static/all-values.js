@@ -697,14 +697,15 @@
     // A5: Enter in a scalar input applies THAT one field to the working copy (matches
     // Live Grid's Enter-applies-row). Same /field/edit-batch + reconcile + tray-swap
     // path as Apply-all, isolated to one dot-path; no full rebuild so focus survives.
-    function applyOne(path, inputEl, fspAck, extraUpdates) {
+    function applyOne(path, inputEl, fspAck, extraUpdates, typeFix) {
         var d = state.dirty.get(path);
-        if (!d || (state.applying && !fspAck)) return;
+        if (!d || (state.applying && !fspAck && !typeFix)) return;
         state.applying = true;   // in-flight guard: an Enter + quick blur can fire two
         var payload = { updates: [{ dot_path: path, value: d.value }]
                             .concat(extraUpdates || []),
                         expect_chip: window.__chipToken || '' };
         if (fspAck) payload.fsp_ack = fspAck;
+        if (typeFix) payload.type_fix = typeFix;
         fetch('/field/edit-batch', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -717,6 +718,16 @@
                     applyOne(path, inputEl, mode,
                              mode === 'comp' ? window._fspCompUpdates(plan) : []);
                 });
+                return;
+            }
+            // r14 ⑩: stored-as-TEXT repair offer — never silent, user chooses.
+            if (!jb.ok && jb.type_fix) {
+                state.applying = false;
+                var conv = window._confirmTypeFix
+                    ? window._confirmTypeFix(jb.type_fix)
+                    : window.confirm(jb.error || 'Convert stored text to a number?');
+                applyOne(path, inputEl, fspAck, extraUpdates,
+                         conv ? 'convert' : 'keep');
                 return;
             }
             if (!jb.ok) { applyError(jb); return; }

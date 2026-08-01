@@ -79,7 +79,11 @@ def _display(value: Any) -> str:
     form (round-trips through ``type_policy.parse_value``, identical to Bulk Edit cells);
     strings (incl. pointer targets) show verbatim; ``None`` shows blank.
     Containers (a pointer resolving to a dict/list) render as JSON so the
-    edit-through input round-trips via the JSON-aware ``_parse_value``."""
+    edit-through input round-trips via the JSON-aware ``_parse_value``.
+
+    r14 honesty: a numeric-LOOKING string renders WITH its quotes so ``"0.13"``
+    (text) can never pass for ``0.13`` (real). The quoted form round-trips —
+    the quote-aware edit parser reads ``"0.13"`` back as the string."""
     if value is None:
         return ""
     if isinstance(value, bool):
@@ -88,6 +92,13 @@ def _display(value: Any) -> str:
         return units.group_digits(value)
     if isinstance(value, (dict, list)):
         return json.dumps(value)
+    if isinstance(value, str) and not value.startswith("#"):
+        try:
+            float(value)
+        except ValueError:
+            pass
+        else:
+            return json.dumps(value)
     return str(value)
 
 

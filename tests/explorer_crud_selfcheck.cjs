@@ -141,8 +141,8 @@ function nodeAt(container, p) {
     const keyIn = panel.querySelector('.tree-crud-key');
     keyIn.value = 'T1';
     keyIn.dispatchEvent(new win.Event('change', { bubbles: true }));
-    ok(panel.querySelector('.tree-crud-type').value === 'number',
-      'C3: schema suggestion prefills the type');
+    ok(panel.querySelector('.tree-crud-type').value === 'real',
+      'C3: schema suggestion (legacy "number" token) prefills the real choice');
     panel.querySelector('.tree-crud-val').value = '8834';
     panel.querySelector('.tree-crud-ok').click();
     await tick(20);
@@ -150,7 +150,7 @@ function nodeAt(container, p) {
     ok(!!call, 'C3: /field/create POSTed');
     if (call) {
       ok(call.opts.body.indexOf('dot_path=qubits.qA1.T1') >= 0, 'C3: dot_path correct');
-      ok(call.opts.body.indexOf('expect_type=number') >= 0, 'C3: expect_type sent');
+      ok(call.opts.body.indexOf('expect_type=real') >= 0, 'C3: expect_type sent');
     }
     await tick(20);
     ok(!!nodeAt(c, 'qubits.qA1.T1'), 'C3: node rebuilt with the new key');

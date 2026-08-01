@@ -173,3 +173,61 @@ Changed: `core/modifier.py`, `core/edit_policy.py`, `core/leaf_classify.py`,
 `core/loader.py`, `core/diagnostics.py`, `core/all_values.py`,
 `core/pulse_catalog.py`, `core/waveform_synth.py`, `web/routes.py`,
 `web/static/app.js`, `web/static/all-values.js`, `build/quam-manager.spec`.
+
+---
+
+## Amendment (2026-08-01, r14): type VISIBILITY — active alarm, honest displays, the text→number repair, "real"
+
+User report: an external state regeneration string-ified numeric values
+wholesale (`0.13` → `"0.13"`) and SM (a) detected it only passively — an
+unclickable ⚠ inside the Explorer the user had to notice; (b) rendered the
+string byte-identically to the number in Live Edit / All values (`str(value)`
+verbatim — the "있는 그대로" complaint); (c) could not FIX it: with no schema
+coverage the legacy old-type-preserving `_type_coerce` re-stored text on every
+edit, forever (deliberately pinned legacy). Four changes, all doctrine-
+compatible (never silent, 409-confirm, empty-policy golden untouched):
+
+1. **Active alarm (⑨).** `diagnostics.numeric_string_leaves(state)` — a
+   schema-free whole-state scan for numeric-looking string leaves (skips
+   `extras`/`wiring`/`network`/dunder tops and pointers; the sibling-vote
+   `value_type` check misses the bulk case where a regen flipped EVERY
+   sibling). Surfaces three ways: `value_type_strnum` warnings (capped 100 +
+   summary) on the Diagnostics page; the `/diagnostics/findings.json` marks
+   feed now includes ALL `value_type*`/`value_nan` findings (they were
+   accidentally excluded by the `startswith("value_spec")` filter) so
+   Explorer rows get their ⚠ — which is now CLICKABLE (navigates/highlights
+   the row) and applied on full-page loads too (`_diagInitOnLoad` gap); and
+   an ACTIVE banner (`_type_alarm_banner.html`, base-level slot) with
+   [Show in Explorer] → `_navigateToExplorerPath(first)`. The banner is
+   delta-gated: computed per `store.mutation_seq` (external pulls rebuild the
+   store → auto re-scan), dismissed per anomaly-set signature
+   (`token::typealarm` memo in `chip_name_prompts.json`) — any NEW text-typed
+   value re-raises it; docs/58's "don't nag" lesson respected.
+2. **Honest displays (⑩ display).** Bulk grids: `_build_bulk_cell` flags
+   `str_numeric`; the cell renders amber with visible quote spans OUTSIDE the
+   input (`"0.13"` — editing text stays clean) + an explanatory title. All
+   values: `_display` renders numeric-looking strings quoted (round-trips —
+   the quote-aware parser reads `"0.13"` back as the string). Explorer: the
+   initial paint always quoted, but the inline-edit commit wrote raw text
+   back and the tray revert numeric-guessed — both now repaint from the
+   server truth (`/field/edit` echoes `stored` + `stored_kind`; revert
+   re-reads `/field/peek`), fixing text AND colour class.
+3. **The repair path (⑩ fix).** `/field/edit` + `/field/edit-batch` gain the
+   FSP-shaped `type_fix` gate: an UNQUOTED numeric input on an unschema'd
+   text field answers 409 with the offer (`current_display`, `proposed`
+   real/int, `more_in_batch`); `type_fix=convert` saves a user-layer type
+   assignment (persisted — future edits are typed, no more gate) and stores
+   the number; `type_fix=keep` proceeds as text; explicit quotes mean "text,
+   don't ask". Wired via the shared `window._confirmTypeFix` in the Explorer
+   inline editor, all-values, and both bulk grids; env-schema-covered fields
+   never gate (the schema already repairs the type on plain edits).
+4. **"real" (⑪) + icons (⑫).** `format_type` prints floats as **real**
+   (physicists' ℝ; "number" parses forever as a legacy alias — stored
+   assignments/sidecars keep loading). Pickers/chips/errors follow. Explorer
+   hover icons enlarged (0.85→1.05em, bigger hit padding) and pushed clear of
+   the value/type-chip (`margin-left` bumps + chip `margin-right`).
+
+Pinned by `tests/test_type_visibility.py` (19: scan/feed/banner/dismiss-
+delta/409-convert-keep-quote gates/batch/all displays/JS+CSS wiring) + the
+updated legacy pins (`test_type_policy`, `test_all_values_route`,
+`test_field_crud_routes`, `explorer_crud_selfcheck` C3 legacy-token mapping).

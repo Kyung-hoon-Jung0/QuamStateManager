@@ -4071,10 +4071,14 @@ input.tree-edit-input {
 }
 
 /* Explorer structural CRUD — hover row actions + inline add/delete/type panels. */
-.tree-row-actions { margin-left: 0.6em; display: inline-flex; gap: 0.15em; align-items: center; }
+/* r14 feedback: the hover icons were too small (0.85em of an 0.84em tree) and
+   crowded the type chip — bigger targets, pushed a touch further right of the
+   value, with a gap so they never read as part of the chip. Hover-revealed
+   anyway, so the size costs nothing while idle. */
+.tree-row-actions { margin-left: 1.1em; display: inline-flex; gap: 0.3em; align-items: center; }
 .tree-act-btn {
-    all: unset; cursor: pointer; padding: 0 0.25em; border-radius: 3px;
-    color: var(--pico-muted-color); font-size: 0.85em; line-height: 1.2;
+    all: unset; cursor: pointer; padding: 0.05em 0.3em; border-radius: 3px;
+    color: var(--pico-muted-color); font-size: 1.05em; line-height: 1.2;
     opacity: 0; transition: opacity 0.12s, color 0.12s;
 }
 .tree-row:hover .tree-act-btn { opacity: 0.7; }
@@ -4100,7 +4104,7 @@ input.tree-edit-input {
 .tree-type-panel .tree-type-opts input[type="radio"] { margin: 0; }
 .tree-type-head { flex-basis: 100%; font-size: 0.85em; }
 .tree-type-chip {
-    margin-left: 0.45em; padding: 0 0.35em; font-size: 0.75em;
+    margin-left: 0.45em; margin-right: 0.35em; padding: 0 0.35em; font-size: 0.75em;
     border: 1px solid color-mix(in srgb, var(--pico-primary) 40%, transparent);
     border-radius: 3px; color: var(--pico-primary);
     vertical-align: middle; white-space: nowrap;
@@ -4141,9 +4145,9 @@ input.tree-edit-input {
 /* Whole-container (list/dict) JSON editor — the ✎ button on a container row + the
    inline textarea it opens. Lets a user enter a list / matrix / object at once. */
 .tree-json-edit-btn {
-    all: unset; cursor: pointer; margin-left: 0.5em;
-    color: var(--pico-muted-color); font-size: 0.9em; line-height: 1;
-    padding: 0 0.2em; border-radius: 3px; opacity: 0; transition: opacity 0.12s, color 0.12s;
+    all: unset; cursor: pointer; margin-left: 0.8em;   /* r14: clear of the value/chip */
+    color: var(--pico-muted-color); font-size: 1.05em; line-height: 1;
+    padding: 0.05em 0.25em; border-radius: 3px; opacity: 0; transition: opacity 0.12s, color 0.12s;
 }
 .tree-row:hover .tree-json-edit-btn { opacity: 0.75; }
 .tree-json-edit-btn:hover { opacity: 1; color: var(--pico-primary); background: var(--tree-edit-bg); }
@@ -7952,6 +7956,18 @@ button.diag-badge { cursor: pointer; }
 /* (No font-style on pointer cells — the ↗ glyph already flags the alias, and the
    old italic just made those numbers harder to read / look like a different font.) */
 .bulk-ptr { color: var(--pico-muted-color); font-size: 0.85em; margin-left: 1px; }
+/* r14 honesty: a numeric-LOOKING string cell wears its quotes (outside the
+   input) + an amber tint — "0.13" the text must never pass for 0.13 the real.
+   The title explains the fix path (Explorer ⚙ → real). */
+.bulk-strq { color: var(--color-warning-text); font-weight: 700; user-select: none; }
+/* r14 ⑨: the active stored-as-text alarm banner (topo-change-banner family). */
+.type-alarm-banner { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+.type-alarm-banner .type-alarm-text { flex: 1 1 24rem; }
+.type-alarm-banner button { margin: 0; }
+.bulk-cell-str {
+    background: color-mix(in srgb, var(--color-warning-text) 10%, transparent);
+    border-bottom: 1px dashed var(--color-warning-text);
+}
 .bulk-td-lo .bulk-cell { background: color-mix(in srgb, var(--color-warning-text) 12%, transparent); }
 .bulk-shared { color: var(--color-warning-text); font-size: 0.85em; margin-left: 1px; cursor: help; }
 .bulk-shared-legend { color: var(--color-warning-text); }
