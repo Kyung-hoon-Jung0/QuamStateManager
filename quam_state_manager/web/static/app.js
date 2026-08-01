@@ -499,17 +499,17 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
         if (label) _sidebarSticky.roots[label.getAttribute('title') || label.textContent.trim()] = d.open;
     });
 
-    // Capture date <details> open state keyed by "rootPath::dateLabel"
+    // Capture container <details> open state keyed by "rootPath::tpath"
+    // (r13: containers nest arbitrarily — chip dirs above date dirs — and
+    // data-tpath is the stable per-root path key; label text collides when
+    // two chips carry the same date).
     _sidebarSticky.dates = {};
     tree.querySelectorAll('details.tree-root').forEach(function(root) {
         var rootLabel = root.querySelector('.tree-root-label span');
         var rootKey = rootLabel ? (rootLabel.getAttribute('title') || rootLabel.textContent.trim()) : '';
-        root.querySelectorAll('details.tree-date').forEach(function(d) {
-            var dateLabel = d.querySelector('.tree-date-label');
-            if (dateLabel) {
-                var dateKey = rootKey + '::' + dateLabel.textContent.trim().split('(')[0].trim();
-                _sidebarSticky.dates[dateKey] = d.open;
-            }
+        root.querySelectorAll('details.tree-dir').forEach(function(d) {
+            var tp = d.getAttribute('data-tpath');
+            if (tp) _sidebarSticky.dates[rootKey + '::' + tp] = d.open;
         });
     });
 
@@ -538,18 +538,19 @@ document.addEventListener('htmx:afterSwap', function(evt) {
         }
     });
 
-    // Restore date <details> open state
+    // Restore container <details> open state (tpath-keyed — see capture)
     tree.querySelectorAll('details.tree-root').forEach(function(root) {
         var rootLabel = root.querySelector('.tree-root-label span');
         var rootKey = rootLabel ? (rootLabel.getAttribute('title') || rootLabel.textContent.trim()) : '';
-        root.querySelectorAll('details.tree-date').forEach(function(d) {
-            var dateLabel = d.querySelector('.tree-date-label');
-            if (dateLabel) {
-                var dateKey = rootKey + '::' + dateLabel.textContent.trim().split('(')[0].trim();
-                if (dateKey in _sidebarSticky.dates) d.open = _sidebarSticky.dates[dateKey];
+        root.querySelectorAll('details.tree-dir').forEach(function(d) {
+            var tp = d.getAttribute('data-tpath');
+            if (tp && (rootKey + '::' + tp) in _sidebarSticky.dates) {
+                d.open = _sidebarSticky.dates[rootKey + '::' + tp];
             }
         });
     });
+    // Re-mark the active branch (the swap rebuilt the DOM).
+    if (window._markActiveTreeBranch) window._markActiveTreeBranch(null);
 
     // Restore sidebar scroll position
     var sidebar = document.getElementById('sidebar');
@@ -1549,6 +1550,24 @@ window.togglePageHeader = function() {
  * Loads into the inspector pane when present (Datasets page / Explorer split),
  * else the main #table-pane so it still works from any page.
  */
+/* r13: tint the active run's ANCESTOR folders too — every containing
+ * <details> summary gets .tree-branch-active, so even a fully collapsed tree
+ * still shows which folder holds the open experiment. Pass the entry element
+ * to mark its chain; pass null to re-derive from the current
+ * .tree-entry-active (used after tree swaps rebuild the DOM). */
+window._markActiveTreeBranch = function(el) {
+    document.querySelectorAll('.tree-branch-active').forEach(function(d) {
+        d.classList.remove('tree-branch-active');
+    });
+    if (!el) el = document.querySelector('.tree-entry-click.tree-entry-active');
+    if (!el) return;
+    var d = el.closest('details');
+    while (d) {
+        d.classList.add('tree-branch-active');
+        d = d.parentElement ? d.parentElement.closest('details') : null;
+    }
+};
+
 document.addEventListener('click', function(evt) {
     var el = evt.target.closest('.tree-entry-click[data-uid]');
     if (!el) return;
@@ -1562,6 +1581,7 @@ document.addEventListener('click', function(evt) {
             a.classList.remove('tree-entry-active');
         });
         el.classList.add('tree-entry-active');
+        window._markActiveTreeBranch(el);
         _dsMarkSlowLoad(target, el.getAttribute('data-run-id'));
         // CRITICAL: pass `source` so htmx reads the target's hx-sync and queues
         // the request on the TARGET, not document.body. Without it every dataset
@@ -8835,6 +8855,7 @@ function syncSidebarTreeHighlight(uid, date) {
     if (match) {
         _openTreeAncestors(match);   // reveal it inside collapsed date groups
         match.classList.add('tree-entry-active');
+        window._markActiveTreeBranch(match);
         // Scroll after the layout settles from opening the <details>. 'center'
         // (not 'nearest') so the revealed entry lands mid-viewport instead of
         // clinging to the bottom edge.

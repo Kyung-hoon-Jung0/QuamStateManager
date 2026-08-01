@@ -17,12 +17,13 @@
     </div>
     <div class="inspector-actions">
         {% if inspector_type == "dataset" %}
-        {# Prev/next run navigation — walks the sidebar tree's run entries
-           (same order the user sees). Keyboard: [ and ] do the same. #}
+        {# Up/down run navigation — walks the sidebar tree's run entries in
+           the order the user SEES them (r13: newest-first, so ↑ = newer,
+           ↓ = older — spatial motion stays honest). Keyboard: [ and ]. #}
         <button class="inspector-nav-btn" onclick="dsNavRun(-1)"
-                title="Previous run  [" aria-label="Previous run">&#8593;</button>
+                title="Newer run  [" aria-label="Newer run">&#8593;</button>
         <button class="inspector-nav-btn" onclick="dsNavRun(1)"
-                title="Next run  ]" aria-label="Next run">&#8595;</button>
+                title="Older run  ]" aria-label="Older run">&#8595;</button>
         <button class="inspector-vsprev" onclick="dsComparePrev(this)"
                 title="Compare with the previous run of this experiment"
                 aria-label="Compare with the previous run of the same experiment">vs prev</button>

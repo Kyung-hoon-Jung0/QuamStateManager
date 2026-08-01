@@ -170,11 +170,21 @@ class Workspace:
         # lets a cache hit detect an out-of-band file replacement with two
         # os.stat calls and reload instead of serving stale content.
         self._loaded_store_mtimes: dict[Path, tuple[float, float] | None] = {}
-        # root path str → max root/immediate-subdir mtime OBSERVED at last scan.
-        # Staleness compares this mtime-to-mtime (see _is_root_stale), never
-        # against local time.time(): a clock-skewed network mount would freeze
-        # (server behind) or thrash (server ahead) the sidebar otherwise.
-        self._scan_times: dict[str, float] = {}
+        # Staleness bookkeeping (r13 — "structure spine" probe): per root we
+        # remember the DIRECTORY SPINE observed at scan time (every run
+        # folder's parent + all its ancestors up to the root — the dirs whose
+        # mtime moves when a run/date/chip appears at ANY depth) and the
+        # {dir → mtime} map observed for it. Staleness compares maps
+        # mtime-to-mtime, never against local time.time(): a clock-skewed
+        # network mount would freeze (server behind) or thrash (server ahead)
+        # the sidebar otherwise. The map compare also survives one
+        # future-dated sibling pinning a max() forever (the old aggregate
+        # probe's blind spot) and depth-2+ layouts (root/<chip>/<date>/#N —
+        # the old probe statted only root+children, so a new run inside an
+        # existing date dir of a grandparent-registered root was invisible
+        # until the next new DAY).
+        self._scan_spines: dict[str, list[str]] = {}
+        self._scan_probes: dict[str, dict[str, float]] = {}
         self._version = 0  # bumped on any tree change; drives the sidebar's version-gated refresh
 
     @property
@@ -204,11 +214,11 @@ class Workspace:
                 logger.warning("Root folder already added: %s", existing)
                 return self._entries_for_root(existing)
 
-            # Sample the staleness probe BEFORE the walk (same reasoning as
+            # Sample a shallow probe BEFORE the walk (same reasoning as
             # DatasetStore's pre-walk cursor): a folder landing mid-scan bumps
-            # an mtime above this value, so the next rescan_if_stale catches it
-            # instead of swallowing it as already-seen.
-            pre_scan_probe = _root_mtime_probe(path)
+            # an mtime above the recorded value, so the next rescan_if_stale
+            # catches it instead of swallowing it as already-seen.
+            pre_probe = _probe_dirs(_shallow_dirs(path))
             self.root_folders.append(path)
             entries = _scan_root(path)
             groups = _group_by_date(entries)
@@ -218,9 +228,13 @@ class Workspace:
             # during iteration raises 'dict changed size'. A single attribute rebind is
             # atomic, so a concurrent reader keeps iterating the OLD dict unharmed.
             self.tree = {**self.tree, str(path): groups}
-            self._scan_times[str(path)] = (
-                pre_scan_probe if pre_scan_probe is not None else 0.0
-            )
+            spine = _spine_of(path, entries)
+            probe = _probe_dirs(spine)
+            for d, mt in pre_probe.items():        # keep the pre-walk guarantee
+                if d in probe:
+                    probe[d] = mt
+            self._scan_spines[str(path)] = spine
+            self._scan_probes[str(path)] = probe
             for entry in entries:
                 self._entries_by_path[entry.quam_state_path.resolve()] = entry
 
@@ -266,6 +280,8 @@ class Workspace:
                 removed_entries.extend(group.entries)
             # Atomic rebind (see add_root) — never pop in place while readers iterate.
             self.tree = {k: v for k, v in self.tree.items() if k != key}
+            self._scan_spines.pop(key, None)
+            self._scan_probes.pop(key, None)
             for entry in removed_entries:
                 resolved = entry.quam_state_path.resolve()
                 self._entries_by_path.pop(resolved, None)
@@ -273,11 +289,57 @@ class Workspace:
             self._version += 1
 
     def rescan_root(self, path: str | Path) -> list[ExperimentEntry]:
-        """Re-scan a root folder (e.g. after new experiments are added)."""
-        path = Path(path).resolve()
-        with self._lock:   # remove+add as one unit (RLock: nested calls re-enter)
-            self.remove_root(path)
-            return self.add_root(path)
+        """Re-scan a root folder (e.g. after new experiments are added).
+
+        r13 (audit D2): this used to be remove_root + add_root, which rebound
+        ``self.tree`` WITHOUT the root for the whole os.walk — lock-free
+        readers rendering in that window showed an empty sidebar ("No
+        workspace roots added yet") until the NEXT version bump. Now the slow
+        scan runs outside the lock and the tree is swapped in ONE rebind, so
+        readers always see either the old or the new state of the root, never
+        its absence.
+        """
+        path = Path(path).expanduser().resolve()
+        with self._lock:
+            registered = self._find_registered_root(path)
+            if registered is None:
+                return self.add_root(path)
+            key = str(registered)
+            old_probe_dirs = list(self._scan_probes.get(key, {}))
+        # Pre-walk sample of the KNOWN spine — a run landing mid-scan in one
+        # of these dirs bumps its mtime above the recorded value, so the next
+        # rescan_if_stale catches it (same guarantee add_root's shallow
+        # pre-probe gives a first scan).
+        pre_probe = _probe_dirs(old_probe_dirs) if old_probe_dirs else {}
+        entries = _scan_root(registered)               # the slow part — no lock
+        groups = _group_by_date(entries)
+        spine = _spine_of(registered, entries)
+        probe = _probe_dirs(spine)
+        for d, mt in pre_probe.items():
+            if d in probe:
+                probe[d] = mt
+        with self._lock:
+            if self._find_registered_root(registered) is None:
+                return entries                         # removed mid-scan — discard
+            old_paths = set()
+            for group in self.tree.get(key, []):
+                for e in group.entries:
+                    old_paths.add(e.quam_state_path.resolve())
+            new_paths = set()
+            for e in entries:
+                rp = e.quam_state_path.resolve()
+                new_paths.add(rp)
+                self._entries_by_path[rp] = e
+            for gone in old_paths - new_paths:
+                self._entries_by_path.pop(gone, None)
+                self._loaded_stores.pop(gone, None)
+                self._loaded_store_mtimes.pop(gone, None)
+            self.tree = {**self.tree, key: groups}     # ONE atomic rebind
+            self._scan_spines[key] = spine
+            self._scan_probes[key] = probe
+            self._version += 1
+            logger.info("Rescanned %s: %d quam_state folders", registered, len(entries))
+        return entries
 
     def rescan_all(self) -> None:
         """Force-rescan every root regardless of mtime (used by the manual Refresh button)."""
@@ -300,20 +362,28 @@ class Workspace:
         return rescanned
 
     def _is_root_stale(self, root: Path) -> bool:
-        """True if the observed root/subdir mtimes moved since the last scan.
+        """True if any spine directory's mtime moved since the last scan.
 
-        Compares the CURRENT max root/immediate-subdir mtime against the one
-        observed at scan time — mtime-to-mtime, never against this machine's
-        ``time.time()`` (mirrors DatasetStore's ``_current_mtime`` design). A
-        network mount whose server clock runs behind ours would otherwise
-        never look stale (new-run mtimes forever below our wall clock); one
-        running ahead would look stale on every poll and thrash full rescans.
+        Compares the CURRENT {dir → mtime} map over the recorded spine against
+        the one observed at scan time — mtime-to-mtime, never against this
+        machine's ``time.time()`` (mirrors DatasetStore's ``_current_mtime``
+        design). A network mount whose server clock runs behind ours would
+        otherwise never look stale (new-run mtimes forever below our wall
+        clock); one running ahead would look stale on every poll and thrash
+        full rescans. The per-dir map (not an aggregate max) means one
+        future-dated sibling can never mask later changes, and a vanished or
+        newly-unreadable spine dir reads as a difference → rescan heals.
         """
-        cur = _root_mtime_probe(root)
-        if cur is None:
-            return False   # transiently unreadable — keep the current tree
-        last = self._scan_times.get(str(root))
-        return last is None or cur != last
+        key = str(root)
+        try:
+            root.stat()
+        except OSError:
+            return False   # root transiently unreadable — keep the current tree
+        spine = self._scan_spines.get(key)
+        if spine is None:
+            return True    # never probed (legacy state) — one rescan seeds it
+        cur = _probe_dirs(spine)
+        return cur != self._scan_probes.get(key)
 
     # ------------------------------------------------------------------
     # Entry lookup
@@ -442,28 +512,137 @@ class Workspace:
 # ======================================================================
 
 
-def _root_mtime_probe(root: Path) -> float | None:
-    """Newest mtime of *root* + its immediate subdirs, as observed right now.
+# Staleness-probe spine bound: a spine larger than this keeps the root plus
+# the most-recently-modified dirs (the ones most likely to change next).
+_SPINE_CAP = 3000
 
-    Stored per-root at scan time and compared mtime-to-mtime by
-    :meth:`Workspace._is_root_stale`, so staleness detection is immune to
-    clock skew between this machine and a network mount's server. ``None``
-    when the root itself is unreadable (transient blip ≠ stale).
-    """
+
+def _probe_dirs(dirs: list[str] | list[Path]) -> dict[str, float]:
+    """{dir → mtime} for every statable directory in *dirs* — the staleness
+    fingerprint. Unstatable dirs are simply absent (their disappearance reads
+    as a map difference → stale → rescan heals). Never raises."""
+    out: dict[str, float] = {}
+    for d in dirs:
+        try:
+            out[str(d)] = os.stat(d).st_mtime
+        except OSError:
+            continue
+    return out
+
+
+def _shallow_dirs(root: Path) -> list[Path]:
+    """*root* + its immediate subdirectories (the pre-walk sample set — cheap,
+    and available before any scan has discovered the real spine)."""
+    dirs: list[Path] = [root]
     try:
-        best = root.stat().st_mtime
         for child in root.iterdir():
-            if not child.is_dir():
-                continue
-            try:
-                mt = child.stat().st_mtime
-            except OSError:
-                continue
-            if mt > best:
-                best = mt
-        return best
+            if child.is_dir():
+                dirs.append(child)
     except OSError:
-        return None
+        pass
+    return dirs
+
+
+def _spine_of(root: Path, entries: list[ExperimentEntry]) -> list[str]:
+    """The directory SPINE of a scanned root: every run folder's parent plus
+    all its ancestors up to (and including) the root.
+
+    A new run bumps its (known) parent dir's mtime; a new date dir bumps the
+    chip dir; a new chip dir bumps the root — so statting exactly this set
+    detects additions at ANY depth without walking. Capped at ``_SPINE_CAP``
+    keeping the root + the most-recently-modified dirs (old days stop
+    changing; recent ones are where runs land)."""
+    spine: set[Path] = {root}
+    for e in entries:
+        d = e.folder_path.parent
+        while True:
+            spine.add(d)
+            if d == root or d.parent == d:
+                break
+            try:
+                d.relative_to(root)
+            except ValueError:
+                break                      # walked outside the root (symlink)
+            d = d.parent
+    dirs = list(spine)
+    if len(dirs) > _SPINE_CAP:
+        probed = _probe_dirs(dirs)
+        dirs.sort(key=lambda p: probed.get(str(p), 0.0), reverse=True)
+        dirs = dirs[:_SPINE_CAP]
+        if root not in dirs:
+            dirs.append(root)
+    return [str(d) for d in dirs]
+
+
+def build_nested_tree(root: Path, entries: list[ExperimentEntry]) -> list[dict]:
+    """VS-Code-style nested render model for one root (r13).
+
+    The flat ``Workspace.tree`` groups by date_str only, which MERGES
+    same-date runs of different chips and hides intermediate folder levels
+    entirely (``root/<chip>/<date>/#N`` rendered as one date group). This
+    builds nested container nodes from each entry's real path:
+
+        {"name", "tpath", "is_date", "children": [...], "entries": [...],
+         "n_total"}
+
+    - Container chain = ``entry.folder_path.parent`` relative to *root*;
+      entries whose parent IS the root (or falls outside it via a symlink)
+      group under a pseudo date container named ``date_str`` — byte-identical
+      to the legacy view for the flat ``root/<date>/#N`` layout.
+    - Sort: date-like children DESCENDING first (today on top — user-chosen),
+      then other names ascending; leaf entries run_id-DESCENDING (newest
+      first; the sidebar cap keeps the newest N visible).
+    - ``tpath`` is the container's /-joined relative path — the stable key
+      for the "Show all" endpoint and the client's sticky open-state.
+    """
+    root_node: dict = {"children": {}, "entries": []}
+
+    def _child(node: dict, name: str, tpath: str) -> dict:
+        ch = node["children"]
+        if name not in ch:
+            ch[name] = {"name": name, "tpath": tpath,
+                        "is_date": bool(_DATE_RE.search(name)),
+                        "children": {}, "entries": []}
+        return ch[name]
+
+    for e in entries:
+        try:
+            rel = e.folder_path.parent.relative_to(root)
+            parts = [p for p in rel.parts if p not in (".",)]
+        except ValueError:
+            parts = []
+        if not parts:
+            parts = [e.date_str]           # flat/outside layout → pseudo date
+        node = root_node
+        tpath = ""
+        for part in parts:
+            tpath = f"{tpath}/{part}" if tpath else part
+            node = _child(node, part, tpath)
+        node["entries"].append(e)
+
+    def _finish(node: dict) -> tuple[list[dict], int]:
+        kids = list(node["children"].values())
+        dates = sorted((k for k in kids if k["is_date"]),
+                       key=lambda n: n["name"], reverse=True)
+        others = sorted((k for k in kids if not k["is_date"]),
+                        key=lambda n: n["name"].lower())
+        ordered = dates + others
+        total = len(node["entries"])
+        # Newest first: run_id desc, timestamp desc; run-less (standalone)
+        # entries sort last (they were float("inf")-last in the asc view too).
+        node["entries"].sort(
+            key=lambda e: (e.run_id if e.run_id is not None else float("-inf"),
+                           e.timestamp))
+        node["entries"].reverse()
+        for k in ordered:
+            _, sub_total = _finish(k)
+            total += sub_total
+        node["children"] = ordered
+        node["n_total"] = total
+        return ordered, total
+
+    _finish(root_node)
+    return root_node["children"]
 
 
 def _scan_root(root: Path) -> list[ExperimentEntry]:
