@@ -403,6 +403,47 @@ async function main() {
     inp0.dispatchEvent(new window.Event('input', { bubbles: true }));
     ok(!warn0.hidden, 'warning re-appears on a new out-of-range edit (|-1.2| > 1)');
 
+    /* ══ 8. axis titles when file metadata lies (r13 feedback ⑧) ═══════
+       A lab node copy-pasted long_name="readout frequency" onto a qubit-DRIVE
+       detuning axis; the label must carry the on-disk dim NAME alongside a
+       meaningfully-different long_name, while cosmetic-only differences
+       (flux bias vs flux_bias) stay single. */
+    feedCube({
+        ok: true, var: 'IQ_abs', dtype: 'float64', units: null, long_name: null,
+        dims: [
+            { name: 'qubit', size: 1, kind: 'entity', coord: ['qD2'], units: null, decimated: false },
+            { name: 'detuning', size: 3, kind: 'sweep', coord: [1, 2, 3],
+              units: 'Hz', long_name: 'readout frequency', decimated: false },
+        ],
+        data: [[0.1, 0.2, 0.3]],
+        kept: null, aux_axes: [], iq_partner: null,
+        default_view: { x: 'detuning', y: null, entity: 'qubit', overlay: [], sliders: {} },
+    });
+    card.setAttribute('data-var', 'lying_meta');
+    card.click();
+    await sleep(30);
+    let pax = plots[plots.length - 1];
+    ok(pax.layout.xaxis.title.text === 'readout frequency (detuning) [Hz]',
+       'lying long_name shows the dim name alongside: ' + pax.layout.xaxis.title.text);
+
+    feedCube({
+        ok: true, var: 'IQ_abs2', dtype: 'float64', units: null, long_name: null,
+        dims: [
+            { name: 'qubit', size: 1, kind: 'entity', coord: ['qD2'], units: null, decimated: false },
+            { name: 'flux_bias', size: 3, kind: 'sweep', coord: [1, 2, 3],
+              units: 'V', long_name: 'flux bias', decimated: false },
+        ],
+        data: [[0.1, 0.2, 0.3]],
+        kept: null, aux_axes: [], iq_partner: null,
+        default_view: { x: 'flux_bias', y: null, entity: 'qubit', overlay: [], sliders: {} },
+    });
+    card.setAttribute('data-var', 'cosmetic_meta');
+    card.click();
+    await sleep(30);
+    pax = plots[plots.length - 1];
+    ok(pax.layout.xaxis.title.text === 'flux bias [V]',
+       'cosmetic-only long_name difference stays single: ' + pax.layout.xaxis.title.text);
+
     console.log(fails ? ('FAILURES: ' + fails) : 'ALL OK');
     process.exit(fails ? 1 : 0);
 }

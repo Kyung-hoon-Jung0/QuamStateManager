@@ -103,8 +103,20 @@
     }
 
     /* ── labels ───────────────────────────────────────────────────────── */
+    function normName(s) {
+        return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+    }
     function axisTitle(dim) {
         var t = dim.long_name || dim.name;
+        // r13 feedback: file metadata can LIE — a lab node copy-pasted
+        // long_name="readout frequency" onto a qubit-DRIVE detuning axis
+        // (08_qubit_spectroscopy v2), and the axis label repeated it. The dim
+        // NAME is the raw on-disk truth, so show it alongside whenever it
+        // differs meaningfully ("readout frequency (detuning) [Hz]");
+        // cosmetic-only differences ("flux bias" vs flux_bias) stay single.
+        if (dim.long_name && normName(dim.long_name) !== normName(dim.name)) {
+            t = dim.long_name + ' (' + dim.name + ')';
+        }
         return dim.units ? t + ' [' + dim.units + ']' : t;
     }
     function valueLabel(cube, comp) {
