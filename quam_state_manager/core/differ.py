@@ -252,12 +252,20 @@ class Differ:
     def compare_parameters(
         contexts: list[ExperimentContext],
         labels: list[str],
+        include_equal: bool = False,
     ) -> list[dict[str, Any]]:
-        """Compare experiment parameters across N runs (differences only).
+        """Compare experiment parameters across N runs.
 
         Returns rows like::
 
-            {"key": "num_shots", "values": [{"label": ..., "value": 100}, ...]}
+            {"key": "num_shots", "values": [{"label": ..., "value": 100}, ...],
+             "same": False}
+
+        Default (``include_equal=False``) keeps the historical
+        differences-only behavior (the Trends caller). With
+        ``include_equal=True`` (r16 ⑧: the dataset Compare Parameters tab)
+        the FULL key union is returned and identical rows carry
+        ``same=True`` — the union was always computed here and thrown away.
         """
         all_keys: list[str] = []
         for ctx in contexts:
@@ -272,8 +280,10 @@ class Differ:
                 {"label": label, "value": ctx.parameters.get(key)}
                 for ctx, label in zip(contexts, labels)
             ]
-            if _has_difference(values):
-                rows.append({"key": key, "values": values})
+            differs = _has_difference(values)
+            if differs or include_equal:
+                rows.append({"key": key, "values": values,
+                             "same": not differs})
         return rows
 
     # ------------------------------------------------------------------
