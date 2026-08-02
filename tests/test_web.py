@@ -6583,3 +6583,66 @@ class TestActiveMarkingR15:
         assert "inactive-chip" in html
         html = two_qubit_client.get("/qubit/qA1").data.decode()
         assert "inactive-chip" not in html
+
+
+class TestFontPresetsR15:
+    """r15 CG4 (docs/70): S/M/L bumped one notch (S=old M, M=old L, L bigger),
+    topbar labels un-staled, and the wizard's font sizes converted px → em so
+    the presets actually reach it. Paddings/line-heights must stay frozen."""
+
+    _ROOT = Path(__file__).resolve().parent.parent
+
+    def _css(self):
+        return (self._ROOT / "quam_state_manager" / "web" / "static"
+                / "style.css").read_text(encoding="utf-8")
+
+    def test_preset_values(self):
+        css = self._css()
+        assert 'html[data-font-size="small"] { --font-size-base: 15px; }' in css
+        assert 'html[data-font-size="large"] { --font-size-base: 19px; }' in css
+        import re
+        m = re.search(r"--font-size-base:\s*(\d+)px", css)
+        assert m and m.group(1) == "17"          # M (attribute absent)
+
+    def test_topbar_labels_match_css(self):
+        base = (self._ROOT / "quam_state_manager" / "web" / "templates"
+                / "base.html").read_text(encoding="utf-8")
+        assert "S <span class=\"muted\">15px</span>" in base
+        assert "M <span class=\"muted\">17px</span>" in base
+        assert "L <span class=\"muted\">19px</span>" in base
+        for stale in ("13px</span>", "14px</span>", "16px</span>"):
+            assert stale not in base
+
+    def test_wizard_rules_carry_no_px_fonts(self):
+        # Every wizard-selector rule's font-size must be relative (em) so the
+        # presets reach it; px font-sizes were the reason S/M/L "did nothing"
+        # in the wizard.
+        import re
+        css = self._css()
+        offenders = []
+        for m in re.finditer(r"([^{}]+)\{([^{}]*)\}", css):
+            sel = " ".join(m.group(1).split())
+            if any(k in sel for k in (".gen-", "#gen-", "generate-root",
+                                      ".regen", ".iw-")):
+                for f in re.finditer(r"font-size:\s*([0-9.]+)px", m.group(2)):
+                    offenders.append(f"{sel[:60]} -> {f.group(0)}")
+        assert not offenders, offenders
+
+    def test_no_inflating_em_boxes(self):
+        # The two square delete buttons were 1.7em boxes — they would have
+        # grown with the font bump; they are fixed px now.
+        css = self._css()
+        for cls in (".gen-chassis-del", ".gen-row-del"):
+            i = css.index(cls + " {")
+            body = css[i:css.index("}", i)]
+            assert "width: 26px" in body and "height: 26px" in body, cls
+
+    def test_dark_pico_text_brightened(self):
+        import re
+        css = self._css()
+        # the semantic-token block (not a comment mention of the selector)
+        m = re.search(r'^\[data-theme="dark"\]\s*\{', css, re.M)
+        assert m
+        block = css[m.end():css.index("}", m.end())]
+        assert "--pico-color:" in block
+        assert "--pico-muted-color:" in block

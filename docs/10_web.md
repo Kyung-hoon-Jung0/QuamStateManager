@@ -343,7 +343,7 @@ Captured in `htmx:beforeSwap`, restored in `htmx:afterSwap`.
 - Tree: `--tree-entry-pad-v`, `--tree-date-label-font`
 - Bookmarks: `--bm-star-font`, `--bm-id-font`, `--bm-exp-font`
 
-User-selectable font size via `data-font-size` attribute on `<html>`: S (13px), M (14px), L (16px).
+User-selectable font size via `data-font-size` attribute on `<html>`: S (15px), M (17px), L (19px) — r15/docs/70 bumped each preset one notch (fonts only; line-heights/paddings are px/rem and never grow). The Generate-Config wizard's own font sizes are em since r15, so it tracks these presets.
 
 ## UI State Persistence (localStorage)
 

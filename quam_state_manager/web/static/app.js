@@ -5772,11 +5772,16 @@ function _showPortPopup(event, assignment) {
     });
 
     popup.classList.remove('hidden');
+    // quam_ui_scale sets a CSS zoom on <html>; fixed-element px get
+    // re-multiplied by it, so divide the viewport coords back out (same fix
+    // as the wizard's slot menu / drag ghost — r15, docs/70).
+    var z = parseFloat(document.documentElement.style.zoom);
+    if (!isFinite(z) || z <= 0) z = 1;
     var px = event.clientX + 14;
     var py = event.clientY - 10;
     if (px + 340 > window.innerWidth) px = event.clientX - 340;
-    popup.style.left = px + 'px';
-    popup.style.top = py + 'px';
+    popup.style.left = (px / z) + 'px';
+    popup.style.top = (py / z) + 'px';
 }
 
 function _scheduleHidePopup() {

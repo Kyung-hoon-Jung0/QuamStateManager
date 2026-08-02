@@ -42,7 +42,11 @@
         if (QuamGen.init) QuamGen.init();      // ensure mounted (idempotent)
         QuamGen.hydrateFromSpec(res.spec, {
           mode: "regenerate", buildEndpoint: "/regenerate/build",
-          sourcePath: res.source_folder
+          sourcePath: res.source_folder,
+          // r15 CG1 (docs/70): /regenerate?step=5 = the /instrument "Modify
+          // wiring…" deep link; hydrateFromSpec has honored opts.step all
+          // along (null → step 1).
+          step: {{ (regen_step if regen_step is defined else None) | tojson }}
         });
         var chip = document.getElementById("regen-chip");
         if (chip && res.source_name) chip.textContent = res.source_name;

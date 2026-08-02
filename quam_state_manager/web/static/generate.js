@@ -639,6 +639,14 @@
     if (menu) menu.hidden = true;
   }
 
+  // The quam_ui_scale mechanism sets a CSS zoom on <html>; fixed-position
+  // elements inside the zoomed root get their px re-multiplied by it, so
+  // viewport-coordinate placement must divide the zoom back out (docs/70).
+  function uiZoom() {
+    var z = parseFloat(document.documentElement.style.zoom);
+    return (isFinite(z) && z > 0) ? z : 1;
+  }
+
   // FEM picker menu for one slot. Opened by click or by Enter on a focused
   // tile; keyboard-operable (Up/Down move, Enter picks, Esc/Tab cancel).
   function openSlotMenu(targetEl, ctrl, slot, fem) {
@@ -683,10 +691,28 @@
       }
     };
 
+    // Viewport coordinates on a FIXED-position menu. The old absolute menu's
+    // containing block was #content-area (position:relative), yet the coords
+    // were page-based (scrollX + rect.left) — the popup landed offset by the
+    // sidebar width + topbar, multiplied by the quam_ui_scale zoom (r15 CG3,
+    // docs/70). Fixed-element px inside a zoomed <html> are re-multiplied by
+    // the zoom, so divide it back out.
     var rect = targetEl.getBoundingClientRect();
-    menu.style.left = (window.scrollX + rect.left) + "px";
-    menu.style.top = (window.scrollY + rect.bottom + 4) + "px";
+    var z = uiZoom();
+    menu.style.left = (rect.left / z) + "px";
+    menu.style.top = ((rect.bottom + 4) / z) + "px";
     menu.hidden = false;
+    // Keep it on-screen now that it can be measured: clamp right, flip above.
+    var mw = menu.offsetWidth, mh = menu.offsetHeight;
+    if (mw && rect.left / z + mw > window.innerWidth / z) {
+      menu.style.left = Math.max(0, window.innerWidth / z - mw - 4) + "px";
+    }
+    if (mh && (rect.bottom + 4) / z + mh > window.innerHeight / z) {
+      menu.style.top = Math.max(0, rect.top / z - mh - 4) + "px";
+    }
+    // A fixed menu must not stay pinned while the chassis scrolls under it.
+    var pane = document.getElementById("table-pane");
+    if (pane) pane.addEventListener("scroll", hideSlotMenu, { once: true });
     var first = menu.querySelector("button");
     if (first) first.focus();
   }
@@ -2299,6 +2325,44 @@
 
   var _wireDrag = null;
 
+  // Cursor-following drag ghost (r15 CG2, docs/70). The custom mouse-event
+  // drag preventDefault()s away even the browser's native drag image, so
+  // NOTHING followed the cursor. Body-appended: escapes every clipping /
+  // transformed ancestor; pointer-events:none so elementFromPoint still sees
+  // the port under the cursor; zoom-corrected like the slot menu.
+  var _dragGhost = null;
+
+  function showDragGhost(drag, ev) {
+    removeDragGhost();
+    var g = document.createElement("div");
+    g.id = "gen-drag-ghost";
+    var dot = document.createElement("span");
+    dot.className = "gen-drag-ghost-dot" + (drag.whole ? " gen-drag-ghost-grip" : "");
+    g.appendChild(dot);
+    var lbl = document.createElement("span");
+    lbl.className = "gen-drag-ghost-label";
+    lbl.textContent = (drag.whole ? "feedline" : (drag.element || "?")) +
+                      " · " + drag.role;
+    g.appendChild(lbl);
+    document.body.appendChild(g);
+    _dragGhost = g;
+    moveDragGhost(ev);
+  }
+
+  function moveDragGhost(ev) {
+    if (!_dragGhost) return;
+    var z = uiZoom();
+    _dragGhost.style.left = ((ev.clientX + 14) / z) + "px";
+    _dragGhost.style.top = ((ev.clientY + 12) / z) + "px";
+  }
+
+  function removeDragGhost() {
+    if (_dragGhost && _dragGhost.parentNode) {
+      _dragGhost.parentNode.removeChild(_dragGhost);
+    }
+    _dragGhost = null;
+  }
+
   function femTypeAt(con, slot) {
     var ctrls = ((state.spec.instruments || {}).controllers) || [];
     for (var i = 0; i < ctrls.length; i++) {
@@ -2578,6 +2642,7 @@
       hoverPort: null, valid: false
     };
     renderMonitor();
+    showDragGhost(_wireDrag, ev);
     document.addEventListener("mousemove", onWireDragMove);
     document.addEventListener("mouseup", onWireDragEnd);
     document.addEventListener("keydown", onWireDragKey);
@@ -2585,6 +2650,7 @@
 
   function onWireDragMove(ev) {
     if (!_wireDrag) return;
+    moveDragGhost(ev);
     var el = document.elementFromPoint(ev.clientX, ev.clientY);
     var cell = el && el.closest ? el.closest(".iw-port") : null;
     if (cell !== _wireDrag.hover) {
@@ -2595,6 +2661,10 @@
       var tgt = cell ? readCell(cell) : null;
       var valid = tgt ? isValidDrop(_wireDrag, tgt) : false;
       if (cell) cell.classList.add(valid ? "iw-port-ok" : "iw-port-bad");
+      if (_dragGhost) {
+        _dragGhost.classList.toggle("gen-drag-ghost-ok", !!cell && valid);
+        _dragGhost.classList.toggle("gen-drag-ghost-bad", !!cell && !valid);
+      }
       if (_monitorState.drag) {
         _monitorState.drag.hoverPort = tgt;
         _monitorState.drag.valid = valid;
@@ -2629,6 +2699,7 @@
     if (!_wireDrag) return;
     if (_wireDrag.hover) _wireDrag.hover.classList.remove("iw-port-ok", "iw-port-bad");
     _wireDrag = null;
+    removeDragGhost();
     _monitorState.drag = null;
     _monitorState.hover = null;
     renderMonitor();
@@ -6668,6 +6739,11 @@
       buildInstrumentData: buildInstrumentData,
       isValidDrop: isValidDrop,
       syncSpecChannels: syncSpecChannels,
+      // r15 CG2/CG3 selfcheck seams (docs/70) — not public API
+      openSlotMenu: openSlotMenu,
+      hideSlotMenu: hideSlotMenu,
+      uiZoom: uiZoom,
+      attachWiringDrag: attachWiringDrag,
       state: state
     }
   };

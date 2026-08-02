@@ -222,9 +222,12 @@
                         <div class="settings-group">
                             <small class="settings-label">Font size</small>
                             <div class="settings-options">
-                                <button onclick="setFontSize('small')"  class="settings-opt" data-size="small">S <span class="muted">13px</span></button>
-                                <button onclick="setFontSize('')"       class="settings-opt" data-size="">M <span class="muted">14px</span></button>
-                                <button onclick="setFontSize('large')"  class="settings-opt" data-size="large">L <span class="muted">16px</span></button>
+                                {# r15 CG4 (docs/70): presets bumped one notch (S=old M, M=old L,
+                                   L bigger). The old labels were STALE (said 13/14/16 while the
+                                   CSS was 13/15/17) — these now mirror the CSS values. #}
+                                <button onclick="setFontSize('small')"  class="settings-opt" data-size="small">S <span class="muted">15px</span></button>
+                                <button onclick="setFontSize('')"       class="settings-opt" data-size="">M <span class="muted">17px</span></button>
+                                <button onclick="setFontSize('large')"  class="settings-opt" data-size="large">L <span class="muted">19px</span></button>
                             </div>
                         </div>
                         {# Global UI scale — zooms the WHOLE app (all text incl.
