@@ -1995,7 +1995,54 @@ def run_build(spec: dict, out_dir: Path) -> dict:
         "qubit_pairs": sorted(str(p) for p in getattr(machine, "qubit_pairs", {}) or {}),
         "allocation": read_allocation(connectivity),
         "warnings": warnings,
+        "class_schemas": _collect_class_schemas(state_path, wiring_path),
     }
+
+
+def _collect_class_schemas(state_path, wiring_path):
+    """``{class_path: sorted field names}`` for every ``__class__`` the fresh
+    build serialized — harvested HERE, inside the selected env, so the regen
+    merge can refuse to graft OLD-only fields this stack generation renamed or
+    removed (quam's loader raises ``AttributeError('Unexpected attribute')``
+    on any field a class doesn't know). Harvesting at build time keys the
+    schema to the exact interpreter that built the state — no cache staleness.
+
+    Best-effort at every level: an unreadable artefact or a class that fails
+    to import/introspect is simply omitted (the merge then falls back to the
+    legacy unconditional graft for it); nothing here can fail the build.
+    """
+    import dataclasses
+    import importlib
+
+    classes = set()
+
+    def walk(node):
+        if isinstance(node, dict):
+            c = node.get("__class__")
+            if isinstance(c, str):
+                classes.add(c)
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    for p in (state_path, wiring_path):
+        try:
+            with open(p, "r", encoding="utf-8") as fh:
+                walk(json.load(fh))
+        except Exception:  # noqa: BLE001 - missing/garbled artefact: skip
+            pass
+
+    schemas = {}
+    for cls_path in sorted(classes):
+        try:
+            mod_name, cls_name = cls_path.rsplit(".", 1)
+            cls = getattr(importlib.import_module(mod_name), cls_name)
+            schemas[cls_path] = sorted(f.name for f in dataclasses.fields(cls))
+        except Exception:  # noqa: BLE001 - unknown to this env: omit -> fallback
+            pass
+    return schemas
 
 
 # ---------------------------------------------------------------------------

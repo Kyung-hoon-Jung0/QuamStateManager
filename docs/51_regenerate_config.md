@@ -80,6 +80,12 @@ Guards:
   source has `qA2-qA1`; both reference the same qubits, so we align on
   `(control, target)` membership and adopt the source id (nothing references a
   pair by id — verified), else every pair's calibration orphans.
+- **Cross-generation schema gate**: an OLD-only key inside a `__class__`-tagged
+  dict is grafted only if the NEW build env's dataclass for that class knows the
+  field — otherwise it's a field an older stack generation renamed/removed and
+  grafting it makes `Quam.load()` raise `AttributeError('Unexpected attribute')`.
+  Dropped paths land in `schema_dropped` (never silent). See the 2026-08-02
+  amendment below.
 
 Transparency counters are surfaced in the build result:
 
@@ -92,6 +98,7 @@ Transparency counters are surfaced in the build result:
 | `pruned_ops`     | redundant OLD operations the rebuild re-expressed, removed as cleanup (see below) |
 | `dangling_grafts`| grafted subtree whose absolute pointer still doesn't resolve *after* prune + TWPA carry |
 | `twpa_wiring_carried` | TWPAs whose wiring + ports were carried from OLD (see below)  |
+| `schema_dropped` | OLD-only fields the NEW env's class schema doesn't know — cross-generation renames/removals, dropped instead of grafted (would kill `Quam.load()`) |
 
 **Prune of redundant superseded ops.** A rebuilt chip can carry an OLD-form pulse
 op (e.g. `…z.operations.cz_unipolar_pulse_qA1`) that the fresh build re-expressed
@@ -226,3 +233,54 @@ Pinned by `test_regen_spec.py` (drop + note + populate prune + wiring-only +
 JS pin) and `test_regenerate.py::test_sidecar_found_via_fallback_dir`.
 Verified against the real 15-qubit chip: 21 → 19 pairs, 2 notes,
 `validate_spec == []`.
+
+## Amendment (2026-08-02): cross-generation schema gate
+
+**Incident.** A 17Q chip built by an old fork stack (quam 0.5.0a3 /
+quam_builder 0.2.0) was re-generated in a modern qop37 env (quam 0.6.0 /
+quam_builder 0.4.0). The rebuild itself was correct, but tier-2 grafted the old
+generation's **schema fields** back into the fresh state as if they were user
+data: `CZGate.duration_control` ×80 + `CZGate.moving_qubit` ×80 (0.4.0 renamed
+the field `duration_qubit` and moved `moving_qubit` onto the qubit pair) and
+`_FlatTopGaussianPulse.sigma` ×16 (removed in quam 0.6.0). All 176 values were
+old-schema *defaults* (`null` / `"control"` / `2.0`) — zero calibration content
+— and every one was a `Quam.load()` killer (quam raises
+`AttributeError('Unexpected attribute')` on any field a class doesn't know).
+The graft fingerprint: the poisoned keys sat *after* `__class__` in each dict —
+quam never serializes past `__class__`.
+
+**Fix — schema harvest at build time.** `run_build._collect_class_schemas`
+(runs INSIDE the selected env, right after the build artefacts land) walks the
+fresh state+wiring for `__class__` strings and dumps
+`{class_path: sorted(dataclasses.fields)}` into `_result.json["class_schemas"]`
+— keyed to the exact interpreter that built the state, so there is no cache to
+go stale (unlike the SM-side `state_schema_cache`, which served a different
+env's harvest in the incident). `run_regenerate` passes the map to
+`merge_states(..., class_schemas=...)`; the tier-2 loop then refuses an
+OLD-only key inside a `__class__`-tagged dict when the class is known and the
+field is not, recording the path in `stats.schema_dropped` (own counter — NOT
+`residual_lost`, these are deliberate drops of schema noise, not lost
+calibration).
+
+Key semantics:
+
+- The gate's discriminator is the **immediate parent dict**: `__class__`-tagged
+  ⇒ keys are dataclass attributes (schema-checked); plain container dicts
+  (`operations` / `macros` / `extras`) ⇒ user namespace, grafts stay
+  unconditional. A user-added op (its own `__class__` subtree under
+  `operations`) therefore still grafts wholesale.
+- Fallbacks are always conservative: no `class_schemas` (old `_result.json`,
+  harvest failure) or a class absent from the map (env couldn't import it) ⇒
+  legacy unconditional graft, bit for bit.
+- A field **present** in the schema still grafts — a same-generation regen
+  where the fresh build simply omitted an optional field keeps carrying it.
+- `__package_versions__` (quam ≥0.6 serialization stamp) is now handled like
+  `__class__`: always the NEW build's, never tier-1-carried from OLD (a carried
+  stamp lied about which stack wrote the state) and never grafted or counted.
+
+UI: the build-result merge panel shows an amber `N cross-gen dropped` chip and
+lists the dropped paths in the expandable detail. Pinned by the schema-gate
+tests in `tests/test_regen_merge.py` + the pipeline/harvest tests in
+`tests/test_regenerate.py`; verified end-to-end against the real incident chip
++ real qop37-env schemas (gate drops exactly the 176 keys; merged == cleaned
+state; schema-less merge reproduces the poisoning).

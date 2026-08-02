@@ -259,3 +259,121 @@ def test_reconcile_never_clobbers_an_existing_new_id():
     new_state = {"twpas": {"A": {}, "twpaA": {}}}
     assert reconcile_twpa_ids(new_state, {"wiring": {}}, old_state) == {}
     assert set(new_state["twpas"]) == {"A", "twpaA"}
+
+
+# ---------------------------------------------------------------------------
+# Cross-generation schema gate (class_schemas)
+# ---------------------------------------------------------------------------
+
+CZGATE = ("quam_builder.architecture.superconducting.custom_gates."
+          "flux_tunable_transmon_pair.two_qubit_gates.CZGate")
+FTG = "quam.components.pulses._FlatTopGaussianPulse"
+
+
+def test_schema_gate_drops_cross_generation_fields():
+    """Incident repro (17Q regen, 2026-08): the OLD fork's CZGate serialized
+    duration_control/moving_qubit (renamed/moved in quam_builder 0.4.0) and its
+    _FlatTopGaussianPulse a sigma (removed in quam 0.6.0). With the build env's
+    schemas known, those keys must NOT graft -- quam raises
+    AttributeError('Unexpected attribute') on any field a class doesn't know."""
+    old = {"qubit_pairs": {"q1-2": {"macros": {"cz": {
+        "__class__": CZGATE, "phase_shift_control": 0.1,
+        "duration_control": None, "moving_qubit": "control"}}}},
+        "qubits": {"q1": {"z": {"operations": {"cz_flattop_pulse": {
+            "__class__": FTG, "amplitude": 0.13, "sigma": 2.0}}}}}}
+    new = {"qubit_pairs": {"q1-2": {"macros": {"cz": {
+        "__class__": CZGATE, "phase_shift_control": 0.0,
+        "duration_qubit": None}}}},
+        "qubits": {"q1": {"z": {"operations": {"cz_flattop_pulse": {
+            "__class__": FTG, "amplitude": 0.1, "smoothing_length": 20}}}}}}
+    schemas = {
+        CZGATE: ["phase_shift_control", "duration_qubit"],
+        FTG: ["amplitude", "smoothing_length"],
+    }
+    r = merge_states(old, new, class_schemas=schemas)
+    cz = r.merged["qubit_pairs"]["q1-2"]["macros"]["cz"]
+    assert "duration_control" not in cz and "moving_qubit" not in cz
+    assert cz["phase_shift_control"] == 0.1          # tier1 carry still works
+    assert cz["duration_qubit"] is None              # NEW field kept
+    op = r.merged["qubits"]["q1"]["z"]["operations"]["cz_flattop_pulse"]
+    assert "sigma" not in op
+    assert op["amplitude"] == 0.13
+    assert r.stats.schema_dropped == [
+        "qubit_pairs.q1-2.macros.cz.duration_control",
+        "qubit_pairs.q1-2.macros.cz.moving_qubit",
+        "qubits.q1.z.operations.cz_flattop_pulse.sigma",
+    ]
+    # dropped is deliberate and reported in its own counter -- never double-
+    # counted as residual loss
+    assert r.stats.residual_lost == []
+
+
+def test_schema_gate_absent_keeps_legacy_graft():
+    # No class_schemas (old build result / allocate / harvest failure) -> the
+    # legacy unconditional graft, bit for bit.
+    old = {"qubit_pairs": {"p": {"macros": {"cz": {
+        "__class__": CZGATE, "duration_control": 42}}}}}
+    new = {"qubit_pairs": {"p": {"macros": {"cz": {"__class__": CZGATE}}}}}
+    r = merge_states(old, new)
+    assert r.merged["qubit_pairs"]["p"]["macros"]["cz"]["duration_control"] == 42
+    assert r.stats.schema_dropped == []
+
+
+def test_schema_gate_unknown_class_falls_back_to_graft():
+    # A class the build env couldn't import is absent from the map -> graft
+    # (conservative: the gate only fires on classes it positively knows).
+    old = {"qubits": {"q1": {"custom": {"__class__": "lab.Fork", "knob": 1}}}}
+    new = {"qubits": {"q1": {"custom": {"__class__": "lab.Fork"}}}}
+    r = merge_states(old, new, class_schemas={CZGATE: ["duration_qubit"]})
+    assert r.merged["qubits"]["q1"]["custom"]["knob"] == 1
+    assert r.stats.schema_dropped == []
+
+
+def test_schema_gate_keeps_legit_field_the_build_omitted():
+    # Same-generation regen where the fresh build simply didn't serialize an
+    # optional field the old chip carries: the field IS in the schema -> graft.
+    old = {"qubits": {"q1": {"xy": {"__class__": "quam.C", "opt_field": 7}}}}
+    new = {"qubits": {"q1": {"xy": {"__class__": "quam.C"}}}}
+    r = merge_states(old, new, class_schemas={"quam.C": ["opt_field"]})
+    assert r.merged["qubits"]["q1"]["xy"]["opt_field"] == 7
+    assert r.stats.schema_dropped == []
+
+
+def test_schema_gate_user_added_op_still_grafts():
+    # operations/macros/extras are plain dict CONTAINERS (no __class__): their
+    # keys are user namespace, never schema fields. A user-added op grafts
+    # wholesale even with schemas present.
+    old = {"qubits": {"q1": {"z": {"operations": {
+        "my_op": {"__class__": "lab.WeirdPulse", "amplitude": 0.3}}}}}}
+    new = {"qubits": {"q1": {"z": {"operations": {}}}}}
+    r = merge_states(old, new, class_schemas={FTG: ["amplitude"]})
+    assert r.merged["qubits"]["q1"]["z"]["operations"]["my_op"]["amplitude"] == 0.3
+    assert r.stats.schema_dropped == []
+
+
+def test_schema_gate_extras_content_untouched():
+    # extras is quam's designed junk drawer -- its inner keys always carry.
+    old = {"qubits": {"q1": {"__class__": "quam.Q", "extras": {"lab_note": "x"}}}}
+    new = {"qubits": {"q1": {"__class__": "quam.Q", "extras": {}}}}
+    r = merge_states(old, new, class_schemas={"quam.Q": ["extras"]})
+    assert r.merged["qubits"]["q1"]["extras"]["lab_note"] == "x"
+    assert r.stats.schema_dropped == []
+
+
+def test_package_versions_stamp_always_new():
+    # quam's serialization stamp is an artifact, not calibration: the OLD one
+    # must never carry over the NEW build's (it would lie about the writer),
+    # and an OLD-only stamp neither grafts nor counts as residual loss.
+    old = {"__class__": "quam.Root", "qubits": {"q1": {"f_01": 5.1e9}},
+           "__package_versions__": {"quam": "0.5.0"}}
+    new_with = {"__class__": "quam.Root", "qubits": {"q1": {"f_01": 0.0}},
+                "__package_versions__": {"quam": "0.6.0"}}
+    r = merge_states(old, new_with)
+    assert r.merged["__package_versions__"] == {"quam": "0.6.0"}
+    assert r.merged["qubits"]["q1"]["f_01"] == 5.1e9
+
+    new_without = {"__class__": "quam.Root", "qubits": {"q1": {"f_01": 0.0}}}
+    r2 = merge_states(old, new_without)
+    assert "__package_versions__" not in r2.merged
+    assert r2.stats.schema_dropped == []
+    assert r2.stats.residual_lost == []

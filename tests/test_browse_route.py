@@ -87,7 +87,8 @@ def test_listing_sort_is_case_insensitive(client, tmp_path):
 
 
 @posix_only
-@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permission bits")
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0,
+                    reason="root/Windows ignores permission bits")
 def test_permission_denied_reports_error(client, tmp_path):
     locked = tmp_path / "locked"
     locked.mkdir()
