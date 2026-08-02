@@ -166,3 +166,13 @@ for an experiment script to pick up the new value.
 - True acceptance test (out of automated scope): run
   `1Q_11_power_rabi.py` against the generated state and confirm flux +
   MW pulses align on the scope to within ±1 ns.
+
+## Amendment (2026-08-03, r16 ⓪-3)
+
+`band` is now user-settable in the Populate step (the Nyquist bands overlap;
+first-match `_band_for` wrote band 2 + 161 ns where real chips run band 3 at
+6.5–7.5 GHz LOs — measured on SNU-17Q readout). An explicit band beats the
+derived pick in `_set_channel_lo` / `_set_channel_band`, and the z delay
+derives from the corrected band. On a re-generate, a band-crossing edit
+auto-updates the delay ONLY when the old value equals this table's (else the
+hand-tuned delay is kept + reported — `populate_conflicts`, docs/72 §2).

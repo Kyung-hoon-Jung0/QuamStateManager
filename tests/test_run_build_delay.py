@@ -148,3 +148,45 @@ class TestApplyLfDelay:
         port = RefPort()
         # Should not raise.
         self.mod._apply_lf_delay(port, 2)
+
+
+class TestBandOverride:
+    """r16 ⓪-3: user-settable band beats the derived _band_for pick — the
+    Nyquist bands OVERLAP (6.5–7.5 GHz is band 2 AND 3) and first-match-wins
+    wrote band 2 + the wrong 161 ns delay on real band-3 readout ports."""
+
+    def setup_method(self):
+        self.mod = _load_helpers()
+
+    def _mw_port(self):
+        return types.SimpleNamespace(upconverter_frequency=None,
+                                     downconverter_frequency=None, band=None)
+
+    def test_explicit_band_overrides_derived(self):
+        ch = types.SimpleNamespace(opx_output=self._mw_port(), opx_input=None)
+        self.mod._set_channel_lo(ch, 7.015e9, 3)     # overlap zone; derived = 2
+        assert ch.opx_output.band == 3
+        assert ch.opx_output.upconverter_frequency == 7.015e9
+
+    def test_none_band_keeps_derived(self):
+        ch = types.SimpleNamespace(opx_output=self._mw_port(), opx_input=None)
+        self.mod._set_channel_lo(ch, 7.015e9, None)
+        assert ch.opx_output.band == 2               # legacy first-match
+
+    def test_invalid_band_falls_back_to_derived(self):
+        ch = types.SimpleNamespace(opx_output=self._mw_port(), opx_input=None)
+        self.mod._set_channel_lo(ch, 5.0e9, 7)
+        assert ch.opx_output.band == 1               # _band_for(5.0e9), first match
+
+    def test_band_only_write(self):
+        out, inp = self._mw_port(), self._mw_port()
+        ch = types.SimpleNamespace(opx_output=out, opx_input=inp)
+        self.mod._set_channel_band(ch, 3)
+        assert out.band == 3 and inp.band == 3
+        assert out.upconverter_frequency is None     # LO untouched
+
+    def test_band_only_invalid_noop(self):
+        out = self._mw_port()
+        ch = types.SimpleNamespace(opx_output=out, opx_input=None)
+        self.mod._set_channel_band(ch, "3")          # strings never coerce here
+        assert out.band is None

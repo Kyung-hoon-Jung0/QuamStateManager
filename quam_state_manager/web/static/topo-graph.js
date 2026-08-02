@@ -178,7 +178,7 @@ window.TopoGraph = (function () {
   function renderStatic(mount, opts) {
     if (!mount) return;
     opts = opts || {};
-    var cell = opts.cell || 36, R = opts.stoneR || 13;
+    var cell = opts.cell || 46, R = opts.stoneR || 17;   // r16 ⓪-5: scaled with the editable board
     var qubits = opts.qubits || [], pairs = opts.pairs || [];
     var es = edgeStyleForGate(opts.gate);
     var auto = opts.layout === "auto";
@@ -230,13 +230,14 @@ window.TopoGraph = (function () {
         var dx = bx - ax, dy = by - ay, L = Math.sqrt(dx * dx + dy * dy) || 1;
         var ux = dx / L, uy = dy / L;
         var tx = bx - ux * R, ty = by - uy * R;
-        var sx = tx - ux * 9, sy = ty - uy * 9, nx = -uy, ny = ux;
+        var ah = R * 0.6, aw = R * 0.27;              // scale with the stones (r16 ⓪-5)
+        var sx = tx - ux * ah, sy = ty - uy * ah, nx = -uy, ny = ux;
         svg += '<polygon class="gen-topo-arrow" points="' +
-               (sx + nx * 4) + "," + (sy + ny * 4) + " " +
-               (sx - nx * 4) + "," + (sy - ny * 4) + " " + tx + "," + ty + '"/>';
+               (sx + nx * aw) + "," + (sy + ny * aw) + " " +
+               (sx - nx * aw) + "," + (sy - ny * aw) + " " + tx + "," + ty + '"/>';
       } else if (es === "coupler") {
         svg += '<circle class="gen-topo-coupler" cx="' + ((ax + bx) / 2) +
-               '" cy="' + ((ay + by) / 2) + '" r="5"/>';
+               '" cy="' + ((ay + by) / 2) + '" r="' + Math.round(R / 3) + '"/>';
       }
     }
     for (var q = 0; q < qubits.length; q++) {

@@ -335,6 +335,18 @@ def validate_spec(spec) -> list[str]:
                         f"populate.pairs['{pid}'].cz_variant: unknown value "
                         f"{variant!r} (expected one of {sorted(CZ_VARIANTS)})"
                     )
+        # r16 ⓪-3: user-settable MW-FEM band (empty = auto from the LO).
+        for grp in ("qubit", "resonator"):
+            rows = populate.get(grp)
+            if not isinstance(rows, dict):
+                continue
+            for rid, rvals in rows.items():
+                if not isinstance(rvals, dict) or "band" not in rvals:
+                    continue
+                if rvals["band"] not in (1, 2, 3):
+                    errors.append(
+                        f"populate.{grp}['{rid}'].band: must be 1, 2 or 3 "
+                        f"(got {rvals['band']!r})")
 
     return errors
 

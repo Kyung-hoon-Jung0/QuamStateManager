@@ -3470,6 +3470,44 @@ class TestGenerate:
         assert "source" in body["error"].lower()
         assert "absolute path" in body["error"]
 
+    def test_regenerate_build_passes_populate_protect_inputs(
+            self, client, tmp_path, monkeypatch):
+        # r16 (docs/72): populate_baseline / populate_touched / scripts_dir
+        # must reach run_regenerate; junk shapes degrade to None.
+        import sys as _sys
+        from quam_state_manager.core import regenerate as regen_mod
+        got = {}
+
+        def fake_run(py, src, spec, out, timeout=300, **kw):
+            got.update(kw)
+            return {"ok": True, "status": "ok", "error": None, "merge": None}
+
+        monkeypatch.setattr(regen_mod, "run_regenerate", fake_run)
+        client.post("/generate/select-env", json={"python": _sys.executable})
+        src = tmp_path / "src"
+        src.mkdir()
+        baseline = {"qubit": {"q1": {"RF_freq": 5.0e9}}}
+        resp = client.post("/regenerate/build", json={
+            "spec": _gen_valid_spec(), "output_path": str(tmp_path / "out"),
+            "source_folder": str(src),
+            "populate_baseline": baseline,
+            "populate_touched": [["qubit", "q1", "band"]],
+            "scripts_dir": str(tmp_path / "scripts")})
+        assert resp.status_code == 200, resp.get_json()
+        assert got["populate_baseline"] == baseline
+        assert got["populate_touched"] == [["qubit", "q1", "band"]]
+        assert str(got["scripts_dir"]).endswith("scripts")
+
+        got.clear()
+        resp = client.post("/regenerate/build", json={
+            "spec": _gen_valid_spec(), "output_path": str(tmp_path / "out"),
+            "source_folder": str(src),
+            "populate_baseline": "junk", "populate_touched": "junk"})
+        assert resp.status_code == 200
+        assert got["populate_baseline"] is None
+        assert got["populate_touched"] is None
+        assert got["scripts_dir"] is None
+
     def test_build_warns_on_nonempty_output_folder(self, client, tmp_path, monkeypatch):
         """A stray .json in the output folder blocks the build with a confirm."""
         from quam_state_manager.core import config_generator

@@ -203,13 +203,16 @@ def _set_port_lo(port, lo, band):
         except ValueError:
             pass
 
-def _set_channel_lo(channel, lo):
+def _set_channel_lo(channel, lo, band=None):
     """Set a channel's up/down-converter LO and the matching MW-FEM band.
 
     MW-FEM channels carry the LO on their ports; IQ channels carry it on the
-    channel's ``LO_frequency``.
+    channel's ``LO_frequency``. ``band`` — explicit user override (r16 ⓪-3:
+    the Nyquist bands OVERLAP, e.g. 6.5–7.5 GHz is band 2 AND 3, and
+    ``_band_for``'s first-match pick can contradict the hardware's actual
+    band); ``None`` keeps the derived value.
     """
-    band = _band_for(lo)
+    band = band if band in (1, 2, 3) else _band_for(lo)
     out = getattr(channel, "opx_output", None)
     if out is not None and hasattr(out, "upconverter_frequency"):
         _set_port_lo(out, lo, band)
@@ -229,7 +232,9 @@ def _apply_resonator(resonator, vals):
         resonator.f_01 = vals["RF_freq"]
         resonator.RF_frequency = vals["RF_freq"]
     if "LO_frequency" in vals:
-        _set_channel_lo(resonator, vals["LO_frequency"])
+        _set_channel_lo(resonator, vals["LO_frequency"], vals.get("band"))
+    elif "band" in vals:
+        _set_channel_band(resonator, vals.get("band"))
     if "depletion_time" in vals:
         resonator.depletion_time = vals["depletion_time"]
     if "time_of_flight" in vals:
@@ -261,7 +266,9 @@ def _apply_qubit(qubit, vals):
     xy = getattr(qubit, "xy", None)
     if xy is not None:
         if "LO_frequency" in vals:
-            _set_channel_lo(xy, vals["LO_frequency"])
+            _set_channel_lo(xy, vals["LO_frequency"], vals.get("band"))
+        elif "band" in vals:
+            _set_channel_band(xy, vals.get("band"))
         if "full_scale_power_dbm" in vals:
             out = getattr(xy, "opx_output", None)
             if out is not None and hasattr(out, "full_scale_power_dbm"):

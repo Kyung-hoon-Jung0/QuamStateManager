@@ -419,15 +419,19 @@
       {# Editable-scripts export: alongside state/wiring, also write a
          01_make_wiring / 02_build_machine / 03_generate_config + README
          Python bundle (values inlined) into a SEPARATE folder for IDE use. #}
+      {# r16 ⓪-4: exports ON by default; the folder auto-follows the state
+         folder (<output>\state_gen_scripts) until the user edits the box. #}
       <label class="gen-scripts-toggle">
-        <input type="checkbox" id="gen-scripts-enable">
+        <input type="checkbox" id="gen-scripts-enable" checked>
         Also export editable Python build scripts
       </label>
-      <div class="gen-field" id="gen-scripts-field" hidden>
+      <div class="gen-field" id="gen-scripts-field">
         <label for="gen-scripts-path">Scripts folder <span class="muted">&mdash;
-          readable Python with this chip's values inlined; edit + re-run in an IDE</span></label>
+          readable Python with this chip's values inlined; edit + re-run in an IDE.
+          Follows the state folder (<code>state_gen_scripts</code>) until you change it</span></label>
         <div class="path-input-group">
-          <input type="text" id="gen-scripts-path" placeholder="…/chip_scripts"
+          <input type="text" id="gen-scripts-path"
+                 placeholder="&lt;state folder&gt;\state_gen_scripts"
                  autocomplete="off">
           <button type="button" class="outline btn-sm btn-browse"
                   onclick="openFolderBrowser('gen-scripts-path')"
