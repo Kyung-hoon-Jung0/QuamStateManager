@@ -8465,6 +8465,38 @@ table.prop-table .pulse-slider-row .pulse-slider-commit {
 /* create form */
 .pulse-create-form { padding: 0 0.5rem 0.75rem; }
 .pulse-create-form fieldset { margin-bottom: 0.5rem; padding: 0.4rem 0.6rem; }
+/* r15 (docs/71 §2): env-discovery strip on top of the add-pulse form */
+.pulse-env-strip {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 0.3rem 0.6rem;
+    margin: 0.3rem 0.5rem 0.6rem; padding: 0.3rem 0.6rem;
+    border: 1px solid var(--pico-muted-border-color); border-radius: 0.4rem;
+    background: var(--pico-card-sectioning-background-color);
+    font-size: 0.85em;
+}
+.pulse-env-badge {
+    font-size: 0.78em; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.04em; padding: 0.08em 0.5em; border-radius: 0.6em;
+    border: 1px solid var(--pico-muted-border-color);
+    color: var(--pico-muted-color); flex: none;
+}
+.pulse-env-badge-ok   { color: var(--color-success-text); border-color: var(--color-success-border); }
+.pulse-env-badge-warn { color: var(--color-warning-text, #b58900); border-color: currentColor; }
+.pulse-env-badge-static { color: var(--pico-muted-color); }
+.pulse-env-err { color: var(--color-error-text, #d0342c); }
+.pulse-env-python {
+    max-width: 24em; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; display: inline-block; vertical-align: bottom;
+    direction: rtl; text-align: left;   /* show the tail of the path */
+}
+.pulse-env-progress { width: 6em; height: 0.5em; }
+.pulse-qclass-display {
+    display: block; font-size: 0.82em; padding: 0.15rem 0.4rem;
+    border: 1px dashed var(--pico-muted-border-color); border-radius: 0.3rem;
+    overflow-wrap: anywhere;
+}
+.pulse-hint-envmissing { color: var(--color-warning-text, #b58900); }
+.pulse-opt-envmissing { color: var(--pico-muted-color); }
+.pulse-env-note { font-size: 0.8em; margin: 0.3rem 0 0; }
 .pulse-target-row legend { font-size: 0.82em; font-weight: 600; }
 .pulse-target-row label { display: inline-flex; gap: 0.3rem; margin-right: 1rem; font-size: 0.9em; }
 .pulse-target-fields { display: inline-flex; gap: 0.4rem; }

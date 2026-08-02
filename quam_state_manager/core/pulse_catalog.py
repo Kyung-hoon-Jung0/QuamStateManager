@@ -480,8 +480,11 @@ _ENV_OVERLAY: dict | None = None
 
 def apply_env_overlay(roster: dict | None) -> None:
     """Install the selected env's pulse roster; ``None`` (or empty) clears."""
-    global _ENV_OVERLAY
+    global _ENV_OVERLAY, _ENV_SPECS_MEMO
     _ENV_OVERLAY = roster if roster else None
+    # Drop the synthesized-spec memo: it keys on object identity, and a
+    # freed dict's id can be reused by a NEW roster after GC.
+    _ENV_SPECS_MEMO = None
 
 
 def env_overlay_active() -> dict | None:
@@ -496,6 +499,109 @@ def _env_home_verified(roster: dict | None, leaf: str, home: str) -> bool:
     rec = roster.get(leaf)
     homes = rec.get("homes") if isinstance(rec, dict) else None
     return isinstance(homes, (list, tuple)) and home in homes
+
+
+# Pulse base classes the env walk reports but nobody instantiates directly.
+_ENV_SPEC_BASE_DENY = frozenset({"Pulse", "BaseReadoutPulse", "ReadoutPulse"})
+
+# Roster ``type.base`` → ParamSpec.kind. Unions/unknowns fall back to "str":
+# the create form accepts pointer strings verbatim for every kind anyway, so
+# "str" is the honest no-coercion choice for shapes we can't model.
+_ENV_KIND_MAP = {"float": "float", "int": "int", "str": "str", "bool": "bool",
+                 "list": "list_float"}
+
+_ENV_SPECS_MEMO: tuple[int, dict] | None = None
+
+
+def env_creatable_specs(roster: dict | None = None) -> dict[str, PulseSpec]:
+    """Synthesized creatable specs for roster-ONLY pulse classes (r15, docs/71 §2).
+
+    The selected env can define pulse classes the static catalog has never
+    transcribed (e.g. quam_builder 0.4.0's ``CosineBipolarPulse``). Users must
+    be able to CREATE those — the roster's dataclass-field dump carries enough
+    for a correct form and a correct write, so each such leaf becomes a
+    synthesized frozen :class:`PulseSpec`:
+
+    - only leaves absent from the catalog AND the alias table, not deprecated,
+      not ``_``-prefixed, not a bare base class, with a fields dump present;
+    - kinds mapped via ``type.base`` (unions → "str": pointers/verbatim);
+    - ``required`` = the dataclass field has no default;
+    - a ``length`` field whose default is a self-reference ⇒ inferred-length
+      (the reference string becomes ``length_pointer``); an explicit ``length``
+      stays a param; none ⇒ "derived" (nothing written);
+    - ``qclass`` = the roster's canonical home — env-verified by definition.
+
+    No preview exists for these (``waveform_synth`` has no transcription); the
+    form shows the honest schema-known message instead. With no roster the
+    result is ``{}`` — the empty-overlay byte-identity fence holds. Memoized
+    on the overlay object identity (overlay swaps are whole-object).
+    """
+    global _ENV_SPECS_MEMO
+    roster = roster if roster is not None else _ENV_OVERLAY
+    if not roster:
+        return {}
+    if _ENV_SPECS_MEMO is not None and _ENV_SPECS_MEMO[0] == id(roster):
+        return _ENV_SPECS_MEMO[1]
+
+    out: dict[str, PulseSpec] = {}
+    for leaf in sorted(roster):
+        rec = roster.get(leaf)
+        if (not isinstance(rec, dict) or leaf in PULSE_CATALOG
+                or leaf in _LEAF_ALIASES or leaf.startswith("_")
+                or leaf in _ENV_SPEC_BASE_DENY or rec.get("deprecated")):
+            continue
+        fields = rec.get("fields")
+        canonical = rec.get("canonical")
+        if not isinstance(fields, dict) or not isinstance(canonical, str) \
+                or not canonical:
+            continue
+
+        length_mode, length_pointer = "derived", "#./inferred_length"
+        lrec = fields.get("length")
+        if isinstance(lrec, dict):
+            ldefault = lrec.get("default")
+            if lrec.get("default_is_reference") and isinstance(ldefault, str):
+                length_mode, length_pointer = "inferred", ldefault
+            else:
+                length_mode = "explicit"
+
+        params: list[ParamSpec] = []
+        for name, frec in fields.items():
+            if not isinstance(frec, dict):
+                continue
+            if name == "length" and length_mode != "explicit":
+                continue
+            base = ((frec.get("type") or {}).get("base")
+                    if isinstance(frec.get("type"), dict) else None)
+            kind = _ENV_KIND_MAP.get(base, "str")
+            has_default = bool(frec.get("has_default"))
+            params.append(ParamSpec(
+                name=name,
+                label=name.replace("_", " ").capitalize(),
+                kind=kind,
+                default=frec.get("default"),
+                required=not has_default,
+                synth=name not in ("id", "digital_marker"),
+            ))
+
+        out[leaf] = PulseSpec(
+            key=leaf,
+            qclass=canonical,
+            label=leaf,
+            iq="never",
+            readout=bool(rec.get("readout")),
+            channels=("xy", "z", "resonator"),
+            params=tuple(params),
+            length_mode=length_mode,
+            length_pointer=length_pointer,
+            creatable=True,
+            group="From environment",
+            doc=("Discovered in the selected environment — SM has no waveform "
+                 "transcription for this class, so there is no live preview."),
+        )
+
+    _ENV_SPECS_MEMO = (id(roster), out)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -683,10 +789,9 @@ def chip_qclass(merged: Any, spec: PulseSpec) -> tuple[str, str]:
     """
     classes = _chip_pulse_classes(merged) if isinstance(merged, dict) else []
 
-    same_leaf = [c for c in classes if c.rsplit(".", 1)[-1] == spec.key]
-    if same_leaf:
-        ranked = sorted(Counter(same_leaf).items(), key=lambda kv: (-kv[1], kv[0]))
-        return ranked[0][0], "reused"
+    reused = evidence_qclass(merged, spec.key, _classes=classes)
+    if reused:
+        return reused, "reused"
 
     prefixes = []
     for c in classes:
@@ -713,7 +818,32 @@ def chip_qclass(merged: Any, spec: PulseSpec) -> tuple[str, str]:
                                            ranked[0][0][:-1]))):
             return candidate, "prefix"
 
+    # r15 (docs/71 §2): no chip evidence — the selected env's roster canonical
+    # is the next-most-trustworthy source. The static catalog path can be
+    # UNLOADABLE on newer stacks (quam 0.6.0 removed SNZ/Erf/GaussianFiltered*
+    # from quam.components.pulses); the env's own introspection can't be.
+    roster = _ENV_OVERLAY
+    rec = roster.get(spec.key) if roster else None
+    canonical = rec.get("canonical") if isinstance(rec, dict) else None
+    if isinstance(canonical, str) and canonical:
+        return canonical, "env"
+
     return spec.qclass, "catalog"
+
+
+def evidence_qclass(merged: Any, leaf: str, *,
+                    _classes: list[str] | None = None) -> str | None:
+    """Majority verbatim ``__class__`` among this chip's pulses whose class
+    NAME equals *leaf* (tie → lexicographic), or None without evidence.
+    Public for the pair-gate templates (docs/71 §3) — never guesses a path."""
+    classes = (_classes if _classes is not None
+               else (_chip_pulse_classes(merged) if isinstance(merged, dict)
+                     else []))
+    same = [c for c in classes if c.rsplit(".", 1)[-1] == leaf]
+    if not same:
+        return None
+    ranked = sorted(Counter(same).items(), key=lambda kv: (-kv[1], kv[0]))
+    return ranked[0][0]
 
 
 def build_template(spec: PulseSpec, fields: dict[str, Any], *,

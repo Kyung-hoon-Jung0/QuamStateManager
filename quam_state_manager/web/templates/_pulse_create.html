@@ -6,6 +6,10 @@
 {% set inspector_sub = "" %}
 {% include '_inspector_header.html' %}
 
+{# r15 (docs/71 §2): env-discovery status on top — like the wizard's env
+   picker, the user sees WHERE the class list came from before choosing. #}
+{% include '_pulse_env_strip.html' %}
+
 <form class="pulse-create-form" hx-post="/api/pulse/create"
       hx-target="#inspector-pane" hx-swap="innerHTML">
 
@@ -60,6 +64,9 @@
         <label for="pulse-create-type">Pulse type</label>
         <select name="pulse_type" id="pulse-create-type"
                 onchange="PulsesPage.createTypeChanged(this)">
+            {# The per-option env verdicts (✓ importable / not in this env)
+               are decorated by JS from the catalog JSON's `verify` field —
+               keeps the markup identical when no roster is installed. #}
             {% for group, specs in groups.items() %}
             <optgroup label="{{ group }}">
                 {% for s in specs %}
@@ -80,11 +87,14 @@
     </div>
 
     <div class="pulse-create-row">
-        <label for="pulse-create-qclass">Class path
+        <label>Class path
             <span class="muted">(the <code>__class__</code> written to state.json)</span></label>
-        <input type="text" name="qclass" id="pulse-create-qclass"
-               autocomplete="off" spellcheck="false"
-               pattern="[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*">
+        {# r15 (docs/71 §2): READ-ONLY — users must never type class paths.
+           The value is derived server-side (chip evidence > chip prefix >
+           env roster canonical > catalog) and travels in the hidden input;
+           the id is kept so existing pins keep passing. #}
+        <code class="pulse-qclass-display" id="pulse-create-qclass-display"></code>
+        <input type="hidden" name="qclass" id="pulse-create-qclass">
         <p class="pulse-qclass-hint muted" id="pulse-create-qclass-hint"></p>
     </div>
 

@@ -1086,3 +1086,147 @@ class TestCreateChipQclass:
         html = foreign_client.get("/pulse/new").data.decode()
         assert "pulse-create-qclass" in html
         assert "newstack.pulses.SquarePulse" in html  # in the catalog JSON
+
+
+# ---------------------------------------------------------------------------
+# r15 (docs/71 §2): env-aware create — roster-driven form, env-only classes,
+# the never-silent env-compat gate, and the discovery strip.
+# ---------------------------------------------------------------------------
+
+
+class TestCreateEnvAware:
+    @pytest.fixture(autouse=True)
+    def _overlay_hygiene(self):
+        from quam_state_manager.core import pulse_catalog as pc
+        pc.apply_env_overlay(None)
+        yield
+        pc.apply_env_overlay(None)
+
+    @pytest.fixture
+    def modern_roster(self):
+        data = json.loads((Path(__file__).parent / "golden"
+                           / "state_schema_modern.json").read_text(
+            encoding="utf-8"))
+        return data["pulse_roster"]
+
+    def test_no_roster_form_is_static_catalog(self, loaded_client):
+        html = loaded_client.get("/pulse/new").data.decode()
+        assert "pulse-env-strip" in html
+        assert "static catalog" in html or "not probed" in html
+        assert "From environment" not in html
+        cat = json.loads(html.split('id="pulse-catalog-data"'
+                                    ' type="application/json">')[1]
+                         .split("</script>")[0])
+        assert all(e.get("verify") is None for e in cat.values())
+
+    def test_roster_adds_env_class_and_verdicts(self, loaded_client,
+                                                modern_roster):
+        from quam_state_manager.core import pulse_catalog as pc
+        pc.apply_env_overlay(modern_roster)
+        html = loaded_client.get("/pulse/new").data.decode()
+        assert "From environment" in html
+        assert ">CosineBipolarPulse</option>" in html
+        cat = json.loads(html.split('id="pulse-catalog-data"'
+                                    ' type="application/json">')[1]
+                         .split("</script>")[0])
+        assert cat["CosineBipolarPulse"]["env_only"] is True
+        assert cat["CosineBipolarPulse"]["verify"] == "env"
+        assert cat["SquarePulse"]["verify"] == "env"
+        # the one creatable catalog class the modern roster does NOT ship
+        assert cat["ErfSquarePulse"]["verify"] == "missing"
+        assert "channels" in cat["SquarePulse"]
+
+    def test_env_only_create_writes_roster_canonical(self, loaded_client,
+                                                     modern_roster, app):
+        from quam_state_manager.core import pulse_catalog as pc
+        pc.apply_env_overlay(modern_roster)
+        r = loaded_client.post("/api/pulse/create", data={
+            "pulse_type": "CosineBipolarPulse", "target_kind": "qubit",
+            "qubit": "qA1", "channel": "xy", "op_name": "cbp_test",
+            "amplitude": "0.1", "length": "80", "flat_length": "40",
+        })
+        assert r.status_code == 200, r.data[:300]
+        ctx = next(iter(app.config["contexts"].values()))
+        op = ctx["store"].state["qubits"]["qA1"]["xy"]["operations"]["cbp_test"]
+        assert op["__class__"] == modern_roster["CosineBipolarPulse"]["canonical"]
+        assert op["amplitude"] == 0.1 and op["flat_length"] == 40
+        assert op["length"] == 80          # explicit length, not a pointer
+
+    def test_missing_in_env_class_gates_409_then_force(self, loaded_client,
+                                                       modern_roster, app):
+        from quam_state_manager.core import pulse_catalog as pc
+        pc.apply_env_overlay(modern_roster)
+        form = {"pulse_type": "ErfSquarePulse",
+                "target_kind": "qubit", "qubit": "qA1", "channel": "xy",
+                "op_name": "erf_test", "amplitude": "0.1",
+                "flat_length": "60", "risetime_samples": "8"}
+        r = loaded_client.post("/api/pulse/create", data=form)
+        assert r.status_code == 409
+        assert b"not importable in the selected" in r.data
+        ctx = next(iter(app.config["contexts"].values()))
+        ops = ctx["store"].state["qubits"]["qA1"]["xy"]["operations"]
+        assert "erf_test" not in ops                  # nothing committed
+        r2 = loaded_client.post("/api/pulse/create", data=dict(form, force="1"))
+        assert r2.status_code == 200, r2.data[:300]
+
+    def test_catalog_class_in_roster_never_gates(self, loaded_client,
+                                                 modern_roster):
+        from quam_state_manager.core import pulse_catalog as pc
+        pc.apply_env_overlay(modern_roster)
+        r = loaded_client.post("/api/pulse/create", data={
+            "pulse_type": "SquarePulse", "target_kind": "qubit",
+            "qubit": "qA1", "channel": "xy", "op_name": "sq_env_ok",
+            "amplitude": "0.2", "length": "60"})
+        assert r.status_code == 200, r.data[:300]
+
+    def test_env_strip_states(self, loaded_client, modern_roster, app):
+        from quam_state_manager.core import config_generator as cg
+        from quam_state_manager.core import pulse_catalog as pc
+        # no env selected
+        html = loaded_client.get("/pulse/new/env-strip").data.decode()
+        assert "no Python environment selected" in html
+        # env selected but interpreter gone
+        cg.set_selected_env(app.instance_path, r"C:\nope\python.exe")
+        html = loaded_client.get("/pulse/new/env-strip").data.decode()
+        assert "no longer exists" in html
+        # selected + roster warm ⇒ count + shared-with note
+        import tempfile, os
+        fake = Path(tempfile.mkdtemp()) / "python.exe"
+        fake.write_text("x", encoding="utf-8")
+        cg.set_selected_env(app.instance_path, str(fake))
+        pc.apply_env_overlay(modern_roster)
+        # env_card.warm needs the store's type policy manifest — the strip
+        # falls to "not probed" without it; the roster count line is the
+        # warm-path pin, so fake warmth via the policy attribute.
+        ctx = next(iter(app.config["contexts"].values()))
+        policy = getattr(ctx["store"], "type_policy", None)
+        if policy is None or policy.manifest is None:
+            class _P:  # minimal manifest carrier
+                manifest = {"versions": {"quam": "0.6.0"}}
+            ctx["store"].type_policy = _P()
+        html = loaded_client.get("/pulse/new/env-strip").data.decode()
+        assert "pulse class" in html and "shared with Generate Config" in html
+
+    def test_qclass_field_is_hidden_not_editable(self, loaded_client):
+        html = loaded_client.get("/pulse/new").data.decode()
+        assert 'type="hidden" name="qclass" id="pulse-create-qclass"' in html
+        assert 'id="pulse-create-qclass-display"' in html
+
+
+def test_pulses_create_selfcheck_passes():
+    """Drives tests/pulses_create_selfcheck.cjs (r15, docs/71 §2) — the
+    env-aware create-form JS against the real pulses.js in jsdom."""
+    import shutil
+    import subprocess
+    if shutil.which("node") is None:
+        pytest.skip("node not on PATH")
+    root = Path(__file__).resolve().parent.parent
+    r = subprocess.run(
+        ["node", str(root / "tests" / "pulses_create_selfcheck.cjs")],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        cwd=str(root), timeout=120,
+    )
+    if r.returncode == 2:
+        pytest.skip("jsdom not installed (run `npm install jsdom`)")
+    assert r.returncode == 0, (r.stdout or "") + (r.stderr or "")
+    assert "ALL OK" in (r.stdout or "")

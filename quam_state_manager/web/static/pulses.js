@@ -581,25 +581,58 @@ window.PulsesPage = (function () {
             hint.textContent = (spec.doc || '') +
                 (spec.iq === 'always' ? ' · IQ' : '') +
                 (spec.length_mode === 'inferred'
-                    ? ' · length auto-inferred (#./inferred_length)' : '');
+                    ? ' · length auto-inferred (' + '#./inferred_length' + ')' : '') +
+                (spec.verify === 'missing'
+                    ? ' · ⚠ NOT importable in the selected environment' : '');
+            hint.classList.toggle('pulse-hint-envmissing',
+                spec.verify === 'missing');
         }
+        // r15 (docs/71 §2): class path is READ-ONLY — derived server-side
+        // (chip evidence > prefix > env roster canonical > catalog); the
+        // hidden input posts it, the <code> shows it.
         var qcInput = document.getElementById('pulse-create-qclass');
-        if (qcInput) {
-            qcInput.value = spec.qclass || '';
-            var qcHint = document.getElementById('pulse-create-qclass-hint');
-            if (qcHint) {
-                qcHint.textContent =
-                    spec.qclass_how === 'reused'
-                        ? 'copied from an existing ' + sel.value + ' on this chip'
+        if (qcInput) qcInput.value = spec.qclass || '';
+        var qcDisplay = document.getElementById('pulse-create-qclass-display');
+        if (qcDisplay) qcDisplay.textContent = spec.qclass || '';
+        var qcHint = document.getElementById('pulse-create-qclass-hint');
+        if (qcHint) {
+            qcHint.textContent =
+                spec.qclass_how === 'reused'
+                    ? 'copied from an existing ' + sel.value + ' on this chip'
+                    : (spec.qclass_how === 'env'
+                        ? 'verified by the selected environment (its own import path)'
                         : (spec.qclass_how === 'prefix'
-                            ? "derived from this chip's module prefix — edit if your stack imports this class from elsewhere"
-                            : 'catalog default — edit if your stack imports this class from elsewhere');
-                qcHint.classList.toggle('pulse-qclass-caution',
-                    spec.qclass_how !== 'reused');
+                            ? "derived from this chip's module prefix"
+                            : 'catalog default'));
+            qcHint.classList.toggle('pulse-qclass-caution',
+                spec.qclass_how !== 'reused' && spec.qclass_how !== 'env');
+        }
+        // Env-only classes have no SM waveform transcription → no preview;
+        // say so instead of showing a stale/empty plot.
+        var plot = document.getElementById('pulse-create-plot');
+        var plotBar = root.querySelector('.pulse-plot-bar');
+        if (plot) plot.hidden = !!spec.env_only;
+        if (plotBar) plotBar.hidden = !!spec.env_only;
+        var envNote = document.getElementById('pulse-create-envnote');
+        if (spec.env_only) {
+            if (!envNote) {
+                envNote = document.createElement('p');
+                envNote.id = 'pulse-create-envnote';
+                envNote.className = 'muted pulse-env-note';
+                var fields = document.getElementById('pulse-create-fields');
+                if (fields && fields.parentNode) {
+                    fields.parentNode.insertBefore(envNote, fields.nextSibling);
+                }
             }
+            envNote.textContent = 'Discovered in the selected environment — ' +
+                'SM has no waveform transcription for this class, so there ' +
+                'is no live preview. Fields come from the env’s own ' +
+                'dataclass schema.';
+        } else if (envNote) {
+            envNote.remove();
         }
         buildFieldRows(spec);
-        schedulCreatePreview(root);
+        if (!spec.env_only) schedulCreatePreview(root);
     }
 
     // Target kinds that name their op (vs the pair-gate flux SLOTS, whose
@@ -692,13 +725,72 @@ window.PulsesPage = (function () {
         root._pairChannels = parseEmbeddedJson('pulse-pair-channels-data') || {};
 
         var typeSel = document.getElementById('pulse-create-type');
-        if (typeSel) createTypeChanged(typeSel);
+        if (typeSel) {
+            // r15 (docs/71 §2): env verdicts on the options — a class the
+            // selected env can NOT import is marked (creating it is still
+            // possible, behind the explicit confirm below).
+            Array.prototype.forEach.call(typeSel.options, function (opt) {
+                var s = root._catalog[opt.value];
+                if (s && s.verify === 'missing') {
+                    opt.textContent += ' — ✗ not in this env';
+                    opt.classList.add('pulse-opt-envmissing');
+                }
+            });
+            createTypeChanged(typeSel);
+        }
+
+        // Never-silent env-compat confirm (server 409 is the backstop): a
+        // missing-in-env class only submits after an explicit OK, which
+        // re-fires the request with force=1.
+        var form = root.querySelector('form.pulse-create-form');
+        if (form && window.htmx) {
+            form.addEventListener('htmx:configRequest', function (evt) {
+                var sel = document.getElementById('pulse-create-type');
+                var s = sel && root._catalog[sel.value];
+                if (!s || s.verify !== 'missing') return;
+                if (root._envForceOk === sel.value) {
+                    evt.detail.parameters.force = '1';
+                    root._envForceOk = null;
+                    return;
+                }
+                evt.preventDefault();
+                var ok = window.confirm(
+                    '"' + sel.value + '" is NOT importable in the selected ' +
+                    'environment — a state carrying it will not Quam.load ' +
+                    'there.\n\nCreate anyway?');
+                if (ok) {
+                    root._envForceOk = sel.value;
+                    window.htmx.trigger(form, 'submit');
+                }
+            });
+        }
 
         root.addEventListener('input', function (evt) {
             if (evt.target.closest && evt.target.closest('#pulse-create-fields')) {
                 schedulCreatePreview(root);
             }
         });
+    }
+
+    // Env-strip "Probe now" — rides the diagnostics probe (single-flighted;
+    // installs the pulse-roster overlay on success), then re-polls the strip.
+    function envStripProbe(btn) {
+        btn.disabled = true;
+        fetch('/diagnostics/env-probe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'force=0'
+        }).then(function (r) { return r.json(); }).then(function (d) {
+            if (!d.ok) {
+                if (window.showToast) window.showToast(d.error || 'probe failed', 'warning');
+                btn.disabled = false;
+                return;
+            }
+            if (window.htmx) {
+                window.htmx.ajax('GET', '/pulse/new/env-strip',
+                    { target: '#pulse-env-strip', swap: 'outerHTML' });
+            }
+        }).catch(function () { btn.disabled = false; });
     }
 
     /* ------------------------------------------------------------------ */
@@ -772,6 +864,7 @@ window.PulsesPage = (function () {
         createTargetKind: createTargetKind,
         createPairGates: createPairGates,
         createPairChannels: createPairChannels,
-        createValidateName: createValidateName
+        createValidateName: createValidateName,
+        envStripProbe: envStripProbe
     };
 })();

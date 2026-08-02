@@ -221,13 +221,21 @@ class TestChipQclassEnv:
         apply_env_overlay(_with_extra_home(modern_roster, "SNZPulse", _NEXT))
         assert chip_qclass(chip, spec) == (_NEXT + ".SNZPulse", "prefix")
 
-    def test_roster_home_elsewhere_still_catalog(self, modern_roster):
+    def test_roster_home_elsewhere_refuses_prefix_uses_env_canonical(
+            self, modern_roster):
         # The pristine roster knows SNZPulse — at the arch home only. It must
-        # NOT bless the chip's unrelated dominant prefix.
+        # NOT bless the chip's unrelated dominant prefix. r15 (docs/71 §2):
+        # the no-evidence fallback is now the roster CANONICAL ("env"), not
+        # the static catalog path — quam 0.6.0 removed SNZPulse from
+        # quam.components.pulses, so the catalog path would be UNLOADABLE in
+        # this very env. The prefix refusal itself is unchanged.
         chip = _chip(_NEXT + ".GaussianPulse", _NEXT + ".DragCosinePulse")
         spec = PULSE_CATALOG["SNZPulse"]
         apply_env_overlay(modern_roster)
-        assert chip_qclass(chip, spec) == (spec.qclass, "catalog")
+        got = chip_qclass(chip, spec)
+        assert got[1] == "env"
+        assert got[0] == modern_roster["SNZPulse"]["canonical"]
+        assert not got[0].startswith(_NEXT + ".")     # prefix still refused
 
     def test_reused_verbatim_unaffected(self, modern_roster):
         apply_env_overlay(modern_roster)
@@ -375,13 +383,23 @@ class TestNoOverlayByteIdentical:
     def test_pristine_modern_roster_is_byte_identical(self, modern_roster):
         # The catalog was aligned to this very env (docs/53): every roster
         # home/field is already covered, so installing the REAL roster must
-        # not move a single output — except the unknown-class synth payload,
-        # which legitimately gains the schema_known grace note for leaves
-        # the env ships (WeirdPulse is not one of them).
+        # not move a single output — except (r15, docs/71 §2) chip_qclass's
+        # NO-EVIDENCE fallback, which now returns the roster canonical with
+        # how="env" instead of the catalog path (deliberate: the catalog
+        # path can be unloadable on the very stack the roster came from).
+        # For SquarePulse the canonical STRING is identical — only the
+        # provenance token moves.
         apply_env_overlay(None)
-        base = _fence_outputs()
+        b_resolved, b_unmodeled, b_chips, b_synth = _fence_outputs()
         apply_env_overlay(modern_roster)
-        assert _fence_outputs() == base
+        resolved, unmodeled, chips, synth = _fence_outputs()
+        assert resolved == b_resolved
+        assert unmodeled == b_unmodeled
+        assert synth == b_synth
+        assert chips[:2] == b_chips[:2]          # evidence/prefix untouched
+        for (b_qc, b_how), (qc, how) in zip(b_chips[2:], chips[2:]):
+            assert b_how == "catalog" and how == "env"
+            assert qc == b_qc == modern_roster["SquarePulse"]["canonical"]
 
     def test_clearing_restores_baseline(self, modern_roster):
         apply_env_overlay(None)
@@ -390,3 +408,74 @@ class TestNoOverlayByteIdentical:
         assert resolve_qclass(_NEXT + ".SNZPulse")[1] == "env"  # overlay live
         apply_env_overlay(None)
         assert _fence_outputs() == base
+
+
+# ---------------------------------------------------------------------------
+# (e) r15 (docs/71 §2): synthesized creatable specs for roster-only classes
+# ---------------------------------------------------------------------------
+
+class TestEnvCreatableSpecs:
+    def test_modern_roster_yields_exactly_cosine_bipolar(self, modern_roster):
+        specs = pc.env_creatable_specs(modern_roster)
+        assert sorted(specs) == ["CosineBipolarPulse"]
+        s = specs["CosineBipolarPulse"]
+        assert s.qclass == modern_roster["CosineBipolarPulse"]["canonical"]
+        assert s.creatable and s.group == "From environment"
+        # the modern class carries an EXPLICIT required length + flat_length
+        # (a DIFFERENT contract from the legacy _CosineBipolarPulse — this is
+        # why it must NOT be aliased onto the legacy spec)
+        assert s.length_mode == "explicit"
+        by_name = {p.name: p for p in s.params}
+        assert by_name["length"].required and by_name["length"].kind == "int"
+        assert by_name["flat_length"].required
+        assert by_name["amplitude"].required
+        assert not by_name["axis_angle"].required     # has a default
+        # union-typed digital_marker degrades to the verbatim "str" kind
+        assert by_name["digital_marker"].kind == "str"
+
+    def test_bases_aliases_deprecated_and_underscore_excluded(self,
+                                                             modern_roster):
+        roster = dict(modern_roster)
+        roster["_Hidden"] = {"canonical": "x._Hidden", "fields": {},
+                             "deprecated": False}
+        roster["OldName"] = {"canonical": "x.OldName", "fields": {},
+                            "deprecated": True}
+        specs = pc.env_creatable_specs(roster)
+        assert "_Hidden" not in specs and "OldName" not in specs
+        assert "Pulse" not in specs and "ReadoutPulse" not in specs
+        for known in ("SquarePulse", "SNZPulse", "DragPulse"):
+            assert known not in specs      # catalog / alias leaves never dup
+
+    def test_no_roster_is_empty_and_memo_clears_on_swap(self, modern_roster):
+        pc.apply_env_overlay(None)
+        assert pc.env_creatable_specs() == {}
+        pc.apply_env_overlay(modern_roster)
+        first = pc.env_creatable_specs()
+        assert "CosineBipolarPulse" in first
+        pc.apply_env_overlay(None)
+        assert pc.env_creatable_specs() == {}
+
+    def test_inferred_length_from_reference_default(self):
+        roster = {"RefLenPulse": {
+            "canonical": "lab.pulses.RefLenPulse", "deprecated": False,
+            "readout": False, "homes": ["lab.pulses"],
+            "fields": {
+                "amplitude": {"has_default": False,
+                              "type": {"base": "float"}},
+                "length": {"has_default": True, "default": "#./inferred_length",
+                           "default_is_reference": True,
+                           "type": {"base": "int"}},
+            }}}
+        s = pc.env_creatable_specs(roster)["RefLenPulse"]
+        assert s.length_mode == "inferred"
+        assert s.length_pointer == "#./inferred_length"
+        assert all(p.name != "length" for p in s.params)
+
+
+class TestEvidenceQclass:
+    def test_majority_and_none(self):
+        chip = _chip("a.pulses.SNZPulse", "b.pulses.SNZPulse",
+                     "b.pulses.SNZPulse")
+        assert pc.evidence_qclass(chip, "SNZPulse") == "b.pulses.SNZPulse"
+        assert pc.evidence_qclass(chip, "NoSuchPulse") is None
+        assert pc.evidence_qclass({}, "SNZPulse") is None
