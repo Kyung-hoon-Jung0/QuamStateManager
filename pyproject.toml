@@ -16,12 +16,23 @@ authors = [
 dependencies = [
     "Flask>=3.0",
     "Typer>=0.9",
+    # r16 ①: rich is imported unconditionally by the CLI — with Typer>=0.9 a
+    # resolver may pick a typer where rich is optional, and `qsm` dies on
+    # import without this explicit pin.
+    "rich>=13.0",
     "h5py>=3.0",
+    # numpy is imported directly (waveform synthesis, autofit synth) — only
+    # transitively guaranteed via h5py/scipy before.
+    "numpy>=1.24",
     "pywebview>=5.0",
     # Pulses-page waveform synthesis: scipy's gaussian/blackman windows and
     # gaussian_filter1d are the exact functions quam/qualang_tools call, so
     # the in-process preview matches the QM stack bit-for-bit.
     "scipy>=1.11",
+    # QUAlibrate config reading needs a TOML parser on Python 3.10 (stdlib
+    # tomllib exists from 3.11) — without it every ~/.qualibrate read
+    # silently degrades.
+    "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]

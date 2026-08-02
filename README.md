@@ -4,31 +4,36 @@ Desktop + web tool for inspecting and editing quantum machine (QUAM) state files
 
 Built for researchers running superconducting qubit experiments who need to browse, compare, and tune parameters across hundreds of qubits.
 
-## Quick Start
+## Install & Run (users)
 
 ```bash
-# Clone + install (editable, with dev deps)
+# From a clone (or a release archive) — a plain install is all you need:
 git clone https://github.com/Kyung-hoon-Jung0/statemanager.git
 cd statemanager
-pip install -e ".[dev]"
+pip install .
 
-# After installation, `qsm` (short) and `quam-manager` are both on your PATH — no extra setup
-qsm --help
-qsm --version
+# `qsm` (short) and `quam-manager` are now on your PATH:
+qsm browser               # web UI at http://127.0.0.1:5050, opens your browser
+qsm serve                 # same, without opening a browser
+python -m quam_state_manager    # desktop app (its own window)
+
+qsm --help                # every CLI command
 qsm show qA1 -f "path/to/quam_state/"
-
-# Web UI in your browser
-qsm serve                 # serves at http://127.0.0.1:5050
-qsm browser               # same, and opens your browser automatically
-
-# Desktop app (its own window)
-python -m quam_state_manager
-
-# Tests
-python -m pytest tests/ -q
 ```
 
-> The Generate / Re-generate Config wizard shells out to a conda/venv env that has the QM stack (`qm-qua`, `quam`, `quam_builder`, `qualang_tools`); the app itself never imports it.
+Then point the app at a `quam_state/` folder (containing `state.json` +
+`wiring.json`) via **State Load**, or open a QUAlibrate project from the
+landing page.
+
+**Where your data lives:** app state (working copies, Param/State History,
+settings) is stored per user —
+`%LOCALAPPDATA%\QUAM State Manager` on Windows,
+`~/Library/Application Support/QUAM State Manager` on macOS,
+`~/.local/share/QUAM State Manager` on Linux. (Running from a repo checkout
+keeps the familiar repo-local `instance/` instead.) Your chip's live
+`state.json`/`wiring.json` are only written on an explicit **Apply to live**.
+
+> The Generate / Re-generate Config wizard shells out to a conda/venv env that has the QM stack (`qm-qua`, `quam`, `quam_builder`, `qualang_tools`); the app itself never imports it — pick the env inside the wizard.
 
 ## CLI Commands
 
@@ -64,7 +69,19 @@ Run as `qsm <command>` (or `quam-manager <command>`). Add `--help` to any comman
 - **CLI** -- inspection, editing, export (CSV/Markdown), comparison
 - **Desktop App** -- pywebview wrapper, PyInstaller onedir bundle for standalone distribution
 
-## Architecture
+---
+
+## For developers
+
+```bash
+# Editable install with dev tooling (keeps app state in the repo's instance/)
+pip install -e ".[dev]"
+
+# Tests (Windows: set PYTHONUTF8=1 — the node selfcheck drivers emit UTF-8)
+python -m pytest tests/ -q
+```
+
+### Architecture
 
 ```
 state.json + wiring.json
@@ -79,7 +96,7 @@ state.json + wiring.json
 
 See [`CLAUDE.md`](CLAUDE.md) for detailed architecture docs, key files table, and developer guide. Full module documentation is in the [`docs/`](docs/) directory.
 
-## Build Standalone Executable
+### Build a standalone executable
 
 ```bash
 pyinstaller build/quam-manager.spec
@@ -88,13 +105,13 @@ pyinstaller build/quam-manager.spec
 
 Uses onedir mode for instant cold start (no temp extraction overhead).
 
-## Tech Stack
+### Tech stack
 
 - **Backend:** Flask, Jinja2, Typer, Rich
 - **Frontend:** HTMX, Pico CSS, Split.js, Plotly.js (all bundled, no CDN)
 - **Desktop:** pywebview
-- **Data:** h5py (HDF5 reading)
-- **Tests:** pytest (3000+ tests)
+- **Data:** h5py (HDF5 reading), numpy + scipy
+- **Tests:** pytest (4000+ tests)
 
 ## License
 

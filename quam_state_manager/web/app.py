@@ -165,6 +165,43 @@ def _resource_path(relative: str) -> str:
     return os.path.join(os.path.dirname(__file__), relative)
 
 
+def _user_data_dir() -> str:
+    """The OS-conventional per-user data dir for the app (created on demand)."""
+    home = os.path.expanduser("~")
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
+    elif sys.platform == "darwin":
+        base = os.path.join(home, "Library", "Application Support")
+    else:
+        base = os.environ.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share")
+    path = os.path.join(base, "QUAM State Manager")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def default_instance_path() -> str | None:
+    """Where app state (working copies / history / settings) lives when the
+    caller didn't choose (r16 ①).
+
+    - PyInstaller bundle → the per-user data dir (the install dir is often
+      not writable — the original ``main._user_instance_path`` rationale).
+    - **pip-installed package** (``__file__`` under site-/dist-packages) →
+      the per-user data dir too: Flask's ``instance_relative_config`` would
+      otherwise derive ``<sys.prefix>/var/quam_state_manager.web-instance``,
+      unwritable under a system Python and surprising under any.
+    - Repo checkout / editable install (``__file__`` maps to a repo carrying
+      ``pyproject.toml``) → ``None`` (keep Flask's relative ``instance/`` —
+      the familiar dev layout every doc references).
+    """
+    if getattr(sys, "frozen", False):
+        return _user_data_dir()
+    pkg_root = Path(__file__).resolve().parent.parent      # quam_state_manager/
+    repo_marker = pkg_root.parent / "pyproject.toml"
+    if repo_marker.exists():
+        return None                                        # repo / editable dev
+    return _user_data_dir()
+
+
 def _purge_test_leftovers(instance_path: str) -> None:
     """Drop legacy test-tmp leftovers from the user's instance/ folder.
 
@@ -253,6 +290,15 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
         # instance/ folder. Auto-allocate a one-shot tmp instance dir.
         import tempfile
         instance_path = tempfile.mkdtemp(prefix="quam_test_instance_")
+
+    if instance_path is None:
+        # r16 ①: a pip-installed package must NOT let Flask derive the
+        # instance dir from __file__ — that lands in <sys.prefix>\var\... ,
+        # unwritable under a system Python, and every settings/working-copy/
+        # history write fails. Installed ⇒ the per-user data dir; running
+        # from a repo checkout (incl. editable installs, whose __file__ maps
+        # back to the repo) keeps the familiar repo instance/.
+        instance_path = default_instance_path()
 
     flask_kwargs: dict = {
         "template_folder": template_dir,
