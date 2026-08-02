@@ -87,7 +87,10 @@ def test_listing_sort_is_case_insensitive(client, tmp_path):
 
 
 @posix_only
-@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permission bits")
+# hasattr guard: os.geteuid does not exist on Windows and decorator args
+# evaluate at IMPORT — without it this module fails collection there.
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
+                    reason="root ignores permission bits")
 def test_permission_denied_reports_error(client, tmp_path):
     locked = tmp_path / "locked"
     locked.mkdir()
@@ -390,7 +393,10 @@ class TestMkdirHardening:
         r = client.post("/mkdir", data={"path": str(tmp_path), "name": "trail "})
         assert r.get_json()["ok"] is True
         assert (tmp_path / "trail").is_dir()
-        assert not (tmp_path / "trail ").exists()
+        # listdir, not .exists(): Windows path lookup itself strips trailing
+        # spaces, so ("trail ").exists() is True there merely because "trail"
+        # exists — only the directory listing shows the real on-disk name.
+        assert "trail " not in os.listdir(tmp_path)
 
     @pytest.mark.parametrize(
         "bad", ["CON", "con", "Com7", "lpt3", "NUL.backup", "aux.d"])

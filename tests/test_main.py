@@ -137,6 +137,12 @@ class TestMainFunction:
         )
         mock_webview.start.assert_called_once()
 
+    # _fatal_startup_error MUST be mocked: on win32 it pops a REAL modal
+    # MessageBoxW that blocks until a human clicks OK — this test hung the
+    # whole suite for hours on native Windows (it passed on POSIX, where the
+    # same helper only prints to stderr). The test is about the exit code,
+    # not the dialog.
+    @patch("quam_state_manager.main._fatal_startup_error")
     @patch("quam_state_manager.main.webview")
     @patch("quam_state_manager.main._wait_for_server", return_value=False)
     @patch("quam_state_manager.main._start_server")
@@ -149,6 +155,7 @@ class TestMainFunction:
         mock_start_server,
         mock_wait,
         mock_webview,
+        mock_fatal,
     ):
         from quam_state_manager.main import main
 
