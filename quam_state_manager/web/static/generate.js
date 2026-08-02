@@ -42,8 +42,8 @@
     namesTouched: false,
     muxSize: 6,           // step-4 "Qubits per readout feedline" (DOM-mirrored)
     outputPath: "",       // step-7 destination folder (DOM-mirrored)
-    scriptsEnabled: false, // step-7: also export the editable Python bundle
-    scriptsPath: "",       // …into this folder (DOM-mirrored)
+    scriptsEnabled: true,  // step-7: also export the editable Python bundle (r16 ⓪-4: default ON)
+    scriptsPath: "",       // …into this folder (DOM-mirrored; auto-follows the state folder until touched)
     // step-6 populate display units; overlaid from localStorage on entry
     populateUnits: { freq: "GHz", time: "ns", volt: "V", amp: "0-1" },
     // step-6 power input mode — "manual" (FSP + amplitude, today's flow) or
@@ -2947,11 +2947,18 @@
   // noBulk: a reason string excludes the column from the "Set all" row — LO is
   // auto-derived from RF (one shared value would break the IF window); grid
   // positions are unique per qubit.
+  // r16 ⓪-3: `band` is user-settable. The Nyquist bands OVERLAP (band 2 =
+  // 4.5–7.5 GHz, band 3 = 6.5–10.5 GHz): an LO in 6.5–7.5 GHz is legal in
+  // BOTH, and the auto-pick (bandOf, first match) chose band 2 where real
+  // chips run band 3. Empty cell = auto (derived from the LO at build).
   var POP_QUBIT_COLS = [
     { field: "RF_freq", label: "RF freq", dim: "freq" },
     { field: "anharmonicity", label: "anharm.", dim: "freq" },
     { field: "LO_frequency", label: "LO", dim: "freq",
       noBulk: "Auto-derived from RF freq to stay within the LO's IF window" },
+    { field: "band", label: "band", kind: "select",
+      options: ["", "1", "2", "3"],
+      noBulk: "Band follows each port's LO unless overridden per qubit" },
     { field: "full_scale_power_dbm", label: "FSP (dBm)" },
     { field: "grid_location", label: "grid", kind: "text",
       noBulk: "Grid position is unique per qubit" }
@@ -2960,6 +2967,9 @@
     { field: "RF_freq", label: "RF freq", dim: "freq" },
     { field: "LO_frequency", label: "LO", dim: "freq",
       noBulk: "Auto-derived from RF freq to stay within the LO's IF window" },
+    { field: "band", label: "band", kind: "select",
+      options: ["", "1", "2", "3"],
+      noBulk: "Band follows each port's LO unless overridden per qubit" },
     { field: "depletion_time", label: "depletion", dim: "time" },
     { field: "time_of_flight", label: "ToF", dim: "time" },
     { field: "readout_length", label: "readout len", dim: "time" },
@@ -3269,6 +3279,11 @@
     raw = (raw == null ? "" : String(raw)).trim();
     if (raw === "") {
       delete bucket[col.field];
+    } else if (col.field === "band") {
+      // stored as an INT — run_build's override gate is `band in (1, 2, 3)`
+      var b = parseInt(raw, 10);
+      if (b === 1 || b === 2 || b === 3) bucket[col.field] = b;
+      else delete bucket[col.field];
     } else if (col.kind === "text" || col.kind === "select") {
       bucket[col.field] = raw;
     } else if (col.dim === "amp") {
@@ -3368,6 +3383,7 @@
       pop[group] = pop[group] || {};
       pop[group][rid] = pop[group][rid] || {};
       setPopValue(pop[group][rid], col, input.value, group, rid);
+      markPopulateTouched(group, rid, col.field);   // populate-protect (docs/72)
       if (Object.keys(pop[group][rid]).length === 0) {
         delete pop[group][rid];
       }
@@ -3450,6 +3466,7 @@
       rowIds.forEach(function (rid) {
         pop[group][rid] = pop[group][rid] || {};
         setPopValue(pop[group][rid], col, input.value, group, rid);
+        markPopulateTouched(group, rid, col.field);   // populate-protect
         if (Object.keys(pop[group][rid]).length === 0) {
           delete pop[group][rid];
         }
@@ -4271,21 +4288,42 @@
   }
 
   // Write computed LOs into the spec and refresh the live LO cells.
-  function applyLoAssignments(assignments) {
+  // opts.force: overwrite existing LOs (the explicit "Re-solve LOs" action).
+  // In regenerate mode the default is FILL-ONLY-EMPTY — the chip's real LOs
+  // (reconstructed into the spec) must not be silently replaced by the
+  // solver on every Populate-step entry (docs/72 amplifier fix); a forced
+  // re-solve records the changed cells as user-touched for populate-protect.
+  function applyLoAssignments(assignments, opts) {
+    var o = opts || {};
+    var fillOnly = state.mode === "regenerate" && !o.force;
     var pop = state.spec.populate;
     Object.keys(assignments).forEach(function (key) {
       var cut = key.indexOf("/");
       var group = key.slice(0, cut), rid = key.slice(cut + 1);
       pop[group] = pop[group] || {};
       pop[group][rid] = pop[group][rid] || {};
+      var had = pop[group][rid].LO_frequency;
+      if (fillOnly && had != null && had !== "") return;
+      if (o.force && had !== assignments[key]) {
+        markPopulateTouched(group, rid, "LO_frequency");
+      }
       pop[group][rid].LO_frequency = assignments[key];
     });
     document.querySelectorAll(
       '.gen-pop-in[data-field="LO_frequency"]').forEach(function (input) {
+      if (input.dataset.dirty === "1") return;   // never clobber mid-typing
       var bucket = (pop[input.dataset.group] || {})[input.dataset.rid] || {};
       input.value = (bucket.LO_frequency == null)
         ? "" : toDisplayValue(bucket.LO_frequency, "freq");
     });
+  }
+
+  // Populate-protect bookkeeping (docs/72): cells the user explicitly owns
+  // this wizard session — typed, Set-all'd, preset-applied or re-solved.
+  function markPopulateTouched(group, rid, field) {
+    if (state.mode !== "regenerate") return;
+    if (!state.regenTouched) state.regenTouched = {};
+    state.regenTouched[group + "|" + rid + "|" + field] = 1;
   }
 
   // -- step 6: LO-group visualisation ----------------------------------
@@ -4359,6 +4397,22 @@
     summary.textContent = "LO map — " + n + " LO group" + (n === 1 ? "" : "s") +
       ", " + m + " MW-FEM" + (m === 1 ? "" : "s");
 
+    // Regenerate keeps the chip's REAL LOs (fill-only-empty, docs/72) — the
+    // explicit re-solve is the user's opt-in to the solver's picks, and it
+    // marks the changed cells touched so populate-protect carries them.
+    if (state.mode === "regenerate") {
+      var rs = document.createElement("button");
+      rs.type = "button";
+      rs.className = "btn-sm outline gen-lo-resolve";
+      rs.textContent = "Re-solve LOs";
+      rs.title = "Replace the chip's stored LO frequencies with the " +
+        "solver's optimal picks (min max|IF| within band windows)";
+      rs.addEventListener("click", function () {
+        recomputeLOs({ force: true });
+      });
+      body.appendChild(rs);
+    }
+
     var lastFem = null;
     calc.groups.forEach(function (g) {
       var femKey = "con" + g.con + " · slot" + g.slot;
@@ -4431,9 +4485,9 @@
   // Recompute + apply the MW-FEM LOs, colour the LO cells and the LO-map
   // panel, then render the conflict panel + diagram rings.
   // computeLoAssignments() returns an empty result with no allocation yet.
-  function recomputeLOs() {
+  function recomputeLOs(opts) {
     var calc = computeLoAssignments();
-    applyLoAssignments(calc.assignments);
+    applyLoAssignments(calc.assignments, opts);
     assignGroupColors(calc.groups);
     decorateLoCells(calc);
     decorateReadoutFSPCells(calc);
@@ -5275,6 +5329,10 @@
         var b = pop[sec][rid] = pop[sec][rid] || {};
         if (!overwrite && b[f] != null && b[f] !== "") return;
         b[f] = v;
+        // Preset Apply is a user action — its fills are populate-protect
+        // touched cells in regen mode (docs/72). autoApplyStandardDefaults
+        // never runs there, so this can't taint the baseline with synthetics.
+        markPopulateTouched(sec, rid, f);
         report.applied++;
       }
       var defaults = body.defaults || {};
@@ -5303,6 +5361,11 @@
   // in the draft, a cell the user deliberately clears afterwards stays
   // cleared on the next visit.
   function autoApplyStandardDefaults() {
+    // Regenerate shows a REAL chip's values — auto-filling blanks with the
+    // synthetic standard preset would present defaults the chip never had
+    // (and poison the populate-protect baseline diff, docs/72). The preset
+    // bar's explicit Apply stays available (and records touched cells).
+    if (state.mode === "regenerate") return;
     if (state.autoPresetApplied) return;
     state.autoPresetApplied = true;
     saveDraft();
@@ -5525,6 +5588,24 @@
     return input ? input.value.trim() : (state.scriptsPath || "");
   }
 
+  // r16 ⓪-4: the scripts path FOLLOWS the state output folder
+  // (`<output>\state_gen_scripts`) until the user edits the box themselves.
+  function autoScriptsPath(outPath) {
+    var p = (outPath || "").trim();
+    if (!p) return "";
+    var win = /\\/.test(p) || /^[A-Za-z]:/.test(p);
+    var sep = win ? "\\" : "/";
+    p = p.replace(/[\\/]+$/, "");
+    return p + sep + "state_gen_scripts";
+  }
+
+  function maybeFollowScriptsPath() {
+    if (state._scriptsPathTouched) return;
+    state.scriptsPath = autoScriptsPath(state.outputPath);
+    var sp = document.getElementById("gen-scripts-path");
+    if (sp) sp.value = state.scriptsPath;
+  }
+
   // Mirror the DOM-only output-path field into state so it persists in a draft.
   function bindOutputStep() {
     var out = document.getElementById("gen-output-path");
@@ -5539,6 +5620,7 @@
           // tab close) used to silently lose the output folder.
           try { localStorage.setItem("quam_gen_output_path", state.outputPath); }
           catch (e) { /* private mode */ }
+          maybeFollowScriptsPath();     // r16 ⓪-4: live-follow until touched
         });
       });
     }
@@ -5555,6 +5637,7 @@
     if (sp) {
       ["input", "change"].forEach(function (ev) {
         sp.addEventListener(ev, function () {
+          state._scriptsPathTouched = true;   // user owns the box from here on
           state.scriptsPath = sp.value.trim();
           try { localStorage.setItem("quam_gen_scripts_path", state.scriptsPath); }
           catch (e) { /* private mode */ }
@@ -5985,12 +6068,18 @@
         var twpaN = m.twpa_wiring_carried || 0;     // TWPAs carried (wiring + ports)
         var prunedN = m.pruned_ops || 0;            // redundant old ops cleaned
         var schemaDropN = m.schema_dropped || 0;    // old-stack fields the new env's classes don't know
+        var popProtN = m.populate_protected || 0;   // wizard populate edits kept over tier-1
+        var popConf = m.populate_conflicts || [];
         var mp = document.createElement("div");
         mp.className = "gen-merge-report";
         mp.innerHTML =
           '<span class="gen-merge-h">Values preserved</span>' +
           '<span class="gen-merge-stat gen-merge-ok">' + m.carried + ' carried</span>' +
           '<span class="gen-merge-stat gen-merge-graft">' + m.grafted + ' grafted</span>' +
+          (popProtN ? '<span class="gen-merge-stat gen-merge-ok" title="Values you ' +
+            'changed in the Populate step — kept as edited (the merge no longer ' +
+            'reverts wizard edits to the old chip\'s values)">' + popProtN +
+            ' populate edit' + (popProtN === 1 ? '' : 's') + ' applied</span>' : '') +
           (supN ? '<span class="gen-merge-stat gen-merge-ok" title="Value preserved — the ' +
             'rebuild references it (e.g. a CZ pulse the old builder stored inline, now on the ' +
             'qubit z line)">' + supN + ' via reference</span>' : '') +
@@ -6006,8 +6095,18 @@
             'Quam.load() fail, so they were dropped">' + schemaDropN +
             ' cross-gen dropped</span>' : '') +
           (dangN ? '<span class="gen-merge-stat gen-merge-warn" title="Grafted legacy content ' +
-            'whose reference no longer resolves">' + dangN + ' broken ref</span>' : '');
+            'whose reference no longer resolves">' + dangN + ' broken ref</span>' : '') +
+          (popConf.length ? '<span class="gen-merge-stat gen-merge-warn" ' +
+            'title="A derived value (z-port delay) was NOT auto-updated because ' +
+            'the old value looks hand-tuned — verify it matches the new band">' +
+            popConf.length + ' delay kept — verify</span>' : '');
         el.appendChild(mp);
+        popConf.slice(0, 5).forEach(function (c) {
+          var cl = document.createElement("div");
+          cl.className = "gen-merge-muted gen-merge-detail";
+          cl.textContent = c;
+          el.appendChild(cl);
+        });
         if (prunedN) {
           var pn = document.createElement("div");
           pn.className = "gen-merge-muted gen-merge-detail";
@@ -6244,7 +6343,16 @@
         force: !!state._buildForce, ack_degrades: !!state._buildAck,
         source_folder: state.sourcePath || null,  // regenerate: merge from here
         // optional editable-scripts export (step 7 checkbox)
-        scripts_dir: (state.scriptsEnabled && state.scriptsPath) || null
+        scripts_dir: (state.scriptsEnabled && state.scriptsPath) || null,
+        // populate-protect (docs/72): the hydration-time populate snapshot +
+        // explicitly-touched cells — the server diffs them against
+        // spec.populate so in-wizard edits beat the tier-1 value merge.
+        populate_baseline: state.mode === "regenerate"
+          ? (state.regenBaselinePopulate || {}) : null,
+        populate_touched: state.mode === "regenerate"
+          ? Object.keys(state.regenTouched || {}).map(function (k) {
+              return k.split("|");
+            }) : null
       })
     })
       .then(function (r) { return r.json(); })
@@ -6399,7 +6507,10 @@
       try { state.outputPath = localStorage.getItem("quam_gen_output_path") || ""; }
       catch (e) { /* private mode */ }
     }
-    state.scriptsEnabled = !!d.scriptsEnabled;
+    // r16 ⓪-4: scripts export defaults ON — only an explicit false (a draft
+    // where the user unticked it) keeps it off; old drafts/hydrate payloads
+    // that never carried the flag now get the new default.
+    state.scriptsEnabled = d.scriptsEnabled !== false;
     // CR options — old drafts lack them: dedicated ports, no ZZ (the
     // historical behavior).
     state.crPortMode = (d.crPortMode === "shared_xy") ? "shared_xy" : "dedicated";
@@ -6409,6 +6520,10 @@
       try { state.scriptsPath = localStorage.getItem("quam_gen_scripts_path") || ""; }
       catch (e) { /* private mode */ }
     }
+    // A restored non-empty path is the user's earlier explicit choice; an
+    // empty one auto-follows the state folder until they touch the box.
+    state._scriptsPathTouched = !!state.scriptsPath;
+    maybeFollowScriptsPath();
     // Line-type toggles — default true for backward compat with old drafts.
     state.qubitFlux = d.qubitFlux !== false;
     state.couplerFlux = d.couplerFlux !== false;
@@ -6484,8 +6599,9 @@
     state.pairGate = "cz_tunable";
     state.muxSize = 6;
     state.outputPath = "";
-    state.scriptsEnabled = false;
+    state.scriptsEnabled = true;      // r16 ⓪-4 default
     state.scriptsPath = "";
+    state._scriptsPathTouched = false;
     try {
       localStorage.removeItem("quam_gen_output_path");
       localStorage.removeItem("quam_gen_scripts_path");
@@ -6727,6 +6843,16 @@
     state.mode = o.mode || "regenerate";
     state.buildEndpoint = o.buildEndpoint || "/regenerate/build";
     state.sourcePath = o.sourcePath || null;
+    // Populate-protect baseline (docs/72): snapshot EXACTLY what this wizard
+    // session displays. The build POST ships it back verbatim; the server
+    // diffs it against the edited populate so only the user's in-wizard edits
+    // beat the tier-1 value merge. Regen mode never persists drafts, so a
+    // refresh re-hydrates a fresh, consistent baseline.
+    try {
+      state.regenBaselinePopulate =
+          JSON.parse(JSON.stringify((spec && spec.populate) || {}));
+    } catch (e) { state.regenBaselinePopulate = {}; }
+    state.regenTouched = {};
     repaintFromState();
     // repaintFromState() only syncs the scalar inputs — the Chassis grid, the
     // Qubits pair list, and the chip board render separately. Force them from the
@@ -6786,6 +6912,15 @@
       hideSlotMenu: hideSlotMenu,
       uiZoom: uiZoom,
       attachWiringDrag: attachWiringDrag,
+      // r16 populate-protect + scripts seams (docs/72) — not public API
+      applyLoAssignments: applyLoAssignments,
+      autoApplyStandardDefaults: autoApplyStandardDefaults,
+      markPopulateTouched: markPopulateTouched,
+      autoScriptsPath: autoScriptsPath,
+      maybeFollowScriptsPath: maybeFollowScriptsPath,
+      POP_QUBIT_COLS: POP_QUBIT_COLS,
+      POP_RESONATOR_COLS: POP_RESONATOR_COLS,
+      setPopValue: setPopValue,
       state: state
     }
   };

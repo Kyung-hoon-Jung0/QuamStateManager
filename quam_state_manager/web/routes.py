@@ -14968,6 +14968,13 @@ def regenerate_reconstruct():
         rec = regenerate.reconstruct_from_folder(folder, sidecar_dirs=sidecar_dirs)
     except (OSError, ValueError) as exc:
         return jsonify({"ok": False, "error": f"Could not read {folder}: {exc}"}), 400
+    except Exception as exc:  # noqa: BLE001 — users hand-edit state/wiring
+        # freely (docs/72); an unexpected shape must degrade to an honest
+        # message, never a blank wizard on a raw 500.
+        logger.exception("reconstruct failed on %s", folder)
+        return jsonify({"ok": False,
+                        "error": f"Could not reconstruct a spec from {folder}: "
+                                 f"{type(exc).__name__}: {exc}"}), 500
     ident = _active_chip_identity()
     # Chip↔env flavor mismatch warnings ride the notes so the wizard shows them
     # before the user reaches the build step (the probe is version-keyed cached
@@ -15005,6 +15012,15 @@ def regenerate_build():
     # Working copy (see regenerate_reconstruct) so the value-merge carries in-app
     # edits, not the stale live files.
     source_folder = (data.get("source_folder") or "").strip() or _ctx_path()
+    # Populate-protect inputs (docs/72): the wizard's hydration-time populate
+    # snapshot + explicitly-touched cells. Absent ⇒ legacy merge behavior.
+    populate_baseline = data.get("populate_baseline")
+    if not isinstance(populate_baseline, dict):
+        populate_baseline = None
+    populate_touched = data.get("populate_touched")
+    if not isinstance(populate_touched, list):
+        populate_touched = None
+    scripts_dir = (data.get("scripts_dir") or "").strip() or None
 
     errors = config_generator.validate_spec(spec)
     if errors:
@@ -15019,6 +15035,11 @@ def regenerate_build():
     source_folder, path_err = _ingest_abs_path(source_folder)
     if path_err:
         return jsonify({"ok": False, "error": f"Source folder: {path_err}"}), 400
+    if scripts_dir:
+        scripts_dir, path_err = _ingest_abs_path(scripts_dir)
+        if path_err:
+            return jsonify({"ok": False,
+                            "error": f"Scripts folder: {path_err}"}), 400
     out_p, src_p = Path(output_path), Path(source_folder)
     # samefile-grounded when the output EXISTS — a case-variant spelling on a
     # case-insensitive FS bypasses resolve()-equality and the rebuild would
@@ -15064,7 +15085,10 @@ def regenerate_build():
             return jsonify(guard)
 
     outcome = regenerate.run_regenerate(
-        python_path, source_folder, spec, Path(output_path), timeout=600
+        python_path, source_folder, spec, Path(output_path), timeout=600,
+        populate_baseline=populate_baseline,
+        populate_touched=populate_touched,
+        scripts_dir=scripts_dir,
     )
     return jsonify(outcome)
 

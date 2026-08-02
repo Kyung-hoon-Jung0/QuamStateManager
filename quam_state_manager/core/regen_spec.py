@@ -419,7 +419,10 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
     # Resonators: group qubits sharing one output port (multiplexed feedline).
     res_groups: dict[tuple, list[str]] = defaultdict(list)
     for q, ch in (wire.get("qubits") or {}).items():
-        rr = ch.get("rr", {}) if isinstance(ch, dict) else {}
+        # `or {}` (not a .get default): real chips carry channels EXPLICITLY
+        # null'd ("rr": null — Explorer nulling / hand edits produce it), and
+        # .get's default never fires on a present-but-None key.
+        rr = (ch.get("rr") or {}) if isinstance(ch, dict) else {}
         o = _parse_port(rr.get("opx_output"))
         i = _parse_port(rr.get("opx_input"))
         if not o:
@@ -438,13 +441,13 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
     for q, ch in (wire.get("qubits") or {}).items():
         if not isinstance(ch, dict):
             continue
-        p = _parse_port(ch.get("xy", {}).get("opx_output"))
+        p = _parse_port((ch.get("xy") or {}).get("opx_output"))
         if p:
             xy_ports[q] = p
             note_fem(p[0], p[1], p[2])
             lines.append({"element": q, "line": "drive",
                           "channel": {"kind": "mw_fem", "con": p[1], "slot": p[2], "out_port": p[3]}})
-        p = _parse_port(ch.get("z", {}).get("opx_output"))
+        p = _parse_port((ch.get("z") or {}).get("opx_output"))
         if p:
             note_fem(p[0], p[1], p[2])
             lines.append({"element": q, "line": "flux",
@@ -464,8 +467,24 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
     # a visible note — the compare engine's pair_orphans treats the same data
     # the same way — and keep their ids so the populate overrides extracted
     # later are dropped too, not silently carried under a phantom key.
-    qubit_names = (list((wire.get("qubits") or {}).keys())
-                   or list((state.get("qubits") or {}).keys()))
+    # Adaptive qubit inventory (r16, docs/72): wiring-first ORDER (ports
+    # allocate in wiring order) but UNION with state — a user-trimmed wiring
+    # must not silently drop a state qubit (and, through the membership gate
+    # below, its pairs). State-only qubits carry no pinned lines; the
+    # allocator assigns their ports fresh on build.
+    wire_qs = list((wire.get("qubits") or {}).keys())
+    _wire_set = set(wire_qs)
+    state_qs = list((state.get("qubits") or {}).keys())
+    _state_set = set(state_qs)
+    qubit_names = wire_qs + [q for q in state_qs if q not in _wire_set]
+    if _wire_set:                       # partial trim — say what differs
+        for q in qubit_names:
+            if q not in _wire_set:
+                notes.append(f"qubit {q!r} has no wiring channels — its "
+                             "ports will be auto-allocated on build.")
+            elif _state_set and q not in _state_set:
+                notes.append(f"qubit {q!r} exists only in wiring — no state "
+                             "entry; the rebuild creates it with defaults.")
     known_qubits = set(qubit_names)
     dropped_pairs: set[str] = set()
     pairs: list[list[str]] = []
@@ -478,7 +497,7 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
         ctrl = str(p.get("qubit_control", "")).split("/")[-1]
         tgt = str(p.get("qubit_target", "")).split("/")[-1]
         wp = wire_pairs.get(pid, {}) if isinstance(wire_pairs.get(pid), dict) else {}
-        c = wp.get("c", {}) if isinstance(wp, dict) else {}
+        c = (wp.get("c") or {}) if isinstance(wp, dict) else {}
         if not ctrl:
             ctrl = str(c.get("control_qubit", "")).split("/")[-1]
         if not tgt:
@@ -534,7 +553,9 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
     # rows there ("Every TWPA needs an id" — the review-r6 TWPA-loss report).
     # validate_spec + run_build accept both shapes, so old sidecars stay valid.
     twpa_ids: list[dict] = []
-    state_twpas = state.get("twpas") or {}
+    state_twpas = state.get("twpas")
+    if not isinstance(state_twpas, dict):     # real chips ship "twpas": []
+        state_twpas = {}
     for tid, ch in (wire.get("twpas") or {}).items():
         if not isinstance(ch, dict):
             continue
@@ -560,9 +581,6 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
             note_fem(iso[0], iso[1], iso[2])
             lines.append({"element": tid, "line": "twpa_isolation",
                           "channel": {"kind": "mw_fem", "con": iso[1], "slot": iso[2], "out_port": iso[3]}})
-
-    controllers = [{"con": con, "fems": [{"slot": s, "fem": ft} for s, ft in sorted(sl)]}
-                   for con, sl in sorted(fems.items())]
 
     pair_gate, mixed = _detect_pair_gate(state)
     if mixed:
@@ -631,6 +649,44 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
                 f"pair {pid!r} existed only in wiring (state pair deleted) — "
                 f"recovered its {ltype} line; the rebuild re-creates the pair "
                 "with DEFAULT values (no calibration to merge).")
+
+    # Adaptive FEM inventory (r16, docs/72): the channel scans above derive
+    # FEMs ONLY from live channel pointers, so a user-trimmed wiring (a
+    # channel deleted or nulled) silently dropped the whole FEM even though
+    # the chip's ports section still declares it — the SNU-17Q "slot 7
+    # disappeared" report: one z channel was that slot's only user. Union
+    # the declared ports inventory in (state.json OR wiring.json may carry
+    # "ports"); channel evidence wins slot-type conflicts. Assembled HERE —
+    # after every note_fem caller including the wiring-only-pairs recovery
+    # loop above, whose FEMs the old early assembly silently lost.
+    for ports_root in (state.get("ports"), wiring.get("ports")):
+        if not isinstance(ports_root, dict):
+            continue
+        for cat in ("mw_outputs", "mw_inputs", "analog_outputs", "analog_inputs"):
+            cons = ports_root.get(cat)
+            ft = _fem_type(cat)
+            if not isinstance(cons, dict) or not ft:
+                continue
+            for con_key, slots in cons.items():
+                m = re.match(r"con(\d+)$", str(con_key))
+                if not m or not isinstance(slots, dict):
+                    continue
+                con_n = int(m.group(1))
+                have = {s for s, _ in fems[con_n]}
+                for slot_key in slots:            # keys are STRINGS ("7")
+                    if not str(slot_key).isdigit():
+                        continue                  # "__class__" and friends
+                    slot_n = int(slot_key)
+                    if slot_n in have:
+                        continue                  # channel evidence owns it
+                    fems[con_n].add((slot_n, ft))
+                    have.add(slot_n)
+                    notes.append(
+                        f"slot con{con_n}/{slot_n} ({ft.upper()}-FEM) has no "
+                        "channel pointer — kept from the ports inventory.")
+
+    controllers = [{"con": con, "fems": [{"slot": s, "fem": ft} for s, ft in sorted(sl)]}
+                   for con, sl in sorted(fems.items())]
 
     spec = {
         "network": {"host": net.get("host"), "cluster_name": net.get("cluster_name"),

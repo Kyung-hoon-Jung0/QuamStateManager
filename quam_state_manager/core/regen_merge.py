@@ -128,6 +128,8 @@ class MergeStats:
     dangling_grafts: list[str] = field(default_factory=list)  # grafts w/ broken abs pointer (after prune)
     pruned_ops: list[str] = field(default_factory=list)      # redundant old ops removed by prune
     schema_dropped: list[str] = field(default_factory=list)  # OLD-only fields the NEW env's class schema doesn't know (cross-generation rename/removal)
+    populate_protected: list[str] = field(default_factory=list)  # user populate edits kept as NEW over tier-1 (docs/72)
+    populate_conflicts: list[str] = field(default_factory=list)  # hand-tuned OLD values kept where a populate edit implied a derived change (z delay)
 
 
 @dataclass
@@ -137,7 +139,8 @@ class MergeResult:
 
 
 def _merge(old: Any, new: Any, path: str, stats: MergeStats,
-           schemas: dict[str, list[str]] | None = None) -> Any:
+           schemas: dict[str, list[str]] | None = None,
+           protect: set[str] | None = None) -> Any:
     if isinstance(old, dict) and isinstance(new, dict):
         out: dict = {}
         for k, nv in new.items():
@@ -153,7 +156,7 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
                 continue
             if k in old:
                 out[k] = _merge(old[k], nv, f"{path}.{k}" if path else k,
-                                stats, schemas)
+                                stats, schemas, protect)
             else:
                 out[k] = copy.deepcopy(nv)
                 stats.kept_new_only += _count_leaves(nv)
@@ -202,6 +205,14 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
     if is_pointer(new) or is_pointer(old):              # structure/pointer -> NEW
         stats.kept_new_pointer += 1
         return new
+    if protect and path in protect:
+        # Populate-protect (docs/72): this leaf carries a value the user
+        # DELIBERATELY changed in the re-generate wizard's Populate step —
+        # the fresh build already applied it; tier-1 carrying the OLD value
+        # here would silently revert the user's edit (the r16 report: "the
+        # whole point of re-gen is changing existing values").
+        stats.populate_protected.append(path)
+        return copy.deepcopy(new)
     stats.carried += 1                                   # tier 1: carry calibration
     return copy.deepcopy(old)
 
@@ -444,7 +455,8 @@ def graft_twpa_wiring(merged_state: dict, old_state: dict,
 
 
 def merge_states(old_state: dict, new_state: dict,
-                 class_schemas: dict[str, list[str]] | None = None) -> MergeResult:
+                 class_schemas: dict[str, list[str]] | None = None,
+                 protect_paths: set[str] | None = None) -> MergeResult:
     """Merge the OLD calibrated state onto the NEW rebuilt structure.
 
     Returns the merged state plus :class:`MergeStats`. ``stats.residual_lost``
@@ -462,11 +474,17 @@ def merge_states(old_state: dict, new_state: dict,
     paths land in ``stats.schema_dropped`` (never silent). ``None`` or a class
     missing from the map ⇒ legacy behavior (graft), so old build results and
     probe failures degrade safely.
+
+    ``protect_paths`` — optional set of merged-tree dot-paths whose NEW value
+    must win over tier-1 (the user's deliberate Populate-step edits, expanded
+    by :mod:`regen_populate`). Protected leaves land in
+    ``stats.populate_protected``; ``None`` ⇒ legacy behavior.
     """
     stats = MergeStats()
     new_state = _reconcile_pair_ids(old_state, new_state)   # align pair ids first
-    merged = _merge(old_state, new_state, "", stats, class_schemas)
+    merged = _merge(old_state, new_state, "", stats, class_schemas, protect_paths)
     stats.schema_dropped.sort()
+    stats.populate_protected.sort()
 
     merged_paths = {p for p, _ in _iter_leaves(merged)}
     old_scalars = [(p, v) for p, v in _iter_leaves(old_state)

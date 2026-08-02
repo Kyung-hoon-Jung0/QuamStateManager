@@ -310,3 +310,18 @@ Emitted-bundle machinery gained ``_match_populate_pairs`` (golden regenerated).
 Pinned by ``TestMatchPopulatePairs`` + the control-target keying tests in
 ``tests/test_regen_spec.py``; verified end-to-end on the audit chip — the
 previously-warning spec now builds with zero warnings and uniform seeding.
+
+## Amendment (2026-08-03, r16 — docs/72): adaptive reconstruction + populate-protect
+
+Two structural fixes moved into `docs/72_regen_adaptive_fidelity.md` (the
+reference): ① `reconstruct_spec` unions the chip's declared **ports
+inventory** into the FEM set (a slot whose only channel was trimmed/nulled
+no longer vanishes — the SNU-17Q slot-7 report), derives qubits as
+wiring ∪ state, tolerates explicit-null channels, and assembles controllers
+AFTER the wiring-only-pairs recovery; ② the value merge accepts
+`protect_paths` — the expanded dot-paths of the user's in-wizard Populate
+edits (`core/regen_populate.py`, baseline shipped from hydration) — so a
+populate edit is no longer silently reverted by tier-1. New transparency
+counters: `populate_protected`, `populate_conflicts`. `/regenerate/build`
+also honors `scripts_dir` now (the bundle used to hardcode
+`<out>/build_scripts/`).

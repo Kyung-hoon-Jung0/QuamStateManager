@@ -15,8 +15,8 @@
 window.WiringGrid = (function () {
   "use strict";
 
-  var CELL = 40;            // px per grid cell
-  var STONE_R = 15;         // stone radius px
+  var CELL = 52;            // px per grid cell (r16 ⓪-5: +30% — customers found the board too small)
+  var STONE_R = 20;         // stone radius px (scaled with CELL)
   var DRAG_THRESHOLD = 4;   // px before a press becomes a drag
 
   // UI-only state (the source of truth is state.spec).
@@ -193,14 +193,16 @@ window.WiringGrid = (function () {
         var dx = pb.x - pa.x, dy = pb.y - pa.y, L = Math.sqrt(dx * dx + dy * dy) || 1;
         var ux = dx / L, uy = dy / L;
         var tx = pb.x - ux * STONE_R, ty = pb.y - uy * STONE_R;   // tip at stone rim
-        var bx = tx - ux * 9, by = ty - uy * 9;                   // base, 9px back
+        var ah = STONE_R * 0.6, aw = STONE_R * 0.27;              // scale with the stones
+        var bx = tx - ux * ah, by = ty - uy * ah;
         var nx = -uy, ny = ux;                                    // perpendicular
-        var pts = (bx + nx * 4) + "," + (by + ny * 4) + " " +
-                  (bx - nx * 4) + "," + (by - ny * 4) + " " + tx + "," + ty;
+        var pts = (bx + nx * aw) + "," + (by + ny * aw) + " " +
+                  (bx - nx * aw) + "," + (by - ny * aw) + " " + tx + "," + ty;
         lines += '<polygon class="gen-topo-arrow" data-edge="' + esc(pid) + '" points="' + pts + '"/>';
       } else if (es === "coupler") {
         lines += '<circle class="gen-topo-coupler" data-edge="' + esc(pid) +
-                 '" cx="' + ((pa.x + pb.x) / 2) + '" cy="' + ((pa.y + pb.y) / 2) + '" r="5"/>';
+                 '" cx="' + ((pa.x + pb.x) / 2) + '" cy="' + ((pa.y + pb.y) / 2) +
+                 '" r="' + Math.round(STONE_R / 3) + '"/>';
       }
     }
     html += '<svg class="gen-topo-edges" width="' + W + '" height="' + H + '">' + lines + '</svg>';

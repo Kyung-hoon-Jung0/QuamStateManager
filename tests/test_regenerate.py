@@ -279,3 +279,85 @@ class TestMatchPopulatePairs:
         resolved, unmatched = rb._match_populate_pairs(pop, ["q1-0"])
         assert resolved == {"q1-0": {"exact": True}}
         assert unmatched == []
+
+
+def test_populate_baseline_protects_wizard_edit(tmp_path, monkeypatch):
+    # r16 (docs/72): a value the user CHANGED in the wizard's Populate step
+    # must survive the merge; untouched values still tier-1 carry.
+    (tmp_path / "old").mkdir()
+    old_state = {"qubits": {"q1": {"f_01": 5.0e9, "anharmonicity": -2.0e8}},
+                 "active_qubit_names": ["q1"]}
+    (tmp_path / "old" / "state.json").write_text(json.dumps(old_state))
+    (tmp_path / "old" / "wiring.json").write_text(json.dumps({"wiring": {}, "network": {}}))
+
+    # build applies the edited populate: f_01 = 5.2e9 (user edit), anharm default
+    fresh = {"qubits": {"q1": {"f_01": 5.2e9, "anharmonicity": -1.9e8}},
+             "active_qubit_names": ["q1"]}
+
+    def fake_build(python_path, mode, spec, out_dir, timeout=300):
+        out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "state.json").write_text(json.dumps(fresh))
+        (out_dir / "wiring.json").write_text(json.dumps({"wiring": {}, "network": {}}))
+        return {"ok": True, "status": "ok", "error": None, "result": {}}
+
+    monkeypatch.setattr(regenerate.config_generator, "run_generator", fake_build)
+    spec = {"qubits": ["q1"],
+            "populate": {"qubit": {"q1": {"RF_freq": 5.2e9}}}}
+    baseline = {"qubit": {"q1": {"RF_freq": 5.0e9}}}   # what the wizard showed
+    out = regenerate.run_regenerate("py", tmp_path / "old", spec,
+                                    tmp_path / "new",
+                                    populate_baseline=baseline)
+    assert out["ok"] is True
+    merged = json.loads((tmp_path / "new" / "state.json").read_text())
+    assert merged["qubits"]["q1"]["f_01"] == 5.2e9        # user edit KEPT
+    assert merged["qubits"]["q1"]["anharmonicity"] == -2.0e8  # tier-1 carry
+    assert out["merge"]["populate_protected"] == 1
+    assert out["merge"]["populate_protected_paths"] == ["qubits.q1.f_01"]
+
+
+def test_no_baseline_is_legacy_byte_identical(tmp_path, monkeypatch):
+    (tmp_path / "old").mkdir()
+    old_state = {"qubits": {"q1": {"f_01": 5.0e9}}, "active_qubit_names": ["q1"]}
+    (tmp_path / "old" / "state.json").write_text(json.dumps(old_state))
+    (tmp_path / "old" / "wiring.json").write_text(json.dumps({"wiring": {}, "network": {}}))
+    fresh = {"qubits": {"q1": {"f_01": 5.2e9}}, "active_qubit_names": ["q1"]}
+
+    def fake_build(python_path, mode, spec, out_dir, timeout=300):
+        out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "state.json").write_text(json.dumps(fresh))
+        (out_dir / "wiring.json").write_text(json.dumps({"wiring": {}, "network": {}}))
+        return {"ok": True, "status": "ok", "error": None, "result": {}}
+
+    monkeypatch.setattr(regenerate.config_generator, "run_generator", fake_build)
+    out = regenerate.run_regenerate(
+        "py", tmp_path / "old",
+        {"qubits": ["q1"], "populate": {"qubit": {"q1": {"RF_freq": 5.2e9}}}},
+        tmp_path / "new")
+    merged = json.loads((tmp_path / "new" / "state.json").read_text())
+    assert merged["qubits"]["q1"]["f_01"] == 5.0e9        # legacy tier-1 revert
+    assert out["merge"]["populate_protected"] == 0
+
+
+def test_scripts_dir_param_replaces_hardcoded_folder(tmp_path, monkeypatch):
+    # r16 ⓪-4: /regenerate/build's scripts_dir must land the bundle THERE,
+    # not in the hardcoded <out>/build_scripts.
+    (tmp_path / "old").mkdir()
+    (tmp_path / "old" / "state.json").write_text(json.dumps(
+        {"qubits": {"q1": {}}, "active_qubit_names": []}))
+    (tmp_path / "old" / "wiring.json").write_text(json.dumps({"wiring": {}, "network": {}}))
+
+    def fake_build(python_path, mode, spec, out_dir, timeout=300):
+        out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "state.json").write_text(json.dumps({"qubits": {"q1": {}}}))
+        (out_dir / "wiring.json").write_text(json.dumps({"wiring": {}, "network": {}}))
+        return {"ok": True, "status": "ok", "error": None, "result": {}}
+
+    monkeypatch.setattr(regenerate.config_generator, "run_generator", fake_build)
+    scripts = tmp_path / "my_scripts" / "state_gen_scripts"
+    out = regenerate.run_regenerate("py", tmp_path / "old", {"qubits": ["q1"]},
+                                    tmp_path / "new", scripts_dir=scripts)
+    assert out["ok"] is True
+    if out.get("script"):                       # emitter succeeded
+        assert (scripts / "02_build_machine.py").exists()
+        assert not (tmp_path / "new" / "build_scripts").exists()
+        assert out["script"] == str(scripts)

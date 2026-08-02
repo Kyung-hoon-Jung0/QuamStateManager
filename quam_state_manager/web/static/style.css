@@ -6775,7 +6775,7 @@ input.gen-topo-dim { width: 3.2em; margin: 0; }
 .gen-topo-presets { display: inline-flex; gap: 0.3rem; }
 .gen-topo-presets button { margin: 0; }
 .gen-topo-hint { font-size: 0.733em; margin: 0.1rem 0 0.3rem; }
-.gen-topo-board { overflow: auto; max-height: 56vh; padding: 4px; }
+.gen-topo-board { overflow: auto; max-height: 64vh; padding: 4px; }  /* r16 ⓪-5: bigger board */
 .gen-topo-grid { position: relative; }
 .gen-topo-cell {
   position: absolute; box-sizing: border-box;
@@ -6802,7 +6802,7 @@ input.gen-topo-dim { width: 3.2em; margin: 0; }
   position: absolute; border-radius: 50%;
   background: var(--pico-primary); color: var(--pico-primary-inverse);
   display: flex; align-items: center; justify-content: center;
-  font-size: 0.667em; font-weight: 600; cursor: grab; user-select: none;
+  font-size: 0.8em; font-weight: 600; cursor: grab; user-select: none;  /* r16 ⓪-5: label scaled with STONE_R */
   box-shadow: 0 1px 2px rgba(0,0,0,0.25);
 }
 /* selected = delete/move candidate: distinct (delete-colour) ring */
@@ -6847,10 +6847,10 @@ ul.gen-topo-hint { font-size: 0.733em; margin: 0.1rem 0 0.3rem; padding-left: 1.
 ul.gen-topo-hint li { margin: 0.1rem 0; }
 ul.gen-topo-hint kbd { font-size: 0.667em; padding: 0 3px; }
 /* read-only static board (Populate mirror): all-SVG stones + labels */
-.gen-pop-topo-board { overflow: auto; max-height: 44vh; padding: 4px; }
+.gen-pop-topo-board { overflow: auto; max-height: 52vh; padding: 4px; }  /* r16 ⓪-5 */
 .gen-topo-stone-ro { fill: var(--pico-primary); }
 .gen-topo-stone-label {
-  fill: var(--pico-primary-inverse); font-size: 0.667em; font-weight: 600;
+  fill: var(--pico-primary-inverse); font-size: 0.8em; font-weight: 600;  /* r16 ⓪-5 */
   pointer-events: none; user-select: none;
 }
 
@@ -6917,6 +6917,8 @@ tr.gen-pop-setall > td {
 .gen-lo-map-body {
     max-height: 14rem; overflow-y: auto; padding: 0.15rem 0 0.25rem;
 }
+/* r16: regen-only explicit LO re-solve (LOs are fill-only-empty there) */
+.gen-lo-resolve { margin: 0.15rem 0 0.3rem; width: auto; font-size: 0.8em; }
 .gen-lo-map-fem {
     font-size: 0.7em; font-weight: 700; text-transform: uppercase;
     letter-spacing: 0.04em; color: var(--pico-muted-color);

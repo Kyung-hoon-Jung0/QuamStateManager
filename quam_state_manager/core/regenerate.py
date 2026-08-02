@@ -62,6 +62,9 @@ def run_regenerate(
     spec: dict,
     out_dir: Path | str,
     timeout: int = 300,
+    populate_baseline: dict | None = None,
+    populate_touched: list | None = None,
+    scripts_dir: Path | str | None = None,
 ) -> dict:
     """Build ``spec`` fresh into ``out_dir`` then merge the OLD chip's values on.
 
@@ -75,6 +78,16 @@ def run_regenerate(
 
     On a build failure ``"merge"`` is ``None`` and the outcome carries the error.
     Never raises.
+
+    ``populate_baseline`` — the populate dict the wizard DISPLAYED at hydration
+    (client snapshot, docs/72). When given, the diff against ``spec["populate"]``
+    (+ ``populate_touched`` ``[group, id, field]`` cells) expands via
+    :mod:`regen_populate` into merge ``protect_paths`` so the user's Populate
+    edits survive the tier-1 carry. ``None`` ⇒ legacy behavior.
+
+    ``scripts_dir`` — where to write the editable build-script bundle
+    (r16 ⓪-4: the wizard's script-path box). ``None`` keeps the legacy
+    ``<out_dir>/build_scripts`` location.
     """
     old_folder = Path(old_folder)
     out_dir = Path(out_dir)
@@ -116,8 +129,24 @@ def run_regenerate(
     # stack renamed/removed (Quam.load killers). Absent on old build results
     # or harvest failure ⇒ merge_states falls back to the legacy graft.
     class_schemas = (outcome.get("result") or {}).get("class_schemas")
+
+    # Populate-protect (docs/72): expand the wizard-session populate diff into
+    # leaf paths whose NEW (build-applied) value must beat the tier-1 carry —
+    # without this every Populate edit was silently reverted by the merge.
+    protect: set[str] | None = None
+    pop_conflicts: list[str] = []
+    if populate_baseline is not None:
+        from . import regen_populate
+        changed = regen_populate.changed_fields(
+            spec.get("populate") or {}, populate_baseline, populate_touched)
+        protect, pop_conflicts = regen_populate.protect_paths(
+            changed, spec.get("populate") or {},
+            old_state, old_wiring, new_state, new_wiring)
+
     result = regen_merge.merge_states(old_state, new_state,
-                                      class_schemas=class_schemas)
+                                      class_schemas=class_schemas,
+                                      protect_paths=protect)
+    result.stats.populate_conflicts.extend(pop_conflicts)
 
     # TWPAs are grafted back at the state level but the builder made no TWPA
     # wiring/ports — carry those from OLD so the channel resolves and
@@ -149,11 +178,13 @@ def run_regenerate(
         res = outcome.get("result") or {}
         bundle = script_emitter.emit_bundle(
             spec, res.get("allocation"), res.get("versions"), chip)
-        bundle_dir = out_dir / "build_scripts"
+        # r16 ⓪-4: honor the wizard's script-path box (previously ignored here —
+        # everything landed in a hardcoded build_scripts/ regardless).
+        bundle_dir = Path(scripts_dir) if scripts_dir else out_dir / "build_scripts"
         bundle_dir.mkdir(parents=True, exist_ok=True)
         for name, src in bundle.items():
             (bundle_dir / name).write_text(src, encoding="utf-8")
-        script_name = "build_scripts/"
+        script_name = str(bundle_dir) if scripts_dir else "build_scripts/"
     except Exception as exc:  # noqa: BLE001 — transparency, not a hard failure
         outcome["script_error"] = str(exc)
         script_name = None
@@ -177,6 +208,9 @@ def run_regenerate(
         "twpa_wiring_carried": twpa_carried,
         "schema_dropped": len(s.schema_dropped),
         "schema_dropped_paths": s.schema_dropped[:200],
+        "populate_protected": len(s.populate_protected),
+        "populate_protected_paths": s.populate_protected[:80],
+        "populate_conflicts": s.populate_conflicts[:20],
     }
     outcome["script"] = script_name   # emitted build recipe filename, or None
     return outcome
