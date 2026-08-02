@@ -155,7 +155,8 @@ class TestGuards:
         r = client.post("/autofit/start", json={"preset": "1q_bringup",
                                                 "backend": "sim"})
         assert r.status_code == 409
-        assert "Scheduler" in r.get_json()["error"]
+        # r15 rename (docs/69): the user-facing label is "Experiment Runner"
+        assert "Experiment Runner" in r.get_json()["error"]
 
     def test_resolve_requires_calibrations_folder(self, client):
         r = client.post("/autofit/resolve", json={"preset": "1q_bringup"})

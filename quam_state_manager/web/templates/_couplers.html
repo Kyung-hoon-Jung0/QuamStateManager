@@ -13,25 +13,27 @@
             <th class="sortable" data-col="0" data-type="str">Pair</th>
             <th class="sortable" data-col="1" data-type="str">Control</th>
             <th class="sortable" data-col="2" data-type="str">Target</th>
-            <th class="sortable" data-col="3" data-type="num">Decouple Offset <span class="unit">(V)</span></th>
-            <th class="sortable" data-col="4" data-type="num">Interaction Offset <span class="unit">(V)</span></th>
-            <th class="sortable" data-col="5" data-type="num">Delay <span class="unit">(ns)</span></th>
+            <th class="sortable" data-col="3" data-type="str">Active</th>
+            <th class="sortable" data-col="4" data-type="num">Decouple Offset <span class="unit">(V)</span></th>
+            <th class="sortable" data-col="5" data-type="num">Interaction Offset <span class="unit">(V)</span></th>
+            <th class="sortable" data-col="6" data-type="num">Delay <span class="unit">(ns)</span></th>
         </tr>
     </thead>
     <tbody>
     {% if pairs %}
     {% for p in pairs %}
-    <tr class="clickable-row" data-pair-id="{{ p.id }}" hx-get="/pair/{{ p.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
+    <tr class="clickable-row{% if not p.is_active %} row-inactive{% endif %}" data-pair-id="{{ p.id }}" hx-get="/pair/{{ p.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
         <td><strong>{{ p.id }}</strong></td>
         <td>{{ p.qubit_control or '-' }}</td>
         <td>{{ p.qubit_target or '-' }}</td>
+        <td>{% if p.is_active %}<span class="cell-good" aria-label="Active" title="Listed in active_qubit_pair_names">&#10003;</span>{% else %}<span class="muted" aria-label="Inactive" title="Not in active_qubit_pair_names">off</span>{% endif %}</td>
         <td>{{ p.coupler_decouple_offset | qty('coupler_decouple_offset') }}</td>
         <td>{{ p.coupler_interaction_offset | qty('coupler_interaction_offset') }}</td>
         <td>{{ p.coupler_delay_ns if p.coupler_delay_ns is not none else '-' }}</td>
     </tr>
     {% endfor %}
     {% else %}
-        <tr><td colspan="6" class="muted" style="text-align:center;padding:2rem">No couplers found in this state file.</td></tr>
+        <tr><td colspan="7" class="muted" style="text-align:center;padding:2rem">No couplers found in this state file.</td></tr>
     {% endif %}
     </tbody>
 </table>

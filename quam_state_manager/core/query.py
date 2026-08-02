@@ -95,6 +95,12 @@ class QueryEngine:
 
         result["id"] = name
         result["grid_location"] = q.get("grid_location")
+        # r15 (docs/69): membership in state.json's active_qubit_names — QUAM
+        # semantics: an absent/empty list means "everything active". List pages
+        # always show ALL qubits and only MARK the active ones (never filter).
+        active_names = root.get("active_qubit_names")
+        result["is_active"] = (not isinstance(active_names, list)
+                               or not active_names or name in active_names)
         result["f_01"] = _resolve(self.store, q.get("f_01"), base + ("f_01",))
         result["f_12"] = q.get("f_12")
         result["anharmonicity"] = _resolve(self.store, q.get("anharmonicity"), base + ("anharmonicity",))
@@ -310,6 +316,10 @@ class QueryEngine:
 
         result["active"] = cr_semantics.is_active(root, name) if (
             cr is not None or zz is not None) else None
+        # r15 (docs/69): universal active flag for EVERY pair (the CR-vocab
+        # "active" above stays channel-gated for back-compat) — same QUAM
+        # semantics: absent/empty active_qubit_pair_names = all active.
+        result["is_active"] = cr_semantics.is_active(root, name)
 
         # Structural presence — the Couplers nav page hides itself chip-wide
         # when no pair has one, and filters its own rows to pairs that do.

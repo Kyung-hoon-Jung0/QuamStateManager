@@ -2,7 +2,7 @@
    Server renders the shell + readiness; autofit.js renders everything live
    from /autofit/status (board, review queue, report). #}
 <div class="table-header-row">
-    <h2>Autofit <small class="muted">run → fit → audit → correct → apply, unattended</small></h2>
+    <h2>Auto Calibrate <small class="muted">run → fit → audit → correct → apply, unattended</small></h2>
 </div>
 
 {# ---- readiness strip (docs/56 §7b — never fail after ▶) ---- #}
@@ -12,14 +12,14 @@
         Chip: {{ readiness.chip.name or 'none loaded' }}</span>
     <span class="autofit-ready-chip {{ 'ok' if readiness.env.ok else 'bad' }}"
           title="{{ readiness.env.value }}">
-        Env {{ '✓' if readiness.env.ok else '— pick on Scheduler' }}</span>
+        Env {{ '✓' if readiness.env.ok else '— pick on Experiment Runner' }}</span>
     <span class="autofit-ready-chip {{ 'ok' if readiness.calibrations_folder.ok else 'bad' }}"
           title="{{ readiness.calibrations_folder.value }}">
-        Calibrations {{ '✓' if readiness.calibrations_folder.ok else '— set on Scheduler' }}</span>
+        Calibrations {{ '✓' if readiness.calibrations_folder.ok else '— set on Experiment Runner' }}</span>
     <span class="autofit-ready-chip {{ 'ok' if readiness.llm.enabled else 'off' }}">
         LLM audit: {{ readiness.llm.provider }}</span>
     <a href="/scheduler" hx-get="/scheduler" hx-target="#table-pane" hx-push-url="true"
-       class="muted autofit-ready-fix">fix on Scheduler →</a>
+       class="muted autofit-ready-fix">fix on Experiment Runner →</a>
 </div>
 
 {# ---- plan bar: THE button ---- #}
@@ -44,7 +44,7 @@
     </label>
     <label>Backend
         <select id="autofit-backend"
-                title="sim: a synthetic demo chip, zero hardware, full write-path parity. real: the loaded chip through the Scheduler chassis.">
+                title="sim: a synthetic demo chip, zero hardware, full write-path parity. real: the loaded chip through the Experiment Runner chassis.">
             <option value="sim">simulation (demo chip)</option>
             <option value="real">real chip (scheduler chassis)</option>
         </select>

@@ -3,6 +3,7 @@
 {% set inspector_type = "pair" %}
 {% set inspector_label = pair_name %}
 {% set inspector_sub = (pair.qubit_control ~ " ↔ " ~ pair.qubit_target) if (pair.qubit_control and pair.qubit_target) else "" %}
+{% set inspector_inactive = pair.is_active is defined and not pair.is_active %}
 {% include '_inspector_header.html' %}
 <article class="pair-detail">
 

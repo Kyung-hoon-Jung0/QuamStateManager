@@ -27,11 +27,13 @@
     <tbody>
     {% if pairs %}
     {% for p in pairs %}
-    <tr class="clickable-row" data-pair-id="{{ p.id }}" hx-get="/pair/{{ p.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
+    <tr class="clickable-row{% if not p.is_active %} row-inactive{% endif %}" data-pair-id="{{ p.id }}" hx-get="/pair/{{ p.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
         <td><strong>{{ p.qubit_control or '?' }} &rarr; {{ p.qubit_target or '?' }}</strong> <small class="muted">{{ p.id }}</small></td>
         <td>{{ p.qubit_control or '-' }}</td>
         <td>{{ p.qubit_target or '-' }}</td>
-        <td>{% if p.get('active') %}<span class="cell-good">&#10003;</span>{% elif p.get('active') is sameas false %}<span class="muted">off</span>{% else %}-{% endif %}</td>
+        {# r15: universal is_active (active_qubit_pair_names membership; absent/
+           empty list = everything active) — was gated on the CR/ZZ channel #}
+        <td>{% if p.is_active %}<span class="cell-good" aria-label="Active" title="Listed in active_qubit_pair_names">&#10003;</span>{% else %}<span class="muted" aria-label="Inactive" title="Not in active_qubit_pair_names">off</span>{% endif %}</td>
         <td>{{ "%.4f" | format(p.cr_drive_amplitude_scaling) if p.get('cr_drive_amplitude_scaling') is not none else '-' }}</td>
         <td>{{ "%.4f" | format(p.cr_drive_phase) if p.get('cr_drive_phase') is not none else '-' }}</td>
         <td>
@@ -65,19 +67,21 @@
             <th class="sortable" data-col="0" data-type="str">Pair</th>
             <th class="sortable" data-col="1" data-type="str">Control</th>
             <th class="sortable" data-col="2" data-type="str">Target</th>
-            <th class="sortable" data-col="3" data-type="str">Moving</th>
-            <th class="sortable" data-col="4" data-type="num">CZ Flattop Amp</th>
-            <th class="sortable" data-col="5" data-type="num">Bell Fidelity</th>
-            <th class="sortable" data-col="6" data-type="num">Detuning <span class="unit">(MHz)</span></th>
+            <th class="sortable" data-col="3" data-type="str">Active</th>
+            <th class="sortable" data-col="4" data-type="str">Moving</th>
+            <th class="sortable" data-col="5" data-type="num">CZ Flattop Amp</th>
+            <th class="sortable" data-col="6" data-type="num">Bell Fidelity</th>
+            <th class="sortable" data-col="7" data-type="num">Detuning <span class="unit">(MHz)</span></th>
         </tr>
     </thead>
     <tbody>
     {% if pairs %}
     {% for p in pairs %}
-    <tr class="clickable-row" data-pair-id="{{ p.id }}" hx-get="/pair/{{ p.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
+    <tr class="clickable-row{% if not p.is_active %} row-inactive{% endif %}" data-pair-id="{{ p.id }}" hx-get="/pair/{{ p.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
         <td><strong>{{ p.id }}</strong></td>
         <td>{{ p.qubit_control or '-' }}</td>
         <td>{{ p.qubit_target or '-' }}</td>
+        <td>{% if p.is_active %}<span class="cell-good" aria-label="Active" title="Listed in active_qubit_pair_names">&#10003;</span>{% else %}<span class="muted" aria-label="Inactive" title="Not in active_qubit_pair_names">off</span>{% endif %}</td>
         <td>{{ p.moving_qubit or '-' }}</td>
         <td>{{ "%.6f" | format(p.cz_flattop_amplitude) if p.get('cz_flattop_amplitude') is not none else '-' }}</td>
         <td>
@@ -95,7 +99,7 @@
     </tr>
     {% endfor %}
     {% else %}
-        <tr><td colspan="7" class="muted" style="text-align:center;padding:2rem">No qubit pairs found in this state file.</td></tr>
+        <tr><td colspan="8" class="muted" style="text-align:center;padding:2rem">No qubit pairs found in this state file.</td></tr>
     {% endif %}
     </tbody>
 </table>

@@ -3,6 +3,7 @@
 {% set inspector_type = "qubit" %}
 {% set inspector_label = qubit_name %}
 {% set inspector_sub = "Grid: " ~ qubit.grid_location if qubit.grid_location else "" %}
+{% set inspector_inactive = qubit.is_active is defined and not qubit.is_active %}
 {% include '_inspector_header.html' %}
 <article class="qubit-detail">
 

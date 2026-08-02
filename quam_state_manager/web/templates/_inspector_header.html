@@ -14,6 +14,7 @@
         <strong>{{ inspector_label }}</strong>
         {% if inspector_qubits is defined and inspector_qubits %}<span class="inspector-qubit-list" title="{{ inspector_qubits }}">{{ inspector_qubits }}</span>{% endif %}
         {% if inspector_sub %}<small class="muted">{{ inspector_sub }}</small>{% endif %}
+        {% if inspector_inactive is defined and inspector_inactive %}<span class="inactive-chip" title="Not listed in the state's active names — shown anyway (r15: everything is listed, active is a mark)">inactive</span>{% endif %}
     </div>
     <div class="inspector-actions">
         {% if inspector_type == "dataset" %}

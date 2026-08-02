@@ -2144,6 +2144,19 @@ th.sortable.sort-desc::after { content: '\25BC'; opacity: 0.8; }
 .cell-best { background: var(--cell-best-bg); }
 .cell-worst { background: var(--cell-worst-bg); }
 
+/* r15 (docs/69): entity list pages list ALL entities; rows outside the
+   state's active_* name lists are marked "off" and gently dimmed — never
+   hidden. Hover restores full strength so dimmed rows stay inspectable. */
+.data-table tr.row-inactive td { opacity: 0.62; }
+.data-table tr.row-inactive:hover td { opacity: 1; }
+.inactive-chip {
+    font-size: 0.72em; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.04em; padding: 0.1em 0.5em; border-radius: 0.6em;
+    color: var(--pico-muted-color);
+    border: 1px solid var(--pico-muted-border-color);
+    vertical-align: middle;
+}
+
 /* Status glyphs accompany hue so colorblind users can still read the cells. */
 .cell-glyph { display: inline-block; width: 1em; margin-right: 0.2em; opacity: 0.85; }
 

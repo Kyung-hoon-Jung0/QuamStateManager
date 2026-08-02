@@ -214,13 +214,13 @@ Every page route checks for `HX-Request` header:
 
 This means every page works as a standalone URL and as an HTMX partial swap.
 
-### Sidebar layout (top to bottom — project-first since docs/63)
+### Sidebar layout (top to bottom — project-first since docs/63, r15 IA since docs/69)
 
 1. **Projects** — the qualibrate-project entry, first (project-first shell): lazy per-project subnav (`GET /qualibrate/subnav`), server-rendered expanded, collapse persisted (`quam_qualibrate_nav_collapsed` in the SUBNAVS registry); row click = `POST /qualibrate/open`
 2. **State Load** — QUAM state folder path + Load button (the standalone, folder-first entry)
 3. **Generate Config** (after a divider) — with the Config Viewer / Re-generate subnav (`#config-subnav`)
-4. **Chip navigation** — Chip Status (+ section subnav), Compare, Explorer, Qubits, Pairs (+ Resonators/Flux/Couplers), Pulses, Live State Edit, State History, Instrument Wiring, Diagnostics, Param History, Fit Audit, Scheduler, Autofit
-5. **Dataset navigation** — Datasets, Collections, Trends
+4. **Chip navigation** (structure→health, docs/69) — Instrument Wiring; **Chip Components** (`#chip-components-subnav`, default open: Qubits, Pairs, + conditional Resonators/Flux/Couplers); Diagnostics; Chip Status (+ section subnav); Compare; **Live State Edit** (`#live-edit-subnav`: Json Tree View (= /explorer), Pulses); **State History** (`#state-history-subnav`: Param History); then the execution trio **Experiment Runner** (/scheduler) · **Fit Replay** (/fit-audit) · **Auto Calibrate** (/autofit) — display renames only, routes/page tokens unchanged
+5. **Dataset navigation** — **Datasets** (`#datasets-subnav`: Collections, Trends)
 6. **Workspace** — Dataset Load add-folder form, compare actions, filter input, workspace tree (polled every 60s via `hx-trigger`)
 
 The pending-changes tray is docked at the bottom of `#main` (not the sidebar) and OOB-swapped; it carries the ⚗ project badge (docs/55 + docs/63 `sm_scope`).
