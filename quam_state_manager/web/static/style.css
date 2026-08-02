@@ -1201,13 +1201,13 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
    .sidebar-filter so it never touches the datasets / inspector / JSON-tree search
    boxes. The right padding for the ? button stays on #sidebar-filter-input below. */
 .sidebar-filter input,
-.sidebar-filter textarea { font-size: 1.05em; padding: 0.2rem 0.3rem; margin: 0; }
+.sidebar-filter textarea { font-size: 1.18em; padding: 0.2rem 0.3rem; margin: 0; }  /* r16 ⑨: query legibility — font up, padding frozen */
 .sidebar-filter textarea {
     box-sizing: border-box; width: 100%;
     line-height: 1.4;
     /* min-height comfortably clears the 1.5rem ? button (so it isn't clipped) and
        exceeds one line's scrollHeight (so overflow-y:auto shows no rest scrollbar). */
-    min-height: 1.9rem;
+    min-height: 2.15rem;   /* r16 ⑨: slightly taller box for the bigger font */
     max-height: calc(1.4em * 3 + 0.5rem);   /* cap at ~3 lines, then scroll */
     resize: none; overflow-y: auto;
     white-space: pre-wrap; word-break: break-word; vertical-align: top;

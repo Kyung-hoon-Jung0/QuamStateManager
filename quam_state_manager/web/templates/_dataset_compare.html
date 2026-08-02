@@ -9,8 +9,9 @@
         <li><a onclick="switchCompareDatasetTab('fit-results', this)">Fit Results
             {% if fit_diff_rows %}<small class="muted">({{ fit_diff_rows|length }})</small>{% endif %}
         </a></li>
+        {% set param_diffs = param_diff_rows | rejectattr("same") | list %}
         <li><a onclick="switchCompareDatasetTab('parameters', this)">Parameters
-            {% if param_diff_rows %}<small class="muted">({{ param_diff_rows|length }})</small>{% endif %}
+            {% if param_diff_rows %}<small class="muted">({{ param_diffs|length }} diff / {{ param_diff_rows|length }})</small>{% endif %}
         </a></li>
     </ul>
 </nav>
@@ -83,8 +84,12 @@
 </div>
 
 {# ── Tab: Parameters ── #}
+{# r16 ⑧: FULL run-parameter comparison — differing rows first (highlighted),
+   identical rows collapsed behind one toggle (compact, at-a-glance). #}
 <div class="dataset-tab-content hidden" id="ds-cmp-tab-parameters">
     {% if param_diff_rows %}
+    {% set diff_rows = param_diff_rows | rejectattr("same") | list %}
+    {% set same_rows = param_diff_rows | selectattr("same") | list %}
     <div class="table-scroll">
     <table class="data-table" role="grid">
         <thead><tr>
@@ -94,7 +99,10 @@
             {% endfor %}
         </tr></thead>
         <tbody>
-        {% for row in param_diff_rows %}
+        {% if not diff_rows %}
+        <tr><td colspan="{{ labels|length + 1 }}" class="muted" style="text-align:center">All {{ param_diff_rows|length }} parameters are identical across the selected runs.</td></tr>
+        {% endif %}
+        {% for row in diff_rows %}
         <tr>
             <td><code>{{ row.key }}</code></td>
             {% set ref_val = row["values"][ref_idx].value %}
@@ -109,11 +117,31 @@
             {% endfor %}
         </tr>
         {% endfor %}
+        {% if same_rows %}
+        <tr class="ds-cmp-eq-toggle"><td colspan="{{ labels|length + 1 }}">
+            <button type="button" class="btn-sm outline"
+                    onclick="var b = this.closest('table').querySelector('tbody.ds-cmp-eq'); b.hidden = !b.hidden; this.textContent = b.hidden ? 'Show {{ same_rows|length }} identical parameter{{ 's' if same_rows|length != 1 }}' : 'Hide identical parameters';">Show {{ same_rows|length }} identical parameter{{ 's' if same_rows|length != 1 }}</button>
+        </td></tr>
+        {% endif %}
         </tbody>
+        {% if same_rows %}
+        <tbody class="ds-cmp-eq" hidden>
+        {% for row in same_rows %}
+        {% set v0 = row["values"][0].value %}
+        <tr class="ds-cmp-eq-row">
+            <td><code>{{ row.key }}</code></td>
+            <td colspan="{{ labels|length }}">
+                {% if v0 is none %}-{% elif v0 is number %}{{ "%.4g" | format(v0) }}{% elif v0 is iterable and v0 is not string %}[{{ v0 | length }} items]{% else %}{{ v0 }}{% endif %}
+                <small class="muted">(same in all)</small>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+        {% endif %}
     </table>
     </div>
     {% else %}
-    <p class="muted" style="text-align:center;padding:1rem">All parameters are identical across selected runs.</p>
+    <p class="muted" style="text-align:center;padding:1rem">No parameters recorded in the selected runs.</p>
     {% endif %}
 </div>
 

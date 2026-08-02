@@ -9769,6 +9769,12 @@ def _entry_matches(entry, conds: list[dict]) -> bool:
             # substring pair — so `q0` / a pair name filter the tree.
             hit = (value in name or value in date or value in status
                    or value in qubits or any(value in p for p in pairs))
+            # r16 ⑨: run-id fast search — an all-digits query matches the run
+            # id exactly or as a prefix ("780" finds #780 / #7801 without the
+            # id: scope). Run ids were deliberately excluded from free text
+            # (any digit matched everything); digits-only is unambiguous.
+            if not hit and value.isdigit() and rid:
+                hit = rid == value or rid.startswith(value)
         elif field == "name":
             hit = value in name
         elif field == "date":
@@ -14587,7 +14593,7 @@ def datasets_compare():
                                message="Could not load at least 2 runs",
                                level="warning")
 
-    param_diff_rows = Differ.compare_parameters(contexts, labels)
+    param_diff_rows = Differ.compare_parameters(contexts, labels, include_equal=True)
     fit_diff_rows = Differ.compare_fit_results(contexts, labels)
 
     # Compute figure key union (preserve order)

@@ -6235,7 +6235,7 @@ class TestRound13SidebarSearchBox:
         assert "min-height:" in block                # single-line rest
         # Bigger font + tighter padding live on the shared rule just above it.
         shared = css[css.index(".sidebar-filter input,"):start]
-        assert "font-size: 1.05em" in shared
+        assert "font-size: 1.18em" in shared
         assert "padding: 0.2rem 0.3rem" in shared
 
     def test_enter_suppressed_in_js(self):
@@ -6258,7 +6258,7 @@ class TestRound14SidebarPolish:
         css = self._read("web", "static", "style.css")
         start = css.index(".sidebar-filter textarea {\n")
         block = css[start:css.index("}", start)]
-        assert "min-height: 1.9rem" in block          # clears the 24px ? button
+        assert "min-height: 2.15rem" in block          # clears the 24px ? button
         # The box is nudged down below the Compare/Trend buttons.
         fblock = css[css.index(".sidebar-filter {"):css.index("}", css.index(".sidebar-filter {"))]
         assert "margin-top: 0.4rem" in fblock
@@ -7117,3 +7117,77 @@ class TestProjectRootsAskR16:
             rm._record_project_roots("proj", [str(rootC)])   # future: silent
             assert str(rootC.resolve()) in rm._load_project_roots()["proj"]
             assert rm._dataset_roots_ask({"qualibrate_project": "proj"}) is None
+
+
+class TestCompareParamsFullR16:
+    """r16 ⑧: the dataset Compare Parameters tab shows the FULL union —
+    differing rows highlighted, identical rows collapsed behind one toggle."""
+
+    def test_include_equal_returns_union_with_same_flags(self):
+        from quam_state_manager.core.differ import Differ
+        from quam_state_manager.core.experiment_data import ExperimentContext
+
+        a = ExperimentContext(parameters={"num_shots": 100, "span": 5e6},
+                              fit_results={}, metadata={})
+        b = ExperimentContext(parameters={"num_shots": 200, "span": 5e6},
+                              fit_results={}, metadata={})
+        full = Differ.compare_parameters([a, b], ["A", "B"], include_equal=True)
+        by_key = {r["key"]: r for r in full}
+        assert set(by_key) == {"num_shots", "span"}
+        assert by_key["num_shots"]["same"] is False
+        assert by_key["span"]["same"] is True
+        legacy = Differ.compare_parameters([a, b], ["A", "B"])
+        assert [r["key"] for r in legacy] == ["num_shots"]   # default unchanged
+
+    def test_compare_page_renders_equal_collapsed(self, tmp_path):
+        import json as _json
+        root = tmp_path / "data"
+        for rid in (1, 2):
+            run = root / "2026-08-01" / f"#{rid}_exp_12000{rid}"
+            (run / "quam_state").mkdir(parents=True)
+            (run / "quam_state" / "state.json").write_text(
+                _json.dumps({"qubits": {}}), encoding="utf-8")
+            (run / "quam_state" / "wiring.json").write_text(
+                _json.dumps({"wiring": {}, "network": {}}), encoding="utf-8")
+            (run / "node.json").write_text(_json.dumps(
+                {"id": rid, "metadata": {"name": "exp"},
+                 "data": {"parameters": {"model": {
+                     "num_shots": 100 * rid, "span": 5e6}}}}), encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "inst"))
+        c = app.test_client()
+        assert c.post("/workspace/add", data={"folder": str(root)}).status_code in (200, 302)
+        from quam_state_manager.web import routes as rm
+        fk = rm._folder_key(root)
+        html = c.get(f"/datasets/compare?ids={fk}:1,{fk}:2").data.decode()
+        assert "num_shots" in html and "cell-diff" in html      # diff highlighted
+        assert "identical parameter" in html                    # collapse toggle
+        assert "(same in all)" in html                          # span collapsed
+        assert "1 diff / 2" in html                             # tab badge
+
+
+class TestSidebarRunIdSearchR16:
+    """r16 ⑨: an all-digits free-text query matches run ids (exact/prefix)."""
+
+    def _entry(self, rid, name):
+        from types import SimpleNamespace
+        return SimpleNamespace(experiment_name=name, date_str="2026-08-01",
+                               status="", run_id=rid)
+
+    def test_digits_query_matches_run_id(self):
+        from quam_state_manager.web.routes import _entry_matches, _parse_tree_query
+        conds = _parse_tree_query("780")
+        assert _entry_matches(self._entry(780, "rabi"), conds)
+        assert _entry_matches(self._entry(7801, "rabi"), conds)   # prefix
+        assert not _entry_matches(self._entry(78, "rabi"), conds)
+        assert not _entry_matches(self._entry(123, "rabi"), conds)
+
+    def test_digits_in_name_still_match(self):
+        from quam_state_manager.web.routes import _entry_matches, _parse_tree_query
+        conds = _parse_tree_query("780")
+        assert _entry_matches(self._entry(5, "cal_780_sweep"), conds)
+
+    def test_non_digit_queries_unchanged(self):
+        from quam_state_manager.web.routes import _entry_matches, _parse_tree_query
+        conds = _parse_tree_query("rabi")
+        assert _entry_matches(self._entry(780, "power_rabi"), conds)
+        assert not _entry_matches(self._entry(780, "t1"), conds)
