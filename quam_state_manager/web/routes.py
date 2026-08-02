@@ -5636,6 +5636,13 @@ def pairs():
             pair_data.append(engine.get_pair(pair_name))
         except KeyError:
             continue
+        except Exception as exc:  # noqa: BLE001 — r16 0-1: users hand-edit
+            # pairs freely (nulls, strings, odd shapes). One poisoned pair
+            # used to 500 the WHOLE list page ("the pairs menu won't open");
+            # degrade it to a visible error row and keep the rest.
+            logger.warning("get_pair(%r) failed: %s", pair_name, exc)
+            pair_data.append({"id": pair_name, "is_active": True,
+                              "_error": f"{type(exc).__name__}: {exc}"})
 
     # CR chips get CR-native columns (drive levers, 2Q fidelity, effective IF,
     # active badge) and adjacency ordering so the two DIRECTIONS of a physical
@@ -5736,6 +5743,13 @@ def _render_pair_detail(name: str, *, focus_path: str | None = None):
         data = engine.get_pair(name)
     except KeyError as e:
         return render_template("_status.html", message=str(e), level="error"), 404
+    except Exception as e:  # noqa: BLE001 — r16 0-1: honest inline error
+        # instead of a raw 500 htmx drops (the pane just froze before).
+        logger.warning("get_pair(%r) failed: %s", name, e)
+        return render_template(
+            "_status.html", level="error",
+            message=f"Pair {name!r} could not be read: "
+                    f"{type(e).__name__}: {e}"), 422
 
     sections = _build_pair_sections(name, data, store)
 
@@ -8384,7 +8398,17 @@ def _config_op_for_pulse_path(config: dict, path: str,
         return None, None
     parts = path.split(".")
     pair_name, gate, slot = parts[1], parts[3], parts[4]
-    pair_qubits = pair_name.split("-")
+    # r16 0-1: derive members from the pair's REFS (cr_semantics doctrine —
+    # never split the id: "q1-2" yields the bare token "2", which as a
+    # substring hint matched nearly every op name → multi-candidate → the
+    # Config-Viewer link silently vanished). Fallback re-prefixes short
+    # tokens and drops bare digits from the hint set.
+    _pair_obj = ((state or {}).get("qubit_pairs") or {}).get(pair_name)
+    _eps = cr_semantics.pair_endpoints(_pair_obj)
+    pair_qubits = [q for q in _eps if q]
+    if not pair_qubits:
+        pair_qubits = [(t if t[:1].isalpha() else f"q{t}")
+                       for t in pair_name.split("-") if t]
     wants_coupler = slot == "coupler_flux_pulse"
 
     candidates: list[tuple[str, str]] = []

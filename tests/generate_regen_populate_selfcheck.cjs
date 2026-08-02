@@ -191,5 +191,24 @@ const SPEC = {
   ok(!('band' in bucket), 'P6: out-of-range rejected');
 })();
 
+// ---- P7 (r16 0-1): prunePopulate keeps short-form pair keys ---------------
+(function () {
+  const win = makeWorld();
+  const G = win.QuamGen;
+  G.init();
+  const st = G._test.state;
+  st.spec.populate = { pairs: {
+    'q1-2':   { cz_amplitude: 0.1 },     // short second member — must SURVIVE
+    'qA1-A2': { cz_amplitude: 0.2 },     // short letter form — must SURVIVE
+    'q1-q9':  { cz_amplitude: 0.3 }      // truly dead member — must go
+  } };
+  G._test.prunePopulate({ q1: true, q2: true, qA1: true, qA2: true });
+  const keys = Object.keys(st.spec.populate.pairs);
+  const okShort = keys.indexOf('q1-2') >= 0 && keys.indexOf('qA1-A2') >= 0;
+  const deadGone = keys.indexOf('q1-q9') < 0;
+  if (!okShort) { console.error('FAIL: P7: short-form pair populate keys deleted'); fails++; }
+  if (!deadGone) { console.error('FAIL: P7: dead pair key survived'); fails++; }
+})();
+
 if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
 console.log('generate_regen_populate_selfcheck: all checks passed');

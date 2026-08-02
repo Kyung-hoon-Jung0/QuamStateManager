@@ -188,6 +188,14 @@ class QueryEngine:
             raise KeyError(f"Qubit pair {name!r} not found (available: {sorted(pairs.keys())})")
 
         p = pairs[name]
+        if not isinstance(p, dict):
+            # A null / string pair value is a real serialization (hand edits,
+            # partial regenerations). Raise a TYPED error — the /pairs route
+            # degrades it to a visible error row (r16 0-1); raising KeyError
+            # here would make the row silently vanish instead.
+            raise TypeError(
+                f"Qubit pair {name!r} is not an object "
+                f"(found {type(p).__name__})")
         root = self.store.merged
         base = ("qubit_pairs", name)
         result: dict[str, Any] = {}

@@ -141,3 +141,32 @@ dots now scale off `STONE_R` instead of hardcoded px), static mirror
 `topo-graph.js` `cell 36→46` / `R 13→17`, stone label fonts 0.667em→0.8em,
 board max-heights 56→64vh (editable) / 44→52vh (populate mirror). The
 topoboard selfchecks are px-free and stay green.
+
+## §6 — Pairs page + short pair-id adaptivity (r16 ⓪-1, branch `fix/pairs-adaptive`)
+
+"After generating a config the /pairs menu sometimes won't open at all."
+Root cause pair: the route caught ONLY `KeyError` (any other exception from
+`get_pair` 500'd the whole list, and `#table-pane` isn't in the htmx
+error-swap whitelist — the pane just kept its old content), and the template
+ran `"%.4f"|format(...)` / `>= 0.95` on values that are STRINGS on real
+chips (dangling-pointer passthrough, r14 stored-as-text numerics).
+
+- `query.get_pair`: a non-dict pair (null / string — real hand-edit shapes)
+  raises a TYPED `TypeError` (KeyError would silently skip the row).
+- `/pairs`: per-pair broad catch → a visible "⚠ unreadable pair" error row;
+  the rest of the table renders. `/pair/<name>` detail degrades to an honest
+  inline 422 message instead of a raw 500.
+- `_pairs.html`: every numeric format/compare cell is `is number`-gated;
+  text-stored values render honestly quoted ("0.13") with a Diagnostics
+  pointer (r14 doctrine), never a crash.
+- **Short pair-id notation** (`q1-2` / `qA1-A2` — the target drops the "q"):
+  `validate_spec` re-prefixes members that only resolve with "q" prepended
+  (run_build always accepted these); `generate.js prunePopulate` resolves
+  segments the same way instead of DELETING the pair's populate seeds; the
+  Config-Viewer op mapper derives members from the pair's REFS via
+  `cr_semantics.pair_endpoints` (a bare "2" token substring-matched almost
+  every op name → multi-candidate → silent link loss).
+
+Pinned by `TestPairsAdaptiveR16` / `TestShortPairIdValidationR16` /
+`TestConfigOpShortPairIdR16` (tests/test_web.py) + selfcheck P7
+(prunePopulate short-form survival).

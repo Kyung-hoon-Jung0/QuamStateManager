@@ -27,6 +27,14 @@
     <tbody>
     {% if pairs %}
     {% for p in pairs %}
+    {% if p.get('_error') %}
+    {# r16 0-1: a poisoned pair (null / string / odd shape) used to 500 the
+       whole page — render it as a visible error row instead. #}
+    <tr class="row-inactive" data-pair-id="{{ p.id }}">
+        <td><strong>{{ p.id }}</strong></td>
+        <td colspan="7"><span class="cell-bad" title="{{ p._error }}">&#9888; unreadable pair &mdash; {{ p._error }}</span></td>
+    </tr>
+    {% else %}
     <tr class="clickable-row{% if not p.is_active %} row-inactive{% endif %}" data-pair-id="{{ p.id }}" hx-get="/pair/{{ p.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
         <td><strong>{{ p.qubit_control or '?' }} &rarr; {{ p.qubit_target or '?' }}</strong> <small class="muted">{{ p.id }}</small></td>
         <td>{{ p.qubit_control or '-' }}</td>
@@ -34,11 +42,17 @@
         {# r15: universal is_active (active_qubit_pair_names membership; absent/
            empty list = everything active) — was gated on the CR/ZZ channel #}
         <td>{% if p.is_active %}<span class="cell-good" aria-label="Active" title="Listed in active_qubit_pair_names">&#10003;</span>{% else %}<span class="muted" aria-label="Inactive" title="Not in active_qubit_pair_names">off</span>{% endif %}</td>
-        <td>{{ "%.4f" | format(p.cr_drive_amplitude_scaling) if p.get('cr_drive_amplitude_scaling') is not none else '-' }}</td>
-        <td>{{ "%.4f" | format(p.cr_drive_phase) if p.get('cr_drive_phase') is not none else '-' }}</td>
+        {# r16 0-1: `is number` gates — dangling-pointer strings and
+           stored-as-text numerics ("0.13") reach these cells on regenerated
+           chips; "%.4f"|format on a str 500'd the whole page. Honest quoted
+           display instead (r14 doctrine). #}
+        <td>{% if p.get('cr_drive_amplitude_scaling') is none %}-{% elif p.cr_drive_amplitude_scaling is number %}{{ "%.4f" | format(p.cr_drive_amplitude_scaling) }}{% else %}<span class="muted" title="Stored as text — see Diagnostics">&quot;{{ p.cr_drive_amplitude_scaling }}&quot;</span>{% endif %}</td>
+        <td>{% if p.get('cr_drive_phase') is none %}-{% elif p.cr_drive_phase is number %}{{ "%.4f" | format(p.cr_drive_phase) }}{% else %}<span class="muted" title="Stored as text — see Diagnostics">&quot;{{ p.cr_drive_phase }}&quot;</span>{% endif %}</td>
         <td>
             {% if p.get('pair_fidelity') is not none %}
-            {% if not p.get('pair_fidelity_physical', True) %}
+            {% if p.pair_fidelity is not number %}
+            <span class="muted" title="Stored as text — see Diagnostics">&quot;{{ p.pair_fidelity }}&quot;</span>
+            {% elif not p.get('pair_fidelity_physical', True) %}
             {# quarantine, never a green paint: outside (0,1] = failed fit —
                matches Chip Status's gated edge for the SAME value #}
             <span class="muted" aria-label="Likely failed fit" title="Outside (0, 1] — likely a failed fit; excluded from health colouring">&#9888; {{ "%.4f" | format(p.pair_fidelity) }}</span>
@@ -52,8 +66,9 @@
             {% if p.get('pair_fidelity_source') == 'channel' %}<small class="muted">(bell)</small>{% endif %}
             {% else %}-{% endif %}
         </td>
-        <td>{% if p.get('cr_effective_if') is not none %}{{ "%.1f" | format(p.cr_effective_if / 1e6) }}{% if p.get('cr_if_problems') %} <span class="cell-bad" title="{{ p.cr_if_problems | join('; ') }}">&#9888;</span>{% endif %}{% else %}-{% endif %}</td>
+        <td>{% if p.get('cr_effective_if') is not none and p.cr_effective_if is number %}{{ "%.1f" | format(p.cr_effective_if / 1e6) }}{% if p.get('cr_if_problems') %} <span class="cell-bad" title="{{ p.cr_if_problems | join('; ') }}">&#9888;</span>{% endif %}{% else %}-{% endif %}</td>
     </tr>
+    {% endif %}
     {% endfor %}
     {% else %}
         <tr><td colspan="8" class="muted" style="text-align:center;padding:2rem">No qubit pairs found in this state file.</td></tr>
@@ -77,16 +92,25 @@
     <tbody>
     {% if pairs %}
     {% for p in pairs %}
+    {% if p.get('_error') %}
+    <tr class="row-inactive" data-pair-id="{{ p.id }}">
+        <td><strong>{{ p.id }}</strong></td>
+        <td colspan="7"><span class="cell-bad" title="{{ p._error }}">&#9888; unreadable pair &mdash; {{ p._error }}</span></td>
+    </tr>
+    {% else %}
     <tr class="clickable-row{% if not p.is_active %} row-inactive{% endif %}" data-pair-id="{{ p.id }}" hx-get="/pair/{{ p.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
         <td><strong>{{ p.id }}</strong></td>
         <td>{{ p.qubit_control or '-' }}</td>
         <td>{{ p.qubit_target or '-' }}</td>
         <td>{% if p.is_active %}<span class="cell-good" aria-label="Active" title="Listed in active_qubit_pair_names">&#10003;</span>{% else %}<span class="muted" aria-label="Inactive" title="Not in active_qubit_pair_names">off</span>{% endif %}</td>
         <td>{{ p.moving_qubit or '-' }}</td>
-        <td>{{ "%.6f" | format(p.cz_flattop_amplitude) if p.get('cz_flattop_amplitude') is not none else '-' }}</td>
+        {# r16 0-1: `is number` gates — see the CR table's note #}
+        <td>{% if p.get('cz_flattop_amplitude') is none %}-{% elif p.cz_flattop_amplitude is number %}{{ "%.6f" | format(p.cz_flattop_amplitude) }}{% else %}<span class="muted" title="Stored as text — see Diagnostics">&quot;{{ p.cz_flattop_amplitude }}&quot;</span>{% endif %}</td>
         <td>
             {% if p.get('cz_flattop_bell_fidelity') is not none %}
-            {% if p.cz_flattop_bell_fidelity >= 0.95 %}
+            {% if p.cz_flattop_bell_fidelity is not number %}
+            <span class="muted" title="Stored as text — see Diagnostics">&quot;{{ p.cz_flattop_bell_fidelity }}&quot;</span>
+            {% elif p.cz_flattop_bell_fidelity >= 0.95 %}
             <span class="cell-good" aria-label="Good"><span class="cell-glyph" aria-hidden="true">&#10003;</span>{{ "%.4f" | format(p.cz_flattop_bell_fidelity) }}</span>
             {% elif p.cz_flattop_bell_fidelity >= 0.85 %}
             <span class="cell-ok" aria-label="OK"><span class="cell-glyph" aria-hidden="true">&#9888;</span>{{ "%.4f" | format(p.cz_flattop_bell_fidelity) }}</span>
@@ -97,6 +121,7 @@
         </td>
         <td>{{ p.detuning | qty('detuning') }}</td>
     </tr>
+    {% endif %}
     {% endfor %}
     {% else %}
         <tr><td colspan="8" class="muted" style="text-align:center;padding:2rem">No qubit pairs found in this state file.</td></tr>
