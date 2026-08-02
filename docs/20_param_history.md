@@ -484,11 +484,11 @@ gating, no-chip 400, button wiring in the inspector template).
 ## Amendment v2 (2026-07-30): chip-identity ladder — extras chip_name, full re-key, runs tier
 
 Forensics on a real instance (7 different chips as SIBLING state folders under
-one parent `iqcc\` — gilboa 15q@10.1.1.18, a 21q@10.1.1.6, five more) found
+one parent `lab3\` — deviceC 15q@10.1.1.18, a 21q@10.1.1.6, five more) found
 three compounding failures: `chip_name_for` collapsed all seven onto the
 parent's name; capture fingerprint-forked snapshot FILES into
-`iqcc_alt_10_1_1_18_15q` while pinning index ROWS to the path-derived dir
-(21q's index carried gilboa's rows; the alt dir had no index and was invisible
+`lab3_alt_10_1_1_18_15q` while pinning index ROWS to the path-derived dir
+(21q's index carried deviceC's rows; the alt dir had no index and was invisible
 even in the other-chips list); and every READ path (/param-history page,
 drawer, field-history popover) used the raw path key — showing the WRONG
 chip's history. Experiment ingestion (page-open backfill, once per tab) had
@@ -558,7 +558,7 @@ runs-tier class + `tests/test_history.py::TestIndexFollowsRoutedDir`.
 
 ## Amendment r12 (2026-07-31): identity confirm + FSP↔amplitude compensation
 
-**A — conservative identity confirm.** The gilboa incident: a lab-side state
+**A — conservative identity confirm.** The deviceC incident: a lab-side state
 regeneration (graph restart bootstrapping a fresh Quam) wiped `extras` while
 15 hours of runs (#471→#495) proved the field round-trips QUAlibrate's normal
 save cycle. Since snapshots hold the pre-wipe state verbatim,
@@ -571,7 +571,7 @@ a name. The banner is deliberately a QUESTION, never a restore
 "**This chip appears to be 'X' (data folder Y) — same hardware fingerprint
 as that chip's history. Is this correct?**" — [Yes] is a hidden-field form
 through the EXISTING validated `/chip-name/set` (stage-only; Apply
-publishes; a remembered not-a-path folder like "gilboa_iqcc" is never
+publishes; a remembered not-a-path folder like "deviceC_lab3" is never
 re-offered); [No — different chip] memoizes `token::identity` and the
 response IS the fill-in prompt, which now carries a Browse… button
 (`openFolderBrowser` gained `opts.autoSubmit=false` so a folder pick fills
@@ -627,8 +627,8 @@ drag widths stay respected. Pinned by `tests/cellbtn_selfcheck.cjs` (23)
 
 ## Amendment r10 (2026-07-31): the extras.data_folder lifecycle
 
-The gilboa incident: the chip-name banner's optional data-folder field stored
-whatever was typed, verbatim — the user entered a NAME ("gilboa_iqcc"), and
+The deviceC incident: the chip-name banner's optional data-folder field stored
+whatever was typed, verbatim — the user entered a NAME ("deviceC_lab3"), and
 the only feedback was a later dangling banner with no fix affordance ("check
 state.json"). r10 closes the loop, always ask-first (click-to-stage through
 the working copy; Apply publishes; never auto-written):
@@ -638,7 +638,7 @@ the working copy; Apply publishes; never auto-written):
   rooted `/`, `\`, or drive prefix — but not reachable HERE; storeable after
   an explicit 409 confirm, because labs share one state across OSes and the
   reader bridges at read time) / `not_a_path` (no root at all — the
-  "gilboa_iqcc" mistake class; always rejected with suggestions, `force_cross`
+  "deviceC_lab3" mistake class; always rejected with suggestions, `force_cross`
   never overrides it — one ack never collapses two gates).
 - **`POST /chip-data-folder/set`** (value | use | clear=1 | force_cross=1):
   live-origin gate; stages via modifier (`create_subtree` / `set_value(...,

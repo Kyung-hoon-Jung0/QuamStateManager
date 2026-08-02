@@ -1,6 +1,6 @@
 """r13: NetCDF-classic support for the Raw Data tab (core/ndview.py).
 
-Since 2026-07-29 every IQCC run's ``ds_*.h5`` is NetCDF-classic (CDF-2) bytes —
+Since 2026-07-29 every Lab3 run's ``ds_*.h5`` is NetCDF-classic (CDF-2) bytes —
 xarray's scipy fallback engine writing under the misleading ``.h5`` name — and
 ndview (h5py-only, a gap docs/48 recorded as deliberate) answered "Cannot open
 the data file: … file signature not found" for all of them. ndview now routes
@@ -8,7 +8,7 @@ file access through a reader adapter (``_open_reader``): b"CDF" magic → scipy
 ``netcdf_file``; everything else → h5py exactly as before (garbage keeps the
 canonical h5py OSError; HDF5 userblock files are never misrouted).
 
-Fixtures mirror the REAL archive shapes verified on the IQCC runs: char-matrix
+Fixtures mirror the REAL archive shapes verified on the Lab3 runs: char-matrix
 qubit names, int dim coords with units, aux ``coordinates`` variables
 (full_freq/current), and — crucially — MIXED per-variable dim order (the real
 2-D files store phase as (qubit, flux_bias, detuning) while I/Q are

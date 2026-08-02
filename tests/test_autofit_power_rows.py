@@ -11,7 +11,7 @@ Two tiers:
     every refusal branch, the amp>1 warning;
   * real-archive goldens (auto-skip off this workstation) — replaying the
     apply over the run's PRE-update state must land bit-exact on the node's
-    own patches (KRISS #599, KRISS_CR #9 — incl. the >1.0 rescale the node
+    own patches (LabA #599, LabA_CR #9 — incl. the >1.0 rescale the node
     itself wrote), and the target_*-less variants (#568/#565) plus qsvp (#12)
     must be refused, never approximated.
 """
@@ -168,11 +168,11 @@ class TestCoupledRows:
 # ---------------------------------------------------------------------------
 
 _DS = Path("/mnt/d/work_laptop/dataset")
-_A599 = _DS / "KRISS/2026-06-14/#599_1Q_05b_resonator_spectroscopy_vs_power_iq_191747"
-_A568 = _DS / "KRISS/2026-06-14/#568_1Q_05b_resonator_spectroscopy_vs_power_iq_085222"
-_A565 = _DS / "KRISS/2026-06-13/#565_1Q_05b_resonator_spectroscopy_vs_power_iq_221422"
-_CR9 = _DS / "KRISS_CR/2026-06-17/#9_05b_resonator_spectroscopy_vs_power_iq_041114"
-_CR12 = _DS / "KRISS_CR/2026-06-17/#12_08b_qubit_spectroscopy_vs_power_043256"
+_A599 = _DS / "LabA/2026-06-14/#599_1Q_05b_resonator_spectroscopy_vs_power_iq_191747"
+_A568 = _DS / "LabA/2026-06-14/#568_1Q_05b_resonator_spectroscopy_vs_power_iq_085222"
+_A565 = _DS / "LabA/2026-06-13/#565_1Q_05b_resonator_spectroscopy_vs_power_iq_221422"
+_CR9 = _DS / "LabA_CR/2026-06-17/#9_05b_resonator_spectroscopy_vs_power_iq_041114"
+_CR12 = _DS / "LabA_CR/2026-06-17/#12_08b_qubit_spectroscopy_vs_power_043256"
 
 real = pytest.mark.skipif(not _DS.is_dir(),
                           reason="real archive not available")
@@ -247,7 +247,7 @@ def _assert_matches_node_patches(final, patches):
 @real
 class TestRealArchiveGoldens:
     def test_599_full_coupled_apply_equals_node_patches(self):
-        """KRISS #599: FSP 13→−9, 5 fitted qubits, qA6 rescale >1.0 — the
+        """LabA #599: FSP 13→−9, 5 fitted qubits, qA6 rescale >1.0 — the
         union of per-qubit applies must equal the node's own 15 patches,
         amp/FSP bit-exact (incl. qA6 amp 1.2056… the node itself wrote)."""
         final, patches, warnings = _apply_all(_A599)
@@ -270,7 +270,7 @@ class TestRealArchiveGoldens:
             assert _get(a, dotted) == _get(b, dotted), dotted
 
     def test_cr9_full_coupled_apply_equals_node_patches(self):
-        """KRISS_CR #9 — same invariant on the second chip/campaign."""
+        """LabA_CR #9 — same invariant on the second chip/campaign."""
         final, patches, _ = _apply_all(_CR9)
         assert any("full_scale_power_dbm" in p["path"] for p in patches)
         _assert_matches_node_patches(final, patches)

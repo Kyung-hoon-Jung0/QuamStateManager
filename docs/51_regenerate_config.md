@@ -316,7 +316,7 @@ previously-warning spec now builds with zero warnings and uniform seeding.
 Two structural fixes moved into `docs/72_regen_adaptive_fidelity.md` (the
 reference): ① `reconstruct_spec` unions the chip's declared **ports
 inventory** into the FEM set (a slot whose only channel was trimmed/nulled
-no longer vanishes — the SNU-17Q slot-7 report), derives qubits as
+no longer vanishes — the LabD-17Q slot-7 report), derives qubits as
 wiring ∪ state, tolerates explicit-null channels, and assembles controllers
 AFTER the wiring-only-pairs recovery; ② the value merge accepts
 `protect_paths` — the expanded dot-paths of the user's in-wizard Populate

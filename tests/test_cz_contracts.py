@@ -453,7 +453,7 @@ class TestTransformMath:
 class TestDummyErrorAmpHeatmap:
     """20b/33 conditional-phase error amplification renders the node's own
     saved-figure form — a 2-D heatmap (amp × #ops) — never one 1-D curve per
-    operations count (the IQCC #407 report), plus the lower-panel
+    operations count (the Lab3 #407 report), plus the lower-panel
     control-fractions companion tile. Contract (amp click) unchanged."""
 
     _OPS = np.arange(1.0, 5.0)          # 4 operation counts

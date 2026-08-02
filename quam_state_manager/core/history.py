@@ -1418,7 +1418,7 @@ class HistoryManager:
         """The identity this chip's HISTORY remembers — for the conservative
         "Is this chip 'X'?" confirm banner (docs/20 r12).
 
-        When a state regeneration wipes ``extras`` (the gilboa incident),
+        When a state regeneration wipes ``extras`` (the deviceC incident),
         the snapshots still hold the pre-wipe state verbatim. Resolve the
         chip dir for the CURRENT content (the chip is unnamed now, so the
         fingerprint tiers decide); if the resolved dir holds no snapshots,

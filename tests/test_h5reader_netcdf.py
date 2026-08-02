@@ -4,7 +4,7 @@ A runner env missing netCDF4/h5netcdf makes xarray fall back to its scipy
 engine, which writes NetCDF-classic bytes ("CDF…") under the same
 ``ds_*.h5`` names. h5py refuses those ("file signature not found"), which
 silently degraded the WHOLE Interactive tab to static PNGs for every such
-run (the entire 2026-07-29 IQCC day — reported via the EF power-rabi node).
+run (the entire 2026-07-29 Lab3 day — reported via the EF power-rabi node).
 SM ships scipy, so the reader now sniffs the magic and reads them natively."""
 
 from __future__ import annotations

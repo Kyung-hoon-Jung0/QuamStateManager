@@ -1,6 +1,6 @@
 # 72 — Re-generate adaptivity + populate fidelity (r16 feedback ⓪/⓪-3/⓪-4/⓪-5, 2026-08-03)
 
-Branch `fix/regen-adaptive`. Driven by the SNU-17Q SUPER-CRITICAL report:
+Branch `fix/regen-adaptive`. Driven by the LabD-17Q SUPER-CRITICAL report:
 "load the chip, click Re-generate — slot 7 is missing", plus "populate values
 I edit in the wizard come back with the OLD values after the build". Users
 hand-trim state/wiring freely; SM must reconstruct adaptively in ALL cases.
@@ -39,7 +39,7 @@ Fixes in `core/regen_spec.py`:
   `[]`) is guarded. `/regenerate/reconstruct` catches broad `Exception` into
   an honest JSON error instead of a blank wizard on a raw 500.
 
-Pinned by `tests/test_regen_spec.py` (customer-shaped `_snu_shaped` fixture:
+Pinned by `tests/test_regen_spec.py` (customer-shaped `_customer17q_shaped` fixture:
 ports-union, state-only qubit + pair survival, null channels, twpas-list,
 zero-noise-on-clean, wiring-only-pair FEM ordering).
 
@@ -102,7 +102,7 @@ no-baseline legacy), the `/regenerate/build` pass-through pin in
 
 The MW-FEM Nyquist bands OVERLAP (1: 0.05–5.5, 2: 4.5–7.5, 3: 6.5–10.5 GHz)
 and both `bandOf` (JS) and `_band_for` (run_build) are first-match-wins —
-measured on the SNU chip: every readout port is band 3 at LO 7.015 GHz, the
+measured on the LabD chip: every readout port is band 3 at LO 7.015 GHz, the
 rebuild derived band 2 and the WRONG 161 ns LF delay (tier-1 masked the
 state values, but the built band/delay were wrong; a structurally-new port
 kept them). `_extract_populate` already extracted the real band — dead data.

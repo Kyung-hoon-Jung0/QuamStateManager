@@ -258,8 +258,8 @@ def test_populate_pair_key_wiring_fallback_and_raw_name():
 
 # --- r16 adaptive loading (docs/72): ports-union, null channels, qubit union ---
 
-def _snu_shaped():
-    """Mini replica of the SNU-17Q customer shape: ports live in STATE.json,
+def _customer17q_shaped():
+    """Mini replica of the LabD-17Q customer shape: ports live in STATE.json,
     wiring carries only wiring.qubits + network, slot 7 has exactly one user."""
     state = {
         "qubits": {"q1": {}, "q2": {}},
@@ -299,8 +299,8 @@ def _fems_of(spec):
 
 def test_ports_inventory_unions_into_fems():
     # slot 7's ONLY user is q2.z — delete q2 from wiring and the FEM must
-    # survive via the state ports inventory (the SNU-17Q slot-7 report).
-    state, wiring = _snu_shaped()
+    # survive via the state ports inventory (the LabD-17Q slot-7 report).
+    state, wiring = _customer17q_shaped()
     del wiring["wiring"]["qubits"]["q2"]
     r = reconstruct_spec(state, wiring)
     fems = _fems_of(r.spec)
@@ -310,7 +310,7 @@ def test_ports_inventory_unions_into_fems():
 
 
 def test_state_only_qubit_kept_with_note_and_pairs_survive():
-    state, wiring = _snu_shaped()
+    state, wiring = _customer17q_shaped()
     del wiring["wiring"]["qubits"]["q2"]
     r = reconstruct_spec(state, wiring)
     assert r.spec["qubits"] == ["q1", "q2"]          # union, wiring order first
@@ -320,7 +320,7 @@ def test_state_only_qubit_kept_with_note_and_pairs_survive():
 
 def test_null_channels_do_not_crash():
     # Explorer nulling / hand edits produce channels serialized as null.
-    state, wiring = _snu_shaped()
+    state, wiring = _customer17q_shaped()
     wiring["wiring"]["qubits"]["q1"]["rr"] = None
     wiring["wiring"]["qubits"]["q1"]["xy"] = None
     wiring["wiring"]["qubits"]["q2"]["z"] = None
@@ -330,14 +330,14 @@ def test_null_channels_do_not_crash():
 
 
 def test_null_pair_coupler_channel_tolerated():
-    state, wiring = _snu_shaped()
+    state, wiring = _customer17q_shaped()
     wiring["wiring"]["qubit_pairs"] = {"q1-2": {"c": None}}
     r = reconstruct_spec(state, wiring)              # must not raise
     assert ["q1", "q2"] in r.spec["qubit_pairs"]
 
 
 def test_twpas_as_list_tolerated():
-    state, wiring = _snu_shaped()
+    state, wiring = _customer17q_shaped()
     state["twpas"] = [{"id": "weird"}]               # non-dict shape
     wiring["wiring"]["twpas"] = {"t1": {"p": {
         "opx_output": "#/ports/mw_outputs/con1/1/3"}}}
@@ -348,7 +348,7 @@ def test_twpas_as_list_tolerated():
 def test_clean_chip_emits_no_inventory_notes():
     # The union must stay SILENT when every declared slot has channel users
     # (no note noise on healthy chips).
-    state, wiring = _snu_shaped()
+    state, wiring = _customer17q_shaped()
     r = reconstruct_spec(state, wiring)
     assert not any("ports inventory" in n for n in r.notes)
     assert not any("auto-allocated" in n for n in r.notes)

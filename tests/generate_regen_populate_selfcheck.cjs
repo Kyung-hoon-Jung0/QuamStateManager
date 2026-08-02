@@ -153,22 +153,22 @@ const SPEC = {
   G.init();
   const st = G._test.state;
   ok(st.scriptsEnabled === true, 'P5: scripts export defaults ON');
-  ok(G._test.autoScriptsPath('D:\\quam_states\\SNU\\17Q') ===
-     'D:\\quam_states\\SNU\\17Q\\state_gen_scripts',
+  ok(G._test.autoScriptsPath('D:\\quam_states\\labd\\17Q') ===
+     'D:\\quam_states\\labd\\17Q\\state_gen_scripts',
      'P5: windows join');
   ok(G._test.autoScriptsPath('/data/chips/17Q/') ===
      '/data/chips/17Q/state_gen_scripts', 'P5: posix join + trailing slash');
 
   const out = win.document.getElementById('gen-output-path');
   const sp = win.document.getElementById('gen-scripts-path');
-  out.value = 'D:\\quam_states\\SNU\\17Q_20260802';
+  out.value = 'D:\\quam_states\\labd\\17Q_20260802';
   out.dispatchEvent(new win.Event('input', { bubbles: true }));
-  ok(sp.value === 'D:\\quam_states\\SNU\\17Q_20260802\\state_gen_scripts',
+  ok(sp.value === 'D:\\quam_states\\labd\\17Q_20260802\\state_gen_scripts',
      'P5: scripts path follows the output folder');
 
   sp.value = 'D:\\custom\\scripts';
   sp.dispatchEvent(new win.Event('input', { bubbles: true }));
-  out.value = 'D:\\quam_states\\SNU\\other';
+  out.value = 'D:\\quam_states\\labd\\other';
   out.dispatchEvent(new win.Event('input', { bubbles: true }));
   ok(st.scriptsPath === 'D:\\custom\\scripts',
      'P5: a user-typed scripts path stops the follow');

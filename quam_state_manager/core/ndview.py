@@ -7,7 +7,7 @@ references (the files carry NO ``_ARRAY_DIMENSIONS`` — the legacy pipeline's
 length-guessing was wrong on every same-size dim); or NetCDF-classic
 (``CDF\\x01``/``CDF\\x02`` magic — a runner env without netCDF4/h5netcdf makes
 xarray fall back to its scipy engine, which writes NetCDF3 bytes under the
-same ``ds_*.h5`` names; the whole 2026-07-29+ IQCC archive is this) with
+same ``ds_*.h5`` names; the whole 2026-07-29+ Lab3 archive is this) with
 scipy.io.netcdf_file, where dimension names are native per-variable metadata.
 Then classifies each dimension, infers a sensible default view, decimates
 oversized arrays, and returns a JSON-ready *cube*: data + coordinates +

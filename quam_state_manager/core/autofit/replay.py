@@ -32,8 +32,8 @@ from quam_state_manager.core.autofit.synth import patch_path_to_dotted
 
 # dev defaults for THIS workstation (override via CLI/kwargs; the gated test
 # auto-skips when absent)
-DEFAULT_PYTHON = "/mnt/c/ProgramData/miniconda3/envs/QRS/python.exe"
-DEFAULT_SOURCE_ROOT = ("/mnt/d/work_laptop/Customer_Codes/QRS/"
+DEFAULT_PYTHON = "/mnt/c/ProgramData/miniconda3/envs/LabB/python.exe"
+DEFAULT_SOURCE_ROOT = ("/mnt/d/work_laptop/Customer_Codes/LabB/"
                        "qualibration_graphs/superconducting")
 
 # family key -> util module override (node-name derivation isn't 1:1 here)

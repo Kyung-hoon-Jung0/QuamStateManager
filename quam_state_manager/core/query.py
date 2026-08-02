@@ -822,7 +822,7 @@ class QueryEngine:
 
         for qname, qw in wiring_qubits.items():
             # `or {}` (not `.get(k, {})`): a channel key present with a JSON null
-            # value returns None, and real data has it (KRISS_CR pairs carry
+            # value returns None, and real data has it (LabA_CR pairs carry
             # "coupler": null; nulling a channel in Explorer produces it too). The
             # subsequent .get() on None crashed the whole diagram → blank rack.
             q = (root.get("qubits") or {}).get(qname) or {}

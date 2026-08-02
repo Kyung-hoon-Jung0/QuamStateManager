@@ -218,7 +218,7 @@ class TestInstrumentWiringCluster:
     on real hardware shapes (CR gates, null channels, OPX+/Octave, input LO)."""
 
     def test_null_channel_does_not_crash(self):
-        # A JSON null channel (real KRISS_CR pairs carry "coupler": null) must not
+        # A JSON null channel (real LabA_CR pairs carry "coupler": null) must not
         # crash get_instrument_wiring into a blank rack.
         r = _iw(
             {"qubits": {}, "qubit_pairs": {"p1": {"coupler": None}}},

@@ -8,7 +8,7 @@ Four related two-qubit nodes, all keyed by ``qubit_pair`` and view-only:
   control/target, with the fitted residual-phase line + peak-mean star (saved fig).
 * 2Q_20  ``conditional_phase`` — conditional phase (and its fit) vs flux amplitude,
   with the fitted ``optimal_amplitude`` marked (no saved figure — additive).
-* 2Q_20b/33 ``conditional_phase`` — error-amplified (IQCC names it
+* 2Q_20b/33 ``conditional_phase`` — error-amplified (Lab3 names it
   ``33_cz_conditional_phase_error_amp``; same normalized family): a 2-D
   heatmap amp × #-CZ-operations of ``phase_diff`` — the node's own saved
   ``phase_figure`` form — with the ``optimal_amplitude`` line and a detuning

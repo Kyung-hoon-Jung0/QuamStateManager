@@ -17,9 +17,9 @@ import pytest
 
 from quam_state_manager.core.autofit import replay
 
-_BAD = Path("/mnt/d/work_laptop/dataset/KRISS/2026-06-14/"
+_BAD = Path("/mnt/d/work_laptop/dataset/LabA/2026-06-14/"
              "#575_1Q_08b_qubit_spectroscopy_vs_power_104031")
-_GOOD = Path("/mnt/d/work_laptop/dataset/KRISS/2026-06-14/"
+_GOOD = Path("/mnt/d/work_laptop/dataset/LabA/2026-06-14/"
              "#578_1Q_08b_qubit_spectroscopy_vs_power_104626")
 
 pytestmark = pytest.mark.skipif(

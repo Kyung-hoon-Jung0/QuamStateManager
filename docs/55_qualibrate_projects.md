@@ -69,11 +69,11 @@ placed under the workspace block. It follows the existing collapsible subnav
 pattern (`#config-subnav`, Generate Config → Config Viewer):
 
 ```
-  ⚗ QUAlibrate            ● IQCC_QRS_1Q     ← active project, live badge
+  ⚗ QUAlibrate            ● Lab3_LabB_1Q     ← active project, live badge
     ├─ ▸ Projects (15)                      ← toggleable submenu
-    │    ● IQCC_QRS_1Q   ⚠                  ← active; ⚠ = dangling state_path
-    │    ○ KRISS          ✓                 ← healthy
-    │    ○ KRISS_CR_2Q    ✓   [SM]          ← [SM] = currently loaded in SM
+    │    ● Lab3_LabB_1Q   ⚠                  ← active; ⚠ = dangling state_path
+    │    ○ LabA          ✓                 ← healthy
+    │    ○ LabA_CR_2Q    ✓   [SM]          ← [SM] = currently loaded in SM
     │    ○ HQ2_CZ         ⚠                 ← lint issue (hover = why)
     │    …
 ```
@@ -118,7 +118,7 @@ findings attach naturally to rows):
   round-trips through `tomli_w` is a footgun we deliberately do not build).
 - **Doctor panel**: the lint list — dangling paths (with sibling-folder
   suggestions), storage collisions ("12 projects share
-  `dataset\KRISS_CR`"), empty overlays, orphaned dataset dirs, env-var
+  `dataset\LabA_CR`"), empty overlays, orphaned dataset dirs, env-var
   mismatches. Each finding: severity + what it breaks + (Tier 3) a guided
   fix button.
 - **Action buttons** (Tier 2+, hidden in MVP): "Set active in QUAlibrate"

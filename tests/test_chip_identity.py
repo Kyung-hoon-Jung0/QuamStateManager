@@ -68,13 +68,13 @@ class TestExtrasReaders:
         ([], None),
         ({}, None),
         ({"extras": None}, None),
-        ({"extras": "gilboa"}, None),
+        ({"extras": "deviceC"}, None),
         ({"extras": {}}, None),
         ({"extras": {"chip_name": None}}, None),
         ({"extras": {"chip_name": 42}}, None),
         ({"extras": {"chip_name": ""}}, None),
         ({"extras": {"chip_name": "   "}}, None),
-        ({"extras": {"chip_name": " gilboa "}}, "gilboa"),
+        ({"extras": {"chip_name": " deviceC "}}, "deviceC"),
         ({"extras": {"chip_name": "x" * 200}}, "x" * 64),
     ])
     def test_chip_name_guards(self, state, expect):
@@ -100,27 +100,27 @@ class TestExtrasReaders:
 class TestLadderTier1:
     def test_named_chip_gets_pretty_dir_from_day_one(self, hm, tmp_path):
         p = _write(tmp_path / "labX" / "quam_a",
-                   _state(chip_name="gilboa"), _wiring("10.0.0.1"))
+                   _state(chip_name="deviceC"), _wiring("10.0.0.1"))
         meta = hm.check_and_snapshot(p, "manual", force=True)
         assert meta is not None
         root = tmp_path / "inst" / "history"
-        assert (root / "gilboa" / meta.timestamp).is_dir()
-        assert hm._key_for(p) == "gilboa"
-        assert hm.display_name_for_dir("gilboa") == "gilboa"
+        assert (root / "deviceC" / meta.timestamp).is_dir()
+        assert hm._key_for(p) == "deviceC"
+        assert hm.display_name_for_dir("deviceC") == "deviceC"
 
     def test_two_named_siblings_never_collapse(self, hm, tmp_path):
         """The user's 7-sibling scenario, with names: each chip gets its own
         pretty dir even though chip_name_for keys both to the parent."""
         pa = _write(tmp_path / "labX" / "quam_a",
-                    _state("qA1", chip_name="gilboa"), _wiring("10.0.0.1"))
+                    _state("qA1", chip_name="deviceC"), _wiring("10.0.0.1"))
         pb = _write(tmp_path / "labX" / "quam_b",
                     _state("qB1", chip_name="deborah"), _wiring("10.0.0.2"))
         ma = hm.check_and_snapshot(pa, "manual", force=True)
         mb = hm.check_and_snapshot(pb, "manual", force=True)
         root = tmp_path / "inst" / "history"
-        assert (root / "gilboa" / ma.timestamp).is_dir()
+        assert (root / "deviceC" / ma.timestamp).is_dir()
         assert (root / "deborah" / mb.timestamp).is_dir()
-        assert hm._key_for(pa) == "gilboa" and hm._key_for(pb) == "deborah"
+        assert hm._key_for(pa) == "deviceC" and hm._key_for(pb) == "deborah"
 
     def test_adoption_keeps_history_continuity(self, hm, tmp_path):
         """A chip with an EXISTING fingerprint-forked alt dir gains a name:
@@ -145,28 +145,28 @@ class TestLadderTier1:
 
     def test_rename_follows_fingerprint_and_keeps_old_alias(self, hm, tmp_path):
         p = _write(tmp_path / "labX" / "quam_a",
-                   _state(chip_name="gilboa"), _wiring("10.0.0.1"))
+                   _state(chip_name="deviceC"), _wiring("10.0.0.1"))
         hm.check_and_snapshot(p, "manual", force=True)
         _write(tmp_path / "labX" / "quam_a",
                _state(chip_name="mount_g", f01=5.2e9), _wiring("10.0.0.1"))
-        assert hm._key_for(p) == "gilboa", \
+        assert hm._key_for(p) == "deviceC", \
             "rename adopts the OLD dir via fingerprint (history continuity)"
-        assert hm.display_name_for_dir("gilboa") == "mount_g"
+        assert hm.display_name_for_dir("deviceC") == "mount_g"
         # legacy URL with the old name key still resolves to the same dir
-        legacy = Path("/__chip_key__") / "gilboa" / "quam_state"
-        assert hm._history_dir(legacy).name == "gilboa"
+        legacy = Path("/__chip_key__") / "deviceC" / "quam_state"
+        assert hm._history_dir(legacy).name == "deviceC"
 
     def test_name_conflict_never_merges_two_chips(self, hm, tmp_path):
         pa = _write(tmp_path / "labX" / "quam_a",
-                    _state("qA1", chip_name="gilboa"), _wiring("10.0.0.1"))
+                    _state("qA1", chip_name="deviceC"), _wiring("10.0.0.1"))
         hm.check_and_snapshot(pa, "manual", force=True)
         pb = _write(tmp_path / "labY" / "quam_b",
-                    _state("qB1", chip_name="gilboa"), _wiring("10.0.0.9"))
+                    _state("qB1", chip_name="deviceC"), _wiring("10.0.0.9"))
         dir_b, key_b, source_b, swap_b = hm.resolve_chip_dir(pb)
-        assert key_b != "gilboa", "second fingerprint must not enter the claimed dir"
+        assert key_b != "deviceC", "second fingerprint must not enter the claimed dir"
         assert (swap_b or {}).get("type") == "name_conflict"
         mb = hm.check_and_snapshot(pb, "manual", force=True)
-        assert not (tmp_path / "inst" / "history" / "gilboa" / mb.timestamp).is_dir()
+        assert not (tmp_path / "inst" / "history" / "deviceC" / mb.timestamp).is_dir()
 
     def test_content_based_routing_beats_stale_live_reads(self, hm, tmp_path):
         """Capture routes by the CONTENT it snapshots (race-proof)."""
@@ -193,7 +193,7 @@ class TestLadderLegacyParity:
         alt_key = mb.chip_swap_detected["to_key"]
         assert alt_key.startswith("labX_alt_")
         assert (root / alt_key / mb.timestamp).is_dir()
-        # READS now follow the routed dirs too (the gilboa bug):
+        # READS now follow the routed dirs too (the deviceC bug):
         assert hm._key_for(pa) == "labX"
         assert hm._key_for(pb) == alt_key
 
@@ -311,20 +311,20 @@ class TestChipNamePrompt:
         assert 'hx-post="/chip-name/set"' in html
 
     def test_named_chip_never_prompts(self, tmp_path):
-        _app, c, _live = self._env(tmp_path, _state("qA1", chip_name="gilboa"))
+        _app, c, _live = self._env(tmp_path, _state("qA1", chip_name="deviceC"))
         assert "chip-name-banner" not in c.get("/qubits").data.decode()
 
     def test_set_stages_into_working_copy_only(self, tmp_path):
         app, c, live = self._env(tmp_path)
         live_bytes = (live / "state.json").read_bytes()
-        r = c.post("/chip-name/set", data={"name": "gilboa",
+        r = c.post("/chip-name/set", data={"name": "deviceC",
                                            "data_folder": "D:/data/root"})
         assert r.status_code == 200
         # staged in the store (working copy), live bytes untouched
         name = app.config["contexts"]
         ctx = next(iter(name.values()))
         st = ctx["store"].state
-        assert st["extras"]["chip_name"] == "gilboa"
+        assert st["extras"]["chip_name"] == "deviceC"
         assert st["extras"]["data_folder"] == "D:/data/root"
         assert (live / "state.json").read_bytes() == live_bytes, \
             "never a direct live write — Apply is the only path"
@@ -380,7 +380,7 @@ class TestExtrasDataFolderPairing:
         data_root = tmp_path / "data"
         (data_root / "2026-07-01").mkdir(parents=True)
         app, _c, ctx = self._env(tmp_path, _state(
-            "qA1", chip_name="gilboa", data_folder=str(data_root)))
+            "qA1", chip_name="deviceC", data_folder=str(data_root)))
         roots = {str(p) for p in app.config["workspace"].root_folders}
         assert str(data_root) in roots
         assert ctx["extras_data_roots"] == [str(data_root)]
@@ -388,7 +388,7 @@ class TestExtrasDataFolderPairing:
 
     def test_dangling_folder_muted_note_only(self, tmp_path):
         app, c, ctx = self._env(tmp_path, _state(
-            "qA1", chip_name="gilboa",
+            "qA1", chip_name="deviceC",
             data_folder=str(tmp_path / "nope" / "missing")))
         assert ctx["extras_data_roots"] == []
         assert len(ctx["extras_data_dangling"]) == 1
@@ -458,11 +458,11 @@ class TestDataFolderValidator:
             v = routes_mod._validate_data_folder(str(tmp_path))
             assert v["ok"] and v["kind"] == "ok"
             assert routes_mod._validate_data_folder(
-                "gilboa_iqcc")["kind"] == "not_a_path"
+                "deviceC_lab3")["kind"] == "not_a_path"
             assert routes_mod._validate_data_folder(
                 "data/sub")["kind"] == "not_a_path"
             assert routes_mod._validate_data_folder(
-                "/nonexistent_xyz_123/gilboa")["kind"] == "cross_machine"
+                "/nonexistent_xyz_123/deviceC")["kind"] == "cross_machine"
             assert routes_mod._validate_data_folder("")["kind"] == "not_a_path"
             assert routes_mod._validate_data_folder(
                 "C:" + "\\" + "no_such_dir_zz")["kind"] == "cross_machine"
@@ -504,13 +504,13 @@ class TestChipDataFolderSet:
 
     def test_not_a_path_rejected(self, tmp_path):
         _app, c, _live, ctx = _df_env(tmp_path, _state("qA1", chip_name="g"))
-        r = c.post("/chip-data-folder/set", data={"value": "gilboa_iqcc"})
+        r = c.post("/chip-data-folder/set", data={"value": "deviceC_lab3"})
         assert r.status_code == 400
         assert "looks like a name" in r.data.decode()
         assert len(ctx["store"].change_log) == 0
         # force never overrides the not-a-path gate
         r2 = c.post("/chip-data-folder/set",
-                    data={"value": "gilboa_iqcc", "force_cross": "1"})
+                    data={"value": "deviceC_lab3", "force_cross": "1"})
         assert r2.status_code == 400
 
     def test_clear_deletes_and_memoizes(self, tmp_path):
@@ -565,7 +565,7 @@ class TestDanglingBannerActions:
         storage = tmp_path / "datasets"
         storage.mkdir()
         _app, c, _live, ctx = _df_env(
-            tmp_path, _state("qA1", chip_name="g", data_folder="gilboa_iqcc"),
+            tmp_path, _state("qA1", chip_name="g", data_folder="deviceC_lab3"),
             monkeypatch=monkeypatch, storage=storage)
         assert ctx.get("qualibrate_project") == "alpha"
         html = c.get("/qubits").data.decode()
@@ -576,14 +576,14 @@ class TestDanglingBannerActions:
 
     def test_fixable_without_candidates(self, tmp_path):
         _app, c, _live, _ctx = _df_env(
-            tmp_path, _state("qA1", chip_name="g", data_folder="gilboa_iqcc"))
+            tmp_path, _state("qA1", chip_name="g", data_folder="deviceC_lab3"))
         html = c.get("/qubits").data.decode()
         assert "cnb-df-form" in html
         assert 'name="use"' not in html
 
     def test_unnamed_dangling_shows_name_prompt_only(self, tmp_path):
         _app, c, _live, _ctx = _df_env(
-            tmp_path, _state("qA1", data_folder="gilboa_iqcc"))
+            tmp_path, _state("qA1", data_folder="deviceC_lab3"))
         html = c.get("/qubits").data.decode()
         assert 'hx-post="/chip-name/set"' in html
         assert "cnb-df-form" not in html
@@ -666,7 +666,7 @@ class TestChipNameSetHardening:
     def test_rejects_bare_name_folder(self, tmp_path):
         _app, c, _live, ctx = _df_env(tmp_path, _state("qA1"))
         r = c.post("/chip-name/set",
-                   data={"name": "gilboa", "data_folder": "gilboa_iqcc"})
+                   data={"name": "deviceC", "data_folder": "deviceC_lab3"})
         assert r.status_code == 400
         assert "looks like a name" in r.data.decode()
         assert "extras" not in ctx["store"].state or \
@@ -677,7 +677,7 @@ class TestChipNameSetHardening:
         _app, c, _live, ctx = _df_env(tmp_path, _state("qA1"))
         missing = str(tmp_path / "missing_zz")
         r = c.post("/chip-name/set",
-                   data={"name": "gilboa", "data_folder": missing})
+                   data={"name": "deviceC", "data_folder": missing})
         assert r.status_code == 200
         assert "not reachable" in r.data.decode()
         assert ctx["store"].state["extras"]["data_folder"] == missing
@@ -723,39 +723,39 @@ class TestLadderDriftHeal:
 
     def test_add_qubit_keeps_named_dir(self, hm, tmp_path):
         p = _write(tmp_path / "labX" / "quam_a",
-                   _state("qA1", chip_name="gilboa"), _wiring("10.0.0.1"))
+                   _state("qA1", chip_name="deviceC"), _wiring("10.0.0.1"))
         m1 = hm.check_and_snapshot(p, "manual", force=True)
-        st = _state("qA1", chip_name="gilboa")
+        st = _state("qA1", chip_name="deviceC")
         st["qubits"]["qB1"] = {"id": "qB1", "f_01": 6.0e9}
         _write(tmp_path / "labX" / "quam_a", st, _wiring("10.0.0.1"))
         m2 = hm.check_and_snapshot(p, "manual", force=True)
         root = tmp_path / "inst" / "history"
-        assert (root / "gilboa" / m1.timestamp).is_dir()
-        assert (root / "gilboa" / m2.timestamp).is_dir(),             "adding a qubit must not fork the named chip's history"
-        assert hm._key_for(p) == "gilboa"
+        assert (root / "deviceC" / m1.timestamp).is_dir()
+        assert (root / "deviceC" / m2.timestamp).is_dir(),             "adding a qubit must not fork the named chip's history"
+        assert hm._key_for(p) == "deviceC"
 
     def test_host_move_keeps_named_dir(self, hm, tmp_path):
         p = _write(tmp_path / "labX" / "quam_a",
-                   _state("qA1", chip_name="gilboa"), _wiring("10.0.0.1"))
+                   _state("qA1", chip_name="deviceC"), _wiring("10.0.0.1"))
         m1 = hm.check_and_snapshot(p, "manual", force=True)
         _write(tmp_path / "labX" / "quam_a",
-               _state("qA1", chip_name="gilboa"), _wiring("10.9.9.9"))
+               _state("qA1", chip_name="deviceC"), _wiring("10.9.9.9"))
         m2 = hm.check_and_snapshot(p, "manual", force=True)
         root = tmp_path / "inst" / "history"
-        assert (root / "gilboa" / m1.timestamp).is_dir()
-        assert (root / "gilboa" / m2.timestamp).is_dir(),             "a host/cluster move must not fork the named chip's history"
+        assert (root / "deviceC" / m1.timestamp).is_dir()
+        assert (root / "deviceC" / m2.timestamp).is_dir(),             "a host/cluster move must not fork the named chip's history"
 
     def test_provably_different_chip_still_refused(self, hm, tmp_path):
         pa = _write(tmp_path / "labX" / "quam_a",
-                    _state("qA1", chip_name="gilboa"), _wiring("10.0.0.1"))
+                    _state("qA1", chip_name="deviceC"), _wiring("10.0.0.1"))
         ma = hm.check_and_snapshot(pa, "manual", force=True)
         # different network AND different labels — a true impostor
         pb = _write(tmp_path / "labY" / "quam_z",
-                    _state("qZ9", chip_name="gilboa"), _wiring("172.16.0.9"))
+                    _state("qZ9", chip_name="deviceC"), _wiring("172.16.0.9"))
         mb = hm.check_and_snapshot(pb, "manual", force=True)
         root = tmp_path / "inst" / "history"
-        assert (root / "gilboa" / ma.timestamp).is_dir()
-        assert not (root / "gilboa" / mb.timestamp).is_dir(),             "two physical chips must never merge into one dir"
+        assert (root / "deviceC" / ma.timestamp).is_dir()
+        assert not (root / "deviceC" / mb.timestamp).is_dir(),             "two physical chips must never merge into one dir"
 
 
 class TestIdentityConfirm:
@@ -766,10 +766,10 @@ class TestIdentityConfirm:
     falls back to the fill-in prompt."""
 
     def _wiped_env(self, tmp_path, *, data_folder=None):
-        """Chip named + snapshotted, then extras WIPED on disk (the gilboa
+        """Chip named + snapshotted, then extras WIPED on disk (the deviceC
         regeneration incident), then loaded fresh."""
         from quam_state_manager.web.app import create_app
-        named = _state("qA1", chip_name="gilboa", data_folder=data_folder)
+        named = _state("qA1", chip_name="deviceC", data_folder=data_folder)
         live = _write(tmp_path / "chips" / "live", named, _wiring("10.0.0.7"))
         app0 = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
         hm = app0.config["history_manager"]
@@ -789,7 +789,7 @@ class TestIdentityConfirm:
         _app, _c, live, _ctx, hm = self._wiped_env(
             tmp_path, data_folder=str(data_root))
         rem = hm.remembered_identity(str(live))
-        assert rem and rem["name"] == "gilboa"
+        assert rem and rem["name"] == "deviceC"
         assert rem["data_folder"] == str(data_root)
 
     def test_confirm_banner_renders_and_yes_stages(self, tmp_path):
@@ -799,24 +799,24 @@ class TestIdentityConfirm:
             tmp_path, data_folder=str(data_root))
         html = c.get("/qubits").data.decode()
         assert "This chip appears to be" in html
-        assert "gilboa" in html and "Is this correct?" in html
+        assert "deviceC" in html and "Is this correct?" in html
         assert 'hx-post="/chip-identity/decline"' in html
         # the Yes form routes through the EXISTING validated path
         assert 'hx-post="/chip-name/set"' in html
-        r = c.post("/chip-name/set", data={"name": "gilboa",
+        r = c.post("/chip-name/set", data={"name": "deviceC",
                                            "data_folder": str(data_root)})
         assert r.status_code == 200
-        assert ctx["store"].state["extras"]["chip_name"] == "gilboa"
+        assert ctx["store"].state["extras"]["chip_name"] == "deviceC"
         assert "This chip appears to be" not in c.get("/qubits").data.decode()
 
     def test_not_a_path_data_folder_never_reoffered(self, tmp_path):
         _app, c, _live, ctx, _hm = self._wiped_env(
-            tmp_path, data_folder="gilboa_iqcc")
+            tmp_path, data_folder="deviceC_lab3")
         html = c.get("/qubits").data.decode()
         assert "This chip appears to be" in html
         assert ctx["identity_confirm"]["data_folder"] is None, \
             "a remembered not-a-path mistake must not be re-suggested"
-        assert 'name="data_folder" value="gilboa_iqcc"' not in html
+        assert 'name="data_folder" value="deviceC_lab3"' not in html
 
     def test_no_falls_back_to_fill_in_prompt(self, tmp_path):
         _app, c, live, _ctx, _hm = self._wiped_env(tmp_path)
