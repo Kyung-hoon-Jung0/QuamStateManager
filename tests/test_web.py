@@ -6901,3 +6901,62 @@ class TestUndoNavServerR16:
         assert "+ added (2 field" in html          # summary kept
         assert "tray-subtree-leaves" in html       # expandable leaf list
         assert "b.c" in html and "2.5" in html     # actual values visible
+
+
+class TestApplyHardeningR16:
+    """r16 6 (docs/65 amendment): apply bookkeeping is pinned to the CAPTURED
+    ctx, /state/tray serves server-truth for the client's stale-attribute
+    recheck, and unexpected apply failures answer honestly."""
+
+    @pytest.fixture
+    def chip_client(self, tmp_path):
+        state = _make_state()
+        folder = tmp_path / "chip"
+        folder.mkdir()
+        (folder / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        (folder / "wiring.json").write_text(json.dumps(_make_wiring()),
+                                            encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "inst"))
+        c = app.test_client()
+        assert c.post("/load", data={"folder": str(folder)}).status_code in (200, 302)
+        return c
+
+    def test_state_tray_route_serves_tray(self, chip_client):
+        r = chip_client.get("/state/tray")
+        assert r.status_code == 200
+        assert b'id="pending-tray"' in r.data
+
+    def test_apply_bookkeeping_uses_captured_ctx(self, chip_client, monkeypatch):
+        from quam_state_manager.web import routes as routes_mod
+        app = chip_client.application
+        with app.app_context():
+            captured_ctx = app.config["contexts"][app.config["active_context"]]
+        seen = []
+        orig = routes_mod._set_working_dirty
+
+        def spy(value, ctx=None):
+            seen.append((value, ctx))
+            return orig(value, ctx)
+
+        monkeypatch.setattr(routes_mod, "_set_working_dirty", spy)
+        chip_client.post("/qubit/qA1/edit", data={
+            "dot_path": "qubits.qA1.f_01", "value": "6.31e9"})
+        r = chip_client.post("/state/apply-to-live")
+        assert r.status_code == 200, r.data[:300]
+        falses = [c for v, c in seen if v is False]
+        assert falses and all(c is captured_ctx for c in falses), \
+            "apply must clear the dirty flag on the CAPTURED ctx, never None"
+
+    def test_unexpected_apply_failure_answers_honestly(self, chip_client,
+                                                       monkeypatch):
+        from quam_state_manager.core import working_copy as wc_mod
+
+        def boom(wc, force=False):
+            raise RuntimeError("weird internal state")
+
+        monkeypatch.setattr(wc_mod, "apply_to_live", boom)
+        chip_client.post("/qubit/qA1/edit", data={
+            "dot_path": "qubits.qA1.f_01", "value": "6.32e9"})
+        r = chip_client.post("/state/apply-to-live")
+        assert r.status_code == 500
+        assert b"unexpectedly" in r.data and b"RuntimeError" in r.data

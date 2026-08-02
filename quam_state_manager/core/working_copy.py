@@ -667,12 +667,38 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False) -> None:
             f"({exc}); working copy's synced state was not advanced."
         ) from exc
 
+    applied_hash = content_hash(state, wiring)
+
+    # r16 ⑥ (docs/65 amendment): VERIFY the apply landed. "Applied" used to
+    # be believed, never observed — the hash below was computed from the
+    # SOURCE bytes, so a write misdirected by a junction/case-variant path,
+    # or immediately overwritten by a racing experiment save, still reported
+    # success ("apply to live sometimes doesn't reflect"). One extra read on
+    # this destructive, user-initiated path is cheap; a mismatch raises with
+    # an honest message instead of advancing the synced state.
+    try:
+        v_state, v_wiring = safe_io.read_state_wiring(wc.live_folder)
+        verified = content_hash(v_state, v_wiring) == applied_hash
+    except (OSError, ValueError) as exc:
+        raise safe_io.LiveFileError(
+            f"Wrote to {wc.live_folder} but could not read it back to verify "
+            f"({exc}); treat the apply as UNVERIFIED and re-sync before "
+            "further edits."
+        ) from exc
+    if not verified:
+        raise safe_io.LiveFileError(
+            f"Apply verification FAILED: {wc.live_folder} does not contain "
+            "the just-written content — another program wrote the live files "
+            "during the apply (or the path is redirected). Re-sync to see "
+            "what the live chip holds now; your edits are still in the "
+            "working copy."
+        )
+
     # Persist meta FIRST -- only advance in-memory synced_* after the meta
     # write succeeds. Otherwise an OSError on the meta write leaves the
     # in-memory copy ahead of disk: the current session would treat the
     # live as in-sync, but the next session would re-read the stale meta
     # and prompt a needless re-sync (red-team Phase 1 follow-up §4.4).
-    applied_hash = content_hash(state, wiring)  # live now holds the working content
     try:
         wc._write_meta_pair(state_mt, wiring_mt, applied_hash)
     except OSError as exc:

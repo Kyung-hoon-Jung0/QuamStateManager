@@ -958,3 +958,46 @@ def test_create_stores_resolved_live_folder(tmp_path, monkeypatch):
     assert meta["live_folder"] == str(live.resolve())
     # …and the resolved spelling loads it straight back
     assert load(tmp_path / "instance", live) is not None
+
+
+# ---------------------------------------------------------------------------
+# r16 6 (docs/65 amendment): post-apply read-back verification
+# ---------------------------------------------------------------------------
+
+def test_apply_verification_catches_misdirected_write(tmp_path, monkeypatch):
+    # "Applied" used to be believed, never observed: a write that never
+    # reaches the real live files (junction/case-shim redirect, or a racer
+    # overwriting immediately) still reported success. The read-back verify
+    # must raise an HONEST error and NOT advance the synced state.
+    from quam_state_manager.core import safe_io, working_copy as wcmod
+    inst = tmp_path / "instance"
+    live = tmp_path / "chip" / "quam_state"
+    _seed(live, state={"qubits": {"q1": {}}})
+    wc = create(inst, live)
+    edited = {"qubits": {"q1": {"f_01": 7e9}}}
+    (wc.working_folder / "state.json").write_text(json.dumps(edited), encoding="utf-8")
+
+    real_write = safe_io.write_state_wiring
+
+    def misdirected(folder, state, wiring):
+        # simulate the write landing with RACER content instead of ours
+        real_write(folder, {"qubits": {"racer": {}}}, wiring)
+
+    monkeypatch.setattr(wcmod.safe_io, "write_state_wiring", misdirected)
+    before = (wc.synced_state_mtime, wc.synced_wiring_mtime, wc.synced_live_hash)
+    with pytest.raises(safe_io.LiveFileError, match="verification FAILED"):
+        apply_to_live(wc)
+    assert (wc.synced_state_mtime, wc.synced_wiring_mtime,
+            wc.synced_live_hash) == before          # synced state NOT advanced
+
+
+def test_apply_verification_passes_on_clean_write(tmp_path):
+    # the happy path exercises the new read-back and still succeeds
+    inst = tmp_path / "instance"
+    live = tmp_path / "chip" / "quam_state"
+    _seed(live, state={"qubits": {"q1": {}}})
+    wc = create(inst, live)
+    edited = {"qubits": {"q1": {"T1": 12e-6}}}
+    (wc.working_folder / "state.json").write_text(json.dumps(edited), encoding="utf-8")
+    apply_to_live(wc)
+    assert json.loads((live / "state.json").read_text()) == edited
