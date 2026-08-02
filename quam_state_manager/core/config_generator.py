@@ -468,6 +468,82 @@ def _env_python(env_path) -> str:
     return str(windows if os.name == "nt" else posix)
 
 
+def resolve_python_interpreter(path_str: str) -> str | None:
+    """Resolve a user-given path to a Python interpreter FILE (r15, docs/71).
+
+    Accepts: the interpreter file itself, a venv/conda FOLDER (both the
+    Windows ``Scripts/python.exe`` and POSIX ``bin/python`` layouts, plus a
+    conda root ``python.exe``; OS-native layout tried first), or a project
+    folder holding a ``.venv`` (the uv convention). Pure stat — never spawns.
+    ``None`` when nothing resolves.
+    """
+    try:
+        p = Path(path_str)
+        if p.is_file():
+            return str(p)
+        if not p.is_dir():
+            return None
+        layouts = [("Scripts", "python.exe"), ("python.exe",), ("bin", "python")]
+        if os.name != "nt":
+            layouts = [("bin", "python"), ("Scripts", "python.exe"), ("python.exe",)]
+        for root in (p, p / ".venv"):
+            for parts in layouts:
+                cand = root.joinpath(*parts)
+                if cand.is_file():
+                    return str(cand)
+    except OSError:
+        return None
+    return None
+
+
+def discover_uv_venvs() -> list[dict]:
+    """Discover uv/venv interpreters via the qualibrate projects (r15, docs/71).
+
+    No interpreter key exists anywhere in qualibrate configs, but every
+    project's ``[qualibrate.calibration_library] folder`` points into its
+    calibration repo — and uv puts the venv at ``<repo>/.venv``. So: walk UP
+    from each project's calibration folder (the folder itself + ≤4 ancestors)
+    looking for ``.venv/pyvenv.cfg`` with a resolvable interpreter.
+    Active-project-first, per-interpreter deduped, dangling folders skipped,
+    never raises. READ-ONLY on the qualibrate tree (docs/55 doctrine).
+    """
+    out: list[dict] = []
+    seen: set[str] = set()
+    try:
+        from quam_state_manager.core import qualibrate_config
+        listing = qualibrate_config.list_projects()
+    except Exception:  # noqa: BLE001 - discovery must never break the wizard
+        return out
+    projects = list(listing.get("projects") or [])
+    projects.sort(key=lambda p: not p.get("active"))
+    for proj in projects:
+        calib = (proj.get("calibration_library") or {}).get("native")
+        if not calib:
+            continue
+        try:
+            node = Path(calib)
+            for _ in range(5):                    # itself + ≤4 ancestors
+                venv = node / ".venv"
+                if (venv / "pyvenv.cfg").is_file():
+                    python = resolve_python_interpreter(str(venv))
+                    if python and python not in seen:
+                        seen.add(python)
+                        out.append({
+                            "name": ".venv · " + str(proj.get("name") or node.name),
+                            "path": str(venv),
+                            "python": python,
+                            "kind": "uv-venv",
+                            "project": proj.get("name"),
+                        })
+                    break
+                if node.parent == node:
+                    break
+                node = node.parent
+        except OSError:
+            continue
+    return out
+
+
 def _envs_from_environments_txt() -> list[Path]:
     """Env paths from ``~/.conda/environments.txt`` (one absolute path per line).
 
@@ -485,12 +561,14 @@ def _envs_from_environments_txt() -> list[Path]:
 
 
 def discover_envs() -> list[dict]:
-    """List the conda environments on this machine.
+    """List the Python environments on this machine.
 
     Merges ``conda env list --json`` (when conda is findable) with
     ``~/.conda/environments.txt`` (which needs no conda executable at all),
-    deduped by path — empty only if both channels come up dry. Probing each
-    env for the QM stack is done separately by :func:`probe_env`.
+    plus uv/.venv interpreters discovered through the qualibrate projects
+    (:func:`discover_uv_venvs`, r15) — deduped by path. Rows carry a
+    ``kind`` tag (``"conda"`` / ``"uv-venv"``). Probing each env for the QM
+    stack is done separately by :func:`probe_env`.
     """
     env_paths: list[Path] = []
     conda = find_conda_executable()
@@ -516,7 +594,14 @@ def discover_envs() -> list[dict]:
             "name": path.name,
             "path": str(path),
             "python": _env_python(path),
+            "kind": "conda",
         })
+    # uv/.venv interpreters from the qualibrate projects (r15, docs/71) —
+    # appended after conda's so the familiar list stays on top.
+    for uv in discover_uv_venvs():
+        if uv["path"] not in seen:
+            seen.add(uv["path"])
+            envs.append(uv)
     return envs
 
 

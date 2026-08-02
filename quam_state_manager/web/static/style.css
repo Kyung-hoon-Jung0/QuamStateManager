@@ -7145,6 +7145,15 @@ tr.gen-pop-row-linked > td {
     font-size: 0.867em; font-weight: 600; line-height: 1.45;
     color: var(--pico-color);
 }
+/* r15 (docs/71): uv/.venv envs discovered via the qualibrate projects share
+   the list with conda envs — a small kind badge tells them apart. */
+#gen-env-list .gen-env-kind {
+    flex: 0 0 auto;
+    font-size: 0.7em; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.04em; padding: 0.05em 0.45em; border-radius: 0.6em;
+    color: var(--pico-primary);
+    border: 1px solid color-mix(in srgb, var(--pico-primary) 45%, transparent);
+}
 /* path: muted mono; styles both the plain text node AND the optional dp-dirs/leaf split */
 #gen-env-list .gen-env-path {
     flex: 1 1 auto; min-width: 0;
