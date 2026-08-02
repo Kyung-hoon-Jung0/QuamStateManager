@@ -424,6 +424,15 @@ function _purgeInteractiveTile(div) {
 var INTERACTIVE_RENDER_HARD_CAP = INTERACTIVE_RENDER_BUDGET * 2;
 
 function _pruneInteractiveTiles(container) {
+    // r16 ⑤: a plot-popup apply swaps the tray + diagnostics banner, whose
+    // height change re-lays-out the page → the observer marks every tile as
+    // moved → this prune purged past the budget and each re-entry re-fetched
+    // + re-rendered ALL figures (the "every update re-renders everything"
+    // slowdown). Tiles depend only on the run's FROZEN artifacts, so the
+    // correct post-apply behavior is NO tile work: skip pruning in the
+    // layout-settle window after a tray swap.
+    if (window._interactiveFreezeUntil
+        && Date.now() < window._interactiveFreezeUntil) return;
     var rendered = container._rendered || [];
     if (rendered.length <= INTERACTIVE_RENDER_BUDGET) return;
     var excess = rendered.length - INTERACTIVE_RENDER_BUDGET;
@@ -442,6 +451,9 @@ function _pruneInteractiveTiles(container) {
         if (old && old.getAttribute('data-rendered') === '1') _purgeInteractiveTile(old);
     }
 }
+// Explicit binding for the jsdom selfcheck (eval'd contexts don't hoist
+// top-level declarations onto window — see _navigateToExplorerPath).
+window._pruneInteractiveTiles = _pruneInteractiveTiles;
 
 // When a dataset pane is swapped out, disconnect its interactive observer and
 // bump its generation so any in-flight tile fetch drops instead of painting
@@ -1471,6 +1483,15 @@ window.toggleTheme = function() {
         if (qp === 'light' || qp === 'dark') theme = qp;
     } catch(e) {}
     if (theme === 'dark') _applyThemeToPlotly('dark');
+    // r16 ⑤-1: retheme() used to run only on the theme TOGGLE — plots
+    // rendered before Plotly/theme settled on a dark-mode LOAD kept the
+    // light template's near-black axis text. One pass after load fixes any
+    // early renders; per-render theming is houseLayout's job.
+    document.addEventListener('DOMContentLoaded', function() {
+        setTimeout(function() {
+            if (window.PlotTheme && window.PlotTheme.retheme) window.PlotTheme.retheme();
+        }, 800);
+    });
     document.addEventListener('DOMContentLoaded', function() {
         var btn = document.getElementById('theme-toggle');
         if (!btn) return;
@@ -6764,7 +6785,11 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
             inner.style.width = '100%';
             inner.style.height = '360px';
             div.appendChild(inner);
-            var layout = d.layout || {};
+            // r16 ⑤-1: HOUSE THEME — the raw server layout carries no colors,
+            // so Plotly's light template painted near-black axis text on the
+            // dark page (ndview was the only themed consumer).
+            var layout = (window.PlotTheme && PlotTheme.houseLayout)
+                ? window.PlotTheme.houseLayout(d.layout || {}) : (d.layout || {});
             if (!layout.height) layout.height = 360;
             // _plotlyRender lazy-loads Plotly and returns a promise; attach the
             // click handler only once the figure exists.
@@ -6814,7 +6839,8 @@ function _fetchAndRenderPlot(container, runId, which, varName, qubitIdx) {
             plotDiv.style.width = '100%';
             plotDiv.style.height = UI_CONFIG.plotly.h5Plot.height + 'px';
             container.appendChild(plotDiv);
-            var layout = data.layout || {};
+            var layout = (window.PlotTheme && PlotTheme.houseLayout)
+                ? window.PlotTheme.houseLayout(data.layout || {}) : (data.layout || {});   // r16 ⑤-1
             layout.margin = UI_CONFIG.plotly.h5Plot.margin;
             layout.height = UI_CONFIG.plotly.h5Plot.height;
             Promise.resolve(_plotlyRender(plotDiv, data.traces, layout, {responsive: true})).then(function() {
@@ -7794,6 +7820,10 @@ window._diagChanged = function () {
 };
 
 function _swapPendingTray(html) {
+    // r16 ⑤: the tray (and the diagnostics-banner refetch that follows) can
+    // change page height — freeze the interactive-tile prune through the
+    // layout settle so an apply never re-renders every figure.
+    window._interactiveFreezeUntil = Date.now() + 1500;
     var slot = document.getElementById('pending-tray');
     if (slot) {
         slot.outerHTML = html;
@@ -7806,7 +7836,7 @@ function _swapPendingTray(html) {
     if (window._restoreTrayState) window._restoreTrayState();
     // audit-r10: same reason — re-evaluate the LiveEditUndo ↶ visibility
     // (the fresh tray arrives with the button display:none).
-    if (window.LiveEditUndo) LiveEditUndo._updateTrayBtn();
+    if (window.LiveEditUndo) window.LiveEditUndo._updateTrayBtn();
     var saveBtn = document.querySelector('.btn-save');
     if (saveBtn) saveBtn.disabled = false;
     // Cross-surface consistency: every edit path funnels through here, so this is
