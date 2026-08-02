@@ -3059,14 +3059,33 @@
     var pop = state.spec.populate;
     if (!pop || !pop.pairs) return;
     var liveIds = {};
+    var byMembers = {};   // sorted "qA|qB" -> canonical "control-target" id
     state.spec.qubit_pairs.forEach(function (p) {
-      if (p[0] && p[1]) liveIds[p[0] + "-" + p[1]] = true;
+      if (p[0] && p[1]) {
+        liveIds[p[0] + "-" + p[1]] = true;
+        byMembers[[String(p[0]), String(p[1])].sort().join("|")] = p[0] + "-" + p[1];
+      }
     });
     var keep = {};
     pairPopCols().forEach(function (c) { keep[c.field] = true; });
     Object.keys(pop.pairs).forEach(function (id) {
-      if (!liveIds[id]) { delete pop.pairs[id]; return; }
+      if (!liveIds[id]) {
+        // Not the canonical spelling. A reconstructed draft can key the SAME
+        // physical pair by the source chip's NAME — short-form target
+        // ("q0-1") and/or flipped orientation — so re-key by qubit membership
+        // instead of deleting the user's per-pair seeds as stale.
+        var seg = id.split("-");
+        var c0 = seg[0];
+        var t0 = seg.slice(1).join("-");
+        if (t0 && t0.charAt(0) !== "q") t0 = "q" + t0;
+        var canon = byMembers[[c0, t0].sort().join("|")];
+        if (canon && !pop.pairs[canon]) pop.pairs[canon] = pop.pairs[id];
+        delete pop.pairs[id];
+        if (!canon || !pop.pairs[canon]) return;
+        id = canon;
+      }
       var bucket = pop.pairs[id];
+      if (!bucket) return;
       Object.keys(bucket).forEach(function (f) {
         if (!keep[f]) delete bucket[f];
       });
@@ -5965,6 +5984,7 @@
         var dangN = (m.dangling_grafts || []).length;
         var twpaN = m.twpa_wiring_carried || 0;     // TWPAs carried (wiring + ports)
         var prunedN = m.pruned_ops || 0;            // redundant old ops cleaned
+        var schemaDropN = m.schema_dropped || 0;    // old-stack fields the new env's classes don't know
         var mp = document.createElement("div");
         mp.className = "gen-merge-report";
         mp.innerHTML =
@@ -5980,6 +6000,11 @@
           '<span class="gen-merge-stat ' + (lostN ? 'gen-merge-warn' : 'gen-merge-muted') +
             '" title="OLD values with no home in the rebuild">' +
             lostN + ' not carried</span>' +
+          (schemaDropN ? '<span class="gen-merge-stat gen-merge-warn" title="Fields an older ' +
+            'stack generation serialized that this env\'s classes renamed or removed ' +
+            '(e.g. CZGate.duration_control → duration_qubit) — grafting them would make ' +
+            'Quam.load() fail, so they were dropped">' + schemaDropN +
+            ' cross-gen dropped</span>' : '') +
           (dangN ? '<span class="gen-merge-stat gen-merge-warn" title="Grafted legacy content ' +
             'whose reference no longer resolves">' + dangN + ' broken ref</span>' : '');
         el.appendChild(mp);
@@ -5991,13 +6016,17 @@
             " the rebuild re-expressed (unreferenced, broken pointers)";
           el.appendChild(pn);
         }
-        if (lostN || dangN) {
+        if (lostN || dangN || schemaDropN) {
           var det = document.createElement("details");
           det.className = "gen-merge-detail";
           var sm = document.createElement("summary");
-          sm.textContent = "Not carried / broken (" + (lostN + dangN) + ") — expand";
+          sm.textContent = "Not carried / dropped / broken (" +
+            (lostN + dangN + schemaDropN) + ") — expand";
           det.appendChild(sm);
           (m.residual_lost || []).concat(m.dangling_grafts || [])
+            .concat((m.schema_dropped_paths || []).map(function (p) {
+              return p + " — old-stack field this env doesn't know (dropped)";
+            }))
             .slice(0, 80).forEach(function (p) {
               var line = document.createElement("div");
               line.className = "gen-merge-lost-line";

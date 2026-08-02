@@ -110,7 +110,14 @@ def run_regenerate(
     if twpa_renames:
         safe_io.atomic_write_json(out_dir / "wiring.json", new_wiring)
 
-    result = regen_merge.merge_states(old_state, new_state)
+    # The build subprocess harvests the env's dataclass field schemas for every
+    # class the fresh state carries (run_build._collect_class_schemas) — the
+    # merge uses them to refuse grafting OLD-only fields a cross-generation
+    # stack renamed/removed (Quam.load killers). Absent on old build results
+    # or harvest failure ⇒ merge_states falls back to the legacy graft.
+    class_schemas = (outcome.get("result") or {}).get("class_schemas")
+    result = regen_merge.merge_states(old_state, new_state,
+                                      class_schemas=class_schemas)
 
     # TWPAs are grafted back at the state level but the builder made no TWPA
     # wiring/ports — carry those from OLD so the channel resolves and
@@ -168,6 +175,8 @@ def run_regenerate(
         "dangling_grafts": s.dangling_grafts[:200],
         "pruned_ops": len(s.pruned_ops),
         "twpa_wiring_carried": twpa_carried,
+        "schema_dropped": len(s.schema_dropped),
+        "schema_dropped_paths": s.schema_dropped[:200],
     }
     outcome["script"] = script_name   # emitted build recipe filename, or None
     return outcome

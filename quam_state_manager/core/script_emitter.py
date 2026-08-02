@@ -66,6 +66,7 @@ _RUN_BUILD_PATH = Path(__file__).resolve().parent.parent / "generator" / "run_bu
 _RUNTIME_CONSTS = ("_BAND_TO_DELAY_NS", "_CZ_VARIANTS", "_PULSE_HOMES")
 _RUNTIME_FUNCS = (
     "_norm_index", "_parse_pair", "_quam_pair_id", "_norm_pair_qubits",
+    "_match_populate_pairs",
     "_num", "_target_lo",
     "_band_for", "_delay_for_band", "_apply_lf_delay",
     "_set_port_lo", "_set_channel_lo", "_operation",

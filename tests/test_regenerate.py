@@ -43,7 +43,9 @@ def test_same_folder_guard_case_insensitive_host(tmp_path, monkeypatch):
     src = tmp_path / "Chip"
     src.mkdir()
     out_dir = tmp_path / "chip"
-    out_dir.mkdir()                     # exists → same_folder branch is taken
+    # exists → same_folder branch is taken. exist_ok: on a real case-insensitive
+    # FS (native Windows) this IS src and already exists — the point of the test.
+    out_dir.mkdir(exist_ok=True)
     monkeypatch.setattr(regenerate.path_match, "same_folder", lambda a, b: True)
     out = regenerate.run_regenerate("py", src, {"qubits": []}, out_dir)
     assert out["merge"] is None
@@ -181,3 +183,99 @@ def test_real_regenerate_zero_loss(tmp_path, monkeypatch):
     assert out["merge"]["residual_lost"] == []
     assert out["merge"]["carried"] > 500
     assert out["merge"]["grafted"] > 50
+
+
+def test_class_schemas_flow_into_merge(tmp_path, monkeypatch):
+    # The build result's class_schemas must reach merge_states: an old-stack
+    # field on a __class__-tagged dict is dropped and reported, not grafted.
+    (tmp_path / "old").mkdir()
+    old_state = {"qubit_pairs": {"p1": {"macros": {"cz": {
+        "__class__": "qb.CZGate", "phase": 0.2, "duration_control": None}}}}}
+    (tmp_path / "old" / "state.json").write_text(json.dumps(old_state))
+    (tmp_path / "old" / "wiring.json").write_text(json.dumps({"wiring": {}, "network": {}}))
+    fresh = {"qubit_pairs": {"p1": {"macros": {"cz": {
+        "__class__": "qb.CZGate", "phase": 0.0, "duration_qubit": None}}}}}
+
+    def fake_build(python_path, mode, spec, out_dir, timeout=300):
+        out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "state.json").write_text(json.dumps(fresh))
+        (out_dir / "wiring.json").write_text(json.dumps({"wiring": {}, "network": {}}))
+        return {"ok": True, "status": "ok", "error": None,
+                "result": {"class_schemas": {
+                    "qb.CZGate": ["phase", "duration_qubit"]}}}
+
+    monkeypatch.setattr(regenerate.config_generator, "run_generator", fake_build)
+    out = regenerate.run_regenerate("py", tmp_path / "old", {"x": 1}, tmp_path / "new")
+
+    assert out["ok"] is True
+    assert out["merge"]["schema_dropped"] == 1
+    assert out["merge"]["schema_dropped_paths"] == [
+        "qubit_pairs.p1.macros.cz.duration_control"]
+    merged = json.loads((tmp_path / "new" / "state.json").read_text())
+    cz = merged["qubit_pairs"]["p1"]["macros"]["cz"]
+    assert "duration_control" not in cz              # gate fired
+    assert cz["phase"] == 0.2                        # tier1 carry intact
+
+
+class TestCollectClassSchemas:
+    """run_build._collect_class_schemas — the in-env harvest feeding the gate.
+
+    run_build is import-light (heavy QM imports live inside functions), so the
+    harvest is unit-testable here with a fake module injected into sys.modules.
+    """
+
+    def test_harvest_fields_and_omit_unimportable(self, tmp_path, monkeypatch):
+        import dataclasses as dc
+        import sys
+        import types
+
+        import quam_state_manager.generator.run_build as run_build
+
+        mod = types.ModuleType("fake_quam_mod")
+
+        @dc.dataclass
+        class Gate:
+            duration_qubit: int = 0
+            phase: float = 0.0
+
+        mod.Gate = Gate
+        monkeypatch.setitem(sys.modules, "fake_quam_mod", mod)
+
+        state = {"pairs": {"p": {
+            "macros": {"cz": {"__class__": "fake_quam_mod.Gate"}},
+            "ghost": {"__class__": "no_such_mod.Nope"},   # omitted, not fatal
+        }}}
+        sp = tmp_path / "state.json"
+        sp.write_text(json.dumps(state))
+        wp = tmp_path / "wiring.json"
+        wp.write_text(json.dumps({"wiring": {}}))
+
+        schemas = run_build._collect_class_schemas(sp, wp)
+        assert schemas == {"fake_quam_mod.Gate": ["duration_qubit", "phase"]}
+
+    def test_unreadable_artefacts_yield_empty(self, tmp_path):
+        import quam_state_manager.generator.run_build as run_build
+        assert run_build._collect_class_schemas(
+            tmp_path / "none.json", tmp_path / "none2.json") == {}
+
+
+class TestMatchPopulatePairs:
+    """run_build._match_populate_pairs — the three-tier per-pair seed lookup."""
+
+    def test_three_tiers_resolve_and_unmatched_warns(self):
+        import quam_state_manager.generator.run_build as rb
+        pop = {"q1-0": {"a": 1},           # exact
+               "q0-q3": {"b": 2},          # spelled form -> q0-3
+               "q2-5": {"c": 3},           # membership: built id is q5-2 (flipped)
+               "q9-7": {"d": 4}}           # matches nothing
+        resolved, unmatched = rb._match_populate_pairs(
+            pop, ["q1-0", "q0-3", "q5-2"])
+        assert resolved == {"q1-0": {"a": 1}, "q0-3": {"b": 2}, "q5-2": {"c": 3}}
+        assert unmatched == ["q9-7"]
+
+    def test_exact_key_wins_over_flipped_duplicate(self):
+        import quam_state_manager.generator.run_build as rb
+        pop = {"q1-0": {"exact": True}, "q0-1": {"flipped": True}}
+        resolved, unmatched = rb._match_populate_pairs(pop, ["q1-0"])
+        assert resolved == {"q1-0": {"exact": True}}
+        assert unmatched == []

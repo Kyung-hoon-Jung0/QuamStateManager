@@ -127,6 +127,7 @@ class MergeStats:
     residual_lost: list[str] = field(default_factory=list)   # OLD scalars TRULY with no home
     dangling_grafts: list[str] = field(default_factory=list)  # grafts w/ broken abs pointer (after prune)
     pruned_ops: list[str] = field(default_factory=list)      # redundant old ops removed by prune
+    schema_dropped: list[str] = field(default_factory=list)  # OLD-only fields the NEW env's class schema doesn't know (cross-generation rename/removal)
 
 
 @dataclass
@@ -135,19 +136,24 @@ class MergeResult:
     stats: MergeStats
 
 
-def _merge(old: Any, new: Any, path: str, stats: MergeStats) -> Any:
+def _merge(old: Any, new: Any, path: str, stats: MergeStats,
+           schemas: dict[str, list[str]] | None = None) -> Any:
     if isinstance(old, dict) and isinstance(new, dict):
         out: dict = {}
         for k, nv in new.items():
-            if k == "__class__":
-                out[k] = nv
+            if k in ("__class__", "__package_versions__"):
+                # Serialization artifacts, not calibration: always the NEW
+                # build's. Tier-1-carrying an OLD __package_versions__ stamp
+                # would lie about which stack wrote the rebuilt state.
+                out[k] = copy.deepcopy(nv)
                 continue
             if k in STRUCTURAL_LEAF_KEYS:               # membership -> always NEW
                 out[k] = copy.deepcopy(nv)
                 stats.kept_new_pointer += 1
                 continue
             if k in old:
-                out[k] = _merge(old[k], nv, f"{path}.{k}" if path else k, stats)
+                out[k] = _merge(old[k], nv, f"{path}.{k}" if path else k,
+                                stats, schemas)
             else:
                 out[k] = copy.deepcopy(nv)
                 stats.kept_new_only += _count_leaves(nv)
@@ -162,11 +168,31 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats) -> Any:
         top = path.split(".", 1)[0] if path else ""
         graftable_here = not (path in ENTITY_COLLECTIONS
                               or top in _HW_ENTITY_COLLECTIONS)
+        # Cross-generation schema gate: a dict carrying __class__ IS a quam
+        # object, so its keys are dataclass attributes — quam raises
+        # AttributeError('Unexpected attribute') on any it doesn't know. When
+        # the build reported the NEW env's field schema for this class, an
+        # OLD-only key outside it is a field the new stack renamed/removed
+        # (e.g. CZGate.duration_control -> duration_qubit in quam_builder
+        # 0.4.0) — grafting it would poison Quam.load(). Drop it VISIBLY via
+        # stats.schema_dropped. Untagged container dicts (operations / macros /
+        # extras) have no schema and keep grafting user-added subtrees.
+        legal: list[str] | None = None
+        if schemas:
+            cls = new.get("__class__")
+            if isinstance(cls, str):
+                legal = schemas.get(cls)
         for k, ov in old.items():
-            if k in new or k == "__class__" or k in STRUCTURAL_LEAF_KEYS:
+            if (k in new or k in ("__class__", "__package_versions__")
+                    or k in STRUCTURAL_LEAF_KEYS):
+                # __package_versions__ is quam's serialization stamp, not user
+                # data — never carry a stale one onto a rebuilt state.
                 continue
             if not graftable_here:
                 continue                                # removed entity -> residual_lost
+            if legal is not None and k not in legal:
+                stats.schema_dropped.append(f"{path}.{k}" if path else k)
+                continue
             out[k] = copy.deepcopy(ov)
             n = _count_leaves(ov)
             stats.grafted += n
@@ -417,7 +443,8 @@ def graft_twpa_wiring(merged_state: dict, old_state: dict,
     return carried
 
 
-def merge_states(old_state: dict, new_state: dict) -> MergeResult:
+def merge_states(old_state: dict, new_state: dict,
+                 class_schemas: dict[str, list[str]] | None = None) -> MergeResult:
     """Merge the OLD calibrated state onto the NEW rebuilt structure.
 
     Returns the merged state plus :class:`MergeStats`. ``stats.residual_lost``
@@ -425,15 +452,34 @@ def merge_states(old_state: dict, new_state: dict) -> MergeResult:
     for a same-structure rebuild; non-empty only where the user intentionally
     removed structure). ``stats.dangling_grafts`` lists grafted subtrees whose
     absolute pointers no longer resolve -- surface these as warnings.
+
+    ``class_schemas`` — optional ``{class_path: [field, ...]}`` map of the NEW
+    build env's dataclass fields (harvested by ``run_build`` inside the env,
+    carried via ``_result.json``). When present, the tier-2 graft refuses to
+    copy an OLD-only key into a ``__class__``-tagged dict whose class doesn't
+    know that field — those are fields an older stack generation serialized
+    that the new one renamed/removed, and quam's loader dies on them. Dropped
+    paths land in ``stats.schema_dropped`` (never silent). ``None`` or a class
+    missing from the map ⇒ legacy behavior (graft), so old build results and
+    probe failures degrade safely.
     """
     stats = MergeStats()
     new_state = _reconcile_pair_ids(old_state, new_state)   # align pair ids first
-    merged = _merge(old_state, new_state, "", stats)
+    merged = _merge(old_state, new_state, "", stats, class_schemas)
+    stats.schema_dropped.sort()
 
     merged_paths = {p for p, _ in _iter_leaves(merged)}
-    old_scalars = [(p, v) for p, v in _iter_leaves(old_state) if not is_pointer(v)]
+    old_scalars = [(p, v) for p, v in _iter_leaves(old_state)
+                   if not is_pointer(v)
+                   and not p.startswith("__package_versions__")]  # artifact, never "lost"
     for p, _ in old_scalars:
         if p in merged_paths:
+            continue
+        # Schema-gate drops are already reported in stats.schema_dropped —
+        # don't double-count them as residual loss (they are deliberate, not
+        # "calibration with no home"). A dropped key may be a subtree root, so
+        # prefix-match its leaves.
+        if any(p == dp or p.startswith(dp + ".") for dp in stats.schema_dropped):
             continue
         # A path is SUPERSEDED (not lost) when the NEW structure replaced an OLD
         # inline subtree with a POINTER — the value lives at the pointer's target
