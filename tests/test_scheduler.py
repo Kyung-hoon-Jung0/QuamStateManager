@@ -373,7 +373,8 @@ class TestSchedulerRoutes:
         resp = client.get("/scheduler")
         assert resp.status_code == 200
         html = resp.data.decode()
-        assert "Scheduler" in html
+        # r15 rename (docs/69): the user-facing label is "Experiment Runner"
+        assert "Experiment Runner" in html
         assert "No chip is open" in html
         # Nav link + script are present on the full page.
         assert "/scheduler" in html
