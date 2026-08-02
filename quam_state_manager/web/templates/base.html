@@ -143,9 +143,9 @@
                    while running; this is the visible signal. #}
                 <li id="scheduler-badge" class="scheduler-badge" hidden aria-live="polite">
                     <a href="/scheduler" hx-get="/scheduler" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                       class="scheduler-badge-link" title="Scheduler — click to view">
+                       class="scheduler-badge-link" title="Experiment Runner — click to view">
                         <span class="scheduler-badge-dot" aria-hidden="true"></span>
-                        <span class="scheduler-badge-label">Scheduler</span>
+                        <span class="scheduler-badge-label">Experiment Runner</span>
                         <span class="scheduler-badge-count"></span>
                     </a>
                 </li>
@@ -361,6 +361,45 @@
             <hr class="sidebar-section-divider">
             <nav class="sidebar-nav">
                 <ul>
+                    {# r15 IA (docs/69): structure→health order — the chip's
+                       physical wiring + component entities first, then the
+                       health/status pair (Diagnostics, Chip Status). #}
+                    <li><a href="/instrument" hx-get="/instrument" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           {% if page == 'instrument' %}class="active"{% endif %}>Instrument Wiring</a></li>
+                    <li class="nav-with-sub">
+                        <div class="nav-sub-row">
+                            {# Parent deliberately carries no active class — the
+                               Qubits child owns the /qubits highlight. #}
+                            <a href="/qubits" hx-get="/qubits" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">Chip Components</a>
+                            <button type="button" class="nav-sub-toggle" aria-expanded="true"
+                                    aria-controls="chip-components-subnav" aria-label="Toggle Chip Components"
+                                    onclick="toggleNavSub(this, 'chip-components-subnav', 'quam_components_nav_collapsed')">&#9662;</button>
+                        </div>
+                        <ul class="nav-subitems" id="chip-components-subnav">
+                            <li><a href="/qubits" hx-get="/qubits" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page == 'qubits' or page == 'qubit_detail' %}class="active"{% endif %}>Qubits</a></li>
+                            <li><a href="/pairs" hx-get="/pairs" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page == 'pairs' or page == 'pair_detail' %}class="active"{% endif %}>Pairs</a></li>
+                            {# Channel-scoped views: hidden chip-wide when the chip has
+                               none of that channel (e.g. a fixed-frequency chip has no
+                               Flux; a CR-only chip has no Couplers) — has_resonator/
+                               has_flux/has_coupler come from _ctx()'s structural scan. #}
+                            {% if has_resonator %}
+                            <li><a href="/resonators" hx-get="/resonators" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page == 'resonators' %}class="active"{% endif %}>Resonators</a></li>
+                            {% endif %}
+                            {% if has_flux %}
+                            <li><a href="/flux" hx-get="/flux" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page == 'flux' %}class="active"{% endif %}>Flux</a></li>
+                            {% endif %}
+                            {% if has_coupler %}
+                            <li><a href="/couplers" hx-get="/couplers" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page == 'couplers' %}class="active"{% endif %}>Couplers</a></li>
+                            {% endif %}
+                        </ul>
+                    </li>
+                    <li><a href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           {% if page == 'diagnostics' %}class="active"{% endif %}>Diagnostics</a></li>
                     <li class="nav-with-sub">
                         <div class="nav-sub-row">
                             <a href="/topology" hx-get="/topology" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
@@ -394,73 +433,71 @@
                        (docs/49 P4: sidebar 3→1; the legacy URLs redirect here). #}
                     <li><a href="/compare-hub" hx-get="/compare-hub" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
                            {% if page == 'compare_hub' %}class="active"{% endif %}>Compare</a></li>
-                    <li><a href="/explorer" hx-get="/explorer" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           {% if page == 'explorer' %}class="active"{% endif %}>Explorer</a></li>
-                    <li><a href="/qubits" hx-get="/qubits" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           {% if page == 'qubits' or page == 'qubit_detail' %}class="active"{% endif %}>Qubits</a></li>
-                    <li><a href="/pairs" hx-get="/pairs" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           {% if page == 'pairs' or page == 'pair_detail' %}class="active"{% endif %}>Pairs</a></li>
-                    {# Channel-scoped views (review feedback): hidden chip-wide when the
-                       chip has none of that channel (e.g. a fixed-frequency chip has no
-                       Flux; a CR-only chip has no Couplers) — has_resonator/has_flux/
-                       has_coupler are computed once in _ctx() from a raw structural scan. #}
-                    {% if has_resonator %}
-                    <li><a href="/resonators" hx-get="/resonators" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           {% if page == 'resonators' %}class="active"{% endif %}>Resonators</a></li>
-                    {% endif %}
-                    {% if has_flux %}
-                    <li><a href="/flux" hx-get="/flux" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           {% if page == 'flux' %}class="active"{% endif %}>Flux</a></li>
-                    {% endif %}
-                    {% if has_coupler %}
-                    <li><a href="/couplers" hx-get="/couplers" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           {% if page == 'couplers' %}class="active"{% endif %}>Couplers</a></li>
-                    {% endif %}
                     <li class="nav-with-sub">
                         <div class="nav-sub-row">
-                            <a href="/pulses" hx-get="/pulses" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                               {% if page == 'pulses' %}class="active"{% endif %}>Pulses</a>
-                            <button type="button" class="nav-sub-toggle" aria-expanded="false"
-                                    aria-controls="pulses-subnav" aria-label="Toggle Pulses tools"
-                                    onclick="toggleNavSub(this, 'pulses-subnav', 'quam_pulses_nav_collapsed')">&#9662;</button>
+                            <a href="/bulk" hx-get="/bulk" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                               {% if page == 'bulk' or page == 'table' %}class="active"{% endif %}>Live State Edit</a>
+                            <button type="button" class="nav-sub-toggle"
+                                    aria-expanded="{{ 'true' if page in ('explorer', 'pulses') else 'false' }}"
+                                    aria-controls="live-edit-subnav" aria-label="Toggle editing tools"
+                                    onclick="toggleNavSub(this, 'live-edit-subnav', 'quam_liveedit_nav_collapsed')">&#9662;</button>
                         </div>
-                        {# Add pulse — opens the full-catalog create form (with live preview)
-                           in the inspector. The Pulses page's "+ New pulse" button is the
-                           other entry; this surfaces it as a first-class nav item. #}
-                        <ul class="nav-subitems nav-subitems-collapsed" id="pulses-subnav">
-                            {# Push the clean /pulses URL (not ?create=1) so a refresh / Back
-                               doesn't re-fire the auto-open trigger over the user's inspector. #}
-                            <li><a href="/pulses?create=1" hx-get="/pulses?create=1" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="/pulses">Add pulse</a></li>
+                        <ul class="nav-subitems{% if page not in ('explorer', 'pulses') %} nav-subitems-collapsed{% endif %}"
+                            id="live-edit-subnav">
+                            <li><a href="/explorer" hx-get="/explorer" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page == 'explorer' %}class="active"{% endif %}>Json Tree View</a></li>
+                            <li><a href="/pulses" hx-get="/pulses" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page == 'pulses' %}class="active"{% endif %}>Pulses</a></li>
                         </ul>
                     </li>
-                    <li><a href="/bulk" hx-get="/bulk" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           {% if page == 'bulk' or page == 'table' %}class="active"{% endif %}>Live State Edit</a></li>
-                    <li><a href="/state-history" hx-get="/state-history" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           {% if page == 'state_history' %}class="active"{% endif %}>State History</a></li>
-                    <li><a href="/instrument" hx-get="/instrument" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           {% if page == 'instrument' %}class="active"{% endif %}>Instrument Wiring</a></li>
-                    <li><a href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           {% if page == 'diagnostics' %}class="active"{% endif %}>Diagnostics</a></li>
-                    <li><a href="/param-history" hx-get="/param-history" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           {% if page == 'param_history' %}class="active"{% endif %}>Param History</a></li>
-                    <li><a href="/fit-audit" hx-get="/fit-audit" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           {% if page == 'fit-audit' %}class="active"{% endif %}>Fit Audit</a></li>
+                    <li class="nav-with-sub">
+                        <div class="nav-sub-row">
+                            <a href="/state-history" hx-get="/state-history" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                               {% if page == 'state_history' %}class="active"{% endif %}>State History</a>
+                            <button type="button" class="nav-sub-toggle"
+                                    aria-expanded="{{ 'true' if page == 'param_history' else 'false' }}"
+                                    aria-controls="state-history-subnav" aria-label="Toggle history tools"
+                                    onclick="toggleNavSub(this, 'state-history-subnav', 'quam_statehistory_nav_collapsed')">&#9662;</button>
+                        </div>
+                        <ul class="nav-subitems{% if page != 'param_history' %} nav-subitems-collapsed{% endif %}"
+                            id="state-history-subnav">
+                            <li><a href="/param-history" hx-get="/param-history" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page == 'param_history' %}class="active"{% endif %}>Param History</a></li>
+                        </ul>
+                    </li>
+                    {# Execution trio (r15 renames — routes/page tokens unchanged):
+                       Experiment Runner = queue + run nodes on hardware (docs/40);
+                       Fit Replay = read-only re-check of already-saved fits (docs/50);
+                       Auto Calibrate = unattended run→fit→verify→apply loop (docs/56). #}
                     <li><a href="/scheduler" hx-get="/scheduler" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           {% if page == 'scheduler' %}class="active"{% endif %}>Scheduler</a></li>
+                           {% if page == 'scheduler' %}class="active"{% endif %}>Experiment Runner</a></li>
+                    <li><a href="/fit-audit" hx-get="/fit-audit" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           {% if page == 'fit-audit' %}class="active"{% endif %}>Fit Replay</a></li>
                     <li><a href="/autofit" hx-get="/autofit" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           {% if page == 'autofit' %}class="active"{% endif %}>Autofit
+                           {% if page == 'autofit' %}class="active"{% endif %}>Auto Calibrate
                            <span id="autofit-nav-badge" class="autofit-nav-badge" hidden></span></a></li>
                 </ul>
             </nav>
             <hr class="sidebar-section-divider">
             <nav class="sidebar-nav">
                 <ul>
-                    <li><a href="/datasets" hx-get="/datasets" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           {% if page == 'datasets' or page == 'dataset_detail' %}class="active"{% endif %}>Datasets</a></li>
-                    <li><a href="/collections" hx-get="/collections" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           {% if page == 'collections' %}class="active"{% endif %}>Collections</a></li>
-                    <li><a href="/trends" hx-get="/trends" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           {% if page == 'trends' %}class="active"{% endif %}>Trends</a></li>
+                    <li class="nav-with-sub">
+                        <div class="nav-sub-row">
+                            <a href="/datasets" hx-get="/datasets" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                               {% if page == 'datasets' or page == 'dataset_detail' %}class="active"{% endif %}>Datasets</a>
+                            <button type="button" class="nav-sub-toggle"
+                                    aria-expanded="{{ 'true' if page in ('collections', 'trends') else 'false' }}"
+                                    aria-controls="datasets-subnav" aria-label="Toggle dataset tools"
+                                    onclick="toggleNavSub(this, 'datasets-subnav', 'quam_datasets_nav_collapsed')">&#9662;</button>
+                        </div>
+                        <ul class="nav-subitems{% if page not in ('collections', 'trends') %} nav-subitems-collapsed{% endif %}"
+                            id="datasets-subnav">
+                            <li><a href="/collections" hx-get="/collections" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page == 'collections' %}class="active"{% endif %}>Collections</a></li>
+                            <li><a href="/trends" hx-get="/trends" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page == 'trends' %}class="active"{% endif %}>Trends</a></li>
+                        </ul>
+                    </li>
                 </ul>
             </nav>
             <hr>
@@ -722,20 +759,27 @@
             "pages": [
                 {"label": "Projects",          "url": "/qualibrate"},
                 {"label": "Generate Config",   "url": "/generate"},
-                {"label": "Chip Status",       "url": "/topology"},
-                                {"label": "Explorer",          "url": "/explorer"},
-                {"label": "Qubits",            "url": "/qubits"},
-                {"label": "Qubit Pairs",       "url": "/pairs"},
-                {"label": "Pulses",            "url": "/pulses"},
-                {"label": "Live State Edit",   "url": "/bulk"},
-                {"label": "State History",     "url": "/state-history"},
-                {"label": "Instrument Wiring", "url": "/instrument"},
                 {"label": "Config Viewer",     "url": "/config"},
+                {"label": "Re-generate config", "url": "/regenerate"},
+                {"label": "Instrument Wiring", "url": "/instrument"},
+                {"label": "Qubits",            "url": "/qubits"},
+                {"label": "Pairs",             "url": "/pairs"},
+                {"label": "Resonators",        "url": "/resonators"},
+                {"label": "Flux",              "url": "/flux"},
+                {"label": "Couplers",          "url": "/couplers"},
+                {"label": "Diagnostics",       "url": "/diagnostics"},
+                {"label": "Chip Status",       "url": "/topology"},
+                {"label": "Compare",           "url": "/compare-hub"},
+                {"label": "Live State Edit",   "url": "/bulk"},
+                {"label": "Json Tree View",    "url": "/explorer"},
+                {"label": "Pulses",            "url": "/pulses"},
+                {"label": "State History",     "url": "/state-history"},
                 {"label": "Param History",     "url": "/param-history"},
-                {"label": "Scheduler",         "url": "/scheduler"},
+                {"label": "Experiment Runner", "url": "/scheduler"},
+                {"label": "Fit Replay",        "url": "/fit-audit"},
+                {"label": "Auto Calibrate",    "url": "/autofit"},
                 {"label": "Datasets",          "url": "/datasets"},
                 {"label": "Collections",       "url": "/collections"},
-                {"label": "Compare",           "url": "/compare-hub"},
                 {"label": "Trends",            "url": "/trends"}
             ]
         }
@@ -1195,8 +1239,8 @@
                         ? (state.queue || []).filter(function (i) { return i.id === run.current_id; })[0]
                         : null;
                     label.textContent = active
-                        ? (cur && cur.name ? "Running: " + cur.name : "Scheduler running")
-                        : "Scheduler paused";
+                        ? (cur && cur.name ? "Running: " + cur.name : "Experiment Runner running")
+                        : "Experiment Runner paused";
                 }
                 if (count) {
                     var q = state.queue || [];
@@ -1255,15 +1299,15 @@
             var bar = document.getElementById("status-bar");
             if (bar) {
                 bar.innerHTML = '<div class="status-msg status-warning">' +
-                    "Editing is locked while the Scheduler is running.</div>";
+                    "Editing is locked while the Experiment Runner is running.</div>";
             }
         });
         document.body.addEventListener("autofitLocked", function () {
             var bar = document.getElementById("status-bar");
             if (bar) {
                 bar.innerHTML = '<div class="status-msg status-warning">' +
-                    "Locked while an Autofit plan is running — see the " +
-                    "Autofit page to pause or abort.</div>";
+                    "Locked while an Auto Calibrate plan is running — see the " +
+                    "Auto Calibrate page to pause or abort.</div>";
             }
         });
     })();

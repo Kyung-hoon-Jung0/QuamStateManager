@@ -13,7 +13,7 @@
   </span>
   <button type="button" class="btn-sm" data-path="{{ type_alarm.first }}"
           onclick="window._navigateToExplorerPath && window._navigateToExplorerPath(this.getAttribute('data-path'))"
-          title="Open the Explorer at the first offending field">Show in Explorer</button>
+          title="Open the Json Tree View at the first offending field">Show in Json Tree View</button>
   <button type="button" class="btn-sm outline" hx-post="/type-alarm/dismiss"
           hx-vals='{"sig": {{ type_alarm.sig | tojson }}, "token": {{ type_alarm.token | tojson }}}'
           hx-target="#type-alarm-slot" hx-swap="innerHTML"

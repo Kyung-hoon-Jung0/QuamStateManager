@@ -15822,9 +15822,9 @@ def _scheduler_lock_guard():
         if autofit_engine.locks_chip(current_app.instance_path):
             resp = make_response(jsonify({
                 "error": "autofit_running",
-                "message": "An Autofit plan is running — this action is "
+                "message": "An Auto Calibrate plan is running — this action is "
                            "locked until it finishes or is aborted "
-                           "(see the Autofit page).",
+                           "(see the Auto Calibrate page).",
             }), 409)
             resp.headers["HX-Reswap"] = "none"
             resp.headers["HX-Trigger"] = "autofitLocked"
@@ -15833,8 +15833,8 @@ def _scheduler_lock_guard():
             and scheduler.is_active(current_app.instance_path):
         resp = make_response(jsonify({
             "error": "scheduler_running",
-            "message": "Scheduler is running — editing is locked until it "
-                       "finishes or is cancelled.",
+            "message": "The Experiment Runner is running — editing is locked "
+                       "until it finishes or is cancelled.",
         }), 409)
         resp.headers["HX-Reswap"] = "none"       # don't swap an error into the page
         resp.headers["HX-Trigger"] = "schedulerLocked"
@@ -16489,7 +16489,7 @@ def autofit_resolve():
     folder = scheduler.load_settings(_sched_inst()).get("calibrations_folder") or ""
     if not folder:
         return jsonify({"ok": False, "error": "no calibrations folder set — "
-                        "configure it on the Scheduler page"}), 400
+                        "configure it on the Experiment Runner page"}), 400
     items = [n.to_dict() for n in
              node_scan.scan_folder(folder, instance_path=_sched_inst())]
     files = [{"name": i.get("name"), "path": i.get("file") or i.get("path")}
@@ -16539,8 +16539,8 @@ def autofit_start():
             return jsonify({"ok": False,
                             "error": "an autofit plan is already running"}), 409
         if scheduler.is_active(inst):
-            return jsonify({"ok": False, "error": "the Scheduler is running — "
-                            "wait for it or cancel it first"}), 409
+            return jsonify({"ok": False, "error": "the Experiment Runner is "
+                            "running — wait for it or cancel it first"}), 409
         try:
             p = _autofit_plan_from_request(data)
         except af_plan.PlanError as exc:
@@ -16632,7 +16632,7 @@ def _autofit_start_real(inst, p, data, auditor):
     foreign = [i for i in qstate.get("queue", [])
                if i.get("enabled") and i.get("status") == "queued"]
     if foreign:
-        return None, {"error": f"the Scheduler queue holds {len(foreign)} "
+        return None, {"error": f"the Experiment Runner queue holds {len(foreign)} "
                       "enabled item(s) — clear or disable them first "
                       "(they would run before the plan's steps)"}, 409
     if not data.get("force"):

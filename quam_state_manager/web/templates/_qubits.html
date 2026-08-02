@@ -22,19 +22,23 @@
     <thead>
         <tr>
             <th class="sortable" data-col="0" data-type="str">ID</th>
-            <th class="sortable" data-col="1" data-type="num">f_01 <span class="unit">(GHz)</span></th>
-            <th class="sortable" data-col="2" data-type="num">T1 <span class="unit">(&micro;s)</span></th>
-            <th class="sortable" data-col="3" data-type="num">T2ramsey <span class="unit">(&micro;s)</span></th>
-            <th class="sortable" data-col="4" data-type="num">Readout Amp</th>
-            <th class="sortable" data-col="5" data-type="num">Gate Fidelity</th>
-            <th class="sortable" data-col="6" data-type="str">Grid</th>
+            <th class="sortable" data-col="1" data-type="str">Active</th>
+            <th class="sortable" data-col="2" data-type="num">f_01 <span class="unit">(GHz)</span></th>
+            <th class="sortable" data-col="3" data-type="num">T1 <span class="unit">(&micro;s)</span></th>
+            <th class="sortable" data-col="4" data-type="num">T2ramsey <span class="unit">(&micro;s)</span></th>
+            <th class="sortable" data-col="5" data-type="num">Readout Amp</th>
+            <th class="sortable" data-col="6" data-type="num">Gate Fidelity</th>
+            <th class="sortable" data-col="7" data-type="str">Grid</th>
         </tr>
     </thead>
     <tbody>
     {% if qubits %}
     {% for q in qubits %}
-        <tr class="clickable-row" data-qubit-id="{{ q.id }}" hx-get="/qubit/{{ q.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
+        <tr class="clickable-row{% if not q.is_active %} row-inactive{% endif %}" data-qubit-id="{{ q.id }}" hx-get="/qubit/{{ q.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
             <td><strong>{{ q.id }}</strong></td>
+            {# r15: ALL qubits are listed; this column marks active_qubit_names
+               membership (absent/empty list in state.json = everything active) #}
+            <td>{% if q.is_active %}<span class="cell-good" aria-label="Active" title="Listed in active_qubit_names">&#10003;</span>{% else %}<span class="muted" aria-label="Inactive" title="Not in active_qubit_names">off</span>{% endif %}</td>
             <td>{{ q.f_01 | qty('f_01') }}</td>
             <td>{{ q.T1 | qty('T1') }}</td>
             <td>{{ q.T2ramsey | qty('T2ramsey') }}</td>
@@ -54,7 +58,7 @@
         </tr>
     {% endfor %}
     {% else %}
-        <tr><td colspan="7" class="muted" style="text-align:center;padding:2rem">No qubits found in this state file.</td></tr>
+        <tr><td colspan="8" class="muted" style="text-align:center;padding:2rem">No qubits found in this state file.</td></tr>
     {% endif %}
     </tbody>
 </table>

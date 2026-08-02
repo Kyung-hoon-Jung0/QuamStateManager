@@ -1322,10 +1322,16 @@ window.qualibrateSubnavToggleAll = function(btn) {
         // unlike before, its collapsed choice now round-trips (the key was
         // written by the toggle but never read back — it re-collapsed on
         // every navigation).
-        { id: 'qualibrate-subnav',  key: 'quam_qualibrate_nav_collapsed', def: '0' },
-        { id: 'chip-status-subnav', key: 'quam_chipstatus_nav_collapsed', def: '0' },
-        { id: 'config-subnav',      key: 'quam_config_nav_collapsed',     def: '1' },
-        { id: 'pulses-subnav',      key: 'quam_pulses_nav_collapsed',     def: '1' },
+        { id: 'qualibrate-subnav',      key: 'quam_qualibrate_nav_collapsed',   def: '0' },
+        { id: 'chip-status-subnav',     key: 'quam_chipstatus_nav_collapsed',   def: '0' },
+        { id: 'config-subnav',          key: 'quam_config_nav_collapsed',       def: '1' },
+        // r15 IA groups (docs/69). Chip Components is primary navigation and
+        // defaults OPEN; the tool groups default collapsed (force-expand on an
+        // active child keeps context visible either way).
+        { id: 'chip-components-subnav', key: 'quam_components_nav_collapsed',   def: '0' },
+        { id: 'live-edit-subnav',       key: 'quam_liveedit_nav_collapsed',     def: '1' },
+        { id: 'state-history-subnav',   key: 'quam_statehistory_nav_collapsed', def: '1' },
+        { id: 'datasets-subnav',        key: 'quam_datasets_nav_collapsed',     def: '1' },
     ];
     function apply() {
         SUBNAVS.forEach(function(s) {
@@ -2581,8 +2587,9 @@ function _softRefreshLiveSurface() {
     // Limited to pages that actually render chip state (all are HTMX-
     // partial-capable); dataset-style pages keep their scroll/virtual-list
     // state instead of being needlessly re-fetched.
-    var STATE_PAGES = ["/qubits", "/pairs", "/table", "/bulk", "/wiring",
-                       "/instrument-wiring", "/topology", "/workbench",
+    var STATE_PAGES = ["/qubits", "/pairs", "/resonators", "/flux", "/couplers",
+                       "/table", "/bulk", "/wiring",
+                       "/instrument", "/topology", "/workbench",
                        "/pulses", "/config", "/scheduler"];
     var path = location.pathname;
     var isStatePage = STATE_PAGES.some(function(p) {

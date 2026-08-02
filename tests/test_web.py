@@ -6436,3 +6436,150 @@ class TestTagRoutesReadOnlyFolder:
         r = c.post(f"/dataset/{key}:1/note", json={"note": "hello"})
         assert r.status_code == 400
         assert "read-only" in r.get_json()["error"]
+
+
+# ---------------------------------------------------------------------------
+# r15 sidebar IA (docs/69): structure→health order, Chip Components group,
+# tool-group nestings, trio renames, and the all-listed + active-marked rule.
+# ---------------------------------------------------------------------------
+
+
+class TestSidebarIAr15:
+    _ROOT = Path(__file__).resolve().parent.parent
+
+    def _base(self):
+        return (self._ROOT / "quam_state_manager" / "web" / "templates"
+                / "base.html").read_text(encoding="utf-8")
+
+    def _appjs(self):
+        return (self._ROOT / "quam_state_manager" / "web" / "static"
+                / "app.js").read_text(encoding="utf-8")
+
+    def test_structure_then_health_order(self):
+        base = self._base()
+        assert (base.index(">Instrument Wiring</a>")
+                < base.index(">Chip Components</a>")
+                < base.index(">Diagnostics</a>")
+                < base.index(">Chip Status</a>")
+                < base.index(">Compare</a>")
+                < base.index(">Live State Edit</a>")
+                < base.index(">State History</a>")
+                < base.index(">Experiment Runner</a>")
+                < base.index(">Fit Replay</a>")
+                < base.index(">Auto Calibrate"))
+
+    def test_group_memberships(self):
+        base = self._base()
+        def seg(ul_id):
+            i = base.index('id="%s"' % ul_id)
+            return base[i:base.index("</ul>", i)]
+        comp = seg("chip-components-subnav")
+        for label in (">Qubits</a>", ">Pairs</a>", ">Resonators</a>",
+                      ">Flux</a>", ">Couplers</a>"):
+            assert label in comp, label
+        live = seg("live-edit-subnav")
+        assert ">Json Tree View</a>" in live and ">Pulses</a>" in live
+        hist = seg("state-history-subnav")
+        assert ">Param History</a>" in hist
+        ds = seg("datasets-subnav")
+        assert ">Collections</a>" in ds and ">Trends</a>" in ds
+
+    def test_new_subnavs_restore_registered(self):
+        appjs = self._appjs()
+        base = self._base()
+        for ul_id, key in (
+                ("chip-components-subnav", "quam_components_nav_collapsed"),
+                ("live-edit-subnav",       "quam_liveedit_nav_collapsed"),
+                ("state-history-subnav",   "quam_statehistory_nav_collapsed"),
+                ("datasets-subnav",        "quam_datasets_nav_collapsed")):
+            assert "{ id: '%s'" % ul_id in appjs, ul_id
+            assert key in appjs and key in base, key
+
+    def test_trio_renames_are_display_only(self):
+        base = self._base()
+        # routes + page tokens unchanged
+        assert 'href="/scheduler"' in base and 'href="/fit-audit"' in base \
+               and 'href="/autofit"' in base
+        assert "autofit-nav-badge" in base            # badge survived the rename
+        # old labels gone from the nav
+        for stale in (">Scheduler</a>", ">Fit Audit</a>", ">Autofit"):
+            assert base.count(stale) == 0, stale
+
+    def test_state_pages_uses_real_instrument_route(self):
+        # /instrument-wiring never existed as a route — the stale entry made
+        # the chip-swap soft-refresh silently skip the Instrument Wiring page.
+        appjs = self._appjs()
+        assert '"/instrument-wiring"' not in appjs
+        assert '"/instrument"' in appjs
+
+    def test_palette_covers_every_nav_page(self):
+        base = self._base()
+        for label in ("Re-generate config", "Diagnostics", "Resonators",
+                      "Couplers", "Json Tree View", "Experiment Runner",
+                      "Fit Replay", "Auto Calibrate"):
+            assert '"label": "%s"' % label in base, label
+        assert '"Qubit Pairs"' not in base            # label drift fixed
+
+
+class TestActiveMarkingR15:
+    """All entities are LISTED; active_* membership is a MARK, never a filter."""
+
+    @pytest.fixture
+    def two_qubit_client(self, tmp_path):
+        state = _make_state()
+        # qA2: a real qubit NOT in active_qubit_names; pair list declares
+        # only one of the two pairs active.
+        import copy
+        state["qubits"]["qA2"] = copy.deepcopy(state["qubits"]["qA1"])
+        state["qubits"]["qA2"]["id"] = "qA2"
+        state["qubit_pairs"]["qA2-A1"] = copy.deepcopy(
+            state["qubit_pairs"]["qA1-A2"])
+        state["qubit_pairs"]["qA2-A1"]["id"] = "qA2-A1"
+        state["active_qubit_names"] = ["qA1"]
+        state["active_qubit_pair_names"] = ["qA1-A2"]
+        folder = tmp_path / "chip"
+        folder.mkdir()
+        (folder / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        (folder / "wiring.json").write_text(json.dumps(_make_wiring()), encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "inst"))
+        c = app.test_client()
+        assert c.post("/load", data={"folder": str(folder)}).status_code in (200, 302)
+        return c
+
+    def test_qubits_lists_all_and_marks_inactive(self, two_qubit_client):
+        html = two_qubit_client.get("/qubits").data.decode()
+        assert 'data-qubit-id="qA1"' in html and 'data-qubit-id="qA2"' in html
+        assert ">Active</th>" in html
+        assert "row-inactive" in html
+        assert 'title="Not in active_qubit_names"' in html
+
+    def test_pairs_lists_all_and_marks_inactive(self, two_qubit_client):
+        html = two_qubit_client.get("/pairs").data.decode()
+        assert 'data-pair-id="qA1-A2"' in html and 'data-pair-id="qA2-A1"' in html
+        assert ">Active</th>" in html
+        assert "row-inactive" in html
+
+    def test_no_active_list_means_everything_active(self, tmp_path):
+        state = _make_state()
+        del state["active_qubit_names"]
+        folder = tmp_path / "chip"
+        folder.mkdir()
+        (folder / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        (folder / "wiring.json").write_text(json.dumps(_make_wiring()), encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "inst"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(folder)})
+        html = c.get("/qubits").data.decode()
+        assert "row-inactive" not in html
+
+    def test_channel_scoped_pages_carry_the_mark(self, two_qubit_client):
+        for url in ("/resonators", "/flux", "/couplers"):
+            html = two_qubit_client.get(url).data.decode()
+            assert ">Active</th>" in html, url
+            assert "row-inactive" in html, url
+
+    def test_inactive_chip_in_detail_header(self, two_qubit_client):
+        html = two_qubit_client.get("/qubit/qA2").data.decode()
+        assert "inactive-chip" in html
+        html = two_qubit_client.get("/qubit/qA1").data.decode()
+        assert "inactive-chip" not in html

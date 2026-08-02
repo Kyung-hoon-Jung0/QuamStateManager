@@ -139,19 +139,26 @@ class TestPulsesLibrary:
         assert re.search(r'hx-get="/pulse/new"[^>]*hx-trigger="load"'
                          r'|hx-trigger="load"[^>]*hx-get="/pulse/new"', create)
 
-    def test_add_pulse_subnav_persistence_and_clean_url(self):
-        # The Pulses subnav expand state must be restorable (in SUBNAVS), and the
-        # "Add pulse" link must push the CLEAN /pulses URL so a refresh / Back
-        # doesn't re-fire the auto-open over the user's inspector. [red-team guards]
+    def test_pulses_nested_under_live_edit_nav(self):
+        # r15 IA (docs/69): Pulses moved into the Live-State-Edit subnav and the
+        # old "Add pulse" nav row is gone (the page's "+ New pulse" button and
+        # /pulses?create=1 auto-open remain the create entries). The new subnav
+        # must be restore-registered so its collapse choice round-trips.
         from pathlib import Path
         root = Path(__file__).resolve().parent.parent / "quam_state_manager" / "web"
         app_js = (root / "static" / "app.js").read_text(encoding="utf-8")
         base = (root / "templates" / "base.html").read_text(encoding="utf-8")
-        assert "pulses-subnav" in app_js and "quam_pulses_nav_collapsed" in app_js
-        # Add-pulse link pushes /pulses (not ?create=1).
-        assert 'hx-get="/pulses?create=1"' in base
-        assert 'hx-push-url="/pulses"' in base
-        assert 'hx-get="/pulses?create=1" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"' not in base
+        assert 'id="live-edit-subnav"' in base
+        assert "{ id: 'live-edit-subnav'" in app_js
+        assert "quam_liveedit_nav_collapsed" in base and \
+               "quam_liveedit_nav_collapsed" in app_js
+        # The old nav row (and its subnav) must be fully gone.
+        assert 'hx-get="/pulses?create=1"' not in base
+        assert "pulses-subnav" not in base
+        # Pulses + Json Tree View are the group's children.
+        i = base.index('id="live-edit-subnav"')
+        seg = base[i:base.index("</ul>", i)]
+        assert ">Json Tree View</a>" in seg and ">Pulses</a>" in seg
 
     def test_sparkline_rendered_for_known_pulse(self, loaded_client):
         html = loaded_client.get("/pulses").data.decode()
