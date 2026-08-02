@@ -14247,11 +14247,15 @@ def generate_probe():
     python_path = (request.args.get("python") or "").strip()
     if not python_path:
         return jsonify({"error": "No interpreter path given."}), 400
-    return jsonify(
-        config_generator.probe_selected_env(
-            python_path, instance_path=current_app.instance_path,
-        ),
+    # r15 (docs/71): accept a venv/conda FOLDER (or a project folder holding
+    # a .venv) and resolve it to the interpreter file server-side.
+    resolved = (config_generator.resolve_python_interpreter(python_path)
+                or python_path)
+    res = config_generator.probe_selected_env(
+        resolved, instance_path=current_app.instance_path,
     )
+    res["resolved"] = resolved
+    return jsonify(res)
 
 
 @bp.route("/generate/select-env", methods=["POST"])
@@ -14265,13 +14269,18 @@ def generate_select_env():
     python_path = (data.get("python") or "").strip()
     if not python_path:
         return jsonify({"ok": False, "error": "No interpreter path given."}), 400
-    if not Path(python_path).is_file():
+    # r15 (docs/71): a venv folder / project folder with a .venv resolves to
+    # its interpreter here — uv users pick the FOLDER, never type the file.
+    resolved = config_generator.resolve_python_interpreter(python_path)
+    if not resolved:
         return jsonify({
             "ok": False,
-            "error": (f"Not a file: {python_path}. Point at a Python interpreter "
-                      "(e.g. /path/to/.venv/bin/python or "
-                      r"C:\path\to\venv\Scripts\python.exe)."),
+            "error": (f"No Python interpreter at: {python_path}. Point at the "
+                      "interpreter file OR a venv folder containing "
+                      r"Scripts\python.exe / bin/python (a project folder "
+                      "holding a .venv works too)."),
         }), 400
+    python_path = resolved
     # A Windows interpreter selected from a POSIX app can't open the POSIX
     # /tmp work paths every subprocess bridge hands it — the failure mode is
     # a silent "produced no _result.json" on every later build. The ONE

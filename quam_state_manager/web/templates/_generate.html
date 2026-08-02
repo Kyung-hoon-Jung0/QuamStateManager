@@ -41,10 +41,10 @@
         No conda environments found &mdash; enter a custom interpreter path below.
       </p>
       <div class="gen-env-custom">
-        <label for="gen-env-custom-path" class="muted gen-env-custom-label">Custom interpreter (venv / any Python):</label>
+        <label for="gen-env-custom-path" class="muted gen-env-custom-label">Custom interpreter <b>or venv folder</b> (uv/.venv supported):</label>
         <div class="gen-env-custom-row">
           <input type="text" id="gen-env-custom-path" autocomplete="off"
-                 placeholder="/path/to/.venv/bin/python  or  C:\Scripts\python.exe">
+                 placeholder="C:\my_repo\.venv  ·  /path/to/.venv  ·  …\Scripts\python.exe">
           <button type="button" class="btn-sync primary gen-env-custom-use" onclick="QuamGen.useCustomEnv()">Use this</button>
         </div>
         <span id="gen-env-custom-status" class="muted"></span>

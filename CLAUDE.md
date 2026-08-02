@@ -8,14 +8,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-**Run tests** (requires the project's conda env, `qm_mng`, on the maintainer's WSL setup):
+**Run tests** (Windows conda env `SNU_17Q` — the canonical pytest env since 2026-08-02; the old WSL `qm_mng` env is obsolete):
 ```bash
-conda run -n qm_mng python -m pytest tests/ -q
+conda run -n SNU_17Q python -m pytest tests/ -q
 # Single test file:
-conda run -n qm_mng python -m pytest tests/test_pointer_resolver.py -v
+conda run -n SNU_17Q python -m pytest tests/test_pointer_resolver.py -v
 # Single test:
-conda run -n qm_mng python -m pytest tests/test_loader.py::test_load_basic -v
+conda run -n SNU_17Q python -m pytest tests/test_loader.py::test_load_basic -v
 ```
+A handful of tests are OS-environmental on native Windows (loopback/symlink/file-locking dependent — e.g. `TestWaitForServer`, `TestRunningUnderWsl::test_true_on_microsoft_kernel`, `TestPhase4QuamCacheConcurrency`, `TestDatasetSelectionFix`, `test_same_folder_guard_case_insensitive_host`); they are environment failures, not regressions.
 
 **Run web dev server** (use a non-default port — stale dev servers stack up):
 ```bash

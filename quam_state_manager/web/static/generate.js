@@ -418,9 +418,17 @@
       row.innerHTML =
         '<span class="gen-env-radio" aria-hidden="true"></span>' +
         '<span class="gen-env-name"></span>' +
+        '<span class="gen-env-kind" hidden></span>' +
         '<span class="gen-env-path"></span>' +
         '<span class="gen-env-status" data-state="checking">checking…</span>';
       row.querySelector(".gen-env-name").textContent = env.name;
+      // r15 (docs/71): uv/.venv envs discovered via the qualibrate projects
+      // sit in the same list — a small kind badge tells them apart.
+      if (env.kind && env.kind !== "conda") {
+        var kindEl = row.querySelector(".gen-env-kind");
+        kindEl.textContent = env.kind === "uv-venv" ? "uv venv" : env.kind;
+        kindEl.hidden = false;
+      }
       row.querySelector(".gen-env-path").textContent = env.python;
       row.addEventListener("click", function () { selectEnv(env.python); });
       list.appendChild(row);
@@ -506,21 +514,26 @@
       });
   }
 
-  // Custom interpreter (a plain venv / any python.exe, not just conda envs):
-  // probe it for the QM stack, then persist via the same select-env path
-  // (which now validates the path is a real file).
+  // Custom interpreter OR venv folder (r15, docs/71): the server resolves a
+  // folder (Scripts/python.exe | bin/python | nested .venv) to the
+  // interpreter file and echoes it as info.resolved; persist THAT via the
+  // same select-env path.
   function useCustomEnv() {
     var input = document.getElementById("gen-env-custom-path");
     var status = document.getElementById("gen-env-custom-status");
     var python = input && input.value.trim();
-    if (!python) { if (status) status.textContent = "Enter an interpreter path."; return; }
+    if (!python) { if (status) status.textContent = "Enter an interpreter or venv-folder path."; return; }
     if (status) status.textContent = "checking…";
     fetch("/generate/probe?python=" + encodeURIComponent(python))
       .then(function (r) { return r.json(); })
       .then(function (info) {
         if (info && info.usable) {
-          selectEnv(python);
-          if (status) status.textContent = "✓ QM stack found — selected.";
+          var target = (info.resolved && info.resolved !== python)
+            ? info.resolved : python;
+          selectEnv(target);
+          if (status) status.textContent = (target !== python)
+            ? ("✓ QM stack found — selected " + target)
+            : "✓ QM stack found — selected.";
         } else {
           var miss = (info && info.missing || []).join(", ");
           if (status) status.textContent = info && info.error
