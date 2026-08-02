@@ -653,7 +653,7 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
     # Adaptive FEM inventory (r16, docs/72): the channel scans above derive
     # FEMs ONLY from live channel pointers, so a user-trimmed wiring (a
     # channel deleted or nulled) silently dropped the whole FEM even though
-    # the chip's ports section still declares it — the SNU-17Q "slot 7
+    # the chip's ports section still declares it — the LabD-17Q "slot 7
     # disappeared" report: one z channel was that slot's only user. Union
     # the declared ports inventory in (state.json OR wiring.json may carry
     # "ports"); channel evidence wins slot-type conflicts. Assembled HERE —

@@ -208,7 +208,7 @@ A runner env that loses `netCDF4`/`h5netcdf` makes xarray fall back to its
 scipy engine, which writes **NetCDF-classic bytes (`CDF…`) under the same
 `ds_*.h5` names**. h5py refuses those ("file signature not found"), silently
 degrading the whole Interactive tab to static PNGs (the entire 2026-07-29+
-IQCC days — reported via the EF power-rabi node, whose recipe was fine all
+Lab3 days — reported via the EF power-rabi node, whose recipe was fine all
 along). `interactive_plots/h5reader.py` now sniffs the 3-byte magic and reads
 classic files natively via `scipy.io.netcdf_file(mmap=False)` — same payload
 shapes (vars/coords/attrs/dim_order), true axis names from per-variable
@@ -226,7 +226,7 @@ the TODO(remove-legacy-h5) marker).
 
 ## Amendment (2026-07-30): 20b/33 conditional-phase error-amp is a 2-D map, + fractions tile
 
-The IQCC `33_cz_conditional_phase_error_amp` run (#407) rendered as ten 1-D
+The Lab3 `33_cz_conditional_phase_error_amp` run (#407) rendered as ten 1-D
 curves ("1 ops" … "10 ops") — the `cz_phase.py` conditional-phase builder's
 `pd.ndim > 1` branch drew one curve per operations count, while the node's
 own saved `phase_figure` is a **2-D heatmap** (amplitude × #-CZ-operations,

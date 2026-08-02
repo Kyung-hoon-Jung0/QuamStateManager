@@ -36,7 +36,7 @@ def _h5_path(run, which: str) -> Path | None:
 # xarray fall back to its scipy engine, which writes NetCDF-classic bytes
 # ("CDF\x01"/"CDF\x02") under the same ``ds_*.h5`` names. h5py refuses those
 # ("file signature not found"), which silently degraded the whole Interactive
-# tab to static PNGs for every such run (the entire 2026-07-29 IQCC day). SM
+# tab to static PNGs for every such run (the entire 2026-07-29 Lab3 day). SM
 # already ships scipy — read them with scipy.io.netcdf_file instead. NetCDF3
 # even carries per-variable dimension NAMES natively, so axis truth needs no
 # DIMENSION_LIST deref here.

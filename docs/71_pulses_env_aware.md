@@ -40,7 +40,7 @@ the wizard), READ-ONLY on the qualibrate tree (docs/55 doctrine).
 Note (this machine, 2026-08-02): discovery legitimately finds 0 today —
 none of the configured projects' repos currently has a `.venv` checked out;
 the real uv venvs live in non-project repos and are reachable via the folder
-input (verified: `D:\work_laptop\temp\iqcc` → its `.venv` interpreter). The
+input (verified: `D:\work_laptop\temp\lab3` → its `.venv` interpreter). The
 moment a project's repo is uv-synced, its env appears in the picker
 unprompted — the customer deployment pattern this was built for.
 
@@ -54,7 +54,7 @@ ordering, and the folder-accepting routes (select-env 200 echoes the resolved
 `resolved`).
 
 Also in this branch: CLAUDE.md's test command switched to the Windows conda
-`SNU_17Q` env (the WSL `qm_mng` env is obsolete per the 2026-08-02 directive)
+`LabD_17Q` env (the WSL `qm_mng` env is obsolete per the 2026-08-02 directive)
 with the known OS-environmental failures cataloged.
 
 ## §2 — env-aware add-pulse (`feat/pulses-env-aware`)

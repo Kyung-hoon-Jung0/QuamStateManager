@@ -108,8 +108,8 @@ paths and skip everywhere public; assertions never compare network values.
 
 | env | quam-builder | writes flavor | loads customer states? |
 |---|---|---|---|
-| `KRISS_CR3` | a08bf66 (metadata says 0.2.0 — versions lie, probe by symbol) | `lo_if` | **no** (unknown field + missing qubit class) |
-| `QRS` | a08bf66 (same git pin) | `lo_if` | **no** |
+| `LabA_CR3` | a08bf66 (metadata says 0.2.0 — versions lie, probe by symbol) | `lo_if` | **no** (unknown field + missing qubit class) |
+| `LabB` | a08bf66 (same git pin) | `lo_if` | **no** |
 | `CR_FA540B6` (to create) | `git+…quam-builder.git@fa540b6` | `rf` | **yes** |
 
 The branch churns daily (R2) — the tip CANNOT load fa540b6-flavor states
@@ -149,7 +149,7 @@ cannot see WSL `/tmp` — probe scripts must live on drive-letter paths.
   +131.4 MHz recomputed from the current state). Use it as a *structural*
   golden only; numeric parity tests must generate a **fresh** config in the
   fa540b6 env.
-- `/mnt/d/work_laptop/quam_states/KRISS_CR` is NOT a CR chip despite its name
+- `/mnt/d/work_laptop/quam_states/LabA_CR` is NOT a CR chip despite its name
   (flux-tunable CZ) — the real references are `CR_state/` and `gen_2x3_cr/`.
 
 ## 10. Open risks

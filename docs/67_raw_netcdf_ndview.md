@@ -2,7 +2,7 @@
 
 ## The problem
 
-Since 2026-07-29 every IQCC run's `ds_raw.h5` / `ds_fit.h5` is **not HDF5**:
+Since 2026-07-29 every Lab3 run's `ds_raw.h5` / `ds_fit.h5` is **not HDF5**:
 the new runner env lost `netCDF4`/`h5netcdf`, so xarray's `to_netcdf` fell back
 to its scipy engine, which writes **NetCDF-classic (CDF-2, magic `CDF\x02`)**
 bytes under the same misleading `.h5` names. h5py refuses those with

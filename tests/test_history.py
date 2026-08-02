@@ -2648,7 +2648,7 @@ class TestIndexFollowsRoutedDir:
     The old behaviour pinned index rows to the PATH-derived dir: with sibling
     chips under one parent folder (all path-keying to one name) the base
     chip's index silently accumulated the alt chip's rows while the alt dir
-    stayed index-less — the wild corruption behind the gilboa report
+    stayed index-less — the wild corruption behind the deviceC report
     (docs/20 amendment v2). Covers both the sync and deferred index lanes."""
 
     def _mk_chip(self, tmp_path, name, host, qubit):

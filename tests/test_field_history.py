@@ -189,7 +189,7 @@ class TestFieldHistoryRoute:
 class TestRunsTier:
     """docs/20 v2 Step 6: the popover reads the workspace runs' own
     quam_state copies directly — today's values appear with guaranteed Data
-    links even when Param History ingestion never ran (the gilboa report:
+    links even when Param History ingestion never ran (the deviceC report:
     33 un-ingested runs). Foreign chips are fingerprint-gated out; a shared
     extras chip name is definitive even across a host move."""
 
@@ -227,10 +227,10 @@ class TestRunsTier:
         c = env["client"]
         # name the LOADED chip (staged into the working copy is enough — the
         # runs tier reads the store dicts)
-        c.post("/chip-name/set", data={"name": "gilboa"})
+        c.post("/chip-name/set", data={"name": "deviceC"})
         data_root = env["tmp"] / "data2"
         named = self._run_state(5.55e9)
-        named["extras"] = {"chip_name": "gilboa"}
+        named["extras"] = {"chip_name": "deviceC"}
         _seed_run(data_root, 41, hhmmss="040000", quam_state=named,
                   quam_wiring={"network": {"host": "10.9.9.9",
                                            "cluster_name": "MOVED"}})

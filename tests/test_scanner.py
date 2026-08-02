@@ -1006,7 +1006,7 @@ class TestTreeFreshnessR16:
 
     def test_deep_empty_date_dir_under_chip_detected(self, tmp_path):
         # Nested layout: root/<chip>/<date> where the date dir is empty at
-        # scan — the exact SNU shape from the report.
+        # scan — the exact LabD shape from the report.
         root = tmp_path / "ws"
         _make_exp(root / "chipA" / "2026-08-01", 1)
         (root / "chipA" / "2026-08-02").mkdir()

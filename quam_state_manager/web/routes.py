@@ -1667,7 +1667,7 @@ def _validate_data_folder(raw: str) -> dict:
     - ``cross_machine``— path-SHAPED (rooted) but not reachable — storeable
       after an explicit confirm (labs share state across OSes; the reader
       bridges at read time);
-    - ``not_a_path``   — a bare name / relative fragment ("gilboa_iqcc",
+    - ``not_a_path``   — a bare name / relative fragment ("deviceC_lab3",
       "data/sub") — never storeable (this is the mistake class that produced
       the un-fixable dangling banner).
     """
@@ -1825,7 +1825,7 @@ def _maybe_identity_confirm(ctx: dict | None) -> None:
     """Gate for the CONSERVATIVE identity-confirm banner (docs/20 r12).
 
     An UNNAMED live chip whose history remembers a declared identity (the
-    gilboa incident: a lab-side state regeneration wiped extras while the
+    deviceC incident: a lab-side state regeneration wiped extras while the
     snapshots kept it) gets "This chip appears to be 'X' — is this
     correct?" INSTEAD of the blank name prompt. Same-architecture chips can
     be many and even share a data folder, so this only ever ASKS — Yes
@@ -1945,7 +1945,7 @@ def chip_name_set():
     data_folder = (request.form.get("data_folder") or "").strip()
     cross_note = ""
     if data_folder:
-        # r10: "gilboa_iqcc"-class values (a NAME typed into the path field)
+        # r10: "deviceC_lab3"-class values (a NAME typed into the path field)
         # used to be stored verbatim and only failed later as an un-fixable
         # dangling banner. Reject them at the door; path-shaped values that
         # aren't reachable HERE stay storeable (labs share state across OSes).

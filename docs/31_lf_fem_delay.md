@@ -171,7 +171,7 @@ for an experiment script to pick up the new value.
 
 `band` is now user-settable in the Populate step (the Nyquist bands overlap;
 first-match `_band_for` wrote band 2 + 161 ns where real chips run band 3 at
-6.5–7.5 GHz LOs — measured on SNU-17Q readout). An explicit band beats the
+6.5–7.5 GHz LOs — measured on LabD-17Q readout). An explicit band beats the
 derived pick in `_set_channel_lo` / `_set_channel_band`, and the z delay
 derives from the corrected band. On a re-generate, a band-crossing edit
 auto-updates the delay ONLY when the old value equals this table's (else the

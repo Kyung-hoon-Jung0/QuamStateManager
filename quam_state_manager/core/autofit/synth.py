@@ -13,7 +13,7 @@ every SM reader (``dataset._parse_run_folder``, ``experiment_data``, ``ndview``,
         quam_state/   state.json + wiring.json (POST-update snapshot when patches exist)
 
 Every field layout here is pinned against real runs captured 2026-07-17
-(KRISS/KAVR/IQCC archives — see docs/56 §6.1): e.g. qubit-spec ds_raw carries
+(LabA/Lab2/Lab3 archives — see docs/56 §6.1): e.g. qubit-spec ds_raw carries
 ``{I,Q,IQ_abs,phase,detuning,full_freq,qubit}`` with detuning as the swept scale.
 
 The generator owns a **SimChip** (ground truth + a deliberately-imperfect
