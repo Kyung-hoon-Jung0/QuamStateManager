@@ -19,7 +19,7 @@
                       onchange="PulsesPage.createTargetKind(this)"> Qubit channel</label>
         <label><input type="radio" name="target_kind" value="pair"
                       onchange="PulsesPage.createTargetKind(this)"
-                      {% if not pairs_map %}disabled title="No pair gates on this chip"{% endif %}> Pair gate flux</label>
+                      {% if not pairs_all %}disabled title="No qubit pairs on this chip"{% endif %}> Pair gate flux</label>
         <label><input type="radio" name="target_kind" value="pair_channel"
                       onchange="PulsesPage.createTargetKind(this)"
                       {% if not pair_channels_map %}disabled title="No CR/ZZ pair channels on this chip"{% endif %}> Pair CR/ZZ channel</label>
@@ -36,17 +36,22 @@
                 {% if has_xy_detuned %}<option {% if sel_channel == 'xy_detuned' %}selected{% endif %}>xy_detuned</option>{% endif %}
             </select>
         </span>
+        {# r15 CZ-first (docs/71 §3): pair → (freq/orientation line) → GATE
+           (existing macros + roster-gated "+ new" variants) → SLOT (held
+           ones disabled with an edit-instead link) → pulse type. Options are
+           populated by JS from the pairs-info island. #}
         <span data-target-kind="pair" class="pulse-target-fields" hidden>
-            <select name="pair" aria-label="Pair" onchange="PulsesPage.createPairGates(this)">
-                {% for p in pairs_map %}<option>{{ p }}</option>{% endfor %}
+            <select name="pair" aria-label="Pair" id="pulse-create-pair"
+                    onchange="PulsesPage.createPairSelected(this)">
+                {% for p in pairs_all %}<option>{{ p }}</option>{% endfor %}
             </select>
-            <select name="gate" aria-label="Gate">
-                {% for g in pairs_map.values() | first | default([]) %}<option>{{ g }}</option>{% endfor %}
-            </select>
-            <select name="slot" aria-label="Slot">
-                <option value="flux_pulse_qubit">flux_pulse_qubit</option>
-                <option value="coupler_flux_pulse">coupler_flux_pulse</option>
-            </select>
+            <select name="gate" aria-label="Gate" id="pulse-create-gate"
+                    onchange="PulsesPage.createGateSelected(this)"></select>
+            <select name="slot" aria-label="Slot" id="pulse-create-slot"
+                    onchange="PulsesPage.createSlotSelected(this)"></select>
+            <input type="text" name="new_gate_name" id="pulse-create-newgate-name"
+                   aria-label="New gate name" placeholder="new gate name, e.g. cz_snz"
+                   pattern="[a-zA-Z][a-zA-Z0-9_]{0,63}" autocomplete="off" hidden>
         </span>
         <span data-target-kind="pair_channel" class="pulse-target-fields" hidden>
             <select name="pc_pair" aria-label="Pair"
@@ -59,6 +64,13 @@
             </select>
         </span>
     </fieldset>
+
+    {# pair mode only: control/target with frequencies + the CZ-orientation
+       check (control = higher f₀₁ — display + warn, never auto-flip: pair
+       orientation on a BUILT chip is fixed pointers; Re-generate owns flips)
+       + the held-slot edit-instead note. Filled by JS. #}
+    <p class="pulse-pair-line muted" id="pulse-create-pairline" hidden></p>
+    <p class="pulse-pair-slotnote muted" id="pulse-create-slotnote" hidden></p>
 
     <div class="pulse-create-row">
         <label for="pulse-create-type">Pulse type</label>
@@ -119,5 +131,7 @@
 <script id="pulse-existing-data" type="application/json">{{ existing_json | script_json }}</script>
 <script id="pulse-pairs-data" type="application/json">{{ pairs_map | tojson }}</script>
 <script id="pulse-pair-channels-data" type="application/json">{{ pair_channels_map | tojson }}</script>
+<script id="pulse-pairs-info-data" type="application/json">{{ pairs_info_json | script_json }}</script>
+<script id="pulse-gate-defs-data" type="application/json">{{ gate_defs_json | script_json }}</script>
 <script>if (window.PulsesPage) window.PulsesPage.initCreate();</script>
 </div>

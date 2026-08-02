@@ -14,11 +14,11 @@ PYTHONUTF8=1 conda run -n SNU_17Q python -m pytest tests/ -q --timeout=600 --tim
 # Single test file:
 PYTHONUTF8=1 conda run -n SNU_17Q python -m pytest tests/test_pointer_resolver.py -v
 ```
-**Native-Windows environmental baseline (2026-08-02, verified pre-existing on pre-r15 code):** 18 tests fail from OS behavior differences, not regressions — `TestWaitForServer` (loopback; deselect it), `TestRunningUnderWsl::test_true_on_microsoft_kernel`, `TestPhase4QuamCacheConcurrency`, `TestDatasetSelectionFix`, `test_same_folder_guard_case_insensitive_host`, 2× scanner symlink/inode tests, `TestEvictionNeverLosesEdits` ×2 + `TestArchiveReadOnly` ×2 (tmp-path case identity), `test_reader_survives_concurrent_writes`, `test_scan_file_always_fresh_even_on_mtime_size_collision`, `TestRestartCleanCopy::test_legacy_meta_replaced_shows_banner_not_clobber` + `TestBannerSlot` ×3 (mtime/replace semantics), `test_label_html_is_escaped` (WinError 123 filename), `test_build_degrade_needs_ack` + `test_build_blocker_refuses` (sh-script fake interpreters). Expect ≈ `18 failed, 4,2xx passed` with `--deselect tests/test_main.py::TestWaitForServer`; anything beyond this list is a real regression.
+**Native-Windows environmental baseline (2026-08-02, verified pre-existing on pre-r15 code):** 19 tests fail from OS behavior differences, not regressions — `TestWaitForServer` (loopback; deselect it), `TestRunningUnderWsl::test_true_on_microsoft_kernel`, `TestPhase4QuamCacheConcurrency`, `TestDatasetSelectionFix`, `test_same_folder_guard_case_insensitive_host`, 2× scanner symlink/inode tests, `TestEvictionNeverLosesEdits` ×2 + `TestArchiveReadOnly` ×2 (tmp-path case identity), `test_reader_survives_concurrent_writes`, `test_scan_file_always_fresh_even_on_mtime_size_collision`, `TestRestartCleanCopy::test_legacy_meta_replaced_shows_banner_not_clobber` + `TestBannerSlot` ×3 (mtime/replace semantics), `test_label_html_is_escaped` (WinError 123 filename), `test_build_degrade_needs_ack` + `test_build_blocker_refuses` (sh-script fake interpreters). Expect ≈ `19 failed, 4,2xx passed` with `--deselect tests/test_main.py::TestWaitForServer`; anything beyond this list is a real regression.
 
-**Run web dev server** (use a non-default port — stale dev servers stack up):
+**Run web dev server** (use a non-default port — stale dev servers stack up; serve from a Windows env, never WSL — broken loopback forwarding on this machine):
 ```bash
-conda run -n qm_mng python -c "from quam_state_manager.web.app import create_app; create_app().run(debug=True, port=5050)"
+conda run -n SNU_17Q python -c "from quam_state_manager.web.app import create_app; create_app().run(debug=True, port=5050)"
 ```
 
 **Run CLI:**

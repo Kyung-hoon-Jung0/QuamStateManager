@@ -8497,6 +8497,11 @@ table.prop-table .pulse-slider-row .pulse-slider-commit {
 .pulse-hint-envmissing { color: var(--color-warning-text, #b58900); }
 .pulse-opt-envmissing { color: var(--pico-muted-color); }
 .pulse-env-note { font-size: 0.8em; margin: 0.3rem 0 0; }
+/* r15 (docs/71 §3): CZ-first pair flow — freq/orientation line + slot note */
+.pulse-pair-line { font-size: 0.82em; margin: 0.15rem 0 0.35rem; }
+.pulse-pair-line-warn { color: var(--color-warning-text, #b58900); }
+.pulse-pair-slotnote { font-size: 0.8em; margin: 0.1rem 0 0.35rem; }
+.pulse-opt-newgate { font-style: italic; }
 .pulse-target-row legend { font-size: 0.82em; font-weight: 600; }
 .pulse-target-row label { display: inline-flex; gap: 0.3rem; margin-right: 1rem; font-size: 0.9em; }
 .pulse-target-fields { display: inline-flex; gap: 0.4rem; }

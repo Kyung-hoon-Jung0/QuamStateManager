@@ -57,16 +57,63 @@ const CATALOG = {
     qclass_how: 'env',
     params: [{ name: 'amplitude', label: 'Amplitude', kind: 'float',
                default: null, unit: '', synth: true, required: true }]
+  },
+  DragCosinePulse: {
+    label: 'Drag cosine', group: 'Control', doc: 'xy-only', iq: 'always',
+    length_mode: 'explicit', channels: ['xy'],
+    verify: 'env', qclass: 'quam.components.pulses.DragCosinePulse',
+    qclass_how: 'env',
+    params: [{ name: 'amplitude', label: 'Amplitude', kind: 'float',
+               default: 0.1, unit: 'V', synth: true, required: true }]
   }
+};
+
+const PAIRS_INFO = {
+  'q1-q2': {                                    // stored control = LOWER f
+    control: 'q1', target: 'q2',
+    f_control: 4.8e9, f_target: 5.1e9, orient_ok: false,
+    gates: {
+      cz_unipolar: {
+        slots: {
+          flux_pulse_qubit: { state: 'held', 'class': 'SNZPulse',
+                              path: 'qubit_pairs.q1-q2.macros.cz_unipolar.flux_pulse_qubit' },
+          coupler_flux_pulse: { state: 'empty', 'class': null, path: null }
+        }
+      }
+    },
+    new_gates: ['cz_unipolar', 'cz_snz']
+  },
+  'q2-q1': {
+    control: 'q2', target: 'q1',
+    f_control: 5.1e9, f_target: 4.8e9, orient_ok: true,
+    gates: {}, new_gates: ['cz_unipolar']
+  }
+};
+const GATE_DEFS = {
+  cz_unipolar: { label: 'CZ Unipolar (square pulse)', has_coupler_slot: true },
+  cz_snz: { label: 'CZ SNZ', has_coupler_slot: false }
 };
 
 const HTML =
   '<div id="pulse-create-root">' +
   '<form class="pulse-create-form">' +
+  '  <input type="radio" name="target_kind" value="qubit" checked>' +
+  '  <input type="radio" name="target_kind" value="pair">' +
+  '  <span data-target-kind="pair" hidden>' +
+  '    <select name="pair" id="pulse-create-pair">' +
+  '      <option>q1-q2</option><option>q2-q1</option>' +
+  '    </select>' +
+  '    <select name="gate" id="pulse-create-gate"></select>' +
+  '    <select name="slot" id="pulse-create-slot"></select>' +
+  '    <input type="text" name="new_gate_name" id="pulse-create-newgate-name" hidden>' +
+  '  </span>' +
+  '  <p id="pulse-create-pairline" hidden></p>' +
+  '  <p id="pulse-create-slotnote" hidden></p>' +
   '  <select name="pulse_type" id="pulse-create-type">' +
   '    <option value="SquarePulse">Square</option>' +
   '    <option value="ErfSquarePulse">Erf square</option>' +
   '    <option value="CosineBipolarPulse">CosineBipolarPulse</option>' +
+  '    <option value="DragCosinePulse">Drag cosine</option>' +
   '  </select>' +
   '  <p id="pulse-create-hint"></p>' +
   '  <code id="pulse-create-qclass-display"></code>' +
@@ -81,6 +128,10 @@ const HTML =
   '<script id="pulse-existing-data" type="application/json">{}</scr' + 'ipt>' +
   '<script id="pulse-pairs-data" type="application/json">{}</scr' + 'ipt>' +
   '<script id="pulse-pair-channels-data" type="application/json">{}</scr' + 'ipt>' +
+  '<script id="pulse-pairs-info-data" type="application/json">' +
+  JSON.stringify(PAIRS_INFO) + '</scr' + 'ipt>' +
+  '<script id="pulse-gate-defs-data" type="application/json">' +
+  JSON.stringify(GATE_DEFS) + '</scr' + 'ipt>' +
   '</div>';
 
 const dom = new JSDOM('<!DOCTYPE html><html><body>' + HTML + '</body></html>',
@@ -164,6 +215,82 @@ P.createTypeChanged(typeSel);
 const before = confirmCalls;
 evt = fireConfigRequest();
 ok(!evt.defaultPrevented && confirmCalls === before, 'P5: env-ok submits freely');
+
+/* -- r15 CZ-first pair flow (docs/71 §3) ------------------------------ */
+
+const pairRadio = root.querySelector('input[name="target_kind"][value="pair"]');
+pairRadio.checked = true;
+P.createTargetKind(pairRadio);
+
+// P6: freq/orientation line — the bad pair warns, the good one doesn't
+const line = doc.getElementById('pulse-create-pairline');
+ok(line.hidden === false, 'P6: pair line shown in pair mode');
+ok(/control q1 \(4\.800 GHz\)/.test(line.textContent) &&
+   /target q2 \(5\.100 GHz\)/.test(line.textContent),
+   'P6: frequencies inline (got "' + line.textContent + '")');
+ok(/LOWER-frequency/.test(line.textContent) &&
+   line.classList.contains('pulse-pair-line-warn'),
+   'P6: orientation warning on the bad pair');
+const pairSel = doc.getElementById('pulse-create-pair');
+pairSel.value = 'q2-q1';
+P.createPairSelected(pairSel);
+ok(!/LOWER-frequency/.test(line.textContent) &&
+   !line.classList.contains('pulse-pair-line-warn'),
+   'P6: no warning on the higher-f-control pair');
+
+// P7: gate select = existing macros + "+ new" entries; slots per gate
+pairSel.value = 'q1-q2';
+P.createPairSelected(pairSel);
+const gateSel = doc.getElementById('pulse-create-gate');
+const gateVals = Array.prototype.map.call(gateSel.options, function (o) { return o.value; });
+ok(gateVals.indexOf('cz_unipolar') !== -1, 'P7: existing gate listed');
+ok(gateVals.indexOf('__new__:cz_snz') !== -1, 'P7: + new variant listed');
+gateSel.value = 'cz_unipolar';
+P.createGateSelected(gateSel);
+const slotSel = doc.getElementById('pulse-create-slot');
+ok(slotSel.options[0].value === 'flux_pulse_qubit' &&
+   slotSel.options[0].disabled === true &&
+   /holds SNZPulse/.test(slotSel.options[0].textContent),
+   'P7: held slot disabled + labelled');
+ok(slotSel.options[1].disabled === false, 'P7: empty slot enabled');
+ok(slotSel.value === 'coupler_flux_pulse',
+   'P7: selection lands on the first EMPTY slot');
+
+// P8: held-slot edit-instead note (deep link), cleared on empty slot
+slotSel.value = 'flux_pulse_qubit';
+P.createSlotSelected(slotSel);
+const slotNote = doc.getElementById('pulse-create-slotnote');
+ok(slotNote.hidden === false && /holds SNZPulse/.test(slotNote.textContent) &&
+   slotNote.querySelector('a'), 'P8: edit-instead note with link');
+slotSel.value = 'coupler_flux_pulse';
+P.createSlotSelected(slotSel);
+ok(slotNote.hidden === true, 'P8: note hidden on an empty slot');
+
+// P9: "+ new gate" reveals the name input; qubit-only variant has no
+// coupler slot; the name input hides again on an existing gate
+gateSel.value = '__new__:cz_snz';
+P.createGateSelected(gateSel);
+const nameInput = doc.getElementById('pulse-create-newgate-name');
+ok(nameInput.hidden === false && nameInput.required === true,
+   'P9: new-gate name input revealed + required');
+ok(Array.prototype.map.call(slotSel.options, function (o) { return o.value; })
+     .join(',') === 'flux_pulse_qubit',
+   'P9: qubit-only variant offers no coupler slot');
+gateSel.value = 'cz_unipolar';
+P.createGateSelected(gateSel);
+ok(nameInput.hidden === true, 'P9: name input hidden for existing gates');
+
+// P10: pair mode narrows the type list to z-capable + env-only classes
+const dragOpt = typeSel.querySelector('option[value="DragCosinePulse"]');
+const cbpOpt = typeSel.querySelector('option[value="CosineBipolarPulse"]');
+ok(dragOpt.hidden === true && dragOpt.disabled === true,
+   'P10: xy-only class hidden in pair mode');
+ok(cbpOpt.hidden === false, 'P10: env-only class stays visible');
+const qubitRadio = root.querySelector('input[name="target_kind"][value="qubit"]');
+qubitRadio.checked = true;
+P.createTargetKind(qubitRadio);
+ok(dragOpt.hidden === false, 'P10: filter lifted outside pair mode');
+ok(line.hidden === true, 'P10: pair line hidden outside pair mode');
 
 if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
 console.log('ALL OK pulses_create_selfcheck');
