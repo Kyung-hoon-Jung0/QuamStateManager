@@ -65,9 +65,9 @@ global.htmx = window.htmx;
 
 /* URL-routed stub — app.js fires unrelated fetches at eval time (e.g.
    /diagnostics/findings.json), which must never consume a section's queue. */
-function mkResp(payload) {
+function mkResp(payload, status) {
     return Promise.resolve({
-        status: 200,
+        status: status || 200,
         json: function () { return Promise.resolve(payload); },
         text: function () { return Promise.resolve(''); },
     });
@@ -82,7 +82,9 @@ window.fetch = global.fetch = function (url, opts) {
     }
     if (u.indexOf('/field/edit') === 0) {
         editCalls.push({ url: u, body: (opts && opts.body) || '' });
-        return mkResp(editQueue.length ? editQueue.shift() : { ok: true, results: [] });
+        // queue entries are either a plain 200 payload, or {__status, body}
+        const q = editQueue.length ? editQueue.shift() : { ok: true, results: [] };
+        return (q && q.__status) ? mkResp(q.body, q.__status) : mkResp(q);
     }
     return mkResp({});
 };
@@ -199,6 +201,79 @@ window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
     window.applyPlotRow(rowsBox.querySelector('.plot-apply-row'));
     await flush(20);
     ok(popup.style.display === 'none', 'last per-row apply also closes the popup');
+
+    /* ── 3b. plot-apply popup routes the r12 FSP 409 (docs/36 amendment) ── */
+    const FSP_DP = 'ports.mw_outputs.con1.3.4.full_scale_power_dbm';
+    const fspPlan = {
+        port: 'con1/3/4', fsp_old: 12, fsp_new: -11,
+        factor: Math.pow(10, 23 / 20), clip_count: 0, skipped: [],
+        amps: [{ path: 'qubits.q1.xy.operations.x180.amplitude',
+                 old: 0.2, new: 0.1, channel: 'q1.xy', op: 'x180', clips: false }],
+    };
+    const realFsp = window._openFspPopup;
+    let fspOpens = 0;
+
+    // comp on Apply All: resend = original rows + amp rows + fsp_ack=comp
+    window._openFspPopup = function (plan, resend) { fspOpens++; resend('comp', plan); };
+    rowsBox.innerHTML = mkRow(FSP_DP) + mkRow('qubits.q1.f_01');
+    popup.style.display = 'flex';
+    editCalls.length = 0;
+    editQueue = [
+        { __status: 409, body: { ok: false, fsp_compensation: fspPlan, fsp_dot_path: FSP_DP,
+                                 error: 'confirm the amplitude compensation first' } },
+        { ok: true, results: [], tray_html: null },
+    ];
+    window.applyAllPlotRows();
+    await flush(30);
+    ok(fspOpens === 1, 'FSP 409 on Apply All opens the compensation popup');
+    ok(editCalls.length === 2, 'comp: exactly one resend');
+    const resent = JSON.parse(editCalls[1] ? editCalls[1].body : '{}');
+    ok(resent.fsp_ack === 'comp', 'resend carries fsp_ack=comp');
+    ok(resent.updates && resent.updates.length === 3 &&
+       resent.updates.some(function (u2) {
+           return u2.dot_path === fspPlan.amps[0].path && u2.value === '0.1';
+       }),
+       'resend = 2 original rows + the compensated amp from the plan');
+    ok(popup.style.display === 'none', 'comp success applies the rows and closes the popup');
+
+    // cancel: nothing resent, rows pending, NO error text, button re-enabled
+    window._openFspPopup = function (plan, resend) { resend('cancel', plan); };
+    rowsBox.innerHTML = mkRow(FSP_DP);
+    popup.style.display = 'flex';
+    editCalls.length = 0;
+    editQueue = [{ __status: 409, body: { ok: false, fsp_compensation: fspPlan,
+                                          error: 'confirm first' } }];
+    window.applyAllPlotRows();
+    await flush(30);
+    ok(editCalls.length === 1, 'cancel: no resend — nothing committed');
+    const cRow = rowsBox.querySelector('.plot-apply-row');
+    ok(!cRow.classList.contains('plot-apply-applied'), 'cancel leaves the row unapplied');
+    const cErr = cRow.querySelector('.plot-apply-row-error');
+    ok(cErr.hidden && cErr.textContent === '',
+       'cancel shows NO error text (user choice, not a failure)');
+    ok(!window.document.getElementById('plot-apply-all').disabled,
+       'cancel re-enables Apply All');
+    ok(popup.style.display === 'flex', 'cancel keeps the popup open');
+
+    // per-row comp: transport switches to /field/edit-batch, one batch
+    window._openFspPopup = function (plan, resend) { resend('comp', plan); };
+    editCalls.length = 0;
+    editQueue = [
+        { __status: 409, body: { ok: false, fsp_compensation: fspPlan } },
+        { ok: true, results: [], tray_html: null },
+    ];
+    const soloRow = rowsBox.querySelector('.plot-apply-row');
+    window.applyPlotRow(soloRow);
+    await flush(30);
+    ok(editCalls.length === 2 &&
+       editCalls[1].url.indexOf('/field/edit-batch') === 0,
+       'per-row comp switches to /field/edit-batch');
+    const b2 = JSON.parse(editCalls[1] ? editCalls[1].body : '{}');
+    ok(b2.fsp_ack === 'comp' && b2.updates && b2.updates.length === 2,
+       'per-row comp batch = row + amp with fsp_ack=comp');
+    ok(soloRow.classList.contains('plot-apply-applied'),
+       'row is marked applied from the batch-shaped response');
+    window._openFspPopup = realFsp;
 
     /* ── 4. bulk toolbar press stamp (separate jsdom, real mount) ─────── */
     const COLS = [

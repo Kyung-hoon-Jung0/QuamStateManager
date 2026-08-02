@@ -7490,38 +7490,92 @@ function applyPlotRow(row) {
     btn.textContent = '…';
 
     var _pp = document.getElementById('plot-apply-popup');
-    var _chipBody = (_pp && _pp.dataset.expectChip)
-        ? '&expect_chip=' + encodeURIComponent(_pp.dataset.expectChip)
-          + (_pp.dataset.forceChip ? '&force_chip=1' : '')
-        : '';
-    fetch('/field/edit', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/x-www-form-urlencoded', 'HX-Request': 'true'},
-        body: 'dot_path=' + encodeURIComponent(dotPath) + '&value=' + encodeURIComponent(input.value) + _chipBody
-    }).then(function(resp) {
-        return resp.json().then(function(j) { return {status: resp.status, body: j}; });
-    }).then(function(r) {
+    // Acks ACCUMULATE across the 409 chain (fsp then type_fix): a resend that
+    // dropped an earlier ack would re-trigger that gate — popup ping-pong.
+    var _fspAck = null, _plan = null, _typeFix = null;
+
+    function _restore() { btn.disabled = false; btn.textContent = prevLabel; }
+
+    function _send() {
+        if (_fspAck === 'comp') {
+            // comp = this row + the compensated amps in ONE /field/edit-batch
+            // (one gid = one Review bundle = one Ctrl+Z).
+            var b = {
+                updates: [{dot_path: dotPath, value: input.value}]
+                    .concat(window._fspCompUpdates(_plan)),
+                fsp_ack: 'comp'
+            };
+            if (_typeFix) b.type_fix = _typeFix;
+            if (_pp && _pp.dataset.expectChip) {
+                b.expect_chip = _pp.dataset.expectChip;
+                if (_pp.dataset.forceChip) b.force_chip = true;
+            }
+            return fetch('/field/edit-batch', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(b)
+            }).then(function(resp) {
+                return resp.json().then(function(j) { return {status: resp.status, body: j}; });
+            });
+        }
+        var body = 'dot_path=' + encodeURIComponent(dotPath)
+                 + '&value=' + encodeURIComponent(input.value);
+        if (_fspAck) body += '&fsp_ack=' + _fspAck;
+        if (_typeFix) body += '&type_fix=' + _typeFix;
+        if (_pp && _pp.dataset.expectChip) {
+            body += '&expect_chip=' + encodeURIComponent(_pp.dataset.expectChip)
+                  + (_pp.dataset.forceChip ? '&force_chip=1' : '');
+        }
+        return fetch('/field/edit', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded', 'HX-Request': 'true'},
+            body: body
+        }).then(function(resp) {
+            return resp.json().then(function(j) { return {status: resp.status, body: j}; });
+        });
+    }
+
+    function _fail(e) {
+        _restore();
+        if (errEl) { errEl.hidden = false; errEl.textContent = String(e); }
+    }
+
+    function handleR(r) {
         if (r.body && r.body.ok) {
+            // Both response shapes land here — single {stored, stored_kind}
+            // and the comp batch {results}: only ok/tray_html are consumed.
             _markPlotRowApplied(row);
             if (r.body.tray_html) _swapPendingTray(r.body.tray_html);
+            if (_fspAck === 'comp' && window.showToast) {
+                var nAmp = ((_plan && _plan.amps) || []).length;
+                window.showToast('Also updated ' + nAmp + ' compensated amplitude'
+                    + (nAmp === 1 ? '' : 's') + ' — one undo reverts both.', 'success');
+            }
             _closePlotPopupIfDone();
         } else if (r.status === 409 && r.body && r.body.chip_mismatch) {
-            btn.disabled = false; btn.textContent = prevLabel;
+            _restore();
             if (window.confirm((r.body.error || 'Different chip.') + '\n\nApply anyway?')
                 && _pp) { _pp.dataset.forceChip = '1'; applyPlotRow(row); }
+        } else if (r.status === 409 && r.body && r.body.type_fix && window._confirmTypeFix) {
+            _typeFix = window._confirmTypeFix(r.body.type_fix) ? 'convert' : 'keep';
+            _send().then(handleR).catch(_fail);
+        } else if (r.status === 409 && r.body && r.body.fsp_compensation && window._openFspPopup) {
+            // r12-B never silent: nothing committed yet — the offer first.
+            window._openFspPopup(r.body.fsp_compensation, function(mode, plan) {
+                if (mode === 'cancel') { _restore(); return; }  // user choice, not a failure
+                _fspAck = mode; _plan = plan;
+                _send().then(handleR).catch(_fail);
+            });
         } else {
-            btn.disabled = false;
-            btn.textContent = prevLabel;
+            _restore();
             if (errEl) {
                 errEl.hidden = false;
                 errEl.textContent = (r.body && r.body.error) || 'Apply failed';
             }
         }
-    }).catch(function(e) {
-        btn.disabled = false;
-        btn.textContent = prevLabel;
-        if (errEl) { errEl.hidden = false; errEl.textContent = String(e); }
-    });
+    }
+
+    _send().then(handleR).catch(_fail);
 }
 
 function applyAllPlotRows() {
@@ -7546,27 +7600,70 @@ function applyAllPlotRows() {
     });
 
     var _pp = document.getElementById('plot-apply-popup');
-    var _body = {updates: updates};
-    if (_pp && _pp.dataset.expectChip) {
-        _body.expect_chip = _pp.dataset.expectChip;
-        if (_pp.dataset.forceChip) _body.force_chip = true;
-    }
-    fetch('/field/edit-batch', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(_body)
-    }).then(function(resp) {
-        return resp.json().then(function(j) { return {status: resp.status, body: j}; });
-    }).then(function(r) {
+    // Acks ACCUMULATE across the 409 chain (fsp then type_fix) — see applyPlotRow.
+    var _ups = updates, _fspAck = null, _plan = null, _typeFix = null;
+
+    // Re-enable only at terminal exits (ok / chip-confirm / cancel / error /
+    // catch), so Apply All can't be re-clicked while the FSP popup is open
+    // or a resend is in flight.
+    function _restore() {
         if (applyAllBtn) { applyAllBtn.disabled = false; applyAllBtn.textContent = prevLabel; }
+    }
+
+    function _post() {
+        var b = {updates: _ups};
+        if (_fspAck) b.fsp_ack = _fspAck;
+        if (_typeFix) b.type_fix = _typeFix;
+        if (_pp && _pp.dataset.expectChip) {
+            b.expect_chip = _pp.dataset.expectChip;
+            if (_pp.dataset.forceChip) b.force_chip = true;
+        }
+        return fetch('/field/edit-batch', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(b)
+        }).then(function(resp) {
+            return resp.json().then(function(j) { return {status: resp.status, body: j}; });
+        });
+    }
+
+    function _fail(e) {
+        _restore();
+        var first = pending[0];
+        if (first) {
+            var er = first.querySelector('.plot-apply-row-error');
+            if (er) { er.hidden = false; er.textContent = String(e); }
+        }
+    }
+
+    function handleR(r) {
         if (r.body && r.body.ok) {
+            _restore();
             pending.forEach(function(row) { _markPlotRowApplied(row); });
             if (r.body.tray_html) _swapPendingTray(r.body.tray_html);
+            if (_fspAck === 'comp' && window.showToast) {
+                var nAmp = ((_plan && _plan.amps) || []).length;
+                window.showToast('Also updated ' + nAmp + ' compensated amplitude'
+                    + (nAmp === 1 ? '' : 's') + ' — one undo reverts both.', 'success');
+            }
             _closePlotPopupIfDone();
         } else if (r.status === 409 && r.body && r.body.chip_mismatch) {
+            _restore();
             if (window.confirm((r.body.error || 'Different chip.') + '\n\nApply anyway?')
                 && _pp) { _pp.dataset.forceChip = '1'; applyAllPlotRows(); }
+        } else if (r.status === 409 && r.body && r.body.type_fix && window._confirmTypeFix) {
+            _typeFix = window._confirmTypeFix(r.body.type_fix) ? 'convert' : 'keep';
+            _post().then(handleR).catch(_fail);
+        } else if (r.status === 409 && r.body && r.body.fsp_compensation && window._openFspPopup) {
+            // r12-B never silent: the batch is untouched — the offer first.
+            window._openFspPopup(r.body.fsp_compensation, function(mode, plan) {
+                if (mode === 'cancel') { _restore(); return; }  // rows stay pending, no error
+                _fspAck = mode; _plan = plan;
+                if (mode === 'comp') _ups = updates.concat(window._fspCompUpdates(plan));
+                _post().then(handleR).catch(_fail);
+            });
         } else {
+            _restore();
             var byPath = {};
             (r.body.results || []).forEach(function(res) { byPath[res.dot_path] = res; });
             var shown = false;
@@ -7588,14 +7685,9 @@ function applyAllPlotRows() {
                 else if (window.showToast) window.showToast(msg, 'error');
             }
         }
-    }).catch(function(e) {
-        if (applyAllBtn) { applyAllBtn.disabled = false; applyAllBtn.textContent = prevLabel; }
-        var first = pending[0];
-        if (first) {
-            var er = first.querySelector('.plot-apply-row-error');
-            if (er) { er.hidden = false; er.textContent = String(e); }
-        }
-    });
+    }
+
+    _post().then(handleR).catch(_fail);
 }
 
 function _markPlotRowApplied(row) {

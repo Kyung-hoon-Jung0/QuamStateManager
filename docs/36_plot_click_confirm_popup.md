@@ -140,3 +140,50 @@ browser test infrastructure).
 
 The only thing removed is the silent multi-POST `_autoUpdateFields`
 chain and its direct mutation of the working copy.
+
+---
+
+## Amendment (2026-08-03): FSP / type_fix 409s are wired (r12 + r14 gates)
+
+**Incident:** clicking a `qubit_spectroscopy_vs_power` point stages
+`ports.mw_outputs.…full_scale_power_dbm` alongside the frequency targets;
+Apply All hit the r12 FSP-compensation 409 ("This batch changes a port's
+full-scale power — confirm the amplitude compensation first") and the popup
+just printed the error string into the first row — a hard dead-end, no way
+to confirm. The plot-apply popup was the last un-wired `/field/edit[-batch]`
+caller (the r14 `type_fix` 409 dead-ended identically).
+
+Both handlers (`applyPlotRow`, `applyAllPlotRows` in `app.js`) are now
+restructured as a local `_send`/`handleR` (resp. `_post`/`handleR`)
+recursion:
+
+- **FSP 409** → the shared `window._openFspPopup(plan, resend)`.
+  `comp` = the pending row(s) **plus** `window._fspCompUpdates(plan)` amp
+  rows in ONE `/field/edit-batch` with `fsp_ack=comp` (one gid = one Review
+  bundle = one Ctrl+Z) — the per-row path *switches transport* from
+  `/field/edit` to `/field/edit-batch` for this, exactly like the Explorer
+  inline editor. `solo` = re-send with `fsp_ack=solo` (FSP alone).
+  `cancel` = buttons restored, rows stay pending, **no error text** (a user
+  choice is not a failure); the popup stays open and usable.
+- **type_fix 409** → the shared `window._confirmTypeFix` → re-send with
+  `type_fix=convert|keep`.
+- **Acks accumulate** across the 409 chain in closure state (`_fspAck`,
+  `_typeFix`): the server can answer an fsp-acked resend with a type_fix
+  409, and a resend that dropped the earlier ack would re-trigger that
+  gate — popup ping-pong. (bulk-edit's `handleR` has this latent bug; the
+  plot handlers do not copy it.)
+- The chip-mismatch 409 branch is unchanged. Apply All's button now
+  re-enables only at terminal exits (ok / chip-confirm / cancel / error /
+  catch), so it can't be re-clicked while the FSP popup is open.
+- comp success additionally toasts "Also updated N compensated
+  amplitude(s) — one undo reverts both." The comp batch's extra amp rows
+  have no popup rows and are naturally ignored by the row-marking loop.
+
+Pinned by `tests/test_fsp_compensation.py::test_js_wiring_pins` (region
+slice of both handlers must contain the fsp + type_fix routing tokens),
+`::test_comp_batch_with_unrelated_row_is_one_undo_group` (the plot-shaped
+mixed batch: FSP row + unrelated row + amps → one gid, one undo), and
+`tests/state_sync_selfcheck.cjs` §3b under jsdom (Apply-All comp resend
+carries original rows + plan amps + `fsp_ack=comp`; cancel = no resend, no
+error text, button re-enabled, popup open; per-row comp switches to
+`/field/edit-batch`).
