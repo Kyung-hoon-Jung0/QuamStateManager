@@ -14134,9 +14134,16 @@ def regenerate_page():
     """Re-generate Config — rebuild an existing chip from an editable spec
     (reassign ports, change bands, add/remove qubits) while its calibrated
     values are carried over, into a NEW folder. Skeleton; the wizard prefill +
-    build/merge wiring (``core.regenerate``) is attached next."""
+    build/merge wiring (``core.regenerate``) is attached next.
+
+    ``?step=N`` (r15 CG1, docs/70) deep-links the wizard to a step after the
+    reconstruct+hydrate finishes — the /instrument "Modify wiring…" button
+    passes step=5 (Wiring). Clamped 1..8; absent/0 keeps the default step 1.
+    """
+    step = min(_int_arg("step", 0, minimum=0), 8)
     template = "_regenerate.html" if _is_htmx() else "regenerate.html"
-    return render_template(template, **_ctx(page="regenerate"))
+    return render_template(template, **_ctx(page="regenerate",
+                                            regen_step=step or None))
 
 
 @bp.route("/generate/envs")

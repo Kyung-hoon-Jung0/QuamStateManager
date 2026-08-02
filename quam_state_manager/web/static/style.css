@@ -20,7 +20,7 @@
     --font-mono:          "JetBrains Mono", "Fira Code", "Cascadia Code",
                           "SF Mono", Menlo, Consolas, "DejaVu Sans Mono",
                           monospace;           /* font used for values, paths, JSON keys, timestamps */
-    --font-size-base:     15px;   /* default page font size (nudged up from 14 per feedback #0); the S/M/L ⚙ buttons set 13/15/17px */
+    --font-size-base:     17px;   /* default page font size (r15 CG4: presets bumped one notch — S=old M, M=old L; the S/M/L ⚙ buttons set 15/17/19px). Fonts only — line-heights/paddings stay px/rem so boxes never grow (docs/70) */
     --body-line-height:   1.5;    /* line spacing for normal paragraph text */
     --dense-line-height:  1.3;    /* tighter line spacing used in tables and tree rows */
 
@@ -479,8 +479,8 @@
 }
 
 /* Font size overrides (driven by the S/M/L ⚙ settings buttons) */
-html[data-font-size="small"] { --font-size-base: 13px; }
-html[data-font-size="large"] { --font-size-base: 17px; }
+html[data-font-size="small"] { --font-size-base: 15px; }
+html[data-font-size="large"] { --font-size-base: 19px; }
 
 /* ================================================================
  * DARK THEME — Color token overrides
@@ -500,6 +500,13 @@ html[data-font-size="large"] { --font-size-base: 17px; }
        on dark. Outlined/text uses are handled per-component instead. */
     --color-text-muted:      #b3bac2;  /* brightened from #9aa0a6 — muted text was too dim (readability feedback) */
     --color-accent:          #5b8def;
+
+    /* r15 CG4 (docs/70, app-global by user decision): Pico's dark text was
+       too dim, especially at the wizard's small sizes. Normal text up from
+       #c2c7d0; muted/hint text up from #7b8495 (≈4.7:1 → ≈6.9:1 on the page
+       bg) — every .muted / --pico-muted-color consumer brightens together. */
+    --pico-color:            #d0d5de;
+    --pico-muted-color:      #98a1b3;
 
     /* -- Param History trigger overrides -- */
     --trigger-save:        #60a5fa;
@@ -5724,7 +5731,10 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
     background: transparent; color: var(--pico-primary);
     border: 1px solid color-mix(in srgb, var(--pico-primary) 45%, transparent);
     border-radius: 5px; cursor: pointer;
-    padding: 0 0.7rem; font-size: 13px; font-weight: 500;
+    /* em (was 13px): Back/Next/Auto-allocate — the wizard's most-clicked
+       buttons — must track the S/M/L presets (r15 CG4, docs/70). Padding
+       stays rem/0 so the box never grows disproportionally. */
+    padding: 0 0.7rem; font-size: 0.867em; font-weight: 500;
     white-space: nowrap;
     /* Equal height + alignment for every variant (feedback: filled "Sync" was
        taller than the outline "Close"). A fixed box-sizing + min-height + inline
@@ -6237,7 +6247,7 @@ button.recents-item:focus {
     padding: 6px 12px;
     border-bottom: 2px solid transparent;   /* transparent → no layout shift on active */
     margin-bottom: -1px;                     /* coincide the per-step underline with the strip hairline */
-    font-size: 13px; font-weight: 500; line-height: 1.45;
+    font-size: 0.867em; font-weight: 500; line-height: 1.45;
     color: var(--pico-muted-color);
     background: none; border-radius: 0;
     cursor: pointer; user-select: none;
@@ -6248,7 +6258,7 @@ button.recents-item:focus {
     flex: 0 0 auto;
     display: inline-flex; align-items: center; justify-content: center;
     width: 1.1em; min-width: 1.1em;
-    font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+    font-family: var(--font-mono); font-size: 0.733em; font-weight: 700;
     font-variant-numeric: tabular-nums; line-height: 1.45;
     color: var(--pico-muted-color);
     background: none; border-radius: 0;
@@ -6278,7 +6288,7 @@ button.recents-item:focus {
     margin-bottom: 0;
     --pico-form-element-spacing-vertical: var(--compact-field-pico-sv);
     --pico-form-element-spacing-horizontal: var(--compact-field-pico-sh);
-    font-size: 13px; line-height: 1.3;
+    font-size: 0.867em; line-height: 1.3;
     font-family: var(--font-mono); font-variant-numeric: tabular-nums;
 }
 /* Wizard selects (chip architecture, 2Q gate) + the free-text path inputs were
@@ -6287,9 +6297,10 @@ button.recents-item:focus {
 .gen-field select,
 .gen-chassis-count-field select,
 #gen-chip-arch, #gen-pair-gate,
+#gen-naming-preset, #gen-preset-select,
 #gen-env-custom-path, #gen-output-path {
     margin: 0; height: auto; width: auto;
-    font-size: 13px; line-height: 1.3;
+    font-size: 0.867em; line-height: 1.3;
     --pico-form-element-spacing-vertical: var(--compact-field-pico-sv);
     --pico-form-element-spacing-horizontal: var(--compact-field-pico-sh);
 }
@@ -6311,7 +6322,7 @@ button.recents-item:focus {
     width: 4.5rem; margin: 0;
     --pico-form-element-spacing-vertical: var(--compact-field-pico-sv);
     --pico-form-element-spacing-horizontal: var(--compact-field-pico-sh);
-    font-size: 13px; line-height: 1.3;
+    font-size: 0.867em; line-height: 1.3;
     font-family: var(--font-mono); font-variant-numeric: tabular-nums;
 }
 .gen-chassis-list { display: flex; flex-direction: column; gap: 0.7rem; }
@@ -6323,7 +6334,9 @@ button.recents-item:focus {
 .gen-chassis-head { display: flex; align-items: center; gap: 0.6rem; }
 .gen-chassis .gen-slots { margin-top: 0.5rem; }
 .gen-chassis-del {
-    margin-left: auto; width: 1.7em; height: 1.7em; padding: 0; line-height: 1;
+    /* fixed-px box (was 1.7em): the delete button must not inflate the
+       chassis-card header when the font presets grow (docs/70) */
+    margin-left: auto; width: 26px; height: 26px; padding: 0; line-height: 1;
     border-radius: 0.3rem; font-size: 0.95em;
 }
 .gen-slots { display: grid; grid-template-columns: repeat(8, 1fr); gap: 0.35rem; }
@@ -6352,7 +6365,9 @@ button.recents-item:focus {
 .gen-slot-fem { font-size: 0.78em; font-weight: 700; }
 
 .gen-slot-menu {
-    position: absolute; z-index: 200;
+    /* fixed (viewport coords) — absolute resolved against #content-area and
+       landed the popup offset by the sidebar/topbar (r15 CG3, docs/70) */
+    position: fixed; z-index: 200;
     display: flex; flex-direction: column;
     background: var(--pico-card-background-color);
     border: 1px solid var(--pico-muted-border-color); border-radius: 0.4rem;
@@ -6401,7 +6416,7 @@ button.recents-item:focus {
     margin: 0; width: auto; min-width: 6rem;
     --pico-form-element-spacing-vertical: var(--compact-field-pico-sv);
     --pico-form-element-spacing-horizontal: var(--compact-field-pico-sh);
-    font-size: 13px; line-height: 1.3; font-family: var(--font-mono);
+    font-size: 0.867em; line-height: 1.3; font-family: var(--font-mono);
 }
 .gen-pair-link { color: var(--pico-muted-color); }
 /* A pair select whose model value names a qubit that no longer exists — the
@@ -6418,42 +6433,69 @@ button.recents-item:focus {
     margin: 0; max-width: 12rem;
     --pico-form-element-spacing-vertical: var(--compact-field-pico-sv);
     --pico-form-element-spacing-horizontal: var(--compact-field-pico-sh);
-    font-size: 13px; line-height: 1.3; font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+    font-size: 0.867em; line-height: 1.3; font-family: var(--font-mono); font-variant-numeric: tabular-nums;
 }
 .gen-row-del {
-    width: 1.7em; height: 1.7em; padding: 0; line-height: 1; margin: 0;
+    /* fixed-px box (was 1.7em) — same no-inflation rule as .gen-chassis-del */
+    width: 26px; height: 26px; padding: 0; line-height: 1; margin: 0;
     border-radius: 0.3rem; font-size: 0.95em;
 }
 
 /* step 5 — wiring */
 .gen-wiring-table { margin-top: 0.6rem; overflow-x: auto; }
 .gen-wiring-diagram { margin: 0.6rem 0; overflow-x: auto; }
-/* Docked monitor panel — port hover + live drag state, above the diagram */
+/* Docked monitor panel — port hover + live drag state, above the diagram.
+   r15 CG2 (docs/70): enlarged (0.84em → 0.95em) + STICKY inside the
+   #table-pane scroller so it stays visible while dragging near the bottom
+   of a tall rack; opaque background so rows never bleed through. */
 .gen-wiring-monitor {
     display: flex; align-items: center; flex-wrap: wrap; gap: 0.3rem 0.6rem;
     min-height: 2.4rem; margin: 0.6rem 0 0;
     padding: 0.35rem 0.6rem; border-radius: 0.4rem;
     border: 1px solid var(--pico-muted-border-color);
-    background: var(--pico-card-sectioning-background-color);
-    font-size: 0.84em;
+    background: var(--pico-card-background-color);
+    font-size: 0.95em;
+    position: sticky; top: 0; z-index: 5;
 }
 .gen-wiring-monitor.gen-monitor-ok  { border-color: #2ea043; }
 .gen-wiring-monitor.gen-monitor-bad { border-color: #d0342c; }
 .gen-monitor-idle { color: var(--pico-muted-color); }
 .gen-monitor-tag {
-    font-weight: 700; text-transform: uppercase; font-size: 0.82em;
+    font-weight: 700; text-transform: uppercase; font-size: 0.9em;
     letter-spacing: 0.04em; color: var(--pico-muted-color);
 }
 .gen-monitor-label { font-weight: 600; font-family: var(--font-mono, monospace); }
 .gen-monitor-src, .gen-monitor-tgt, .gen-monitor-fields {
     font-family: var(--font-mono, monospace);
 }
+.gen-monitor-src, .gen-monitor-tgt { font-weight: 600; color: var(--pico-contrast); }
 .gen-monitor-fields, .gen-monitor-arrow { color: var(--pico-muted-color); }
 .gen-monitor-badge { font-weight: 700; }
 .gen-monitor-ok  .gen-monitor-badge { color: var(--color-success-text); }  /* #2ea043 was 3.3:1; -text adapts */
 .gen-monitor-bad .gen-monitor-badge { color: var(--color-error-text); }    /* #d0342c failed dark; -text adapts */
 .iw-port.iw-port-ok circle  { stroke: #2ea043 !important; stroke-width: 3 !important; }
 .iw-port.iw-port-bad circle { stroke: #d0342c !important; stroke-width: 3 !important; }
+/* Cursor-following drag ghost (r15 CG2, docs/70): body-appended so no
+   clipping/transformed ancestor can swallow it; pointer-events:none so
+   elementFromPoint keeps seeing the port under the cursor. */
+#gen-drag-ghost {
+    position: fixed; z-index: 400; pointer-events: none;
+    display: flex; align-items: center; gap: 0.35em;
+    padding: 0.15rem 0.5rem; border-radius: 0.4rem;
+    background: var(--pico-card-background-color);
+    border: 1.5px solid var(--pico-primary);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+    font-size: 0.9em; font-weight: 600;
+    font-family: var(--font-mono, monospace);
+    white-space: nowrap;
+}
+#gen-drag-ghost .gen-drag-ghost-dot {
+    width: 0.75em; height: 0.75em; border-radius: 50%;
+    background: var(--pico-primary); flex: none;
+}
+#gen-drag-ghost .gen-drag-ghost-dot.gen-drag-ghost-grip { border-radius: 0.15em; }
+#gen-drag-ghost.gen-drag-ghost-ok  { border-color: #2ea043; }
+#gen-drag-ghost.gen-drag-ghost-bad { border-color: #d0342c; }
 .iw-port-grip { cursor: grab; }
 .iw-port-grip:hover { fill: var(--pico-primary) !important; }
 /* Wiring validation (step 5) */
@@ -6496,7 +6538,7 @@ table.gen-wiring tbody tr.pinned {
     height: auto; min-height: 0; box-sizing: content-box;
     --pico-form-element-spacing-vertical: 0.01rem;
     font-family: var(--font-mono); font-variant-numeric: tabular-nums;
-    font-size: 13px; font-weight: 500;
+    font-size: 0.867em; font-weight: 500;
 }
 .gen-wiring-pin:focus { position: relative; z-index: 4; }
 
@@ -6548,8 +6590,8 @@ table.gen-wiring tbody tr.pinned {
 .gen-preview-result { margin-top: 0.6rem; }
 .gen-preview-result p { margin: 0.2rem 0; }
 .gen-config-export { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin: 0.55rem 0 0.2rem; }
-.gen-config-export-lead { font-size: 12px; font-weight: 600; }
-.gen-config-export-btn { font-size: 12.5px; padding: 0.3rem 0.7rem; margin: 0; }
+.gen-config-export-lead { font-size: 0.8em; font-weight: 600; }
+.gen-config-export-btn { font-size: 0.833em; padding: 0.3rem 0.7rem; margin: 0; }
 
 /* step 6 — populate */
 .gen-panel h4 { margin: 0.9rem 0 0.3rem; }
@@ -6579,19 +6621,19 @@ table.gen-wiring tbody tr.pinned {
   background: var(--pico-card-background-color);
 }
 .gen-pop-preview-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
-.gen-pop-preview-title { font-size: 12px; font-weight: 600; margin-bottom: 0.2rem; }
+.gen-pop-preview-title { font-size: 0.8em; font-weight: 600; margin-bottom: 0.2rem; }
 .gen-pop-preview-plot { width: 100%; min-height: 150px; }
-.gen-pop-preview-err { color: var(--pico-del-color); font-size: 11.5px; margin-top: 0.2rem; }
+.gen-pop-preview-err { color: var(--pico-del-color); font-size: 0.767em; margin-top: 0.2rem; }
 .gen-pop-preview-close {
   flex: none; border: none; background: none; cursor: pointer;
-  font-size: 18px; line-height: 1; padding: 0 0.25rem; margin: 0;
+  font-size: 1.2em; line-height: 1; padding: 0 0.25rem; margin: 0;
   color: var(--pico-muted-color);
 }
 .gen-pop-preview-close:hover { color: var(--pico-del-color); }
 /* persistent on/off toggle for the live waveform preview */
 .gen-preview-toggle {
   display: inline-flex; align-items: center; gap: 0.4rem;
-  font-size: 11.5px; color: var(--pico-muted-color); margin: 0 0 0.4rem; cursor: pointer;
+  font-size: 0.767em; color: var(--pico-muted-color); margin: 0 0 0.4rem; cursor: pointer;
 }
 .gen-preview-toggle input { margin: 0; }
 
@@ -6602,7 +6644,7 @@ table.gen-wiring tbody tr.pinned {
     display: flex; gap: 0.7rem; align-items: center; flex-wrap: wrap;
     margin: 0.3rem 0 0.4rem;
 }
-.gen-preset-bar label { display: flex; align-items: center; gap: 0.35rem; margin: 0; font-size: 13px; }
+.gen-preset-bar label { display: flex; align-items: center; gap: 0.35rem; margin: 0; font-size: 0.867em; }
 .gen-preset-bar select { margin: 0; width: auto; max-width: 24rem; }
 .gen-preset-overwrite input { margin: 0; }
 .gen-preset-savebox {
@@ -6612,9 +6654,9 @@ table.gen-wiring tbody tr.pinned {
 }
 .gen-preset-savebox input[type="text"] { margin: 0; width: 18rem; }
 .gen-preset-sections { display: flex; gap: 0.7rem; flex-wrap: wrap; }
-.gen-preset-sections label { display: flex; align-items: center; gap: 0.25rem; margin: 0; font-size: 12.5px; }
+.gen-preset-sections label { display: flex; align-items: center; gap: 0.25rem; margin: 0; font-size: 0.833em; }
 .gen-preset-sections input { margin: 0; }
-.gen-preset-err { color: var(--color-error-text); font-size: 12.5px; }
+.gen-preset-err { color: var(--color-error-text); font-size: 0.833em; }
 
 /* Qubit naming block (step 4) — scheme presets + per-qubit rename inputs */
 .gen-naming { margin: 0.4rem 0 0.6rem; }
@@ -6628,7 +6670,7 @@ table.gen-wiring tbody tr.pinned {
 .gen-qubit-name-in {
     width: 5.5ch !important; min-width: 4ch; margin: 0;
     padding: 0.05rem 0.3rem; height: auto; min-height: 0; box-sizing: content-box;
-    font-family: var(--font-mono); font-size: 12.5px; text-align: center;
+    font-family: var(--font-mono); font-size: 0.833em; text-align: center;
 }
 /* ---- Step-4 flow bands (readability redesign): DEFINE → LAYOUT → TWPAs.
    Hairline-separated sections in the VSCode idiom (small uppercase muted
@@ -6642,7 +6684,7 @@ table.gen-wiring tbody tr.pinned {
 }
 .gen-band-head {
     display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap;
-    margin: 0 0 0.45rem; font-size: 13.5px;
+    margin: 0 0 0.45rem; font-size: 0.9em;
 }
 /* Small inline action in a band header (Import port CSV…). Had NO rule at all,
    so Pico's full-size button default applied — a huge button next to a 12.5px
@@ -6650,7 +6692,7 @@ table.gen-wiring tbody tr.pinned {
 button.gen-mini-btn {
     width: auto; height: auto; margin: 0;
     padding: 0.15rem 0.6rem;
-    font-size: 12px; line-height: 1.4; font-weight: 500;
+    font-size: 0.8em; line-height: 1.4; font-weight: 500;
     background: transparent;
     color: var(--pico-primary);
     border: 1px solid color-mix(in srgb, var(--pico-primary) 45%, transparent);
@@ -6662,32 +6704,32 @@ button.gen-mini-btn:hover {
     color: var(--pico-primary);
 }
 .gen-band-title {
-    font-weight: 800; font-size: 12.5px; letter-spacing: 0.09em;
+    font-weight: 800; font-size: 0.833em; letter-spacing: 0.09em;
     text-transform: uppercase;
     color: color-mix(in srgb, var(--pico-color) 82%, transparent);
 }
 .gen-band-head .muted { font-weight: 400; }
-.gen-band-sublabel { font-weight: 600; font-size: 13.5px; }
-.gen-oneline { margin: 0.2rem 0; font-size: 13.5px; }
+.gen-band-sublabel { font-weight: 600; font-size: 0.9em; }
+.gen-oneline { margin: 0.2rem 0; font-size: 0.9em; }
 /* DEFINE band: architecture radios + count + mux inline on one wrapping row */
 .gen-define-row { display: flex; gap: 1.6rem; align-items: flex-start; flex-wrap: wrap; }
-.gen-define-row .gen-chassis-count-field { margin: 0; font-size: 14px; }
-.gen-field-label { font-weight: 600; font-size: 14px; display: block; margin-bottom: 0.25rem; }
+.gen-define-row .gen-chassis-count-field { margin: 0; font-size: 0.933em; }
+.gen-field-label { font-weight: 600; font-size: 0.933em; display: block; margin-bottom: 0.25rem; }
 /* Architecture radio group — all three options visible, one click to switch */
 .gen-arch-radios { display: flex; flex-direction: column; gap: 0.25rem; }
 .gen-arch-radio {
     display: flex; align-items: center; gap: 0.45rem; margin: 0;
-    font-size: 14px; cursor: pointer;
+    font-size: 0.933em; cursor: pointer;
 }
 .gen-arch-radio input[type="radio"] { margin: 0; flex: none; }
 .gen-arch-radio-off { color: var(--pico-muted-color); cursor: not-allowed; }
 /* Read-only control-line confirmation (derived from the architecture) */
 .gen-line-confirm {
     display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;
-    margin: 0.45rem 0; font-size: 13.5px;
+    margin: 0.45rem 0; font-size: 0.9em;
 }
-.gen-line-confirm .gen-line-toggle { margin: 0; font-size: 13.5px; }
-.gen-line-confirm select { margin: 0; width: auto; padding: 0 1.6rem 0 0.4rem; height: auto; font-size: 13.5px; }
+.gen-line-confirm .gen-line-toggle { margin: 0; font-size: 0.9em; }
+.gen-line-confirm select { margin: 0; width: auto; padding: 0 1.6rem 0 0.4rem; height: auto; font-size: 0.9em; }
 .gen-line-confirm input[type="checkbox"] { margin: 0; }
 .gen-line-confirm-why { font-style: italic; }
 /* LAYOUT band: board + pairs rail side by side; wraps to stacked when the
@@ -6698,32 +6740,32 @@ button.gen-mini-btn:hover {
 .gen-pairs-rail-head { display: flex; align-items: center; gap: 0.7rem; margin: 0 0 0.3rem; }
 .gen-pairs-rail-head button { margin: 0; }
 /* Board empty state (count 0 — clicks would be inert; say so) */
-.gen-topo-empty { padding: 1.2rem 0.8rem; font-size: 13.5px; color: var(--pico-muted-color); }
+.gen-topo-empty { padding: 1.2rem 0.8rem; font-size: 0.9em; color: var(--pico-muted-color); }
 /* Partial placement = exactly what the Next-gate rejects — pre-announce it */
 .gen-topo-caption-warn { color: var(--color-warning-text) !important; }
 /* Condensed gesture line + info glyph (replaces the 4-bullet hint list) */
-.gen-topo-gestures { font-size: 12.5px; margin: 0.2rem 0; }
+.gen-topo-gestures { font-size: 0.833em; margin: 0.2rem 0; }
 .gen-info-glyph { cursor: help; user-select: none; margin-left: 0.25rem; }
 /* Manual orientation pin on a CZ pair row (restrained outline chip) */
 .gen-pair-manual-chip {
-    font-size: 11px; padding: 0 0.35rem; border-radius: 8px;
+    font-size: 0.733em; padding: 0 0.35rem; border-radius: 8px;
     border: 1px solid var(--pico-muted-border-color);
     color: var(--pico-muted-color); line-height: 1.5; user-select: none;
 }
 /* Step-4 readability bump: muted captions + the CZ pair hint at 13.5px, the
    naming scheme select compact (it rendered outsized + over-wide). */
-.gen-panel[data-step="4"] .muted { font-size: 13.5px; }
-.gen-naming-controls { font-size: 14px; }
-.gen-naming-controls label { font-size: 14px; }
+.gen-panel[data-step="4"] .muted { font-size: 0.9em; }
+.gen-naming-controls { font-size: 0.933em; }
+.gen-naming-controls label { font-size: 0.933em; }
 .gen-naming-controls select {
-    font-size: 13.5px; height: auto; max-width: 17rem;
+    font-size: 0.9em; height: auto; max-width: 17rem;
     padding: 0.15rem 1.8rem 0.15rem 0.5rem;
 }
 .gen-naming-controls button { margin: 0; }
-.gen-qubit-name-in { font-size: 13.5px; }
-.gen-pair-list { font-size: 13.5px; }
+.gen-qubit-name-in { font-size: 0.9em; }
+.gen-pair-list { font-size: 0.9em; }
 .gen-pair-cz-hint { max-width: 30rem; }
-.gen-topo-summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+.gen-topo-summary { cursor: pointer; font-weight: 600; font-size: 0.867em; }
 .gen-topo-controls { display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; margin: 0.4rem 0 0.2rem; }
 .gen-topo-controls label { display: flex; align-items: center; gap: 0.35rem; margin: 0; }
 /* input. prefix lifts specificity over Pico's input{width:100%} — without it
@@ -6732,7 +6774,7 @@ input.gen-topo-dim { width: 3.2em; margin: 0; }
 .gen-topo-dim { width: 3.2em; }
 .gen-topo-presets { display: inline-flex; gap: 0.3rem; }
 .gen-topo-presets button { margin: 0; }
-.gen-topo-hint { font-size: 11px; margin: 0.1rem 0 0.3rem; }
+.gen-topo-hint { font-size: 0.733em; margin: 0.1rem 0 0.3rem; }
 .gen-topo-board { overflow: auto; max-height: 56vh; padding: 4px; }
 .gen-topo-grid { position: relative; }
 .gen-topo-cell {
@@ -6754,13 +6796,13 @@ input.gen-topo-dim { width: 3.2em; margin: 0; }
   stroke-width: 2; pointer-events: none;
 }
 /* per-pair line-bundle legend (reflects the chosen chip type) */
-.gen-topo-legend { font-size: 11px; margin: 0 0 0.35rem; color: var(--pico-muted-color); }
+.gen-topo-legend { font-size: 0.733em; margin: 0 0 0.35rem; color: var(--pico-muted-color); }
 .gen-topo-legend:empty { display: none; }
 .gen-topo-stone {
   position: absolute; border-radius: 50%;
   background: var(--pico-primary); color: var(--pico-primary-inverse);
   display: flex; align-items: center; justify-content: center;
-  font-size: 10px; font-weight: 600; cursor: grab; user-select: none;
+  font-size: 0.667em; font-weight: 600; cursor: grab; user-select: none;
   box-shadow: 0 1px 2px rgba(0,0,0,0.25);
 }
 /* selected = delete/move candidate: distinct (delete-colour) ring */
@@ -6771,7 +6813,7 @@ input.gen-topo-dim { width: 3.2em; margin: 0; }
   filter: brightness(1.15);
 }
 /* live status line for the armed/selected modes */
-.gen-topo-status { font-size: 11px; margin: 0 0 0.3rem; min-height: 1.1em; font-weight: 600; }
+.gen-topo-status { font-size: 0.733em; margin: 0 0 0.3rem; min-height: 1.1em; font-weight: 600; }
 .gen-topo-status:empty { min-height: 0; }
 .gen-topo-status--armed { color: var(--pico-primary); }
 .gen-topo-status--sel { color: var(--pico-del-color); }
@@ -6801,18 +6843,18 @@ input.gen-topo-dim { width: 3.2em; margin: 0; }
 /* one-click Renumber button (shown only while ids have gaps) */
 .gen-topo-renumber { background: var(--pico-del-color); border-color: var(--pico-del-color); }
 /* multi-line gesture hint */
-ul.gen-topo-hint { font-size: 11px; margin: 0.1rem 0 0.3rem; padding-left: 1.1rem; }
+ul.gen-topo-hint { font-size: 0.733em; margin: 0.1rem 0 0.3rem; padding-left: 1.1rem; }
 ul.gen-topo-hint li { margin: 0.1rem 0; }
-ul.gen-topo-hint kbd { font-size: 10px; padding: 0 3px; }
+ul.gen-topo-hint kbd { font-size: 0.667em; padding: 0 3px; }
 /* read-only static board (Populate mirror): all-SVG stones + labels */
 .gen-pop-topo-board { overflow: auto; max-height: 44vh; padding: 4px; }
 .gen-topo-stone-ro { fill: var(--pico-primary); }
 .gen-topo-stone-label {
-  fill: var(--pico-primary-inverse); font-size: 10px; font-weight: 600;
+  fill: var(--pico-primary-inverse); font-size: 0.667em; font-weight: 600;
   pointer-events: none; user-select: none;
 }
 
-table.gen-pop-table { font-size: 12.5px; border-collapse: collapse; }
+table.gen-pop-table { font-size: 0.833em; border-collapse: collapse; }
 table.gen-pop-table th, table.gen-pop-table td { padding: 1px 4px; white-space: nowrap; }
 table.gen-pop-table th { color: var(--pico-muted-color); font-weight: 600; }
 /* sticky header row + sticky qubit/pair-id first column */
@@ -6827,7 +6869,7 @@ table.gen-pop-table thead th:first-child { z-index: 4; }
     height: auto; min-height: 0; box-sizing: content-box;
     --pico-form-element-spacing-vertical: 0.01rem;
     font-family: var(--font-mono); font-variant-numeric: tabular-nums;
-    font-size: 13px; font-weight: 500;
+    font-size: 0.867em; font-weight: 500;
 }
 .gen-pop-in:focus { position: relative; z-index: 4; }
 select.gen-pop-in { width: auto !important; min-width: 7ch; font-family: var(--font-mono); }
@@ -7048,7 +7090,7 @@ tr.gen-pop-row-linked > td {
     border-top: 1px solid color-mix(in srgb, var(--pico-muted-border-color) 60%, transparent);
 }
 .gen-progress {
-    color: var(--pico-muted-color); font-size: 12.5px;
+    color: var(--pico-muted-color); font-size: 0.833em;
     font-family: var(--font-mono); font-variant-numeric: tabular-nums;
 }
 /* the top mirror's counter sits just left of Back/Next with a hair of room */
@@ -7064,7 +7106,7 @@ tr.gen-pop-row-linked > td {
 #gen-env-list.gen-env-list {
     display: flex; flex-direction: column; gap: 0;
     margin: 0.4rem 0 0;
-    font-size: 13px; line-height: 1.45;
+    font-size: 0.867em; line-height: 1.45;
     border-top: 1px solid color-mix(in srgb, var(--pico-muted-border-color) 60%, transparent);
 }
 #gen-env-list .gen-env-scanning { margin: 0; padding: 0.6rem 10px; font-size: 0.85em; }
@@ -7093,21 +7135,21 @@ tr.gen-pop-row-linked > td {
     width: 1.1em; height: 1.1em; margin: 0;
     border: 0; border-radius: 0; background: none;
     display: inline-flex; align-items: center; justify-content: center;
-    font-family: var(--font-mono); font-size: 11px; line-height: 1.45;
+    font-family: var(--font-mono); font-size: 0.733em; line-height: 1.45;
     color: var(--pico-primary);
 }
 #gen-env-list .gen-env-radio::before { content: ""; }
 #gen-env-list .gen-env-row.selected .gen-env-radio::before { content: "\2022"; }
 #gen-env-list .gen-env-name {
     flex: 0 0 auto;
-    font-size: 13px; font-weight: 600; line-height: 1.45;
+    font-size: 0.867em; font-weight: 600; line-height: 1.45;
     color: var(--pico-color);
 }
 /* path: muted mono; styles both the plain text node AND the optional dp-dirs/leaf split */
 #gen-env-list .gen-env-path {
     flex: 1 1 auto; min-width: 0;
     font-family: var(--font-mono); font-variant-numeric: tabular-nums;
-    font-size: 12.5px; font-weight: 400; line-height: 1.45;
+    font-size: 0.833em; font-weight: 400; line-height: 1.45;
     color: var(--pico-muted-color);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -7117,7 +7159,7 @@ tr.gen-pop-row-linked > td {
 #gen-env-list .gen-env-status {
     flex: 0 0 auto; align-self: center; white-space: nowrap;
     font-family: var(--font-mono); font-variant-numeric: tabular-nums;
-    font-size: 11px; font-weight: 600; line-height: 1.5;
+    font-size: 0.733em; font-weight: 600; line-height: 1.5;
     padding: 0 5px; border-radius: 8px;
     border: 1px solid transparent; background: none;
 }
@@ -7144,12 +7186,12 @@ tr.gen-pop-row-linked > td {
     display: flex; align-items: flex-start; gap: 6px;
     margin-top: 0.75rem; padding: 6px 10px 6px 8px;
     background: transparent; border: 0; border-left: 2px solid transparent; border-radius: 0;
-    font-size: 12.5px; line-height: 1.45; font-weight: 400;
+    font-size: 0.833em; line-height: 1.45; font-weight: 400;
     color: var(--pico-muted-color);
 }
 #gen-message::before {
     flex: 0 0 auto; width: 1.1em; text-align: center;
-    font-family: var(--font-mono); font-size: 11px; font-weight: 700; line-height: 1.45;
+    font-family: var(--font-mono); font-size: 0.733em; font-weight: 700; line-height: 1.45;
     font-variant-numeric: tabular-nums;
 }
 #gen-message.gen-message-warn {
@@ -7344,7 +7386,7 @@ tr.gen-pop-row-linked > td {
     color: var(--pico-color);
     border: 1px solid color-mix(in srgb, var(--pico-muted-border-color) 60%, transparent);
     border-radius: 4px; padding: 0.45rem 0.6rem;
-    font-family: var(--font-mono); font-size: 11px; line-height: 1.4;
+    font-family: var(--font-mono); font-size: 0.733em; line-height: 1.4;
     font-variant-numeric: tabular-nums;
     overflow: auto; max-height: 16rem; white-space: pre-wrap; word-break: break-word;
 }
@@ -7354,14 +7396,14 @@ tr.gen-pop-row-linked > td {
    .detail-section > summary.section-header by SPECIFICITY (0-3-1), not source order. */
 .qubit-config-pane .gen-config-ops > summary.section-header {
     background: none; border-radius: 0; padding: 4px 0 6px;
-    font-size: 13px; font-weight: 600; color: var(--pico-color);
+    font-size: 0.867em; font-weight: 600; color: var(--pico-color);
     border-bottom: 1px solid color-mix(in srgb, var(--pico-muted-border-color) 60%, transparent);
     margin-bottom: 0.4rem;
 }
 .qubit-config-pane .gen-config-ops > summary.section-header .muted { color: var(--pico-muted-color); }
-.gen-config-ops .ops-table { width: 100%; border-collapse: collapse; font-size: 12.5px; border: 0; background: none; table-layout: auto; }
+.gen-config-ops .ops-table { width: 100%; border-collapse: collapse; font-size: 0.833em; border: 0; background: none; table-layout: auto; }
 .gen-config-ops .ops-table thead th {
-    font-family: inherit; font-size: 12px; font-weight: 600; line-height: 1.45;
+    font-family: inherit; font-size: 0.8em; font-weight: 600; line-height: 1.45;
     text-transform: none; letter-spacing: 0; color: var(--pico-muted-color);
     text-align: left; white-space: nowrap; padding: 0 10px 5px; background: none; border: 0;
     border-bottom: 1px solid color-mix(in srgb, var(--pico-muted-border-color) 60%, transparent);
@@ -7377,7 +7419,7 @@ tr.gen-pop-row-linked > td {
 /* value cells: plain mono+tabular; ellipsis on overflow (real pulse names are long),
    full value on hover via title=. */
 .gen-config-ops .ops-table td.ops-val {
-    font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 12.5px;
+    font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 0.833em;
     color: var(--pico-color); white-space: nowrap; cursor: default;
     max-width: 28ch; overflow: hidden; text-overflow: ellipsis;
 }
@@ -7387,10 +7429,10 @@ tr.gen-pop-row-linked > td {
 .gen-config-ops .wf-view-btn {
     display: inline-flex; align-items: center; gap: 5px; margin: 0; padding: 2px 6px;
     border: 0; border-radius: 4px; background: transparent; color: var(--pico-muted-color);
-    opacity: 0.55; font-size: 12px; font-weight: 500; line-height: 1.45; cursor: pointer;
+    opacity: 0.55; font-size: 0.8em; font-weight: 500; line-height: 1.45; cursor: pointer;
     transition: opacity .1s, color .1s, background .1s;
 }
-.gen-config-ops .wf-view-glyph { font-family: var(--font-mono); font-size: 12px; line-height: 1; }
+.gen-config-ops .wf-view-glyph { font-family: var(--font-mono); font-size: 0.8em; line-height: 1; }
 .gen-config-ops .ops-table tbody tr:hover .wf-view-btn,
 .gen-config-ops .wf-view-btn:focus-visible { opacity: 1; color: var(--pico-primary); }
 .gen-config-ops .wf-view-btn:hover { opacity: 1; color: var(--pico-primary); background: color-mix(in srgb, var(--pico-primary) 14%, transparent); }
@@ -8485,11 +8527,11 @@ table.prop-table .pulse-slider-row .pulse-slider-commit {
 .gen-env-custom-row { display: flex; gap: 0.4rem; margin: 0.2rem 0; align-items: center; }
 .gen-env-custom-row input {
     flex: 1 1 auto; min-width: 0; margin: 0;
-    font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 12.5px;
+    font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 0.833em;
 }
 .gen-env-custom-row .gen-env-custom-use { margin: 0; white-space: nowrap; }
 #gen-env-custom-status {
-    font-family: var(--font-mono); font-size: 11px; line-height: 1.5; color: var(--pico-muted-color);
+    font-family: var(--font-mono); font-size: 0.733em; line-height: 1.5; color: var(--pico-muted-color);
 }
 /* ── Experiment Scheduler ────────────────────────────────────────────── */
 .sched-root { max-width: 920px; }
