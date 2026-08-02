@@ -250,3 +250,23 @@ names only; plain 2Q_20/32 stays byte-identical 1-D. Pinned by
 pair-middle dims, axis-range pinning, fractions math, prefactor-only
 view-only degrade, 1-D sibling regression) and re-verified live on the real
 NetCDF-classic #407 through the registry + `/interactive/plot` route.
+
+## Amendment (2026-08-03, r16 ⑤/⑤-1 — Interactive tab render + theme)
+
+- **No re-render on apply** (⑤): a point-apply's tray + diagnostics-banner
+  swap changed the page height, the IntersectionObserver saw every tile
+  "move", and `_pruneInteractiveTiles` purged past the 6-tile budget — each
+  re-entry re-fetched + re-rendered ("every update re-renders everything").
+  Tiles depend only on the run's FROZEN artifacts, so the correct post-apply
+  behavior is no tile work: `_swapPendingTray` arms a 1.5 s
+  `_interactiveFreezeUntil` stamp and the prune skips inside it. Real
+  scrolling still prunes normally after the settle.
+- **House theme** (⑤-1): the Interactive tab (and the Data-tab h5 plots)
+  passed the raw server layout to Plotly — no colors ⇒ the light template's
+  near-black axis text on dark pages. Both fetchers now route their layout
+  through `PlotTheme.houseLayout` (server fields win the merge; ndview was
+  already the only themed consumer), and one `retheme()` pass runs after
+  load for any early renders.
+
+Pinned by `tests/interactive_theme_selfcheck.cjs` (merge semantics + wiring
+source pins + freeze behavior) + driver `tests/test_interactive_theme.py`.
