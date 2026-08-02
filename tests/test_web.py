@@ -6838,3 +6838,66 @@ class TestConfigOpShortPairIdR16:
     def test_full_id_still_resolves(self):
         elem, op = self._run("q1-q2")
         assert (elem, op) == ("q1.z", "cz_unipolar_pulse_q1_q2")
+
+
+class TestUndoNavServerR16:
+    """r16 0-2 (docs/73): the /undo response is UndoNav's navigation signal —
+    entries must carry source_file + deleted; the tray carries group ids and
+    shows created/deleted VALUES (r16 2)."""
+
+    @pytest.fixture
+    def chip_client(self, tmp_path):
+        state = _make_state()
+        folder = tmp_path / "chip"
+        folder.mkdir()
+        (folder / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        (folder / "wiring.json").write_text(json.dumps(_make_wiring()),
+                                            encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "inst"))
+        c = app.test_client()
+        assert c.post("/load", data={"folder": str(folder)}).status_code in (200, 302)
+        return c
+
+    def test_undo_payload_carries_source_and_deleted(self, chip_client):
+        chip_client.post("/qubit/qA1/edit", data={
+            "dot_path": "qubits.qA1.f_01", "value": "6.3e9"})
+        resp = chip_client.post("/undo")
+        trig = json.loads(resp.headers.get("HX-Trigger", "{}"))
+        entries = trig["cellsReverted"]["entries"]
+        assert entries and "source_file" in entries[0]
+        assert "deleted" in entries[0] and "created" in entries[0]
+
+    def _tray(self, chip_client):
+        # The tray rides pages/OOB swaps — render the fragment directly.
+        from quam_state_manager.web import routes as routes_mod
+        app = chip_client.application
+        with app.test_request_context():
+            return routes_mod._tray_html()
+
+    def test_tray_items_carry_group_id(self, chip_client):
+        chip_client.post("/qubit/qA1/edit", data={
+            "dot_path": "qubits.qA1.f_01", "value": "6.3e9"})
+        html = self._tray(chip_client)
+        assert 'class="tray-change-item" data-group-id=' in html
+
+    def test_tray_created_scalar_shows_value(self, chip_client):
+        # extras.data_folder-class scalar create used to render a bare
+        # "+ added" with NO value at all (r16 2).
+        app = chip_client.application
+        with app.app_context():
+            ctx = app.config["contexts"][app.config["active_context"]]
+            ctx["modifier"].create_subtree("qubits.qA1.z.note_r16", "hello-r16")
+        html = self._tray(chip_client)
+        assert "hello-r16" in html
+        assert "+ added" not in html        # replaced by the actual value
+
+    def test_tray_created_subtree_lists_leaves(self, chip_client):
+        app = chip_client.application
+        with app.app_context():
+            ctx = app.config["contexts"][app.config["active_context"]]
+            ctx["modifier"].create_subtree(
+                "qubits.qA1.z.block_r16", {"a": 1, "b": {"c": 2.5}})
+        html = self._tray(chip_client)
+        assert "+ added (2 field" in html          # summary kept
+        assert "tray-subtree-leaves" in html       # expandable leaf list
+        assert "b.c" in html and "2.5" in html     # actual values visible

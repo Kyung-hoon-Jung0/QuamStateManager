@@ -8666,9 +8666,14 @@ def undo():
         # toast the summary (handled client-side in the cellsReverted listener).
         "cellsReverted": {
             "message": message,
+            # source_file + deleted feed UndoNav (r16 0-2, docs/73): the
+            # RESPONSE is the authoritative what-was-undone signal (a peek-
+            # then-undo design would race a concurrent commit), so the
+            # navigate-to-owner decision rides these fields.
             "entries": [
                 {"dot_path": e.dot_path, "old_value_str": _fmt_val(e.old_value),
-                 "created": e.created}
+                 "created": e.created, "deleted": e.deleted,
+                 "source_file": e.source_file}
                 for e in entries
             ],
         },

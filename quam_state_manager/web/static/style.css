@@ -1843,6 +1843,14 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
     font-family: var(--font-mono);
 }
 .tray-arrow { color: var(--pico-muted-color); flex-shrink: 0; }
+/* r16 ②: created/deleted subtree values — collapsed leaf list (docs/73) */
+.tray-subtree { display: inline-block; margin: 0; }
+.tray-subtree > summary { cursor: pointer; list-style: revert; }
+.tray-subtree-leaves {
+    margin: 0.15rem 0 0.1rem 0.9rem; display: flex; flex-direction: column;
+    gap: 0.1rem; font-size: 0.85em; max-height: 11rem; overflow-y: auto;
+}
+.tray-subtree-leaf code { color: var(--pico-muted-color); margin-right: 0.3rem; }
 .change-old { color: var(--color-error-text); text-decoration: line-through; max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .change-new { color: var(--color-success-text); font-weight: 600; max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* In the pending-tray drawer ONLY, show the FULL before/after value — no 80px

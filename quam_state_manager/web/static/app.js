@@ -2715,6 +2715,9 @@ document.addEventListener("cellsReverted", function(evt) {
     // listeners no-op off their page and skip when a cell is mid-edit/dirty.
     document.dispatchEvent(new CustomEvent("quam:state-changed"));
     if (d.message && window.showToast) window.showToast(d.message, "success");
+    // r16 ⓪-2 (docs/73): flash the reverted item in place, or navigate to
+    // its owning surface with the current page's typing stashed + restored.
+    if (window.UndoNav) window.UndoNav.handle(d.entries || []);
 });
 
 // Tab / click-away COMMITS the inline-edit forms (Pulses detail, Qubit/Pair
@@ -7918,6 +7921,11 @@ function _navigateToExplorerPath(dotPath) {
         })
         .catch(openExplorer);   // probe failure \u2192 fail open (Explorer shows its own state)
 }
+// Explicit window binding: the guarded callers (value-history Data links,
+// UndoNav) reference window._navigateToExplorerPath \u2014 a classic <script>
+// hoists top-level declarations onto window, but eval'd/bundled contexts
+// (the jsdom selfchecks) don't. Pin it so the guard never silently no-ops.
+window._navigateToExplorerPath = _navigateToExplorerPath;
 
 /**
  * Expand a JSON tree to reveal a specific dot-path (e.g. "qubits.q4.resonator.time_of_flight").
@@ -12253,8 +12261,26 @@ window.LiveEditUndo = (function () {
         if (stack.length) {
             tip = "Undo " + stack[stack.length - 1].label + " (Ctrl+Z)";
         } else if (_changeCount() > 0) {
-            tip = "Undo last staged change — removes exactly that entry group "
-                + "from Review (Ctrl+Z)";
+            // r16 ⓪-2 (docs/73): NAME the target — /undo pops the newest
+            // change-log group, i.e. the LAST tray item (+ its group mates).
+            var items = document.querySelectorAll(
+                "#pending-tray .tray-change-item");
+            var last = items.length ? items[items.length - 1] : null;
+            var pathEl = last && last.querySelector(".tray-change-path");
+            var path = pathEl ? pathEl.textContent : "";
+            var n = 1;
+            var gid = last ? last.getAttribute("data-group-id") : "";
+            if (gid) {
+                n = 0;
+                for (var i = items.length - 1; i >= 0
+                     && items[i].getAttribute("data-group-id") === gid; i--) n++;
+            }
+            tip = path
+                ? ("Undo staged change to " + path
+                   + (n > 1 ? " (+" + (n - 1) + " more in this action)" : "")
+                   + " (Ctrl+Z)")
+                : ("Undo last staged change — removes exactly that entry "
+                   + "group from Review (Ctrl+Z)");
         } else {
             tip = "Nothing to undo";
         }
@@ -12282,6 +12308,230 @@ window.LiveEditUndo = (function () {
 
     return { record: record, tryUndo: tryUndo, trigger: trigger, clear: clear,
              refreshTip: refreshTip, _updateTrayBtn: _updateTrayBtn };
+})();
+
+/* ── UndoNav (r16 ⓪-2, docs/73): make the SERVER undo tier visible ──
+   Before this, a Ctrl+Z that fell through to POST /undo reverted the most
+   recent change-log group — which may belong to ANOTHER page/tab — with no
+   visible effect on the current page ("Ctrl+Z did nothing / changed a value
+   I typed elsewhere"). Driven by the /undo RESPONSE (cellsReverted entries —
+   authoritative; a peek-then-undo design would race a concurrent commit):
+   - target visible on this page → flash it in place;
+   - target elsewhere → STASH this page's in-progress typing, navigate to the
+     owning surface (qubit/pair inspector deep link, /bulk, Explorer) and
+     highlight the reverted item; the stash refills on return so nothing the
+     user typed is lost (the r16 hard requirement). */
+window.UndoNav = (function () {
+    var STASH_KEY = "quam_undo_stash";
+    var STASH_TTL_MS = 30 * 60 * 1000;
+    var _pendingHighlight = [];        // dot paths still awaiting a visible el
+
+    function _esc(s) {
+        return (window.CSS && CSS.escape) ? CSS.escape(String(s)) : String(s);
+    }
+
+    function _visible(el) {
+        return !!(el && el.getClientRects && el.getClientRects().length);
+    }
+
+    // First VISIBLE element owning a dot-path on the current page. A hidden
+    // bulk column deliberately counts as NOT covered (escape hatch: navigate
+    // to the inspector instead of flashing something the user can't see).
+    function visibleEl(dp) {
+        var el = null;
+        try {
+            el = document.querySelector('.bulk-cell[data-dot-path="' + _esc(dp) + '"]');
+            if (_visible(el)) return el;
+            el = document.querySelector('.av-input[data-dot-path="' + _esc(dp) + '"]');
+            if (_visible(el)) return el;
+            var hidden = document.querySelector(
+                'input[type="hidden"][name="dot_path"][value="' + _esc(dp) + '"]');
+            if (hidden) {
+                var form = hidden.closest("form");
+                var input = form && form.querySelector('input[name="value"]');
+                if (_visible(input)) return input;
+            }
+            el = document.querySelector('.tree-node[data-path="' + _esc(dp) + '"]');
+            if (_visible(el)) return el;
+        } catch (e) { /* selector quirks — treat as not covered */ }
+        return null;
+    }
+
+    function flash(el) {
+        if (!el || !el.classList) return;
+        el.classList.add("leu-flash");
+        setTimeout(function () { el.classList.remove("leu-flash"); }, 900);
+        if (el.scrollIntoView) {
+            try { el.scrollIntoView({ block: "center", behavior: "smooth" }); }
+            catch (e) { el.scrollIntoView(); }
+        }
+    }
+
+    // Owning surface for a reverted group. Anchor = the OLDEST entry (the
+    // action's anchor — same one the server toast names).
+    function ownerSurface(entries) {
+        var anchor = entries[entries.length - 1] || entries[0];
+        var dp = (anchor && anchor.dot_path) || "";
+        var seg = dp.split(".");
+        var owners = {};
+        entries.forEach(function (e) {
+            var s = ((e && e.dot_path) || "").split(".");
+            owners[s[0] + (s[1] ? "." + s[1] : "")] = 1;
+        });
+        var multi = Object.keys(owners).length > 1;
+        if (seg[0] === "qubits" && seg[1]) {
+            return multi
+                ? { kind: "pane", url: "/bulk" }
+                : { kind: "inspector",
+                    url: "/qubit/" + encodeURIComponent(seg[1])
+                         + "?focus=" + encodeURIComponent(dp) };
+        }
+        if (seg[0] === "qubit_pairs" && seg[1]) {
+            return multi
+                ? { kind: "pane", url: "/bulk" }
+                : { kind: "inspector",
+                    url: "/pair/" + encodeURIComponent(seg[1])
+                         + "?focus=" + encodeURIComponent(dp) };
+        }
+        // ports / octaves / mixers / twpas / wiring / top-level → Explorer
+        return { kind: "explorer", path: dp };
+    }
+
+    // In-progress typing on the CURRENT page, keyed by dot-path. All-Values
+    // keeps its own dirty Map across rebuilds — skipped here.
+    function stashDirtyInputs() {
+        var cells = {};
+        document.querySelectorAll(".bulk-cell").forEach(function (c) {
+            var dp = c.dataset && c.dataset.dotPath;
+            var orig = c.getAttribute("data-orig");
+            if (dp && orig !== null && c.value !== orig) cells[dp] = c.value;
+        });
+        document.querySelectorAll("form.inline-edit").forEach(function (f) {
+            var hidden = f.querySelector('input[name="dot_path"]');
+            var input = f.querySelector('input[name="value"]');
+            if (!hidden || !input) return;
+            var baseline = input.hasAttribute("data-committed")
+                ? input.getAttribute("data-committed") : input.defaultValue;
+            if (input.value !== baseline) cells[hidden.value] = input.value;
+        });
+        if (!Object.keys(cells).length) return;
+        try {
+            sessionStorage.setItem(STASH_KEY, JSON.stringify(
+                { ts: Date.now(), cells: cells }));
+        } catch (e) { /* private mode — navigation still proceeds */ }
+    }
+
+    function _readStash() {
+        try {
+            var raw = sessionStorage.getItem(STASH_KEY);
+            if (!raw) return null;
+            var st = JSON.parse(raw);
+            if (!st || !st.cells || Date.now() - (st.ts || 0) > STASH_TTL_MS) {
+                sessionStorage.removeItem(STASH_KEY);
+                return null;
+            }
+            return st;
+        } catch (e) { return null; }
+    }
+
+    function clearStash() {
+        try { sessionStorage.removeItem(STASH_KEY); } catch (e) {}
+    }
+
+    // After swaps: refill stashed typing into any now-present inputs (marks
+    // them dirty via the existing input handlers) and apply pending
+    // highlights. Runs cheaply — both lists are usually empty.
+    function restorePass() {
+        var st = _readStash();
+        if (st) {
+            var left = false;
+            Object.keys(st.cells).forEach(function (dp) {
+                var el = visibleEl(dp);
+                if (el && el.tagName === "INPUT" && !el.readOnly) {
+                    el.value = st.cells[dp];
+                    el.dispatchEvent(new Event("input", { bubbles: true }));
+                    delete st.cells[dp];
+                } else if (!el) {
+                    left = true;      // page without this input — keep for later
+                }
+            });
+            if (!left || !Object.keys(st.cells).length) clearStash();
+            else {
+                try {
+                    sessionStorage.setItem(STASH_KEY, JSON.stringify(st));
+                } catch (e) {}
+            }
+        }
+        if (_pendingHighlight.length) {
+            var now = Date.now();
+            _pendingHighlight = _pendingHighlight.filter(function (h) {
+                if (now - h.ts > 8000) return false;     // stale — stop trying
+                var el = visibleEl(h.dp);
+                if (el) { flash(el); return false; }
+                return true;
+            });
+        }
+    }
+
+    function _pend(paths) {
+        var ts = Date.now();
+        _pendingHighlight = paths.map(function (dp) { return { dp: dp, ts: ts }; });
+    }
+
+    function handle(entries) {
+        entries = entries || [];
+        if (!entries.length) return;
+        var covered = entries.filter(function (e) {
+            return e && visibleEl(e.dot_path);
+        });
+        if (covered.length) {
+            // The undone value is right here — flash it NOW, and keep it
+            // pending so the async grid re-GET (quam:state-changed) can't
+            // swallow the highlight mid-swap.
+            covered.forEach(function (e) { flash(visibleEl(e.dot_path)); });
+            _pend(covered.map(function (e) { return e.dot_path; }));
+            return;
+        }
+        var os = ownerSurface(entries);
+        _pend(entries.map(function (e) { return e.dot_path; }));
+        if (os.kind === "inspector") {
+            // Opens in #inspector-pane — #table-pane (and the user's typing
+            // in it) is untouched; ?focus= scrolls + focuses the field.
+            if (window.htmx && document.getElementById("inspector-pane")) {
+                htmx.ajax("GET", os.url, {
+                    target: "#inspector-pane", swap: "innerHTML" });
+            }
+            return;
+        }
+        stashDirtyInputs();
+        window._undoNavAt = Date.now();     // one-shot beforeSwap-confirm bypass
+        if (os.kind === "explorer") {
+            if (window._navigateToExplorerPath) {
+                _navigateToExplorerPath(os.path);   // nav + expand + highlight
+            }
+            return;
+        }
+        if (window.htmx && document.getElementById("table-pane")) {
+            htmx.ajax("GET", os.url, { target: "#table-pane", swap: "innerHTML" });
+            try {
+                if (window.history && history.pushState) {
+                    history.pushState({}, "", os.url.split("?")[0]);
+                }
+            } catch (e) {}
+        } else {
+            window.location.assign(os.url);
+        }
+    }
+
+    document.addEventListener("htmx:afterSwap", function () { restorePass(); });
+    document.addEventListener("stateRestored", function () {
+        clearStash();
+        _pendingHighlight = [];
+    });
+
+    return { handle: handle, visibleEl: visibleEl, ownerSurface: ownerSurface,
+             stashDirtyInputs: stashDirtyInputs, restorePass: restorePass,
+             clearStash: clearStash };
 })();
 
 /* ── Column History (docs/20 v2): 🕘 on a bulk-grid COLUMN HEADER ──

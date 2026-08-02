@@ -13,11 +13,12 @@
         {% for c in changes %}
         <tr>
             <td><code class="dot-path">{{ c.dot_path }}</code></td>
+            {# r16 ②: show the actual values on created/deleted entries #}
             {% if c.created %}
             <td class="change-old muted">&mdash;</td>
-            <td class="change-new">+ added{% if c.new_value is mapping %} ({{ c.new_value | length }} field{{ 's' if c.new_value | length != 1 }}){% endif %}</td>
+            <td class="change-new">{% if c.new_value is mapping %}<details class="tray-subtree"><summary>+ added ({{ c.new_value | length }} field{{ 's' if c.new_value | length != 1 }})</summary><div class="tray-subtree-leaves">{% for lp, lv in c.new_value | flatten_leaves %}<div class="tray-subtree-leaf"><code>{{ lp }}</code> {{ lv if lv is not none else 'null' }}</div>{% endfor %}</div></details>{% else %}+ {{ c.new_value if c.new_value is not none else 'null' }}{% endif %}</td>
             {% elif c.deleted %}
-            <td class="change-old">&minus; deleted{% if c.old_value is mapping %} ({{ c.old_value | length }} field{{ 's' if c.old_value | length != 1 }}){% endif %}</td>
+            <td class="change-old">{% if c.old_value is mapping %}<details class="tray-subtree"><summary>&minus; deleted ({{ c.old_value | length }} field{{ 's' if c.old_value | length != 1 }})</summary><div class="tray-subtree-leaves">{% for lp, lv in c.old_value | flatten_leaves %}<div class="tray-subtree-leaf"><code>{{ lp }}</code> {{ lv if lv is not none else 'null' }}</div>{% endfor %}</div></details>{% else %}&minus; {{ c.old_value if c.old_value is not none else 'null' }}{% endif %}</td>
             <td class="change-new muted">&mdash;</td>
             {% else %}
             <td class="change-old">{{ c.old_value if c.old_value is not none else 'null' }}</td>

@@ -307,6 +307,25 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # numbers across Bulk Edit, the inspector and the diff/review surfaces.
     app.jinja_env.filters["groupdigits"] = _units.group_digits
 
+    def _flatten_leaves_filter(value, cap: int = 40):
+        """(dot_path, leaf_value) pairs for a nested mapping — the Review
+        tray's created/deleted subtree expansion (r16 ②, docs/73). Lists are
+        leaf values (mirrors the merge walkers); capped so a pasted mega-tree
+        can't flood the tray."""
+        out: list = []
+
+        def walk(node, prefix):
+            if len(out) >= cap:
+                return
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    walk(v, f"{prefix}.{k}" if prefix else str(k))
+            else:
+                out.append((prefix or ".", node))
+        walk(value, "")
+        return out[:cap]
+    app.jinja_env.filters["flatten_leaves"] = _flatten_leaves_filter
+
     def _format_ts_filter(ts) -> str:
         """Render a ``YYYYMMDD_HHMMSS`` snapshot timestamp as
         ``YYYY-MM-DD HH:MM:SS UTC``. Robust: falls back to the raw string when it

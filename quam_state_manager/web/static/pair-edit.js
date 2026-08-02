@@ -604,6 +604,9 @@
                         // must not be vetoed by stale typed text.
                         if (window._stateRestoredRefresh
                             && Date.now() - window._stateRestoredRefresh < 4000) return;
+                        // r16 ⓪-2: UndoNav stashed the typing — no discard here.
+                        if (window._undoNavAt
+                            && Date.now() - window._undoNavAt < 4000) return;
                         if (!window.confirm('You have unapplied pair edits in Live State Edit. Leave and discard them?')) {
                             ev.preventDefault();
                         }
