@@ -1,0 +1,28 @@
+{# r16 ③ (docs/63 amendment): a scoped project already has recorded dataset
+   roots and the state declared a NEW data path — ask instead of silently
+   loading both. All three answers swap this strip in place. #}
+<div id="dataset-roots-banner">
+{% if dataset_roots_ask %}
+<div class="chip-name-banner cnb-suggest" role="region"
+     aria-label="Project dataset folders question">
+  <span class="cnb-text">
+    <strong>New data folder for project &lsquo;{{ dataset_roots_ask.project }}&rsquo;:</strong>
+    {% for r in dataset_roots_ask.new %}<code>{{ r }}</code>{% if not loop.last %}, {% endif %}{% endfor %}.
+    This project currently scopes {{ dataset_roots_ask.current | length }}
+    folder{{ 's' if dataset_roots_ask.current | length != 1 }} — should its
+    Datasets view use only the new path, or keep both?
+  </span>
+  <form class="cnb-form" hx-post="/project-roots/confirm"
+        hx-target="#dataset-roots-banner" hx-swap="outerHTML">
+    <input type="hidden" name="project" value="{{ dataset_roots_ask.project }}">
+    <button type="submit" name="choice" value="new_only" class="cnb-set"
+            title="The project's Datasets view scopes to the new folder only; the old folder stays available under All">Use only the new path</button>
+    <button type="submit" name="choice" value="both" class="cnb-no"
+            title="Keep the previous folder(s) in this project's scope too">Keep both</button>
+    <button type="submit" name="choice" value="decline" class="cnb-dismiss"
+            aria-label="Stop asking for this project"
+            title="Stop asking for this project — new folders merge silently (the old behavior)">&#10005;</button>
+  </form>
+</div>
+{% endif %}
+</div>

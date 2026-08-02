@@ -2277,6 +2277,7 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         "extras_data_dangling": (_active_ctx() or {}).get("extras_data_dangling") or [],
         "data_folder_suggest": (_active_ctx() or {}).get("data_folder_suggest"),
         "data_folder_candidates": (_active_ctx() or {}).get("data_folder_candidates") or [],
+        "dataset_roots_ask": _dataset_roots_ask(_active_ctx()),
         "last_apply": (_active_ctx() or {}).get("last_apply"),
         # r14 ⑨: ACTIVE stored-as-text alarm — numeric-looking string leaves
         # (external regen wholesale-string-ifies values; SM used to detect this
@@ -9952,10 +9953,14 @@ def workspace_tree_poll():
     """
     ws = _ws()
     if not ws:
-        return jsonify(v=0)
-    if ws.rescan_if_stale():
+        return jsonify(v=0, rescanned=False)
+    rescanned = ws.rescan_if_stale()
+    if rescanned:
         current_app.config.pop("dataset_store", None)  # keep Datasets tab in sync
-    return jsonify(v=ws.version)
+    # r16 ⑦ D-C: report whether THIS poll's staleness check did the rescan —
+    # the first poll used to adopt its own version bump as the baseline and
+    # never render what it just discovered.
+    return jsonify(v=ws.version, rescanned=rescanned)
 
 
 @bp.route("/workspace/refresh", methods=["POST"])
@@ -9964,8 +9969,16 @@ def workspace_refresh():
     ws = _ws()
     ws.rescan_all()
     current_app.config.pop("dataset_store", None)  # keep Datasets tab in sync
-    return render_template("_sidebar_tree.html",
-                           **_tree_render_ctx(ws.tree if ws else {}))
+    # r16 ⑦ D-D: honor the sidebar filter — the rotate button used to render
+    # UNFILTERED while the poller re-applied the (possibly browser-restored,
+    # chip-less, invisible) filter ≤60 s later: entries "came back" on Refresh
+    # then vanished again.
+    name_filter = request.form.get("name", "").strip() \
+        or request.args.get("name", "").strip()
+    tree = ws.tree if ws else {}
+    if name_filter:
+        tree = _filter_tree(tree, name_filter)
+    return render_template("_sidebar_tree.html", **_tree_render_ctx(tree))
 
 
 @bp.route("/workspace/select", methods=["POST"])
@@ -12771,6 +12784,27 @@ def _load_project_roots() -> dict[str, list[str]]:
             for k, v in raw.items() if isinstance(v, list)}
 
 
+def _pending_roots_file() -> Path:
+    return Path(current_app.instance_path) / "project_roots_pending.json"
+
+
+def _load_pending_roots() -> dict:
+    try:
+        raw = json.loads(_pending_roots_file().read_text(encoding="utf-8"))
+        return raw if isinstance(raw, dict) else {}
+    except FileNotFoundError:
+        return {}
+    except Exception:  # noqa: BLE001 — a corrupt memo must never break a page
+        return {}
+
+
+def _save_pending_roots(data: dict) -> None:
+    try:
+        safe_io.atomic_write_json(_pending_roots_file(), data)
+    except OSError as exc:
+        logger.warning("Could not save pending project roots: %s", exc)
+
+
 def _record_project_roots(project: str, roots: list[str]) -> None:
     """Merge *roots* into the project's recorded list (fs_key-dedup, atomic).
 
@@ -12778,27 +12812,112 @@ def _record_project_roots(project: str, roots: list[str]) -> None:
     including ones already registered in the workspace — so a root added in
     an earlier session still scopes. A recorded root that later vanishes
     from the workspace simply stops intersecting the present folder set.
+
+    r16 ③: when the project ALREADY has recorded roots and a genuinely-new
+    fs_key arrives (the user changed/added the state's data path), the new
+    root is NOT silently merged — it goes to the pending file and the
+    dataset-roots banner asks "only the new path, or both?". First-time
+    recording (no prior roots) stays automatic; a per-project decline memo
+    stops the asking permanently (keeps today's merge behavior).
     """
     if not project or not roots:
         return
     data = _load_project_roots()
     cur = data.get(project, [])
     have = {path_match.fs_key(r) for r in cur}
-    changed = False
+    fresh: list[str] = []
     for r in roots:
         resolved = str(Path(r).resolve())
-        k = path_match.fs_key(resolved)
-        if k not in have:
-            cur.append(resolved)
-            have.add(k)
-            changed = True
-    if not changed:
+        if path_match.fs_key(resolved) not in have:
+            fresh.append(resolved)
+    if not fresh:
         return
+    if cur:
+        pend = _load_pending_roots()
+        entry = pend.get(project)
+        if isinstance(entry, dict) and entry.get("declined"):
+            pass                                   # user said "stop asking" — merge
+        else:
+            known = set((entry or {}).get("new", [])) if isinstance(entry, dict) else set()
+            merged_new = sorted(known | set(fresh))
+            if set(merged_new) != known:
+                pend[project] = {"new": merged_new}
+                _save_pending_roots(pend)
+            return                                  # ask before scoping (r16 ③)
+    for resolved in fresh:
+        cur.append(resolved)
+        have.add(path_match.fs_key(resolved))
     data[project] = cur
     try:
         safe_io.atomic_write_json(_project_roots_file(), data)
     except OSError as exc:
         logger.warning("Could not save project dataset roots: %s", exc)
+
+
+def _dataset_roots_ask(ctx: dict | None) -> dict | None:
+    """Banner payload for the pending dataset-roots question (r16 ③): the
+    active scope project has recorded roots AND a newly-declared data path
+    awaiting the user's "only new / both" choice. Cheap: one stat when no
+    pending file exists (the common case)."""
+    project = (ctx or {}).get("qualibrate_project")
+    if not project:
+        return None
+    try:
+        if not _pending_roots_file().exists():
+            return None
+    except OSError:
+        return None
+    entry = _load_pending_roots().get(project)
+    if not isinstance(entry, dict) or entry.get("declined"):
+        return None
+    new = [r for r in entry.get("new", []) if isinstance(r, str)]
+    if not new:
+        return None
+    return {"project": project, "new": new,
+            "current": _load_project_roots().get(project, [])}
+
+
+@bp.route("/project-roots/confirm", methods=["POST"])
+def project_roots_confirm():
+    """Resolve the pending dataset-roots question (r16 ③).
+
+    ``choice``: ``both`` merges the new roots into the project's record
+    (the old always-behavior); ``new_only`` REPLACES the record with the new
+    roots (the old folder stays in the workspace / under "All" — only the
+    project's lens narrows); ``decline`` memoizes "stop asking" and keeps
+    merging silently from then on.
+    """
+    project = (request.form.get("project") or "").strip()
+    choice = (request.form.get("choice") or "").strip()
+    pend = _load_pending_roots()
+    entry = pend.get(project)
+    new = [r for r in (entry or {}).get("new", [])] if isinstance(entry, dict) else []
+    if choice == "decline":
+        pend[project] = {"declined": True}
+        _save_pending_roots(pend)
+        if new:                       # declining = keep today's merge behavior
+            _record_project_roots(project, new)
+    elif choice in ("both", "new_only") and project:
+        data = _load_project_roots()
+        if choice == "both":
+            merged = data.get(project, [])
+            have = {path_match.fs_key(r) for r in merged}
+            for r in new:
+                if path_match.fs_key(r) not in have:
+                    merged.append(r)
+                    have.add(path_match.fs_key(r))
+            data[project] = merged
+        else:
+            data[project] = list(new)
+        try:
+            safe_io.atomic_write_json(_project_roots_file(), data)
+        except OSError as exc:
+            logger.warning("Could not save project dataset roots: %s", exc)
+        pend.pop(project, None)
+        _save_pending_roots(pend)
+        current_app.config.pop("dataset_store", None)   # re-seed the lens
+    return render_template("_dataset_roots_banner.html",
+                           dataset_roots_ask=_dataset_roots_ask(_active_ctx()))
 
 
 def _strip_project_root(folder: str) -> None:
@@ -14169,18 +14288,44 @@ def dataset_prev_state_diff(uid):
     entries = Differ().diff(prev_path, cur_path)
     summary = Differ.summary(entries)
 
-    # Stepper bounds: walk the comparison run older/newer, but never past the
-    # current run (you can't diff a run against itself or a later one). These
-    # are run_ids within the SAME folder, passed to the stepper as ``vs`` ints.
+    # Stepper bounds: walk the comparison run older/newer. r16 ④: the old
+    # clamp refused any vs ≥ run_id, which made "newer ›" DISABLED on every
+    # first open (vs starts at the immediate prev, so its next IS run_id) —
+    # the reported "only prev works". Comparing against a LATER run is a
+    # legitimate ask (how did the state change AFTER this run?), so only the
+    # self-diff is skipped; the column headers name both ids either way.
     older = ds.get_previous_run_id(vs)
     newer = ds.get_next_run_id(vs)
-    if newer is not None and newer >= run_id:
-        newer = None
+    if newer == run_id:                     # skip the self-diff in BOTH directions
+        newer = ds.get_next_run_id(run_id)
+    if older == run_id:
+        older = ds.get_previous_run_id(run_id)
 
     return render_template("_dataset_prev_diff.html", run_id=run_id, uid=uid,
                            prev_run_id=vs, entries=entries, summary=summary,
                            older=older, newer=newer, compact=compact,
                            limit=(8 if compact else 300))
+
+
+@bp.route("/dataset/<uid>/neighbor")
+def dataset_neighbor(uid):
+    """The adjacent run's uid in run-id order (r16 ④): the inspector-header
+    ↑/↓ nav walked only the sidebar tree's VISIBLE entries — a run opened
+    from the Datasets table (or with the tree collapsed/filtered) had both
+    buttons silently dead. ``dir``: -1 = newer (next id), 1 = older
+    (previous id) — the tree's spatial order. Any run counts (not just
+    state-carrying): this is navigation, not a diff."""
+    resolved = _resolve_run(uid)
+    if not resolved:
+        return jsonify(ok=False), 404
+    ds, run_id, _ = resolved
+    d = request.args.get("dir", type=int) or 1
+    nid = (ds.get_next_run_id(run_id, require_state=False) if d < 0
+           else ds.get_previous_run_id(run_id, require_state=False))
+    folder_key = uid.rsplit(":", 1)[0]
+    return jsonify(ok=True,
+                   uid=(f"{folder_key}:{nid}" if nid is not None else None),
+                   run_id=nid)
 
 
 @bp.route("/dataset/<uid>/load-state", methods=["POST"])

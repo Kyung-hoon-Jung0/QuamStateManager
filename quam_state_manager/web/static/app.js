@@ -1618,16 +1618,33 @@ window.dsNavRun = function(dir) {
     // ids are "pinned-"-prefixed and must not anchor the navigation.
     var root = document.getElementById('ds-detail-root');
     var curUid = root ? root.getAttribute('data-uid') : null;
+    // r16 ④: server neighbor fallback — a run opened from the Datasets TABLE
+    // (or with the tree collapsed / date group closed / filter hiding it) has
+    // no visible tree entries, so both nav buttons were silently dead.
+    function serverNeighbor() {
+        if (!curUid || !window.htmx) return;
+        fetch('/dataset/' + curUid + '/neighbor?dir=' + dir)
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (!d || !d.uid) return;   // genuinely at the end
+                var hasInspector = !!document.getElementById('inspector-pane');
+                var target = hasInspector ? '#inspector-pane' : '#table-pane';
+                _dsMarkSlowLoad(target, d.run_id);
+                htmx.ajax('GET', '/dataset/' + d.uid,
+                          {source: target, target: target, swap: 'innerHTML'});
+            }).catch(function() {});
+    }
     var entries = Array.prototype.filter.call(
         document.querySelectorAll('.tree-entry-click[data-uid]'),
         function(e) { return e.offsetParent !== null; });   // visible only
-    if (!entries.length) return;
+    if (!entries.length) { serverNeighbor(); return; }
     var idx = -1;
     for (var i = 0; i < entries.length; i++) {
         if (entries[i].getAttribute('data-uid') === curUid) { idx = i; break; }
     }
-    var next = entries[idx === -1 ? 0 : idx + dir];
-    if (!next) return;   // at either end
+    if (idx === -1) { serverNeighbor(); return; }   // open run not in the tree
+    var next = entries[idx + dir];
+    if (!next) { serverNeighbor(); return; }        // tree end — folder may have more
     next.scrollIntoView({block: 'nearest'});
     next.click();
 };
@@ -6299,7 +6316,10 @@ window.loadPrevDiffInto = function(containerId, runId, compact, vs) {
 };
 // Stepper button → reload the diff (against run `vs`) in whichever container holds it.
 window.loadPrevDiff = function(btn, runId, vs, compact) {
-    var container = btn.closest('#ds-prevdiff-container, #ds-prevdiff-fv-body');
+    // r16 ④: SUFFIX match (the file's established idiom) — pinned-compare
+    // prefixes every cloned id with "pinned-", so the exact-id closest()
+    // missed and BOTH stepper buttons were silently dead there.
+    var container = btn.closest('[id$="ds-prevdiff-container"], [id$="ds-prevdiff-fv-body"]');
     if (container) loadPrevDiffInto(container.id, runId, compact, vs);
 };
 

@@ -6960,3 +6960,160 @@ class TestApplyHardeningR16:
         r = chip_client.post("/state/apply-to-live")
         assert r.status_code == 500
         assert b"unexpectedly" in r.data and b"RuntimeError" in r.data
+
+
+class TestDatasetNavR16:
+    """r16 4+7 route surface: poll rescanned flag, filter-honoring refresh,
+    the un-clamped prev-state stepper, and the neighbor fallback."""
+
+    @pytest.fixture
+    def ws_client(self, tmp_path):
+        import json as _json
+        root = tmp_path / "data"
+        for rid, day in ((1, "2026-08-01"), (2, "2026-08-01"), (3, "2026-08-02")):
+            run = root / day / f"#{rid}_exp{rid}_12000{rid}"
+            (run / "quam_state").mkdir(parents=True)
+            (run / "quam_state" / "state.json").write_text(
+                _json.dumps({"qubits": {"q1": {"f_01": 5e9 + rid}}}), encoding="utf-8")
+            (run / "quam_state" / "wiring.json").write_text(
+                _json.dumps({"wiring": {}, "network": {}}), encoding="utf-8")
+            (run / "node.json").write_text(_json.dumps(
+                {"id": rid, "metadata": {"name": f"exp{rid}"},
+                 "parameters": {"model": {}}}), encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "inst"))
+        c = app.test_client()
+        r = c.post("/workspace/add", data={"folder": str(root)})
+        assert r.status_code in (200, 302), r.data[:200]
+        return c, root
+
+    def test_poll_reports_rescanned_flag(self, ws_client):
+        c, root = ws_client
+        body = c.get("/workspace/tree/poll").get_json()
+        assert "rescanned" in body and "v" in body
+
+    def test_refresh_honors_filter(self, ws_client):
+        c, root = ws_client
+        html = c.post("/workspace/refresh", data={"name": "exp1"}).data.decode()
+        assert "exp1" in html
+        assert "exp3" not in html          # filtered out (D-D)
+        html_all = c.post("/workspace/refresh").data.decode()
+        assert "exp3" in html_all          # no filter -> everything
+
+    def _uid(self, c, root, rid):
+        from quam_state_manager.web import routes as rm
+        return f"{rm._folder_key(root)}:{rid}"
+
+    def test_stepper_newer_enabled_on_first_open(self, ws_client):
+        # r16 4: run #2 opened -> vs defaults to #1; "newer" used to be
+        # clamped at the current run and was ALWAYS disabled on open. It now
+        # offers #3 (comparing against a LATER run is legitimate).
+        c, root = ws_client
+        html = c.get(f"/dataset/{self._uid(c, root, 2)}/prev-state-diff").data.decode()
+        import re
+        btns = re.findall(r"<button[^>]*loadPrevDiff[^>]*>", html)
+        assert len(btns) == 2, html[:400]
+        assert "disabled" not in btns[1], btns[1]   # newer ENABLED, targets #3
+
+    def test_stepper_skips_self_diff(self, ws_client):
+        c, root = ws_client
+        html = c.get(
+            f"/dataset/{self._uid(c, root, 2)}/prev-state-diff?vs=1").data.decode()
+        # from vs=#1 the "newer" step must skip #2 (self) and offer #3
+        import re
+        btns = re.findall(r"<button[^>]*loadPrevDiff[^>]*>", html)
+        assert len(btns) == 2
+        assert ", 3," in btns[1]
+
+    def test_neighbor_endpoint_both_directions(self, ws_client):
+        c, root = ws_client
+        uid2 = self._uid(c, root, 2)
+        newer = c.get(f"/dataset/{uid2}/neighbor?dir=-1").get_json()
+        older = c.get(f"/dataset/{uid2}/neighbor?dir=1").get_json()
+        assert newer["ok"] and newer["run_id"] == 3
+        assert older["ok"] and older["run_id"] == 1
+        end = c.get(f"/dataset/{self._uid(c, root, 3)}/neighbor?dir=-1").get_json()
+        assert end["ok"] and end["uid"] is None      # honest end-of-folder
+
+
+class TestProjectRootsAskR16:
+    """r16 3: a project with recorded roots gets a QUESTION for a new data
+    path instead of a silent merge; first-time recording stays automatic."""
+
+    def _app(self, tmp_path):
+        return create_app(testing=True, instance_path=str(tmp_path / "inst"))
+
+    def test_first_record_is_automatic(self, tmp_path):
+        app = self._app(tmp_path)
+        with app.test_request_context():
+            from quam_state_manager.web import routes as rm
+            rootA = tmp_path / "A"; rootA.mkdir()
+            rm._record_project_roots("proj", [str(rootA)])
+            assert rm._load_project_roots()["proj"] == [str(rootA.resolve())]
+            assert rm._load_pending_roots() == {}
+
+    def test_second_new_root_asks_instead_of_merging(self, tmp_path):
+        app = self._app(tmp_path)
+        with app.test_request_context():
+            from quam_state_manager.web import routes as rm
+            rootA = tmp_path / "A"; rootA.mkdir()
+            rootB = tmp_path / "B"; rootB.mkdir()
+            rm._record_project_roots("proj", [str(rootA)])
+            rm._record_project_roots("proj", [str(rootB)])
+            assert rm._load_project_roots()["proj"] == [str(rootA.resolve())]
+            pend = rm._load_pending_roots()["proj"]
+            assert pend["new"] == [str(rootB.resolve())]
+            ask = rm._dataset_roots_ask({"qualibrate_project": "proj"})
+            assert ask and ask["new"] == [str(rootB.resolve())]
+
+    def test_confirm_new_only_replaces(self, tmp_path):
+        app = self._app(tmp_path)
+        c = app.test_client()
+        with app.test_request_context():
+            from quam_state_manager.web import routes as rm
+            rootA = tmp_path / "A"; rootA.mkdir()
+            rootB = tmp_path / "B"; rootB.mkdir()
+            rm._record_project_roots("proj", [str(rootA)])
+            rm._record_project_roots("proj", [str(rootB)])
+        r = c.post("/project-roots/confirm",
+                   data={"project": "proj", "choice": "new_only"})
+        assert r.status_code == 200
+        with app.test_request_context():
+            from quam_state_manager.web import routes as rm
+            assert rm._load_project_roots()["proj"] == [str(rootB.resolve())]
+            assert "proj" not in rm._load_pending_roots()
+
+    def test_confirm_both_merges(self, tmp_path):
+        app = self._app(tmp_path)
+        c = app.test_client()
+        with app.test_request_context():
+            from quam_state_manager.web import routes as rm
+            rootA = tmp_path / "A"; rootA.mkdir()
+            rootB = tmp_path / "B"; rootB.mkdir()
+            rm._record_project_roots("proj", [str(rootA)])
+            rm._record_project_roots("proj", [str(rootB)])
+        c.post("/project-roots/confirm",
+               data={"project": "proj", "choice": "both"})
+        with app.test_request_context():
+            from quam_state_manager.web import routes as rm
+            got = rm._load_project_roots()["proj"]
+            assert set(got) == {str(rootA.resolve()), str(rootB.resolve())}
+
+    def test_decline_memoizes_and_reverts_to_merge(self, tmp_path):
+        app = self._app(tmp_path)
+        c = app.test_client()
+        with app.test_request_context():
+            from quam_state_manager.web import routes as rm
+            rootA = tmp_path / "A"; rootA.mkdir()
+            rootB = tmp_path / "B"; rootB.mkdir()
+            rootC = tmp_path / "C"; rootC.mkdir()
+            rm._record_project_roots("proj", [str(rootA)])
+            rm._record_project_roots("proj", [str(rootB)])
+        c.post("/project-roots/confirm",
+               data={"project": "proj", "choice": "decline"})
+        with app.test_request_context():
+            from quam_state_manager.web import routes as rm
+            got = rm._load_project_roots()["proj"]     # declined -> B merged
+            assert str(rootB.resolve()) in got
+            rm._record_project_roots("proj", [str(rootC)])   # future: silent
+            assert str(rootC.resolve()) in rm._load_project_roots()["proj"]
+            assert rm._dataset_roots_ask({"qualibrate_project": "proj"}) is None

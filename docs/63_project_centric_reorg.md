@@ -275,3 +275,17 @@ stat costs ~8 ms over P9 — accepted).
 Tests: `tests/test_qualibrate_location.py` (precedence, bridge forms, P9
 fallback, locate/use routes, landing block, restart persistence, read-only
 pin).
+
+## Amendment (2026-08-03, r16 ③ — dataset-roots question)
+
+`_record_project_roots` no longer merges silently once a project HAS
+recorded roots: a genuinely-new fs_key goes to
+`instance/project_roots_pending.json` and the `#dataset-roots-banner`
+(base.html, below the chip banner) asks — **Use only the new path**
+(replaces the project's record; the old folder stays in the workspace /
+under "All") / **Keep both** (the old merge) / **×** (decline memo: stop
+asking for this project, merge silently from then on — including the roots
+that were pending). First-time recording stays automatic, so
+`TestDatasetLens`' open-records pin is unchanged. Route:
+`POST /project-roots/confirm`; pins in
+`tests/test_web.py::TestProjectRootsAskR16`.

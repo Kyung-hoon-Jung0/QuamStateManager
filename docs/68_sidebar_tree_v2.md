@@ -127,3 +127,35 @@ escape hatch).
   day shows exactly the newest 50 (#396→#347) + "Show all 84"; the tpath
   fragment returns all 84. Suite: 591 passed on the qm_mng env for the
   affected batteries; app.js selfchecks green.
+
+## Amendment (2026-08-03, r16 ⑦ — the "recent folders keep disappearing" fix)
+
+The D3 spine probe was ENTRY-derived: a date dir holding no valid run at scan
+time never joined the spine. Creating a new day bumps the root's mtime and
+fires a rescan in the sub-second window before the day's first save lands
+(measured ~0.6 s on the real archive), so the empty day was never watched —
+every later run bumped only its own dir and the sidebar froze until the
+manual Refresh (which bypasses the gate). Days whose runs never write
+quam_state reproduced it with no race at all.
+
+- **D-A**: `_spine_of` now also watches every spine member's immediate child
+  DIRECTORIES (excluding discovered run folders — leaves). Enumeration
+  happens once per scan; the poll stays pure stats.
+- **D-B**: spine dirs first DISCOVERED by a `rescan_root` are stamped
+  mtime 0.0 → the next poll re-records them honestly (one self-healing
+  rescan, only when structure appeared; steady-state new runs still cost
+  exactly one rescan — pinned).
+- **D-C**: `/workspace/tree/poll` returns `rescanned`; the client's baseline
+  poll renders what its own staleness check just discovered instead of
+  silently adopting the version bump, and every 10th quiet tick force-fetches
+  the tree (a gate false-negative can't freeze the sidebar past ~10 min).
+- **D-D**: the rotate Refresh now carries the sidebar filter (it used to
+  render unfiltered while the poller re-applied a browser-RESTORED, chip-less
+  filter ≤60 s later — the exact "comes back, then vanishes" report), and a
+  restored filter value renders its chips on load.
+- **D-E**: the workspace walk's inode dedup skips `st_ino == 0` (Windows
+  FindFirstFile fallback) — a zero inode identifies nothing.
+
+Pinned by `tests/test_scanner.py::TestTreeFreshnessR16` (empty-at-scan day,
+invalid-only day, nested chip/date, the 0.0 heal tick, steady-state
+one-rescan) + `TestDatasetNavR16` (poll flag, filter-honoring refresh).
