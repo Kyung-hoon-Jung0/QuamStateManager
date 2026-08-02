@@ -257,3 +257,25 @@ class TestCollectClassSchemas:
         import quam_state_manager.generator.run_build as run_build
         assert run_build._collect_class_schemas(
             tmp_path / "none.json", tmp_path / "none2.json") == {}
+
+
+class TestMatchPopulatePairs:
+    """run_build._match_populate_pairs — the three-tier per-pair seed lookup."""
+
+    def test_three_tiers_resolve_and_unmatched_warns(self):
+        import quam_state_manager.generator.run_build as rb
+        pop = {"q1-0": {"a": 1},           # exact
+               "q0-q3": {"b": 2},          # spelled form -> q0-3
+               "q2-5": {"c": 3},           # membership: built id is q5-2 (flipped)
+               "q9-7": {"d": 4}}           # matches nothing
+        resolved, unmatched = rb._match_populate_pairs(
+            pop, ["q1-0", "q0-3", "q5-2"])
+        assert resolved == {"q1-0": {"a": 1}, "q0-3": {"b": 2}, "q5-2": {"c": 3}}
+        assert unmatched == ["q9-7"]
+
+    def test_exact_key_wins_over_flipped_duplicate(self):
+        import quam_state_manager.generator.run_build as rb
+        pop = {"q1-0": {"exact": True}, "q0-1": {"flipped": True}}
+        resolved, unmatched = rb._match_populate_pairs(pop, ["q1-0"])
+        assert resolved == {"q1-0": {"exact": True}}
+        assert unmatched == []

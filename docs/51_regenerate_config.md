@@ -284,3 +284,29 @@ tests in `tests/test_regen_merge.py` + the pipeline/harvest tests in
 `tests/test_regenerate.py`; verified end-to-end against the real incident chip
 + real qop37-env schemas (gate drops exactly the 176 keys; merged == cleaned
 state; schema-less merge reproduces the poisoning).
+
+## Amendment (2026-08-02 ②): pair-membership populate reconciliation
+
+Found by the qua-libs compatibility audit (3×3 tunable-coupler chip): the
+source chip named its pairs ascending (``"q0-1"``) while the pair's actual
+control was ``q1`` — reconstruct emitted ``qubit_pairs`` in the real
+(control, target) orientation but keyed ``populate.pairs`` by the OLD NAME, so
+run_build's exact-id seed lookup missed every orientation-flipped pair (7/12):
+their per-pair CZ seeds fell back to default-family seeding with only a
+warning, and the wizard's ``reconcilePopulatePairs`` outright DELETED such
+keys as stale. Three-layer fix, mirroring the merge's membership doctrine:
+
+- **reconstruct** (``regen_spec._populate_pair_key``): per-pair populate
+  buckets are keyed by the wizard-canonical ``f"{control}-{target}"`` id
+  (state refs first, coupler-channel wiring refs as fallback, raw name last).
+- **build** (``run_build._match_populate_pairs``): the seed lookup resolves
+  populate keys onto built pair ids in three tiers — exact, ``_quam_pair_id``
+  spelling, qubit MEMBERSHIP — so old drafts/sidecars keep working regardless
+  of spelling or orientation; only keys matching no pair at all warn.
+- **wizard** (``reconcilePopulatePairs``): a non-canonical key is re-keyed by
+  membership onto the canonical id instead of deleted.
+
+Emitted-bundle machinery gained ``_match_populate_pairs`` (golden regenerated).
+Pinned by ``TestMatchPopulatePairs`` + the control-target keying tests in
+``tests/test_regen_spec.py``; verified end-to-end on the audit chip — the
+previously-warning spec now builds with zero warnings and uniform seeding.

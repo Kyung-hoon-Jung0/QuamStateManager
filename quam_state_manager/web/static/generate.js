@@ -2975,14 +2975,33 @@
     var pop = state.spec.populate;
     if (!pop || !pop.pairs) return;
     var liveIds = {};
+    var byMembers = {};   // sorted "qA|qB" -> canonical "control-target" id
     state.spec.qubit_pairs.forEach(function (p) {
-      if (p[0] && p[1]) liveIds[p[0] + "-" + p[1]] = true;
+      if (p[0] && p[1]) {
+        liveIds[p[0] + "-" + p[1]] = true;
+        byMembers[[String(p[0]), String(p[1])].sort().join("|")] = p[0] + "-" + p[1];
+      }
     });
     var keep = {};
     pairPopCols().forEach(function (c) { keep[c.field] = true; });
     Object.keys(pop.pairs).forEach(function (id) {
-      if (!liveIds[id]) { delete pop.pairs[id]; return; }
+      if (!liveIds[id]) {
+        // Not the canonical spelling. A reconstructed draft can key the SAME
+        // physical pair by the source chip's NAME — short-form target
+        // ("q0-1") and/or flipped orientation — so re-key by qubit membership
+        // instead of deleting the user's per-pair seeds as stale.
+        var seg = id.split("-");
+        var c0 = seg[0];
+        var t0 = seg.slice(1).join("-");
+        if (t0 && t0.charAt(0) !== "q") t0 = "q" + t0;
+        var canon = byMembers[[c0, t0].sort().join("|")];
+        if (canon && !pop.pairs[canon]) pop.pairs[canon] = pop.pairs[id];
+        delete pop.pairs[id];
+        if (!canon || !pop.pairs[canon]) return;
+        id = canon;
+      }
       var bucket = pop.pairs[id];
+      if (!bucket) return;
       Object.keys(bucket).forEach(function (f) {
         if (!keep[f]) delete bucket[f];
       });

@@ -87,6 +87,48 @@ def _norm_pair_qubits(spec_pair):
         return None
     return control, target, _quam_pair_id(f"{control}-{target}")
 
+def _match_populate_pairs(populate_pairs, built_ids):
+    """Resolve ``populate.pairs`` keys onto the BUILT QUAM pair ids.
+
+    Three tiers, first hit wins: the exact key; the ``_quam_pair_id`` spelling
+    (``"q1-q2"`` -> ``"q1-2"``); qubit MEMBERSHIP. The membership tier is what
+    saves reconstructed specs — they key per-pair seeds by the SOURCE chip's
+    pair NAME (``"q0-1"``) while the builder names control-target (``"q1-0"``):
+    the same physical pair, flipped spelling. docs/51 reconciles pair ids by
+    membership at merge; the seed lookup must do the same or those pairs'
+    seeds silently fall back to defaults.
+
+    Returns ``(resolved, unmatched)``: ``{built_id: vals}`` plus the populate
+    keys matching no built pair at all (callers surface those as warnings).
+    """
+    by_members = {}
+    for bid in built_ids:
+        try:
+            by_members.setdefault(frozenset(_parse_pair(bid)), bid)
+        except Exception:  # noqa: BLE001 - unparseable built id: exact-only
+            pass
+    built = set(built_ids)
+    resolved: dict = {}
+    unmatched: list = []
+    for k, v in populate_pairs.items():
+        bid = k if k in built else None
+        if bid is None:
+            try:
+                cand = _quam_pair_id(k)
+                bid = cand if cand in built else None
+            except Exception:  # noqa: BLE001 - malformed key: try membership
+                bid = None
+        if bid is None:
+            try:
+                bid = by_members.get(frozenset(_parse_pair(k)))
+            except Exception:  # noqa: BLE001
+                bid = None
+        if bid is None:
+            unmatched.append(k)
+        else:
+            resolved.setdefault(bid, v)
+    return resolved, unmatched
+
 def _num(v):
     """Return ``v`` if it is a real finite number, else None (rejects bool, str,
     None, and unresolved JSON-pointer strings)."""
@@ -1225,16 +1267,6 @@ def _finalize_pair_gates(machine, spec, pair_gate):
     if qpairs is None:
         return warnings
     populate_pairs = (spec.get("populate") or {}).get("pairs") or {}
-    # populate.pairs may be keyed by the wizard's "control-target" spec id
-    # ("q1-q2") or already by the QUAM pair id ("q1-2"); the qpairs keys below are
-    # QUAM pair ids, so normalize both forms onto the QUAM id (else wizard-entered
-    # per-pair overrides silently never reach the seed).
-    norm_pairs = dict(populate_pairs)
-    for _k, _v in populate_pairs.items():
-        try:
-            norm_pairs.setdefault(_quam_pair_id(_k), _v)
-        except Exception:  # noqa: BLE001 — a malformed key just isn't normalized
-            pass
 
     if pair_gate == "cz_fixed":
         try:
@@ -1259,6 +1291,12 @@ def _finalize_pair_gates(machine, spec, pair_gate):
                 qubit_control=qc.get_reference(),
                 qubit_target=qt.get_reference(),
             )
+
+    # Resolve per-pair seeds onto the pairs that actually exist NOW (after the
+    # cz_fixed creation above) — exact / spelled / membership-matched, so a
+    # reconstructed spec's name-keyed or orientation-flipped keys still land.
+    norm_pairs, unmatched_pop_keys = _match_populate_pairs(
+        populate_pairs, list(qpairs.keys()))
 
     shared = (spec.get("cr_port_mode") == "shared_xy")
     for quam_id, pair in list(qpairs.items()):
@@ -1299,17 +1337,10 @@ def _finalize_pair_gates(machine, spec, pair_gate):
 
     # Warn on populate.pairs keys that match no built pair (typos / removed pairs)
     # so a silently-dropped per-pair override is visible in _result.json.
-    qpair_ids = set(qpairs.keys())
-    for k in populate_pairs:
-        norm = k
-        try:
-            norm = _quam_pair_id(k)
-        except Exception:  # noqa: BLE001
-            pass
-        if k not in qpair_ids and norm not in qpair_ids:
-            warnings.append(
-                f"populate.pairs['{k}']: no matching qubit pair was built — the "
-                "per-pair overrides under this key were ignored.")
+    for k in unmatched_pop_keys:
+        warnings.append(
+            f"populate.pairs['{k}']: no matching qubit pair was built — the "
+            "per-pair overrides under this key were ignored.")
     return warnings
 
 def _split_port_pointer(ptr):

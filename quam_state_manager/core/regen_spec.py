@@ -101,6 +101,29 @@ def _num(v: Any) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
+def _populate_pair_key(pid: str, pair: dict, root: dict) -> str:
+    """Key a per-pair populate bucket by the WIZARD's canonical id.
+
+    The wizard keys ``populate.pairs`` by ``f"{control}-{target}"`` derived
+    from the spec's ``qubit_pairs`` entries (its reconcile pass prunes any
+    other spelling as stale), and ``run_build`` seeds by the same orientation.
+    Keying by the SOURCE chip's pair NAME — ascending ``"q0-1"`` while the
+    pair's control is actually ``q1`` — lost the seeds of every
+    orientation-flipped pair. Same control/target derivation as the spec's
+    pair list (state refs first, coupler-channel wiring refs as fallback);
+    the raw name only when neither resolves.
+    """
+    ctrl = str(pair.get("qubit_control", "")).split("/")[-1]
+    tgt = str(pair.get("qubit_target", "")).split("/")[-1]
+    if not (ctrl and tgt):
+        wp = ((root.get("wiring") or {}).get("qubit_pairs") or {}).get(pid)
+        c = wp.get("c") if isinstance(wp, dict) else None
+        if isinstance(c, dict):
+            ctrl = ctrl or str(c.get("control_qubit", "")).split("/")[-1]
+            tgt = tgt or str(c.get("target_qubit", "")).split("/")[-1]
+    return f"{ctrl}-{tgt}" if ctrl and tgt else pid
+
+
 def _extract_populate(state: dict, root: dict) -> dict:
     """Invert ``apply_populate`` — read the physics values the wizard's Populate
     step displays back out of the chip's state, so the re-opened wizard is
@@ -312,7 +335,7 @@ def _extract_populate(state: dict, root: dict) -> dict:
                     pairv["zz_flattop_flat_length"] = zft["flat_length"]
 
         if pairv:
-            pop_pairs[pid] = pairv
+            pop_pairs[_populate_pair_key(pid, pair, root)] = pairv
 
     out: dict = {}
     if pop_q:
@@ -556,9 +579,13 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
     populate = _extract_populate(state, merged)
     if dropped_pairs and isinstance(populate.get("pairs"), dict):
         # A dropped pair's calibration overrides must not ride under a phantom
-        # key (run_build would only warn-and-ignore them anyway).
+        # key (run_build would only warn-and-ignore them anyway). Buckets are
+        # keyed by the canonical control-target id, so pop that too.
         for pid in dropped_pairs:
             populate["pairs"].pop(pid, None)
+            pr = (state.get("qubit_pairs") or {}).get(pid)
+            if isinstance(pr, dict):
+                populate["pairs"].pop(_populate_pair_key(pid, pr, merged), None)
         if not populate["pairs"]:
             populate.pop("pairs")
 

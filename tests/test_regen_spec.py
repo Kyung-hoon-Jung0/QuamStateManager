@@ -200,13 +200,13 @@ class TestCrReconstruction:
         spec = reconstruct_spec(state, wiring).spec
         zz_lines = [ln for ln in spec["lines"] if ln["line"] == "zz_drive"]
         assert len(zz_lines) == 1 and zz_lines[0]["element"] == "q0-q1"
-        pv = spec["populate"]["pairs"]["q0-1"]
+        pv = spec["populate"]["pairs"]["q0-q1"]   # canonical control-target key
         assert pv["zz_detuning"] == -30e6
         assert pv["zz_flattop_length"] == 300
 
     def test_cr_populate_prefilled(self):
         state, wiring = self._fixture()
-        pv = reconstruct_spec(state, wiring).spec["populate"]["pairs"]["q0-1"]
+        pv = reconstruct_spec(state, wiring).spec["populate"]["pairs"]["q0-q1"]
         assert pv["cr_drive_phase"] == 0.11
         assert pv["cr_drive_amplitude_scaling"] == 1.0
         assert pv["cr_drive_amplitude"] == 0.79      # square op amplitude
@@ -228,3 +228,29 @@ class TestCrReconstruction:
         assert len(cr_lines) == 2                    # dedicated FEM-2 ports
         assert cr_lines[0]["channel"]["slot"] == 2
         assert "cr_port_mode" not in spec
+
+
+def test_populate_pairs_keyed_by_control_target_orientation():
+    """Per-pair populate buckets ride the WIZARD-canonical control-target id —
+    keying by the source chip's ascending pair NAME lost the seeds of every
+    orientation-flipped pair (wizard reconcile pruned them / run_build fell
+    back to default seeding)."""
+    from quam_state_manager.core import regen_spec
+    state = {"qubits": {"q0": {}, "q1": {}},
+             "qubit_pairs": {"q0-1": {
+                 "qubit_control": "#/qubits/q1",
+                 "qubit_target": "#/qubits/q0",
+                 "moving_qubit": "control"}}}
+    merged = dict(state)
+    merged["wiring"] = {}
+    pop = regen_spec._extract_populate(state, merged)
+    assert list(pop["pairs"].keys()) == ["q1-q0"]
+
+
+def test_populate_pair_key_wiring_fallback_and_raw_name():
+    from quam_state_manager.core import regen_spec
+    pair = {"moving_qubit": "target"}
+    root = {"wiring": {"qubit_pairs": {"p7": {"c": {
+        "control_qubit": "#/qubits/q3", "target_qubit": "#/qubits/q4"}}}}}
+    assert regen_spec._populate_pair_key("p7", pair, root) == "q3-q4"
+    assert regen_spec._populate_pair_key("p8", {}, {"wiring": {}}) == "p8"
