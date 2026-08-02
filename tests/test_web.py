@@ -1529,7 +1529,9 @@ class TestSidebarFeatures:
         base = (Path(__file__).resolve().parent.parent
                 / "quam_state_manager" / "web" / "templates" / "base.html")
         text = base.read_text(encoding="utf-8")
-        assert ".then(function(){ lastV = v; })" in text
+        # r16 ⑦ moved the advance-after-success into refetchTree — same D4
+        # semantics (lastV only moves once the swap resolved), new spelling.
+        assert "if (typeof v !== 'undefined') lastV = v;" in text
         assert "AbortController" in text
         assert "visibilitychange" in text
 

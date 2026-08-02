@@ -55,25 +55,14 @@ def _kill_scheduler(instance_path: str) -> None:
 
 
 def _user_instance_path() -> str | None:
-    """A per-user, WRITABLE instance dir for the frozen exe (else None → dev default).
+    """A per-user, WRITABLE instance dir when not running from a repo, else None.
 
-    When frozen (PyInstaller), Flask's default ``instance_relative_config`` derives
-    instance_path from the package ``__file__`` — inside the install dir (e.g.
-    ``C:\\Program Files\\quam-manager``), which a standard user can't write, so every
-    working-copy / history / settings write fails. Point it at a per-user data dir.
-    Running from source keeps the repo ``instance/`` (returns None)."""
-    if not getattr(sys, "frozen", False):
-        return None
-    home = os.path.expanduser("~")
-    if sys.platform == "win32":
-        base = os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
-    elif sys.platform == "darwin":
-        base = os.path.join(home, "Library", "Application Support")
-    else:
-        base = os.environ.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share")
-    path = os.path.join(base, "QUAM State Manager")
-    os.makedirs(path, exist_ok=True)
-    return path
+    r16 ①: the resolution now lives in ``web.app.default_instance_path`` — one
+    policy for the frozen exe, pip installs AND ``create_app()``'s own default
+    (a pip-installed package previously fell into Flask's
+    ``<sys.prefix>/var/...`` instance dir, unwritable under a system Python)."""
+    from quam_state_manager.web.app import default_instance_path
+    return default_instance_path()
 
 
 def _fatal_startup_error(exc: BaseException) -> None:
