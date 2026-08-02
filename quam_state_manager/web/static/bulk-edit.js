@@ -1327,6 +1327,11 @@
                         // the refresh proceeds without a veto prompt.
                         if (window._stateRestoredRefresh
                             && Date.now() - window._stateRestoredRefresh < 4000) return;
+                        // r16 ⓪-2: UndoNav managed navigation — the typing was
+                        // STASHED (restored on return), not discarded; a
+                        // confirm here would be a lie.
+                        if (window._undoNavAt
+                            && Date.now() - window._undoNavAt < 4000) return;
                         if (!window.confirm('You have unapplied edits in Live State Edit. Leave and discard them?')) {
                             ev.preventDefault();
                         }
