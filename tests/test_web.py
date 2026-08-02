@@ -6684,3 +6684,157 @@ class TestFontPresetsR15:
         block = css[m.end():css.index("}", m.end())]
         assert "--pico-color:" in block
         assert "--pico-muted-color:" in block
+
+
+class TestPairsAdaptiveR16:
+    """r16 0-1: /pairs must never 500 — poisoned pairs (null / string /
+    text-numeric leaves on hand-edited or regenerated chips) degrade to
+    visible error rows / honest quoted cells."""
+
+    def _client_with(self, tmp_path, mutate):
+        state = _make_state()
+        mutate(state)
+        folder = tmp_path / "chip"
+        folder.mkdir()
+        (folder / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        (folder / "wiring.json").write_text(json.dumps(_make_wiring()),
+                                            encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "inst"))
+        c = app.test_client()
+        assert c.post("/load", data={"folder": str(folder)}).status_code in (200, 302)
+        return c
+
+    def test_null_pair_renders_error_row_not_500(self, tmp_path):
+        def mutate(state):
+            state["qubit_pairs"]["broken"] = None
+        c = self._client_with(tmp_path, mutate)
+        r = c.get("/pairs")
+        assert r.status_code == 200
+        html = r.data.decode()
+        assert 'data-pair-id="qA1-A2"' in html            # healthy pair intact
+        assert 'data-pair-id="broken"' in html            # poisoned pair VISIBLE
+        assert "unreadable pair" in html
+
+    def test_string_pair_renders_error_row_not_500(self, tmp_path):
+        def mutate(state):
+            state["qubit_pairs"]["weird"] = "#/qubits/qA1"
+        c = self._client_with(tmp_path, mutate)
+        r = c.get("/pairs")
+        assert r.status_code == 200
+        assert "unreadable pair" in r.data.decode()
+
+    def test_text_numeric_cz_amplitude_quoted_not_500(self, tmp_path):
+        def mutate(state):
+            state["qubit_pairs"]["qA1-A2"]["macros"]["cz_flattop"] = {
+                "flux_pulse_qubit": {"amplitude": "0.13", "length": 120,
+                                     "flat_length": 80},
+            }
+        c = self._client_with(tmp_path, mutate)
+        r = c.get("/pairs")
+        assert r.status_code == 200
+        html = r.data.decode()
+        assert "&quot;0.13&quot;" in html                 # honest quoted display
+        assert "Stored as text" in html
+
+    def test_text_numeric_bell_fidelity_quoted_not_500(self, tmp_path):
+        def mutate(state):
+            state["qubit_pairs"]["qA1-A2"]["macros"]["cz_flattop"] = {
+                "flux_pulse_qubit": {"amplitude": 0.1, "length": 120,
+                                     "flat_length": 80},
+                "fidelity": {"Bell_State": {"Fidelity": "0.97"}},
+            }
+        c = self._client_with(tmp_path, mutate)
+        r = c.get("/pairs")
+        assert r.status_code == 200
+        assert "&quot;0.97&quot;" in r.data.decode()
+
+    def test_pair_detail_honest_error_not_500(self, tmp_path):
+        def mutate(state):
+            state["qubit_pairs"]["broken"] = None
+        c = self._client_with(tmp_path, mutate)
+        r = c.get("/pair/broken")
+        assert r.status_code == 422
+        assert "could not be read" in r.data.decode()
+
+    def test_get_pair_typed_error_for_non_dict(self, tmp_path):
+        # TypeError (not KeyError) — the route maps KeyError to a silent
+        # skip; a poisoned pair must surface as a visible error row instead.
+        from quam_state_manager.core.loader import QuamStore
+        from quam_state_manager.core.query import QueryEngine
+        state = _make_state()
+        state["qubit_pairs"]["broken"] = None
+        folder = tmp_path / "chip"
+        folder.mkdir()
+        (folder / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        (folder / "wiring.json").write_text(json.dumps(_make_wiring()),
+                                            encoding="utf-8")
+        eng = QueryEngine(QuamStore(folder))
+        with pytest.raises(TypeError):
+            eng.get_pair("broken")
+
+
+class TestShortPairIdValidationR16:
+    """r16 0-1: spec validation accepts the short second-member pair-id
+    notation ('q1-2' / 'qA1-A2') that run_build already builds."""
+
+    def _spec(self, element):
+        return {
+            "network": {"host": "1.2.3.4", "cluster_name": "C"},
+            "instruments": {"controllers": [
+                {"con": 1, "fems": [{"slot": 1, "fem": "mw"},
+                                    {"slot": 5, "fem": "lf"}]}]},
+            "qubits": ["q1", "q2"],
+            "qubit_pairs": [["q1", "q2"]],
+            # coupler lines require qubit flux lines (tunable-coupler CZ)
+            "lines": [
+                {"element": "q1", "line": "flux",
+                 "channel": {"kind": "lf_fem", "con": 1, "slot": 5,
+                             "out_port": 2}},
+                {"element": "q2", "line": "flux",
+                 "channel": {"kind": "lf_fem", "con": 1, "slot": 5,
+                             "out_port": 3}},
+                {"element": element, "line": "coupler",
+                 "channel": {"kind": "lf_fem", "con": 1, "slot": 5,
+                             "out_port": 1}},
+            ],
+        }
+
+    def test_short_numeric_target_accepted(self):
+        from quam_state_manager.core import config_generator
+        assert config_generator.validate_spec(self._spec("q1-2")) == []
+
+    def test_full_form_still_accepted(self):
+        from quam_state_manager.core import config_generator
+        assert config_generator.validate_spec(self._spec("q1-q2")) == []
+
+    def test_unknown_member_still_rejected(self):
+        from quam_state_manager.core import config_generator
+        errs = config_generator.validate_spec(self._spec("q1-q9"))
+        assert any("q1-q9" in e for e in errs)
+
+
+class TestConfigOpShortPairIdR16:
+    """r16 0-1: pair-gate op mapping derives members from the pair's REFS,
+    never by splitting the id — a short id's bare token ("2") used to
+    substring-match unrelated ops, go multi-candidate, and silently drop
+    the Config-Viewer link."""
+
+    def _run(self, pair_name):
+        from quam_state_manager.web.routes import _config_op_for_pulse_path
+        state = {"qubit_pairs": {pair_name: {
+            "qubit_control": "#/qubits/q1", "qubit_target": "#/qubits/q2"}}}
+        config = {"elements": {
+            "q1.z": {"operations": {"cz_unipolar_pulse_q1_q2": {}}},
+            # decoy: contains the bare token "2" but neither member name
+            "q3.z": {"operations": {"cz_unipolar_pulse_q32": {}}},
+        }}
+        path = f"qubit_pairs.{pair_name}.macros.cz_unipolar.flux_pulse_qubit"
+        return _config_op_for_pulse_path(config, path, state)
+
+    def test_short_id_resolves_via_refs(self):
+        elem, op = self._run("q1-2")
+        assert (elem, op) == ("q1.z", "cz_unipolar_pulse_q1_q2")
+
+    def test_full_id_still_resolves(self):
+        elem, op = self._run("q1-q2")
+        assert (elem, op) == ("q1.z", "cz_unipolar_pulse_q1_q2")

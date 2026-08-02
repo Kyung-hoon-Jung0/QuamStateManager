@@ -1311,8 +1311,15 @@
     });
     if (pop.pairs) {
       Object.keys(pop.pairs).forEach(function (key) {
+        // r16 0-1: pair keys may use the SHORT second-member notation
+        // ("q1-2" / "qA1-A2" — the target drops the leading "q"). Resolve
+        // each segment adaptively before condemning the key; deleting on a
+        // raw split silently threw away the pair's populate seeds.
         var seg = key.split("-");
-        if (seg.some(function (q) { return !valid[q]; })) delete pop.pairs[key];
+        var dead = seg.some(function (q) {
+          return !(valid[q] || valid["q" + q]);
+        });
+        if (dead) delete pop.pairs[key];
       });
     }
   }
@@ -6913,6 +6920,7 @@
       uiZoom: uiZoom,
       attachWiringDrag: attachWiringDrag,
       // r16 populate-protect + scripts seams (docs/72) — not public API
+      prunePopulate: prunePopulate,
       applyLoAssignments: applyLoAssignments,
       autoApplyStandardDefaults: autoApplyStandardDefaults,
       markPopulateTouched: markPopulateTouched,

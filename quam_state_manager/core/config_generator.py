@@ -234,7 +234,16 @@ def validate_spec(spec) -> list[str]:
             )
         elif line_type in PAIR_LINE_TYPES:
             parts = str(element).split("-", 1)
-            if len(parts) != 2 or parts[0] not in qubit_set or parts[1] not in qubit_set:
+            # r16 0-1: pair-id notation is user-free — real chips carry the
+            # SHORT second-member form ("q1-2", "qA1-A2": the target drops
+            # the leading "q"; run_build._parse_pair and the populate seed
+            # lookup both accept it). Re-prefix a member that only resolves
+            # with "q" prepended instead of rejecting the whole spec.
+            members = [m if m in qubit_set or not m
+                       else (f"q{m}" if f"q{m}" in qubit_set else m)
+                       for m in parts]
+            if (len(parts) != 2 or members[0] not in qubit_set
+                    or members[1] not in qubit_set):
                 errors.append(
                     f"lines[{i}]: {line_type} element '{element}' must be "
                     "'<control>-<target>' of two declared qubits"
