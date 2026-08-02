@@ -1230,3 +1230,182 @@ def test_pulses_create_selfcheck_passes():
         pytest.skip("jsdom not installed (run `npm install jsdom`)")
     assert r.returncode == 0, (r.stdout or "") + (r.stderr or "")
     assert "ALL OK" in (r.stdout or "")
+
+
+# ---------------------------------------------------------------------------
+# r15 (docs/71 §3): CZ-first pair flow — pairs_info island, orientation,
+# slot occupancy, roster-gated gate variants, one-shot new-gate create.
+# ---------------------------------------------------------------------------
+
+
+def _pairs_state() -> dict:
+    """Two-qubit chip where the STORED control is the LOWER-f qubit (warn
+    case) plus a healthy pair; both flux-archetyped (coupler present)."""
+    return {
+        "qubits": {
+            "q1": {"id": "q1", "f_01": 4.8e9, "z": {"operations": {}},
+                   "xy": {"operations": {}}},
+            "q2": {"id": "q2", "f_01": 5.1e9, "z": {"operations": {}},
+                   "xy": {"operations": {}}},
+        },
+        "qubit_pairs": {
+            "q1-q2": {                          # control q1 (LOWER f) -> warn
+                "qubit_control": "#/qubits/q1",
+                "qubit_target": "#/qubits/q2",
+                "coupler": {"decouple_offset": 0.1},
+                "macros": {
+                    "cz_unipolar": {
+                        "flux_pulse_qubit": {"amplitude": 0.05, "length": 100},
+                        "coupler_flux_pulse": None,
+                    },
+                },
+            },
+            "q2-q1": {                          # control q2 (higher f) -> ok
+                "qubit_control": "#/qubits/q2",
+                "qubit_target": "#/qubits/q1",
+                "coupler": {"decouple_offset": 0.1},
+                "macros": {},
+            },
+        },
+    }
+
+
+@pytest.fixture
+def pairs_client(tmp_path):
+    folder = tmp_path / "chip"
+    folder.mkdir()
+    (folder / "state.json").write_text(json.dumps(_pairs_state()),
+                                       encoding="utf-8")
+    (folder / "wiring.json").write_text(json.dumps(_make_wiring()),
+                                        encoding="utf-8")
+    app = create_app(testing=True, instance_path=str(tmp_path / "inst"))
+    c = app.test_client()
+    assert c.post("/load", data={"folder": str(folder)}).status_code in (200, 302)
+    c._app = app
+    return c
+
+
+class TestCzGateFirst:
+    @pytest.fixture(autouse=True)
+    def _overlay_hygiene(self):
+        from quam_state_manager.core import pulse_catalog as pc
+        pc.apply_env_overlay(None)
+        yield
+        pc.apply_env_overlay(None)
+
+    @pytest.fixture
+    def modern_roster(self):
+        data = json.loads((Path(__file__).parent / "golden"
+                           / "state_schema_modern.json").read_text(
+            encoding="utf-8"))
+        return data["pulse_roster"]
+
+    def _island(self, html):
+        return json.loads(html.split('id="pulse-pairs-info-data"'
+                                     ' type="application/json">')[1]
+                          .split("</script>")[0])
+
+    def test_pairs_info_carries_freqs_orientation_and_slots(self, pairs_client):
+        html = pairs_client.get("/pulse/new").data.decode()
+        info = self._island(html)
+        bad = info["q1-q2"]
+        assert bad["control"] == "q1" and bad["target"] == "q2"
+        assert bad["f_control"] == 4.8e9 and bad["f_target"] == 5.1e9
+        assert bad["orient_ok"] is False          # control is LOWER f
+        assert info["q2-q1"]["orient_ok"] is True
+        slots = bad["gates"]["cz_unipolar"]["slots"]
+        assert slots["flux_pulse_qubit"]["state"] == "held"
+        assert slots["flux_pulse_qubit"]["class"] == "SquarePulse (implicit)"
+        assert slots["flux_pulse_qubit"]["path"] == (
+            "qubit_pairs.q1-q2.macros.cz_unipolar.flux_pulse_qubit")
+        assert slots["coupler_flux_pulse"]["state"] == "empty"
+        # a gate-less flux pair still offers "+ new gate" entries
+        assert "cz_unipolar" in info["q2-q1"]["new_gates"]
+
+    def test_new_gate_variants_are_roster_gated(self, pairs_client,
+                                                modern_roster):
+        from quam_state_manager.core import pulse_catalog as pc
+        info = self._island(pairs_client.get("/pulse/new").data.decode())
+        assert info["q1-q2"]["new_gates"] == ["cz_unipolar", "cz_flattop"]
+        pc.apply_env_overlay(modern_roster)
+        info = self._island(pairs_client.get("/pulse/new").data.decode())
+        # the modern roster verifies bipolar + SNZ but NOT erf
+        # (ErfSquarePulse is absent from it)
+        assert set(info["q1-q2"]["new_gates"]) == {
+            "cz_unipolar", "cz_flattop", "cz_bipolar", "cz_snz"}
+
+    def test_pair_gate_form_gains_verified_variants(self, pairs_client,
+                                                    modern_roster):
+        from quam_state_manager.core import pulse_catalog as pc
+        html = pairs_client.get("/pair/q1-q2/gate/new").data.decode()
+        assert "cz_snz" not in html               # no roster -> legacy list
+        pc.apply_env_overlay(modern_roster)
+        html = pairs_client.get("/pair/q1-q2/gate/new").data.decode()
+        assert 'value="cz_snz"' in html and 'value="cz_bipolar"' in html
+        assert 'value="cz_flattop_erf"' not in html
+
+    def test_new_gate_one_shot_create_writes_classes(self, pairs_client,
+                                                     modern_roster):
+        from quam_state_manager.core import pulse_catalog as pc
+        pc.apply_env_overlay(modern_roster)
+        r = pairs_client.post("/api/pulse/create", data={
+            "pulse_type": "SNZPulse", "target_kind": "pair",
+            "pair": "q2-q1", "gate": "__new__:cz_snz",
+            "new_gate_name": "cz_snz", "slot": "flux_pulse_qubit",
+            "amplitude": "0.07", "flat_length": "120", "t_phi_eff": "0",
+            "padding": "16"})
+        assert r.status_code == 200, r.data[:400]
+        ctx = next(iter(pairs_client._app.config["contexts"].values()))
+        macro = ctx["store"].state["qubit_pairs"]["q2-q1"]["macros"]["cz_snz"]
+        # the configured slot carries the user's pulse with the roster
+        # canonical class; the macro skeleton has the SNZ shape
+        fp = macro["flux_pulse_qubit"]
+        assert fp["__class__"] == modern_roster["SNZPulse"]["canonical"]
+        assert fp["amplitude"] == 0.07 and fp["flat_length"] == 120
+        assert macro["coupler_flux_pulse"] is None
+        assert macro["phase_shift_control"] == 0.0
+
+    def test_new_gate_coupler_slot_refused_for_qubit_only_variant(
+            self, pairs_client, modern_roster):
+        from quam_state_manager.core import pulse_catalog as pc
+        pc.apply_env_overlay(modern_roster)
+        r = pairs_client.post("/api/pulse/create", data={
+            "pulse_type": "SNZPulse", "target_kind": "pair",
+            "pair": "q2-q1", "gate": "__new__:cz_snz",
+            "new_gate_name": "cz_snz2", "slot": "coupler_flux_pulse",
+            "amplitude": "0.07", "flat_length": "120", "t_phi_eff": "0",
+            "padding": "16"})
+        assert r.status_code == 400
+        assert b"no coupler slot" in r.data
+
+    def test_new_env_variant_refused_without_roster(self, pairs_client):
+        r = pairs_client.post("/api/pulse/create", data={
+            "pulse_type": "SquarePulse", "target_kind": "pair",
+            "pair": "q2-q1", "gate": "__new__:cz_snz",
+            "new_gate_name": "cz_snz3", "slot": "flux_pulse_qubit",
+            "amplitude": "0.07", "length": "100"})
+        assert r.status_code == 409
+
+    def test_held_slot_still_409s(self, pairs_client):
+        r = pairs_client.post("/api/pulse/create", data={
+            "pulse_type": "SquarePulse", "target_kind": "pair",
+            "pair": "q1-q2", "gate": "cz_unipolar",
+            "slot": "flux_pulse_qubit",
+            "amplitude": "0.05", "length": "100"})
+        assert r.status_code == 409
+        assert b"already holds" in r.data
+
+    def test_env_gate_leaves_subset_of_capability_map(self):
+        # the roster gating must stay in lockstep with the generator's
+        # capability model — a variant added on one side only would either
+        # never be offered or be offered unverifiable.
+        from quam_state_manager.core.capabilities import _CZ_VARIANT_CAPS
+        from quam_state_manager.web.routes import (_ENV_GATE_LEAVES,
+                                                   _ENV_GATE_TYPES,
+                                                   _SLOT_LEAVES)
+        assert set(_ENV_GATE_TYPES) == set(_ENV_GATE_LEAVES)
+        mapped = {"cz_bipolar": "bipolar", "cz_snz": "SNZ",
+                  "cz_flattop_erf": "flattop_erf"}
+        for gid, variant in mapped.items():
+            assert variant in _CZ_VARIANT_CAPS, gid
+            assert gid in _SLOT_LEAVES, gid

@@ -659,20 +659,195 @@ window.PulsesPage = (function () {
                 createValidateName();
             }
         }
+        // r15 (docs/71 §3): pair mode narrows the type list to flux-capable
+        // classes (z channel) + env-discovered ones; other modes restore all.
+        _applyPairTypeFilter(radio.value === 'pair');
+        var line = document.getElementById('pulse-create-pairline');
+        var note = document.getElementById('pulse-create-slotnote');
+        if (radio.value === 'pair') {
+            var pairSel = document.getElementById('pulse-create-pair');
+            if (pairSel) createPairSelected(pairSel);
+        } else {
+            if (line) line.hidden = true;
+            if (note) note.hidden = true;
+        }
+    }
+
+    function _applyPairTypeFilter(pairMode) {
+        var root = createRoot();
+        var typeSel = document.getElementById('pulse-create-type');
+        if (!root || !root._catalog || !typeSel) return;
+        var changed = false;
+        Array.prototype.forEach.call(typeSel.options, function (opt) {
+            var s = root._catalog[opt.value] || {};
+            var fluxOk = (s.channels || []).indexOf('z') !== -1 || s.env_only;
+            var hide = pairMode && !fluxOk;
+            opt.hidden = hide;
+            opt.disabled = hide;
+            if (hide && opt.selected) changed = true;
+        });
+        if (changed) {
+            for (var i = 0; i < typeSel.options.length; i++) {
+                if (!typeSel.options[i].hidden) {
+                    typeSel.selectedIndex = i;
+                    createTypeChanged(typeSel);
+                    break;
+                }
+            }
+        }
     }
 
     function createPairGates(sel) {
+        // Legacy name kept for back-compat pins; the r15 CZ-first flow lives
+        // in createPairSelected (docs/71 §3).
+        createPairSelected(sel);
+    }
+
+    /* -- r15 CZ-first pair flow (docs/71 §3) -------------------------- */
+
+    function _fmtGHz(f) {
+        return (typeof f === 'number' && isFinite(f))
+            ? (f / 1e9).toFixed(3) + ' GHz' : '?';
+    }
+
+    function createPairSelected(sel) {
         var root = createRoot();
-        var pairs = root && root._pairs;
-        if (!pairs) return;
-        var gateSel = root.querySelector('select[name="gate"]');
-        if (!gateSel) return;
+        var info = root && root._pairsInfo && root._pairsInfo[sel.value];
+        var gateSel = document.getElementById('pulse-create-gate');
+        if (!gateSel) {                       // pre-r15 markup — legacy fill
+            var legacy = root && root._pairs;
+            var gs = root && root.querySelector('select[name="gate"]');
+            if (!legacy || !gs) return;
+            gs.innerHTML = '';
+            (legacy[sel.value] || []).forEach(function (g) {
+                var opt = document.createElement('option');
+                opt.textContent = g;
+                gs.appendChild(opt);
+            });
+            return;
+        }
         gateSel.innerHTML = '';
-        (pairs[sel.value] || []).forEach(function (g) {
+        var gates = (info && info.gates) || {};
+        Object.keys(gates).forEach(function (g) {
             var opt = document.createElement('option');
+            opt.value = g;
             opt.textContent = g;
             gateSel.appendChild(opt);
         });
+        var defs = root._gateDefs || {};
+        ((info && info.new_gates) || []).forEach(function (gid) {
+            if (!defs[gid]) return;
+            var opt = document.createElement('option');
+            opt.value = '__new__:' + gid;
+            opt.textContent = '+ new: ' + (defs[gid].label || gid);
+            opt.className = 'pulse-opt-newgate';
+            gateSel.appendChild(opt);
+        });
+        // freq / orientation line — control = higher f₀₁ is the CZ
+        // convention (czAutoOrient / run_build._cz_order_warning twins);
+        // display + warn only, a built pair's orientation is fixed pointers.
+        var line = document.getElementById('pulse-create-pairline');
+        if (line) {
+            if (info && (info.control || info.target)) {
+                var txt = 'control ' + (info.control || '?') + ' (' +
+                    _fmtGHz(info.f_control) + ') · target ' +
+                    (info.target || '?') + ' (' + _fmtGHz(info.f_target) + ')';
+                if (info.orient_ok === false) {
+                    txt += ' — ⚠ stored control is the LOWER-frequency qubit;' +
+                        ' CZ convention is control = higher f₀₁.' +
+                        ' Changing roles requires Re-generate.';
+                }
+                line.textContent = txt;
+                line.classList.toggle('pulse-pair-line-warn',
+                    info.orient_ok === false);
+                line.hidden = false;
+            } else {
+                line.hidden = true;
+            }
+        }
+        createGateSelected(gateSel);
+    }
+
+    function createGateSelected(gateSel) {
+        var root = createRoot();
+        if (!root) return;
+        var pairSel = document.getElementById('pulse-create-pair');
+        var slotSel = document.getElementById('pulse-create-slot');
+        var nameInput = document.getElementById('pulse-create-newgate-name');
+        if (!slotSel) return;
+        var isNew = /^__new__:/.test(gateSel.value);
+        var gid = isNew ? gateSel.value.slice(8) : null;
+        var defs = root._gateDefs || {};
+        if (nameInput) {
+            nameInput.hidden = !isNew;
+            nameInput.required = isNew;
+        }
+        slotSel.innerHTML = '';
+        function addSlot(name, disabled, title) {
+            var opt = document.createElement('option');
+            opt.value = name;
+            opt.textContent = name + (disabled ? ' — holds ' + title : '');
+            opt.disabled = !!disabled;
+            slotSel.appendChild(opt);
+        }
+        if (isNew) {
+            addSlot('flux_pulse_qubit', false, '');
+            if (defs[gid] && defs[gid].has_coupler_slot) {
+                addSlot('coupler_flux_pulse', false, '');
+            }
+        } else {
+            var info = root._pairsInfo &&
+                root._pairsInfo[pairSel ? pairSel.value : ''];
+            var slots = (info && info.gates && info.gates[gateSel.value] &&
+                         info.gates[gateSel.value].slots) || {};
+            ['flux_pulse_qubit', 'coupler_flux_pulse'].forEach(function (s) {
+                var st = slots[s] || { state: 'empty' };
+                addSlot(s, st.state === 'held', st['class'] || '');
+            });
+            // land on the first EMPTY slot so the default submit is valid
+            for (var i = 0; i < slotSel.options.length; i++) {
+                if (!slotSel.options[i].disabled) {
+                    slotSel.selectedIndex = i;
+                    break;
+                }
+            }
+        }
+        createSlotSelected(slotSel);
+    }
+
+    function createSlotSelected(slotSel) {
+        var root = createRoot();
+        if (!root) return;
+        var pairSel = document.getElementById('pulse-create-pair');
+        var gateSel = document.getElementById('pulse-create-gate');
+        var note = document.getElementById('pulse-create-slotnote');
+        if (!note || !gateSel) return;
+        var isNew = /^__new__:/.test(gateSel.value);
+        var info = root._pairsInfo &&
+            root._pairsInfo[pairSel ? pairSel.value : ''];
+        var st = (!isNew && info && info.gates && info.gates[gateSel.value] &&
+                  info.gates[gateSel.value].slots &&
+                  info.gates[gateSel.value].slots[slotSel.value]) || null;
+        if (st && st.state === 'held' && st.path) {
+            note.innerHTML = '';
+            note.appendChild(document.createTextNode(
+                slotSel.value + ' holds ' + (st['class'] || 'a pulse') + ' — '));
+            var a = document.createElement('a');
+            a.href = '#';
+            a.textContent = 'edit the existing pulse →';
+            a.addEventListener('click', function (e) {
+                e.preventDefault();
+                if (window.htmx) {
+                    window.htmx.ajax('GET',
+                        '/pulse/detail?path=' + encodeURIComponent(st.path),
+                        { target: '#inspector-pane', swap: 'innerHTML' });
+                }
+            });
+            note.appendChild(a);
+            note.hidden = false;
+        } else {
+            note.hidden = true;
+        }
     }
 
     function createPairChannels(sel) {
@@ -723,6 +898,8 @@ window.PulsesPage = (function () {
         root._existing = parseEmbeddedJson('pulse-existing-data') || {};
         root._pairs = parseEmbeddedJson('pulse-pairs-data') || {};
         root._pairChannels = parseEmbeddedJson('pulse-pair-channels-data') || {};
+        root._pairsInfo = parseEmbeddedJson('pulse-pairs-info-data') || {};
+        root._gateDefs = parseEmbeddedJson('pulse-gate-defs-data') || {};
 
         var typeSel = document.getElementById('pulse-create-type');
         if (typeSel) {
@@ -863,6 +1040,9 @@ window.PulsesPage = (function () {
         createTypeChanged: createTypeChanged,
         createTargetKind: createTargetKind,
         createPairGates: createPairGates,
+        createPairSelected: createPairSelected,
+        createGateSelected: createGateSelected,
+        createSlotSelected: createSlotSelected,
         createPairChannels: createPairChannels,
         createValidateName: createValidateName,
         envStripProbe: envStripProbe

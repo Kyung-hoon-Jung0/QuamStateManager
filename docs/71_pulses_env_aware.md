@@ -123,3 +123,76 @@ missing-in-modern-roster catalog class, env-only create writes the canonical,
 `tests/pulses_create_selfcheck.cjs` (real pulses.js in jsdom: hidden+display
 fill, option marks, env-only preview suppression, the confirm→force=1
 one-shot flow).
+
+## §3 — CZ-first two-step pair flow (`feat/cz-gate-first`)
+
+User report: picking "pair pulse" showed a gate select with ~2 chip-macro
+names next to a 15-class pulse list — two selects at different semantic
+levels, unlabeled, and on a fully-populated chip every combination 409'd.
+New UX: **pair → gate → slot → pulse**, with frequencies and orientation
+shown where the user decides.
+
+### The `pairs_info` island
+
+`pulse_create_form` now ships per-pair: `control`/`target` + their `f_01`
+(fallback `xy_RF_frequency`), `orient_ok` (strict `f_control > f_target` —
+`czAutoOrient`'s rule; `None` when a frequency is missing), per-gate **slot
+occupancy** (`held` with the class leaf + dot-path / `empty` — absent and
+present-but-None both create), and arch-gated `new_gates`. The legacy
+`pairs_map` island stays for back-compat.
+
+### The form flow (JS: `createPairSelected`/`createGateSelected`/`createSlotSelected`)
+
+- Pair select → a frequency line "control q2 (5.100 GHz) · target q1
+  (4.800 GHz)"; when the STORED control is the lower-f qubit: "⚠ … CZ
+  convention is control = higher f₀₁. Changing roles requires Re-generate."
+  Display + warn only — a built pair's orientation is fixed pointers; the
+  wizard/`run_build._cz_order_warning` own the write side.
+- Gate select = the pair's existing flux macros **plus "+ new: …" entries**;
+  slot select disables held slots ("flux_pulse_qubit — holds SNZPulse") and
+  lands on the first empty one; a held slot picked anyway shows an
+  "edit the existing pulse →" deep link into `/pulse/detail`. The server's
+  already-holds 409 stays the backstop.
+- Pair mode narrows the pulse-type list to z-capable + env-discovered
+  classes; other modes restore the full list.
+
+### Gate-variant expansion (roster-gated)
+
+`_ENV_GATE_TYPES` adds the generator's remaining CZ variants — `cz_bipolar`,
+`cz_snz`, `cz_flattop_erf` — offered (in BOTH the create form's "+ new" list
+and the Pairs-page add-gate form) only when the selected env's roster
+verifies the pulse classes they need (`_ENV_GATE_LEAVES`, kept in lockstep
+with `capabilities._CZ_VARIANT_CAPS` by a sync pin; either of
+modern/legacy leaf spellings satisfies a slot). **No roster ⇒ exactly the
+legacy list** — the regression fence. Shapes mirror
+`run_build._cz_variant_pulses`: SNZ/erf carry the whole gate on the qubit z
+line (`coupler_flux_pulse: None`); bipolar's coupler mirrors the qubit
+shape's fields by self-reference (the builder's link_attrs semantics).
+
+### Slot classes — never guessed
+
+`_slot_qclass` = chip evidence (`evidence_qclass`, verbatim majority) >
+roster canonical > omit (the long-standing classless shape). Applied to ALL
+flux gate templates including legacy `cz_unipolar`/`cz_flattop` — a chip
+with evidence or a probed env finally gets real `__class__` markers on new
+gate slots instead of the forever-"implicit SquarePulse" blindness; with
+neither, byte-identical legacy output.
+
+### "+ new gate" create path
+
+`gate=__new__:<type>` + `new_gate_name` → ONE `create_subtree` of the whole
+macro (gate scalars at the type's defaults, the selected slot replaced by
+the user's configured pulse) = one lock hold, one Review entry, one Ctrl+Z.
+Server twins for every client rule: unknown/non-flux type 400, env-variant
+without roster 409, name collision 409, no-flux-arch pair 409, coupler slot
+on a qubit-only variant 400.
+
+### Pins
+
+`test_pulses_routes.py::TestCzGateFirst` (island freqs/orientation/slots,
+roster-gated variant lists in both surfaces, one-shot create writes the
+roster canonical + SNZ skeleton, coupler-slot refusal, no-roster refusal,
+held-slot 409, the `_CZ_VARIANT_CAPS` sync pin) and the extended
+`pulses_create_selfcheck.cjs` P6–P10 (freq line + warn, gate/slot fills,
+held-slot disable + edit link, new-gate reveal, qubit-only slot list, the
+pair-mode type filter round-trip).

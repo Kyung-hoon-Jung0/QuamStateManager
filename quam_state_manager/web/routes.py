@@ -5818,6 +5818,131 @@ _GATE_TYPES: dict[str, dict[str, Any]] = {
 }
 
 
+# r15 (docs/71 §3): the three remaining generator CZ variants become add-gate
+# types — offered ONLY when the selected env's roster verifies the pulse
+# classes they need (mirror of capabilities._CZ_VARIANT_CAPS; no roster ⇒
+# exactly the legacy list, a regression fence). Shapes mirror
+# run_build._cz_variant_pulses: SNZ / flattop_erf carry the whole gate on the
+# qubit z line (coupler slot None); bipolar's coupler mirrors the qubit
+# shape's fields by self-reference (single source of truth, the builder's
+# link_attrs semantics).
+_ENV_GATE_TYPES: dict[str, dict[str, Any]] = {
+    "cz_bipolar": {
+        "label": "CZ Bipolar (cosine, net-zero)",
+        "arch": "flux",
+        "fields": [
+            ("amplitude", "Flux amplitude", 0.05, "float"),
+            ("flat_length", "Flat length (ns)", 200, "int"),
+            ("smoothing_length", "Smoothing length (ns)", 20, "int"),
+            ("post_zero_padding_length", "Post-zero padding (ns)", 20, "int"),
+            ("coupler_amplitude", "Coupler amplitude", 0.0, "float"),
+            ("phase_shift_control", "Phase shift (control)", 0.0, "float"),
+            ("phase_shift_target", "Phase shift (target)", 0.0, "float"),
+        ],
+    },
+    "cz_snz": {
+        "label": "CZ SNZ (sudden net-zero, qubit line only)",
+        "arch": "flux",
+        "fields": [
+            ("amplitude", "Flux amplitude", 0.05, "float"),
+            ("flat_length", "Flat length (ns)", 200, "int"),
+            ("t_phi_eff", "t_phi_eff (ns)", 0.0, "float"),
+            ("padding", "Padding (ns)", 20, "int"),
+            ("phase_shift_control", "Phase shift (control)", 0.0, "float"),
+            ("phase_shift_target", "Phase shift (target)", 0.0, "float"),
+        ],
+    },
+    "cz_flattop_erf": {
+        "label": "CZ Flat-top Erf (qubit line only)",
+        "arch": "flux",
+        "fields": [
+            ("amplitude", "Flux amplitude", 0.05, "float"),
+            ("flat_length", "Flat length (ns)", 200, "int"),
+            ("risetime_samples", "Risetime (samples)", 16, "int"),
+            ("post_zero_padding_length", "Post-zero padding (ns)", 20, "int"),
+            ("phase_shift_control", "Phase shift (control)", 0.0, "float"),
+            ("phase_shift_target", "Phase shift (target)", 0.0, "float"),
+        ],
+    },
+}
+
+# Roster leaves each new variant needs — per slot, ANY listed alternative
+# satisfies it (modern quam_builder ships CosineBipolarPulse, legacy quam
+# ships _CosineBipolarPulse; both are valid bipolar carriers).
+_ENV_GATE_LEAVES: dict[str, tuple[tuple[str, ...], ...]] = {
+    "cz_bipolar": (("CosineBipolarPulse", "_CosineBipolarPulse"),
+                   ("SmoothedFlatTopGaussianPulse", "_FlatTopGaussianPulse")),
+    "cz_snz": (("SNZPulse",),),
+    "cz_flattop_erf": (("ErfSquarePulse",),),
+}
+
+# Flux-slot pulse-class candidates per gate type (evidence/roster resolved by
+# _slot_qclass; None entry ⇒ that gate has no coupler slot).
+_SLOT_LEAVES: dict[str, dict[str, tuple[str, ...] | None]] = {
+    "cz_unipolar": {"qubit": ("SquarePulse",), "coupler": ("SquarePulse",)},
+    "cz_flattop": {"qubit": ("SmoothedFlatTopGaussianPulse",
+                             "_FlatTopGaussianPulse"),
+                   "coupler": ("SmoothedFlatTopGaussianPulse",
+                               "_FlatTopGaussianPulse")},
+    "cz_bipolar": {"qubit": ("CosineBipolarPulse", "_CosineBipolarPulse"),
+                   "coupler": ("SmoothedFlatTopGaussianPulse",
+                               "_FlatTopGaussianPulse")},
+    "cz_snz": {"qubit": ("SNZPulse",), "coupler": None},
+    "cz_flattop_erf": {"qubit": ("ErfSquarePulse",), "coupler": None},
+}
+
+
+def _env_gate_types() -> dict[str, dict[str, Any]]:
+    """The roster-verified subset of ``_ENV_GATE_TYPES`` (docs/71 §3).
+
+    No roster installed ⇒ {} — the legacy gate list stays byte-identical.
+    """
+    from quam_state_manager.core.pulse_catalog import env_overlay_active
+    roster = env_overlay_active()
+    if not roster:
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for gid, gdef in _ENV_GATE_TYPES.items():
+        needs = _ENV_GATE_LEAVES[gid]
+        if all(any(leaf in roster for leaf in alts) for alts in needs):
+            out[gid] = gdef
+    return out
+
+
+def _slot_qclass(store, leaf_candidates: tuple[str, ...] | None) -> str | None:
+    """``__class__`` for a gate flux slot (docs/71 §3): chip evidence (the
+    first candidate with a same-leaf pulse on the chip, verbatim majority) >
+    roster canonical > None (today's classless shape — SM renders it as an
+    implicit SquarePulse). Never guesses a module path."""
+    if not leaf_candidates:
+        return None
+    from quam_state_manager.core.pulse_catalog import (env_overlay_active,
+                                                      evidence_qclass)
+    for leaf in leaf_candidates:
+        ev = evidence_qclass(store.merged, leaf)
+        if ev:
+            return ev
+    roster = env_overlay_active()
+    if roster:
+        for leaf in leaf_candidates:
+            rec = roster.get(leaf)
+            canonical = rec.get("canonical") if isinstance(rec, dict) else None
+            if isinstance(canonical, str) and canonical:
+                return canonical
+    return None
+
+
+def _slot_qclasses_for(store, gate_type: str) -> dict[str, str]:
+    """Resolved slot classes for *gate_type* — only verified entries appear."""
+    leaves = _SLOT_LEAVES.get(gate_type) or {}
+    out: dict[str, str] = {}
+    for slot_key in ("qubit", "coupler"):
+        qc = _slot_qclass(store, leaves.get(slot_key))
+        if qc:
+            out[slot_key] = qc
+    return out
+
+
 def _pair_arch(store, pair_obj: dict) -> dict[str, bool]:
     """Structural evidence for which gate families this pair supports.
 
@@ -5893,8 +6018,21 @@ def _parametric_cz_qclass(store) -> str:
 def _build_gate_template(gate_type: str, fields: dict[str, Any], *,
                          parametric_qclass: str | None = None,
                          cr_qclass: str | None = None,
-                         stark_qclass: str | None = None) -> dict:
-    """Construct the macro dict for ``gate_type`` from validated *fields*."""
+                         stark_qclass: str | None = None,
+                         slot_qclasses: dict[str, str] | None = None) -> dict:
+    """Construct the macro dict for ``gate_type`` from validated *fields*.
+
+    *slot_qclasses* (r15, docs/71 §3) optionally carries evidence/roster-
+    verified pulse ``__class__`` strings for the ``qubit``/``coupler`` flux
+    slots — absent, the slots stay classless (the long-standing shape SM
+    renders as an implicit SquarePulse). Never guessed.
+    """
+    _sq = slot_qclasses or {}
+
+    def _classed(d: dict, slot_key: str) -> dict:
+        qc = _sq.get(slot_key)
+        return {"__class__": qc, **d} if qc else d
+
     if gate_type == "cr_gate":
         # the modern CRGate shape (verified on every flavor artifact, docs/54)
         return {
@@ -5917,27 +6055,82 @@ def _build_gate_template(gate_type: str, fields: dict[str, Any], *,
     if gate_type == "cz_unipolar":
         return {
             "fidelity": {},
-            "flux_pulse_qubit": {
+            "flux_pulse_qubit": _classed({
                 "amplitude": fields["amplitude"],
                 "length": fields["length"],
-            },
-            "coupler_flux_pulse": {
+            }, "qubit"),
+            "coupler_flux_pulse": _classed({
                 "amplitude": fields["coupler_amplitude"],
                 "length": fields["coupler_length"],
-            },
+            }, "coupler"),
             "phase_shift_control": fields["phase_shift_control"],
             "phase_shift_target": fields["phase_shift_target"],
         }
     if gate_type == "cz_flattop":
         return {
             "fidelity": {},
-            "flux_pulse_qubit": {
+            "flux_pulse_qubit": _classed({
                 "amplitude": fields["amplitude"],
                 "flat_length": fields["flat_length"],
                 "smoothing_length": fields["smoothing_length"],
                 "length": "#./inferred_total_length",
-            },
-            "coupler_flux_pulse": {"amplitude": fields["coupler_amplitude"]},
+            }, "qubit"),
+            "coupler_flux_pulse": _classed(
+                {"amplitude": fields["coupler_amplitude"]}, "coupler"),
+            "phase_shift_control": fields["phase_shift_control"],
+            "phase_shift_target": fields["phase_shift_target"],
+        }
+    if gate_type == "cz_bipolar":
+        # bipolar carrier on the qubit line; the coupler mirrors the shape
+        # fields by self-reference (run_build's link_attrs semantics — one
+        # source of truth, edits can't drift the two slots apart).
+        return {
+            "fidelity": {},
+            "flux_pulse_qubit": _classed({
+                "amplitude": fields["amplitude"],
+                "flat_length": fields["flat_length"],
+                "smoothing_length": fields["smoothing_length"],
+                "post_zero_padding_length": fields["post_zero_padding_length"],
+                "length": "#./inferred_total_length",
+            }, "qubit"),
+            "coupler_flux_pulse": _classed({
+                "amplitude": fields["coupler_amplitude"],
+                "flat_length": "#../flux_pulse_qubit/flat_length",
+                "smoothing_length": "#../flux_pulse_qubit/smoothing_length",
+                "post_zero_padding_length":
+                    "#../flux_pulse_qubit/post_zero_padding_length",
+                "length": "#./inferred_total_length",
+            }, "coupler"),
+            "phase_shift_control": fields["phase_shift_control"],
+            "phase_shift_target": fields["phase_shift_target"],
+        }
+    if gate_type == "cz_snz":
+        # the whole gate rides the qubit z line (safe on fixed OR tunable
+        # couplers) — no coupler pulse, matching run_build's SNZ shape.
+        return {
+            "fidelity": {},
+            "flux_pulse_qubit": _classed({
+                "amplitude": fields["amplitude"],
+                "flat_length": fields["flat_length"],
+                "t_phi_eff": fields["t_phi_eff"],
+                "padding": fields["padding"],
+                "length": "#./inferred_length",
+            }, "qubit"),
+            "coupler_flux_pulse": None,
+            "phase_shift_control": fields["phase_shift_control"],
+            "phase_shift_target": fields["phase_shift_target"],
+        }
+    if gate_type == "cz_flattop_erf":
+        return {
+            "fidelity": {},
+            "flux_pulse_qubit": _classed({
+                "amplitude": fields["amplitude"],
+                "flat_length": fields["flat_length"],
+                "risetime_samples": fields["risetime_samples"],
+                "post_zero_padding_length": fields["post_zero_padding_length"],
+                "length": "#./inferred_length",
+            }, "qubit"),
+            "coupler_flux_pulse": None,
             "phase_shift_control": fields["phase_shift_control"],
             "phase_shift_target": fields["phase_shift_target"],
         }
@@ -5985,7 +6178,9 @@ def pair_gate_form(name: str):
     # never offer a flux-CZ macro on a FixedFrequencyTransmonPair (writing one
     # corrupts the pair for quam's loader) nor a CR macro on a coupler pair.
     arch = _pair_arch(store, pair_obj)
-    gate_types = {k: v for k, v in _GATE_TYPES.items()
+    # r15 (docs/71 §3): + the roster-verified generator variants (SNZ /
+    # bipolar / flattop-erf) — no roster ⇒ exactly the legacy list.
+    gate_types = {k: v for k, v in {**_GATE_TYPES, **_env_gate_types()}.items()
                   if arch.get(v.get("arch", "flux"))}
     if _parametric_cz_evidence(store) is None:
         gate_types = {k: v for k, v in gate_types.items() if k != "cz_parametric"}
@@ -6020,8 +6215,18 @@ def pair_add_gate(name: str):
     gate_name = (request.form.get("gate_name") or "").strip()
     gate_type = (request.form.get("gate_type") or "").strip()
 
-    if gate_type not in _GATE_TYPES:
+    all_gate_types = {**_GATE_TYPES, **_ENV_GATE_TYPES}
+    if gate_type not in all_gate_types:
         return render_template("_status.html", message=f"Unknown gate type: {gate_type!r}", level="error"), 400
+    # Server twin of the roster gating (never trust the form): an env-variant
+    # whose pulse classes the selected env can't verify must not be written.
+    if gate_type in _ENV_GATE_TYPES and gate_type not in _env_gate_types():
+        return render_template(
+            "_status.html",
+            message=(f"{gate_type} needs pulse classes the selected "
+                     "environment does not verify — probe/select the env "
+                     "that ships them first."),
+            level="error"), 409
     if not _GATE_NAME_RE.match(gate_name):
         return render_template(
             "_status.html",
@@ -6042,7 +6247,7 @@ def pair_add_gate(name: str):
     # form): a flux-CZ macro on a CR pair — or a CR macro on a coupler pair —
     # corrupts the pair for quam's loader.
     arch = _pair_arch(store, pair_obj)
-    wanted_arch = _GATE_TYPES[gate_type].get("arch", "flux")
+    wanted_arch = all_gate_types[gate_type].get("arch", "flux")
     if not arch.get(wanted_arch):
         labels = {"flux": "a flux-tunable/coupler pair",
                   "cr": "a pair with a cross-resonance channel",
@@ -6067,7 +6272,7 @@ def pair_add_gate(name: str):
         ), 409
 
     fields: dict[str, Any] = {}
-    for field_name, _label, default, kind in _GATE_TYPES[gate_type]["fields"]:
+    for field_name, _label, default, kind in all_gate_types[gate_type]["fields"]:
         raw = request.form.get(field_name, "")
         try:
             fields[field_name] = float(raw) if kind == "float" else int(float(raw))
@@ -6079,7 +6284,8 @@ def pair_add_gate(name: str):
         parametric_qclass=_parametric_cz_qclass(store),
         cr_qclass=cr_semantics.gate_class_evidence(store.merged, "CRGate"),
         stark_qclass=cr_semantics.gate_class_evidence(
-            store.merged, "StarkInducedCZGate"))
+            store.merged, "StarkInducedCZGate"),
+        slot_qclasses=_slot_qclasses_for(store, gate_type))
     dot_path = f"qubit_pairs.{name}.macros.{gate_name}"
     try:
         modifier.create_subtree(dot_path, template)
@@ -7522,6 +7728,15 @@ def pulse_create_form():
     qubit_names = [q.get("id") for q in engine.list_qubits() if q.get("id")]
     pairs_map: dict[str, list[str]] = {}
     pair_channels_map: dict[str, list[str]] = {}
+    # r15 (docs/71 §3) — the CZ-first pair island: per pair, control/target
+    # with their frequencies (control = higher f₀₁ is the CZ convention —
+    # the form shows a ⚠ when the stored orientation contradicts it; the
+    # wizard's czAutoOrient + run_build._cz_order_warning are the write-side
+    # twins), per-gate SLOT occupancy (held slots are disabled with an
+    # edit-instead deep link — the server's 409 stays the backstop), and the
+    # arch+roster-gated "+ new gate" variants.
+    pairs_info: dict[str, dict[str, Any]] = {}
+    env_gates = _env_gate_types()
     for pair_name, pair in (store.merged.get("qubit_pairs") or {}).items():
         if not isinstance(pair, dict):
             continue
@@ -7545,6 +7760,72 @@ def pulse_create_form():
         ]
         if channels:
             pair_channels_map[pair_name] = channels
+
+        try:
+            p = engine.get_pair(pair_name)
+        except KeyError:
+            p = {}
+        info: dict[str, Any] = {
+            "control": p.get("qubit_control"),
+            "target": p.get("qubit_target"),
+            "gates": {},
+        }
+        for role, qn in (("f_control", p.get("qubit_control")),
+                         ("f_target", p.get("qubit_target"))):
+            f = None
+            if qn:
+                try:
+                    q = engine.get_qubit(qn)
+                    f = q.get("f_01")
+                    if not isinstance(f, (int, float)):
+                        f = q.get("xy_RF_frequency")
+                except KeyError:
+                    pass
+            info[role] = f if isinstance(f, (int, float)) else None
+        fc, ft = info["f_control"], info["f_target"]
+        # strict fc > ft mirrors czAutoOrient; either freq missing ⇒ no ⚠
+        info["orient_ok"] = (fc > ft) if (fc is not None and ft is not None) \
+            else None
+        if isinstance(macros, dict):
+            for g, m in macros.items():
+                if not isinstance(m, dict):
+                    continue
+                if cr_semantics.classify_class(m.get("__class__"))[0] in (
+                        "cr_gate", "stark_cz_gate"):
+                    continue
+                slots: dict[str, dict[str, Any]] = {}
+                for slot in ("flux_pulse_qubit", "coupler_flux_pulse"):
+                    v = m.get(slot)
+                    if isinstance(v, dict):
+                        leaf = (v.get("__class__") or "").rsplit(".", 1)[-1]
+                        slots[slot] = {
+                            "state": "held",
+                            "class": leaf or "SquarePulse (implicit)",
+                            "path": (f"qubit_pairs.{pair_name}.macros"
+                                     f".{g}.{slot}"),
+                        }
+                    else:
+                        # absent key or present-but-None — both creatable
+                        # (the POST's replace_none_slot path handles None)
+                        slots[slot] = {"state": "empty", "class": None,
+                                       "path": None}
+                info["gates"][g] = {"slots": slots}
+        arch = _pair_arch(store, pair)
+        if arch.get("flux"):
+            new_gates = [gid for gid in ("cz_unipolar", "cz_flattop")
+                         ] + sorted(env_gates)
+        else:
+            new_gates = []
+        info["new_gates"] = new_gates
+        pairs_info[pair_name] = info
+
+    gate_defs_json = json.dumps({
+        gid: {"label": gdef["label"],
+              "has_coupler_slot": (_SLOT_LEAVES.get(gid) or {}).get("coupler")
+              is not None}
+        for gid, gdef in {**_GATE_TYPES, **_ENV_GATE_TYPES}.items()
+        if gdef.get("arch") == "flux" and gid != "cz_parametric"
+    })
 
     # existing op names per target, for client-side duplicate validation
     existing: dict[str, list[str]] = {}
@@ -7616,6 +7897,9 @@ def pulse_create_form():
                      else ""),
         env_card=_env_card_state(store),
         env_class_count=len(roster or {}),
+        pairs_info_json=json.dumps(pairs_info),
+        gate_defs_json=gate_defs_json,
+        pairs_all=list(pairs_info),
     )
 
 
@@ -7729,6 +8013,8 @@ def _pulse_create_locked(store, modifier, spec, fields, target_kind,
     from quam_state_manager.core.pulse_index import PAIR_PULSE_CHANNELS
 
     replace_none_slot = False
+    new_gate_template: dict | None = None
+    new_gate_name = ""
     if target_kind == "pair":
         pair = request.form.get("pair", "").strip()
         gate = request.form.get("gate", "").strip()
@@ -7737,29 +8023,86 @@ def _pulse_create_locked(store, modifier, spec, fields, target_kind,
             return render_template("_status.html", message="Invalid slot",
                                    level="error"), 400
         macros = ((store.merged.get("qubit_pairs") or {}).get(pair) or {}).get("macros")
-        macro = macros.get(gate) if isinstance(macros, dict) else None
-        if not isinstance(macro, dict):
-            return render_template("_status.html",
-                                   message=f"Gate {gate!r} not found on {pair!r}",
-                                   level="error"), 404
-        # Never write a flux slot into a CR/Stark macro — the gate's drive
-        # lives on the pair's cross_resonance/zz channel; a flux_pulse_qubit
-        # here corrupts the macro's schema for quam's loader.
-        if cr_semantics.classify_class(macro.get("__class__"))[0] in (
-                "cr_gate", "stark_cz_gate"):
-            return render_template(
-                "_status.html",
-                message=(f"{gate!r} is a CR/Stark gate — it takes no flux "
-                         "pulse. Create the pulse on the pair's "
-                         "cross-resonance / ZZ channel instead."),
-                level="error"), 409
-        if slot in macro and macro[slot] is not None:
-            return render_template(
-                "_status.html",
-                message=f"{pair}.{gate}.{slot} already holds a pulse",
-                level="error"), 409
-        replace_none_slot = slot in macro  # present-but-None → set, not create
-        dot_path = f"qubit_pairs.{pair}.macros.{gate}.{slot}"
+        if gate.startswith("__new__:"):
+            # r15 (docs/71 §3): CZ-first — create the gate macro AND its
+            # selected slot's pulse in ONE create_subtree (one lock hold,
+            # one Review entry, one Ctrl+Z). The macro's other fields take
+            # the gate type's defaults; slot classes are evidence/roster
+            # verified via _slot_qclasses_for (never guessed).
+            gate_type = gate.split(":", 1)[1]
+            new_gate_name = (request.form.get("new_gate_name") or "").strip()
+            all_types = {**_GATE_TYPES, **_ENV_GATE_TYPES}
+            gdef = all_types.get(gate_type)
+            if gdef is None or gdef.get("arch") != "flux":
+                return render_template("_status.html",
+                                       message=f"Unknown gate type {gate_type!r}",
+                                       level="error"), 400
+            if (gate_type in _ENV_GATE_TYPES
+                    and gate_type not in _env_gate_types()):
+                return render_template(
+                    "_status.html",
+                    message=(f"{gate_type} needs pulse classes the selected "
+                             "environment does not verify."),
+                    level="error"), 409
+            if not _GATE_NAME_RE.match(new_gate_name):
+                return render_template(
+                    "_status.html",
+                    message=("Gate name must start with a letter "
+                             "(letters/digits/_, max 64)."),
+                    level="error"), 400
+            pair_obj = (store.merged.get("qubit_pairs") or {}).get(pair)
+            if not isinstance(pair_obj, dict):
+                return render_template("_status.html",
+                                       message=f"Unknown pair: {pair!r}",
+                                       level="error"), 404
+            if new_gate_name in (macros or {}):
+                return render_template(
+                    "_status.html",
+                    message=f"Gate {new_gate_name!r} already exists on {pair}.",
+                    level="error"), 409
+            if not _pair_arch(store, pair_obj).get("flux"):
+                return render_template(
+                    "_status.html",
+                    message=("This pair's architecture has no flux line — "
+                             "a flux-CZ macro would corrupt it."),
+                    level="error"), 409
+            if (slot == "coupler_flux_pulse"
+                    and (_SLOT_LEAVES.get(gate_type) or {}).get("coupler")
+                    is None):
+                return render_template(
+                    "_status.html",
+                    message=(f"{gate_type} carries the whole gate on the "
+                             "qubit line — it has no coupler slot."),
+                    level="error"), 400
+            defaults = {f[0]: f[2] for f in gdef["fields"]}
+            new_gate_template = _build_gate_template(
+                gate_type, defaults,
+                slot_qclasses=_slot_qclasses_for(store, gate_type))
+            dot_path = f"qubit_pairs.{pair}.macros.{new_gate_name}"
+        else:
+            macro = macros.get(gate) if isinstance(macros, dict) else None
+            if not isinstance(macro, dict):
+                return render_template("_status.html",
+                                       message=f"Gate {gate!r} not found on {pair!r}",
+                                       level="error"), 404
+            # Never write a flux slot into a CR/Stark macro — the gate's
+            # drive lives on the pair's cross_resonance/zz channel; a
+            # flux_pulse_qubit here corrupts the macro's schema.
+            if cr_semantics.classify_class(macro.get("__class__"))[0] in (
+                    "cr_gate", "stark_cz_gate"):
+                return render_template(
+                    "_status.html",
+                    message=(f"{gate!r} is a CR/Stark gate — it takes no flux "
+                             "pulse. Create the pulse on the pair's "
+                             "cross-resonance / ZZ channel instead."),
+                    level="error"), 409
+            if slot in macro and macro[slot] is not None:
+                return render_template(
+                    "_status.html",
+                    message=f"{pair}.{gate}.{slot} already holds a pulse",
+                    level="error"), 409
+            replace_none_slot = slot in macro  # present-but-None → set
+            dot_path = f"qubit_pairs.{pair}.macros.{gate}.{slot}"
     elif target_kind == "pair_channel":
         pair = request.form.get("pc_pair", "").strip()
         channel = request.form.get("pc_channel", "").strip()
@@ -7820,7 +8163,15 @@ def _pulse_create_locked(store, modifier, spec, fields, target_kind,
         qclass, _how = chip_qclass(store.merged, spec)
     template = build_template(spec, fields, qclass=qclass)
     try:
-        if replace_none_slot:
+        if new_gate_template is not None:
+            # r15 (docs/71 §3): the new gate macro + its configured slot
+            # pulse land as ONE subtree — one lock hold, one Review entry.
+            new_gate_template[request.form.get("slot", "").strip()
+                              or "flux_pulse_qubit"] = template
+            modifier.create_subtree(dot_path, new_gate_template)
+            dot_path = (f"{dot_path}."
+                        f"{request.form.get('slot', '').strip() or 'flux_pulse_qubit'}")
+        elif replace_none_slot:
             modifier.set_value(dot_path, template, coerce=False)
         else:
             modifier.create_subtree(dot_path, template)
