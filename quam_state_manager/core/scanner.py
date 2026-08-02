@@ -318,6 +318,15 @@ class Workspace:
         for d, mt in pre_probe.items():
             if d in probe:
                 probe[d] = mt
+        # r16 ⑦ D-B: newly-discovered spine dirs (not in the OLD spine) were
+        # stamped post-walk — a run landing there mid-walk was swallowed
+        # forever. 0.0 forces exactly one healing rescan on the next poll,
+        # which then records the real mtimes. Only fires when structure
+        # actually appeared, so steady-state polls stay rescan-free.
+        if pre_probe:
+            for d in probe:
+                if d not in pre_probe:
+                    probe[d] = 0.0
         with self._lock:
             if self._find_registered_root(registered) is None:
                 return entries                         # removed mid-scan — discard
@@ -545,13 +554,22 @@ def _shallow_dirs(root: Path) -> list[Path]:
 
 def _spine_of(root: Path, entries: list[ExperimentEntry]) -> list[str]:
     """The directory SPINE of a scanned root: every run folder's parent plus
-    all its ancestors up to (and including) the root.
+    all its ancestors up to (and including) the root, PLUS every spine
+    member's immediate child directories (r16 ⑦ D-A).
 
     A new run bumps its (known) parent dir's mtime; a new date dir bumps the
     chip dir; a new chip dir bumps the root — so statting exactly this set
-    detects additions at ANY depth without walking. Capped at ``_SPINE_CAP``
-    keeping the root + the most-recently-modified dirs (old days stop
-    changing; recent ones are where runs land)."""
+    detects additions at ANY depth without walking. The child-dir expansion
+    closes the D-A hole: a date dir that held NO valid run at scan time
+    (created moments before the scan fired — the root-mtime bump races the
+    day's first save by well under a second on real archives — or whose runs
+    never write quam_state) was never watched, so every later run bumped
+    only ITS mtime, which nothing statted, and the sidebar stayed frozen
+    until the manual Refresh. Children are enumerated ONCE PER SCAN (the
+    poll stays pure stats); a dir created after the scan is caught
+    transitively — its creation bumps its parent's (watched) mtime → rescan
+    → it joins the spine. Capped at ``_SPINE_CAP`` keeping the root + the
+    most-recently-modified dirs (old days stop changing)."""
     spine: set[Path] = {root}
     for e in entries:
         d = e.folder_path.parent
@@ -564,6 +582,18 @@ def _spine_of(root: Path, entries: list[ExperimentEntry]) -> list[str]:
             except ValueError:
                 break                      # walked outside the root (symlink)
             d = d.parent
+    run_folders = {e.folder_path for e in entries}
+    for d in list(spine):                  # r16 ⑦: watch empty/invalid dirs too
+        try:
+            for child in d.iterdir():
+                # Discovered run folders are LEAVES (already listed; their
+                # internal churn is not tree structure) — including them
+                # would balloon the probe with every run and make each new
+                # run cost a second healing rescan via the D-B stamp.
+                if child.is_dir() and child not in run_folders:
+                    spine.add(child)
+        except OSError:
+            continue
     dirs = list(spine)
     if len(dirs) > _SPINE_CAP:
         probed = _probe_dirs(dirs)
@@ -689,10 +719,15 @@ def _scan_root(root: Path) -> list[ExperimentEntry]:
             dirnames.clear()
             continue
         key = (st.st_dev, st.st_ino)
-        if key in visited:
+        # r16 ⑦ D-E: Windows' FindFirstFile fallback can report st_ino == 0 —
+        # every such dir would share one key and everything after the first
+        # would be pruned as a "duplicate" (alphabetically-later ⇒ the newest
+        # dates). A zero inode identifies nothing; skip the dedup for it.
+        if st.st_ino and key in visited:
             dirnames.clear()   # cycle / duplicate route to a dir already walked
             continue
-        visited.add(key)
+        if st.st_ino:
+            visited.add(key)
         if dp.name == "quam_state" and _is_quam_state_folder(dp):
             candidates.append(dp)
             dirnames.clear()

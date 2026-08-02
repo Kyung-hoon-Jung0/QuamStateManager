@@ -593,6 +593,7 @@
                             title="Compact — one truncated line per entry">&#9638;</button>
                     <button class="btn-workspace-refresh" type="button"
                             hx-post="/workspace/refresh" hx-target="#sidebar-tree"
+                            hx-include="#sidebar-filter-input"
                             title="Refresh folder list" aria-label="Refresh folder list">&#8635;</button>
                 </div>
                 <div id="sidebar-tree"
@@ -616,13 +617,30 @@
                     // Size the filter textarea to its (possibly prefilled) value on load.
                     var fi = document.getElementById('sidebar-filter-input');
                     if (fi && window.autoGrowNote) autoGrowNote(fi);
+                    // r16 ⑦ D-D: browsers RESTORE textarea values across reloads —
+                    // the tree then rendered filtered with NO visible chips (chips
+                    // draw only oninput), which read as "my folders disappeared".
+                    // Make the restored filter visible.
+                    if (fi && fi.value && fi.value.trim() && window.renderFilterTags) {
+                        renderFilterTags(fi);
+                    }
                     var secs = Math.max(5, (window.UI_CONFIG && UI_CONFIG.autoRefreshInterval) || 60);
                     var lastV = null;
                     var _treePolling = false;
+                    var _pollN = 0;
+                    function refetchTree(v) {
+                        var f = document.getElementById('sidebar-filter-input');
+                        return htmx.ajax('GET', '/workspace/tree', {
+                            target: '#sidebar-tree', swap: 'innerHTML',
+                            values: { name: (f && f.value) || '' }
+                        }).then(function(){ if (typeof v !== 'undefined') lastV = v; })
+                          .catch(function(){});
+                    }
                     function poll() {
                         // In-flight guard + visibility gating (audit B24).
                         if (_treePolling || document.hidden) return;
                         _treePolling = true;
+                        _pollN++;
                         // 10 s abort (r13 audit D5): a hung socket used to pin
                         // _treePolling=true and silently kill every later tick.
                         var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
@@ -630,17 +648,25 @@
                         fetch('/workspace/tree/poll', ctrl ? { signal: ctrl.signal } : undefined)
                           .then(function(r){ return r.json(); }).then(function(d){
                             if (!d || typeof d.v === 'undefined') return;
-                            if (lastV === null) { lastV = d.v; return; }  // baseline
+                            if (lastV === null) {
+                                lastV = d.v;
+                                // r16 ⑦ D-C: the baseline poll's own staleness
+                                // check may have JUST rescanned — render what it
+                                // found instead of silently adopting the bump.
+                                if (d.rescanned && window.htmx) refetchTree(d.v);
+                                return;
+                            }
+                            // r16 ⑦ D-C belt: every 10th tick re-fetches even
+                            // with no version bump — a gate false-negative can
+                            // no longer freeze the tree past ~10 min.
+                            if (d.v === lastV && (_pollN % 10 === 0) && window.htmx) {
+                                refetchTree(d.v);
+                                return;
+                            }
                             if (d.v !== lastV && window.htmx) {
-                                var f = document.getElementById('sidebar-filter-input');
-                                var v = d.v;
-                                // r13 audit D4: advance lastV only after the tree
-                                // swap SUCCEEDED — fire-and-forget used to strand
-                                // a stale DOM forever when the swap failed/aborted.
-                                htmx.ajax('GET', '/workspace/tree', {
-                                    target: '#sidebar-tree', swap: 'innerHTML',
-                                    values: { name: (f && f.value) || '' }
-                                }).then(function(){ lastV = v; }).catch(function(){});
+                                // r13 audit D4 semantics live in refetchTree:
+                                // lastV advances only after the swap SUCCEEDED.
+                                refetchTree(d.v);
                             }
                         }).catch(function(){}).then(function(){
                             if (tm) clearTimeout(tm);
@@ -675,6 +701,7 @@
 
         <main id="main">
             {% include '_chip_name_banner.html' %}
+            {% include '_dataset_roots_banner.html' %}
             <div id="content-area">
                 {# Per-page header collapse (Item 4): persistent toggle, OUTSIDE
                    #table-pane so it survives HTMX swaps and stays reachable when the

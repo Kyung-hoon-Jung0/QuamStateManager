@@ -965,3 +965,87 @@ class TestNestedTreeAndSpine:
         ws.rescan_root(root)
         assert len(ws.all_entries) == 4
         assert all("chipB" not in str(e.folder_path) for e in ws.all_entries)
+
+
+class TestTreeFreshnessR16:
+    """r16 ⑦ (docs/68 amendment): the D-A hole — a date dir holding NO valid
+    run at scan time was never in the spine, so later runs bumped only ITS
+    mtime and the sidebar stayed frozen until the manual Refresh."""
+
+    def test_empty_at_scan_date_dir_detected_later(self, tmp_path):
+        # The Workspace twin of test_dataset_rescan's new-run-in-new-date-dir.
+        root = tmp_path / "ws"
+        _make_exp(root / "2026-08-01", 1)
+        (root / "2026-08-02").mkdir()          # today exists but has no run yet
+        ws = Workspace()
+        ws.add_root(root)
+        assert len(ws.all_entries) == 1
+        assert ws._is_root_stale(root) is False
+        time.sleep(0.02)
+        _make_exp(root / "2026-08-02", 2, name="first_of_day")
+        assert ws._is_root_stale(root) is True   # the empty day IS watched now
+        assert ws.rescan_if_stale() is True
+        assert len(ws.all_entries) == 2
+
+    def test_invalid_only_day_detected_later(self, tmp_path):
+        # A day whose first runs never save quam_state was permanently
+        # invisible (no race needed).
+        root = tmp_path / "ws"
+        _make_exp(root / "2026-08-01", 1)
+        bad = root / "2026-08-02" / "#5_no_state"
+        bad.mkdir(parents=True)                  # run folder without quam_state
+        ws = Workspace()
+        ws.add_root(root)
+        assert len(ws.all_entries) == 1
+        assert ws._is_root_stale(root) is False
+        time.sleep(0.02)
+        _make_exp(root / "2026-08-02", 6, name="valid_now")
+        assert ws._is_root_stale(root) is True
+        ws.rescan_if_stale()
+        assert len(ws.all_entries) == 2
+
+    def test_deep_empty_date_dir_under_chip_detected(self, tmp_path):
+        # Nested layout: root/<chip>/<date> where the date dir is empty at
+        # scan — the exact SNU shape from the report.
+        root = tmp_path / "ws"
+        _make_exp(root / "chipA" / "2026-08-01", 1)
+        (root / "chipA" / "2026-08-02").mkdir()
+        ws = Workspace()
+        ws.add_root(root)
+        assert ws._is_root_stale(root) is False
+        time.sleep(0.02)
+        _make_exp(root / "chipA" / "2026-08-02", 2, name="deep_first")
+        assert ws._is_root_stale(root) is True
+        ws.rescan_if_stale()
+        assert len(ws.all_entries) == 2
+
+    def test_new_structure_self_heals_via_zero_stamp(self, tmp_path):
+        # D-B: a dir first DISCOVERED by a rescan is stamped 0.0 so the next
+        # poll re-records it honestly (a run landing mid-walk can't be
+        # swallowed forever).
+        root = tmp_path / "ws"
+        _make_exp(root / "2026-08-01", 1)
+        ws = Workspace()
+        ws.add_root(root)
+        time.sleep(0.02)
+        (root / "2026-08-02").mkdir()            # structure appears
+        assert ws.rescan_if_stale() is True      # root mtime moved
+        key = str(root.resolve())
+        newd = str((root / "2026-08-02").resolve())
+        assert ws._scan_probes[key].get(newd) == 0.0
+        assert ws._is_root_stale(root) is True   # heal tick pending
+        ws.rescan_if_stale()
+        assert ws._scan_probes[key].get(newd, 0.0) > 0.0
+        assert ws._is_root_stale(root) is False  # converged
+
+    def test_steady_state_new_run_costs_one_rescan(self, tmp_path):
+        # Run folders are spine LEAVES — a new run must not trigger the D-B
+        # heal tick (2 rescans per run would double the scan load).
+        root = tmp_path / "ws"
+        _make_exp(root / "2026-08-01", 1)
+        ws = Workspace()
+        ws.add_root(root)
+        time.sleep(0.02)
+        _make_exp(root / "2026-08-01", 2, name="second")
+        assert ws.rescan_if_stale() is True
+        assert ws._is_root_stale(root) is False  # no follow-up tick
