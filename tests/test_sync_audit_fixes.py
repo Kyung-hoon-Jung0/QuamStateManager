@@ -81,7 +81,8 @@ class TestClientGuards:
         assert 'data-change-count="{{ change_count }}"' in tray
         assert 'getAttribute("data-change-count")' in _APP_JS
         # _swapPendingTray (the 7-caller funnel) now restores tray state itself
-        swap = _APP_JS[_APP_JS.index("function _swapPendingTray"):][:600]
+        # (window widened past the r16 ⑤ freeze-stamp preamble)
+        swap = _APP_JS[_APP_JS.index("function _swapPendingTray"):][:1200]
         assert "_restoreTrayState()" in swap
 
 
