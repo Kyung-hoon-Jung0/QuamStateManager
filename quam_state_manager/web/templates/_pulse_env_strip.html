@@ -1,0 +1,51 @@
+{# Add-pulse env-discovery strip (r15, docs/71 §2) — the "탐색 잘 되었다는
+   표시" the users asked for: names the selected env + how many pulse classes
+   its roster verified, with Probe / Change-env affordances. States mirror
+   the /diagnostics env card; the probe rides the EXISTING single-flighted
+   POST /diagnostics/env-probe (which installs the roster overlay on success).
+   Self-polls while probing. Env choice is GLOBAL — shared with Generate
+   Config (one selected interpreter drives the wizard, diagnostics and this
+   form alike). #}
+<div id="pulse-env-strip" class="pulse-env-strip"
+     {% if env_card.probing %}hx-get="/pulse/new/env-strip" hx-trigger="every 2s"
+     hx-swap="outerHTML"{% endif %}>
+  {% if not env_card.selected %}
+    <span class="pulse-env-badge pulse-env-badge-static">static catalog</span>
+    <span class="muted">no Python environment selected — classes below are
+      SM's built-in list.
+      <a href="/generate" hx-get="/generate" hx-target="#table-pane"
+         hx-sync="#table-pane:replace" hx-push-url="true">Pick an env in
+      Generate Config</a> (conda or a uv/.venv folder) to discover the
+      env's own pulse classes.</span>
+  {% elif not env_card.selected_exists %}
+    <span class="pulse-env-badge pulse-env-badge-warn">env gone</span>
+    <span class="pulse-env-err">the selected interpreter no longer exists —
+      reselect it in
+      <a href="/generate" hx-get="/generate" hx-target="#table-pane"
+         hx-sync="#table-pane:replace" hx-push-url="true">Generate Config</a>.</span>
+  {% elif env_card.probing %}
+    <span class="pulse-env-badge">probing…</span>
+    <span class="muted">reading the environment's pulse classes</span>
+    <progress class="pulse-env-progress"></progress>
+  {% elif env_card.warm and env_class_count %}
+    <span class="pulse-env-badge pulse-env-badge-ok">&#10003; env</span>
+    <span class="pulse-env-text">
+      <strong>{{ env_class_count }}</strong> pulse class{{ 'es' if env_class_count != 1 }}
+      discovered in
+      <code class="pulse-env-python" title="{{ env_card.selected }}">{{ env_card.selected }}</code>
+      {%- for k in ("quam", "quam_builder") %}{% if env_card.versions.get(k) %}
+      · <code>{{ k }} {{ env_card.versions[k] }}</code>{% endif %}{% endfor %}
+      <span class="muted">· shared with Generate Config</span>
+    </span>
+  {% elif env_card.warm %}
+    <span class="pulse-env-badge pulse-env-badge-warn">0 classes</span>
+    <span class="muted">the probe found no pulse classes — the env may lack
+      <code>quam</code>; the static catalog is shown.</span>
+  {% else %}
+    <span class="pulse-env-badge pulse-env-badge-warn">not probed</span>
+    <span class="muted">the selected env hasn't been probed for this chip —
+      classes below are SM's static catalog until then.</span>
+    <button type="button" class="btn-sm outline"
+            onclick="PulsesPage.envStripProbe(this)">Probe now</button>
+  {% endif %}
+</div>

@@ -7495,15 +7495,27 @@ def pulse_create_form():
 
     from quam_state_manager.core.pulse_catalog import PULSE_CATALOG, chip_qclass
 
+    # r15 (docs/71 §2): the selected env's pulse roster drives the form —
+    # roster-only classes become creatable (synthesized specs), catalog
+    # classes get an importability verdict, and the strip on top names the
+    # env + class count (or says "static catalog" honestly).
+    from quam_state_manager.core.pulse_catalog import (env_creatable_specs,
+                                                      env_overlay_active)
+    roster = env_overlay_active()
+    env_specs = env_creatable_specs(roster)
+
     creatable = [s for s in PULSE_CATALOG.values() if s.creatable]
     groups: dict[str, list] = {}
     for s in creatable:
         groups.setdefault(s.group, []).append(s)
+    for s in env_specs.values():
+        groups.setdefault(s.group, []).append(s)
 
     # The __class__ each type would write on THIS chip (+ provenance) — the
-    # form shows it as an editable field with a caution when it is a guess
-    # ("prefix"/"catalog") rather than evidence ("reused" from the chip).
-    chip_classes = {s.key: chip_qclass(store.merged, s) for s in creatable}
+    # form shows it (read-only since r15) with a caution when it is a guess
+    # ("prefix"/"catalog") rather than evidence ("reused"/"env").
+    chip_classes = {s.key: chip_qclass(store.merged, s)
+                    for s in [*creatable, *env_specs.values()]}
 
     from quam_state_manager.core.pulse_index import PAIR_PULSE_CHANNELS, PULSE_CHANNELS
 
@@ -7554,10 +7566,19 @@ def pulse_create_form():
             if isinstance(ops, dict):
                 existing[f"pair:{pair_name}/{channel}"] = sorted(ops.keys())
 
-    catalog_json = json.dumps({
-        s.key: {
+    def _cat_entry(s, *, env_only=False):
+        # verify: None = no roster installed (no verdict possible);
+        # "env" = the selected env imports this class; "missing" = it does
+        # NOT (creating it writes a state that env can't Quam.load — the
+        # form confirms before submitting, the POST 409s as backstop).
+        verify = None
+        if roster is not None:
+            verify = "env" if s.key in roster else "missing"
+        d = {
             "label": s.label, "group": s.group, "doc": s.doc,
             "iq": s.iq, "length_mode": s.length_mode,
+            "channels": list(s.channels),
+            "verify": verify,
             "qclass": chip_classes[s.key][0],
             "qclass_how": chip_classes[s.key][1],
             "params": [
@@ -7566,7 +7587,14 @@ def pulse_create_form():
                  "required": p.required}
                 for p in s.params
             ],
-        } for s in creatable
+        }
+        if env_only:
+            d["env_only"] = True
+        return d
+
+    catalog_json = json.dumps({
+        **{s.key: _cat_entry(s) for s in creatable},
+        **{s.key: _cat_entry(s, env_only=True) for s in env_specs.values()},
     })
 
     # Optional preselection (the qubit-detail "Add pulse" button passes these
@@ -7586,6 +7614,25 @@ def pulse_create_form():
         sel_channel=(sel_channel
                      if sel_channel in ("xy", "z", "resonator", "xy_detuned")
                      else ""),
+        env_card=_env_card_state(store),
+        env_class_count=len(roster or {}),
+    )
+
+
+@bp.route("/pulse/new/env-strip")
+def pulse_env_strip():
+    """The add-pulse form's env-discovery strip (r15, docs/71 §2) — states:
+    no env / interpreter gone / not probed [Probe now] / probing (self-poll)
+    / ✓ N classes from <env>. Reuses the diagnostics env-card state + the
+    existing POST /diagnostics/env-probe; zero new probe machinery."""
+    store = _store()
+    if not store:
+        return ""
+    from quam_state_manager.core.pulse_catalog import env_overlay_active
+    return render_template(
+        "_pulse_env_strip.html",
+        env_card=_env_card_state(store),
+        env_class_count=len(env_overlay_active() or {}),
     )
 
 
@@ -7598,14 +7645,37 @@ def api_pulse_create():
         return render_template("_status.html", message="No state loaded",
                                level="warning")
 
-    from quam_state_manager.core.pulse_catalog import PULSE_CATALOG
+    from quam_state_manager.core.pulse_catalog import (PULSE_CATALOG,
+                                                       env_creatable_specs,
+                                                       env_overlay_active)
 
     pulse_type = request.form.get("pulse_type", "").strip()
+    roster = env_overlay_active()
     spec = PULSE_CATALOG.get(pulse_type)
     if spec is None or not spec.creatable:
+        # r15 (docs/71 §2): roster-only classes are creatable via their
+        # synthesized specs (e.g. quam_builder 0.4.0's CosineBipolarPulse).
+        spec = env_creatable_specs(roster).get(pulse_type)
+    if spec is None or not spec.creatable:
+        hint = (" (the selected environment may have changed since this "
+                "form was opened — reload it)" if roster is not None else "")
         return render_template("_status.html",
-                               message=f"Unknown pulse type {pulse_type!r}",
+                               message=f"Unknown pulse type {pulse_type!r}{hint}",
                                level="error"), 400
+
+    # Never-silent env-compat gate (r15, docs/71 §2): with a roster installed,
+    # a class the selected env can NOT import writes a state that env will
+    # fail to Quam.load. The form pre-confirms and re-submits with force=1;
+    # this 409 is the backstop for un-wired callers.
+    if (roster is not None and spec.key not in roster
+            and request.form.get("force") != "1"):
+        return render_template(
+            "_status.html",
+            message=(f"{spec.key} is not importable in the selected "
+                     "environment — a state carrying it will not Quam.load "
+                     "there. Re-submit with force=1 to create it anyway "
+                     "(the form asks for this confirmation automatically)."),
+            level="error"), 409
 
     # Optional explicit class path (the create form surfaces the derived one
     # as an editable field). The LEAF must equal the chosen spec — otherwise
