@@ -448,3 +448,20 @@ class TestVersionResolution:
 
         monkeypatch.setattr(builtins, "__import__", _fake_import)
         assert cli._resolve_version() == "0.0.0+unknown"   # graceful, no crash
+
+
+def test_cli_output_strings_are_ascii():
+    """r16 follow-up: a cp949 (Korean-Windows default) console can't encode
+    an em-dash — the serve/browser banners raised UnicodeEncodeError and the
+    server DIED before binding the port on a fresh `pip install` + `qsm
+    serve`. Every typer.echo literal must stay ASCII."""
+    import re
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent
+           / "quam_state_manager" / "cli.py").read_text(encoding="utf-8")
+    offenders = []
+    for m in re.finditer(r'typer\.echo\(\s*(f?"[^"]*")', src):
+        lit = m.group(1)
+        if any(ord(c) > 127 for c in lit):
+            offenders.append(lit)
+    assert not offenders, offenders

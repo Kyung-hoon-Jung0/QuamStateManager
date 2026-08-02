@@ -157,7 +157,10 @@ def serve(
     """
     from quam_state_manager.web.app import create_app
 
-    typer.echo(f"QUAM State Manager — open  http://{host}:{port}   (Ctrl+C to quit)")
+    # ASCII-only banner: a cp949/legacy-codepage console (Korean/Japanese
+    # Windows default) can't encode an em-dash — typer.echo then raised
+    # UnicodeEncodeError and  DIED before binding the port.
+    typer.echo(f"QUAM State Manager - open  http://{host}:{port}   (Ctrl+C to quit)")
     create_app().run(host=host, port=port, debug=debug)
 
 
@@ -186,7 +189,7 @@ def browser(
     from quam_state_manager.web.app import create_app
 
     url = f"http://{host}:{port}"
-    typer.echo(f"QUAM State Manager — opening  {url}   (Ctrl+C to quit)")
+    typer.echo(f"QUAM State Manager - opening  {url}   (Ctrl+C to quit)")
 
     if not no_open:
         # Open after a short delay so the server is accepting connections.
