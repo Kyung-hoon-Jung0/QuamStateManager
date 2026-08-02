@@ -145,3 +145,26 @@ live_replace, live_drift, dataset_load_state, state_history) 122 green;
 web slice (test_web, predelivery_audit_fixes, all_values_route,
 column_history) 544 green; ctrlz/tab-focus/bulk-search/all-values selfchecks
 green.
+
+## Amendment (2026-08-03, r16 ⑥ — apply-to-live hardening)
+
+Customer report: "apply to live sometimes doesn't reflect on the chip." A
+ranked audit of every silent-failure path, and what changed:
+
+| # | path | verdict |
+|---|------|---------|
+| a | `needs_confirm` declined/suppressed → silent return | **FIXED** — explicit "Cancelled — nothing was changed." toast |
+| b | stale tray `data-*` → "Nothing to apply" WITHOUT asking the server | **FIXED** — `applyEditsToLive` re-checks via the new `GET /state/tray` (server truth), re-routes once, only then no-op-toasts (one recheck, no loop) |
+| c | no post-apply verification (applied_hash computed from SOURCE bytes) | **FIXED** — `working_copy.apply_to_live` re-reads the live pair after the write and compares content; a mismatch raises an honest `LiveFileError` ("another program wrote during the apply / path redirected — re-sync; your edits are still in the working copy") and the synced state is NOT advanced |
+| d | bookkeeping raced a concurrent `/load`: `_set_working_dirty(False)` / post-apply snapshot / cache invalidate hit the ACTIVE ctx, not the captured one → wrong chip's dirty flag cleared, wrong chip snapshotted | **FIXED** — all five `_set_working_dirty` call sites, both post-apply `check_and_snapshot` sites (+ the post-sync one) and the replay `_invalidate_engine_cache` are ctx-pinned |
+| e | pull+replay drops an edit (`failed` list) | already surfaced (warning toast + summary); unchanged |
+| f | deliberate no-refresh after a clean apply | unchanged (the blink/freeze trade-off stands; replay-failed / pulled-other still refresh) |
+| g | meta-write fails AFTER live was written → "Apply failed" but live IS updated | messages already distinct; unexpected exception classes now answer honestly (`except Exception` → "Apply to live failed unexpectedly: <type>: <msg>") instead of a raw 500 htmx drops |
+| h | staleness gates (unreadable live ⇒ proceed; diverged-banner suppression) | documented, unchanged this round — the (c) verification now backstops the worst case |
+| i | user-error pattern: editing while an experiment loops saves every few seconds | not an SM bug — the (c) verification now REPORTS the race instead of claiming success |
+
+Pinned by `tests/test_working_copy.py` (misdirected-write verification raises
++ synced state frozen; clean-write verify passes),
+`tests/test_web.py::TestApplyHardeningR16` (`/state/tray`, ctx-pin spy,
+honest unexpected-failure answer) and `tests/apply_ux_selfcheck.cjs` (A1–A3)
++ driver.

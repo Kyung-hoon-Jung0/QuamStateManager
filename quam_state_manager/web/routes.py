@@ -8626,6 +8626,14 @@ def save():
     return tray + "\n" + f'<div id="status-bar" hx-swap-oob="innerHTML">{toast}</div>'
 
 
+@bp.route("/state/tray")
+def state_tray():
+    """Current Review tray fragment (r16 6): applyEditsToLive re-checks the
+    SERVER before declaring 'nothing to apply' — the tray's data-* attributes
+    can go stale when an OOB swap was missed."""
+    return _tray_html()
+
+
 @bp.route("/undo", methods=["POST"])
 def undo():
     modifier = _modifier()
@@ -9219,7 +9227,7 @@ def state_sync():
             _rebuild_after_working_copy_replaced(ctx)   # the pull consumed the change
             if mode in ("reapply", "apply") and pending:
                 replay = _replay_updates(ctx["modifier"], pending)
-                _invalidate_engine_cache()   # replay used _defer_hooks — refresh caches
+                _invalidate_engine_cache(ctx)  # replay used _defer_hooks — refresh caches (ctx-pinned, r16 6)
                 ctx["working_dirty"] = False  # edits unsaved in the change log, not saved
     except FileNotFoundError:
         return jsonify({"status": "error", "message": "Live state folder not found"}), 404
@@ -9238,8 +9246,8 @@ def state_sync():
 
     # Record a Param History snapshot of the now-current live state.
     try:
-        _history().check_and_snapshot(_active_path(), "auto",
-                                      project=_scope_for(_active_path(), _active_ctx()))
+        _history().check_and_snapshot(ctx["path"], "auto",
+                                      project=_scope_for(ctx["path"], ctx))
     except Exception:
         logger.warning("History snapshot after sync failed", exc_info=True)
     return jsonify({
@@ -9286,7 +9294,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False):
                     "close any program that has state.json open and retry."
                 ),
             }), 500
-        _set_working_dirty(True)
+        _set_working_dirty(True, ctx)
 
     # docs/20 v2 "Revert last apply": capture the PRE-apply live content.
     # audit-r10: pinned to the CAPTURED ctx (a concurrent /load must never
@@ -9329,8 +9337,13 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False):
         })
     except (OSError, ValueError) as exc:
         return jsonify({"status": "error", "message": f"Apply to live failed: {exc}"}), 500
+    except Exception as exc:  # noqa: BLE001 — r16 6: honest message, never a dropped 500
+        logger.exception("apply-to-live (sync) unexpected failure")
+        return jsonify({"status": "error",
+                        "message": f"Apply to live failed unexpectedly: "
+                                   f"{type(exc).__name__}: {exc}"}), 500
 
-    _set_working_dirty(False)
+    _set_working_dirty(False, ctx)
     ctx["staged_base"] = False   # the staged content reached live (audit-r10)
     _clear_reapply(ctx)  # edits are on the live chip now — nothing left to re-apply
     ctx["live_diverged"] = False  # live now holds the merged working content
@@ -9353,9 +9366,9 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False):
     # + self-healing. Synchronous under TESTING for deterministic assertions.
     try:
         _history().check_and_snapshot(
-            _active_path(), "save",
+            ctx["path"], "save",
             defer_index=not current_app.config.get("TESTING"),
-            project=_scope_for(_active_path(), _active_ctx()))
+            project=_scope_for(ctx["path"], ctx))
     except Exception:
         logger.warning("History snapshot after pull-apply failed", exc_info=True)
     return jsonify({
@@ -9413,7 +9426,7 @@ def state_apply_to_live():
                 ),
                 level="error",
             ), 500
-        _set_working_dirty(True)
+        _set_working_dirty(True, ctx)
 
     # docs/20 v2 "Revert last apply": capture the PRE-apply live content.
     # audit-r10: ctx-pinned + content-matched fallback (see the sync twin —
@@ -9444,8 +9457,14 @@ def state_apply_to_live():
                  or not ctx.get("pending_reapply")))
     except (OSError, ValueError) as exc:
         return render_template("_status.html", message=f"Apply to live failed: {exc}", level="error"), 500
+    except Exception as exc:  # noqa: BLE001 — r16 6: honest message, never a dropped 500
+        logger.exception("apply-to-live unexpected failure")
+        return render_template(
+            "_status.html", level="error",
+            message=f"Apply to live failed unexpectedly: "
+                    f"{type(exc).__name__}: {exc}"), 500
 
-    _set_working_dirty(False)
+    _set_working_dirty(False, ctx)
     ctx["staged_base"] = False   # the staged content reached live (audit-r10)
     _clear_reapply(ctx)  # the edits are now on the live chip — nothing left to re-apply
     ctx["live_diverged"] = False  # live now holds the working content (incl. force)
@@ -9464,9 +9483,9 @@ def state_apply_to_live():
     # see the pull-apply path above for the full rationale.
     try:
         _history().check_and_snapshot(
-            _active_path(), "save",
+            ctx["path"], "save",
             defer_index=not current_app.config.get("TESTING"),
-            project=_scope_for(_active_path(), _active_ctx()))
+            project=_scope_for(ctx["path"], ctx))
     except Exception:
         logger.warning("History snapshot after apply failed", exc_info=True)
     toast = render_template(

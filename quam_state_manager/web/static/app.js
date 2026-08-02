@@ -2224,6 +2224,10 @@ window.doStateSync = function(mode, forced) {
                 if (window.confirm((data.message || "Overwrite the working state?")
                                    + "\n\nContinue and discard it?")) {
                     setTimeout(function() { window.doStateSync(mode, true); }, 0);
+                } else if (window.showToast) {
+                    // r16 ⑥: a declined confirm used to end SILENTLY — the
+                    // click looked accepted while nothing happened.
+                    window.showToast("Cancelled — nothing was changed.", "info");
                 }
                 return;
             }
@@ -2380,6 +2384,28 @@ window.applyEditsToLive = function () {
     }
     if (cc > 0) {
         if (window.doStateSync) window.doStateSync("apply");
+        return;
+    }
+    // r16 ⑥: the tray's data-* can be STALE (a missed OOB swap) — "nothing
+    // to apply" was declared from them without ever asking the server, so a
+    // real pending edit silently never reached the live chip. Re-fetch the
+    // tray (server truth), re-route ONCE on fresh attributes, and only then
+    // report the honest no-op.
+    if (window.htmx && !window._applyRecheck) {
+        window._applyRecheck = true;
+        htmx.ajax("GET", "/state/tray", {
+            target: "#pending-tray", swap: "outerHTML"
+        }).then(function () {
+            try {
+                var t2 = document.getElementById("pending-tray");
+                var cc2 = t2 ? parseInt(t2.getAttribute("data-change-count") || "0", 10) : 0;
+                var dirty2 = !!(t2 && t2.getAttribute("data-working-dirty") === "1");
+                if (dirty2 || cc2 > 0) { window.applyEditsToLive(); return; }
+                if (window.showToast) {
+                    window.showToast("Nothing to apply — your edits already match the live chip.", "info");
+                }
+            } finally { window._applyRecheck = false; }
+        }, function () { window._applyRecheck = false; });
     } else if (window.showToast) {
         window.showToast("Nothing to apply — your edits already match the live chip.", "info");
     }
