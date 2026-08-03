@@ -2784,22 +2784,234 @@ document.addEventListener("cellsReverted", function(evt) {
     if (window.UndoNav) window.UndoNav.handle(d.entries || []);
 });
 
+/* ------------------------------------------------------------------ */
+/* Inline-edit commit plumbing (Pulses detail, Qubit/Pair inspector)    */
+/* ------------------------------------------------------------------ */
+/* One commit = POST → the whole #inspector-pane re-renders. Three things
+   must hold across that swap or the surface feels broken (docs/75):
+     1. the swap REMOVES the focused input, which fires focusout on it —
+        that must not re-submit the form that is still committing,
+     2. an htmx-owned form must never fall back to a NATIVE submission,
+     3. focus, caret and panel scroll must survive, so the next keystroke
+        lands where the user is looking.
+   Pinned by tests/pulses_commit_selfcheck.cjs. */
+window.InlineCommit = (function () {
+    var INLINE_SEL = 'form.inline-edit input[name="value"]';
+    var RESTORE_TTL_MS = 5000;
+    // The pane keeps growing after the swap (Plotly re-renders the waveform at
+    // +250ms and its newPlot resolves later still), so a single scrollTop write
+    // at settle time gets CLAMPED to the not-yet-final scrollHeight. Re-apply
+    // over the whole settling window instead of guessing one delay.
+    var RESTORE_PASSES_MS = [0, 120, 300, 600, 1000];
+    var FOCUSABLE = ['input:not([type="hidden"]):not([disabled])',
+                     'button:not([disabled])', 'select:not([disabled])',
+                     'textarea:not([disabled])', 'a[href]',
+                     '[tabindex]:not([tabindex="-1"])'].join(",");
+    var pending = null;
+    var userMoved = false;      // the user scrolled/clicked since the commit
+
+    /* htmx marks the requesting element with .htmx-request; we ALSO carry our
+       own flag so the in-flight window is detected even if htmx's bookkeeping
+       moves (the flag rides the element, which the swap discards anyway). */
+    function inFlight(form) {
+        return !!(form && ((form.classList && form.classList.contains("htmx-request"))
+                           || (form.dataset && form.dataset.committing === "1")));
+    }
+
+    function fieldKey(input) {
+        var form = input.closest && input.closest("form");
+        var dp = form && form.querySelector('input[name="dot_path"]');
+        if (dp && dp.value) return "dot:" + dp.value;
+        var p = input.getAttribute("data-param");
+        return p ? "param:" + p : null;
+    }
+
+    function findByKey(key) {
+        if (!key) return null;
+        var cut = key.indexOf(":");
+        var kind = key.slice(0, cut), val = key.slice(cut + 1);
+        var all = document.querySelectorAll(INLINE_SEL);
+        for (var i = 0; i < all.length; i++) {
+            var el = all[i];
+            if (kind === "param") {
+                if (el.getAttribute("data-param") === val) return el;
+            } else {
+                var f = el.closest("form");
+                var dp = f && f.querySelector('input[name="dot_path"]');
+                if (dp && dp.value === val) return el;
+            }
+        }
+        return null;
+    }
+
+    function scrollerOf(el) {
+        var n = el;
+        while (n && n !== document.body) {
+            if (n.scrollHeight > n.clientHeight + 4) return n;
+            n = n.parentElement;
+        }
+        return null;
+    }
+
+    function paneFocusables() {
+        var pane = document.getElementById("inspector-pane");
+        if (!pane) return [];
+        return Array.prototype.slice.call(pane.querySelectorAll(FOCUSABLE));
+    }
+
+    /* Called just before a commit. `nextEl === input` means the commit came
+       from Enter (focus stays put); anything else is where focus was heading
+       when the commit fired (Tab / click-away). Three restore modes:
+         key   — put focus back on the SAME field (Enter),
+         index — Tab moved on inside the pane: the re-render rebuilds the same
+                 structure, so the n-th focusable is the same control,
+         none  — focus left the pane entirely: restore the scroll, never yank
+                 focus back out of wherever the user went. */
+    function remember(input, nextEl) {
+        if (!input || !input.closest) return;
+        var mode = "none", key = null, idx = -1, caret = null;
+        if (nextEl === input) {
+            mode = "key";
+            key = fieldKey(input);
+            try { caret = input.selectionStart; } catch (e) { caret = null; }
+        } else if (nextEl && nextEl.nodeType === 1) {
+            var pane = document.getElementById("inspector-pane");
+            if (pane && pane.contains(nextEl)) {
+                idx = paneFocusables().indexOf(nextEl);
+                if (idx >= 0) mode = "index";
+            }
+        }
+        var sc = scrollerOf(input);
+        userMoved = false;
+        pending = { mode: mode, key: key, idx: idx, caret: caret,
+                    scroller: sc, scrollTop: sc ? sc.scrollTop : null,
+                    ts: Date.now() };
+    }
+
+    function restore(finalPass) {
+        if (!pending) return;
+        if (Date.now() - pending.ts > RESTORE_TTL_MS) { pending = null; return; }
+        var p = pending;
+        if (!userMoved && p.scroller && p.scroller.isConnected && p.scrollTop != null
+            && Math.abs(p.scroller.scrollTop - p.scrollTop) > 2) {
+            p.scroller.scrollTop = p.scrollTop;
+        }
+        // Only ever restore focus the SWAP took away (it lands on <body>);
+        // never steal focus the user has since moved somewhere real.
+        var a = document.activeElement;
+        if (p.mode !== "none" && (!a || a === document.body || a.tagName === "HTML")) {
+            var el = p.mode === "key" ? findByKey(p.key) : (paneFocusables()[p.idx] || null);
+            if (el) {
+                try { el.focus({ preventScroll: true }); } catch (e) { }
+                if (p.mode === "key" && el.setSelectionRange) {
+                    try {
+                        var pos = p.caret == null ? el.value.length
+                                                  : Math.min(p.caret, el.value.length);
+                        el.setSelectionRange(pos, pos);
+                    } catch (e) { /* non-text inputs have no selection range */ }
+                }
+            }
+        }
+        if (finalPass) pending = null;
+    }
+
+    function afterSwap() {
+        RESTORE_PASSES_MS.forEach(function (ms, i) {
+            var last = i === RESTORE_PASSES_MS.length - 1;
+            if (ms === 0) { restore(last); return; }
+            setTimeout(function () { restore(last); }, ms);
+        });
+    }
+
+    function noteUserScroll() { userMoved = true; }
+    /* A click/tap means the user has taken over — drop the pending restore
+       entirely, so a commit followed by opening ANOTHER pulse can never land
+       focus in the new pulse's same-named field (they would then be typing
+       into a parameter they never chose to edit). Ordering is safe: mousedown
+       fires BEFORE the focusout that records a click-away commit, so the
+       commit's own remember() still wins. */
+    function noteUserTakeover() { pending = null; userMoved = true; }
+    document.addEventListener("wheel", noteUserScroll, { passive: true });
+    document.addEventListener("touchstart", noteUserTakeover, { passive: true });
+    document.addEventListener("mousedown", noteUserTakeover, true);
+    document.addEventListener("keydown", function (e) {
+        if (e.key === "PageUp" || e.key === "PageDown"
+            || e.key === "Home" || e.key === "End") userMoved = true;
+    }, true);
+
+    return { inFlight: inFlight, remember: remember, restore: restore,
+             afterSwap: afterSwap, _key: fieldKey, _find: findByKey,
+             _focusables: paneFocusables,
+             _pending: function () { return pending; } };
+})();
+
+document.addEventListener("htmx:beforeRequest", function (evt) {
+    var elt = evt.detail && evt.detail.elt;
+    if (elt && elt.matches && elt.matches("form.inline-edit") && elt.dataset) {
+        elt.dataset.committing = "1";
+    }
+});
+document.addEventListener("htmx:afterRequest", function (evt) {
+    var elt = evt.detail && evt.detail.elt;
+    if (elt && elt.dataset && elt.dataset.committing) delete elt.dataset.committing;
+});
+document.addEventListener("htmx:afterSettle", function (evt) {
+    if (evt.target && evt.target.id === "inspector-pane") window.InlineCommit.afterSwap();
+});
+
+/* An htmx-owned form must NEVER perform the browser's native submission.
+   htmx prevents the default action whenever it issues the request — but when
+   it DECLINES one (a duplicate while the same form is in flight is dropped by
+   hx-sync's default) the event's default action survives, and the browser then
+   navigates to the current URL with the form fields as a query string. On
+   Pulses that showed up as the "Leave site?" prompt (or, with nothing unsaved,
+   a silent full-page reload that closed the inspector). Bubble phase: htmx's
+   own listener has already run, so this only ever covers the declined case. */
+document.addEventListener("submit", function (evt) {
+    if (!window.htmx) return;          // no htmx ⇒ native submit is the fallback
+    var f = evt.target;
+    if (!f || !f.getAttribute) return;
+    if (f.getAttribute("hx-post") || f.getAttribute("hx-get")
+        || f.getAttribute("data-hx-post") || f.getAttribute("data-hx-get")) {
+        evt.preventDefault();
+    }
+});
+
+/* Enter commits the field it is typed in — remember where focus (and the
+   panel's scroll) must come back to once the re-render lands. Capture phase:
+   this must run before htmx turns the implicit submission into a request. */
+document.addEventListener("keydown", function (evt) {
+    if (evt.key !== "Enter") return;
+    var input = evt.target;
+    if (!input || !input.matches || !input.matches('form.inline-edit input[name="value"]')) return;
+    var form = input.closest("form");
+    if (form && window.InlineCommit.inFlight(form)) return;
+    window.InlineCommit.remember(input, input);
+}, true);
+
 // Tab / click-away COMMITS the inline-edit forms (Pulses detail, Qubit/Pair
 // inspector) like Enter. These forms re-render #inspector-pane on commit — same
 // as Enter — so tabbing to the next field re-renders the pane; the value is still
-// committed (the reported pain: "clicked away, my edit was lost"). focusout does
-// NOT fire on Enter (Enter never blurs the input), so there's no double-submit.
+// committed (the reported pain: "clicked away, my edit was lost").
 // The baseline guard skips unchanged values (and Escape-restores) so a bare
 // click-away with no edit is a no-op — the server never no-ops set_value.
+//
+// The in-flight guard is load-bearing, not defensive: Enter's OWN response
+// swaps #inspector-pane, and removing the focused input fires focusout on it
+// with the typed (≠ data-committed) value still in place. Re-submitting from
+// there double-commits AND — because htmx drops the duplicate without
+// preventing the default action — hands the browser a native form submission.
 document.addEventListener("focusout", function(evt) {
     var input = evt.target;
     if (!input || !input.matches
         || !input.matches('form.inline-edit input[name="value"]')) return;
     var form = input.closest("form");
     if (!form || !form.isConnected || !form.requestSubmit) return;
+    if (window.InlineCommit.inFlight(form)) return;   // the swap's own focusout
     var baseline = input.hasAttribute("data-committed")
         ? input.getAttribute("data-committed") : input.defaultValue;
     if (input.value === baseline) return;   // unchanged → don't commit/reswap
+    window.InlineCommit.remember(input, evt.relatedTarget);
     form.requestSubmit();
 });
 

@@ -70,10 +70,13 @@
 
 {# On pulses-changed, JS rebuilds the hx-get URL from live DOM state
    (search input + active channel badge) so a mutation refresh never stales
-   the search/filter context — see pulsesRefreshUrl() in app.js. #}
+   the search/filter context — see pulsesRefreshUrl() in app.js.
+   delay: debounces (htmx restarts the countdown on every new event), so a
+   run of per-field commits refetches the whole row set ONCE instead of once
+   per keystroke-commit — the table flicker the user reported (docs/75). #}
 <div id="pulses-rows-wrap"
      hx-get="/pulses?rows=1&channel={{ active_channel }}&per_page={{ per_page }}{{ ('&q=' ~ (active_query | urlencode)) if active_query else '' }}"
-     hx-trigger="pulses-changed from:body"
+     hx-trigger="pulses-changed from:body delay:400ms"
      hx-swap="innerHTML">
 {% include '_pulse_rows.html' %}
 </div>

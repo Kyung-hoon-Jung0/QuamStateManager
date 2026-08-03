@@ -129,3 +129,22 @@ quam_builder layouts.)
   schema-fixed).
 - `WaveformPulse` arrays edit as comma-separated text.
 - Sparklines are synthesized per page render (bounded by pagination).
+
+---
+
+## Amendment (2026-08-04) — commit stability
+
+The instant per-field commit model described above (Enter/Tab → `/pulse/edit`
+→ full detail re-render + tray OOB) had a latent defect from the first
+commit: the re-render removes the focused input, the resulting `focusout`
+re-submitted the still-in-flight form, htmx dropped the duplicate without
+preventing the event's default action, and the browser performed the form's
+native submission — a full-page navigation carrying the edit in the query
+string ("사이트에서 나갈까요?" / a silent reload), with focus left on `<body>`
+so the next Enter did nothing.
+
+Fixed in `fix/pulses-commit-stability`: in-flight guard, an app-wide armor
+that stops any `hx-post`/`hx-get` form from submitting natively, and
+focus/caret/scroll restoration across the re-render, plus debounced
+post-commit refreshes. Full analysis, measurements and the verification
+matrix: **`docs/75_inline_commit_stability.md`**.

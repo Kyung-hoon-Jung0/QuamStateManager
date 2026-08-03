@@ -69,6 +69,8 @@ class TestCleanApplyPreservesSurface:
         m = re.search(r'<div id="pulses-rows-wrap"[^>]*>', tpl)
         assert m, "pulses-rows-wrap element not found"
         block = m.group(0)
-        assert 'hx-trigger="pulses-changed from:body"' in block
+        # docs/75 added a debounce modifier — the trigger EVENT and source must
+        # stay put, the delay is free to change.
+        assert re.search(r'hx-trigger="pulses-changed from:body[^"]*"', block), block
         assert 'hx-swap="innerHTML"' in block
         assert "inspector-pane" not in block  # the REFRESH element doesn't touch it
