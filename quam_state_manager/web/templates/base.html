@@ -122,9 +122,13 @@
                 {# Always-on diagnostics health badge for the active chip. Lazily
                    loaded (load + diagnostics-changed); shows "✓ healthy" or
                    "⚠ N issues" and opens /diagnostics. Empty when no chip. #}
+                {# delay: debounces the post-edit refresh — instant per-field
+                   commits (Pulses, inspector rows) fire diagnostics-changed on
+                   every commit, and re-running the health probe per keystroke
+                   is the "refreshes constantly" churn (docs/75). #}
                 <li id="diag-tray-slot" class="diag-tray-slot"
                     hx-get="/diagnostics/summary"
-                    hx-trigger="load, diagnostics-changed from:body"
+                    hx-trigger="load, diagnostics-changed from:body delay:500ms"
                     hx-swap="innerHTML"></li>
                 {# Global "import in progress" pill. Hidden by default; revealed
                    when /param-history/backfill/status reports running, regardless
@@ -288,7 +292,7 @@
        chip load / switch — and on the diagnostics-changed event after edits. #}
     <div id="diagnostics-banner-slot"
          hx-get="/diagnostics/banner"
-         hx-trigger="load, diagnostics-changed from:body"
+         hx-trigger="load, diagnostics-changed from:body delay:500ms"
          hx-swap="innerHTML"></div>
     <div class="app-layout">
         <aside id="sidebar">
