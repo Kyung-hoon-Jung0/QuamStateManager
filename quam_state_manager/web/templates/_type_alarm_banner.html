@@ -11,6 +11,12 @@
     (e.g. <code>{{ type_alarm.first }}</code>) — usually an external state
     regeneration. SM edits keep text until the type is converted.
   </span>
+  {# docs/77: the repair itself, one click away — SM shows what it proposes
+     for every field and converts only after the user confirms. Primary
+     action: nobody wants to retype 40 values by hand. #}
+  <button type="button" class="btn-sm primary"
+          onclick="window.openTypeFixPlan && window.openTypeFixPlan()"
+          title="Show what SM would store instead, then convert the ones you confirm">Fix {{ type_alarm.count }} value{{ 's' if type_alarm.count != 1 }}&hellip;</button>
   <button type="button" class="btn-sm" data-path="{{ type_alarm.first }}"
           onclick="window._navigateToExplorerPath && window._navigateToExplorerPath(this.getAttribute('data-path'))"
           title="Open the Json Tree View at the first offending field">Show in Json Tree View</button>

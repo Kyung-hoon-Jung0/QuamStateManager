@@ -1,0 +1,103 @@
+{# One-click repair for numbers stored as TEXT — the confirmation step (docs/77).
+
+   Doctrine: SM proposes, the user confirms. Every convertible field is listed
+   with what it holds NOW and what it would hold instead, and every field SM
+   REFUSED to convert is listed too, with the reason — a fix that quietly
+   skipped half the anomalies would be worse than no fix at all. Nothing is
+   written until the button below is pressed, and what it writes goes to the
+   working copy (Review → Save / Apply as usual), never straight to the live
+   chip. #}
+<div class="tfx-card" role="dialog" aria-modal="true" aria-labelledby="tfx-title"
+     data-sig="{{ plan.sig }}">
+  <div class="ch-head">
+    <span class="ch-title" id="tfx-title">Fix values stored as text</span>
+    <button type="button" class="ch-close" title="Close (Esc)"
+            onclick="window.closeTypeFixPlan()">&times;</button>
+  </div>
+
+  {% if not plan.rows and not plan.skipped %}
+  <p class="tfx-none">Nothing to fix — every numeric value on this chip is
+     stored as a number.</p>
+  {% else %}
+
+  {% if plan.rows %}
+  <p class="tfx-lead">
+    {{ plan.total }} value{{ 's' if plan.total != 1 }} {{ 'are' if plan.total != 1 else 'is' }}
+    stored as <strong>text</strong>. SM will store the same number as a real
+    number and remember the field's type, so later edits keep it.
+    {% if plan.truncated %}
+    <span class="tfx-warn">Showing the first {{ plan.rows | length }};
+      {{ plan.hidden }} more will be listed after this batch.</span>
+    {% endif %}
+  </p>
+
+  <div class="ch-scroll">
+    <table class="ch-table tfx-table">
+      <thead>
+        <tr>
+          <th class="tfx-selcol">
+            <input type="checkbox" id="tfx-all" checked
+                   aria-label="Select every field"
+                   onclick="window.typeFixToggleAll(this)">
+          </th>
+          <th>field</th>
+          <th>stored now</th>
+          <th></th>
+          <th>becomes</th>
+          <th>type</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in plan.rows %}
+        <tr class="tfx-row">
+          <td class="tfx-selcol">
+            <input type="checkbox" class="tfx-pick" checked
+                   data-path="{{ r.path }}"
+                   aria-label="Convert {{ r.path }}"
+                   onclick="window.typeFixCount()">
+          </td>
+          <td class="tfx-path"><code>{{ r.path }}</code></td>
+          <td class="tfx-old"><code class="tfx-text">{{ r.current_display }}</code></td>
+          <td class="tfx-arrow" aria-hidden="true">&rarr;</td>
+          <td class="tfx-new"><code>{{ r.proposed_display }}</code></td>
+          <td class="tfx-type"><span class="tfx-type-chip">{{ r.proposed_type }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="tfx-lead">SM found values stored as text, but none of them can be
+     converted safely. They are listed below with the reason.</p>
+  {% endif %}
+
+  {% if plan.skipped %}
+  <details class="tfx-skipped">
+    <summary>{{ plan.skipped | length }} value{{ 's' if plan.skipped | length != 1 }}
+      left alone &mdash; SM will not guess at {{ 'these' if plan.skipped | length != 1 else 'this one' }}</summary>
+    <table class="ch-table tfx-table tfx-table-skip">
+      <tbody>
+        {% for s in plan.skipped %}
+        <tr>
+          <td class="tfx-path"><code>{{ s.path }}</code></td>
+          <td class="tfx-old"><code class="tfx-text">{{ s.current_display }}</code></td>
+          <td class="tfx-why muted">{{ s.reason }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </details>
+  {% endif %}
+  {% endif %}
+
+  <div class="tfx-actions">
+    {% if plan.rows %}
+    <button type="button" class="cnb-set" id="tfx-apply"
+            onclick="window.typeFixApply(this)">Convert <span id="tfx-count">{{ plan.rows | length }}</span> field(s)</button>
+    {% endif %}
+    <button type="button" class="cnb-no" onclick="window.closeTypeFixPlan()">Cancel</button>
+    <span class="tfx-note muted">Staged into the working copy — review in the
+      tray, then Save / Apply to live as usual.</span>
+  </div>
+  <div class="tfx-error" hidden></div>
+</div>

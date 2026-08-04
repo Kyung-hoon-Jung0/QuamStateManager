@@ -2075,6 +2075,123 @@ def type_alarm_dismiss():
     return ""
 
 
+@bp.route("/type-fix/plan")
+def type_fix_plan():
+    """Preview the one-click repair for numbers stored as TEXT (docs/77).
+
+    Answers "what would SM change?" before anything is written: one row per
+    convertible leaf with what is stored now, what it becomes and the
+    resulting type, plus the leaves SM refuses to guess at, each with a
+    reason. Read-only — the user still has to press the button.
+    """
+    ctx = _active_ctx()
+    store = (ctx or {}).get("store")
+    if store is None:
+        return render_template("_status.html", message="No state loaded",
+                               level="warning")
+    from quam_state_manager.core import type_fix as _tf
+    plan = _tf.build_plan(store)
+    return render_template("_type_fix_plan.html", plan=plan)
+
+
+@bp.route("/type-fix/apply", methods=["POST"])
+def type_fix_apply():
+    """Convert the selected stored-as-text values, in ONE change group.
+
+    Safety: the plan is re-derived here and its signature compared with the
+    one the preview was rendered from — a fix computed against a different
+    chip state is refused rather than applied to the wrong leaves (the same
+    doctrine as the diagnostics one-click fix). Writes go to the WORKING COPY
+    only; the user reviews them in the tray and Saves/Applies as usual.
+    """
+    ctx = _active_ctx()
+    store = (ctx or {}).get("store")
+    modifier = (ctx or {}).get("modifier")
+    if store is None or modifier is None:
+        return jsonify(ok=False, error="No state loaded"), 400
+
+    payload = request.get_json(silent=True) or {}
+    want = [str(p) for p in (payload.get("paths") or [])]
+    sig = (payload.get("sig") or "").strip()
+    if not want:
+        return jsonify(ok=False, error="Nothing selected."), 400
+
+    from quam_state_manager.core import type_fix as _tf
+    from quam_state_manager.core import type_policy as _tp
+
+    plan = _tf.build_plan(store)
+    if sig and sig != plan["sig"]:
+        return jsonify(
+            ok=False, error_kind="stale_plan",
+            error=("The chip changed since this list was built — reopen the "
+                   "fix dialog so you confirm what is actually there now."),
+        ), 409
+
+    by_path = {r["path"]: r for r in plan["rows"]}
+    rows = [by_path[p] for p in want if p in by_path]
+    unknown = [p for p in want if p not in by_path]
+    if not rows:
+        return jsonify(ok=False, error="None of the selected fields are "
+                                       "convertible any more.", unknown=unknown), 409
+
+    # 1. Persist the user type assignment FIRST for every row that needs one:
+    #    without an enforced expectation the modifier's legacy coercion would
+    #    faithfully cast the number back to the old value's string type.
+    inst = current_app.instance_path
+    assigned: list[str] = []
+    failures: list[dict] = []
+    for r in rows:
+        if not r["needs_assignment"]:
+            continue
+        try:
+            _tp.save_assignment(inst, ctx["path"], r["path"], {
+                "type": r["proposed_type"],
+                "override_env": False,
+                "note": "auto-corrected from text (docs/77)",
+            })
+            assigned.append(r["path"])
+        except (ValueError, OSError) as exc:
+            failures.append({"path": r["path"], "error": str(exc)})
+    if assigned:
+        _attach_type_policy(ctx, inst)
+
+    # 2. One change GROUP so the whole repair is a single Ctrl+Z.
+    gid = modifier.new_group_id() if len(rows) > 1 else None
+    applied: list = []
+    converted: list[dict] = []
+    for r in rows:
+        if any(f["path"] == r["path"] for f in failures):
+            continue
+        try:
+            entry = modifier.set_value(r["path"], r["proposed_value"],
+                                       group_id=gid, _defer_hooks=True)
+            applied.append(entry)
+            converted.append({"path": r["path"],
+                              "value": r["proposed_value"],
+                              "type": r["proposed_type"]})
+        except Exception as exc:  # noqa: BLE001 — report, never half-report
+            modifier._rollback(applied)
+            return jsonify(
+                ok=False, error=f"{r['path']}: {exc}",
+                error_kind="write_failed",
+                note="No fields were changed — the whole repair was rolled back.",
+            ), 400
+    if applied:
+        # Hooks once for the whole group (mirrors modifier.batch_set and the
+        # /field/edit-batch epilogue, so per-entry hooks aren't duplicated).
+        modifier.store._clear_pointer_cache()
+        if modifier.store.search_index is not None:
+            for entry in applied:
+                modifier.store.search_index.update_entry(entry.dot_path,
+                                                         entry.new_value)
+        _set_working_dirty(True, ctx)
+        _invalidate_engine_cache(ctx)
+
+    return jsonify(ok=True, converted=converted, count=len(converted),
+                   failures=failures, unknown=unknown,
+                   tray_html=_tray_html())
+
+
 def _write_datafolder_memo(token: str, ctx: dict | None) -> None:
     with _chip_prompt_memo_lock:
         data = _load_chip_prompt_memo()

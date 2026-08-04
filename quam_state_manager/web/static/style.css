@@ -9611,6 +9611,46 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .fh-chart { margin: 0 0 .3rem; min-height: 128px; }
 
 /* ── Column History panel + LiveEditUndo (docs/20 v2) ─────────────────── */
+/* ── Stored-as-text auto-correction dialog (docs/77) ──────────────────────
+   Rides the shared .ch-overlay / .ch-card modal chrome; only the plan table
+   and its "what SM will not touch" section are specific here. */
+.tfx-host { padding: 0; background: none; box-shadow: none; }
+.tfx-card {
+    background: var(--pico-card-background-color);
+    border-radius: 12px; padding: .8rem 1rem .7rem;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+    width: min(920px, 94vw); max-height: 82vh;
+    display: flex; flex-direction: column; font-size: .82rem;
+}
+.tfx-lead { margin: .1rem 0 .5rem; line-height: 1.45; }
+.tfx-none { margin: .4rem 0 .6rem; color: var(--color-text-muted); }
+.tfx-warn { color: var(--color-warning-text); }
+.tfx-table td, .tfx-table th { vertical-align: baseline; }
+.tfx-selcol { width: 1.6rem; text-align: center; }
+.tfx-selcol input { margin: 0; }
+.tfx-path code { background: none; padding: 0; font-size: .78rem; }
+.tfx-old code, .tfx-new code { background: none; padding: 0; font-size: .8rem; }
+/* the quoted text form is the anomaly — colour it like every other
+   stored-as-text display in SM (bulk cells, All values) */
+.tfx-text { color: var(--color-warning-text); }
+.tfx-arrow { color: var(--color-text-muted); padding: 0 .1rem; }
+.tfx-new code { font-weight: 600; }
+.tfx-type-chip {
+    font-family: var(--font-mono); font-size: .68rem; padding: .02rem .3rem;
+    border: 1px solid var(--pico-muted-border-color); border-radius: .4rem;
+    color: var(--color-text-muted);
+}
+.tfx-skipped { margin: .5rem 0 .2rem; }
+.tfx-skipped summary { cursor: pointer; color: var(--color-text-muted);
+    font-size: .76rem; }
+.tfx-table-skip { margin-top: .3rem; }
+.tfx-why { white-space: normal; font-size: .74rem; }
+.tfx-actions { display: flex; align-items: center; gap: .5rem;
+    margin-top: .6rem; flex-wrap: wrap; }
+.tfx-note { font-size: .72rem; }
+.tfx-error { margin-top: .4rem; color: var(--color-danger-text, #c0392b);
+    font-size: .76rem; white-space: normal; }
+
 .ch-overlay {
     position: fixed; inset: 0; z-index: 9550;
     display: flex; align-items: center; justify-content: center;
