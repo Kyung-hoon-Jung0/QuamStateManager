@@ -221,6 +221,37 @@ class TestNeverSilent:
             "value": "0.45"})
         assert r.status_code == 200 and r.get_json()["ok"]
 
+    def test_comp_batch_with_unrelated_row_is_one_undo_group(self, env):
+        """The plot popup's Apply-All comp resend = FSP row + OTHER clicked
+        fields + the compensated amps in ONE batch → one gid, one Ctrl+Z."""
+        c, ctx = env["client"], env["ctx"]
+        base = [{"dot_path": _FSP, "value": "-6"},
+                {"dot_path": "qubits.qA1.xy.operations.x180.length",
+                 "value": "48"}]
+        r0 = c.post("/field/edit-batch", json={"updates": base,
+                                               "expect_chip": ""})
+        assert r0.status_code == 409
+        plan = r0.get_json()["fsp_compensation"]
+        updates = base + [{"dot_path": a["path"], "value": str(a["new"])}
+                          for a in plan["amps"]]
+        r = c.post("/field/edit-batch", json={
+            "updates": updates, "fsp_ack": "comp", "expect_chip": ""})
+        assert r.status_code == 200 and r.get_json()["ok"], r.get_json()
+        with ctx["store"]._lock:
+            st = ctx["store"].state
+            assert st["ports"]["mw_outputs"]["con1"]["1"]["1"][
+                "full_scale_power_dbm"] == -6
+            assert st["qubits"]["qA1"]["xy"]["operations"]["x180"][
+                "length"] == 48
+        assert c.post("/undo").status_code == 200          # ONE Ctrl+Z
+        assert len(ctx["store"].change_log) == 0
+        with ctx["store"]._lock:
+            st = ctx["store"].state
+            assert st["ports"]["mw_outputs"]["con1"]["1"]["1"][
+                "full_scale_power_dbm"] == 0
+            assert st["qubits"]["qA1"]["xy"]["operations"]["x180"][
+                "length"] == 40
+
     def test_js_wiring_pins(self):
         static = Path("quam_state_manager/web/static")
         app_js = (static / "app.js").read_text(encoding="utf-8")
@@ -232,3 +263,14 @@ class TestNeverSilent:
             js = (static / f).read_text(encoding="utf-8")
             assert "fsp_compensation" in js, f"{f} must offer the popup"
             assert "fsp_ack" in js
+        # docs/36 amendment: the plot-apply popup — BOTH handlers must route
+        # the r12 fsp 409 and the r14 type_fix 409 (they used to dead-end on
+        # the raw error string).
+        i1 = app_js.index("function applyPlotRow")
+        i2 = app_js.index("function applyAllPlotRows")
+        i3 = app_js.index("function _markPlotRowApplied")
+        for name, region in (("applyPlotRow", app_js[i1:i2]),
+                             ("applyAllPlotRows", app_js[i2:i3])):
+            for tok in ("fsp_compensation", "_openFspPopup", "fsp_ack",
+                        "_fspCompUpdates", "type_fix", "_confirmTypeFix"):
+                assert tok in region, f"{name} must handle the {tok} 409"

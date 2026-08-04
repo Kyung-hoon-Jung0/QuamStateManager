@@ -365,8 +365,10 @@ def test_state_sync_client_wiring():
     """The client half (tests/state_sync_selfcheck.cjs under jsdom): the
     needs_confirm confirm+force retry, the stateRestored surface-refresh
     bridge (with the dataset-detail inspector exemption), the plot-apply
-    popup closing after ONE successful apply, and the bulk toolbar
-    pointerdown stamp that stops the lost-click row-commit race."""
+    popup closing after ONE successful apply, the plot-apply FSP-409 →
+    _openFspPopup routing (comp resend with the amp rows / cancel keeps
+    rows pending with no error), and the bulk toolbar pointerdown stamp
+    that stops the lost-click row-commit race."""
     node = shutil.which("node")
     try:
         subprocess.run([node, "-e", "require('jsdom')"],
@@ -377,4 +379,4 @@ def test_state_sync_client_wiring():
         [node, str(Path(__file__).resolve().parent / "state_sync_selfcheck.cjs")],
         capture_output=True, text=True, timeout=120)
     assert res.returncode == 0, f"selfcheck failed:\n{res.stdout}\n{res.stderr}"
-    assert res.stdout.count("ok - ") >= 20, res.stdout
+    assert res.stdout.count("ok - ") >= 33, res.stdout
