@@ -88,3 +88,29 @@ zoom-corrected follow, grip label, sticky/enlarged monitor CSS) — driven by
 `tests/test_web.py::TestFontPresetsR15` (preset values + topbar labels in
 sync). The `_test` harness exports gained `openSlotMenu`/`hideSlotMenu`/
 `attachWiringDrag`/`uiZoom` (selfcheck-only, not public API).
+
+## Amendment (2026-08-04): port labels — chord-fit adaptive sizing
+
+The one wizard surface the px→em font work could not reach is the wiring
+diagram's port labels: they are inline SVG `font-size` attributes set by the
+shared renderer (`_appendPortCircle`, app.js), and the diagram geometry
+(circle radii, row pitch) is deliberately px-fixed — so preset tracking is
+the wrong tool there. Users instead reported the labels simply too small on
+control/z ports, where a circle always carries exactly ONE qubit.
+
+Fix: single-member circles (r ≥ 16 — output singles r=21, input singles
+r=17; multi-member feedline sub-circles are r ≤ 13 and unchanged at 7px)
+now size the label to the chord of the circle at the text band:
+`fontSize = clamp(floor(chord / (0.62·len)), 9, cap)` with `cap = 14`
+(output) / `11` (input), `chord = 2·√(r²−36)`. Short names get big type
+(`q1`–`qA12` → 14px, up from 10), longer names shrink toward the 9px floor
+instead of only truncating; `maxChars` for the big circles tightened 8 → 7
+so even the floor case stays inside the circle. The text baseline follows
+the size (`cy + round(fontSize·0.36)` — was a hardcoded `cy + 4`). Applies
+to every surface sharing the renderer: wizard wiring + populate steps,
+Instrument Wiring page, preview/compare.
+
+Pinned by `tests/wiring_portlabel_selfcheck.cjs` (renders the REAL
+`renderInstrumentWiring` under jsdom: single-member ≥ 12px, feedline 7px,
+width-containment guard per circle, and the `.iw-port`/`data-*` drag-drop
+DOM contract) — driven by `tests/test_gen_ux_selfchecks.py`.

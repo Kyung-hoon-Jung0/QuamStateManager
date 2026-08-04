@@ -9777,7 +9777,6 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .fsp-clipmark { color: var(--color-error-text); font-size: .72rem; }
 .fsp-skipped { margin: .2rem 0 0; font-size: .7rem; color: var(--color-text-muted); }
 .fsp-actions { display: flex; gap: .4rem; margin-top: .5rem; flex-wrap: wrap; }
-.fsp-actions .cnb-set, .fsp-actions .cnb-no { width: auto; }
 
 /* undo flash on a restored/filled cell */
 @keyframes leuFlash { 0% { background: var(--pico-primary); opacity: .35; }

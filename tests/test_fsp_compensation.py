@@ -274,3 +274,11 @@ class TestNeverSilent:
             for tok in ("fsp_compensation", "_openFspPopup", "fsp_ack",
                         "_fspCompUpdates", "type_fix", "_confirmTypeFix"):
                 assert tok in region, f"{name} must handle the {tok} 409"
+        # 2026-08-04: the popup's action row uses the global compact CTA
+        # family (one filled CTA, the rest restrained) — the cnb-* classes
+        # are banner-scoped and fell through to Pico defaults here.
+        j1 = app_js.index("window._openFspPopup = (function")
+        j2 = app_js.index("window._fspCompUpdates = function")
+        popup = app_js[j1:j2]
+        assert "btn-sync primary" in popup, "comp button must be the one filled CTA"
+        assert "cnb-" not in popup, "banner-scoped cnb-* classes are unstyled in the popup"

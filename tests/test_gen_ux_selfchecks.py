@@ -10,6 +10,12 @@
   body-appended cursor-following ghost (element · role label, zoom-corrected,
   removed on drop/Escape) and the docked monitor is bigger + sticky.
 
+- tests/wiring_portlabel_selfcheck.cjs — the shared port-circle renderer's
+  label sizing (2026-08-04): single-member circles (control/z/coupler,
+  single readout, input single) get chord-fit adaptive type (9-14px, short
+  names big), feedline sub-circles keep 7px, every label fits its circle,
+  and the iw-port drag-drop DOM contract survives.
+
 Skips without node + jsdom.
 """
 import shutil
@@ -40,3 +46,8 @@ def test_generate_slotmenu_selfcheck_passes():
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")
 def test_generate_dragghost_selfcheck_passes():
     _run("generate_dragghost_selfcheck.cjs")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")
+def test_wiring_portlabel_selfcheck_passes():
+    _run("wiring_portlabel_selfcheck.cjs")

@@ -600,9 +600,14 @@ never hang). Wired in the Explorer inline editor, both grids' `_applyCells`,
 All-values' `applyOne`, and the plot-apply popup's per-row + Apply All
 handlers (docs/36 amendment, 2026-08-03); un-wired callers get the honest
 409 `error` string instead of a silent failure. The diagnostics DAC linter re-runs
-after commit as the second net. Pinned by `tests/test_fsp_compensation.py`
-(plan traversal/factor/clip/range; the never-silent gates; the one-group
-undo; non-FSP paths unaffected; JS wiring pins).
+after commit as the second net. The popup's action row uses the global
+compact CTA family — `btn-sync primary` (comp, the one filled CTA) /
+`btn-sync` (solo) / `btn-sync outline` (Cancel) — since 2026-08-04; the
+`cnb-*` classes it originally borrowed are `.cnb-form`-scoped (chip-name
+banner) and fell through to Pico defaults inside the popup. Pinned by
+`tests/test_fsp_compensation.py` (plan traversal/factor/clip/range; the
+never-silent gates; the one-group undo; non-FSP paths unaffected; JS wiring
+pins incl. the button-class pin).
 
 ## Amendment r11 (2026-07-31): the cell 🕘 anchors to the VALUE TEXT
 
