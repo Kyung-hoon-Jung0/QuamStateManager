@@ -366,6 +366,12 @@
         if (!cell || !cell.classList.contains('bulk-cell-modified')) return;
         var newEl = td.querySelector('.bulk-ba-new');
         if (newEl) newEl.textContent = cell.value;
+        // docs/76: same Δ chip as the qubit grid.
+        var oldEl = td.querySelector('.bulk-ba-old');
+        var dEl = td.querySelector('.bulk-ba-delta');
+        if (dEl && oldEl && window.ValueDelta) {
+            window.ValueDelta.paint(dEl, oldEl.textContent, cell.value);
+        }
         td.classList.toggle('bulk-ba-show', show);
     }
 

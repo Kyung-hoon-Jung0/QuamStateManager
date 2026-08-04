@@ -2785,6 +2785,161 @@ document.addEventListener("cellsReverted", function(evt) {
 });
 
 /* ------------------------------------------------------------------ */
+/* Value delta (Δ) — the JS mirror of core/value_delta.py               */
+/* ------------------------------------------------------------------ */
+/* Every before→after surface shows old, new AND the difference (docs/76).
+   This is the client half; it must agree with the Python half character for
+   character — tests/test_value_delta.py feeds the same case table through
+   both and diffs the output.
+
+   The subtraction is EXACT DECIMAL arithmetic over BigInt, not float: in
+   binary floating point 5.2 - 5.1 is 0.10000000000000053, and showing that
+   as a researcher's "difference" is worse than showing nothing. Both sides
+   are parsed from their shortest round-tripping decimal spelling, so the
+   answer reads 0.1 — the number a physicist would have written down. */
+window.ValueDelta = (function () {
+    var GROUPED = /^[+-]?\d[\d,]*(\.\d+)?$/;
+    var DECIMAL = /^([+-]?)(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/;
+    var SCI_HIGH_EXP = 16;    // |v| >= 1e15  (mirrors _SCI_HIGH)
+    var SCI_LOW_EXP = -6;     // |v| <  1e-6  (mirrors _SCI_LOW)
+
+    /* -> {mant: BigInt, scale: int} with value = mant * 10^-scale, or null */
+    function parse(value) {
+        if (value === null || value === undefined || typeof value === "boolean") return null;
+        var s;
+        if (typeof value === "number") {
+            if (!isFinite(value)) return null;
+            s = String(value);                  // shortest round-tripping form
+        } else if (typeof value === "string") {
+            s = value.trim();
+            if (s.indexOf(",") >= 0 && GROUPED.test(s)) s = s.replace(/,/g, "");
+            if (!s) return null;
+        } else {
+            return null;                        // list / dict / anything else
+        }
+        var m = DECIMAL.exec(s);
+        if (!m) return null;
+        var frac = m[3] || "";
+        var exp = m[4] ? parseInt(m[4], 10) : 0;
+        var mant = BigInt(m[2] + frac);
+        if (m[1] === "-") mant = -mant;
+        return { mant: mant, scale: frac.length - exp };
+    }
+
+    function align(a, b) {
+        var s = Math.max(a.scale, b.scale);
+        var am = a.mant * pow10(s - a.scale);
+        var bm = b.mant * pow10(s - b.scale);
+        return { am: am, bm: bm, scale: s };
+    }
+    function pow10(n) {
+        var r = 1n;
+        for (var i = 0; i < n; i++) r *= 10n;
+        return r;
+    }
+    function toNumber(mant, scale) { return Number(mant.toString() + "e" + (-scale)); }
+
+    function padExp(s) { return s.replace(/[eE]([+-])(\d)$/, "e$10$2"); }
+
+    function groupInt(digits) {
+        return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    }
+
+    /* Format |mant * 10^-scale| exactly as core.value_delta._format_magnitude. */
+    function formatMagnitude(mant, scale) {
+        if (mant === 0n) return "0";
+        var digits = (mant < 0n ? -mant : mant).toString();
+        var expo = digits.length - scale;        // value in [10^(expo-1), 10^expo)
+        if (expo >= SCI_HIGH_EXP || expo <= SCI_LOW_EXP) {
+            return padExp(Math.abs(toNumber(mant, scale)).toExponential(3));
+        }
+        var intPart, frac;
+        if (scale <= 0) {
+            intPart = digits + new Array(1 - scale).join("0");
+            frac = "";
+        } else {
+            while (digits.length <= scale) digits = "0" + digits;
+            intPart = digits.slice(0, digits.length - scale);
+            frac = digits.slice(digits.length - scale).replace(/0+$/, "");
+        }
+        return groupInt(intPart) + (frac ? "." + frac : "");
+    }
+
+    function formatDelta(mant, scale) {
+        if (mant === 0n) return "0";
+        return (mant < 0n ? "-" : "+") + formatMagnitude(mant, scale);
+    }
+
+    function formatPercent(pct) {
+        var a = Math.abs(pct);
+        if (a && a < 0.001) return padExp(sign(pct) + Math.abs(pct).toExponential(2));
+        var digits = a >= 100 ? 0 : (a >= 10 ? 1 : (a >= 1 ? 2 : 3));
+        var s = sign(pct) + Math.abs(pct).toFixed(digits);
+        if (digits) s = s.replace(/0+$/, "").replace(/\.$/, "");
+        return s;
+    }
+    function sign(v) { return v < 0 ? "-" : "+"; }
+
+    /* {delta, text, pct, pct_text, dir, coerced, title} | null */
+    function compute(oldValue, newValue) {
+        var a = parse(oldValue), b = parse(newValue);
+        if (!a || !b) return null;
+        var al = align(a, b);
+        var dm = al.bm - al.am;
+        var aNum = toNumber(al.am, al.scale);
+        var text = formatDelta(dm, al.scale);
+        var pct = null, pctText = null;
+        if (aNum !== 0 && dm !== 0n) {
+            pct = toNumber(dm, al.scale) / Math.abs(aNum) * 100;
+            if (isFinite(pct)) pctText = formatPercent(pct) + "%"; else pct = null;
+        }
+        var dir = dm > 0n ? "up" : (dm < 0n ? "down" : "same");
+        var coerced = (typeof oldValue === "string") || (typeof newValue === "string");
+        var title = "difference: " + text + (pctText ? " (" + pctText + ")" : "");
+        if (coerced) title += " — one side is stored as text";
+        if (dm === 0n) title = "same numeric value" + (coerced ? " (stored type differs)" : "");
+        return { delta: toNumber(dm, al.scale), text: text, pct: pct,
+                 pct_text: pctText, dir: dir, coerced: coerced, title: title };
+    }
+
+    /* Standard chip markup, shared by every JS-rendered surface. Returns ""
+       when a delta is meaningless, so callers can append unconditionally. */
+    function chipHtml(oldValue, newValue, extraClass) {
+        var d = compute(oldValue, newValue);
+        if (!d) return "";
+        var cls = "val-delta delta-" + d.dir + (extraClass ? " " + extraClass : "");
+        var esc = function (s) {
+            return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+        };
+        return '<span class="' + cls + '" title="' + esc(d.title) + '">' + esc(d.text)
+             + (d.pct_text ? ' <span class="val-delta-pct">(' + esc(d.pct_text) + ')</span>' : '')
+             + '</span>';
+    }
+
+    /* Fill an existing element with the chip (or blank it). Only the
+       val-delta / delta-<dir> classes are managed — the caller's own classes
+       on that element are left alone. */
+    function paint(el, oldValue, newValue) {
+        if (!el) return null;
+        var d = compute(oldValue, newValue);
+        el.classList.remove("delta-up", "delta-down", "delta-same");
+        if (!d) {
+            el.textContent = ""; el.hidden = true; el.removeAttribute("title");
+            return null;
+        }
+        el.classList.add("val-delta", "delta-" + d.dir);
+        el.hidden = false;
+        el.title = d.title;
+        el.textContent = d.text + (d.pct_text ? " (" + d.pct_text + ")" : "");
+        return d;
+    }
+
+    return { compute: compute, chipHtml: chipHtml, paint: paint,
+             formatDelta: formatDelta, formatPercent: formatPercent, parse: parse };
+})();
+
+/* ------------------------------------------------------------------ */
 /* Inline-edit commit plumbing (Pulses detail, Qubit/Pair inspector)    */
 /* ------------------------------------------------------------------ */
 /* One commit = POST → the whole #inspector-pane re-renders. Three things
@@ -7565,7 +7720,8 @@ function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExp
           + '<div class="plot-apply-row-old"><span class="muted">previous</span> '
           + '<span class="plot-apply-old-val muted">…</span></div>'
           + '<div class="plot-apply-row-new"><span class="muted">new</span> '
-          + '<input type="text" class="plot-apply-new-input" value="' + _ppEscape(String(u.value)) + '"></div>'
+          + '<input type="text" class="plot-apply-new-input" value="' + _ppEscape(String(u.value)) + '">'
+          + '<span class="plot-apply-delta val-delta" hidden></span></div>'
           + '<div class="plot-apply-row-action">'
           + '<button type="button" class="primary btn-sm plot-apply-row-btn">Apply</button></div>'
           + provHtml
@@ -7583,7 +7739,10 @@ function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExp
             }
         });
         // Value-domain heads-up (non-blocking) — re-evaluated on every edit.
-        input.addEventListener('input', function() { _updatePlotRowDomainWarning(row); });
+        input.addEventListener('input', function() {
+            _updatePlotRowDomainWarning(row);
+            _updatePlotRowDelta(row);       // docs/76: how far this click moves the value
+        });
         _updatePlotRowDomainWarning(row);
         rowsBox.appendChild(row);
     });
@@ -7603,10 +7762,28 @@ function _setOldVal(slot, v, err) {
     if (v === null || v === undefined) {
         slot.textContent = err ? '(not set)' : '(null)';
         slot.classList.add('muted');
+        slot._rawValue = null;
     } else {
         slot.textContent = String(v);
         slot.classList.remove('muted');
+        slot._rawValue = v;         // keep the RAW value for the Δ (docs/76)
     }
+    var row = slot.closest ? slot.closest('.plot-apply-row') : null;
+    if (row) _updatePlotRowDelta(row);
+}
+
+/* Δ between the field's current value (fetched via /field/peek, or the
+   selected pointer write-target) and the value this click would stage.
+   Blank whenever a difference is meaningless — a not-yet-loaded or
+   non-numeric previous value never fabricates one. */
+function _updatePlotRowDelta(row) {
+    if (!row || !window.ValueDelta) return;
+    var chip = row.querySelector('.plot-apply-delta');
+    var slot = row.querySelector('.plot-apply-old-val');
+    var input = row.querySelector('.plot-apply-new-input');
+    if (!chip || !slot || !input) return;
+    var oldRaw = (slot._rawValue === undefined) ? null : slot._rawValue;
+    window.ValueDelta.paint(chip, oldRaw, input.value);
 }
 
 // Render the pointer chain + write-target selector + shared warning for a
@@ -7913,7 +8090,7 @@ window._openFspPopup = (function () {
         var table = _el("table", "ch-table");
         var thead = document.createElement("thead");
         var hr = document.createElement("tr");
-        ["pulse", "amplitude now", "", "compensated", ""].forEach(function (t) {
+        ["pulse", "amplitude now", "", "compensated", "Δ", ""].forEach(function (t) {
             hr.appendChild(_el("th", null, t));
         });
         thead.appendChild(hr);
@@ -7925,6 +8102,11 @@ window._openFspPopup = (function () {
             tr.appendChild(_el("td", null, _fmt(a.old)));
             tr.appendChild(_el("td", "fsp-arrow", "→"));
             tr.appendChild(_el("td", a.clips ? "fsp-clip" : null, _fmt(a.new)));
+            // docs/76: the compensation factor is uniform, but the amplitude
+            // MOVE per pulse is not — show it per row.
+            var dTd = _el("td", "fsp-delta");
+            if (window.ValueDelta) window.ValueDelta.paint(dTd, a.old, a.new);
+            tr.appendChild(dTd);
             tr.appendChild(_el("td", "fsp-clipmark", a.clips ? "⚠ >1.0" : ""));
             tbody.appendChild(tr);
         });
@@ -8081,6 +8263,23 @@ function _reviewRevealEditSync() {
     var note = document.querySelector('.state-review .review-accept-note');
     if (note) note.hidden = false;
 }
+
+/* The review screen's "new" side is an EDITABLE live value, so its Δ has to
+   follow what the user typed — a server-rendered delta would keep describing
+   the value they just replaced (docs/76). Delegated so it survives every
+   re-render of the overlay; the old value rides the input as data-old-raw
+   (JSON, so a stored-as-text number stays text and the Δ still says so). */
+document.addEventListener("input", function (evt) {
+    var input = evt.target;
+    if (!input || !input.classList || !input.classList.contains("review-live-input")) return;
+    var row = input.closest(".review-row, tr");
+    var chip = row && row.querySelector(".review-delta");
+    if (!chip || !window.ValueDelta) return;
+    var oldRaw;
+    try { oldRaw = JSON.parse(input.getAttribute("data-old-raw")); }
+    catch (e) { return; }
+    window.ValueDelta.paint(chip, oldRaw, input.value);
+});
 
 // Review modal: write a (possibly edited) live value into the working copy on the
 // fly, without a full pull. Goes through the same /field/edit-batch path; the tray

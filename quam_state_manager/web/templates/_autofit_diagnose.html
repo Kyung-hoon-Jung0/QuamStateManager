@@ -99,6 +99,13 @@ function autofitDiagApply(btn, target, family, fresh, parameters) {
       var li = document.createElement("li");
       li.textContent = (row.label || row.path) + " — " + row.path + ": " +
           JSON.stringify(row.old_hint) + " → " + JSON.stringify(row.value);
+      // docs/76: this list is a WRITE confirmation — say how far each value
+      // moves, not only where it lands. textContent above, element below:
+      // the paths/values come from node output and are never trusted as HTML.
+      if (window.ValueDelta) {
+        var dEl = document.createElement("span");
+        if (window.ValueDelta.paint(dEl, row.old_hint, row.value)) li.appendChild(dEl);
+      }
       ul.appendChild(li);
     });
     card.appendChild(ul);

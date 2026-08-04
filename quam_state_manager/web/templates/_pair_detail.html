@@ -30,7 +30,7 @@
                     {% endif %}
                 </td>
                 <td class="col-val{% if is_modified %} cell-modified{% endif %}"
-                    {% if is_modified %}title="Previous: {{ modified_map[p.dot_path] }}"{% endif %}>
+                    {% if is_modified %}title="Previous: {{ modified_map[p.dot_path] }}{% set _d = modified_map[p.dot_path] | value_delta(p.value) %}{% if _d %} &#10;difference: {{ _d.text }}{% if _d.pct_text %} ({{ _d.pct_text }}){% endif %}{% endif %}"{% endif %}>
                     {% if p.is_self_ref %}
                         <em class="selfref-value">{{ p.raw }} <span class="tag-runtime">(runtime)</span></em>
                     {% elif p.editable %}
@@ -41,7 +41,7 @@
                             <input type="text" name="value" class="edit-input{% if is_modified %} edit-input-modified{% endif %}"
                                    value="{% if p.value is none %}{% elif p.value is float and (p.value|abs >= 1e6 or (0 < p.value|abs < 1e-3)) %}{{ '%.6e' | format(p.value) }}{% else %}{{ p.value }}{% endif %}"
                                    placeholder="{% if p.value is none %}not set{% endif %}"
-                                   title="{% if is_modified %}Modified — was: {{ modified_map[p.dot_path] }}{% else %}Press Enter to stage this edit (then Save to working state / Apply to live). Current: {{ p.value }}{% if _stored %} (raw {{ _stored }}){% endif %}{% endif %}">
+                                   title="{% if is_modified %}Modified — was: {{ modified_map[p.dot_path] }}{% set _d = modified_map[p.dot_path] | value_delta(p.value) %}{% if _d %} (difference {{ _d.text }}{% if _d.pct_text %}, {{ _d.pct_text }}{% endif %}){% endif %}{% else %}Press Enter to stage this edit (then Save to working state / Apply to live). Current: {{ p.value }}{% if _stored %} (raw {{ _stored }}){% endif %}{% endif %}">
                             <button type="button" class="field-hist-btn" tabindex="-1"
                                     title="Value history — past values of this field from Param History snapshots"
                                     onclick="FieldHistory.openInspector(this)">&#128344;</button>

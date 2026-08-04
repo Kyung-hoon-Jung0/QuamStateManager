@@ -1,3 +1,4 @@
+{% from '_delta_macros.html' import delta_chip %}
 {# Live-chip vs working-copy diff, shown in the #state-review-overlay. #}
 {# Layout (customer feedback): the Close + Sync actions live in the PINNED header
    so they're reachable instantly — no Tab-past-every-value-box, no scrolling to
@@ -130,11 +131,16 @@
         <span class="review-live-edit" title="live chip value (editable) — &#10003; pulls it into the working state">
           <input type="text" class="review-live-input" value="{{ e.new_value | groupdigits }}"
                  data-dot-path="{{ e.dot_path }}"{% if _mine %} data-yours="1"{% endif %}
+                 data-old-raw="{{ e.old_value | tojson }}"
                  size="{{ [((e.new_value | groupdigits) | length) + 1, 8] | max }}"
                  aria-label="Live value for {{ e.dot_path }} (editable)">
           <button type="button" class="btn-xs review-accept" onclick="reviewAccept(this)"
                   title="{% if _mine %}The working state already holds your edit — accepting REPLACES it with the live value{% else %}Write this (editable) live value into the working state{% endif %}">&#10003;</button>
         </span>
+        {# Δ against the working-state value. Server-rendered for the initial
+           view; recomputed by reviewDeltaWatch() while the user edits the
+           live value, so the difference never lies about what will be pulled. #}
+        {{ delta_chip(e.old_value, e.new_value, 'review-delta') }}
         {% endif %}
       </div>
     </div>

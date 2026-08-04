@@ -1,6 +1,7 @@
 {# Prev-state diff: this run's quam_state vs an earlier run's. Lazy-loaded into
    the Prev State tab (full) and the Full View summary (compact=1). Reuses the
    existing diff-badge / diff-row-* classes from the compare surfaces. #}
+{% from '_delta_macros.html' import delta_cell %}
 {% if error %}
 <p class="muted" style="padding:.6rem">{{ error }}</p>
 {% elif prev_run_id is none %}
@@ -32,6 +33,7 @@
             <th class="col-prop">Path</th>
             <th class="col-val">#{{ prev_run_id }}</th>
             <th class="col-val">#{{ run_id }}</th>
+            <th class="col-val col-delta">&Delta;</th>
         </tr></thead>
         <tbody>
         {% for e in entries[:limit] %}
@@ -39,6 +41,7 @@
             <td class="col-prop"><code>{{ e.dot_path }}</code></td>
             <td class="col-val">{% if e.old_value is none %}<em class="null-value">—</em>{% else %}<code>{{ e.old_value }}</code>{% endif %}</td>
             <td class="col-val">{% if e.new_value is none %}<em class="null-value">—</em>{% else %}<code>{{ e.new_value }}</code>{% endif %}</td>
+            <td class="col-val col-delta">{{ delta_cell(e.old_value, e.new_value) }}</td>
         </tr>
         {% endfor %}
         </tbody>

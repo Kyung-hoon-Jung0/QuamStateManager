@@ -3135,6 +3135,41 @@ input.edit-input {
 .diff-delta.delta-pos { color: var(--diff-delta-pos-color); }
 .diff-delta.delta-neg { color: var(--diff-delta-neg-color); }
 .diff-delta.delta-zero { color: var(--pico-muted-color); }
+/* docs/76 vocabulary (up/down/same) on the block variant — the diff and
+   compare tables now render through the same macro as everything else. */
+.diff-delta.delta-up   { color: var(--diff-delta-pos-color); }
+.diff-delta.delta-down { color: var(--diff-delta-neg-color); }
+.diff-delta.delta-same { color: var(--pico-muted-color); }
+
+/* ── Δ chip (docs/76) ─────────────────────────────────────────────────────
+   The shared inline difference marker, rendered by _delta_macros.html and
+   window.ValueDelta on every before→after surface (Review tray, sync screen,
+   plot-apply popup, bulk-grid hover, FSP popup, history timelines, diff and
+   compare tables). Inline (the .diff-delta above is the block variant that
+   stacks under a diff cell) and reusing the same colour tokens, so "up" and
+   "down" read identically everywhere. */
+.val-delta {
+    display: inline;
+    font-family: var(--font-mono);
+    font-size: 0.82em;
+    font-weight: 600;
+    white-space: nowrap;
+    margin-left: 0.35em;
+}
+.val-delta.delta-up   { color: var(--diff-delta-pos-color); }
+.val-delta.delta-down { color: var(--diff-delta-neg-color); }
+.val-delta.delta-same { color: var(--pico-muted-color); font-weight: 500; }
+/* The percentage is context, not the headline — one step quieter. */
+.val-delta .val-delta-pct { opacity: 0.78; font-weight: 500; }
+
+/* Table Δ columns keep their own alignment. */
+th.col-delta, td.col-delta { text-align: right; white-space: nowrap; }
+td.col-delta .val-delta { margin-left: 0; }
+
+/* History timelines are dense — the Δ there is a footnote, not a column. */
+.fh-delta, .ch-chip-delta { font-size: 0.76em; margin-left: 0.3em; }
+/* Inside a chip button the Δ must not inherit the chip's own colour. */
+.ch-chip .ch-chip-delta { display: inline-block; }
 
 /* Reference state selector */
 .ref-selector {
