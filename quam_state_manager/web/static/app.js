@@ -6138,10 +6138,21 @@ function _appendPortCircle(svg, cx, cy, r, roleColors, assignment, rawWiring, ed
     // Strip .role suffix for display: "qA1.xy" → "qA1" (role is encoded by color)
     var label = assignment.label || '';
     var displayLabel = label.replace(/\.[^.]+$/, '') || label;
-    var maxChars = r < 14 ? 4 : (r < 18 ? 6 : 8);
+    var maxChars = r < 14 ? 4 : (r < 18 ? 6 : 7);
     var display = displayLabel.length > maxChars ? displayLabel.substring(0, maxChars - 1) + '\u2026' : displayLabel;
-    var fontSize = r < 14 ? 7 : (r < 18 ? 8 : 10);
-    var txt = _svgText(cx, cy + 4, display, fontSize, '700', UI_CONFIG.instrumentWiring.portLabelColor, 'middle');
+    var fontSize;
+    if (r >= 16) {
+        // Single-member circle (control/z/coupler, single readout, input
+        // single): size the label to the chord at the text band, so short
+        // names get big type and longer ones shrink instead of only truncating.
+        var cap = r >= 18 ? 14 : 11;
+        var chord = 2 * Math.sqrt(r * r - 36);
+        fontSize = Math.max(9, Math.min(cap,
+            Math.floor(chord / (0.62 * Math.max(1, display.length)))));
+    } else {
+        fontSize = 7;  // multi-member feedline sub-circles
+    }
+    var txt = _svgText(cx, cy + Math.round(fontSize * 0.36), display, fontSize, '700', UI_CONFIG.instrumentWiring.portLabelColor, 'middle');
     txt.setAttribute('font-family', 'monospace');
     g.appendChild(txt);
 
@@ -8214,15 +8225,15 @@ window._openFspPopup = (function () {
         }
         var foot = _el("div", "fsp-actions");
         var n = (plan.amps || []).length;
-        var bComp = _el("button", "cnb-set", "Apply FSP + compensate "
+        var bComp = _el("button", "btn-sync primary", "Apply FSP + compensate "
             + n + " amplitude" + (n === 1 ? "" : "s"));
         bComp.type = "button";
         bComp.addEventListener("click", function () { finish("comp"); });
-        var bSolo = _el("button", "cnb-no", "Apply FSP only");
+        var bSolo = _el("button", "btn-sync", "Apply FSP only");
         bSolo.type = "button";
         bSolo.title = "Change the port power WITHOUT touching amplitudes — every pulse's real output power shifts by the FSP delta";
         bSolo.addEventListener("click", function () { finish("solo"); });
-        var bCancel = _el("button", "cnb-no", "Cancel");
+        var bCancel = _el("button", "btn-sync outline", "Cancel");
         bCancel.type = "button";
         bCancel.addEventListener("click", function () { finish("cancel"); });
         if (n === 0) bComp.disabled = true;
