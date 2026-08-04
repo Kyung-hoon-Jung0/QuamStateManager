@@ -231,3 +231,19 @@ Pinned by `tests/test_type_visibility.py` (19: scan/feed/banner/dismiss-
 delta/409-convert-keep-quote gates/batch/all displays/JS+CSS wiring) + the
 updated legacy pins (`test_type_policy`, `test_all_values_route`,
 `test_field_crud_routes`, `explorer_crud_selfcheck` C3 legacy-token mapping).
+
+---
+
+## Amendment (2026-08-04) — the anomaly now has a one-click repair
+
+r14 (above) made "stored as TEXT" *visible*: diagnostics warnings, the delta-
+gated alarm banner, Explorer marks, honest quoted displays, and a per-field
+`type_fix` offer when the user retypes a value. Repairing a wholesale
+regeneration still meant walking to every field.
+
+`docs/77_type_autofix.md` adds the button: SM shows what it proposes for every
+offending field (value + resulting type), lists what it refuses to convert and
+why, and converts the confirmed rows in ONE change group into the working copy.
+The per-field `type_fix` gate documented here is unchanged — the batch path
+persists the same kind of user type assignment, which is what makes the number
+survive later edits.

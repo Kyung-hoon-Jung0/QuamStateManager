@@ -2785,6 +2785,132 @@ document.addEventListener("cellsReverted", function(evt) {
 });
 
 /* ------------------------------------------------------------------ */
+/* Stored-as-text auto-correction (docs/77)                             */
+/* ------------------------------------------------------------------ */
+/* SM detects numbers written as text ("0.13") and used to leave the repair
+   to the user: visit the field, retype the value, confirm the type offer.
+   This is the one-click path — SM shows exactly what it proposes (each
+   field, what it holds now, what it would hold, which type), the user
+   confirms once, and the whole repair lands as ONE change group (one
+   Ctrl+Z) in the working copy. Nothing reaches the live chip until the
+   usual Save / Apply. */
+(function () {
+    var overlay = null;
+
+    function ensure() {
+        if (overlay) return overlay;
+        overlay = document.createElement("div");
+        overlay.className = "ch-overlay tfx-overlay";
+        overlay.style.display = "none";
+        var backdrop = document.createElement("div");
+        backdrop.className = "ch-backdrop";
+        backdrop.addEventListener("click", window.closeTypeFixPlan);
+        var card = document.createElement("div");
+        card.className = "ch-card tfx-host";
+        overlay.appendChild(backdrop);
+        overlay.appendChild(card);
+        document.body.appendChild(overlay);
+        return overlay;
+    }
+
+    window.closeTypeFixPlan = function () {
+        if (!overlay) return;
+        if (overlay._releaseTrap) {
+            try { overlay._releaseTrap(); } catch (e) {}
+            overlay._releaseTrap = null;
+        }
+        overlay.style.display = "none";
+        overlay.querySelector(".tfx-host").innerHTML = "";
+    };
+
+    /* Fetch the plan and show it. The plan is built server-side and carries
+       its own signature, so what the user confirms is what the server
+       re-validates before writing. */
+    window.openTypeFixPlan = function () {
+        var o = ensure();
+        var host = o.querySelector(".tfx-host");
+        host.innerHTML = '<div class="tfx-card"><p class="tfx-lead">Checking the chip…</p></div>';
+        o.style.display = "flex";
+        fetch("/type-fix/plan", { headers: { "HX-Request": "true" } })
+            .then(function (r) { return r.text(); })
+            .then(function (html) {
+                host.innerHTML = html;
+                window.typeFixCount();
+                o._releaseTrap = window.trapFocus
+                    ? window.trapFocus(o, window.closeTypeFixPlan) : null;
+                var btn = host.querySelector("#tfx-apply");
+                if (btn) { try { btn.focus(); } catch (e) {} }
+            })
+            .catch(function (e) {
+                host.innerHTML = '<div class="tfx-card"><p class="tfx-lead">'
+                    + "Could not build the fix list: " + String(e) + "</p></div>";
+            });
+    };
+
+    window.typeFixToggleAll = function (box) {
+        var picks = document.querySelectorAll(".tfx-pick");
+        Array.prototype.forEach.call(picks, function (p) { p.checked = box.checked; });
+        window.typeFixCount();
+    };
+
+    window.typeFixCount = function () {
+        var picks = document.querySelectorAll(".tfx-pick");
+        var n = 0;
+        Array.prototype.forEach.call(picks, function (p) { if (p.checked) n++; });
+        var out = document.getElementById("tfx-count");
+        if (out) out.textContent = n;
+        var btn = document.getElementById("tfx-apply");
+        if (btn) btn.disabled = (n === 0);
+        var all = document.getElementById("tfx-all");
+        if (all) all.checked = (n === picks.length && n > 0);
+        return n;
+    };
+
+    window.typeFixApply = function (btn) {
+        var card = btn.closest(".tfx-card");
+        var errBox = card.querySelector(".tfx-error");
+        var paths = [];
+        Array.prototype.forEach.call(card.querySelectorAll(".tfx-pick"), function (p) {
+            if (p.checked) paths.push(p.getAttribute("data-path"));
+        });
+        if (!paths.length) return;
+        btn.disabled = true;
+        var label = btn.textContent;
+        btn.textContent = "Converting…";
+        fetch("/type-fix/apply", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ paths: paths, sig: card.getAttribute("data-sig") })
+        }).then(function (r) {
+            return r.json().then(function (d) { return { status: r.status, body: d }; });
+        }).then(function (res) {
+            var d = res.body || {};
+            if (!d.ok) {
+                btn.disabled = false; btn.textContent = label;
+                if (errBox) {
+                    errBox.hidden = false;
+                    errBox.textContent = (d.error || "The repair did not run.")
+                        + (d.note ? "  " + d.note : "");
+                }
+                return;
+            }
+            if (d.tray_html) window._swapPendingTray(d.tray_html);
+            window.closeTypeFixPlan();
+            if (window.showToast) {
+                window.showToast(d.count + " value" + (d.count === 1 ? "" : "s")
+                    + " now stored as numbers — review in the tray, then Save / Apply.",
+                    "success");
+            }
+            // the anomaly set shrank: refresh the badge, banner and tree marks
+            try { window.htmx && window.htmx.trigger(document.body, "diagnostics-changed"); } catch (e) {}
+            document.dispatchEvent(new CustomEvent("quam:state-changed"));
+        }).catch(function (e) {
+            btn.disabled = false; btn.textContent = label;
+            if (errBox) { errBox.hidden = false; errBox.textContent = String(e); }
+        });
+    };
+})();
+
+/* ------------------------------------------------------------------ */
 /* Value delta (Δ) — the JS mirror of core/value_delta.py               */
 /* ------------------------------------------------------------------ */
 /* Every before→after surface shows old, new AND the difference (docs/76).

@@ -42,9 +42,14 @@
             <td>{{ q.f_01 | qty('f_01') }}</td>
             <td>{{ q.T1 | qty('T1') }}</td>
             <td>{{ q.T2ramsey | qty('T2ramsey') }}</td>
-            <td>{{ "%.4f" | format(q.readout_amplitude) if q.readout_amplitude is not none else '-' }}</td>
+            {# r16 0-1 idiom (see _pairs.html): a value stored as TEXT must not
+   crash the list — show it honestly, quoted, and let the alarm
+   banner's one-click fix (docs/77) repair it. #}
+            <td>{% if q.readout_amplitude is none %}-{% elif q.readout_amplitude is number %}{{ "%.4f" | format(q.readout_amplitude) }}{% else %}<span class="muted" title="Stored as text — see Diagnostics (the alarm banner offers a one-click fix)">&quot;{{ q.readout_amplitude }}&quot;</span>{% endif %}</td>
             <td>
-                {% if q.gate_fidelity_avg is not none %}
+                {% if q.gate_fidelity_avg is not none and q.gate_fidelity_avg is not number %}
+                <span class="muted" title="Stored as text — see Diagnostics (the alarm banner offers a one-click fix)">&quot;{{ q.gate_fidelity_avg }}&quot;</span>
+                {% elif q.gate_fidelity_avg is not none %}
                 {% if q.gate_fidelity_avg >= 0.99 %}
                 <span class="cell-good" aria-label="Good"><span class="cell-glyph" aria-hidden="true">&#10003;</span>{{ "%.4f" | format(q.gate_fidelity_avg) }}</span>
                 {% elif q.gate_fidelity_avg >= 0.95 %}

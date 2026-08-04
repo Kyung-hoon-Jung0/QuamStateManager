@@ -38,9 +38,9 @@
             <td><strong>{{ q.id }}</strong></td>
             <td>{% if q.is_active %}<span class="cell-good" aria-label="Active" title="Listed in active_qubit_names">&#10003;</span>{% else %}<span class="muted" aria-label="Inactive" title="Not in active_qubit_names">off</span>{% endif %}</td>
             <td>{{ q.readout_frequency | qty('readout_frequency') }}</td>
-            <td>{{ "%.4f" | format(q.readout_amplitude) if q.readout_amplitude is not none else '-' }}</td>
+            <td>{% if q.readout_amplitude is none %}-{% elif q.readout_amplitude is number %}{{ "%.4f" | format(q.readout_amplitude) }}{% else %}<span class="muted" title="Stored as text — see Diagnostics (the alarm banner offers a one-click fix)">&quot;{{ q.readout_amplitude }}&quot;</span>{% endif %}</td>
             <td>{{ q.readout_length if q.readout_length is not none else '-' }}</td>
-            <td>{{ "%.4f" | format(q.readout_threshold) if q.readout_threshold is not none else '-' }}</td>
+            <td>{% if q.readout_threshold is none %}-{% elif q.readout_threshold is number %}{{ "%.4f" | format(q.readout_threshold) }}{% else %}<span class="muted" title="Stored as text — see Diagnostics (the alarm banner offers a one-click fix)">&quot;{{ q.readout_threshold }}&quot;</span>{% endif %}</td>
             <td>{{ q.time_of_flight | qty('time_of_flight') }}</td>
             <td>{{ q.grid_location or '-' }}</td>
         </tr>
