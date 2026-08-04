@@ -270,3 +270,8 @@ NetCDF-classic #407 through the registry + `/interactive/plot` route.
 
 Pinned by `tests/interactive_theme_selfcheck.cjs` (merge semantics + wiring
 source pins + freeze behavior) + driver `tests/test_interactive_theme.py`.
+
+**Amendment (2026-08-03):** FSP-targeting clicks (e.g. spectroscopy-vs-power
+staging `full_scale_power_dbm`) now route the r12 compensation 409 through
+the shared `_openFspPopup` in both plot-apply handlers instead of
+dead-ending — see the docs/36 amendment for the contract.

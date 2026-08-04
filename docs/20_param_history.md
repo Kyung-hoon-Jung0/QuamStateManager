@@ -596,9 +596,10 @@ old→new ("SM will update these amplitudes WITH the port change") and only
 an explicit choice commits — `comp` = FSP+amps in ONE batch (one gid = one
 Review bundle = one Ctrl+Z), `solo` = FSP alone, Cancel = nothing written
 (every popup exit notifies the caller exactly once, so grid apply chains
-never hang). Wired in the Explorer inline editor, both grids' `_applyCells`
-and All-values' `applyOne`; un-wired callers get the honest 409 `error`
-string instead of a silent failure. The diagnostics DAC linter re-runs
+never hang). Wired in the Explorer inline editor, both grids' `_applyCells`,
+All-values' `applyOne`, and the plot-apply popup's per-row + Apply All
+handlers (docs/36 amendment, 2026-08-03); un-wired callers get the honest
+409 `error` string instead of a silent failure. The diagnostics DAC linter re-runs
 after commit as the second net. Pinned by `tests/test_fsp_compensation.py`
 (plan traversal/factor/clip/range; the never-silent gates; the one-group
 undo; non-FSP paths unaffected; JS wiring pins).
