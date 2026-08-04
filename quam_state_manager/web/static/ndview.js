@@ -562,7 +562,11 @@
                             '<span class="ndv-cand-label" title="' + esc(pth) + '">' + esc(cd.label) + '</span>' +
                             '<span class="ndv-cand-delta">' +
                             window.PlotTheme.siFormat(cur, '') + ' → ' +
-                            window.PlotTheme.siFormat(clicked, '') + '</span>' +
+                            window.PlotTheme.siFormat(clicked, '') +
+                            // docs/76: how far this click would move the field
+                            (window.ValueDelta
+                                ? ' ' + window.ValueDelta.chipHtml(cur, clicked) : '') +
+                            '</span>' +
                             '<button type="button" class="ndv-cand-stage" data-path="' + esc(pth) +
                             '" data-value="' + esc(clicked) + '">Stage</button></div>';
                     });

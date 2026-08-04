@@ -1,3 +1,4 @@
+{% from '_delta_macros.html' import delta_chip %}
 {# Column History panel (docs/20 v2 + r9 Changes amendment): one bulk-grid
    column's recent story, TWO tabs in one response (toggle is client-only,
    remembered in localStorage — ColumnHistory.switchView):
@@ -50,6 +51,9 @@
       <td class="ch-current" title="{{ row.current_fill }}"><code>{{ row.current }}</code></td>
       <td class="ch-chips">
         {% for p in row.chips %}
+        {# docs/76: chips are newest-first, so the change a chip INTRODUCED is
+           measured against the next chip to its right (the value it replaced). #}
+        {% set _prev = row.chips[loop.index0 + 1] if not loop.last else None %}
         <span class="ch-chipwrap">
           <button type="button"
                   class="ch-chip{% if p.is_current %} ch-chip-cur{% endif %}{% if not p.has %} ch-chip-miss{% endif %}"
@@ -60,6 +64,7 @@
             <code>{% if p.has %}{{ p.display }}{% else %}—{% endif %}</code>
             <span class="ch-chip-when">{{ p.when }}</span>
             {% if p.is_current %}<span class="ch-chip-now">current</span>{% endif %}
+            {% if _prev and p.has and _prev.has %}{{ delta_chip(_prev.raw, p.raw, 'ch-chip-delta') }}{% endif %}
           </button>
           {% if p.uid %}
           <button type="button" class="ch-chip-data" hx-get="/dataset/{{ p.uid }}"

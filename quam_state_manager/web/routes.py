@@ -4988,6 +4988,9 @@ def bulk_column_history():
             chips.append({
                 "display": _fh_display_string(p["value"]),
                 "fill": _fh_fill_string(p["value"]),
+                # RAW value (not the display string) so the Δ chip reports the
+                # stored type honestly — docs/76.
+                "raw": p["value"],
                 "has": p["value"] is not None,
                 "when": (f"{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}"
                          if len(ts) >= 13 else ts),
@@ -8667,7 +8670,14 @@ def undo():
     elif anchor.created:
         message = f"Undone: {anchor.dot_path} removed"
     else:
+        # docs/76: say how far the undo moved the value, not just where it
+        # landed — "→ 5,100,000,000" alone doesn't tell you what was lost.
+        from quam_state_manager.core import value_delta as _vd
+        _d = _vd.compute(anchor.new_value, anchor.old_value)
         message = f"Undone: {anchor.dot_path} → {_fmt_val(anchor.old_value)}"
+        if _d and _d["dir"] != "same":
+            message += f" ({_d['text']}"
+            message += f", {_d['pct_text']})" if _d["pct_text"] else ")"
 
     resp = make_response(_tray_html())
     resp.headers["HX-Trigger"] = json.dumps({

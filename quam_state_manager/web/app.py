@@ -352,6 +352,15 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # precision-losing e-notation). The canonical editable/displayed form for raw
     # numbers across Bulk Edit, the inspector and the diff/review surfaces.
     app.jinja_env.filters["groupdigits"] = _units.group_digits
+    # `value_delta` — the difference between an old and a new value, for every
+    # before→after surface (docs/76). Returns None when a delta is meaningless
+    # (non-numeric, boolean, null, pointer, subtree) so templates render their
+    # existing placeholder instead of a fabricated zero. Exact decimal
+    # arithmetic; mirrored character-for-character by window.ValueDelta in
+    # app.js (pinned by tests/test_value_delta.py).
+    from quam_state_manager.core import value_delta as _value_delta
+    app.jinja_env.filters["value_delta"] = _value_delta.compute
+    app.jinja_env.filters["delta_describe"] = _value_delta.describe
 
     def _flatten_leaves_filter(value, cap: int = 40):
         """(dot_path, leaf_value) pairs for a nested mapping — the Review

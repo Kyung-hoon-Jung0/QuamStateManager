@@ -1,3 +1,4 @@
+{% from '_delta_macros.html' import delta_block %}
 {# Accumulating "Live changes since baseline" — every param the live chip has
    changed since the tracking baseline, regardless of whether SM auto-adopted
    the new state into its working copy. Decoupled from the working-copy sync
@@ -7,9 +8,10 @@
      • default → inside the floating #live-drift-overlay (gets a header + close)
    See the live-drift-tracking memory + docs. #}
 {% macro drift_delta(old, new) -%}
-{% if old is number and new is number and old is not none and new is not none -%}
-{% set d = new - old -%}
-<span class="diff-delta {{ 'delta-pos' if d > 0 else ('delta-neg' if d < 0 else 'delta-zero') }}">{{ "%+.3e" | format(d) }}</span>
+{# docs/76: one shared Δ — exact decimal arithmetic, grouped digits and a
+   percentage, identical to the Review tray / sync screen / popups. #}
+{% if (old | value_delta(new)) -%}
+{{ delta_block(old, new) }}
 {%- else -%}
 <span class="muted">&ndash;</span>
 {%- endif %}

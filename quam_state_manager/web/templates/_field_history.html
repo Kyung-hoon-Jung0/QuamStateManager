@@ -1,3 +1,4 @@
+{% from '_delta_macros.html' import delta_chip %}
 {# Per-field value-history panel (the 🕘 button on Live-Edit cells and
    inspector rows). Injected into the FieldHistory floating container by
    app.js — which htmx.process()es it so the Data buttons' hx-get works.
@@ -34,8 +35,11 @@
   <thead><tr><th>Value</th><th>Since</th><th>Set by</th><th></th></tr></thead>
   <tbody>
   {% for pt in hist.points %}
+    {# docs/76: points are newest-first, so the change this point INTRODUCED is
+       measured against the next row down (the value it replaced). #}
+    {% set _prev = hist.points[loop.index0 + 1] if not loop.last else None %}
     <tr{% if pt.is_current %} class="fh-current"{% endif %}>
-      <td class="fh-val" title="{{ pt.fill }}"><code>{{ pt.display }}</code>{% if pt.is_current %} <span class="fh-now">current</span>{% endif %}</td>
+      <td class="fh-val" title="{{ pt.fill }}"><code>{{ pt.display }}</code>{% if pt.is_current %} <span class="fh-now">current</span>{% endif %}{% if _prev %}{{ delta_chip(_prev.value, pt.value, 'fh-delta') }}{% endif %}</td>
       <td class="fh-ts">{{ pt.when }}</td>
       <td class="fh-src">
         {% if pt.experiment %}

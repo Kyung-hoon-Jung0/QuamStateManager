@@ -1,0 +1,48 @@
+{# Shared Δ (difference) rendering for every before→after surface — docs/76.
+
+   ONE macro, so the Review tray, the sync/review screen, the diff tables and
+   the history popovers all answer "how much did this change?" the same way.
+   The arithmetic lives in core/value_delta.py (exact decimal, never float
+   noise) and is mirrored character-for-character by window.ValueDelta in
+   app.js for the JS-rendered surfaces (plot-apply popup, bulk grid, FSP).
+
+   A delta is only rendered when it MEANS something: both sides numeric (or a
+   numeric string — real chips store numbers as text, docs/56 r14). Booleans,
+   nulls, JSON pointers, strings and created/deleted subtrees render nothing,
+   so no surface ever shows a fabricated "0".
+
+   Usage:
+     {% from '_delta_macros.html' import delta_chip, delta_cell %}
+     {{ delta_chip(old, new) }}          → inline chip, empty when meaningless
+     {{ delta_cell(old, new) }}          → table cell content, "–" when meaningless
+#}
+
+{% macro delta_chip(old, new, extra_class='') -%}
+{%- set d = old | value_delta(new) -%}
+{%- if d -%}
+<span class="val-delta delta-{{ d.dir }}{% if extra_class %} {{ extra_class }}{% endif %}" title="{{ d.title }}">{{ d.text }}{% if d.pct_text %} <span class="val-delta-pct">({{ d.pct_text }})</span>{% endif %}</span>
+{%- endif -%}
+{%- endmacro %}
+
+{# Block variant for the diff/compare tables, where the Δ stacks UNDER the
+   value instead of sitting beside it. Keeps the long-standing .diff-delta
+   class (and its column styling) while using this file's arithmetic, so the
+   same change reads the same everywhere — the diff page used to say
+   "+1.000e+08" where the Review tray says "+100,000,000". #}
+{% macro delta_block(old, new) -%}
+{%- set d = old | value_delta(new) -%}
+{%- if d -%}
+<span class="diff-delta delta-{{ d.dir }}" title="{{ d.title }}">{{ d.text }}{% if d.pct_text %} <span class="val-delta-pct">({{ d.pct_text }})</span>{% endif %}</span>
+{%- endif -%}
+{%- endmacro %}
+
+{# Table-cell variant: always renders something, so a Δ column keeps its
+   alignment (the existing diff tables' convention). #}
+{% macro delta_cell(old, new) -%}
+{%- set d = old | value_delta(new) -%}
+{%- if d -%}
+<span class="val-delta delta-{{ d.dir }}" title="{{ d.title }}">{{ d.text }}{% if d.pct_text %} <span class="val-delta-pct">({{ d.pct_text }})</span>{% endif %}</span>
+{%- else -%}
+<span class="muted">&ndash;</span>
+{%- endif -%}
+{%- endmacro %}

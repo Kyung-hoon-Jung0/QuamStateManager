@@ -1,3 +1,4 @@
+{% from '_delta_macros.html' import delta_chip %}
 <div id="pending-tray"
      class="pending-tray{% if not active_name and change_count == 0 and not working_dirty and not (qualibrate_tray is defined and qualibrate_tray) %} tray-empty{% endif %}"
      data-change-count="{{ change_count }}"
@@ -151,6 +152,7 @@
           <span class="change-old">{{ c.old_value | groupdigits if c.old_value is not none else 'null' }}</span>
           <span class="tray-arrow">&#8594;</span>
           <span class="change-new">{{ c.new_value | groupdigits if c.new_value is not none else 'null' }}</span>
+          {{ delta_chip(c.old_value, c.new_value) }}
           {% endif %}
           <button class="outline btn-sm btn-discard"
                   hx-post="/discard"

@@ -164,7 +164,7 @@
                         {% if cell.str_numeric %}<span class="bulk-strq" aria-hidden="true">"</span>{% endif %}
                         {% if cell.lo and cell.lo.peer_qubit %}<span class="bulk-shared" title="Shares the LO with {{ cell.lo.peer_qubit }} (band {{ cell.lo.peer_band }}) — LO-coupled ports must use the same band (bands 1 & 3 compatible; band 2 only with band 2)">&#9888;</span>{% elif cell.is_pointer %}<span class="bulk-ptr" title="JSON pointer — editing writes the resolved target">&#8599;</span>{% endif %}
                         <span class="bulk-band-msg" hidden></span>
-                        <span class="bulk-ba" aria-hidden="true"><span class="bulk-ba-old">{{ cell.old_display }}</span> &rarr; <span class="bulk-ba-new"></span></span>
+                        <span class="bulk-ba" aria-hidden="true"><span class="bulk-ba-old">{{ cell.old_display }}</span> &rarr; <span class="bulk-ba-new"></span><span class="bulk-ba-delta" hidden></span></span>
                         {% endif %}
                     </td>
                     {% endfor %}
@@ -279,7 +279,7 @@
                                title="{{ cell.dot_path }}{% if cell.str_numeric %} — stored as TEXT (string), not a real: edits keep text unless the type is converted (Json Tree View ⚙ → real, or edit there){% endif %}{% if cell.is_pointer %} — pointer alias (edits the resolved target){% endif %}">
                         {% if cell.str_numeric %}<span class="bulk-strq" aria-hidden="true">"</span>{% endif %}
                         {% if cell.is_pointer %}<span class="bulk-ptr" title="JSON pointer — editing writes the resolved target">&#8599;</span>{% endif %}
-                        <span class="bulk-ba" aria-hidden="true"><span class="bulk-ba-old">{{ cell.old_display }}</span> &rarr; <span class="bulk-ba-new"></span></span>
+                        <span class="bulk-ba" aria-hidden="true"><span class="bulk-ba-old">{{ cell.old_display }}</span> &rarr; <span class="bulk-ba-new"></span><span class="bulk-ba-delta" hidden></span></span>
                         {% endif %}
                     </td>
                     {% endfor %}

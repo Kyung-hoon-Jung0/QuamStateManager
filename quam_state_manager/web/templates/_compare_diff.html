@@ -1,6 +1,9 @@
-{% macro render_delta(val, ref, fmt) -%}
-{% set d = val - ref -%}
-<span class="diff-delta {{ 'delta-pos' if d > 0 else ('delta-neg' if d < 0 else 'delta-zero') }}">{{ fmt | format(d) }}</span>
+{% from '_delta_macros.html' import delta_block %}
+{# docs/76: the shared Δ (exact decimal, grouped, with a percentage). The
+   old per-call printf format is gone — the formatter picks the readable form
+   from the magnitude, the same way on every surface. #}
+{% macro render_delta(val, ref) -%}
+{{ delta_block(ref, val) }}
 {%- endmacro %}
 
 {% set ri = ref_idx | default(0) %}
@@ -78,8 +81,8 @@
             {% set is_diff = (loop.index0 != ri) and (v.value != ref_val) %}
             <td{% if is_diff %} class="cell-diff"{% endif %}>
                 {% if v.value is none %}<span class="muted">-</span>
-                {% elif v.value is number and (v.value | abs >= 1e6 or (0 < v.value | abs < 1e-3)) %}{{ "%.4e" | format(v.value) }}{% if is_diff and ref_val is number %}{{ render_delta(v.value, ref_val, "%+.3e") }}{% endif %}
-                {% elif v.value is number %}{{ "%.6f" | format(v.value) }}{% if is_diff and ref_val is number %}{{ render_delta(v.value, ref_val, "%+.6f") }}{% endif %}
+                {% elif v.value is number and (v.value | abs >= 1e6 or (0 < v.value | abs < 1e-3)) %}{{ "%.4e" | format(v.value) }}{% if is_diff and ref_val is number %}{{ render_delta(v.value, ref_val) }}{% endif %}
+                {% elif v.value is number %}{{ "%.6f" | format(v.value) }}{% if is_diff and ref_val is number %}{{ render_delta(v.value, ref_val) }}{% endif %}
                 {% elif v.value is sameas true %}true
                 {% elif v.value is sameas false %}false
                 {% elif v.value is iterable and v.value is not string %}{{ v.value | join(", ") }}
@@ -121,8 +124,8 @@
                 {% if v.value is none %}<span class="muted">-</span>
                 {% elif v.value is sameas true %}true
                 {% elif v.value is sameas false %}false
-                {% elif v.value is number and (v.value | abs >= 1e6 or (0 < v.value | abs < 1e-3)) %}{{ "%.4e" | format(v.value) }}{% if is_diff and ref_val is number %}{{ render_delta(v.value, ref_val, "%+.3e") }}{% endif %}
-                {% elif v.value is number %}{{ "%.6f" | format(v.value) }}{% if is_diff and ref_val is number %}{{ render_delta(v.value, ref_val, "%+.6f") }}{% endif %}
+                {% elif v.value is number and (v.value | abs >= 1e6 or (0 < v.value | abs < 1e-3)) %}{{ "%.4e" | format(v.value) }}{% if is_diff and ref_val is number %}{{ render_delta(v.value, ref_val) }}{% endif %}
+                {% elif v.value is number %}{{ "%.6f" | format(v.value) }}{% if is_diff and ref_val is number %}{{ render_delta(v.value, ref_val) }}{% endif %}
                 {% else %}{{ v.value }}{% endif %}
             </td>
             {% endfor %}
@@ -163,8 +166,8 @@
             {% set is_diff = (loop.index0 != ri) and (v.value != ref_val) %}
             <td{% if is_diff %} class="cell-diff"{% endif %}>
                 {% if v.value is none %}<span class="muted">-</span>
-                {% elif v.value is number and (v.value | abs >= 1e6 or (0 < v.value | abs < 1e-3)) %}{{ "%.4e" | format(v.value) }}{% if is_diff and ref_val is number %}{{ render_delta(v.value, ref_val, "%+.3e") }}{% endif %}
-                {% elif v.value is number %}{{ "%.6f" | format(v.value) }}{% if is_diff and ref_val is number %}{{ render_delta(v.value, ref_val, "%+.6f") }}{% endif %}
+                {% elif v.value is number and (v.value | abs >= 1e6 or (0 < v.value | abs < 1e-3)) %}{{ "%.4e" | format(v.value) }}{% if is_diff and ref_val is number %}{{ render_delta(v.value, ref_val) }}{% endif %}
+                {% elif v.value is number %}{{ "%.6f" | format(v.value) }}{% if is_diff and ref_val is number %}{{ render_delta(v.value, ref_val) }}{% endif %}
                 {% else %}{{ v.value }}{% endif %}
             </td>
             {% endfor %}

@@ -280,9 +280,13 @@
       function pathRows(evts) {
         return evts.map(function (e) {
           return (e.paths || []).map(function (p) {
+            // docs/76: a calibration ledger without the size of each move is
+            // half a ledger — the Δ says whether a node nudged or jumped.
+            var d = window.ValueDelta ? window.ValueDelta.chipHtml(p.old, p.new) : "";
             return "<tr><td>" + esc(e.step || "") + "</td><td><code>" +
               esc(p.path) + "</code></td><td>" + esc(fmt(p.old)) +
-              " → <strong>" + esc(fmt(p.new)) + "</strong></td><td>" +
+              " → <strong>" + esc(fmt(p.new)) + "</strong>" +
+              (d ? " " + d : "") + "</td><td>" +
               esc(e.group_id || "") + "</td></tr>";
           }).join("");
         }).join("");

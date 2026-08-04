@@ -1,3 +1,4 @@
+{% from '_delta_macros.html' import delta_chip %}
 {% set inspector_type = "dataset" %}
 {% set inspector_label = "Comparing " ~ runs|length ~ " runs" %}
 {% set inspector_sub = labels | join(" vs ") %}
@@ -71,6 +72,8 @@
                 {% elif v.value == true %}<span class="outcome-badge outcome-ok">true</span>
                 {% elif v.value == false %}<span class="outcome-badge outcome-fail">false</span>
                 {% else %}{{ v.value }}{% endif %}
+                {# docs/76: fit results are the numbers researchers compare — show the gap #}
+                {% if is_diff %}{{ delta_chip(ref_val, v.value) }}{% endif %}
             </td>
             {% endfor %}
         </tr>
@@ -113,6 +116,8 @@
                 {% elif v.value is number %}{{ "%.4g" | format(v.value) }}
                 {% elif v.value is iterable and v.value is not string %}<small class="muted">[{{ v.value | length }} items]</small>
                 {% else %}{{ v.value }}{% endif %}
+                {# docs/76: how far this run sits from the reference run #}
+                {% if is_diff %}{{ delta_chip(ref_val, v.value) }}{% endif %}
             </td>
             {% endfor %}
         </tr>
