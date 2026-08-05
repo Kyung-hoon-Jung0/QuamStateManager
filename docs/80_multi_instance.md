@@ -230,21 +230,80 @@ from events the app already fires (`load`, `stateRestored`, `liveDriftChanged`)
 is a live fact, so a persisted "don't show again" would end up asserting
 something no longer true.
 
+## Part 4 — two windows, two chips
+
+Runner state used to sit directly in the instance dir: ONE `scheduler.json`,
+ONE `scheduler_queue.json`, machine-wide. So window 2 choosing its chip
+rewrote the `quam_state_path` that window 1's worker **re-reads before every
+item**, and both windows stared at one queue. Nothing about PIDs or `qm`
+prevented two chips — `qm` is multi-client by design. Our storage layout did.
+
+State is now keyed by chip: `instance/scheduler/<chip>-<hash>/` holding
+`scheduler.json`, `scheduler_queue.json` and `scheduler_logs/`, where the hash
+is over `path_match.fs_key` (one chip is one scope however its path was
+spelled) and the readable prefix comes from `history.chip_name_for` — every
+chip folder is literally named `quam_state`, so a leaf-name scope would make
+every directory on disk indistinguishable.
+
+**Scoping by the OPEN chip is the only non-circular choice**: the runner's own
+`quam_state_path` lives *inside* the scoped file, so it cannot also select it.
+It also matches the mental model — a window has a chip open, and its runner
+belongs to that chip. With no chip open, a shared `_nochip` scope (the runner
+page is not usable without a chip anyway — the preflight requires one).
+
+**Settings split, and that split is what makes this a feature rather than a
+chore.** `env_python`, `calibrations_folder`, `default_timeout_s` and
+`continue_without_ui` are facts about the *machine* and stay shared at
+`instance/scheduler/_shared.json`; asking for the conda env and the node
+library again per chip would be a regression dressed up as isolation.
+Everything else is per-chip — above all `quam_state_path`, which IS the chip.
+
+The web layer needed one real change: `routes._sched_inst()` resolves the
+scope, and every scheduler/autofit route already went through it.
+
+What deliberately did NOT move, and why each would have been a quiet
+regression:
+
+* the two **node-library scan caches** — they key on (env, folder) and know
+  nothing about chips, so scoping them would rebuild the same expensive scan
+  per chip;
+* the autofit **sim world** — a throwaway synthetic chip that exists to demo
+  the loop hardware-free, unrelated to whichever real chip is open (the
+  autofit *ledger* IS per-chip, because a plan is about a chip);
+* **queue presets** — a preset is "these nodes, in this order": a measurement
+  recipe, not a fact about one device. A lab that builds a good tune-up
+  sequence on chip A wants it on chip B, so presets sit beside the scopes
+  rather than inside one;
+* the **UI heartbeat**. This one is the subtlest. It has always meant "a
+  browser is still there" — its job is noticing a *closed tab*, which is why
+  its window is 90 s (long enough to survive a backgrounded tab's clamped
+  timers). Keyed strictly to the polled scope, merely **switching chips**
+  would have read as a disconnect and paused the run on the chip you
+  navigated away from — exactly what a two-chip user does when they start a
+  run on chip A and go look at chip B. `touch_ui` therefore feeds every
+  runner this process is driving.
+
+Window-close cleanup now cancels by **our own runner registry**
+(`cancel_all_local`) rather than by directory: with scopes, one directory
+would reach at most one of this process's runs.
+
+**Migration** runs once at startup, flag-file gated, and copies rather than
+moves — a copy that turns out wrong is recoverable, a move is not. The legacy
+`quam_state_path` says which chip the queue belonged to; with none recorded it
+lands in `_nochip`. Doing it at startup rather than lazily means which scope
+inherits the queue is decided by that recorded chip, not by whichever request
+happened to resolve a scope first.
+
+Verified end to end with two real servers on two ports: independent queues,
+each window's own target chip, shared env and calibrations folder, two scope
+directories on disk.
+
 ## What is NOT closed
 
-Two windows still cannot run **two different chips** at once: the Experiment
-Runner's settings (`scheduler.json` holds one `quam_state_path`, one env, one
-calibrations folder) and its queue are per *instance directory*, i.e. one per
-machine. That is a pre-existing limit of the storage layout, not of PIDs and
-not of QM — `qm` supports multiple clients fine. Scoping the runner per chip
-(`instance/scheduler/<scope>/…`) would lift it; `_sched_inst()` is very nearly
-the single choke point that would need to change (9 of 11 call sites go through
-it). Deliberately left out of this branch so the safety work could land on its
-own.
-
-Also unchanged: no editing merge between windows, no live cross-window sync,
-and `last_session.json` stays last-write-wins (it only tints the landing's
-Resume highlight).
+No editing merge between windows, no live cross-window sync, and
+`last_session.json` stays last-write-wins (it only tints the landing's Resume
+highlight). Two windows on the **same** chip still share one working copy —
+that is what the Part 3 banner is for.
 
 ## Pins for Parts 1–3
 
