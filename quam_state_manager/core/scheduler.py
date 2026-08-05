@@ -15,17 +15,20 @@ a single-user local app; revisit if it keeps growing):
 * **Settings + dataset discovery** — ``instance/scheduler.json`` + the dataset
   roots under the storage location.
 * **Pre-flight** — :func:`build_preflight`, the identity/safety checks gating a run.
-* **Queue** — durable ``instance/scheduler_queue.json`` CRUD (add/reorder/…).
+* **Queue** — durable per-chip ``<scope>/scheduler_queue.json`` CRUD
+  (add/reorder/…); see :func:`scope_dir` for what a scope is (docs/80).
 * **Runner** — the background daemon worker: spawn/kill (process groups), the
   dry-run + graph-library safety gates, failure policy, heartbeat, cancellation.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import re
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -174,7 +177,162 @@ def scan_params(python_path: str, folder: str, *, instance_path=None,
 
 
 # ----------------------------------------------------------------------
-# Settings persistence (instance/scheduler.json)
+# Per-chip scope (docs/80 Part 4)
+# ----------------------------------------------------------------------
+#
+# The runner's state used to live directly in the instance dir — ONE
+# scheduler.json and ONE scheduler_queue.json for the whole machine. That is
+# what stopped two windows from driving two different chips: not PIDs, not
+# anything in ``qm`` (which is happily multi-client), just our storage layout.
+# Window 2 picking its chip rewrote the ``quam_state_path`` window 1's worker
+# re-reads per item, and both windows saw one queue.
+#
+# So runner state is now keyed by the chip it belongs to. Every scheduler
+# entry point already takes a directory, and the web layer resolves that
+# directory in exactly one place (``routes._sched_inst``), so the change is a
+# different path rather than a different API.
+
+_SCOPE_ROOT = "scheduler"
+_SCOPE_FALLBACK = "_nochip"
+
+# Memo for scope resolution. Resolving a scope costs a real filesystem call
+# (``Path.resolve`` inside both ``fs_key`` and ``chip_name_for``) — measured at
+# ~205us locally, and a 9p/network workspace is far worse. That was fine when
+# the web layer's scope lookup was an attribute read, but ``_sched_inst`` now
+# resolves one on EVERY non-GET request (the edit-lock guard) and several times
+# per 2.5s status poll. The mapping is a pure function of its inputs and the
+# number of distinct chips in a session is tiny (the context cache holds 10),
+# so a small bounded memo removes the cost entirely.
+_SCOPE_MEMO: dict[tuple[str, str], Path] = {}
+_SCOPE_MEMO_MAX = 64
+_SCOPE_MEMO_LOCK = threading.Lock()
+
+
+def scope_dir(instance_path, chip_path=None) -> Path:
+    key = (str(instance_path), str(chip_path or ""))
+    with _SCOPE_MEMO_LOCK:
+        hit = _SCOPE_MEMO.get(key)
+    if hit is not None:
+        return hit
+    out = _scope_dir_uncached(instance_path, chip_path)
+    with _SCOPE_MEMO_LOCK:
+        if len(_SCOPE_MEMO) >= _SCOPE_MEMO_MAX:
+            _SCOPE_MEMO.clear()
+        _SCOPE_MEMO[key] = out
+    return out
+
+
+def _scope_dir_uncached(instance_path, chip_path=None) -> Path:
+    """Where THIS chip's runner state lives.
+
+    ``<instance>/scheduler/<chip-name>-<path-hash>``. The hash is over
+    :func:`path_match.fs_key`, the same per-OS canonical identity the working
+    copies use, so a chip is one scope no matter how its path was spelled; the
+    readable prefix is there so the folder means something to a human.
+
+    With no chip open we fall back to a shared ``_nochip`` scope: the runner
+    page is not usable without a chip anyway (the preflight requires one), and
+    inventing a scope per empty session would scatter state.
+    """
+    root = Path(instance_path) / _SCOPE_ROOT
+    if not chip_path:
+        return root / _SCOPE_FALLBACK
+    try:
+        key = path_match.fs_key(chip_path) or str(chip_path)
+    except Exception:       # noqa: BLE001
+        key = str(chip_path)
+    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:8]
+    # Same readable-prefix rule the working copies use: every chip folder is
+    # literally named "quam_state", so the leaf name alone would make every
+    # scope indistinguishable on disk.
+    try:
+        label = history.chip_name_for(Path(str(chip_path)))
+    except Exception:       # noqa: BLE001
+        label = Path(str(chip_path)).name
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", label or "")[:40] or "chip"
+    return root / f"{name}-{digest}"
+
+
+def shared_settings_path(scope) -> Path:
+    """Machine-level settings, one level up from any scope."""
+    return Path(scope).parent / "_shared.json"
+
+
+def migrate_legacy_scope(instance_path) -> dict:
+    """Move pre-scope runner state into the scope it belongs to (docs/80).
+
+    The old layout put ``scheduler.json`` / ``scheduler_queue.json`` /
+    ``scheduler_logs/`` straight in the instance dir. Which chip did that queue
+    belong to? The settings say so: ``quam_state_path`` is the chip the worker
+    was pointed at. With no chip recorded it lands in the no-chip scope, where
+    the first session without a chip open will find it.
+
+    Run once at startup (flag-file gated) rather than lazily at scope
+    resolution, so WHICH scope adopts the legacy queue does not depend on who
+    asked first. Idempotent and never fatal — a failed migration must leave the
+    old files exactly where they are rather than lose a queue.
+    """
+    inst = Path(instance_path)
+    marker = inst / _SCOPE_ROOT / ".migrated_v1"
+    out = {"migrated": False, "scope": None}
+    legacy_settings = inst / _SETTINGS_FILENAME
+    legacy_queue = inst / _QUEUE_FILENAME
+    if marker.exists():
+        return out
+    try:
+        (inst / _SCOPE_ROOT).mkdir(parents=True, exist_ok=True)
+        if not legacy_settings.exists() and not legacy_queue.exists():
+            marker.write_text("nothing to migrate\n", encoding="utf-8")
+            return out
+        settings = _read_settings_file(legacy_settings)
+        target = scope_dir(inst, settings.get("quam_state_path") or None)
+        target.mkdir(parents=True, exist_ok=True)
+
+        if settings:
+            shared = {k: v for k, v in settings.items() if k in _SHARED_KEYS}
+            own = {k: v for k, v in settings.items()
+                   if k in _DEFAULTS and k not in _SHARED_KEYS}
+            if shared and not shared_settings_path(target).exists():
+                safe_io.atomic_write_json(shared_settings_path(target), shared)
+            if own and not settings_path(target).exists():
+                safe_io.atomic_write_json(settings_path(target), own)
+        if legacy_queue.exists() and not queue_path(target).exists():
+            shutil.copy2(legacy_queue, queue_path(target))
+        legacy_logs = inst / _LOGS_DIRNAME
+        if legacy_logs.is_dir() and not (target / _LOGS_DIRNAME).exists():
+            shutil.copytree(legacy_logs, target / _LOGS_DIRNAME)
+
+        # The originals are left in place: a copy that turns out wrong is
+        # recoverable, a move that turns out wrong is not. The marker stops
+        # this from running again, so they are simply inert.
+        marker.write_text(f"migrated to {target.name}\n", encoding="utf-8")
+        out.update({"migrated": True, "scope": target.name})
+        logger.info("scheduler: legacy runner state adopted into scope %s", target.name)
+    except Exception:       # noqa: BLE001 — never block startup
+        logger.warning("scheduler legacy scope migration failed", exc_info=True)
+    return out
+
+
+def cancel_all_local() -> list[str]:
+    """Cancel every run THIS process is actually driving (docs/80).
+
+    The window-close path used to cancel by instance dir, which with per-chip
+    scopes would reach at most one of this process's runs — and, before
+    ownership existed, could reach someone else's. Iterating our own runner
+    registry is both complete and incapable of touching another window's run.
+    """
+    cancelled = []
+    for scope in list(_RUNNERS.keys()):
+        try:
+            cancel(scope)
+            cancelled.append(scope)
+        except Exception:   # noqa: BLE001
+            logger.warning("cancel on exit failed for %s", scope, exc_info=True)
+    return cancelled
+
+
+# ----------------------------------------------------------------------
+# Settings persistence
 # ----------------------------------------------------------------------
 
 _SETTINGS_FILENAME = "scheduler.json"
@@ -190,44 +348,72 @@ _DEFAULTS: dict = {
     "effective_config": None,       # last-read snapshot (shown in Verify + read on the run path)
 }
 
+# Which settings are facts about the MACHINE rather than about a chip.
+#
+# Splitting these out is the difference between per-chip scoping being a
+# feature and being a chore: the conda env and the node library are the same
+# for every chip in a lab, and asking for them again per chip would be a
+# regression dressed up as isolation. Everything NOT listed here is per-chip —
+# above all ``quam_state_path``, which IS the chip, and which the worker
+# re-reads per item (a shared copy is precisely how window 2 used to redirect
+# window 1's run).
+_SHARED_KEYS = frozenset({
+    "calibrations_folder", "env_python", "default_timeout_s",
+    "continue_without_ui",
+})
 
-def settings_path(instance_path) -> Path:
-    return Path(instance_path) / _SETTINGS_FILENAME
+
+def settings_path(scope) -> Path:
+    return Path(scope) / _SETTINGS_FILENAME
 
 
-def load_settings(instance_path) -> dict:
-    """Read persisted settings, merged over defaults; tolerant of a missing file."""
-    path = settings_path(instance_path)
-    data: dict = {}
-    if path.exists():
-        try:
-            loaded = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                data = loaded
-        except (OSError, ValueError):
-            logger.warning("Could not read scheduler settings %s", path, exc_info=True)
+def _read_settings_file(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+        return loaded if isinstance(loaded, dict) else {}
+    except (OSError, ValueError):
+        logger.warning("Could not read scheduler settings %s", path, exc_info=True)
+        return {}
+
+
+def load_settings(scope) -> dict:
+    """Settings for this scope: defaults ← machine-level ← this chip's."""
     merged = dict(_DEFAULTS)
-    merged.update({k: v for k, v in data.items() if k in _DEFAULTS})
+    shared = _read_settings_file(shared_settings_path(scope))
+    merged.update({k: v for k, v in shared.items() if k in _SHARED_KEYS})
+    own = _read_settings_file(settings_path(scope))
+    merged.update({k: v for k, v in own.items()
+                   if k in _DEFAULTS and k not in _SHARED_KEYS})
     return merged
 
 
-def save_settings(instance_path, settings: dict) -> dict:
-    """Persist settings atomically (only known keys); returns the merged result.
+def save_settings(scope, settings: dict) -> dict:
+    """Persist settings atomically, routing each key to its home.
 
     Guarded by _QLOCK so a debounced settings POST can't lose-update against the
-    effective-config write (both do a full read-modify-write of scheduler.json).
+    effective-config write (both do a read-modify-write).
     A non-positive/invalid ``default_timeout_s`` is clamped to the default so the
     run watchdog can never be silently disabled.
     """
     with _QLOCK:
-        current = load_settings(instance_path)
+        current = load_settings(scope)
         current.update({k: v for k, v in (settings or {}).items() if k in _DEFAULTS})
         try:
             t = int(current.get("default_timeout_s"))
         except (TypeError, ValueError):
             t = _DEFAULTS["default_timeout_s"]
         current["default_timeout_s"] = t if t > 0 else _DEFAULTS["default_timeout_s"]
-        safe_io.atomic_write_json(settings_path(instance_path), current)
+
+        Path(scope).mkdir(parents=True, exist_ok=True)
+        shared_path = shared_settings_path(scope)
+        shared = _read_settings_file(shared_path)
+        shared.update({k: current[k] for k in _SHARED_KEYS})
+        safe_io.atomic_write_json(shared_path, shared)
+        safe_io.atomic_write_json(
+            settings_path(scope),
+            {k: v for k, v in current.items() if k not in _SHARED_KEYS})
         return current
 
 
@@ -518,9 +704,10 @@ def build_preflight(ctx: dict) -> dict:
 # ======================================================================
 # Queue + background worker (Phase 1)
 #
-# All durable state lives in instance/scheduler_queue.json; per-run stdout in
-# instance/scheduler_logs/<id>.log. The worker is a Flask-free daemon thread
-# keyed on instance_path — it reads settings + queue from disk, spawns
+# All durable state lives in <scope>/scheduler_queue.json; per-run stdout in
+# <scope>/scheduler_logs/<id>.log, where <scope> is the per-chip directory
+# resolved by scope_dir (docs/80). The worker is a Flask-free daemon thread
+# keyed on that scope — it reads settings + queue from disk, spawns
 # run_experiment.py (run mode) one item at a time, and writes status back. No
 # Flask app context is required (mirrors the param-history backfill pattern but
 # self-contained on disk). See docs/40_scheduler.md.
@@ -544,8 +731,21 @@ HEARTBEAT_TIMEOUT_S = 90.0
 
 
 def touch_ui(instance_path) -> None:
-    """Record that the UI just polled (browser-alive heartbeat)."""
-    _LAST_UI_SEEN[str(instance_path)] = time.time()
+    """Record that the UI just polled (browser-alive heartbeat).
+
+    Feeds EVERY runner this process is driving, not just the polled scope
+    (docs/80 Part 4). The heartbeat has always meant "a browser is still
+    there" — it exists to notice a CLOSED tab, which is why its window is 90s
+    (long enough to survive a backgrounded tab's clamped timers). Once runner
+    state became per-chip, keying it strictly to the polled scope would have
+    made *switching chips* look like a disconnect and paused the run on the
+    chip you navigated away from — precisely what a two-chip user does when
+    they start a run on chip A and go look at chip B.
+    """
+    now = time.time()
+    _LAST_UI_SEEN[str(instance_path)] = now
+    for scope in list(_RUNNERS.keys()):
+        _LAST_UI_SEEN[scope] = now
 
 
 # ----------------------------------------------------------------------
@@ -630,6 +830,13 @@ def queue_path(instance_path) -> Path:
     return Path(instance_path) / _QUEUE_FILENAME
 
 
+def save_queue_dir(instance_path) -> Path:
+    """Ensure the scope dir exists before a queue write lands in it."""
+    d = Path(instance_path)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def _logs_dir(instance_path) -> Path:
     d = Path(instance_path) / _LOGS_DIRNAME
     d.mkdir(parents=True, exist_ok=True)
@@ -659,6 +866,7 @@ def load_queue(instance_path) -> dict:
 
 
 def save_queue(instance_path, state: dict) -> None:
+    save_queue_dir(instance_path)
     safe_io.atomic_write_json(queue_path(instance_path), state)
 
 
@@ -1047,8 +1255,16 @@ _PRESET_STRIP = ("id", "status", "started_at", "ended_at", "returncode",
                  "error", "log_file", "result_ref", "inserted_by", "outcome_note")
 
 
-def presets_path(instance_path) -> Path:
-    return Path(instance_path) / _PRESETS_FILENAME
+def presets_path(scope) -> Path:
+    """Queue presets live BESIDE the scopes, not inside one (docs/80 Part 4).
+
+    A preset is "these nodes, in this order, with these overrides" — a recipe
+    for a measurement routine, not a fact about one device. A lab that builds
+    a good tune-up sequence on chip A wants it on chip B; scoping presets per
+    chip would silently hide the user's own saved work the moment they opened
+    a different device. So they sit one level up, next to ``_shared.json``.
+    """
+    return Path(scope).parent / _PRESETS_FILENAME
 
 
 def list_presets(instance_path) -> list[dict]:
@@ -1061,7 +1277,9 @@ def list_presets(instance_path) -> list[dict]:
 
 
 def _save_presets(instance_path, presets: list[dict]) -> None:
-    safe_io.atomic_write_json(presets_path(instance_path), {"presets": presets})
+    path = presets_path(instance_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    safe_io.atomic_write_json(path, {"presets": presets})
 
 
 def save_preset(instance_path, name: str) -> dict:

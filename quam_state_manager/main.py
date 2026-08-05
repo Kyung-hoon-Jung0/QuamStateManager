@@ -46,10 +46,15 @@ def _kill_scheduler(instance_path: str) -> None:
     headless and writing state.json. ``scheduler.cancel`` sets the cancel event
     and group-kills the child. Registered via atexit as a backstop, AND called
     explicitly on the window-close path because ``os._exit(0)`` bypasses atexit.
+
+    Cancels by OUR OWN runner registry rather than by instance dir (docs/80):
+    runner state is now per-chip, so a single directory would reach at most one
+    of this process's runs — and must never reach another window's, which
+    cancelling by directory used to do.
     """
     try:
         from quam_state_manager.core import scheduler
-        scheduler.cancel(instance_path)
+        scheduler.cancel_all_local()
     except Exception:  # noqa: BLE001 — best-effort cleanup on the way out
         logger.warning("scheduler cleanup on exit failed", exc_info=True)
 

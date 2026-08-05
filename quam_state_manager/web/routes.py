@@ -13946,9 +13946,18 @@ def _split_dataset_uid(uid: str) -> tuple[str, int] | None:
 # runs while other writers land runs, so its cost is not ours to bound; what we
 # CAN bound is how long the monitoring request may take before answering. Past
 # the budget the remaining folders are left un-scanned with their cursors held,
-# so nothing is skipped — it is re-offered on the next poll. Deliberately well
-# under the client's 10s abort so the budget, not the abort, is what fires.
-_POLL_BUDGET_S = 6.0
+# so nothing is skipped — it is re-offered on the next poll (the client comes
+# back in ~1.2s on `partial`). The budget therefore trades chattiness, never
+# correctness, which is why it can afford to be generous.
+#
+# INVARIANT: this must stay well below the client's abort
+# (POLL_TIMEOUT_MS in dataset-virtual.js, currently 20s). The two have
+# different jobs — the budget means "answer by now", the abort means
+# "something is wrong" — and an aborted request delivers NEITHER a cursor nor
+# the partial flag, i.e. exactly the silent-stall this whole mechanism exists
+# to prevent. Keeping the abort at >2x the budget means it only ever fires on
+# a genuinely hung request, never on a merely slow scan.
+_POLL_BUDGET_S = 8.0
 
 _dataset_candidates_lock = threading.Lock()
 _dataset_candidates_cache: dict[Any, tuple[Any, int, list[Path]]] = {}
@@ -17145,7 +17154,7 @@ def _scheduler_lock_guard():
     if request.method != "GET" and request.endpoint in (
             _SCHEDULER_MUTATOR_ENDPOINTS | _AUTOFIT_BLOCKED_SCHEDULER_ENDPOINTS):
         from quam_state_manager.core.autofit import engine as autofit_engine
-        if autofit_engine.locks_chip(current_app.instance_path):
+        if autofit_engine.locks_chip(_sched_inst()):
             resp = make_response(jsonify({
                 "error": "autofit_running",
                 "message": "An Auto Calibrate plan is running — this action is "
@@ -17156,7 +17165,7 @@ def _scheduler_lock_guard():
             resp.headers["HX-Trigger"] = "autofitLocked"
             return resp
     if request.endpoint in _SCHEDULER_MUTATOR_ENDPOINTS \
-            and scheduler.is_active(current_app.instance_path):
+            and scheduler.is_active(_sched_inst()):
         resp = make_response(jsonify({
             "error": "scheduler_running",
             "message": "The Experiment Runner is running — editing is locked "
@@ -17171,7 +17180,7 @@ def _scheduler_lock_guard():
 @bp.route("/scheduler", methods=["GET"])
 def scheduler_page():
     """Top-level Scheduler page — setup, pre-flight, queue + runner."""
-    settings = scheduler.load_settings(current_app.instance_path)
+    settings = scheduler.load_settings(_sched_inst())
     open_folder = _active_path() if _context_type() == "quam" else None
     # Prefill the quam_state target from the open chip when unset (Strict policy
     # wants them equal anyway).
@@ -17215,7 +17224,7 @@ def _sched_settings_patch(data: dict) -> dict[str, Any]:
 @bp.route("/scheduler/settings", methods=["GET", "POST"])
 def scheduler_settings():
     """Read (GET) or persist (POST) Scheduler settings."""
-    inst = current_app.instance_path
+    inst = _sched_inst()
     if request.method == "GET":
         return jsonify(scheduler.load_settings(inst))
 
@@ -17242,7 +17251,7 @@ def scheduler_settings():
 @bp.route("/scheduler/effective-config", methods=["GET"])
 def scheduler_effective_config():
     """Read the chosen env's effective qualibrate config (subprocess)."""
-    inst = current_app.instance_path
+    inst = _sched_inst()
     python_path = (request.args.get("python") or "").strip()
     if not python_path:
         python_path = scheduler.load_settings(inst).get("env_python") or ""
@@ -17301,7 +17310,7 @@ def _gather_preflight(inst: str, data: dict) -> dict:
 @bp.route("/scheduler/preflight", methods=["POST"])
 def scheduler_preflight():
     """Run the identity/safety checks that gate a future run (Strict policy)."""
-    inst = current_app.instance_path
+    inst = _sched_inst()
     data = request.get_json(silent=True) or {}
     return jsonify(_gather_preflight(inst, data))
 
@@ -17326,7 +17335,28 @@ def scheduler_register_storage():
 # --- Scheduler queue (Phase 1) ----------------------------------------
 
 def _sched_inst() -> str:
-    return current_app.instance_path
+    """Where the Experiment Runner's state lives FOR THE OPEN CHIP (docs/80).
+
+    This one function is what makes two windows able to drive two different
+    chips. Runner state used to sit directly in the instance dir — one
+    settings file, one queue, machine-wide — so window 2 choosing its chip
+    rewrote the ``quam_state_path`` window 1's worker re-reads per item, and
+    both windows stared at the same queue. Nothing about PIDs or ``qm``
+    prevented two chips; the storage layout did.
+
+    Scoping by the OPEN chip is the only non-circular choice available: the
+    runner's own ``quam_state_path`` lives *inside* the scoped file, so it
+    cannot also select it. It is also the honest mental model — a window has a
+    chip open, and its runner belongs to that chip. Machine-level settings
+    (env, calibrations folder) stay shared one level up, so per-chip isolation
+    never becomes per-chip re-configuration.
+
+    Callers that want the INSTANCE dir — the node-library scan caches, which
+    are chip-independent — must ask for it explicitly.
+    """
+    ctx = _active_ctx()
+    chip = ctx.get("path") if ctx and ctx.get("type") == "quam" else None
+    return str(scheduler.scope_dir(current_app.instance_path, chip))
 
 
 def _sched_state() -> dict:
@@ -17375,7 +17405,7 @@ def scheduler_scan():
     folder = (request.args.get("folder") or "").strip()
     if not folder:
         folder = scheduler.load_settings(_sched_inst()).get("calibrations_folder") or ""
-    items = [n.to_dict() for n in node_scan.scan_folder(folder, instance_path=_sched_inst())] if folder else []
+    items = [n.to_dict() for n in node_scan.scan_folder(folder, instance_path=current_app.instance_path)] if folder else []
     store = _store() if _context_type() == "quam" else None
     return jsonify({
         "folder": folder,
@@ -17401,7 +17431,10 @@ def scheduler_scan_params():
         return jsonify({"ok": False, "error": "No calibrations folder set."}), 400
     if not env:
         return jsonify({"ok": False, "error": "No env selected."}), 400
-    return jsonify(scheduler.scan_params(env, folder, instance_path=inst))
+    # The parameter-scan cache keys on (env, folder) and knows nothing about
+    # chips, so it stays instance-level rather than being rebuilt per scope.
+    return jsonify(scheduler.scan_params(
+        env, folder, instance_path=current_app.instance_path))
 
 
 @bp.route("/scheduler/queue/add", methods=["POST"])
@@ -17838,7 +17871,7 @@ def autofit_resolve():
         return jsonify({"ok": False, "error": "no calibrations folder set — "
                         "configure it on the Experiment Runner page"}), 400
     items = [n.to_dict() for n in
-             node_scan.scan_folder(folder, instance_path=_sched_inst())]
+             node_scan.scan_folder(folder, instance_path=current_app.instance_path)]
     files = [{"name": i.get("name"), "path": i.get("file") or i.get("path")}
              for i in items if i.get("kind") == "node"]
     res = af_plan.resolve_steps(p, files)
@@ -17926,7 +17959,12 @@ def _autofit_start_sim(inst, p, auditor):
     from quam_state_manager.core.modifier import Modifier
     from quam_state_manager.core.saver import Saver
 
-    sim_root = Path(inst) / "autofit" / "sim"
+    # Instance-level, NOT per-chip (docs/80 Part 4): the sim world is a
+    # throwaway synthetic chip that exists to demo the loop hardware-free. It
+    # has nothing to do with whichever real chip is open, so scoping it would
+    # scatter identical copies of the same fake device. The plan LEDGER, by
+    # contrast, is about a specific chip and does live in the scope.
+    sim_root = Path(current_app.instance_path) / "autofit" / "sim"
     shutil.rmtree(sim_root, ignore_errors=True)
     live = sim_root / "live_chip"
     live.mkdir(parents=True)
@@ -17994,7 +18032,7 @@ def _autofit_start_real(inst, p, data, auditor):
     # step → file resolution must be complete
     folder = scheduler.load_settings(inst).get("calibrations_folder") or ""
     items = [n.to_dict() for n in
-             node_scan.scan_folder(folder, instance_path=inst)] if folder else []
+             node_scan.scan_folder(folder, instance_path=current_app.instance_path)] if folder else []
     files = [{"name": i.get("name"), "path": i.get("file") or i.get("path")}
              for i in items if i.get("kind") == "node"]
     res = af_plan.resolve_steps(p, files)

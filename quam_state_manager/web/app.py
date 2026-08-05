@@ -537,6 +537,18 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     instances.register(app.instance_path)
     atexit.register(instances.deregister, app.instance_path)
 
+    # Runner state moved from the instance dir into per-chip scopes (docs/80
+    # Part 4). Adopt any pre-scope queue ONCE, at startup, so which scope
+    # inherits it is decided by the settings' recorded chip rather than by
+    # whichever request happened to resolve a scope first.
+    try:
+        from quam_state_manager.core import scheduler as _scheduler
+        _scheduler.migrate_legacy_scope(app.instance_path)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning(
+            "scheduler scope migration failed", exc_info=True)
+
     from quam_state_manager.web.routes import bp
     app.register_blueprint(bp)
 

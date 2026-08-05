@@ -1034,7 +1034,13 @@
     // every request is aborted after POLL_TIMEOUT_MS, the flag is cleared in a
     // real finally, a watchdog force-clears a flag that outlived any possible
     // request, and repeated failures back off instead of hammering.
-    var POLL_TIMEOUT_MS = 10000;          // matches the sidebar tree poller
+    // The abort exists to catch a HUNG request, not a slow one. The server
+    // bounds its own work with _POLL_BUDGET_S (8s) and answers `partial` when
+    // it runs out, so a merely slow scan always replies well inside this
+    // window. Keeping the abort at >2x the budget means firing it is always a
+    // real fault — and an aborted request delivers neither a cursor nor the
+    // partial flag, so it must never be the normal outcome.
+    var POLL_TIMEOUT_MS = 20000;
     var POLL_BACKOFF_MAX_MS = 300000;
 
     function pollFailed() {
