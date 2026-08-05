@@ -152,7 +152,7 @@ def open_shared(path: Path | str) -> Iterator:
 # Reading
 # ----------------------------------------------------------------------
 
-def read_json(path: Path | str) -> dict:
+def read_json(path: Path | str, *, attempts: int | None = None) -> dict:
     """Read a single JSON file conflict-safely, with transient retry.
 
     The handle is held only long enough to slurp the bytes; parsing happens
@@ -161,10 +161,17 @@ def read_json(path: Path | str) -> dict:
     Raises :class:`FileNotFoundError` if the file stays absent across every
     attempt, or :class:`LiveFileError` if it cannot be read as a valid JSON
     object.
+
+    ``attempts`` overrides the retry ladder for callers whose target is NOT a
+    live file being atomically replaced under them.  The default ladder sleeps
+    up to ``0.15+0.30+0.45 = 0.9`` seconds before giving up, which is right for
+    a live ``state.json`` and badly wrong for a bulk scan over folders another
+    writer is still filling in -- see :func:`scan_json`.
     """
     path = Path(path)
+    tries = _READ_ATTEMPTS if attempts is None else max(1, int(attempts))
     last_exc: Exception | None = None
-    for attempt in range(_READ_ATTEMPTS):
+    for attempt in range(tries):
         try:
             with open_shared(path) as f:
                 raw = f.read()
@@ -177,7 +184,7 @@ def read_json(path: Path | str) -> dict:
             # JSONDecodeError a mid-write read; locks are OSError.  Retry all.
             last_exc = exc
             logger.debug("read %s attempt %d failed: %s", path.name, attempt + 1, exc)
-            if attempt + 1 < _READ_ATTEMPTS:
+            if attempt + 1 < tries:
                 time.sleep(_READ_BACKOFF_S * (attempt + 1))
     if isinstance(last_exc, FileNotFoundError):
         raise last_exc
@@ -185,8 +192,39 @@ def read_json(path: Path | str) -> dict:
         # A content problem (bad JSON / not an object) -- retries won't help.
         raise LiveFileError(f"{path.name} is not valid JSON: {last_exc}") from last_exc
     raise LiveFileError(
-        f"Could not read {path} after {_READ_ATTEMPTS} attempts: {last_exc}"
+        f"Could not read {path} after {tries} attempts: {last_exc}"
     ) from last_exc
+
+
+def scan_json(path: Path | str) -> dict | None:
+    """Read a JSON file for a BULK SCAN: one attempt, no sleep, no exception.
+
+    Returns the parsed object, or ``None`` when the file is absent, still
+    being written, truncated, locked or not a JSON object.
+
+    Why this exists (docs/80).  Scanning a data folder means walking run
+    folders that another writer -- a qualibrate node, or a second State
+    Manager window -- may be creating *right now*.  A half-written
+    ``node.json`` is not an error condition; it is the normal appearance of a
+    run that is not finished yet, and the correct response is to skip it and
+    look again on the next pass.  Routing those reads through
+    :func:`read_json` instead charged ``0.9`` seconds of backoff *per such
+    file, per scan*, which is what turned "another process is writing runs"
+    into a stalled dataset poll.
+
+    Callers must treat ``None`` as "come back later", never as "empty" -- see
+    ``DatasetStore._parse_run_folder``, which marks the run incomplete so the
+    next scan re-parses it regardless of its mtime fingerprint.
+    """
+    path = Path(path)
+    try:
+        with open_shared(path) as f:
+            raw = f.read()
+        data = json.loads(raw.decode("utf-8"))
+    except (OSError, ValueError) as exc:
+        logger.debug("scan read %s skipped: %s", path, exc)
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def read_state_wiring(folder: Path | str, *, attempts: int | None = None) -> tuple[dict, dict]:
