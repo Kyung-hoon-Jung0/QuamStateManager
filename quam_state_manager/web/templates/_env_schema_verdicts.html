@@ -1,0 +1,64 @@
+{# docs/79 — everything the user has taught SM about this environment.
+
+   Standing matters more than the list: a verdict is only ENFORCED while the
+   field it was decided about still looks the way it did. Anything that moved
+   since is shown as needing re-confirmation rather than silently applied, and
+   anything the library has caught up with is offered for removal. #}
+<div class="tfx-card" role="dialog" aria-modal="true" aria-labelledby="envv-title">
+  <div class="ch-head">
+    <span class="ch-title" id="envv-title">Types you taught SM
+      <span class="ch-unit">{{ env_label }}</span></span>
+    <button type="button" class="ch-close" title="Close (Esc)"
+            onclick="window.closeEnvSchemaChanges()">&times;</button>
+  </div>
+
+  {% if not items %}
+  <p class="tfx-none">You have not overridden anything in this environment —
+     SM is using the schema exactly as the installed packages describe it.</p>
+  {% else %}
+  <div class="ch-scroll">
+    <table class="ch-table tfx-table">
+      <thead>
+        <tr><th>field</th><th>SM uses</th><th>environment says</th>
+            <th>standing</th><th>on this chip</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for it in items %}
+        <tr class="tfx-row">
+          <td class="tfx-path"><code>{{ it.leaf }}.{{ it.field }}</code></td>
+          <td class="tfx-new">
+            {% if it.decision == 'override' %}<code>{{ it.spec.base }}</code>
+            {% else %}<span class="muted">the environment's type</span>{% endif %}
+          </td>
+          <td class="tfx-old"><code>{{ it.env_spec.base if it.env_spec else '—' }}</code></td>
+          <td>
+            {% if it.status == 'exact' %}<span class="envv-ok">in force</span>
+            {% elif it.status == 'carried' %}<span class="envv-ok">in force</span>
+              <span class="muted">(decided in {{ it.from_label }})</span>
+            {% elif it.status == 'needs_reaffirm' %}<span class="envv-warn">needs re-confirming</span>
+              <span class="muted">— this field changed since you decided</span>
+            {% else %}<span class="muted">no longer needed — the environment agrees</span>{% endif %}
+          </td>
+          <td>{% if it.conflicts %}<span class="envv-warn">{{ it.conflicts }} value(s) conflict</span>
+              {% else %}<span class="muted">—</span>{% endif %}</td>
+          <td>
+            <button type="button" class="btn-xs outline"
+                    data-env-key="{{ it.from_env_key }}" data-class="{{ it.class_path }}"
+                    data-field="{{ it.field }}"
+                    onclick="window.envVerdictRevoke(this)">Revoke</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <div class="tfx-actions">
+    <button type="button" class="btn-sync outline"
+            onclick="window.closeEnvSchemaChanges()">Close</button>
+    <span class="tfx-note muted">These apply to every chip opened in this
+      environment; per-chip, per-key overrides stay in the Json Tree View.</span>
+  </div>
+  <div class="tfx-error" hidden></div>
+</div>

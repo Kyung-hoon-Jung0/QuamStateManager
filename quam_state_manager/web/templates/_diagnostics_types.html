@@ -86,4 +86,40 @@
     against it are unknown — use "Probe environment" above.
   </p>
   {% endif %}
+
+  {# docs/79: the library's own movements, and what the user has taught SM
+     about them. Kept on this card because "is this value wrong or did the
+     library move?" is one question, not two. #}
+  {% if types_card and types_card.env.warm %}
+  <div class="diag-types-row">
+    <div class="diag-types-label">Environment schema</div>
+    <div class="diag-types-body">
+      <span class="diag-types-counts">
+        {% if types_card.env_change and types_card.env_change.first %}
+        first baseline recorded ({{ types_card.env_change.to_label }}) — an
+        upgrade can be compared against it from now on
+        {% elif types_card.env_change and types_card.env_change.changed %}
+        <strong>{{ types_card.env_change.count }}</strong> schema
+        {{ 'items' if types_card.env_change.count != 1 else 'item' }} changed
+        since {{ types_card.env_change.from_label }}
+        {% else %}
+        unchanged since SM last recorded it
+        {% endif %}
+        {% if types_card.taught %} &middot; you taught SM
+        {{ types_card.taught }} type{{ 's' if types_card.taught != 1 }}{% endif %}
+      </span>
+      <div class="diag-types-actions">
+        {% if types_card.env_change and types_card.env_change.changed %}
+        <button type="button" class="btn-sm"
+                onclick="window.openEnvSchemaChanges && window.openEnvSchemaChanges()"
+                title="See what the library changed, and tell SM which side is right">Review {{ types_card.env_change.count }} schema change{{ 's' if types_card.env_change.count != 1 }}&hellip;</button>
+        {% endif %}
+        {% if types_card.taught %}
+        <button type="button" class="btn-sm outline"
+                onclick="window.openEnvSchemaVerdicts && window.openEnvSchemaVerdicts()">Manage taught types</button>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
 </div>

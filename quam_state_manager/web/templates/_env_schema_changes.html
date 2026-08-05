@@ -1,0 +1,98 @@
+{# docs/79 — what the ENVIRONMENT changed, and the user's chance to correct SM.
+
+   A type mismatch can be the chip's fault or the library's, and until SM kept
+   a baseline it could not tell the two apart. This lists what moved between
+   the environment SM last recorded and the one selected now, and lets the user
+   answer per field. Nothing here is automatic: SM never rewrites a value from
+   a schema change. #}
+<div class="tfx-card env-changes-card" role="dialog" aria-modal="true"
+     aria-labelledby="envchg-title"
+     {% if transition and transition.diff %}data-from="{{ transition.from_key }}"
+     data-to="{{ transition.to_key }}" data-sig="{{ transition.sig }}"{% endif %}>
+  <div class="ch-head">
+    <span class="ch-title" id="envchg-title">Environment schema</span>
+    <button type="button" class="ch-close" title="Close (Esc)"
+            onclick="window.closeEnvSchemaChanges()">&times;</button>
+  </div>
+
+  {% if not transition %}
+  <p class="tfx-none">No environment is selected, or its schema has not been
+     probed yet — probe it from the Diagnostics environment card.</p>
+
+  {% elif transition.first %}
+  <p class="tfx-none">
+    This is the first environment schema SM has recorded
+    (<strong>{{ transition.to_label }}</strong>). From now on an upgrade can be
+    compared against it, so SM can tell you what the <em>library</em> changed
+    rather than only what looks wrong in your chip.
+  </p>
+
+  {% elif not transition.changed %}
+  <p class="tfx-none">
+    Nothing in the environment's schema changed since
+    <strong>{{ transition.from_label }}</strong>.
+  </p>
+
+  {% else %}
+  <p class="tfx-lead">
+    The environment changed from <strong>{{ transition.from_label }}</strong>
+    to <strong>{{ transition.to_label }}</strong>
+    ({{ transition.distance }} version step) and
+    <strong>{{ transition.diff.total }}</strong> schema
+    {{ 'items' if transition.diff.total != 1 else 'item' }} moved with it.
+    SM changes <em>nothing</em> in your state because of this — tell it which
+    side is right where it matters.
+    {% if transition.diff.truncated %}
+    <span class="tfx-warn">Showing the first {{ rows | length }}.</span>
+    {% endif %}
+  </p>
+
+  <div class="ch-scroll">
+    <table class="ch-table tfx-table">
+      <thead>
+        <tr><th>field</th><th>what changed</th><th>was</th><th>now</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr class="tfx-row{% if r.answered %} envchg-answered{% endif %}">
+          <td class="tfx-path"><code>{{ r.leaf }}{% if r.field %}.{{ r.field }}{% endif %}</code></td>
+          <td class="tfx-why">{{ r.kind | replace('_', ' ') }}{% if r.detail %} — {{ r.detail }}{% endif %}</td>
+          <td class="tfx-old"><code>{{ r.old.base if r.old else '—' }}</code></td>
+          <td class="tfx-new"><code>{{ r.new.base if r.new else '—' }}</code></td>
+          <td class="envchg-actions">
+            {% if r.answered %}
+            <span class="muted">you answered this ({{ r.verdict.status }})</span>
+            {% elif r.field %}
+            <button type="button" class="btn-xs primary"
+                    onclick="window.envVerdict(this, 'accept', 'env')"
+                    data-class="{{ r.class }}" data-field="{{ r.field }}"
+                    title="Record that this environment is right — stops asking, changes no value">This is right now</button>
+            {% if r.old %}
+            <button type="button" class="btn-xs outline"
+                    onclick="window.envVerdict(this, 'override', 'baseline')"
+                    data-class="{{ r.class }}" data-field="{{ r.field }}"
+                    data-baseline="{{ transition.from_key }}"
+                    title="Keep treating this field as the previous environment did">Keep {{ r.old.base }}</button>
+            {% endif %}
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <div class="tfx-actions">
+    {% if transition and transition.changed %}
+    <button type="button" class="btn-sync outline"
+            onclick="window.envSchemaDismiss(this)"
+            title="Hide this exact set of schema changes — a further change raises it again">Don&rsquo;t show this again</button>
+    {% endif %}
+    <button type="button" class="btn-sync outline"
+            onclick="window.closeEnvSchemaChanges()">Close</button>
+    <span class="tfx-note muted">Answers are remembered for this environment
+      and apply to every chip you open in it.</span>
+  </div>
+  <div class="tfx-error" hidden></div>
+</div>

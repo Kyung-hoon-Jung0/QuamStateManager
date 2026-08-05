@@ -203,3 +203,65 @@ def test_analyzer_cross_generation_detects_and_aggregates():
     assert unknown[0]["count"] >= 50            # dozens of CZ macros aggregate...
     assert len(unknown) == 1                    # ...into ONE finding
     assert len(res["findings"]) < 60, "cross-generation noise flood"
+
+
+# ---------------------------------------------------------------------------
+# docs/79 — the env-scoped verdict layer must be INVISIBLE until it is used
+# ---------------------------------------------------------------------------
+
+def test_no_verdict_store_means_the_policy_is_byte_identical(tmp_path):
+    """The dormancy guarantee: with nothing taught, ``load_policy`` must not
+    even copy the manifest — the whole mechanism is provably inert on every
+    existing instance."""
+    manifest = next(iter(_MANIFESTS.values()))
+    policy = tp.load_policy(tmp_path, tmp_path / "chip", manifest)
+    assert policy.verdicts == {}
+    assert policy.manifest is policy.env_manifest is manifest
+
+
+@pytest.mark.parametrize("mname", sorted(_MANIFESTS))
+def test_an_accept_all_overlay_is_a_provable_no_op(mname):
+    """Accepting the environment's OWN type for every field must change
+    nothing — not one expectation, not one judgement, not one byte of state.
+
+    This is what makes a class-wide verdict layer safe to ship: when a verdict
+    agrees with the env, it is indistinguishable from having no verdict at all,
+    so only a deliberate disagreement can ever change behaviour.
+    """
+    from quam_state_manager.core import type_verdicts as tv
+
+    manifest = _MANIFESTS[mname]
+    resolved = {}
+    for cpath, entry in (manifest.get("classes") or {}).items():
+        canonical = entry.get("canonical") or cpath
+        for fname, f in (entry.get("fields") or {}).items():
+            spec = tv.normalize_spec(f.get("type"))
+            if spec:
+                resolved[f"{canonical}.{fname}"] = {
+                    "enforced": True, "spec": spec, "status": "exact",
+                    "from_label": mname, "decided_at": "", "note": "",
+                    "class_path": canonical, "field": fname,
+                }
+    overlaid = tv.overlay_manifest(manifest, resolved)
+
+    chips = _chips()
+    assert chips, "no corpus chips found"
+    plain = tp.TypePolicy(manifest, {})
+    taught = tp.TypePolicy(overlaid, {}, verdicts=resolved, env_manifest=manifest)
+    for chip in chips[:5]:
+        try:
+            state = _load_state(chip)
+        except (OSError, ValueError):
+            continue
+        for path, value in _scalar_leaves(state):
+            if value is None or sev.is_pointer_str(value):
+                continue
+            a = plain.expected_for(state, path, infer=False)
+            b = taught.expected_for(state, path, infer=False)
+            assert (a is None) == (b is None), f"{chip.name}:{path}"
+            if a is None:
+                continue
+            assert a.spec.get("base") == b.spec.get("base"), (
+                f"{chip.name}:{path} — an accept-all overlay changed the "
+                f"expectation ({a.spec.get('base')} -> {b.spec.get('base')})")
+            assert sev.judge(value, a.spec)[0] == sev.judge(value, b.spec)[0]

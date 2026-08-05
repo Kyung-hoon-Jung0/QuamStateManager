@@ -3026,6 +3026,141 @@ window.TypeAlert = (function () {
     };
 })();
 
+/* Environment schema changes + the verdicts the user records about them
+   (docs/79). Reuses the same ch-overlay shell as the repair dialog: this is
+   the other half of the same question ("is this value wrong, or did the
+   library move?"), so it should not look like a different app. */
+(function () {
+    var overlay = null;
+
+    function ensure() {
+        if (overlay) return overlay;
+        overlay = document.createElement("div");
+        overlay.className = "ch-overlay tfx-overlay envchg-overlay";
+        overlay.style.display = "none";
+        var backdrop = document.createElement("div");
+        backdrop.className = "ch-backdrop";
+        backdrop.addEventListener("click", window.closeEnvSchemaChanges);
+        var card = document.createElement("div");
+        card.className = "ch-card tfx-host";
+        overlay.appendChild(backdrop);
+        overlay.appendChild(card);
+        document.body.appendChild(overlay);
+        return overlay;
+    }
+
+    window.closeEnvSchemaChanges = function () {
+        if (!overlay) return;
+        if (overlay._releaseTrap) {
+            try { overlay._releaseTrap(); } catch (e) {}
+            overlay._releaseTrap = null;
+        }
+        overlay.style.display = "none";
+        overlay.querySelector(".tfx-host").innerHTML = "";
+    };
+
+    function open(url) {
+        var o = ensure();
+        var host = o.querySelector(".tfx-host");
+        host.innerHTML = '<div class="tfx-card"><p class="tfx-lead">Comparing environments…</p></div>';
+        o.style.display = "flex";
+        fetch(url, { headers: { "HX-Request": "true" } })
+            .then(function (r) { return r.text(); })
+            .then(function (html) {
+                host.innerHTML = html;
+                o._releaseTrap = window.trapFocus
+                    ? window.trapFocus(o, window.closeEnvSchemaChanges) : null;
+            })
+            .catch(function (e) {
+                host.innerHTML = '<div class="tfx-card"><p class="tfx-lead">'
+                    + "Could not compare the environments: " + String(e) + "</p></div>";
+            });
+    }
+
+    window.openEnvSchemaChanges = function () { open("/env-schema/changes"); };
+    window.openEnvSchemaVerdicts = function () { open("/env-schema/verdicts"); };
+
+    function _err(btn, msg) {
+        var card = btn.closest(".tfx-card");
+        var box = card && card.querySelector(".tfx-error");
+        if (box) { box.hidden = false; box.textContent = msg; }
+    }
+
+    /* Record what the user knows: either "the environment is right" or "keep
+       treating this as the previous environment did". Both are explicit
+       clicks — SM never decides this on its own. */
+    window.envVerdict = function (btn, decision, use) {
+        var body = new URLSearchParams({
+            class_path: btn.getAttribute("data-class") || "",
+            field: btn.getAttribute("data-field") || "",
+            decision: decision, use: use
+        });
+        if (btn.getAttribute("data-baseline")) {
+            body.set("baseline_key", btn.getAttribute("data-baseline"));
+        }
+        btn.disabled = true;
+        fetch("/env-schema/verdict", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: body.toString()
+        }).then(function (r) {
+            return r.json().then(function (d) { return { status: r.status, body: d }; });
+        }).then(function (res) {
+            if (!res.body || !res.body.ok) {
+                btn.disabled = false;
+                _err(btn, (res.body && res.body.error) || "Could not record that.");
+                return;
+            }
+            var row = btn.closest("tr");
+            if (row) {
+                row.classList.add("envchg-answered");
+                var cell = btn.closest("td");
+                if (cell) cell.textContent = "recorded";
+            }
+            if (window.showToast) {
+                window.showToast(res.body.warning
+                    || "Recorded — SM will use that in this environment.",
+                    res.body.warning ? "warning" : "success");
+            }
+            try { window.htmx && window.htmx.trigger(document.body, "diagnostics-changed"); } catch (e) {}
+        }).catch(function (e) { btn.disabled = false; _err(btn, String(e)); });
+    };
+
+    window.envVerdictRevoke = function (btn) {
+        var body = new URLSearchParams({
+            env_key: btn.getAttribute("data-env-key") || "",
+            class_path: btn.getAttribute("data-class") || "",
+            field: btn.getAttribute("data-field") || ""
+        });
+        btn.disabled = true;
+        fetch("/env-schema/verdict/revoke", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: body.toString()
+        }).then(function () {
+            var row = btn.closest("tr");
+            if (row && row.parentNode) row.parentNode.removeChild(row);
+            try { window.htmx && window.htmx.trigger(document.body, "diagnostics-changed"); } catch (e) {}
+        }).catch(function () { btn.disabled = false; });
+    };
+
+    window.envSchemaDismiss = function (btn) {
+        var card = btn.closest(".tfx-card");
+        if (card) {
+            fetch("/env-schema/dismiss", {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: new URLSearchParams({
+                    from_key: card.getAttribute("data-from") || "",
+                    to_key: card.getAttribute("data-to") || "",
+                    sig: card.getAttribute("data-sig") || ""
+                }).toString()
+            }).catch(function () {});
+        }
+        window.closeEnvSchemaChanges();
+    };
+})();
+
 /* Content-entry events the app already fires (they bubble to document) — no
    new poller, no route changes, no live-file reads. */
 document.addEventListener("DOMContentLoaded", function () {
