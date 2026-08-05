@@ -151,16 +151,108 @@ client checks fail there. A pin that passes on the broken code pins nothing.
 
 ---
 
-## Still to come on this branch
+---
 
-* **Part 1** — a process registry (`instance/instances/<pid>.json`, one file
-  per process so there is no shared read-modify-write; liveness by PID probe,
-  no new poller).
-* **Part 2** — scheduler state scoped per chip
-  (`instance/scheduler/<scope>/…`) plus `run.owner_pid`. Two windows driving
-  two different chips is something QM supports and only our storage layout
-  prevented; the same change makes a *second runner on the same chip* refuse
-  instead of silently double-driving one OPX.
-* **Part 3** — warn only when two windows hold the **same state path**. A
-  shared data folder is not a conflict, and 0-4 removed the loss that made it
-  look like one.
+## Part 1 — knowing the other window exists
+
+`core/instances.py`: a registry of live State Manager processes and what each
+holds.
+
+**One file per process** (`instance/instances/<pid>.json`), not one shared
+document. A shared file would need a read-modify-write from every process —
+precisely the lost-update pattern this whole document exists to close, and two
+windows would delete each other's entries. Per-process files have no write
+contention at all: each process writes only its own, reading is a glob,
+cleanup is an unlink.
+
+**Liveness by PID probe, not heartbeat.** A heartbeat means a timer, and the
+docs/78 constraint holds: no new background pollers. A probe is exact at the
+moment it matters and costs one syscall. Its failure modes are bounded: a
+reused PID reads as alive (a warning that need not have been shown), a probe
+that errors reads as dead (no worse than having no registry). `pid_alive` now
+lives here with `scheduler._pid_alive` as an alias, so the orphan reconciler
+and the registry can never disagree about who is alive.
+
+Written from choke points that already exist: `create_app` (register), the
+first request (the port — chosen outside `create_app`, so the request is the
+only place that knows it for sure), both `_activate_quam` branches (the chip),
+`atexit` + the window-close path (deregister, because `os._exit` skips atexit).
+Every write is best-effort: bookkeeping must never stop the app.
+
+## Part 2 — run ownership
+
+The queue is a file; `is_running` is an in-memory registry. A second process
+therefore sees "the file says running" and "no worker of mine", which is
+**indistinguishable from a crashed worker** — and it acted on that. Reproduced
+on unmodified code: a `/scheduler/status` poll from window 2 flipped window 1's
+live run to `idle` and marked its in-flight item `failed`; pressing Start
+spawned a **second worker over the same queue**; and closing window 2 wrote
+`cancelled` over a run it did not own.
+
+`run.owner_pid` (+ `owner_port`, so the warning can name the window by what the
+user sees in their address bar) makes the distinction recordable. Claimed by
+`start`, released at every terminal transition.
+
+| | live foreign owner | dead owner / no owner |
+|---|---|---|
+| poll (`_reconcile_orphaned`) | **file untouched**, message names the window | reconciles exactly as before |
+| `start()` | `ForeignRunnerError` → 409 `scheduler_foreign_owner` | allowed |
+| `cancel()` | **file untouched** | cancels as before |
+
+Queue mutators needed no change: the route guard already 409s while
+`is_active`, and a foreign-owned run is still `running`.
+
+**The no-owner row is the load-bearing one.** A queue written before this
+existed — or by a genuinely crashed process — must behave byte-identically to
+before, because that is the case the orphan-reconcile mechanism was built for.
+It does.
+
+This is the one place multi-window use is *refused* rather than reported,
+because it is the one case no warning can make safe: two workers on one queue
+means two processes driving one OPX.
+
+## Part 3 — the banner
+
+Only the **same state path** in two live windows gets a banner, and it is a
+banner, not a gate. A cross-process file lock was considered and rejected: it
+would trap a user behind a crashed window, a worse failure than the one it
+prevents.
+
+A shared **data folder** gets nothing. Two experiment lines on one chip out of
+one data folder is a real workflow; the only loss it used to cause was the
+whole-file tags write, fixed at the source in Part 0-4. Warning about a normal
+workflow would only teach users to ignore the strip that carries the warning
+that matters.
+
+`GET /instances/banner` into a `#multi-instance-slot` in `base.html`, refreshed
+from events the app already fires (`load`, `stateRestored`, `liveDriftChanged`)
+— no new poller. Dismissal is for the current view only: which windows are open
+is a live fact, so a persisted "don't show again" would end up asserting
+something no longer true.
+
+## What is NOT closed
+
+Two windows still cannot run **two different chips** at once: the Experiment
+Runner's settings (`scheduler.json` holds one `quam_state_path`, one env, one
+calibrations folder) and its queue are per *instance directory*, i.e. one per
+machine. That is a pre-existing limit of the storage layout, not of PIDs and
+not of QM — `qm` supports multiple clients fine. Scoping the runner per chip
+(`instance/scheduler/<scope>/…`) would lift it; `_sched_inst()` is very nearly
+the single choke point that would need to change (9 of 11 call sites go through
+it). Deliberately left out of this branch so the safety work could land on its
+own.
+
+Also unchanged: no editing merge between windows, no live cross-window sync,
+and `last_session.json` stays last-write-wins (it only tints the landing's
+Resume highlight).
+
+## Pins for Parts 1–3
+
+`tests/test_multi_instance.py` — the ownership matrix runs against a **real
+live foreign process** (a spawned python that sleeps), not a mocked pid check,
+because a probe that is wrong about liveness is exactly the failure this
+feature would have. Plus registry round-trip, dead-entry self-cleaning, corrupt
+entries dropped rather than raised, a read-only instance dir never raising,
+conflict classification (same chip / different chip / shared data folder), the
+409 and the status-poll surface, and the banner (present, absent, dead peer,
+never blocking an edit, wired into every page).

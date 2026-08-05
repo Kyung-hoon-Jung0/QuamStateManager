@@ -213,6 +213,14 @@ def main() -> None:
     # Kill any in-flight Scheduler experiment BEFORE os._exit — otherwise it keeps
     # driving the OPX headless (os._exit bypasses the atexit backstop above).
     _kill_scheduler(app.instance_path)
+    # Same reason: os._exit skips atexit, so drop our instance-registry entry
+    # explicitly rather than leaving a sibling window probing a dead PID
+    # (docs/80). Harmless if it fails — readers probe liveness anyway.
+    try:
+        from quam_state_manager.core import instances
+        instances.deregister(app.instance_path)
+    except Exception:  # noqa: BLE001
+        logger.debug("instance deregister on exit failed", exc_info=True)
     # Force-kill the process to ensure the Flask daemon thread is cleaned up.
     # On Windows, daemon threads may linger after webview.start() returns.
     _shutdown()
