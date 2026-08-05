@@ -680,3 +680,107 @@ class TestSharedTagsFile:
         on_disk = json.loads((root / "quashboard_tags.json").read_text(encoding="utf-8"))
         assert on_disk["bookmarks"] == []
         assert set(on_disk["tags"]) == {"1", "2"}
+
+
+class TestIncompleteIsBounded:
+    """"Not finished yet" is a bet. Some files never become valid — a
+    hand-edited node.json holding a JSON list, a permission error, real
+    corruption — and betting on those forever is expensive in a way that is
+    easy to miss: the folder re-parses on every scan AND its membership in
+    _incomplete_paths defeats the date-dir short-circuit, so every SIBLING run
+    in that date is re-walked too, permanently undoing the optimisation that
+    keeps a steady-state poll at O(date dirs) on a large workspace.
+    """
+
+    def _broken_and_good(self, root: Path):
+        w = RunWriter(root)
+        broken = w.write(1, mode="empty")
+        (broken / "node.json").write_text("[1, 2, 3]", encoding="utf-8")  # valid JSON, wrong shape
+        w.write(2, mode="complete", hhmmss="020000")
+        return w
+
+    def test_a_permanently_broken_run_stops_being_re_parsed(self, tmp_path):
+        root = tmp_path / "data"
+        w = self._broken_and_good(root)
+        store = DatasetStore(root)
+        assert store.runs[1].incomplete is True
+
+        parses: list[str] = []
+        real = DatasetStore._parse_run_folder
+
+        def spy(self, entry, *a, **k):
+            parses.append(entry.name)
+            return real(self, entry, *a, **k)
+
+        DatasetStore._parse_run_folder = spy
+        try:
+            for i in range(6):
+                parses.clear()
+                _touch_tree(root, time.time() + 10 * (i + 1))
+                store.rescan_if_stale()
+                last = list(parses)
+        finally:
+            DatasetStore._parse_run_folder = real
+
+        assert last == [], "an unfixable run must stop taxing every poll"
+        assert not store._incomplete_paths
+        fp = store._folder_fp[w.folder(1)]
+        assert fp[0] != ("incomplete",), "it is cached under its REAL fingerprint now"
+
+    def test_the_healthy_siblings_stop_being_dragged_along(self, tmp_path):
+        """The expensive half: one broken run used to re-walk its whole date."""
+        root = tmp_path / "data"
+        self._broken_and_good(root)
+        store = DatasetStore(root)
+        parses: list[str] = []
+        real = DatasetStore._parse_run_folder
+
+        def spy(self, entry, *a, **k):
+            parses.append(entry.name)
+            return real(self, entry, *a, **k)
+
+        DatasetStore._parse_run_folder = spy
+        try:
+            for i in range(6):
+                parses.clear()
+                _touch_tree(root, time.time() + 10 * (i + 1))
+                store.rescan_if_stale()
+        finally:
+            DatasetStore._parse_run_folder = real
+        assert not any("#2_" in n for n in parses)
+
+    def test_a_run_that_keeps_changing_still_heals(self, tmp_path):
+        """The bound must not cut short a genuine writer: a real one moves the
+        fingerprint on every write, which resets the count."""
+        root = tmp_path / "data"
+        run = RunWriter(root).folder(5)
+        run.mkdir(parents=True)
+        full = json.dumps(_node_payload(5, "late", "2026-08-05", ["q5"]))
+        store = None
+        for i in range(6):
+            run.joinpath("node.json").write_text(full[: 10 + i * 8], encoding="utf-8")
+            _touch_tree(root, time.time() + 10 * (i + 1))
+            if store is None:
+                store = DatasetStore(root)
+            else:
+                store.rescan_if_stale()
+        run.joinpath("node.json").write_text(full, encoding="utf-8")
+        _touch_tree(root, time.time() + 200)
+        store.rescan_if_stale()
+        assert store.runs[5].status == "successful"
+        assert store.runs[5].incomplete is False
+
+    def test_a_fixed_file_is_picked_up_even_after_we_gave_up(self, tmp_path):
+        root = tmp_path / "data"
+        w = self._broken_and_good(root)
+        store = DatasetStore(root)
+        for i in range(5):
+            _touch_tree(root, time.time() + 10 * (i + 1))
+            store.rescan_if_stale()
+        assert not store._incomplete_paths          # given up
+
+        w.finish(1)                                  # the user repairs it
+        _touch_tree(root, time.time() + 500)
+        store.rescan_if_stale()
+        assert store.runs[1].status == "successful", (
+            "giving up must not be permanent — a changed fingerprint re-parses")

@@ -298,6 +298,53 @@ Verified end to end with two real servers on two ports: independent queues,
 each window's own target chip, shared env and calibrations folder, two scope
 directories on disk.
 
+## Audit findings (2026-08-05, post-implementation)
+
+An adversarial pass over the finished branch found three real defects, all of
+the same shape: something correct in the common case that becomes a permanent
+tax or a silent loss in the uncommon one. Each is fixed and pinned.
+
+**1 — the LLM auditor's settings became per-chip.** Routes pass the resolved
+scope to `af_auditor.load_settings`, so after Part 4 the provider, model and
+**API key** were read from `<scope>/autofit_ai.json` instead of
+`instance/autofit_ai.json`. The user's existing file simply stopped being
+found: `provider` fell back to `"off"` and the audit silently switched itself
+off. An API key is a user credential, not a device fact — pinned to the
+instance dir, like `env_python`.
+
+**2 — an unfixable run re-parsed forever, and dragged its siblings with it.**
+"Incomplete" is a bet that the writer has not finished. For a run being
+created that pays off within a poll or two, but some files never become
+valid — a hand-edited `node.json` holding a JSON list, a permission error,
+real corruption. Unbounded, such a folder re-parsed on every scan *and* its
+membership in `_incomplete_paths` defeated the B27 date-dir short-circuit, so
+every **sibling** run in that date was re-walked and re-parsed too, forever —
+quietly undoing the optimisation that keeps a steady-state poll at O(date
+dirs) on a large workspace. The bet is now bounded by
+`_INCOMPLETE_MAX_TRIES`: while the folder keeps *changing* we keep trying (a
+real writer moves the fingerprint on every write, so a genuine mid-write run
+is never cut short), but once it has looked identical and unreadable three
+times we accept it as broken rather than unfinished. If it is later repaired,
+its fingerprint moves and the ordinary cache path picks it up.
+
+**3 — the `partial` catch-up had no bound.** A workspace that cannot be
+scanned inside the budget answers `partial` every time, so "come back promptly"
+turned a 60 s poll into a 1.2 s one — a 50× load increase applied exactly when
+the machine is already too slow to keep up. Capped at
+`POLL_MAX_CATCHUPS = 5` consecutive catch-ups, after which the normal interval
+resumes (which still makes progress: every poll advances the folders it did
+scan).
+
+Also verified clean in the same pass, with real processes and hostile inputs:
+concurrent register/update/read from 8 threads (no error, no lost entry);
+registry files with non-integer names, negative PIDs and wrong-typed fields
+(dropped, never raised); six threads racing `start()` on one scope (exactly one
+worker); a corrupt queue file (reads as idle); garbage `owner_pid` values (no
+raise); and scope names derived from hostile chip folder names — `..`,
+`../../evil`, `C:/Windows`, a 300-character name, `_shared.json`, `_nochip` —
+all of which stay inside the scheduler root and cannot collide with the shared
+files, because `chip_name_for` resolves the path before the label is taken.
+
 ## What is NOT closed
 
 No editing merge between windows, no live cross-window sync, and

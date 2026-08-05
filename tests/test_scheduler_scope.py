@@ -223,13 +223,37 @@ class TestLegacyMigration:
         assert settings["global_simulate"] is False
         assert (scope / "scheduler_logs" / "aaa.log").exists()
 
-    def test_it_runs_once_and_never_destroys_the_original(self, tmp_path):
+    def test_the_originals_are_removed_only_after_the_copy_verifies(self, tmp_path):
+        """Copy, verify, THEN delete: nothing is removed until the new copy has
+        been read back and found to hold the same items."""
+        inst = tmp_path / "_i"
+        chip = _chip(tmp_path, "ChipAlpha")
+        self._legacy(inst, chip)
+        out = scheduler.migrate_legacy_scope(inst)
+        assert out["removed_legacy"] is True
+        assert not (inst / "scheduler_queue.json").exists()
+        assert not (inst / "scheduler.json").exists()
+        assert not (inst / "scheduler_logs").exists()
+        # ...and the queue really is in the scope, not merely gone.
+        scope = scheduler.scope_dir(inst, chip)
+        assert [i["id"] for i in scheduler.load_queue(scope)["queue"]] == ["aaa"]
+
+    def test_a_copy_that_cannot_be_verified_keeps_the_originals(self, tmp_path,
+                                                                monkeypatch):
+        inst = tmp_path / "_i"
+        chip = _chip(tmp_path, "ChipAlpha")
+        self._legacy(inst, chip)
+        monkeypatch.setattr(scheduler, "_verify_migrated", lambda *a, **k: False)
+        out = scheduler.migrate_legacy_scope(inst)
+        assert out["migrated"] is True
+        assert not out.get("removed_legacy")
+        assert (inst / "scheduler_queue.json").exists(), "a lost queue is unacceptable"
+
+    def test_it_runs_once(self, tmp_path):
         inst = tmp_path / "_i"
         chip = _chip(tmp_path, "ChipAlpha")
         self._legacy(inst, chip)
         scheduler.migrate_legacy_scope(inst)
-        assert (inst / "scheduler_queue.json").exists(), (
-            "a copy that turns out wrong is recoverable; a move is not")
 
         # Mutate the scope, re-run: the second call must be a no-op.
         scope = scheduler.scope_dir(inst, chip)
