@@ -281,7 +281,13 @@
     <div id="live-diverged-slot">{% include '_live_diverged_banner.html' %}</div>
     {# r14 ⑨ — active stored-as-text alarm (base-level slot: survives pane
        navigation, same reasoning as the diverged banner above). #}
-    <div id="type-alarm-slot">{% include '_type_alarm_banner.html' %}</div>
+    {# The count must never outlive the anomaly set it describes: a repair or a
+       content load re-renders this slot. First paint stays server-side (no
+       flash, no extra request on load). #}
+    <div id="type-alarm-slot"
+         hx-get="/type-alarm/banner"
+         hx-trigger="diagnostics-changed from:body delay:400ms, stateRestored from:body, liveDriftChanged from:body"
+         hx-swap="innerHTML">{% include '_type_alarm_banner.html' %}</div>
     {# The accumulating live-drift ALARM banner used to live here — removed
        (docs/58): users rarely acted on it. The same data now lives in the
        "Live changes since baseline" panels on Param History + State History;

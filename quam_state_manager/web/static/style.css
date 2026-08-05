@@ -4187,6 +4187,20 @@ input.tree-edit-input {
 .diag-env-progress { width: 8rem; height: 0.5rem; margin: 0; }
 .diag-env-missing { margin: 0.4rem 0 0; font-size: 0.85em; }
 
+/* docs/78 — "Types & values" card (same shell as the env card). */
+.diag-types-row { display: flex; gap: 0.6rem; margin-top: 0.45rem;
+    align-items: flex-start; flex-wrap: wrap; }
+.diag-types-label { min-width: 13em; font-weight: 600; font-size: 0.9em; }
+.diag-types-body { flex: 1 1 22em; }
+.diag-types-counts { font-size: 0.9em; }
+.diag-types-actions { display: flex; align-items: center; gap: 0.4rem;
+    margin-top: 0.3rem; flex-wrap: wrap; }
+.diag-types-caption { margin: 0 0 0.25rem; font-size: 0.85em; }
+.diag-types-envlist { margin: 0; padding-left: 1.1em; font-size: 0.88em; }
+.diag-types-envlist li { margin: 0.15em 0; }
+.diag-types-envmsg { color: var(--color-text-muted); }
+.diag-env-ok { color: var(--color-text-muted); font-size: 0.9em; }
+
 /* Inline rejection-reason chip after a bounced edit (the red flash alone said
    nothing). Theme rule: coloured border + text token, never *-border as text. */
 .tree-edit-err {
@@ -9647,6 +9661,14 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .tfx-why { white-space: normal; font-size: .74rem; }
 .tfx-actions { display: flex; align-items: center; gap: .5rem;
     margin-top: .6rem; flex-wrap: wrap; }
+/* docs/78: the self-raised alert's header — what arrived, and from where. */
+.tfx-alert { margin: .1rem 0 .5rem; padding: .45rem .6rem;
+    border-left: 3px solid var(--pico-primary);
+    background: color-mix(in srgb, var(--pico-primary) 7%, transparent);
+    border-radius: 0 .4rem .4rem 0; }
+.tfx-alert-head { margin: 0 0 .25rem; }
+.tfx-alert-line { margin: .18rem 0; font-size: .78rem; white-space: normal; }
+.tfx-alert-env { color: var(--color-text-muted); }
 .tfx-note { font-size: .72rem; }
 .tfx-error { margin-top: .4rem; color: var(--color-danger-text, #c0392b);
     font-size: .76rem; white-space: normal; }

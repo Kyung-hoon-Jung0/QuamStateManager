@@ -347,3 +347,209 @@ class TestAStringifiedChipStaysNavigable:
         html = strclient.get("/qubits").get_data(as_text=True)
         assert "type-alarm-banner" in html
         assert "openTypeFixPlan" in html
+
+
+# ---------------------------------------------------------------------------
+# docs/78 — the alert that raises ITSELF when new content lands
+# ---------------------------------------------------------------------------
+
+
+class TestTheAlertPayload:
+    """The unified payload behind the banner, the popup and the card."""
+
+    def test_it_carries_both_anomaly_classes_and_a_plan(self, app, client):
+        from quam_state_manager.web import routes
+        with app.test_request_context():
+            payload = routes._type_alarm_payload(_ctx(app))
+        assert payload is not None
+        assert payload["strnum"]["fixable"] == len(_CONVERTIBLE)
+        assert payload["strnum"]["skipped"] >= 1      # id / grid_location / slot
+        assert payload["editable"] is True
+        assert "env" in payload and "entries" in payload["env"]
+        assert payload["total"] == payload["strnum"]["count"] + payload["env"]["count"]
+
+    def test_the_dismiss_signature_formula_is_unchanged(self, app, client):
+        """r14 dismissals already on disk must keep working — the signature is
+        sha1 over the sorted PATHS only, never the stored values."""
+        import hashlib
+        from quam_state_manager.web import routes
+        with app.test_request_context():
+            payload = routes._type_alarm_payload(_ctx(app))
+            memo = routes._type_alarm_memo(_ctx(app))
+        legacy = hashlib.sha1(
+            "\n".join(sorted(memo["paths"])).encode("utf-8")).hexdigest()[:16]
+        assert payload["sig"] == legacy
+
+    def test_the_env_signature_ignores_instance_counts(self):
+        """One more qubit with the SAME defect is not a new thing to say."""
+        one = [{"kind": "type_mismatch", "class": "Transmon", "field": "T1",
+                "code": "type_mismatch", "count": 3}]
+        many = [dict(one[0], count=21)]
+        assert type_fix.env_signature(one) == type_fix.env_signature(many)
+        other = [dict(one[0], field="T2")]
+        assert type_fix.env_signature(one) != type_fix.env_signature(other)
+
+    def test_an_archive_is_told_but_not_offered_a_repair(self, app, client):
+        from quam_state_manager.web import routes
+        ctx = _ctx(app)
+        ctx["origin"] = "dataset_archive"
+        with app.test_request_context():
+            payload = routes._type_alarm_payload(ctx)
+        assert payload["editable"] is False
+        assert payload["strnum"]["fixable"] == 0     # no plan is even built
+
+
+class TestTheContentEntryTrigger:
+    """The popup may only fire when NEW CONTENT entered the working copy."""
+
+    def test_opening_a_chip_arms_it(self, app, client):
+        assert _ctx(app).get("type_alarm_armed")
+
+    def test_an_ordinary_edit_does_not_arm_it(self, app, client):
+        client.get("/type-alert")                     # consume the open-arm
+        assert not _ctx(app).get("type_alarm_armed")
+        client.post("/field/edit", data={"dot_path": "qubits.q1.T1",
+                                         "value": "9000", "type_fix": "convert"})
+        assert not _ctx(app).get("type_alarm_armed"), \
+            "editing is the user's own doing — it must never prompt"
+
+    def test_a_plain_render_does_not_arm_it(self, app, client):
+        client.get("/type-alert")
+        client.get("/qubits")
+        client.get("/diagnostics")
+        assert not _ctx(app).get("type_alarm_armed")
+
+    def test_an_archive_is_never_armed(self, app, client):
+        from quam_state_manager.web import routes
+        ctx = _ctx(app)
+        ctx["origin"] = "dataset_archive"
+        ctx.pop("type_alarm_armed", None)
+        routes._arm_type_alarm(ctx, "chip-open")
+        assert not ctx.get("type_alarm_armed")
+
+
+class TestTheAlertEndpoint:
+    def test_it_answers_once_per_content_entry(self, client):
+        first = client.get("/type-alert", headers={"HX-Request": "true"})
+        assert first.status_code == 200
+        body = first.get_data(as_text=True)
+        # the PROPOSAL is in the popup — auto-correct is one click, but never blind
+        assert 'class="tfx-pick"' in body
+        assert "type problem" in body
+        assert client.get("/type-alert").status_code == 204
+
+    def test_it_names_where_the_content_came_from(self, client):
+        body = client.get("/type-alert").get_data(as_text=True)
+        assert "this chip was opened" in body
+
+    def test_a_dismissed_set_never_raises_again(self, app, client):
+        from quam_state_manager.web import routes
+        with app.test_request_context():
+            payload = routes._type_alarm_payload(_ctx(app))
+        client.post("/type-alarm/dismiss",
+                    data={"sig": payload["sig"], "env_sig": payload["env_sig"],
+                          "token": payload["token"]})
+        routes._arm_type_alarm(_ctx(app), "live-pull")
+        _ctx(app).pop("_type_alarm_shown", None)
+        assert client.get("/type-alert").status_code == 204
+
+    def test_re_arming_with_the_same_set_does_not_re_nag(self, app, client):
+        from quam_state_manager.web import routes
+        assert client.get("/type-alert").status_code == 200
+        routes._arm_type_alarm(_ctx(app), "live-pull")
+        assert client.get("/type-alert").status_code == 204
+
+    def test_a_new_anomaly_raises_it_again(self, app, client):
+        from quam_state_manager.web import routes
+        assert client.get("/type-alert").status_code == 200
+        store = _ctx(app)["store"]
+        with store._lock:
+            store.state["qubits"]["q1"]["T2"] = "3.3e-6"   # a NEW text number
+            store.mutation_seq += 1
+        routes._arm_type_alarm(_ctx(app), "live-pull")
+        assert client.get("/type-alert").status_code == 200
+
+    def test_an_archive_is_never_prompted(self, app, client):
+        ctx = _ctx(app)
+        ctx["origin"] = "dataset_archive"
+        ctx["type_alarm_armed"] = {"reason": "chip-open", "at": "now"}
+        assert client.get("/type-alert").status_code == 204
+
+
+class TestArchivesAreNotOfferedRepair:
+    def test_plan_and_apply_refuse_on_an_archive(self, app, client):
+        ctx = _ctx(app)
+        ctx["origin"] = "dataset_archive"
+        assert client.get("/type-fix/plan").status_code == 409
+        r = client.post("/type-fix/apply", json={"paths": ["qubits.q1.T1"]})
+        assert r.status_code == 409
+        assert r.get_json()["error_kind"] == "archive_read_only"
+        assert ctx["store"].get_value("qubits.q1.T1") == "8834"
+
+
+class TestTheBannerRefreshes:
+    def test_the_slot_re_renders_itself(self, client):
+        html = client.get("/qubits").get_data(as_text=True)
+        assert 'hx-get="/type-alarm/banner"' in html
+        assert "diagnostics-changed from:body" in html
+
+    def test_the_count_drops_after_a_repair(self, client):
+        """The stale count was the bug: the slot had no refresh trigger, so a
+        repaired chip kept advertising the old number until a full page load."""
+        def _count(html):
+            m = re.search(r"<strong>(\d+) values? stored as TEXT</strong>", html)
+            return int(m.group(1)) if m else 0
+
+        before = _count(client.get("/type-alarm/banner").get_data(as_text=True))
+        assert before >= len(_CONVERTIBLE)
+        _, paths, sig = _plan(client)
+        assert client.post("/type-fix/apply",
+                           json={"paths": paths, "sig": sig}).status_code == 200
+        after = _count(client.get("/type-alarm/banner").get_data(as_text=True))
+        assert after == before - len(_CONVERTIBLE)
+
+
+class TestTheDiagnosticsCard:
+    def test_the_card_is_the_single_entry_point(self, client):
+        html = client.get("/diagnostics").get_data(as_text=True)
+        assert "diag-types-card" in html
+        assert "Auto-correct" in html
+        # the per-row repeat is gone: one whole-chip action, offered once
+        assert "Fix types" not in html
+
+    def test_it_reports_both_classes_and_self_refreshes(self, client):
+        html = client.get("/diagnostics/types-card").get_data(as_text=True)
+        assert "Numbers stored as text" in html
+        assert 'hx-get="/diagnostics/types-card"' in html
+        assert "diagnostics-changed from:body" in html
+
+    def test_nothing_is_left_to_auto_correct_after_a_repair(self, client):
+        """What remains is only what SM refused to guess at (an identity key,
+        a leading-zero label) — the card must stop offering a repair for them
+        rather than pretending there is more to do."""
+        _, paths, sig = _plan(client)
+        assert client.post("/type-fix/apply",
+                           json={"paths": paths, "sig": sig}).status_code == 200
+        html = client.get("/diagnostics/types-card").get_data(as_text=True)
+        assert "Auto-correct 0 values" in html
+
+    def test_a_chip_with_no_anomalies_says_so(self, tmp_path):
+        clean = tmp_path / "clean"
+        clean.mkdir()
+        (clean / "state.json").write_text(
+            json.dumps({"qubits": {"q1": {"id": 1, "T1": 8834}}}), encoding="utf-8")
+        (clean / "wiring.json").write_text(json.dumps(_WIRING), encoding="utf-8")
+        created = create_app(testing=True, instance_path=str(tmp_path / "_i3"))
+        c = created.test_client()
+        c.post("/load", data={"folder": str(clean)})
+        html = c.get("/diagnostics/types-card").get_data(as_text=True)
+        assert "consistent" in html
+        assert "Auto-correct" not in html
+        assert c.get("/type-alert").status_code == 204   # never prompts a clean chip
+
+    def test_an_archive_sees_counts_but_no_repair_button(self, app, client):
+        _ctx(app)["origin"] = "dataset_archive"
+        html = client.get("/diagnostics/types-card").get_data(as_text=True)
+        assert "Numbers stored as text" in html
+        assert "Auto-correct" not in html
+        assert "read-only archive" in html

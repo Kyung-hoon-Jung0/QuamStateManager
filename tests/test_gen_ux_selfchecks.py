@@ -10,6 +10,11 @@
   body-appended cursor-following ghost (element · role label, zoom-corrected,
   removed on drop/Escape) and the docked monitor is bigger + sticky.
 
+- tests/type_alert_popup_selfcheck.cjs — the self-raising type-anomaly alert
+  (docs/78): it never interrupts (typing / drag / another modal / background
+  tab), opens at most one dialog per content-entry event, closing is not
+  dismissing, and auto-correct runs the docs/77 apply path.
+
 - tests/wiring_portlabel_selfcheck.cjs — the shared port-circle renderer's
   label sizing (2026-08-04): single-member circles (control/z/coupler,
   single readout, input single) get chord-fit adaptive type (9-14px, short
@@ -51,3 +56,8 @@ def test_generate_dragghost_selfcheck_passes():
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")
 def test_wiring_portlabel_selfcheck_passes():
     _run("wiring_portlabel_selfcheck.cjs")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")
+def test_type_alert_popup_selfcheck_passes():
+    _run("type_alert_popup_selfcheck.cjs")

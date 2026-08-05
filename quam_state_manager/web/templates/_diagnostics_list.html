@@ -82,14 +82,9 @@
               <button type="button" class="btn-sm outline diag-goto"
                       data-jump-path="{{ f.jump_path }}" onclick="goToDiagField(this)">Go to field</button>
               {% endif %}
-              {# docs/77: the stored-as-text anomaly has a batch repair — open
-                 the plan (all offending fields at once) rather than making the
-                 user fix them one row at a time. #}
-              {% if f.category == 'value_type_strnum' %}
-              <button type="button" class="btn-sm diag-fix"
-                      title="Show what SM would store instead, for every value stored as text, and convert the ones you confirm"
-                      onclick="window.openTypeFixPlan && window.openTypeFixPlan()">Fix types&hellip;</button>
-              {% endif %}
+              {# docs/78: the batch repair moved to the "Types & values" card at
+                 the top of this page. Repeating it on every one of up to 100
+                 rows made one whole-chip action look like a per-row one. #}
               {% if f.fix and f.fix.action == 'set_pointer' %}
               <button type="button" class="btn-sm diag-fix"
                       data-action="{{ f.fix.action }}"

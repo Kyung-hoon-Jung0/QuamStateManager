@@ -757,6 +757,10 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict) -> None:
             pidx = ctx.get("pulse_index")
             if pidx is not None:
                 pidx.invalidate()
+            # docs/78: SM just adopted content an experiment / qualibrate wrote.
+            # That is exactly the moment a string-ified or schema-drifted value
+            # arrives, so let the next render raise the type popup once.
+            _arm_type_alarm(ctx, "node-finished")
             # The live chip visibly changed and we adopted it — record a
             # Param History snapshot like the explicit /state/sync does.
             try:
@@ -895,6 +899,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         _maybe_chip_name_prompt(current)
         _adopt_extras_data_folders(current)
         _maybe_data_folder_suggest(current)
+        _arm_type_alarm(current, "chip-open")   # docs/78
         with _quam_cache_lock:
             current_app.config["contexts"][ctx_name] = current
             current_app.config["active_context"] = ctx_name
@@ -957,6 +962,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         _maybe_chip_name_prompt(ctx)
         _adopt_extras_data_folders(ctx)
         _maybe_data_folder_suggest(ctx)
+        _arm_type_alarm(ctx, "chip-open")   # docs/78
         with _quam_cache_lock:
             if key not in _quam_cache:
                 # Evict the oldest CLEAN in-memory entry if the cache is full.
@@ -1139,6 +1145,9 @@ def _rebuild_after_working_copy_replaced(ctx: dict) -> None:
     # consumed it; a fresh stage re-sets the flag right after this call).
     ctx["staged_base"] = False
     _reseed_drift_baseline_if_chip_changed(ctx)
+    # docs/78: content the user did not type just landed — let the next render
+    # raise the type-anomaly popup once (pull / stage / restore / run load).
+    _arm_type_alarm(ctx, ctx.pop("_alarm_reason", None) or "live-pull")
 
 
 def _reseed_drift_baseline_if_chip_changed(ctx: dict) -> None:
@@ -2013,58 +2022,199 @@ def chip_name_decline():
     return ""
 
 
+def _type_alarm_memo(ctx: dict) -> dict:
+    """The per-store anomaly scan, memoized on ``mutation_seq``.
+
+    ONE whole-state walk per content change, shared by the banner, the
+    self-appearing alert and the diagnostics types card. Holds both classes:
+    ``paths`` (stored-as-text — SM can repair these) and ``env`` (the chip
+    disagrees with the selected environment's schema — the user decides).
+    """
+    store = ctx["store"]
+    seq = getattr(store, "mutation_seq", None)
+    memo = ctx.get("_type_alarm_memo")
+    if isinstance(memo, dict) and memo.get("seq") == seq:
+        return memo
+    from quam_state_manager.core import diagnostics as _diag
+    from quam_state_manager.core import type_fix as _tf
+    with store._lock:
+        state = store.state
+    paths = _diag.numeric_string_leaves(state)
+    env_findings: list = []
+    try:
+        from quam_state_manager.core import state_env_validate as _sev
+        # The WARM manifest already attached to the store (cached_only at
+        # activation) — the request path never spawns a probe. Cold env → [].
+        policy = getattr(store, "type_policy", None)
+        manifest = policy.manifest if policy is not None else None
+        if manifest:
+            env_findings = list(
+                _sev.analysis_for_store(store, manifest).get("findings") or [])
+    except Exception:  # noqa: BLE001 — a cold/broken env must not break the scan
+        logger.debug("env-schema scan for the type alarm failed", exc_info=True)
+    memo = {"seq": seq, "paths": paths, "sig": _tf.strnum_signature(paths),
+            "env_findings": env_findings,
+            "env_sig": _tf.env_signature(env_findings)}
+    ctx["_type_alarm_memo"] = memo
+    return memo
+
+
+def _alarm_plan(ctx: dict, memo: dict) -> dict | None:
+    """The repair plan for the memoized anomaly set, cached alongside it.
+
+    ``_type_alarm_payload`` runs in every ``_ctx()``, i.e. on every render, so
+    the plan must be built once per content change — not once per page.
+    """
+    if not memo["paths"]:
+        return None
+    if "plan" not in memo:
+        from quam_state_manager.core import type_fix as _tf
+        memo["plan"] = _tf.build_plan(ctx["store"], paths=memo["paths"])
+    return memo["plan"]
+
+
 def _type_alarm_payload(ctx: dict | None) -> dict | None:
-    """r14 ⑨: the ACTIVE stored-as-text alarm payload, else None.
+    """The ACTIVE type-anomaly payload (both classes), else None.
 
     Numeric-looking string leaves ("0.13") usually mean an external state
-    regeneration string-ified values wholesale; SM used to detect this only as
-    a passive Explorer row mark the user had to find. Memoized on the store's
-    ``mutation_seq`` (one whole-state walk per content change — external pulls
-    and syncs rebuild the store, so they re-scan automatically) and
-    delta-gated against the per-chip dismissed signature (dismiss silences
-    THIS set; any new anomaly re-raises the banner)."""
+    regeneration string-ified values wholesale; env-schema mismatches usually
+    mean the environment's quam moved under the chip. SM used to surface the
+    first as a passive Explorer mark (r14) and the second only as a row in the
+    diagnostics list. Both are delta-gated against the per-chip dismissed
+    signatures — dismissing silences THOSE sets, and any new anomaly re-raises.
+
+    ``editable`` is False on an archive: a read-only context is told what is
+    wrong but never offered the repair.
+    """
     if not ctx:
         return None
     store = ctx.get("store")
     if store is None:
         return None
     try:
-        seq = getattr(store, "mutation_seq", None)
-        memo = ctx.get("_type_alarm_memo")
-        if not isinstance(memo, dict) or memo.get("seq") != seq:
-            from quam_state_manager.core import diagnostics as _diag
-            with store._lock:
-                state = store.state
-            paths = _diag.numeric_string_leaves(state)
-            sig = (hashlib.sha1("\n".join(sorted(paths)).encode("utf-8"))
-                   .hexdigest()[:16] if paths else "")
-            memo = {"seq": seq, "paths": paths, "sig": sig}
-            ctx["_type_alarm_memo"] = memo
-        if not memo["paths"]:
+        from quam_state_manager.core import type_fix as _tf
+        memo = _type_alarm_memo(ctx)
+        if not memo["paths"] and not memo["env_findings"]:
             return None
         token = _active_chip_token() or ("path:" + str(ctx.get("path") or ""))
         dismissed = _load_chip_prompt_memo().get(f"{token}::typealarm") or {}
-        if dismissed.get("sig") == memo["sig"]:
+        # Each class is gated on its OWN signature: dismissing the text
+        # anomalies must never also silence an env mismatch (and a legacy
+        # record, which carries no env_sig, reads as "env not yet dismissed").
+        strnum_live = bool(memo["paths"]) and dismissed.get("sig") != memo["sig"]
+        env_live = (bool(memo["env_findings"])
+                    and (dismissed.get("env_sig") or "") != memo["env_sig"])
+        if not strnum_live and not env_live:
             return None
-        return {"count": len(memo["paths"]), "first": memo["paths"][0],
-                "paths": memo["paths"][:6], "sig": memo["sig"],
-                "token": token}
+        editable = (ctx.get("origin") or "live") == "live"
+        summary = _tf.alert_summary(_alarm_plan(ctx, memo) if editable else None,
+                                    memo["env_findings"], memo["paths"])
+        summary.update({
+            "token": token,
+            "editable": editable,
+            "sig": memo["sig"],
+            "env_sig": memo["env_sig"],
+            "strnum_live": strnum_live,
+            "env_live": env_live,
+            # legacy top-level keys — the r14 banner reads these
+            "count": len(memo["paths"]),
+            "first": memo["paths"][0] if memo["paths"] else "",
+            "paths": memo["paths"][:6],
+        })
+        return summary
     except Exception:  # noqa: BLE001 — an alarm bug must never break rendering
         logger.debug("type-alarm computation failed", exc_info=True)
         return None
 
 
+_ALARM_REASONS = {
+    "chip-open": "this chip was opened",
+    "live-pull": "the live state was pulled in",
+    "snapshot-stage": "a snapshot was staged into the working copy",
+    "restore-live": "a snapshot was restored to the live chip",
+    "run-state-load": "a run's state was loaded",
+    "node-finished": "SM picked up an external write to the live chip",
+}
+
+
+def _arm_type_alarm(ctx: dict | None, reason: str) -> None:
+    """Mark that NEW CONTENT entered this chip's working copy.
+
+    The popup is never fired from here — this only makes the next render
+    ELIGIBLE to raise it once (``GET /type-alert`` consumes the flag). That
+    separation is what keeps ordinary editing, rendering and polling silent:
+    they never arm, so they can never prompt.
+    """
+    if not ctx or ctx.get("type") != "quam":
+        return
+    if (ctx.get("origin") or "live") != "live":
+        return          # archive: reported on Diagnostics, never prompted
+    ctx["type_alarm_armed"] = {
+        "reason": reason if reason in _ALARM_REASONS else "chip-open",
+        "at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+@bp.route("/type-alert")
+def type_alert():
+    """The self-appearing type-anomaly popup — ONE-SHOT per content-entry event.
+
+    204 unless new content just entered the working copy AND the anomaly set is
+    one the user has not already answered. Reads in-memory state only (never a
+    live file), so it costs a dict lookup once the mutation_seq memo is warm.
+    """
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam" or ctx.get("store") is None:
+        return "", 204
+    if (ctx.get("origin") or "live") != "live":
+        return "", 204
+    armed = ctx.get("type_alarm_armed")
+    if not armed:
+        return "", 204                     # an ordinary edit/render never arms
+    payload = _type_alarm_payload(ctx)
+    if not payload:
+        ctx.pop("type_alarm_armed", None)
+        return "", 204
+    seen = ctx.get("_type_alarm_shown")
+    shown_key = (payload["sig"], payload["env_sig"])
+    if seen == shown_key:
+        ctx.pop("type_alarm_armed", None)  # same set, same session — no re-nag
+        return "", 204
+    ctx.pop("type_alarm_armed", None)
+    ctx["_type_alarm_shown"] = shown_key
+    from quam_state_manager.core import type_fix as _tf
+    memo = _type_alarm_memo(ctx)
+    plan = _alarm_plan(ctx, memo) or _tf.build_plan(ctx["store"], paths=[])
+    payload = dict(payload)
+    payload["reason"] = armed.get("reason") or "chip-open"
+    payload["reason_label"] = _ALARM_REASONS.get(payload["reason"], "")
+    return render_template("_type_fix_plan.html", plan=plan, alert=payload)
+
+
+@bp.route("/type-alarm/banner")
+def type_alarm_banner():
+    """Re-render the alarm slot so its count can never outlive the anomaly set
+    it describes (a repair used to leave the old number on screen until the
+    next full page load)."""
+    return render_template("_type_alarm_banner.html",
+                           type_alarm=_type_alarm_payload(_active_ctx()))
+
+
 @bp.route("/type-alarm/dismiss", methods=["POST"])
 def type_alarm_dismiss():
-    """Memo the CURRENT anomaly signature as seen (per chip token) — the
-    banner stays gone for this exact set and re-raises on any new anomaly."""
+    """Memo the CURRENT anomaly signatures as answered (per chip token) — the
+    banner and the popup stay gone for these exact sets and re-raise on any new
+    anomaly. The two classes are memoed independently."""
     sig = (request.form.get("sig") or "").strip()
+    env_sig = (request.form.get("env_sig") or "").strip()
     token = (request.form.get("token") or "").strip()
-    if sig and token:
+    if token and (sig or env_sig):
         with _chip_prompt_memo_lock:
             data = _load_chip_prompt_memo()
+            prev = data.get(f"{token}::typealarm") or {}
             data[f"{token}::typealarm"] = {
-                "sig": sig,
+                "sig": sig or prev.get("sig") or "",
+                "env_sig": env_sig or prev.get("env_sig") or "",
                 "dismissed_at": datetime.now().isoformat(timespec="seconds"),
             }
             try:
@@ -2089,6 +2239,9 @@ def type_fix_plan():
     if store is None:
         return render_template("_status.html", message="No state loaded",
                                level="warning")
+    blocked = _archive_write_blocked(ctx)
+    if blocked is not None:
+        return blocked      # a read-only archive is told, never offered a repair
     from quam_state_manager.core import type_fix as _tf
     plan = _tf.build_plan(store)
     return render_template("_type_fix_plan.html", plan=plan)
@@ -2109,6 +2262,14 @@ def type_fix_apply():
     modifier = (ctx or {}).get("modifier")
     if store is None or modifier is None:
         return jsonify(ok=False, error="No state loaded"), 400
+    if (ctx.get("origin") or "live") != "live":
+        # A dataset run archive is a frozen record: staging edits into its
+        # working copy would only fail later at apply, after the user thought
+        # the repair landed.
+        return jsonify(
+            ok=False, error_kind="archive_read_only",
+            error=("This chip was opened from a dataset run archive "
+                   "(read-only). Load it from its live folder to repair.")), 409
 
     payload = request.get_json(silent=True) or {}
     want = [str(p) for p in (payload.get("paths") or [])]
@@ -6830,6 +6991,7 @@ def state_history_stage(timestamp: str):
     try:
         with _active_wc_lock(ctx):
             safe_io.write_state_wiring(wc.working_folder, state, wiring)
+            ctx["_alarm_reason"] = "snapshot-stage"
             _rebuild_after_working_copy_replaced(ctx)
             ctx["working_dirty"] = True   # working now differs from live
             # audit-r10: mark the STAGED BASE — content not representable as
@@ -6982,6 +7144,7 @@ def state_history_restore_live(timestamp: str):
 
             safe_io.write_state_wiring(wc.working_folder, state, wiring)
             working_copy.apply_to_live(wc, force=True)
+            ctx["_alarm_reason"] = "restore-live"
             _rebuild_after_working_copy_replaced(ctx)
     except (OSError, ValueError, safe_io.LiveFileError) as exc:
         return render_template("_status.html",
@@ -9352,6 +9515,7 @@ def state_sync():
             pulled_other_changes = (_pre_sync_hash is not None
                                     and wc.synced_live_hash != _pre_sync_hash)
             # Rebuild the store + derived objects from the freshly-synced copy.
+            ctx["_alarm_reason"] = "live-pull"
             _rebuild_after_working_copy_replaced(ctx)   # the pull consumed the change
             if mode in ("reapply", "apply") and pending:
                 replay = _replay_updates(ctx["modifier"], pending)
@@ -14560,6 +14724,7 @@ def dataset_load_state(uid):
     try:
         with _active_wc_lock(ctx):
             safe_io.write_state_wiring(wc.working_folder, state, wiring)
+            ctx["_alarm_reason"] = "run-state-load"
             _rebuild_after_working_copy_replaced(ctx)
             ctx["working_dirty"] = True   # working now differs from live
             ctx["staged_base"] = True     # audit-r10 (see state_history_stage)
@@ -15929,6 +16094,43 @@ def _env_card_state(store: QuamStore) -> dict:
     }
 
 
+def _types_card_state(ctx: dict | None) -> dict | None:
+    """Context for the /diagnostics "Types & values" card (docs/78).
+
+    Reads the SAME mutation_seq-memoized scan the alert and the banner use, so
+    the page costs nothing extra. Unlike the alert this is NOT delta-gated: a
+    dismissed anomaly is silenced as a prompt, never hidden from the report.
+    """
+    if not ctx or ctx.get("store") is None:
+        return None
+    try:
+        from quam_state_manager.core import type_fix as _tf
+        store = ctx["store"]
+        memo = _type_alarm_memo(ctx)
+        editable = (ctx.get("origin") or "live") == "live"
+        card = _tf.alert_summary(_alarm_plan(ctx, memo),
+                                 memo["env_findings"], memo["paths"])
+        card["editable"] = editable
+        card["strnum"]["first"] = memo["paths"][0] if memo["paths"] else ""
+        policy = getattr(store, "type_policy", None)
+        card["env"]["warm"] = bool(policy is not None and policy.manifest)
+        return card
+    except Exception:  # noqa: BLE001 — the card must never break /diagnostics
+        logger.warning("types-card state failed", exc_info=True)
+        return None
+
+
+@bp.route("/diagnostics/types-card")
+def diagnostics_types_card():
+    """Re-render just the types card (after a repair, the counts must drop
+    immediately — same self-refresh contract as the env card)."""
+    ctx = _active_ctx()
+    if not ctx or ctx.get("store") is None:
+        return "", 204
+    return render_template("_diagnostics_types.html",
+                           types_card=_types_card_state(ctx))
+
+
 @bp.route("/diagnostics")
 def diagnostics_view():
     """Full diagnostics report for the active chip."""
@@ -15947,6 +16149,7 @@ def diagnostics_view():
             allow_jump=True,
             has_config=bool(store.generated_config),
             env_card=_env_card_state(store),
+            types_card=_types_card_state(_active_ctx()),
             # The config-reference findings were linted against the cached
             # generated config, which may predate the latest edits — surface
             # that so a stale config doesn't pass off old findings as current

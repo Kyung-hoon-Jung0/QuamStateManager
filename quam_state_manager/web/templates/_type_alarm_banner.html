@@ -6,23 +6,38 @@
 {% if type_alarm %}
 <div id="type-alarm-banner" class="topo-change-banner type-alarm-banner" role="alert">
   <span class="type-alarm-text">&#9888;
+    {% if type_alarm.count %}
     <strong>{{ type_alarm.count }} value{{ 's' if type_alarm.count != 1 }} stored as TEXT</strong>
     but read{{ 's' if type_alarm.count == 1 }} like a number
     (e.g. <code>{{ type_alarm.first }}</code>) — usually an external state
     regeneration. SM edits keep text until the type is converted.
+    {% endif %}
+    {% if type_alarm.env and type_alarm.env.count %}
+    {% if type_alarm.count %}<br>{% endif %}
+    <strong>{{ type_alarm.env.count }} field{{ 's' if type_alarm.env.count != 1 }}</strong>
+    {{ "don't" if type_alarm.env.count != 1 else "doesn't" }} match the selected
+    environment's schema{% if type_alarm.env.entries %}
+    (e.g. <code>{{ type_alarm.env.entries[0].location }}</code>){% endif %} —
+    SM does not change these; review them on Diagnostics.
+    {% endif %}
   </span>
   {# docs/77: the repair itself, one click away — SM shows what it proposes
      for every field and converts only after the user confirms. Primary
-     action: nobody wants to retype 40 values by hand. #}
+     action: nobody wants to retype 40 values by hand. An archive is told
+     what is wrong but never offered a repair it could not apply. #}
+  {% if type_alarm.count and type_alarm.editable %}
   <button type="button" class="btn-sm primary"
           onclick="window.openTypeFixPlan && window.openTypeFixPlan()"
           title="Show what SM would store instead, then convert the ones you confirm">Fix {{ type_alarm.count }} value{{ 's' if type_alarm.count != 1 }}&hellip;</button>
+  {% endif %}
+  {% if type_alarm.first %}
   <button type="button" class="btn-sm" data-path="{{ type_alarm.first }}"
           onclick="window._navigateToExplorerPath && window._navigateToExplorerPath(this.getAttribute('data-path'))"
           title="Open the Json Tree View at the first offending field">Show in Json Tree View</button>
+  {% endif %}
   <button type="button" class="btn-sm outline" hx-post="/type-alarm/dismiss"
-          hx-vals='{"sig": {{ type_alarm.sig | tojson }}, "token": {{ type_alarm.token | tojson }}}'
+          hx-vals='{"sig": {{ type_alarm.sig | tojson }}, "env_sig": {{ type_alarm.env_sig | tojson }}, "token": {{ type_alarm.token | tojson }}}'
           hx-target="#type-alarm-slot" hx-swap="innerHTML"
-          title="Hide for this exact set — any NEW text-typed value raises it again">Dismiss</button>
+          title="Hide for this exact set — any NEW anomaly raises it again">Dismiss</button>
 </div>
 {% endif %}
