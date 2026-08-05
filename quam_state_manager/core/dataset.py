@@ -61,6 +61,12 @@ _DATE_FOLDER_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # which is precisely the point: the next scan must re-parse the folder.
 _INCOMPLETE_FP = ("incomplete",)
 
+# How many times a run folder may parse as unreadable WITHOUT changing before
+# we stop treating it as "still being written". A real writer moves the
+# fingerprint on every write, so this never cuts short a genuine mid-write
+# run; it only stops a permanently broken file from taxing every future scan.
+_INCOMPLETE_MAX_TRIES = 3
+
 # Reserved tag that backs the one-click ⭐ "favorite" (bookmarks are now just
 # this tag, so the star and the tag system share one store). A run is
 # "bookmarked" iff it carries this tag. The star glyph + special chip styling
@@ -351,6 +357,9 @@ class DatasetStore:
         # always re-parses them, and membership here defeats the B27 date-dir
         # short-circuit that would otherwise never walk far enough to notice.
         self._incomplete_paths: set[Path] = set()
+        # path -> (real fingerprint, consecutive identical failures); bounds
+        # the "it must still be mid-write" bet — see _retry_incomplete.
+        self._incomplete_tries: dict[Path, tuple[tuple, int]] = {}
         # Per-date-dir fingerprint cache (B27). date_path → (date_mtime, run_paths).
         # A run folder can only be added to / removed from a date dir by moving
         # the date dir's own mtime, so a date dir whose mtime is unchanged since
@@ -416,6 +425,41 @@ class DatasetStore:
             return path.stat().st_mtime
         except OSError:
             return 0.0
+
+    def _retry_incomplete(self, run_entry: Path, real_fp: tuple) -> bool:
+        """Should this un-parseable folder keep being re-parsed? (docs/80)
+
+        "Incomplete" is a bet that the writer has not finished yet, and for a
+        run being created that bet pays off within a poll or two. But some
+        files never become valid — a hand-edited ``node.json`` holding a JSON
+        list, a permission error, genuine corruption — and an unbounded bet on
+        those is expensive in a way that is easy to miss: the folder re-parses
+        on every scan AND its membership in ``_incomplete_paths`` defeats the
+        B27 date-dir short-circuit, so every *sibling* run in that date is
+        re-walked and re-parsed too, forever. On a workspace with thousands of
+        runs that quietly undoes the optimisation that keeps a steady-state
+        poll at O(date dirs).
+
+        So the bet is bounded: while the folder keeps CHANGING we keep trying
+        (a real writer moves the fingerprint every time it writes), but once it
+        has looked identical and unreadable this many times we accept it as
+        broken rather than unfinished. If it is ever fixed its fingerprint
+        moves and the normal cache path re-parses it.
+        """
+        prev = self._incomplete_tries.get(run_entry)
+        if prev is not None and prev[0] == real_fp:
+            tries = prev[1] + 1
+        else:
+            tries = 1
+        if tries >= _INCOMPLETE_MAX_TRIES:
+            self._incomplete_tries.pop(run_entry, None)
+            logger.info(
+                "dataset scan: %s still unreadable after %d identical attempts — "
+                "treating it as broken rather than unfinished", run_entry,
+                _INCOMPLETE_MAX_TRIES)
+            return False
+        self._incomplete_tries[run_entry] = (real_fp, tries)
+        return True
 
     @staticmethod
     def _stat_fp(path: Path) -> tuple:
@@ -570,6 +614,7 @@ class DatasetStore:
             self._data_json_cache.clear()
             self._folder_fp.clear()
             self._incomplete_paths.clear()
+            self._incomplete_tries.clear()
             self._date_fp.clear()
             self.dates = []
             self.experiment_types = []
@@ -699,7 +744,8 @@ class DatasetStore:
                     continue
                 run_info.last_parsed = now
                 self.runs[run_id] = run_info
-                if run_info.incomplete:
+                real_fp = (folder_fp, node_fp, data_fp)
+                if run_info.incomplete and self._retry_incomplete(run_entry, real_fp):
                     # Mid-write folder: record a SENTINEL fingerprint that
                     # ``_stat_fp`` can never return, so the run-level cache
                     # check always re-parses, and remember the path so the B27
@@ -712,6 +758,7 @@ class DatasetStore:
                         _INCOMPLETE_FP, _INCOMPLETE_FP, _INCOMPLETE_FP, run_id)
                 else:
                     self._incomplete_paths.discard(run_entry)
+                    self._incomplete_tries.pop(run_entry, None)
                     self._folder_fp[run_entry] = (folder_fp, node_fp, data_fp, run_id)
                 parsed += 1
 
@@ -721,6 +768,7 @@ class DatasetStore:
         for p in vanished:
             _, _, _, vanished_id = self._folder_fp.pop(p)
             self._incomplete_paths.discard(p)
+            self._incomplete_tries.pop(p, None)
             # Only drop the run if the one currently indexed under this id actually
             # came from the folder that vanished. run_ids are unique only per
             # qualibrate storage root, so merged/copied archives (or a reset id

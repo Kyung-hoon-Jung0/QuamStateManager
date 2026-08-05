@@ -302,15 +302,55 @@ def migrate_legacy_scope(instance_path) -> dict:
         if legacy_logs.is_dir() and not (target / _LOGS_DIRNAME).exists():
             shutil.copytree(legacy_logs, target / _LOGS_DIRNAME)
 
-        # The originals are left in place: a copy that turns out wrong is
-        # recoverable, a move that turns out wrong is not. The marker stops
-        # this from running again, so they are simply inert.
+        # Copy first, VERIFY, only then delete. A move that turns out wrong
+        # loses a queue; this cannot, because nothing is removed until the new
+        # copy has been read back and found to hold the same items. If the
+        # check fails we keep both and say so — a leftover file is inert (no
+        # code reads these paths any more), a lost queue is not.
+        if _verify_migrated(legacy_queue, target, settings):
+            legacy_queue.unlink(missing_ok=True)
+            legacy_settings.unlink(missing_ok=True)
+            if legacy_logs.is_dir():
+                shutil.rmtree(legacy_logs, ignore_errors=True)
+            out["removed_legacy"] = True
+        else:
+            logger.warning(
+                "scheduler: legacy runner state copied to %s but could not be "
+                "verified; the originals were kept", target)
+
         marker.write_text(f"migrated to {target.name}\n", encoding="utf-8")
         out.update({"migrated": True, "scope": target.name})
         logger.info("scheduler: legacy runner state adopted into scope %s", target.name)
     except Exception:       # noqa: BLE001 — never block startup
         logger.warning("scheduler legacy scope migration failed", exc_info=True)
     return out
+
+
+def _verify_migrated(legacy_queue: Path, target: Path, settings: dict) -> bool:
+    """Is the migrated copy provably as good as the original?
+
+    Checks the only two things whose loss would matter: every queue item id
+    survived, and the settings that were set are readable back through the
+    normal (shared + per-chip) load path. Anything unexpected reads as "not
+    verified", which keeps the originals.
+    """
+    try:
+        if legacy_queue.exists():
+            old = json.loads(legacy_queue.read_text(encoding="utf-8"))
+            new = load_queue(target)
+            old_ids = [i.get("id") for i in (old.get("queue") or [])]
+            new_ids = [i.get("id") for i in (new.get("queue") or [])]
+            if old_ids != new_ids:
+                return False
+        if settings:
+            got = load_settings(target)
+            for key, value in settings.items():
+                if key in _DEFAULTS and got.get(key) != value:
+                    return False
+        return True
+    except Exception:       # noqa: BLE001 — unverifiable ⇒ keep the originals
+        logger.debug("migration verification failed", exc_info=True)
+        return False
 
 
 def cancel_all_local() -> list[str]:

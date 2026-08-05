@@ -117,6 +117,7 @@
         pollFailures: 0,
         pollSkipUntil: 0,
         pollCatchUp: false,
+        pollCatchUps: 0,
     };
 
     function tokenize(raw) {
@@ -1042,6 +1043,9 @@
     // partial flag, so it must never be the normal outcome.
     var POLL_TIMEOUT_MS = 20000;
     var POLL_BACKOFF_MAX_MS = 300000;
+    // Consecutive prompt catch-ups allowed after a `partial` answer before
+    // we accept it as the steady state and return to the normal interval.
+    var POLL_MAX_CATCHUPS = 5;
 
     function pollFailed() {
         state.pollFailures = (state.pollFailures || 0) + 1;
@@ -1103,7 +1107,21 @@
                 // un-scanned (their cursors held). Come back promptly instead
                 // of waiting out the full interval, so a burst of incoming
                 // runs is caught up in seconds rather than minutes.
-                if (data.partial) state.pollCatchUp = true;
+                //
+                // BOUNDED, because "partial" does not always mean "nearly
+                // done": a workspace that simply cannot be scanned inside the
+                // budget would answer partial every time, turning a 60s poll
+                // into a 1.2s one — a 50x load increase applied exactly when
+                // the machine is already too slow to keep up. After a few
+                // catch-ups we accept that this is the steady state and go
+                // back to the normal interval, which still makes progress
+                // (every poll advances the folders it did scan).
+                if (data.partial && state.pollCatchUps < POLL_MAX_CATCHUPS) {
+                    state.pollCatchUp = true;
+                    state.pollCatchUps++;
+                } else if (!data.partial) {
+                    state.pollCatchUps = 0;
+                }
                 if (activeRecently()) {
                     // Hold the delta until the user is idle to avoid jumping
                     // their search/scroll out from under them.

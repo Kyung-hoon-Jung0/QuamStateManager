@@ -17816,7 +17816,12 @@ def _autofit_readiness() -> dict:
     chip_ok = bool(ctx and ctx.get("type") == "quam")
     env = settings.get("env_python") or ""
     folder = settings.get("calibrations_folder") or ""
-    ai = af_auditor.load_settings(inst)
+    # Instance-level, NOT the per-chip scope (docs/80 Part 4 audit): the LLM
+    # provider, model and API KEY are a user credential, not a fact about a
+    # device. Reading them from a scope would both hide the file the user
+    # already wrote at instance/autofit_ai.json — silently turning the audit
+    # off — and ask for the key again per chip.
+    ai = af_auditor.load_settings(current_app.instance_path)
     store = _store() if chip_ok else None
     return {
         "chip": {"ok": chip_ok,
@@ -17934,7 +17939,8 @@ def autofit_start():
             return jsonify({"ok": False, "error": str(exc)}), 400
         backend_kind = (data.get("backend") or "sim").strip()
 
-        auditor = Auditor(af_auditor.load_settings(inst))
+        # instance-level: see the note in _autofit_readiness
+        auditor = Auditor(af_auditor.load_settings(current_app.instance_path))
 
         if backend_kind == "sim":
             eng = _autofit_start_sim(inst, p, auditor)

@@ -296,6 +296,24 @@ function jsonResponse(body, status) {
     }
 
     // ------------------------------------------------------------------
+    // 8b. ...but the catch-up is BOUNDED. A workspace that can never be
+    //     scanned inside the budget answers partial every time; unbounded,
+    //     that turns a 60s poll into a 1.2s one, i.e. a 50x load increase
+    //     applied exactly when the machine is already too slow.
+    // ------------------------------------------------------------------
+    {
+        const { w, calls } = boot(() => jsonResponse({
+            updated: [], vanished: [], now: 7000, partial: true, skipped: 3,
+        }));
+        pump(w);
+        await wait(30);
+        await wait(9000);          // well past 5 catch-ups at ~1.2s apart
+        ok(calls.length <= 7,
+           `a permanently-partial server must not be polled forever (got ${calls.length})`);
+        ok(calls.length >= 3, 'some catch-up did happen');
+    }
+
+    // ------------------------------------------------------------------
     // 9. Deltas still apply (the hardening must not break the feature).
     // ------------------------------------------------------------------
     {
