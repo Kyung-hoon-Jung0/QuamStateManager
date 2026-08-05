@@ -1019,7 +1019,10 @@ def _attach_type_policy(ctx, inst=None) -> None:
             prev = getattr(store, "type_policy", None)
             if (prev is not None and prev.manifest is not None
                     and getattr(store, "_type_manifest_env", None) == python_path):
-                manifest = prev.manifest
+                # Carry the PRISTINE env manifest, never the verdict-overlaid
+                # one — re-attaching would otherwise overlay an overlay and
+                # bake a revoked verdict in (docs/79).
+                manifest = getattr(prev, "env_manifest", None) or prev.manifest
         store.type_policy = type_policy.load_policy(inst, live, manifest)
         store._type_manifest_env = python_path if manifest is not None else None
         if manifest is not None and manifest.get("pulse_roster"):
@@ -5463,6 +5466,204 @@ def field_type_assign():
 
     effective = policy.annotate(store.merged, dot_path) if policy else None
     return jsonify(ok=True, assigned=record, expected=effective, warning=warning)
+
+
+def _env_manifest_and_versions(store) -> tuple[dict | None, dict]:
+    """The PRISTINE env manifest (never the verdict overlay) + its versions."""
+    policy = getattr(store, "type_policy", None)
+    manifest = getattr(policy, "env_manifest", None) or getattr(policy, "manifest", None)
+    return manifest, ((manifest or {}).get("versions") or {})
+
+
+@bp.route("/env-schema/changes")
+def env_schema_changes():
+    """What the ENVIRONMENT's schema changed since the last one SM recorded.
+
+    This is the half of the type story SM could not tell before: a type
+    mismatch may be the chip's fault OR the library's, and only a retained
+    baseline can distinguish them. With no prior baseline the answer is honest
+    ("this run recorded the first one"), never an invented diff.
+    """
+    from quam_state_manager.core import state_env_baseline as _seb
+    from quam_state_manager.core import type_verdicts as _tv
+    ctx = _active_ctx()
+    store = (ctx or {}).get("store")
+    if store is None:
+        return render_template("_status.html", message="No state loaded",
+                               level="warning")
+    manifest, _versions = _env_manifest_and_versions(store)
+    transition = _seb.env_transition(current_app.instance_path, manifest)
+    resolved = {}
+    if manifest:
+        resolved = _tv.resolve_for_manifest(current_app.instance_path, manifest)
+    return render_template("_env_schema_changes.html", transition=transition,
+                           verdicts=resolved,
+                           rows=_env_change_rows(transition, resolved))
+
+
+def _env_change_rows(transition: dict | None, resolved: dict) -> list[dict]:
+    """Diff rows joined with any verdict already recorded for that field, so a
+    question the user has answered renders as answered."""
+    rows = []
+    for r in ((transition or {}).get("diff") or {}).get("rows") or []:
+        cls, field = r.get("class") or "", r.get("field") or ""
+        v = resolved.get(f"{cls}.{field}") if field else None
+        rows.append({
+            **r,
+            "leaf": cls.rsplit(".", 1)[-1],
+            "verdict": v,
+            "answered": bool(v and v.get("status") in ("exact", "carried")),
+            "needs_reaffirm": bool(v and v.get("status") == "needs_reaffirm"),
+        })
+    return rows
+
+
+@bp.route("/env-schema/verdicts")
+def env_schema_verdicts():
+    """List / manage what the user has taught SM about this environment."""
+    from quam_state_manager.core import type_verdicts as _tv
+    ctx = _active_ctx()
+    store = (ctx or {}).get("store")
+    manifest, versions = _env_manifest_and_versions(store) if store else (None, {})
+    resolved = (_tv.resolve_for_manifest(current_app.instance_path, manifest)
+                if manifest else {})
+    items = []
+    for key, v in sorted(resolved.items()):
+        conflicts = []
+        if store is not None and v.get("spec"):
+            with store._lock:
+                conflicts = _tv.conflicting_leaves(
+                    store.state, manifest, v["class_path"], v["field"], v["spec"])
+        items.append({**v, "key": key, "conflicts": len(conflicts),
+                      "leaf": (v.get("class_path") or "").rsplit(".", 1)[-1]})
+    if request.args.get("format") == "json":
+        return jsonify(ok=True, count=len(items),
+                       env=_seb_label(versions), verdicts=items)
+    return render_template("_env_schema_verdicts.html", items=items,
+                           env_label=_seb_label(versions))
+
+
+def _seb_label(versions: dict) -> str:
+    from quam_state_manager.core import state_env_baseline as _seb
+    return _seb.env_label(versions)
+
+
+@bp.route("/env-schema/verdict", methods=["POST"])
+def env_schema_verdict():
+    """Record what the user knows that SM does not: in THIS environment, that
+    class·field's type is X.
+
+    Scope is env + class·field on purpose — "the library changed in this
+    version" is a fact about the library, not about one chip, so it must not
+    have to be re-taught per chip. The blast radius is disclosed (how many
+    values on the CURRENT chip the type would reject) but never blocks: the
+    verdict may itself be the repair path, exactly like a per-key assignment.
+    """
+    from quam_state_manager.core import type_policy as _tp
+    from quam_state_manager.core import type_verdicts as _tv
+    ctx = _active_ctx()
+    store = (ctx or {}).get("store")
+    if store is None:
+        return jsonify(ok=False, error="No state loaded"), 400
+    manifest, versions = _env_manifest_and_versions(store)
+    if not manifest:
+        return jsonify(ok=False, error_kind="cold_env",
+                       error=("the environment's schema has not been probed yet "
+                              "— probe it on Diagnostics first")), 409
+
+    class_path = (request.form.get("class_path") or "").strip()
+    field = (request.form.get("field") or "").strip()
+    decision = (request.form.get("decision") or "").strip()
+    use = (request.form.get("use") or "env").strip()
+    if not class_path or not field or decision not in ("accept", "override"):
+        return jsonify(ok=False, error="class_path, field and decision required"), 400
+
+    env_spec, reason = _tv.env_field_spec(manifest, class_path, field)
+    if reason == "unknown_field":
+        return jsonify(
+            ok=False, error_kind="unknown_field",
+            error=(f"this environment's {class_path.rsplit('.', 1)[-1]} has no "
+                   f"field '{field}' at all. That breaks Quam.load() outright — "
+                   "it is not a disagreement about types, so teaching SM cannot "
+                   "fix it. Select the environment this chip was written by, or "
+                   "migrate the state.")), 409
+    if reason:
+        return jsonify(ok=False, error_kind=reason,
+                       error=("SM cannot introspect that class in this "
+                              "environment, so there is nothing to teach")), 409
+
+    spec = None
+    type_expr = None
+    spec_source = use
+    if decision == "override":
+        if use == "grammar":
+            type_expr = (request.form.get("type") or "").strip()
+            try:
+                spec = _tp.parse_type(type_expr)
+            except ValueError as exc:
+                return jsonify(ok=False, error=str(exc)), 400
+        elif use == "baseline":
+            from quam_state_manager.core import state_env_baseline as _seb
+            key = (request.form.get("baseline_key") or "").strip()
+            body = _seb.load_baseline(current_app.instance_path, key)
+            entry = ((body or {}).get("classes") or {}).get(class_path) or {}
+            f = ((entry.get("fields") or {}) or {}).get(field) or {}
+            spec = f.get("t")
+            if not spec:
+                return jsonify(ok=False, error_kind="no_baseline_spec",
+                               error=("that recorded environment has no type for "
+                                      "this field")), 409
+        else:
+            spec = env_spec
+        if not spec:
+            return jsonify(ok=False, error="no type to record"), 400
+
+    record = _tv.save_verdict(
+        current_app.instance_path, versions, class_path, field,
+        decision=decision, spec=spec, type_expr=type_expr,
+        spec_source=spec_source, env_spec=env_spec,
+        note=request.form.get("note", ""))
+    _attach_type_policy(ctx)                 # the overlay takes effect now
+    ctx.pop("_type_alarm_memo", None)        # findings change with the overlay
+
+    conflicts = []
+    if spec:
+        with store._lock:
+            conflicts = _tv.conflicting_leaves(store.state, manifest,
+                                               class_path, field, spec)
+    return jsonify(ok=True, verdict=record, conflicts=conflicts,
+                   affected=len(conflicts),
+                   warning=((f"{len(conflicts)} value(s) on THIS chip do not "
+                             "match that type — they are now flagged until you "
+                             "edit them") if conflicts else None))
+
+
+@bp.route("/env-schema/verdict/revoke", methods=["POST"])
+def env_schema_verdict_revoke():
+    """Take back something the user taught SM (never destructive to data)."""
+    from quam_state_manager.core import type_verdicts as _tv
+    ctx = _active_ctx()
+    key = (request.form.get("env_key") or "").strip()
+    class_path = (request.form.get("class_path") or "").strip()
+    field = (request.form.get("field") or "").strip()
+    removed = _tv.revoke_verdict(current_app.instance_path, key, class_path, field)
+    if ctx is not None:
+        _attach_type_policy(ctx)
+        ctx.pop("_type_alarm_memo", None)
+    return jsonify(ok=True, removed=removed)
+
+
+@bp.route("/env-schema/dismiss", methods=["POST"])
+def env_schema_dismiss():
+    """Memo THIS env transition as seen. Env-scope fact, so it lives with the
+    baselines rather than in the chip-keyed prompt memo — and it is delta-gated:
+    a further schema change raises it again."""
+    from quam_state_manager.core import state_env_baseline as _seb
+    _seb.dismiss_transition(current_app.instance_path,
+                            (request.form.get("from_key") or "").strip(),
+                            (request.form.get("to_key") or "").strip(),
+                            (request.form.get("sig") or "").strip())
+    return ""
 
 
 @bp.route("/field/type-unassign", methods=["POST"])
@@ -16121,10 +16322,40 @@ def _types_card_state(ctx: dict | None) -> dict | None:
         card["strnum"]["first"] = memo["paths"][0] if memo["paths"] else ""
         policy = getattr(store, "type_policy", None)
         card["env"]["warm"] = bool(policy is not None and policy.manifest)
+        # docs/79: the library's own movements + what the user has taught SM.
+        card["env_change"], card["taught"] = _env_change_summary(store)
         return card
     except Exception:  # noqa: BLE001 — the card must never break /diagnostics
         logger.warning("types-card state failed", exc_info=True)
         return None
+
+
+def _env_change_summary(store) -> tuple[dict | None, int]:
+    """(env transition summary, taught-type count) — both cheap reads."""
+    try:
+        from quam_state_manager.core import state_env_baseline as _seb
+        from quam_state_manager.core import type_verdicts as _tv
+        manifest, _versions = _env_manifest_and_versions(store)
+        if not manifest:
+            return None, 0
+        inst = current_app.instance_path
+        transition = _seb.env_transition(inst, manifest)
+        summary = None
+        if transition:
+            diff = transition.get("diff") or {}
+            summary = {
+                "first": transition.get("first"),
+                "changed": transition.get("changed"),
+                "count": diff.get("total") or 0,
+                "from_label": transition.get("from_label") or "",
+                "to_label": transition.get("to_label") or "",
+                "dismissed": bool(transition.get("dismissed")),
+            }
+        taught = len(_tv.resolve_for_manifest(inst, manifest))
+        return summary, taught
+    except Exception:  # noqa: BLE001 — baseline history must never break the card
+        logger.warning("env-change summary failed", exc_info=True)
+        return None, 0
 
 
 @bp.route("/diagnostics/types-card")
