@@ -13,6 +13,7 @@ alongside QUAM without restructuring the session model.
 
 from __future__ import annotations
 
+import atexit
 import json
 import logging
 import os
@@ -109,6 +110,36 @@ def _csrf_origin_check():
     # Neither header present: fail closed for state-changing requests
     # (no legitimate browser flow lands here for our routes).
     return ("CSRF: missing Origin/Referer header", 403)
+
+
+def _record_own_port():
+    """Stamp this process's port into the instance registry, once (docs/80).
+
+    Captured from the request rather than passed in, because the port is
+    chosen in three different places — ``main.find_free_port`` for the desktop
+    window, ``app.run(port=…)`` for a dev server, a WSGI host for anything
+    else — and only one of them could ever hand it to ``create_app``. The
+    first request knows it for certain.
+
+    The port is what a user can actually tell two windows apart by, so it is
+    worth this small indirection. Never raises: a registry write failing must
+    not fail a page.
+    """
+    if current_app.config.get("_instance_port_recorded"):
+        return None
+    current_app.config["_instance_port_recorded"] = True
+    try:
+        host = request.host or ""
+        port = int(host.rsplit(":", 1)[1]) if ":" in host else None
+    except (ValueError, IndexError):
+        port = None
+    if port:
+        from quam_state_manager.core import instances, scheduler
+        instances.update(current_app.instance_path, port=port)
+        # A run we claim records the port too, so the OTHER window's warning
+        # can name us by what the user sees in their address bar (docs/80).
+        scheduler.set_own_port(port)
+    return None
 
 
 _CSP = (
@@ -453,6 +484,7 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # blueprint) so every route, including any future blueprints, is
     # covered.
     app.before_request(_csrf_origin_check)
+    app.before_request(_record_own_port)
     app.after_request(_add_security_headers)
 
     # One-time housekeeping: remove ``pytest-*`` / ``Temp`` history dirs leaked
@@ -498,6 +530,12 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     app.config["history_manager"] = HistoryManager(app.instance_path)
     app.config["contexts"] = {}
     app.config["active_context"] = None
+
+    # Announce this process to any sibling window sharing this instance dir
+    # (docs/80). Best-effort by construction — see core/instances.
+    from quam_state_manager.core import instances
+    instances.register(app.instance_path)
+    atexit.register(instances.deregister, app.instance_path)
 
     from quam_state_manager.web.routes import bp
     app.register_blueprint(bp)

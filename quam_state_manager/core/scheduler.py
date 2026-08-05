@@ -38,6 +38,7 @@ from pathlib import Path
 from quam_state_manager.core import (
     config_generator,
     history,
+    instances,
     node_inject,
     node_scan,
     path_match,
@@ -545,6 +546,68 @@ HEARTBEAT_TIMEOUT_S = 90.0
 def touch_ui(instance_path) -> None:
     """Record that the UI just polled (browser-alive heartbeat)."""
     _LAST_UI_SEEN[str(instance_path)] = time.time()
+
+
+# ----------------------------------------------------------------------
+# Cross-process run ownership (docs/80)
+# ----------------------------------------------------------------------
+#
+# The queue is a file; ``is_running`` is an in-memory registry. A SECOND State
+# Manager process therefore sees "the file says running" and "no worker of
+# mine", which is indistinguishable from a crashed worker — and it acted on
+# that, with three reproduced consequences: a mere /scheduler/status poll
+# reconciled the other window's live run to idle and marked its in-flight item
+# failed; pressing Start spawned a SECOND worker over the same queue (two
+# workers driving one OPX); and closing the window wrote "cancelled" over a run
+# it did not own.
+#
+# ``run.owner_pid`` closes all three by making the distinction recordable. It
+# is deliberately a hint, not a lock: an entry with no owner (a queue written
+# before this existed, or by a genuinely crashed process) keeps the exact
+# pre-existing behaviour, so crash recovery is untouched.
+
+def _run_owner(state: dict) -> tuple[int | None, int | None]:
+    run = state.get("run") or {}
+    try:
+        pid = int(run.get("owner_pid")) if run.get("owner_pid") else None
+    except (TypeError, ValueError):
+        pid = None
+    try:
+        port = int(run.get("owner_port")) if run.get("owner_port") else None
+    except (TypeError, ValueError):
+        port = None
+    return pid, port
+
+
+def foreign_owner(state: dict) -> tuple[int, int | None] | None:
+    """``(pid, port)`` of ANOTHER live process that owns this run, else None.
+
+    None covers all three safe cases: nobody claimed it, we claimed it, or the
+    claimant is gone (a real crash — reconcile away).
+    """
+    pid, port = _run_owner(state)
+    if not pid or pid == os.getpid():
+        return None
+    if not instances.pid_alive(pid):
+        return None
+    return pid, port
+
+
+def owner_label(pid: int, port: int | None) -> str:
+    return f"port {port} · PID {pid}" if port else f"PID {pid}"
+
+
+# This process's HTTP port, stamped into a run we claim so the OTHER window can
+# name us in its warning. Set by the web layer once the first request reveals it
+# (the port is chosen outside create_app). Deliberately a module global rather
+# than a registry lookup: the scheduler's directory argument becomes a per-chip
+# scope in a later step, so it must not be the key for a process-level fact.
+_OWN_PORT: int | None = None
+
+
+def set_own_port(port: int | None) -> None:
+    global _OWN_PORT
+    _OWN_PORT = int(port) if port else None
 
 
 # Post-node refresh hook (injected by the web layer). The Flask-free worker can't
@@ -1117,45 +1180,14 @@ def _kill(proc) -> None:
         logger.debug("kill failed for pid %s", getattr(proc, "pid", "?"), exc_info=True)
 
 
-def _pid_alive(pid) -> bool:
-    """Best-effort EXISTENCE probe for *pid* — never kills, only checks. Used by
-    _reconcile_orphaned to tell a genuinely-gone worker (safe to unlock editing)
-    from an experiment subprocess that outlived a crashed SM process (still
-    driving the OPX → must NOT silently unlock). Bounded, safe failure modes: a
-    false 'alive' (PID reused) keeps the lock the user clears via Start; a false
-    'dead' is no worse than today.
-    """
-    try:
-        pid = int(pid)
-    except (TypeError, ValueError):
-        return False
-    if pid <= 0:
-        return False
-    if os.name == "nt":
-        try:
-            import ctypes
-            k32 = ctypes.windll.kernel32
-            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-            STILL_ACTIVE = 259
-            h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-            if not h:
-                return False
-            code = ctypes.c_ulong()
-            ok = k32.GetExitCodeProcess(h, ctypes.byref(code))
-            k32.CloseHandle(h)
-            return bool(ok) and code.value == STILL_ACTIVE
-        except Exception:   # noqa: BLE001 — probe failure ⇒ treat as gone (safe default)
-            return False
-    # POSIX: signal 0 is the classic existence check.
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True          # exists but owned by another user → still alive
-    except OSError:
-        return False
+# Best-effort EXISTENCE probe for a pid — never kills, only checks. Used by
+# _reconcile_orphaned to tell a genuinely-gone worker (safe to unlock editing)
+# from an experiment subprocess that outlived a crashed SM process (still
+# driving the OPX → must NOT silently unlock), and by the instance registry to
+# tell a live sibling window from a crashed one. ONE implementation, in
+# core.instances, so the two can never drift; the alias keeps this module's
+# established name (and its pins) working.
+_pid_alive = instances.pid_alive
 
 
 def _classify_result(work_dir: Path, returncode: int) -> tuple[str, str | None]:
@@ -1378,7 +1410,9 @@ def _worker(instance_path: str) -> None:
                 item = _next_queued(state)
                 if item is None:
                     state["run"].update({"status": "idle", "current_id": None,
-                                         "message": "queue complete"})
+                                         "message": "queue complete",
+                                         # release the docs/80 claim
+                                         "owner_pid": None, "owner_port": None})
                     save_queue(instance_path, state)
                     break
                 item["status"] = "running"
@@ -1437,6 +1471,9 @@ def _worker(instance_path: str) -> None:
             if cancel.is_set():
                 state["run"].update({"status": "idle", "message": "cancelled"})
             state["run"]["current_id"] = None
+            if state["run"].get("status") != "running":
+                state["run"]["owner_pid"] = None      # docs/80: claim released
+                state["run"]["owner_port"] = None
             save_queue(instance_path, state)
             # Clear liveness INSIDE the lock so is_running() and the persisted
             # run-state flip atomically (a resume start() can't be dropped).
@@ -1478,6 +1515,20 @@ def _reconcile_orphaned(instance_path) -> dict | None:
         if is_running(instance_path):
             return None
         state = load_queue(instance_path)
+        # docs/80: another LIVE State Manager process owns this run. Its worker
+        # is alive in ITS memory and invisible in ours, so "no worker of mine"
+        # means nothing here. Touch nothing — a poll from a second window used
+        # to flip the owner's run to idle and mark its in-flight item failed,
+        # releasing the edit lock while an experiment was still driving the OPX.
+        owner = foreign_owner(state)
+        if owner is not None:
+            pid, port = owner
+            msg = (f"Another State Manager window ({owner_label(pid, port)}) "
+                   "is running the Experiment Runner.")
+            if (state.get("run") or {}).get("message") != msg:
+                state["run"]["message"] = msg
+                save_queue(instance_path, state)
+            return state
         # Hardware safety: if the file says 'running' but no in-memory worker,
         # the experiment subprocess MIGHT have outlived a killed SM process and
         # still be driving the OPX. Probe the persisted PID: if it's alive, keep
@@ -1498,7 +1549,8 @@ def _reconcile_orphaned(instance_path) -> dict | None:
         msg = "interrupted (worker stopped or app restarted)"
         if state["run"].get("status") == "running":
             state["run"].update({"status": "idle", "current_id": None,
-                                  "message": msg, "worker_pid": None})
+                                  "message": msg, "worker_pid": None,
+                                  "owner_pid": None, "owner_port": None})
             changed = True
         for it in state["queue"]:
             if it.get("status") == "running":
@@ -1511,12 +1563,33 @@ def _reconcile_orphaned(instance_path) -> dict | None:
         return state
 
 
+class ForeignRunnerError(RuntimeError):
+    """Another live State Manager process owns this queue's run (docs/80)."""
+
+    def __init__(self, pid: int, port: int | None):
+        self.pid = pid
+        self.port = port
+        super().__init__(
+            f"Another State Manager window ({owner_label(pid, port)}) is running "
+            "the Experiment Runner. Two runners on one queue would drive the "
+            "same OPX at once.")
+
+
 def start(instance_path) -> dict:
-    """Start (or resume) the worker. Returns the current run state."""
+    """Start (or resume) the worker. Returns the current run state.
+
+    Raises :class:`ForeignRunnerError` when another live process owns the run.
+    This is the ONE place multi-window use is refused rather than merely
+    reported: a second worker over the same queue means two processes driving
+    one OPX, which no warning can make safe.
+    """
     instance_path = str(instance_path)
     with _QLOCK:
         if is_running(instance_path):
             return load_queue(instance_path)["run"]
+        owner = foreign_owner(load_queue(instance_path))
+        if owner is not None:
+            raise ForeignRunnerError(*owner)
         runner = {"thread": None, "cancel": threading.Event(),
                   "proc": None, "proc_lock": threading.Lock()}
         _RUNNERS[instance_path] = runner
@@ -1533,7 +1606,9 @@ def start(instance_path) -> dict:
                 it["status"] = "queued"
         state["run"].update({"status": "running", "started_at": _now(),
                              "current_id": None, "message": "",
-                             "completed_count": 0, "pause_requested": False})
+                             "completed_count": 0, "pause_requested": False,
+                             # Claim the run for THIS process (docs/80).
+                             "owner_pid": os.getpid(), "owner_port": _OWN_PORT})
         save_queue(instance_path, state)
         touch_ui(instance_path)  # fresh heartbeat so the worker doesn't pause immediately
         t = threading.Thread(target=_worker, args=(instance_path,), daemon=True)
@@ -1563,6 +1638,11 @@ def cancel(instance_path) -> dict:
     """Cancel: kill the running item (and its descendants) and stop the queue."""
     instance_path = str(instance_path)
     runner = _RUNNERS.get(instance_path)
+    if runner is None and foreign_owner(load_queue(instance_path)) is not None:
+        # docs/80: not ours to cancel. This path is reached by the window-close
+        # handler (main._kill_scheduler), so without this guard merely CLOSING
+        # a second window rewrote another window's live run as "cancelled".
+        return load_queue(instance_path)["run"]
     if runner is not None:
         runner["cancel"].set()
         with runner["proc_lock"]:
@@ -1592,7 +1672,8 @@ def cancel(instance_path) -> dict:
             state["run"]["pause_requested"] = False
         else:
             state["run"].update({"status": "idle", "current_id": None,
-                                 "message": "cancelled", "pause_requested": False})
+                                 "message": "cancelled", "pause_requested": False,
+                                 "owner_pid": None, "owner_port": None})
         save_queue(instance_path, state)
         return state["run"]
 

@@ -900,6 +900,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         _adopt_extras_data_folders(current)
         _maybe_data_folder_suggest(current)
         _arm_type_alarm(current, "chip-open")   # docs/78
+        _publish_instance_chip(current)         # docs/80
         with _quam_cache_lock:
             current_app.config["contexts"][ctx_name] = current
             current_app.config["active_context"] = ctx_name
@@ -963,6 +964,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         _adopt_extras_data_folders(ctx)
         _maybe_data_folder_suggest(ctx)
         _arm_type_alarm(ctx, "chip-open")   # docs/78
+        _publish_instance_chip(ctx)         # docs/80
         with _quam_cache_lock:
             if key not in _quam_cache:
                 # Evict the oldest CLEAN in-memory entry if the cache is full.
@@ -2140,6 +2142,34 @@ _ALARM_REASONS = {
 }
 
 
+def _publish_instance_chip(ctx: dict | None) -> None:
+    """Tell the instance registry which chip this window now holds (docs/80).
+
+    Called from the same two activation branches the type alarm arms from —
+    every path that opens or switches a chip converges there, so the registry
+    cannot drift out of date without the chip itself having changed.
+
+    Registry writes are best-effort inside ``core.instances``; the extra guard
+    here is for the identity lookup, which touches the store.
+    """
+    if not ctx or ctx.get("type") != "quam":
+        return
+    try:
+        identity = _active_chip_identity() or {}
+    except Exception:       # noqa: BLE001 — a name lookup must not fail a load
+        identity = {}
+    try:
+        from quam_state_manager.core import instances
+        instances.update(
+            current_app.instance_path,
+            chip_path=str(ctx.get("path") or ""),
+            chip_name=str(identity.get("name") or ""),
+            project=str(ctx.get("qualibrate_project") or ""),
+        )
+    except Exception:       # noqa: BLE001
+        logger.debug("instance registry: chip publish failed", exc_info=True)
+
+
 def _arm_type_alarm(ctx: dict | None, reason: str) -> None:
     """Mark that NEW CONTENT entered this chip's working copy.
 
@@ -2192,6 +2222,39 @@ def type_alert():
     payload["reason"] = armed.get("reason") or "chip-open"
     payload["reason_label"] = _ALARM_REASONS.get(payload["reason"], "")
     return render_template("_type_fix_plan.html", plan=plan, alert=payload)
+
+
+def _instance_peers_for_active() -> list:
+    """Live sibling windows holding the SAME chip as this one (docs/80).
+
+    Returns the peers themselves so the template can name each by port. Empty
+    whenever nothing is loaded, nothing else is running, or the other windows
+    hold different chips — which is the normal multi-project case and gets no
+    banner at all.
+    """
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam":
+        return []
+    try:
+        from quam_state_manager.core import instances
+        return instances.conflicts(current_app.instance_path,
+                                   chip_path=ctx.get("path"))["same_chip"]
+    except Exception:       # noqa: BLE001 — a warning must not break a render
+        logger.debug("instance conflict probe failed", exc_info=True)
+        return []
+
+
+@bp.route("/instances/banner")
+def instances_banner():
+    """Re-render the sibling-window slot.
+
+    Refreshed from events the app already fires — no new poller — so the strip
+    disappears on its own once the other window closes and something on this
+    one moves.
+    """
+    return render_template("_multi_instance_banner.html",
+                           instance_peers=_instance_peers_for_active(),
+                           active_name=(_active_chip_identity() or {}).get("name"))
 
 
 @bp.route("/type-alarm/banner")
@@ -17271,6 +17334,17 @@ def _sched_state() -> dict:
     compact autofit summary so the existing badge poll powers the Autofit
     badge for free (docs/56 §7b-F)."""
     out = scheduler.runner_status(_sched_inst())
+    # docs/80 — name the window that owns a run we are only watching, so the
+    # Experiment Runner page can say "another window is running this" instead
+    # of showing controls that would 409.
+    try:
+        owner = scheduler.foreign_owner({"run": out.get("run") or {}})
+        if owner is not None:
+            out["foreign_owner"] = {
+                "pid": owner[0], "port": owner[1],
+                "label": scheduler.owner_label(*owner)}
+    except Exception:       # noqa: BLE001 — a badge detail must not break the poll
+        logger.debug("foreign-owner probe failed", exc_info=True)
     try:
         from quam_state_manager.core.autofit import engine as autofit_engine
         eng = autofit_engine.get_engine(_sched_inst())
@@ -17614,7 +17688,17 @@ def scheduler_start():
     scheduler.set_refresh_hook(
         lambda folder, item_id, status: _scheduler_refresh_hook(
             app, inst, folder, item_id, status))
-    scheduler.start(inst)
+    try:
+        scheduler.start(inst)
+    except scheduler.ForeignRunnerError as exc:
+        # docs/80 — the one refusal, because it is the one case a warning
+        # cannot make safe: a second worker over the same queue means two
+        # processes driving one OPX.
+        return jsonify({"ok": False, "reason": "foreign_runner",
+                        "error": "scheduler_foreign_owner",
+                        "owner": {"pid": exc.pid, "port": exc.port,
+                                  "label": scheduler.owner_label(exc.pid, exc.port)},
+                        "message": str(exc)}), 409
     return jsonify({"ok": True, "state": _sched_state()})
 
 
