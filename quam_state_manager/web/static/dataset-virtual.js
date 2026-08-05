@@ -109,6 +109,14 @@
         pollIntervalMs: 60000,
         lastInteractionTs: 0,
         pendingDelta: null,        // Buffered server response held while user is busy
+        // Liveness bookkeeping for the poll (docs/80): when the current request
+        // started (watchdog), how many consecutive failures (backoff), until
+        // when to skip polling, and whether the server asked us back early
+        // because it left folders un-scanned inside its budget.
+        pollStartedAt: 0,
+        pollFailures: 0,
+        pollSkipUntil: 0,
+        pollCatchUp: false,
     };
 
     function tokenize(raw) {
@@ -1016,9 +1024,47 @@
         return (Date.now() - state.lastInteractionTs) < IDLE_DEFER_MS;
     }
 
+    // docs/80 — the poll must never be able to stop permanently.
+    //
+    // The in-flight guard below is correct (a slow server must not stack
+    // requests), but it used to be paired with a fetch that had no timeout: if
+    // one request never settled, pollInFlight stayed true and the dataset table
+    // silently stopped updating until the page was reloaded. Monitoring that
+    // fails closed and says nothing is worse than monitoring that is late. So:
+    // every request is aborted after POLL_TIMEOUT_MS, the flag is cleared in a
+    // real finally, a watchdog force-clears a flag that outlived any possible
+    // request, and repeated failures back off instead of hammering.
+    var POLL_TIMEOUT_MS = 10000;          // matches the sidebar tree poller
+    var POLL_BACKOFF_MAX_MS = 300000;
+
+    function pollFailed() {
+        state.pollFailures = (state.pollFailures || 0) + 1;
+        // 1st retry at 2x the base interval, doubling to the cap.
+        var backoff = Math.min(state.pollIntervalMs * Math.pow(2, state.pollFailures),
+                               POLL_BACKOFF_MAX_MS);
+        state.pollSkipUntil = Date.now() + backoff;
+    }
+
+    function pollSucceeded() {
+        state.pollFailures = 0;
+        state.pollSkipUntil = 0;
+    }
+
     function pollDelta() {
         if (state.pollTs <= 0) return;
-        if (state.pollInFlight) return;                 // don't stack on a slow server
+        if (state.pollInFlight) {
+            // Watchdog: a request can only legitimately be in flight for the
+            // abort window. Anything longer means the settle path was lost
+            // (an aborted-but-unsettled fetch, a thrown handler, a stubbed
+            // fetch in a test); clear it so polling resumes on the next tick
+            // rather than never.
+            if (state.pollStartedAt && (Date.now() - state.pollStartedAt) > POLL_TIMEOUT_MS * 2) {
+                state.pollInFlight = false;
+            } else {
+                return;                              // don't stack on a slow server
+            }
+        }
+        if (state.pollSkipUntil && Date.now() < state.pollSkipUntil) return;
         // Table swapped away (navigated to another menu) → stop polling so we
         // don't fetch + server-rescan forever against a detached DOM.
         if (!state.scrollEl || !document.body.contains(state.scrollEl)) {
@@ -1029,11 +1075,29 @@
         var dateVal = dateInp ? (dateInp.value || '') : '';
         var url = '/datasets/changes-since?ts=' + encodeURIComponent(state.pollTs);
         if (dateVal) url += '&date=' + encodeURIComponent(dateVal);
+        var ctl = null, timer = null;
+        try {
+            if (typeof AbortController === 'function') {
+                ctl = new AbortController();
+                timer = setTimeout(function () { try { ctl.abort(); } catch (e) {} },
+                                   POLL_TIMEOUT_MS);
+            }
+        } catch (e) { ctl = null; }
         state.pollInFlight = true;
-        fetch(url)
-            .then(function(r) { return r.json(); })
+        state.pollStartedAt = Date.now();
+        fetch(url, ctl ? { signal: ctl.signal } : undefined)
+            .then(function(r) {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+            })
             .then(function(data) {
-                if (!data || typeof data.now !== 'number') return;
+                if (!data || typeof data.now !== 'number') throw new Error('bad payload');
+                pollSucceeded();
+                // The server hit its wall-clock budget and left folders
+                // un-scanned (their cursors held). Come back promptly instead
+                // of waiting out the full interval, so a burst of incoming
+                // runs is caught up in seconds rather than minutes.
+                if (data.partial) state.pollCatchUp = true;
                 if (activeRecently()) {
                     // Hold the delta until the user is idle to avoid jumping
                     // their search/scroll out from under them.
@@ -1042,8 +1106,19 @@
                 }
                 applyDelta(data);
             })
-            .catch(function(err) { console.warn('dataset poll failed:', err); })
-            .then(function() { state.pollInFlight = false; });   // finally
+            .catch(function(err) {
+                pollFailed();
+                console.warn('dataset poll failed:', err);
+            })
+            .then(function() {                                   // finally
+                if (timer) clearTimeout(timer);
+                state.pollInFlight = false;
+                state.pollStartedAt = 0;
+                if (state.pollCatchUp) {
+                    state.pollCatchUp = false;
+                    setTimeout(function () { if (state.pollTimer) pollDelta(); }, 1200);
+                }
+            });
     }
 
     function stopPolling() {

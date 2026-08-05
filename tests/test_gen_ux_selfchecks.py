@@ -15,6 +15,13 @@
   tab), opens at most one dialog per content-entry event, closing is not
   dismissing, and auto-correct runs the docs/77 apply path.
 
+- tests/dataset_poll_selfcheck.cjs — the dataset delta-poll's liveness
+  (docs/80): a request that never settles must not wedge polling forever
+  (pollInFlight stuck true = the table silently stops updating until reload),
+  requests carry an abort signal, errors back off instead of hammering, a
+  malformed body never advances the cursor past an unscanned window, and a
+  `partial` response schedules a prompt catch-up.
+
 - tests/wiring_portlabel_selfcheck.cjs — the shared port-circle renderer's
   label sizing (2026-08-04): single-member circles (control/z/coupler,
   single readout, input single) get chord-fit adaptive type (9-14px, short
@@ -61,3 +68,8 @@ def test_wiring_portlabel_selfcheck_passes():
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")
 def test_type_alert_popup_selfcheck_passes():
     _run("type_alert_popup_selfcheck.cjs")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")
+def test_dataset_poll_selfcheck_passes():
+    _run("dataset_poll_selfcheck.cjs")

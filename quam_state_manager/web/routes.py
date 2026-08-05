@@ -13879,6 +13879,14 @@ def _split_dataset_uid(uid: str) -> tuple[str, int] | None:
 # fast poll STILL surfaces a brand-new chip dir once the sidebar scan picks it up,
 # without paying the token walk each poll. The stat-heavy rebuild only runs on a
 # miss; we never hold the lock across the rebuild.
+# Wall-clock budget for ONE /datasets/changes-since poll (docs/80). A rescan
+# runs while other writers land runs, so its cost is not ours to bound; what we
+# CAN bound is how long the monitoring request may take before answering. Past
+# the budget the remaining folders are left un-scanned with their cursors held,
+# so nothing is skipped — it is re-offered on the next poll. Deliberately well
+# under the client's 10s abort so the budget, not the abort, is what fires.
+_POLL_BUDGET_S = 6.0
+
 _dataset_candidates_lock = threading.Lock()
 _dataset_candidates_cache: dict[Any, tuple[Any, int, list[Path]]] = {}
 
@@ -14292,13 +14300,22 @@ def datasets_changes_since():
     # Aggregate the per-folder deltas: tag each updated row with its folder_key
     # and namespace the vanished list by uid (so a #250-vanishes-in-A +
     # #250-appears-in-B never reads as a single run resurrecting).
-    active = _active_dataset_stores(fast=True)   # 60s poll — skip the token stat-walk
-    if not active:
-        return jsonify({"updated": [], "vanished": [], "now": 0})
     try:
         ts = float(request.args.get("ts", 0))
     except (TypeError, ValueError):
         ts = 0.0
+    try:
+        active = _active_dataset_stores(fast=True)  # 60s poll — skip the token stat-walk
+    except Exception:
+        # Never 500 the monitoring poll: hold the cursor and try again next
+        # tick. A 500 here is invisible to the user (the client catches it)
+        # but stops the table updating for good (docs/80).
+        logger.exception("changes-since: could not resolve active data folders")
+        return jsonify({"updated": [], "vanished": [], "now": ts,
+                        "partial": True, "skipped": 0})
+    if not active:
+        return jsonify({"updated": [], "vanished": [], "now": 0,
+                        "partial": False, "skipped": 0})
     date = request.args.get("date") or None
     updated: list[dict] = []
     vanished: list[str] = []
@@ -14311,17 +14328,42 @@ def datasets_changes_since():
     # only re-emits a few rows (client merges by id — harmless). A folder
     # whose rescan failed returns now == ts (D8) and correctly holds the
     # cursor back until it heals.
+    #
+    # docs/80 — this loop must survive a folder another process is writing.
+    # Two failure modes it now closes:
+    #   * an exception escaping ONE folder used to 500 the whole poll. The
+    #     client swallows the error, never advances its cursor, and the table
+    #     silently stops updating — the worst possible shape for a monitoring
+    #     surface. A failed folder now contributes nothing and reports
+    #     ``now == ts``, i.e. it holds its own cursor exactly like the D8
+    #     rescan-failure path already does, while healthy folders keep flowing.
+    #   * an unbounded walk. With a writer actively landing runs, a rescan can
+    #     take arbitrarily long; past the budget we stop scanning further
+    #     folders and hold THEIR cursors, so the response stays prompt and the
+    #     un-scanned window is re-offered next poll rather than skipped.
     now: float | None = None
+    deadline = time.monotonic() + _POLL_BUDGET_S
+    skipped = 0
     for fol in active:
-        delta = fol["store"].changes_since(ts, date=date)
-        for row in delta.get("updated", []):
-            row["f"] = fol["key"]
-            updated.append(row)
-        for rid in delta.get("vanished", []):
-            vanished.append(_dataset_uid(fol["key"], rid))
-        sample = delta.get("now", 0.0)
+        if time.monotonic() >= deadline:
+            skipped += 1
+            now = ts if now is None else min(now, ts)
+            continue
+        try:
+            delta = fol["store"].changes_since(ts, date=date)
+            for row in delta.get("updated", []):
+                row["f"] = fol["key"]
+                updated.append(row)
+            for rid in delta.get("vanished", []):
+                vanished.append(_dataset_uid(fol["key"], rid))
+            sample = delta.get("now", 0.0)
+        except Exception:
+            logger.exception("changes-since failed for %s", fol.get("path"))
+            skipped += 1
+            sample = ts
         now = sample if now is None else min(now, sample)
-    return jsonify({"updated": updated, "vanished": vanished, "now": now or 0.0})
+    return jsonify({"updated": updated, "vanished": vanished, "now": now or 0.0,
+                    "partial": bool(skipped), "skipped": skipped})
 
 
 @bp.route("/datasets/rescan", methods=["POST"])
