@@ -1,0 +1,89 @@
+{# docs/78 — "Types & values" as a first-class diagnostics card.
+
+   The two type anomalies used to be findable only as rows inside a long list
+   (and the repair button was repeated on every one of up to 100 of them).
+   They are different in kind, so the card states each honestly:
+
+     · values stored as TEXT   — SM can repair these; one click, one undo.
+     · env-schema mismatches   — the chip and the selected environment
+                                 disagree. SM does NOT change these; the
+                                 library may simply have moved. The user
+                                 decides which side is right. #}
+<div id="diag-types-card" class="diag-env-card diag-types-card"
+     hx-get="/diagnostics/types-card"
+     hx-trigger="diagnostics-changed from:body delay:300ms"
+     hx-swap="outerHTML">
+  <div class="diag-env-head">
+    <strong>Types &amp; values</strong>
+    {% if not types_card or not types_card.total %}
+    <span class="diag-env-ok">&#10003; every value's type is consistent</span>
+    {% else %}
+    <span class="diag-env-versions">
+      {%- if types_card.strnum.count %}{{ types_card.strnum.count }} stored as text{% endif -%}
+      {%- if types_card.strnum.count and types_card.env.count %} &middot; {% endif -%}
+      {%- if types_card.env.count %}{{ types_card.env.count }} don't match the environment{% endif -%}
+    </span>
+    {% endif %}
+  </div>
+
+  {% if types_card and types_card.strnum.count %}
+  <div class="diag-types-row">
+    <div class="diag-types-label">Numbers stored as text</div>
+    <div class="diag-types-body">
+      <span class="diag-types-counts">
+        {{ types_card.strnum.count }} value{{ 's' if types_card.strnum.count != 1 }}
+        {%- if types_card.editable %} &middot; SM can convert {{ types_card.strnum.fixable }}
+        {%- if types_card.strnum.skipped %} &middot; {{ types_card.strnum.skipped }}
+        left alone (reason shown){% endif %}{% endif %}
+      </span>
+      <div class="diag-types-actions">
+        {% if types_card.editable %}
+        <button type="button" class="btn-sm primary"
+                title="Show what SM would store instead for every value stored as text, then convert the ones you confirm"
+                onclick="window.openTypeFixPlan && window.openTypeFixPlan()">Auto-correct {{ types_card.strnum.fixable }} value{{ 's' if types_card.strnum.fixable != 1 }}&hellip;</button>
+        {% else %}
+        <span class="muted">read-only archive — open the live chip to repair</span>
+        {% endif %}
+        {% if types_card.strnum.first %}
+        <button type="button" class="btn-sm outline" data-path="{{ types_card.strnum.first }}"
+                onclick="window._navigateToExplorerPath && window._navigateToExplorerPath(this.getAttribute('data-path'))">Show in Json Tree View</button>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if types_card and types_card.env.count %}
+  <div class="diag-types-row">
+    <div class="diag-types-label">Environment-schema mismatches</div>
+    <div class="diag-types-body">
+      <p class="diag-types-caption muted">
+        SM will not change these — this chip and the selected environment's
+        schema disagree. Decide which is right.
+      </p>
+      <ul class="diag-types-envlist">
+        {% for it in types_card.env.entries %}
+        <li>
+          <code>{{ it.location }}</code>
+          <span class="diag-types-envmsg">{{ it.message }}</span>
+          {% if it.count > 1 %}<span class="muted">({{ it.count }}&times;)</span>{% endif %}
+          {% if it.example_path %}
+          <button type="button" class="btn-xs outline diag-goto"
+                  data-jump-path="{{ it.example_path }}" onclick="goToDiagField(this)">Go to field</button>
+          {% endif %}
+        </li>
+        {% endfor %}
+        {% if types_card.env.count > types_card.env.entries | length %}
+        <li class="muted">+ {{ types_card.env.count - (types_card.env.entries | length) }} more
+          in the "Environment match" section below</li>
+        {% endif %}
+      </ul>
+    </div>
+  </div>
+  {% elif types_card and not types_card.env.warm %}
+  <p class="diag-types-caption muted">
+    The environment's schema has not been probed yet, so type mismatches
+    against it are unknown — use "Probe environment" above.
+  </p>
+  {% endif %}
+</div>

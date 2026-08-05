@@ -2825,13 +2825,17 @@ document.addEventListener("cellsReverted", function(evt) {
 
     /* Fetch the plan and show it. The plan is built server-side and carries
        its own signature, so what the user confirms is what the server
-       re-validates before writing. */
-    window.openTypeFixPlan = function () {
+       re-validates before writing.
+
+       The optional url lets the self-raising alert (docs/78) render the SAME
+       dialog from /type-alert — one dialog, one apply path, so "auto-correct"
+       stays one click without ever writing something the user did not see. */
+    window.openTypeFixPlan = function (url) {
         var o = ensure();
         var host = o.querySelector(".tfx-host");
         host.innerHTML = '<div class="tfx-card"><p class="tfx-lead">Checking the chip…</p></div>';
         o.style.display = "flex";
-        fetch("/type-fix/plan", { headers: { "HX-Request": "true" } })
+        fetch(url || "/type-fix/plan", { headers: { "HX-Request": "true" } })
             .then(function (r) { return r.text(); })
             .then(function (html) {
                 host.innerHTML = html;
@@ -2847,14 +2851,38 @@ document.addEventListener("cellsReverted", function(evt) {
             });
     };
 
+    /* Scope every selection query to the ONE open dialog — the alert and the
+       manual entry point render the same card, and a document-wide query
+       would miscount the moment anything else on the page grew a .tfx-pick. */
+    function _picks(node) {
+        var card = (node && node.closest && node.closest(".tfx-card"))
+            || (overlay && overlay.querySelector(".tfx-card"));
+        return (card || document).querySelectorAll(".tfx-pick");
+    }
+
+    /* Mount an ALREADY-FETCHED plan card (the self-raising alert has the HTML
+       in hand — re-fetching would race the one-shot server flag). */
+    window.openTypeFixPlanHtml = function (html) {
+        var o = ensure();
+        var host = o.querySelector(".tfx-host");
+        host.innerHTML = html;
+        o.style.display = "flex";
+        window.typeFixCount();
+        o._releaseTrap = window.trapFocus
+            ? window.trapFocus(o, window.closeTypeFixPlan) : null;
+        var btn = host.querySelector("#tfx-apply");
+        if (btn) { try { btn.focus(); } catch (e) {} }
+        return o;
+    };
+
     window.typeFixToggleAll = function (box) {
-        var picks = document.querySelectorAll(".tfx-pick");
+        var picks = _picks(box);
         Array.prototype.forEach.call(picks, function (p) { p.checked = box.checked; });
         window.typeFixCount();
     };
 
     window.typeFixCount = function () {
-        var picks = document.querySelectorAll(".tfx-pick");
+        var picks = _picks(null);
         var n = 0;
         Array.prototype.forEach.call(picks, function (p) { if (p.checked) n++; });
         var out = document.getElementById("tfx-count");
@@ -2893,7 +2921,7 @@ document.addEventListener("cellsReverted", function(evt) {
                 }
                 return;
             }
-            if (d.tray_html) window._swapPendingTray(d.tray_html);
+            if (d.tray_html && window._swapPendingTray) window._swapPendingTray(d.tray_html);
             window.closeTypeFixPlan();
             if (window.showToast) {
                 window.showToast(d.count + " value" + (d.count === 1 ? "" : "s")
@@ -2909,6 +2937,103 @@ document.addEventListener("cellsReverted", function(evt) {
         });
     };
 })();
+
+/* The type-anomaly alert that raises ITSELF (docs/78).
+
+   Detection was already automatic, but the repair sat behind a button the
+   user had to go and find. Now, whenever NEW CONTENT enters the working copy
+   — a chip is opened, the live state is pulled, a snapshot is staged, a run's
+   state is loaded, or SM adopts an experiment's write — the server arms a
+   one-shot flag and this asks for it. /type-alert answers 204 unless the
+   anomaly set is genuinely new, so ordinary editing never prompts.
+
+   The dialog it opens is the docs/77 repair dialog: the proposal is on screen,
+   so auto-correct is one click AND nothing is written unseen. */
+window.TypeAlert = (function () {
+    var inflight = false, retryTimer = null;
+
+    /* Never interrupt: not while typing, not mid-drag, not over another
+       modal, not in a background tab. The server flag is only consumed by a
+       200, so deferring costs nothing — the alert waits for a calm moment. */
+    function _busy() {
+        if (document.hidden) return true;
+        var a = document.activeElement;
+        if (a && a.matches && a.matches('input, textarea, select, [contenteditable=""], [contenteditable="true"]')) {
+            return true;
+        }
+        if (document.body && document.body.classList.contains("dragging")) return true;
+        if (document.querySelector(".drag-ghost")) return true;
+        var modals = document.querySelectorAll(".ch-overlay, #plot-apply-popup, #new-run-popup");
+        for (var i = 0; i < modals.length; i++) {
+            if (modals[i].style.display && modals[i].style.display !== "none") return true;
+        }
+        return false;
+    }
+
+    function check() {
+        if (inflight) return;
+        if (_busy()) {
+            if (retryTimer) return;
+            retryTimer = setTimeout(function () { retryTimer = null; check(); }, 3000);
+            return;
+        }
+        inflight = true;
+        fetch("/type-alert", { headers: { "HX-Request": "true" } })
+            .then(function (r) { return r.status === 200 ? r.text() : null; })
+            .then(function (html) {
+                inflight = false;
+                if (!html) return;                 // 204: nothing new to say
+                window.openTypeFixPlanHtml(html);
+            })
+            .catch(function () { inflight = false; });
+    }
+
+    function _card() { return document.querySelector(".tfx-overlay .tfx-card"); }
+
+    return {
+        check: check,
+        /* "I'll fix them myself" — close and land on the first offending field. */
+        manual: function (path) {
+            window.closeTypeFixPlan();
+            if (path && window._navigateToExplorerPath) window._navigateToExplorerPath(path);
+        },
+        diagnostics: function () {
+            window.closeTypeFixPlan();
+            try {
+                window.htmx.ajax("GET", "/diagnostics",
+                                 { target: "#table-pane", swap: "innerHTML" });
+                history.pushState({}, "", "/diagnostics");
+            } catch (e) {}
+        },
+        /* Explicit "don't show this again" — Esc / backdrop / Cancel do NOT
+           memo, so closing the dialog never silently loses the finding. */
+        dismiss: function (btn) {
+            var card = (btn && btn.closest && btn.closest(".tfx-card")) || _card();
+            if (!card) { window.closeTypeFixPlan(); return; }
+            var body = new URLSearchParams({
+                sig: card.getAttribute("data-alert-sig") || "",
+                env_sig: card.getAttribute("data-alert-env-sig") || "",
+                token: card.getAttribute("data-alert-token") || ""
+            });
+            fetch("/type-alarm/dismiss", {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: body.toString()
+            }).catch(function () {});
+            window.closeTypeFixPlan();
+            try { window.htmx && window.htmx.trigger(document.body, "diagnostics-changed"); } catch (e) {}
+        }
+    };
+})();
+
+/* Content-entry events the app already fires (they bubble to document) — no
+   new poller, no route changes, no live-file reads. */
+document.addEventListener("DOMContentLoaded", function () {
+    window.TypeAlert.check();
+    ["diagnostics-changed", "stateRestored", "liveDriftChanged"].forEach(function (ev) {
+        document.addEventListener(ev, function () { window.TypeAlert.check(); });
+    });
+});
 
 /* ------------------------------------------------------------------ */
 /* Value delta (Δ) — the JS mirror of core/value_delta.py               */

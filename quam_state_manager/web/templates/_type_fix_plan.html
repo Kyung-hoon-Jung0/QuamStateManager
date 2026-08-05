@@ -8,16 +8,83 @@
    working copy (Review → Save / Apply as usual), never straight to the live
    chip. #}
 <div class="tfx-card" role="dialog" aria-modal="true" aria-labelledby="tfx-title"
-     data-sig="{{ plan.sig }}">
+     data-sig="{{ plan.sig }}"
+     {% if alert %}data-alert-sig="{{ alert.sig }}"
+     data-alert-env-sig="{{ alert.env_sig }}"
+     data-alert-token="{{ alert.token }}"
+     data-alert-first="{{ alert.first }}"{% endif %}>
   <div class="ch-head">
-    <span class="ch-title" id="tfx-title">Fix values stored as text</span>
+    <span class="ch-title" id="tfx-title">
+      {% if alert %}Values arrived with a type problem{% else %}Fix values stored as text{% endif %}
+    </span>
     <button type="button" class="ch-close" title="Close (Esc)"
             onclick="window.closeTypeFixPlan()">&times;</button>
   </div>
 
+  {# docs/78: when the dialog RAISED ITSELF (new content just landed), it opens
+     with what happened and where it came from. The proposal table below is the
+     same one the manual entry point shows — so "auto-correct" is one click,
+     yet nothing is written that the user did not see. #}
+  {% if alert %}
+  <div class="tfx-alert">
+    <p class="tfx-alert-head">
+      <strong>{{ alert.total }} value{{ 's' if alert.total != 1 }}</strong>
+      on this chip {{ 'have' if alert.total != 1 else 'has' }} a type problem{% if alert.reason_label %},
+      found when {{ alert.reason_label }}{% endif %}.
+    </p>
+    {% if alert.strnum.count %}
+    <p class="tfx-alert-line">
+      <strong>{{ alert.strnum.count }}</strong> stored as <strong>text</strong>
+      but read like numbers{% if alert.strnum.examples %}
+      (e.g. <code>{{ alert.strnum.examples[0].path }}</code> =
+      <code class="tfx-text">{{ alert.strnum.examples[0].current }}</code>){% endif %}.
+      SM can convert {{ alert.strnum.fixable }} of them;
+      {% if alert.strnum.skipped %}the {{ alert.strnum.skipped }} it will not guess at
+      {{ 'are' if alert.strnum.skipped != 1 else 'is' }} listed below.{% else %}
+      the number itself never changes.{% endif %}
+    </p>
+    {% endif %}
+    {% if alert.env.count %}
+    <p class="tfx-alert-line tfx-alert-env">
+      <strong>{{ alert.env.count }}</strong> field{{ 's' if alert.env.count != 1 }}
+      {{ "don't" if alert.env.count != 1 else "doesn't" }} match the selected
+      environment's schema{% if alert.env.entries %}
+      (e.g. <code>{{ alert.env.entries[0].location }}</code> —
+      {{ alert.env.entries[0].message }}){% endif %}.
+      <strong>SM will not change these</strong> — the library may have changed.
+      Review them on Diagnostics and decide which side is right.
+    </p>
+    {% endif %}
+  </div>
+  {% endif %}
+
   {% if not plan.rows and not plan.skipped %}
+  {% if alert and alert.env.count %}
+  {# env-only: there is nothing for SM to repair, so this is a report. #}
+  <div class="ch-scroll">
+    <table class="ch-table tfx-table">
+      <thead><tr><th>field</th><th>what the environment says</th><th>example</th><th></th></tr></thead>
+      <tbody>
+        {% for it in alert.env.entries %}
+        <tr class="tfx-row">
+          <td class="tfx-path"><code>{{ it.location }}</code></td>
+          <td class="tfx-why">{{ it.message }}{% if it.count > 1 %}
+            <span class="muted">({{ it.count }}&times;)</span>{% endif %}</td>
+          <td class="tfx-path">{% if it.example_path %}<code>{{ it.example_path }}</code>{% endif %}</td>
+          <td>{% if it.example_path %}
+            <button type="button" class="btn-xs" data-path="{{ it.example_path }}"
+                    onclick="window._navigateToExplorerPath && window._navigateToExplorerPath(this.getAttribute('data-path'))"
+                    title="Open the Json Tree View at this field">Go to field</button>
+            {% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
   <p class="tfx-none">Nothing to fix — every numeric value on this chip is
      stored as a number.</p>
+  {% endif %}
   {% else %}
 
   {% if plan.rows %}
@@ -92,11 +159,26 @@
 
   <div class="tfx-actions">
     {% if plan.rows %}
-    <button type="button" class="cnb-set" id="tfx-apply"
+    <button type="button" class="btn-sync primary" id="tfx-apply"
             onclick="window.typeFixApply(this)">Convert <span id="tfx-count">{{ plan.rows | length }}</span> field(s)</button>
     {% endif %}
-    <button type="button" class="cnb-no" onclick="window.closeTypeFixPlan()">Cancel</button>
-    <span class="tfx-note muted">Staged into the working copy — review in the
+    {% if alert %}
+    {# The alternative the user asked for: fix them by hand instead. #}
+    <button type="button" class="btn-sync" data-path="{{ alert.first or (alert.env.entries and alert.env.entries[0].example_path) }}"
+            onclick="window.TypeAlert && window.TypeAlert.manual(this.getAttribute('data-path'))"
+            title="Close this and open the Json Tree View at the first field">I&rsquo;ll fix them myself</button>
+    {% if alert.env.count %}
+    <button type="button" class="btn-sync"
+            onclick="window.TypeAlert && window.TypeAlert.diagnostics()"
+            title="The environment mismatches are listed there with what each side expects">Review on Diagnostics</button>
+    {% endif %}
+    <button type="button" class="btn-sync outline"
+            onclick="window.TypeAlert && window.TypeAlert.dismiss(this)"
+            title="Hide this exact set — any NEW anomaly raises it again">Don&rsquo;t show this again</button>
+    {% endif %}
+    <button type="button" class="btn-sync outline" onclick="window.closeTypeFixPlan()">Cancel</button>
+    <span class="tfx-note muted">{% if alert %}Nothing is written until you
+      choose. {% endif %}Staged into the working copy — review in the
       tray, then Save / Apply to live as usual.</span>
   </div>
   <div class="tfx-error" hidden></div>
