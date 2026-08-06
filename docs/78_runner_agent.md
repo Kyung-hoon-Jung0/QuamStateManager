@@ -1380,3 +1380,145 @@ regression, so each move is stated with its evidence:
 * `resonator_spectroscopy_vs_coupler_flux` has no rejected side in the corpus
   at all — its false-accept coverage is UNMEASURED, and that must be stated in
   any report the loop produces, not silently rendered as "passed".
+
+---
+
+## 16. P3a/P3b implementation record (2026-08-07) — SHIPPED
+
+Branch `feat/runner-p3-judge`. P3a is what the judge KNOWS; P3b is what it may
+SAY. The judge's calibration (P3c/P3d) is measured, not designed, and needs a
+real provider — see §16.6.
+
+### 16.1 The pack is authored from real figures, per family
+
+`quam_state_manager/core/autofit/judge_packs/v1/<family>.json` — nine entries,
+each written by reading the **real archived PNGs** of runs the node itself
+accepted and (where any exist) rejected, across two chips' archives. Each entry
+carries `axes` · `correct_signature` (3–7 bullets) · `failure_appearance` per
+mode · `abstain_when` · `localizer` · `notes`.
+
+Versioned data, not code: a lab edits a JSON file. `judge_pack.prompt_block()`
+renders one family's entry into the prompt; an unknown family renders **nothing**
+and the judge leans on abstain — honest, because we have taught it nothing about
+that node.
+
+### 16.2 Clause B is enforced at LOAD, not just reviewed
+
+docs/47 Clause B: a feature's position inside the sweep window is an artefact of
+the window the experimenter chose, not physics. An exemplar that says "the peak
+sits near the middle of the window" doesn't merely fail to help — it transfers a
+falsehood to the next chip, whose window is centred elsewhere.
+
+So `lint_entry` runs at load and violating strings are **dropped and logged**,
+never handed to the judge. A hand-edited pack can degrade the judge's knowledge;
+it cannot teach it a window-dependent lie.
+
+The lint refuses four shapes: a quantity with a physical unit, a
+position-in-window or fractional-of-axis claim, a path/run-id, and — added after
+the critic pass — **a feature sized against the swept window**.
+
+That last one is the finding worth keeping. Five violations in the first-draft
+pack were written entirely in words, with no digit anywhere:
+
+> "the band is many times **narrower than the swept frequency range**"
+> "excursions that are a small **fraction of the plotted frequency window**"
+> "a few pixels wide and far **narrower than the swept frequency span**"
+
+No number/unit check can see any of these, and each one means the identical
+physics, zoomed in, scores differently. Sizing against the **feature** is the
+correct form and must pass — "a fraction of the notch's own width", "narrower
+than the visible hump" — so the rule keys on the window noun, not on "fraction".
+`part of the sweep` is also allowed: that is a COVERAGE statement, and coverage
+is itself one of the deterministic gates.
+
+Shipped pack: **0 violations**, pinned by a test.
+
+### 16.3 What the cross-family critic caught that a per-family author could not
+
+Nine independent authors produce nine locally-sensible entries that contradict
+each other. The findings, all fixed:
+
+| # | fault | why it matters |
+|---|---|---|
+| D1 | one family declared **dark = resonance** as fact; two siblings say polarity must be read off the panel | a colour-inverted panel would read as broken |
+| D2 | **extremum at the sweep edge**: a failure in one family, an abstain in two others | identical geometry, three verdicts — and the failure version scored position-in-window |
+| D3 | qubit spectroscopy hard-coded the peak as pointing **up**, against three siblings that call the sign a readout convention | a sign-flipped panel reads as suspicious |
+| D4 | the three-band drive structure asserted unconditionally in one vs_power family, abstained on in the other | a partial drive range routes to reject in one and abstain in the other |
+| E1 | power-rabi bullets 1–6 written unscoped, only bullet 7 marked "map variant" | a judge shown the 2-D map looks for a single sine, which a correct error-amplification map does not contain |
+| E2 | the map's convergence identified by "widest fringe spacing" | not the discriminator — the convergence is *which fringe stays vertical as pulse count grows* |
+| F1 | a family with no rejected runs opened all four failure descriptions with "**Observed:**" | reads as witnessed; it was inferred from update-less panels inside accepted runs |
+| F2 | a bullet demanding contrast "several times the cell-to-cell scatter" | would reject that family's ONLY known-good exemplar, described in its own notes as the floor of acceptability |
+
+F2 is the same disease as P2's shipped bands: **a criterion written from
+intuition that the lab's own accepted data contradicts.** It is worth stating
+that the judge's exemplars are exactly as falsifiable as the gates' numbers.
+
+### 16.4 Power Rabi: what the archive actually ships
+
+docs/78 P3a asks for the 2-D error-amplification signature. The archived figure
+is usually **per-qubit 1-D** (drive amplitude vs readout, one panel per qubit),
+with the pulse-count map as a variant. The entry therefore carries **both**, and
+says which bullets apply to which — the sine bullets are explicitly scoped to
+the 1-D layout, and the map is judged solely by fringe convergence: one fringe
+vertical at the same amplitude from the lowest pulse-count row to the highest,
+the fringes either side bending toward it and crowding as pulse count grows.
+
+### 16.5 P3b — two more asks, both structurally number-free
+
+| ask | schema | unavailable/unparseable ⇒ |
+|---|---|---|
+| `signature` (the §1.3 terminator) | `{signature: clear\|unclear\|absent, failure_mode, reason}` | **`unclear`** |
+| `compare` (D-8 tier 2b) | `{comparison: better\|worse\|same, reason}` | **`same`** |
+
+Design points:
+
+* the signature verdict is a **separate field** from the trust verdict. "The fit
+  is consistent with the data" and "this experiment worked" are different
+  questions; a loop that conflated them could terminate on a self-consistent fit
+  of noise;
+* the signature bundle carries **no fit numbers at all** — handing over the
+  claimed value invites reasoning backwards from it;
+* the defaults are the safe ones and this is load-bearing: an unavailable judge
+  that answered `clear` would let the loop terminate because nobody looked, and
+  one that answered `better`/`worse` would respectively keep a hopeless target
+  running or trip the stop-loss on a good run. Budget exhaustion answers the
+  same way;
+* comparison images are ordered **previous, then current**, and a dropped image
+  shortens the list rather than silently shifting the pair — a re-order inverts
+  the verdict;
+* the numeric-emission guard is now **one implementation** (`_numeric_emission`)
+  shared by all three asks, rather than three copies free to drift.
+
+### 16.6 Not done, and why
+
+**P3c/P3d — the two-sided calibration (D-7) — is unmeasured.** There is no API
+key in this environment, so no accept-rate on known-good figures and no
+reject-rate on manufactured wrong-fit figures exists. Until it does, the D-7
+pre-flight gate cannot be evaluated and the decision point ("does Sonnet clear
+both bars per family?") cannot be reached. Everything that must hold *before* a
+model is called is shipped and pinned; the numbers are not, and nothing in the
+code pretends otherwise.
+
+Note for whoever runs it: the wrong-fit set is buildable today — P0's
+`figure_gen` regenerates a run's figure through the lab's own plotting module
+with an injected wrong fit, which is exactly what docs/47 asked for and could
+not build.
+
+### 16.7 Packaging
+
+The pack is DATA inside the package, and left out of the wheel it fails
+**silently**: `load_pack()` returns `{}` and the judge rules on figures it was
+taught nothing about, with no error anywhere. Added to `MANIFEST.in` and
+`package-data`, and pinned by a test.
+
+### 16.8 Verification
+
+* `tests/test_runner_p3.py` (**new**, 56 tests): the Clause-B lint in both
+  directions (violations caught / relative-geometry and coverage language
+  preserved), the shipped pack clean, every scoped family present, the 2-D map
+  families declaring no localizer, power-rabi carrying the map signature with
+  the sine bullets scoped, a hand-edited violation dropped rather than taught,
+  both new schemas incl. every unusable-reply path, the safe defaults, budget
+  exhaustion, image order, the shared numeric guard, packaging, and the
+  identifier-shape leak scan.
+* autofit + P2 suites re-run green after the auditor changes (200 passed).

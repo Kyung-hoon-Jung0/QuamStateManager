@@ -3,3 +3,8 @@
 # web UI dies with TemplateNotFound: base.html. Editable installs are unaffected.
 recursive-include quam_state_manager/web/templates *
 recursive-include quam_state_manager/web/static *
+# The vision judge's per-family exemplar pack is DATA, not code (docs/78 P3a —
+# a lab edits it without touching Python). Left out of the wheel it fails
+# SILENTLY: load_pack() returns {} and the judge is asked to rule on figures it
+# was taught nothing about.
+recursive-include quam_state_manager/core/autofit/judge_packs *.json

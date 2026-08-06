@@ -1,0 +1,34 @@
+{
+ "family": "qubit_spectroscopy_vs_power",
+ "label": "Qubit spectroscopy vs power",
+ "axes": "A 2-D colour map. Horizontal axis: drive frequency, shown either as absolute frequency or as detuning from the currently stored value. Vertical axis: drive strength, plotted on a linear-amplitude scale in one panel and on a logarithmic power scale in the companion panel — the same measurement, only the vertical scaling differs. Colour encodes the measured readout quantity at each (frequency, drive) pixel; pixels are visibly blocky because both sweeps are coarse. Overlays drawn by the node: a dashed vertical line at the frequency it claims, a short polyline/marker chain tracing the per-row extracted line centre across the drive rows, and a horizontal line at the drive level it selected.",
+ "correct_signature": [
+  "Exactly one vertical ridge stands out: a column whose colour departs from the background in a single consistent direction, continuous across many neighbouring drive rows rather than a stack of unrelated blobs.",
+  "That ridge's contrast clearly exceeds the strongest background speckle; any competing column is plainly weaker and survives only a row or two.",
+  "The ridge is narrow — a few pixels across — in the weakest drive rows where it is still visible, and does not get narrower as drive increases; a modest widening toward the stronger rows is expected.",
+  "Where the drive range spans it, scanning from weak to strong drive the map shows three contiguous bands in order: low-contrast/featureless, ridge-bearing, then washed-out where the ridge dissolves into uniform background. The ridge-bearing band is one unbroken stretch, not interleaved with the washed-out rows.",
+  "The per-row centre chain stays inside the ridge body: successive points step sideways by less than about one ridge width and none leaves the column.",
+  "The dashed claimed-frequency line falls on the ridge, within its width; the chosen-drive horizontal line falls inside the ridge-bearing band, not among the washed-out rows.",
+  "Away from the ridge the background is structureless speckle — no repeating vertical stripes of comparable strength or comparable row-to-row alignment."
+ ],
+ "failure_appearance": {
+  "wrong_peak": "The overlays sit on a column that is not the strongest continuous one: the dashed claimed-frequency line and the centre chain lie on a streak that other columns of equal or greater contrast compete with, or they sit more than a couple of ridge widths to one side of the most continuous, highest-contrast ridge. Sub-form: the chain splits between two columns separated by several ridge widths and the marker follows the shorter-lived, weaker one.",
+  "no_signal": "Seen in the rejected example: no continuous vertical ridge anywhere. The map is a field of short vertical streaks running both brighter and darker than background, of comparable contrast, spread across the whole frequency axis and not aligned between neighbouring drive rows; nothing survives more than a few rows. The per-row centre chain is absent altogether, and the claimed-frequency marker rests on an arbitrary streak indistinguishable from its neighbours.",
+  "noisy": "A ridge exists but only marginally: its contrast is the same order as the strongest background streaks, it breaks into disconnected patches separated by gaps of several rows, and the centre chain hops sideways by more than a ridge width between neighbouring rows. A partial version of this appears even in an accepted run at its strongest drive rows, where the ridge dissolves into speckle — that alone is fine as long as a contiguous ridge-bearing band survives at weaker drive; it is a failure only when no such band exists.",
+  "drifted": null,
+  "feature_present_fit_failed": "One continuous ridge is plainly visible, but the overlays disagree with it: the dashed claimed-frequency line lands beside the ridge body rather than within its width, or the centre chain wanders over a sideways span several times the ridge width, or the chosen-drive horizontal line sits among the washed-out rows above the ridge-bearing band instead of inside it."
+ },
+ "abstain_when": [
+  "The colour scale is saturated or nearly flat, so no column can be told from the background at any drive level — there is nothing in the picture to judge.",
+  "The ridge touches a left or right edge of the map, so its full width and centre cannot be seen and no sideways comparison is possible.",
+  "Only a handful of drive rows are shown — too few to distinguish a continuous ridge from an accidentally aligned run of noise.",
+  "The overlays (claimed-frequency line, per-row centre chain, chosen-drive line) are missing or ambiguous, so the numeric claim cannot be located on the picture.",
+  "Two or more comparable ridges are present, each continuous and of similar contrast — the figure alone cannot say which one the node was supposed to take.",
+  "Only one regime is in view - every drive row ridge-bearing, or every row washed out - so the transition the claim depends on was not captured."
+ ],
+ "localizer": "none",
+ "notes": "The two panels are the SAME measurement with the vertical axis rescaled (linear drive amplitude vs logarithmic drive power); judge one of them and never count the second as independent confirmation. In the sampled archives the ridge reads as a low-signal (darker) column against a brighter background, but that polarity follows the readout convention and can invert — judge the magnitude and continuity of the contrast, not its sign. The washed-out band at the strongest drive rows is expected saturation and is not by itself a failure; what matters is that a contiguous ridge-bearing band exists below it and that the chosen-drive marker sits inside that band. Pixels are coarse, so a single-pixel excursion is never evidence — require alignment across several neighbouring rows. Evidence is thin: three figures from a single qubit, one accepted run and one rejected run. no_signal and the milder noisy form are directly witnessed. wrong_peak and feature_present_fit_failed are stated as the geometric negation of the overlay-to-ridge relation observed in the accepted run, not from a witnessed instance — treat them as lower-confidence until more examples are added. drifted is left null deliberately: no sampled run showed a monotonic sideways lean of the ridge with increasing drive, and a mild lean plus widening at the strongest rows is physically expected here, so a slight lean must never be scored as a failure on its own; if a genuinely drifted example is ever archived, describe it as a lean that grows steadily with drive and carries the centre chain more than a couple of ridge widths off its weak-drive position. localizer is \"none\" because the deliverable is a 2-D map, so the verdict rests on signature trust rather than pointing at a located feature.",
+ "evidence": {
+  "figures_opened": 3
+ }
+}
