@@ -790,12 +790,24 @@ def numeric_string_leaves(root: dict) -> list[str]:
     number — the '"0.13" stored as text' anomaly (r14 ⑨/⑩). External state
     regeneration is the usual culprit; the legacy coercer then preserves the
     wrong type on every SM edit, so these must be surfaced actively. Skips
-    ``extras`` (user-declared free-form), pointers, and non-state sections."""
+    ``extras`` (user-declared free-form), pointers, and non-state sections.
+
+    ``extras`` is skipped at ANY depth, which is where it actually lives on
+    real chips — ``qubit_pairs.<pair>.extras.<key>``, not just the root. Only
+    the root was skipped before, so a lab's own label
+    (``extras.cz_branch = "02"``) was reported as a mistyped number; on the
+    reporting chip those labels were 100% of the alarm. See
+    :func:`edit_policy.is_free_form_path`, the single definition shared with
+    the edit-path offer so the warning and the repair cannot disagree."""
+    from quam_state_manager.core.edit_policy import is_free_form_path
+
     out: list[str] = []
 
     def _scan(node: Any, path: str) -> None:
         if isinstance(node, dict):
             for k, v in node.items():
+                if k == "extras":
+                    continue
                 _scan(v, f"{path}.{k}" if path else str(k))
         elif isinstance(node, list):
             for i, v in enumerate(node):
@@ -804,6 +816,8 @@ def numeric_string_leaves(root: dict) -> list[str]:
             try:
                 float(node)
             except ValueError:
+                return
+            if is_free_form_path(path):
                 return
             out.append(path)
 

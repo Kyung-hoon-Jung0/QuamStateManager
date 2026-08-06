@@ -95,3 +95,36 @@ def editability_reason(store: Any, target_path: str) -> str | None:
     if segs[-1] in SKIP_LEAVES:
         return "identity / type key — read-only"
     return None
+
+
+# ----------------------------------------------------------------------
+# extras — the user's own corner of the state
+# ----------------------------------------------------------------------
+
+_FREE_FORM_SEGMENT = "extras"
+
+
+def is_free_form_path(dot_path: str) -> bool:
+    """Is this leaf inside an ``extras`` block — i.e. user-declared free form?
+
+    ``extras`` is where a chip carries things QUAM itself does not model:
+    ``extras.chip_name``, ``extras.data_folder``, a lab's own labels. Nothing
+    there has a schema, and the value is whatever the user says it is. SM must
+    therefore not form opinions about its TYPE — most sharply, it must not
+    read a numeric-looking string as a number that got string-ified by mistake.
+
+    A real report from the field made the cost concrete: a CZ branch label
+    stored as ``extras.cz_branch = "02"`` was flagged as a stored-as-text
+    anomaly (it is a label, and ``"02"`` is exactly how a label is written),
+    and — worse — changing it to ``"03"`` was intercepted by the type-repair
+    409 offering to convert it to a number. On that chip the two labels were
+    100% of the alarm, and the field could not be edited at all without
+    knowing the undocumented quoting escape hatch.
+
+    Matched at ANY depth, because that is where ``extras`` lives on real
+    chips: ``qubit_pairs.<pair>.extras.<key>``, not just the root. One
+    definition, used by both the detector
+    (:func:`diagnostics.numeric_string_leaves`) and the edit-path offer, so
+    the warning and the repair can never disagree about what counts as text.
+    """
+    return _FREE_FORM_SEGMENT in (dot_path or "").split(".")
