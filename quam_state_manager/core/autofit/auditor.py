@@ -56,6 +56,8 @@ SIGNATURES = ("clear", "unclear", "absent")
 COMPARISONS = ("better", "worse", "same")
 
 _SETTINGS_FILE = "autofit_ai.json"
+# the judge model D-10 selected; see the fallback in _call_anthropic
+DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5"
 _DEFAULTS = {
     "provider": "off",            # off | fake | anthropic | openai_compat
     "api_key": "",
@@ -400,7 +402,11 @@ def _call_anthropic(settings: dict, bundle: dict) -> str:
         "https://api.anthropic.com/v1/messages",
         {"x-api-key": settings.get("api_key", ""),
          "anthropic-version": "2023-06-01"},
-        {"model": settings.get("model") or "claude-haiku-4-5-20251001",
+        # D-10 chose Sonnet: docs/47 measured Haiku at ~17% false-accept,
+        # concentrated in the hard 2-D families — which are 7 of our 9. A blank
+        # `model` used to fall back to exactly that model, silently, so the
+        # recorded decision held only if the operator also typed a model name.
+        {"model": settings.get("model") or DEFAULT_ANTHROPIC_MODEL,
          "max_tokens": 300, "system": bundle.get("system") or _SYSTEM,
          "messages": [{"role": "user", "content": content}]},
         float(settings.get("timeout_s", 60)))

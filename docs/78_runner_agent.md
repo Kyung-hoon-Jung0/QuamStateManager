@@ -1,8 +1,13 @@
 # 78 — Runner + AI calibration agent (PLAN, final)
 
-> Status: **PLAN ONLY — nothing implemented.**
-> Worktree `.claude/worktrees/runner-agent`, branch `feat/runner-agent`,
-> based on `origin/main @ 8e5fa99`. Design discussion + investigation: 2026-08-05.
+> Status (2026-08-07): **P0, P1, P2, P3a/P3b SHIPPED — P3c onward not started.**
+> Records: §13 (P0) · §14 (P1) · §15 (P2) · §16 (P3a/P3b) · **§17 (audit —
+> read this before trusting any earlier section)**. The line is a stack of
+> branches off `origin/main @ 8e5fa99`: `9cf30dd` → `37e7e25` → `9e6de68` →
+> `8ceee44`, on `feat/runner-p3-judge`; not merged to main.
+> **The loop does not close yet**: the §1.3 terminator is implemented but has
+> no caller (§17 B1), and P4–P9 are untouched.
+> Design discussion + investigation: 2026-08-05.
 > Lineage: docs/40 (Scheduler chassis) · docs/47 (LLM doctrine + Phase-0
 > measurements) · docs/50 (fit-audit) · docs/56 (Autofit v1/v2) ·
 > docs/48 (ndview + click contracts) · docs/52 (env capability probing).
@@ -158,7 +163,7 @@ matters is whether a wrong choice yields an **obviously bad figure**
 | **A — self-revealing** | `frequency_span_in_mhz`, `frequency_step_in_mhz`, `num_shots`, `num_flux_points`, `min/max_flux_offset_in_v`, **drive power / amplitude factor**, target selection, next-node selection | **picks real numbers**, inside code-owned bounds |
 | **B — deceptive** | `reset_type`, `use_state_discrimination`, `multiplexed` | **proposes only**; code checks the precondition and may refuse |
 | **frozen** | `line_attenuation_in_db`, `input_line_impedance_in_ohm` | never touched — facts about the wiring; changing them silently rescales every power |
-| **reserved** | `simulate`, `timeout`, `load_data_id`, targets keys | already blocked by the scheduler (docs/40 Phase 2b) |
+| **reserved** | `simulate`, `timeout`, `load_data_id`, targets keys | ⚠️ **FALSE as written — see §17.6.** Only `simulate` + the targets keys are blocked (`node_inject.RESERVED_OVERRIDE_KEYS`). **`load_data_id` is NOT**, and it is the dangerous one: it makes a node replay archived data instead of measuring. Blocking it is P4's first item. |
 
 `num_shots = 3` is a number and is perfectly safe (wrong ⇒ visibly noisy).
 `use_state_discrimination = True` without calibrated IQ blobs is a boolean and
@@ -509,15 +514,20 @@ so families 4 and 8 die at `analysis.py:87` with `KeyError: 'qubit_pairs'`.
 
 ### 4.7 What does NOT exist
 
+*(As surveyed 2026-08-05, before P0–P3. The ✅ rows were closed by the phases
+named; the ❌ rows are still true today — re-verified 2026-08-07, §17.)*
+
 | | status |
 |---|---|
-| plan-level **step cap** | **absent** — the work queue is a `deque` runtime rungs `appendleft` into, with no global bound |
-| plan-level **wall clock** | **absent** (docs/56 §2e claims both — doc/code drift) |
-| notifications (email / webhook / browser) | **absent entirely** |
-| `fit_audit.FAMILIES` | only **2** entries |
-| `families.py` coverage | **4 of our 9 families are ABSENT** (`06`, `07`, `09`, `10`); `power_rabi` is a shell (`metric_gates=[]`, presence-only check, 2 trivial adaptations, no ladder, no `verify_wide`) and its update path is **wrong for this chip** (D-14) |
-| G5 history-drift gate | **dead in production** — routes build `PlanEngine` without `history_points_of` |
-| cross-experiment consistency review (goal §1.1 #3) | **absent entirely** |
+| plan-level **step cap** | ❌ **still absent** — the work queue is a `deque` runtime rungs `appendleft` into, with no global bound |
+| plan-level **wall clock** | ❌ **still absent** (docs/56 §2e claims both — doc/code drift) |
+| notifications (email / webhook / browser) | ❌ **still absent entirely** |
+| `fit_audit.FAMILIES` | ✅ closed by P0c — 9 entries |
+| `families.py` coverage | ✅ closed by P2a/P2b/P2c — all 9 registered, `power_rabi` gated on `multipulse_fit_quality` with a ladder, update path run-derived |
+| G5 history-drift gate | ✅ closed by P2d — `routes.py` passes `history_points_of` |
+| cross-experiment consistency review (goal §1.1 #3) | ❌ **still absent entirely** (P6c) |
+| per-target figure for the judge (D-11.1) | ❌ **still absent** — the whole multi-target sheet is sent per target (§17 B2) |
+| the §1.3 terminator in the loop | ❌ **implemented, no caller** (§17 B1) |
 
 Present and healthy: per-step `retry_max` (0–5, default 1), LLM budget
 (40 calls/plan), per-step timeout (3600 s), target-scoped `criticality`,
@@ -1522,3 +1532,158 @@ taught nothing about, with no error anywhere. Added to `MANIFEST.in` and
   exhaustion, image order, the shared numeric guard, packaging, and the
   identifier-shape leak scan.
 * autofit + P2 suites re-run green after the auditor changes (200 passed).
+
+---
+
+## 17. Audit of the plan against the shipped code (2026-08-07)
+
+Six independent auditors read docs/78 §1–§16 against the code at `8ceee44` and
+a consolidator re-verified every claim at its cited line. **This section
+overrides any earlier section it contradicts.** What it found splits three ways:
+defects (fixed here), plan staleness (fixed here), and *phase-ownership gaps* —
+work nobody owned, which is the part a plan is actually for.
+
+### 17.1 The document lied about its own status
+
+The header read **"PLAN ONLY — nothing implemented"** while §13–§16 recorded
+four shipped phases, and §12 routes a fresh context to §1 — straight past the
+records. A design document whose first line is false is worse than no document:
+it is the one line that gets believed. Fixed, and the header now names what
+does NOT work as well as what does.
+
+Same class, §4.7 ("What does NOT exist"): four of seven rows had been closed by
+P0/P2 and still read as gaps. Now marked ✅/❌ with the closing phase, and the
+two new ❌ rows below added.
+
+### 17.2 Defects found and fixed in this pass
+
+**D1 — G5's trend anchor was frame-correct only for `assign` families.**
+`ramsey` writes `f_01 -= freq_offset`: the FIELD holds ~5 GHz while the FIT KEY
+is a ~MHz offset. `trend_path_for` returned the written path, and G5 then
+compared the offset against the f_01 series — reproduced on a clean synthetic
+run as *"freq_offset=2.998e+06 is 449,605 robust-σ off its own history (median
+5.002e+09)"*. Ramsey is step 6 of the shipped `1q_bringup` preset and
+`_autofit_start_real` supplies the provider, so this was live.
+
+This is **§15.5's defect one layer up**: that fix made G5 read the right
+*value*, and it still read the wrong *series*. `trend_path_for` now returns
+`None` unless the anchoring write is a plain `assign` with no factor — an
+offset or a scaled write has no honest history to compare against, so the gate
+abstains rather than invent one. The lesson generalizes: **fixing a symptom in
+the consumer does not fix the contract.**
+
+**D2 — the sim could not run six of the nine families.**
+`simbackend.FAMILY_TO_NODE` never gained P2's six, so a family-keyed step for
+any of them returned `status="skipped"` while the plan still reported `done`.
+`synth.GENERATORS` had all nine — it was pure wiring, missed because the P2
+tests drive the generators directly. The demo path that is supposed to exercise
+the whole x180 chain hardware-free could not touch the families P2 was built
+for. Fixed.
+
+**D3 — three families could be flagged `wrong_peak` with no rung to answer it.**
+G2 emits `wrong_peak` for *every* consistency-check hit, and `power_rabi`
+declares three. With no matching adaptation `can_retry` is False, so the target
+**defers instead of re-measuring** — and §15.7 re-based `power_rabi/wrong_peak`
+from fail to suspect *on the assumption that a rung existed*. Added, each from
+the node's own knobs: power rabi halves the prefactor window and step about the
+parked amplitude (a harmonic outside the tightened window cannot be locked);
+the two resonator families take their existing signal / refine ladders.
+`chevron_11_02` has the same shape and is deliberately left — it is outside the
+nine-family scope and we have no corpus evidence for a CZ rung.
+
+**D4 — a blank `model` silently ran the model D-10 rejected.**
+`_DEFAULTS["model"] = ""` and the anthropic call fell back to Haiku — which
+docs/47 measured at ~17% false-accept, concentrated in the hard 2-D families,
+which are 7 of our 9. D-10's "no code change needed" was true only if the
+operator also typed a model name. The fallback is now `DEFAULT_ANTHROPIC_MODEL
+= "claude-sonnet-5"`, i.e. the recorded decision holds by default.
+
+### 17.3 Open defects — NOT fixed here, and why
+
+**B1 — the §1.3 terminator has no caller.** `Auditor.signature()`,
+`build_signature_bundle`, `parse_signature` and `SignatureVerdict` are reachable
+only from tests. The engine consults the auditor in exactly two places, both on
+the *failure* side (`suspect` → judge, node-failed → presence); `_decide`'s
+success branch closes a target with no vision judgment at all. A 7-step × 2-target
+sim chain finishes `status: done, llm_calls: 0`.
+
+Not fixed here because it is a **policy** decision, not a wiring one: with no
+provider configured the judge answers `unclear` by design, so switching the
+termination rule on today would stop every target from ever completing. The rule
+needs its unavailable-judge branch decided (gates-only termination with an
+honest ledger note, versus refusing to run at all), and that belongs to the
+phase that owns the loop. **§17.5 gives it an owner.**
+
+**B2 — the judge is shown the whole multi-target sheet, once per target.**
+`_first_figure(run)` globs `figures.*.png` and returns the first, inside the
+per-target loop. D-11.1 calls per-target panels *"correctness, not polish"* and
+R7's stated mitigation was "a P0e requirement with a test" — neither the
+extraction nor the test exists, and P0's record does not list it as outstanding.
+`figure_gen.generate(..., targets=[...])` produces exactly the right artifact
+and has **zero consumers** outside its own module.
+
+This is now the **top blocker for P3c**: calibrating a judge on whole sheets
+measures the wrong thing, and a 90% bar cleared that way means nothing. In the
+sim it is worse than a wrong panel — `synth.py` plots every target on one axes,
+so there is no panel to extract; the sim's plotting must go per-target too.
+
+**B3 — a verdict does not record the context that produced it.** §13.2 is
+binding: *"a verification context is (env, source root, run generation); every
+verdict records all three."* `fit_audit.audit_run` returns `gate_hash` and
+`lib_versions` but no `env` and no `root_kind`/`root_rev`; `audit_run_cached`
+puts them in the cache KEY and hands the payload back unlabelled. So two
+verdicts from different analysis revisions are indistinguishable downstream —
+which is precisely what D-13 was written to prevent. `figure_gen` does carry all
+four, so the two paths disagree.
+
+### 17.4 Plan gaps — work nobody owned
+
+| gap | now owned by |
+|---|---|
+| wiring the §1.3 terminator, incl. the unavailable-judge branch | **P6a** (was: nobody; P3b owned only the *ask*) |
+| per-target panel extraction + its test (D-11.2), and per-target sim plotting | **P3c-0**, a prerequisite of calibration (was: P0e, silently unbuilt) |
+| stamping `env` / `root_kind` / `root_rev` on every verdict | **P3c-0** (was: asserted as done in §13.2) |
+| judge-pack maintenance: who re-authors an entry when a lab's plotting changes | **P6d** (new) |
+| re-measuring the accuracy ledger when a lab's nodes change | **P6d** (new) |
+| the two families with NO node-rejected runs in the corpus | tracked as **R11** below |
+
+**R11 (new risk).** `resonator_spectroscopy_vs_coupler_flux` has zero rejected
+runs in the corpus and `qubit_spectroscopy_vs_coupler_flux` has three accepted
+targets. Their false-accept coverage is **unmeasured, not good**, and any report
+that renders them as "passed" without the sample count is misleading. The
+pack entries say so in their own notes; the calibration report must too.
+
+### 17.5 The shortest honest path to the one-button loop
+
+1. **P3c-0 (new, blocks everything downstream)** — per-target figures: teach
+   `synth.py` to plot per target, wire `figure_gen`'s per-target extraction into
+   the engine, add the D-11.2 fidelity test, and stamp env/root on verdicts.
+   Without this, every judgment and every calibration number is about the wrong
+   picture.
+2. **P3c/P3d** — the two-sided calibration, per family with sample counts,
+   thin families visibly thin (R11). Needs the operator's key.
+3. **P6a** — the terminator: gates PASS **and** signature `clear`, with the
+   unavailable-judge branch decided and recorded in the ledger either way.
+4. **P5a tier 1** — the plan step cap and wall clock (§4.7's two oldest ❌
+   rows); without them a non-terminating loop has nothing to stop it, and step 3
+   is exactly what makes non-termination possible.
+5. Then P4 (action space), P5b–d, P6b/P6c, P7, P8.
+
+Steps 1 and 4 are the ones a demo will skip and a night run will not survive.
+
+### 17.6 Also corrected in the plan text
+
+* **D-3's "reserved keys" row was wrong.** It claimed `simulate`, `timeout`,
+  `load_data_id` and the targets keys are "already blocked by the scheduler".
+  `node_inject.RESERVED_OVERRIDE_KEYS` is `("simulate", "qubits",
+  "qubit_pairs", "targets")` — **`load_data_id` is not blocked**, and it is the
+  one that matters: a node given `load_data_id` replays archived data instead of
+  measuring, so an agent could "calibrate" a chip without touching hardware.
+  P4's action space is planned on top of that false assertion; D-3 now says so,
+  and blocking it is P4's first item.
+* §2's "out of scope: the `…_vs_power_iq` variant" is stale — `fit_audit` and
+  `families` both alias it, deliberately, or every such run silently drops from
+  the backlog.
+* P5b no longer claims the pairwise-vision comparator as future work: D-8 tier
+  2b shipped in P3b; only the deterministic metric-trend half (tier 2a) remains.
+* P2b's "no `verify_wide`" for `power_rabi` is still true and stays open.

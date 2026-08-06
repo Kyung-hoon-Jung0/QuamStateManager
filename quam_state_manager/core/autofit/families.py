@@ -111,6 +111,18 @@ def trend_path_for(fam, value_key: str, target: str,
     is undecidable.
     """
     ups = [u for u in fam.updates if u.fit_key == value_key]
+    # The history at the written field is only THIS value's history when the
+    # write is a plain assign. Ramsey writes `f_01 -= freq_offset`: the field
+    # holds ~5 GHz while the fit key is a ~MHz offset, so comparing one against
+    # the other reports a 450,000-sigma drift on a perfectly good run (measured).
+    # That is the §15.5 defect one layer up — the fix there made G5 read the
+    # right VALUE, this makes it read the right SERIES. No honest anchor exists
+    # for an offset or a scaled write, so the gate abstains rather than invent
+    # one (docs/78 §17).
+    assigns = [u for u in ups if u.op == "assign" and u.factor == 1.0]
+    if ups and not assigns:
+        return None          # written, but not as this value — no anchor
+    ups = assigns
     cand = None
     routed = [u for u in ups if u.route_on]
     if routed:
@@ -323,6 +335,23 @@ def _spec_wrong_peak(params: dict) -> dict:
             "operation_amplitude_factor": amp / 2.0}
 
 
+def _rabi_narrow_window(params: dict) -> dict:
+    """wrong_peak for power rabi: the classic failure is locking a Rabi
+    HARMONIC — the fit reports an amplitude an integer fraction of the true one.
+    The node's own knobs are the prefactor window and its step, so the rung
+    halves the window about the parked amplitude (prefactor 1.0, which the
+    revert has already restored to the pre-step value) and halves the step.
+    A harmonic outside the tightened window can no longer be locked; the number
+    itself is never edited."""
+    lo = float(params.get("min_amp_factor", 0.8))
+    hi = float(params.get("max_amp_factor", 1.2))
+    step = float(params.get("amp_factor_step", max((hi - lo) / 100.0, 1e-4)))
+    return {"min_amp_factor": 1.0 - (1.0 - lo) / 2.0,
+            "max_amp_factor": 1.0 + (hi - 1.0) / 2.0,
+            "amp_factor_step": step / 2.0,
+            "num_shots": int(float(params.get("num_shots", 100)) * 2)}
+
+
 def _step_refine(params: dict) -> dict:
     """feature_present_fit_failed: the archive's #194 class — a dip clearly
     visible in the window but the fit died on a too-coarse grid (step 0.05→0.5
@@ -503,7 +532,15 @@ _register(Family(
     ],
     adaptations={"noisy": _more_shots,
                  "no_signal": [_more_shots, _power_up],
-                 "feature_present_fit_failed": _more_shots},
+                 "feature_present_fit_failed": _more_shots,
+                 # Every consistency-check hit is emitted as `wrong_peak`
+                 # (gates G2), and this family declares three — so without a
+                 # rung a harmonic lock DEFERS instead of re-measuring, which
+                 # is exactly the case §15.7 re-based from fail to suspect.
+                 # The honest knob is the node's own window: a locked harmonic
+                 # is resolved by scanning tighter and finer around the parked
+                 # amplitude, never by editing the fitted number.
+                 "wrong_peak": _rabi_narrow_window},
 ))
 
 _register(Family(
@@ -697,6 +734,10 @@ _register(Family(
                       Rung(kind="seed_shift", seed_paths=_RES_SEED,
                            span_default=30.0)],
         "feature_present_fit_failed": [_step_refine, _spec_wrong_peak],
+        # "the node produced no power split" is emitted as wrong_peak by G2;
+        # without a rung the target defers. Re-measuring finer and at half
+        # drive is the same ladder its fit-failed case takes (docs/78 §17).
+        "wrong_peak": [_step_refine, _spec_wrong_peak],
         "out_of_band": _widen_span(2.0, 30.0)},
     verify_wide={"span_param": "frequency_span_in_mhz", "factor": 4.0,
                  "span_default": 15.0},
@@ -831,6 +872,11 @@ _register(Family(
     adaptations={"noisy": _more_shots,
                  "no_signal": [_widen_flux(2.0), _power_up],
                  "feature_present_fit_failed": _denser_flux,
+                 # this family's consistency check ("flat flux response") is
+                 # emitted as wrong_peak by G2; with no rung the target DEFERS
+                 # instead of re-measuring. A flat response is a signal
+                 # problem, so it takes the signal ladder (docs/78 §17).
+                 "wrong_peak": [_widen_flux(2.0), _power_up],
                  "out_of_band": _widen_flux(2.0)},
 ))
 

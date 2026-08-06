@@ -204,6 +204,42 @@ class TestRoutedUpdates:
             ["qubits.qA1.xy.operations.x180_DragCosine.amplitude"]
 
 
+class TestLoopCanActuallyRunTheScope:
+    """docs/78 §17 D2/D3 — the wiring that decides whether a plan step RUNS and
+    whether a flagged target RETRIES. Both failed silently: a skipped step still
+    reported `done`, and a family with no rung deferred instead of re-measuring
+    while the ledger recorded it as an honest suspect."""
+
+    def test_the_sim_can_run_every_scoped_family(self):
+        from quam_state_manager.core.autofit.simbackend import FAMILY_TO_NODE
+        for key in NEW_FAMILIES + ["resonator_spectroscopy",
+                                   "qubit_spectroscopy"]:
+            node = FAMILY_TO_NODE.get(key)
+            assert node, f"sim cannot run {key} — a step for it is SKIPPED " \
+                         f"while the plan still reports done"
+            assert node in synth.GENERATORS, (key, node)
+
+    @pytest.mark.parametrize("key", NEW_FAMILIES + ["resonator_spectroscopy",
+                                                   "qubit_spectroscopy"])
+    def test_a_family_that_can_be_flagged_wrong_peak_can_answer_it(self, key):
+        """G2 emits `wrong_peak` for every consistency-check hit; with no rung
+        `can_retry` is False and the target defers."""
+        fam = families.FAMILIES[key]
+        if not fam.consistency_checks:
+            pytest.skip("cannot be flagged wrong_peak by a consistency check")
+        assert "wrong_peak" in (fam.adaptations or {}), key
+
+    def test_the_rabi_wrong_peak_rung_tightens_the_window(self):
+        """A locked harmonic is answered by scanning tighter and finer around
+        the parked amplitude — never by editing the fitted number."""
+        rung = families.FAMILIES["power_rabi"].adaptations["wrong_peak"]
+        out = rung({"min_amp_factor": 0.8, "max_amp_factor": 1.2,
+                    "amp_factor_step": 0.002, "num_shots": 100})
+        assert 0.8 < out["min_amp_factor"] < 1.0 < out["max_amp_factor"] < 1.2
+        assert out["amp_factor_step"] < 0.002
+        assert not any(k in out for k in ("opt_amp", "amplitude"))
+
+
 class TestPowerCoupling:
     """The rvp node's update is ATOMIC across frequency + readout amplitude +
     the SHARED port FSP + every sibling amp on that feedline. The engine used to
@@ -364,6 +400,27 @@ class TestTrendAnchor:
         trend compared against the WRONG offset field manufactures drift."""
         fam = families.FAMILIES["resonator_spectroscopy_vs_flux"]
         assert families.trend_path_for(fam, "idle_offset", "qA1", {}) is None
+
+    def test_a_non_assign_write_has_no_honest_trend(self):
+        """docs/78 §17 D1. Ramsey writes `f_01 -= freq_offset`: the FIELD holds
+        a ~5 GHz frequency while the FIT KEY is a ~MHz offset, so anchoring on
+        the written path made G5 report a 449,605-sigma drift on a clean run.
+        An offset or scaled write has no history of its own — abstain."""
+        fam = families.FAMILIES["ramsey"]
+        assert fam.value_key == "freq_offset"
+        assert any(u.op == "subtract_from_current" for u in fam.updates)
+        assert families.trend_path_for(fam, "freq_offset", "qA1", {},
+                                       _state()) is None
+
+    def test_every_family_with_a_trend_anchors_on_an_assign(self):
+        for key, fam in families.FAMILIES.items():
+            path = families.trend_path_for(fam, fam.value_key, "qA1",
+                                           {"operation": "x180"}, _state())
+            if path is None:
+                continue
+            ups = [u for u in fam.updates if u.fit_key == fam.value_key]
+            assert not ups or any(u.op == "assign" and u.factor == 1.0
+                                  for u in ups), key
 
     def test_verify_only_families_have_no_trend(self):
         for key in ("resonator_spectroscopy_vs_coupler_flux",

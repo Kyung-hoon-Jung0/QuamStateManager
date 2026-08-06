@@ -310,6 +310,17 @@ class TestSchemasStayNumberFree:
         assert auditor.SIGNATURES == ("clear", "unclear", "absent")
         assert auditor.COMPARISONS == ("better", "worse", "same")
 
+    def test_the_default_anthropic_model_is_the_one_D10_chose(self):
+        """docs/78 §17 D4. A blank `model` used to fall back to Haiku — which
+        docs/47 measured at ~17% false-accept, concentrated in the hard 2-D
+        families, which are 7 of our 9. The recorded decision must hold by
+        default, not only when the operator also types a model name."""
+        import inspect
+        assert auditor.DEFAULT_ANTHROPIC_MODEL == "claude-sonnet-5"
+        src = inspect.getsource(auditor._call_anthropic)
+        assert "DEFAULT_ANTHROPIC_MODEL" in src
+        assert "claude-haiku" not in src   # the model id, not the prose
+
     def test_the_guard_is_one_implementation(self):
         for text, allowed in (
                 ('{"verdict":"accept","x":1}', ("verdict",)),
