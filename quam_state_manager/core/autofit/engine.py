@@ -37,6 +37,7 @@ from typing import Any, Callable, Protocol
 from quam_state_manager.core import safe_io
 from quam_state_manager.core.autofit import families as fam_mod
 from quam_state_manager.core.autofit import gates as gates_mod
+from quam_state_manager.core.autofit import power_rows
 from quam_state_manager.core.autofit.auditor import Auditor, build_bundle
 from quam_state_manager.core.autofit.plan import Plan, Step
 from quam_state_manager.core.autofit.synth import patch_path_to_dotted
@@ -75,6 +76,10 @@ class Writer(Protocol):
     def apply_rows(self, rows: list[dict], *, label: str) -> dict: ...
     def revert_patches(self, patches: list[dict], *, label: str) -> dict: ...
     def restore_values(self, rows: list[dict], *, label: str) -> dict: ...
+    # optional: the MERGED state+wiring view. Power coupling resolves a
+    # feedline port through the wiring pointer chain, so `state` alone would
+    # make every port lookup (silently) refuse.
+    def merged_view(self) -> dict | None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +142,8 @@ class PlanEngine:
                  backend: Backend, writer: Writer, auditor: Auditor, *,
                  autonomy: str | None = None,
                  snapshot_fn: Callable[[str], Any] | None = None,
-                 history_points_of: Callable[[str, str], list[float] | None]
+                 history_points_of: Callable[[dict[str, str]],
+                                             dict[str, list[float]]]
                  | None = None,
                  abstain_policy: str = "defer",
                  is_sim: bool = False,
@@ -636,7 +642,28 @@ class PlanEngine:
 
         hp = None
         if self.history_points_of is not None:
-            hp = lambda t: self.history_points_of(fam.value_key, t)  # noqa: E731
+            # The trend anchor is the STATE path this family WRITES, not the
+            # bare fit key — a family whose value has no writable home (the
+            # verify-only coupler nodes) honestly has no history to drift
+            # against, and the provider is told the paths rather than guessing
+            # them (docs/78 P2d). Resolved for every target in ONE map so the
+            # provider can serve a whole column from a single snapshot pass
+            # instead of re-parsing the history N times.
+            run_params = run.get("parameters") or {}
+            path_map = {}
+            for t in targets:
+                p = fam_mod.trend_path_for(fam, fam.value_key, t, run_params,
+                                           self.writer.current_value_of)
+                if p:
+                    path_map[t] = p
+            series: dict = {}
+            if path_map:
+                try:
+                    series = self.history_points_of(path_map) or {}
+                except Exception:  # noqa: BLE001 — history must never gate-block
+                    logger.warning("history trend lookup failed", exc_info=True)
+                    series = {}
+            hp = series.get
 
         verdicts = gates_mod.evaluate_run(
             run, fam, targets,
@@ -815,12 +842,45 @@ class PlanEngine:
             return []
         entry = (run.get("fit_results") or {}).get(target) or {}
         try:
-            return fam_mod.resolve_updates(fam, target, entry,
+            rows = fam_mod.resolve_updates(fam, target, entry,
                                            run.get("parameters") or {},
                                            self.writer.current_value_of)
         except Exception:  # noqa: BLE001
             logger.exception("resolve_updates failed")
             return []
+        # The rvp node's update is ATOMIC across frequency + readout amplitude
+        # + the SHARED port FSP + every sibling amp on that feedline. Writing
+        # only the frequency half silently de-couples the readout power
+        # calibration (docs/56 §6G) — so build the coupled rows here too, and
+        # when they can't be built from node-authored numbers say so in the
+        # ledger rather than writing a quiet partial (r12 doctrine).
+        if fam.key == power_rows.POWER_COUPLED_FAMILY and rows:
+            merged = None
+            view = getattr(self.writer, "merged_view", None)
+            if callable(view):
+                try:
+                    merged = view()
+                except Exception:  # noqa: BLE001
+                    logger.exception("merged_view failed")
+            if not isinstance(merged, dict):
+                self._ledger("power_rows_skipped", target=target,
+                             reason="no merged state+wiring view available")
+            else:
+                try:
+                    pr = power_rows.coupled_power_rows(fam.key, target,
+                                                       dict(entry), merged)
+                except Exception as exc:  # noqa: BLE001
+                    self._ledger("power_rows_skipped", target=target,
+                                 reason=f"power rows failed: {exc}")
+                else:
+                    rows = rows + pr["rows"]
+                    if pr["skipped"]:
+                        self._ledger("power_rows_skipped", target=target,
+                                     reason=pr["skipped"])
+                    for w in pr["warnings"]:
+                        self._ledger("power_rows_warning", target=target,
+                                     reason=w)
+        return rows
 
     def _defer(self, step: Step, target: str, reason: str,
                v: gates_mod.GateVerdict, *, reverted: bool = False) -> None:

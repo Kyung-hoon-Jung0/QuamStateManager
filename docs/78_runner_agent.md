@@ -1115,3 +1115,268 @@ Two properties of the test made that possible, both learned from the review:
   mapping the flux value would have had to fall in the frequency range.
 * side-by-side against the archived lab PNGs: same arch, same orientation, same
   ranges; node 10 matches its lab panel.
+
+---
+
+## 15. P2 implementation record (2026-08-06) — SHIPPED
+
+Branch `feat/runner-p2-families`. P2 is the physics layer: the nine families of
+the x180 chain get real gates, real update grammar, and — for the first time —
+a history gate that is actually connected.
+
+### 15.1 The method: bands are MEASURED, never invented
+
+Every number added in this phase came from replaying real archived runs through
+the lab's own analysis and splitting the results by the node's OWN verdict:
+
+* harvest: 119 runs across the 9 families (`--per-family 14`, spread evenly over
+  every root and date so no single campaign dominates), replayed via the P0
+  env × pinned-revision matrix;
+* for each candidate field, compare the node-ACCEPTED distribution against the
+  node-REJECTED one;
+* a floor is only worth having if it sits **below the accepted minimum** and
+  still separates. Anything else buys false-rejects.
+
+The verdict is the **accuracy ledger** — gates vs the node's own success flag
+over 276 accepted and 115 rejected targets:
+
+| family | accepted | FALSE REJECTS | rejected | caught |
+|---|---:|---:|---:|---:|
+| resonator_spectroscopy | 23 | **0** | 7 | 7 |
+| resonator_spectroscopy_vs_power | 31 | **0** | 7 | 7 |
+| resonator_spectroscopy_vs_flux | 40 | **0** | 42 | 25 |
+| resonator_spectroscopy_vs_coupler_flux | 15 | **0** | 0 | — |
+| qubit_spectroscopy | 34 | **0** | 15 | 14 |
+| qubit_spectroscopy_vs_power | 45 | **0** | 2 | 0 |
+| qubit_spectroscopy_vs_flux | 30 | **0** | 17 | 0 |
+| qubit_spectroscopy_vs_coupler_flux | 3 | **0** | 14 | 14 |
+| power_rabi | 55 | **0** | 8 | 8 |
+
+**0 false rejects, 75/115 rejects caught deterministically.** The uncaught 40
+are the honest scope of the vision round (P3) — they are not a gap to be closed
+by inventing a tighter band, and §15.3 says exactly why for each family.
+
+### 15.2 What the corpus overturned in ALREADY-SHIPPED code
+
+Sixteen production false-rejects existed before this phase — gates written from
+physical intuition that the real data contradicts:
+
+| family | shipped band | what the corpus says | fix |
+|---|---|---|---|
+| `qubit_spectroscopy` | `r2 ≥ 0.75` | the node ACCEPTED r² down to **0.452**; 12 of 34 good fits would have been flagged | `peak_snr ≥ 5.0` leads (accepted [6.6, 24.3], all 15 rejects below, median 3.0); r² drops to 0.30 as a garbage backstop |
+| `power_rabi` | `prefactor ∈ [0.5, 2.0]`, a HARD G4 fail | 4 of 55 accepted fits sit outside it — real bring-up prefactors run down to 0.20 | envelope widened to [0.05, 5.0]; detection moves to `multipulse_fit_quality ≥ 0.30` (accepted [0.37, 0.82], rejects median 0.12) |
+| `qubit_spectroscopy_vs_flux` | (proposed) `vertex_extrapolated` check | the node's own analysis treats it as a WARNING and accepts anyway — one accepted target carries it | check dropped before it ever shipped |
+
+The lesson generalizes: **a gate is a claim about the lab's data, so it needs the
+lab's data as evidence.** The `_R2_FLOOR` that was safe for resonator
+spectroscopy (accepted floor 0.82) was catastrophic one family over.
+
+### 15.2b The jump limits — measured separately, and 37 more false alarms
+
+The accuracy ledger covers bands, metric gates and consistency checks, but a
+`max_abs_jump` needs a **pre-update anchor**, which no fit dict carries. That
+anchor is sitting in every run's own `node.json`: `patches[].old` IS the
+pre-update state and `patches[].value` IS the claim — so every accepted patch is
+a jump the node itself was happy with. No replay needed.
+
+| family / anchor | limit | accepted moves | largest accepted | over the limit |
+|---|---:|---:|---:|---:|
+| resonator_spectroscopy / frequency | 50 MHz | 122 | 30.5 MHz | 0 |
+| resonator_spectroscopy_vs_power / resonator_frequency | 50 MHz | 27 | 4.5 MHz | 0 |
+| qubit_spectroscopy / frequency | ~~100~~ → **200 MHz** | 114 | **139 MHz** | ~~2~~ → 0 |
+| qubit_spectroscopy_vs_power / frequency | ~~100~~ → **200 MHz** | 29 | 47 MHz | 0 |
+| qubit_spectroscopy_vs_flux / qubit_frequency | 500 MHz | 47 | 31 MHz | 0 |
+| power_rabi / opt_amp | ~~0.25~~ → **0.8** | 1004 | **0.538** | ~~35~~ → 0 |
+
+Two findings, and the second is the important one:
+
+1. the old limits fired on **37 moves the nodes themselves accepted** — 3.5% of
+   every power-rabi write, which in `review` autonomy means one in thirty
+   perfectly good calibrations queued for a human;
+2. **not one node-rejected target emits a patch at all** (the nodes skip failed
+   targets), so on this corpus a jump limit has *zero measured detection value*.
+   Its entire measured effect was false alarms.
+
+That settles what a jump limit is FOR: a sanity envelope against an absurd step,
+not drift detection. Real drift detection is G5's job — which is only true now
+that G5 is actually wired (§15.5). `qubit_spectroscopy_vs_power` inherits node
+08's wider measurement rather than its own thin 29-sample maximum, because it
+writes the same physical quantity in the same bring-up regime.
+
+Totals after the recalibration: **0 false rejects across bands, metric gates,
+consistency checks AND jump limits.**
+
+### 15.3 The four new families, and their honest coverage
+
+| node | family | what it can catch | what it CANNOT |
+|---|---|---|---|
+| 06 res-vs-flux | `resonator_spectroscopy_vs_flux` | `ridge_amp_snr ≥ 2.5` (27/42), `ridge_coverage ≥ 0.55` (17 more), `ridge_r2 ≥ 0.40` | a vertex read off a noise ridge — inside every band |
+| 07 res-vs-coupler-flux | `resonator_spectroscopy_vs_coupler_flux` | physical envelope + signal presence | everything else: the corpus has **no rejected side at all** (15/15 accepted), so there is nothing to calibrate a metric against. Declaring one would be guessing. |
+| 09 qubit-vs-flux | `qubit_spectroscopy_vs_flux` | 500 MHz jump limit, swept-range guard, presence | the fitted vertex: **no numeric field separates** accepted from rejected — every reject is non-finite, i.e. the node's own gate is finiteness. A fabricated metric would add false-rejects without adding detection. |
+| 10 qubit-vs-coupler-flux | `qubit_spectroscopy_vs_coupler_flux` | `num_crossings ≥ 1` — **perfect separation** (3/3 accepted found exactly one crossing, 14/14 rejects found zero) | — |
+
+Both COUPLER families are **verify-only** (`updates=[]`): node 07's
+`update_state` is an empty stub and node 10 writes only a bookkeeping `extras`
+key. Inventing a write target from the figure's axis is precisely the D-1 trap
+("the figure axis is not the state value").
+
+### 15.4 The update grammar is run-derived (D-14), and the families disagree
+
+Two families read the SAME fit key and write it DIFFERENTLY. Any attempt to
+share one update rule corrupts one of them:
+
+| | node 06 | node 09 |
+|---|---|---|
+| `flux_point == "independent"` | assign `z.independent_offset` | assign `z.independent_offset` |
+| `flux_point == "joint"` | assign `z.joint_offset` | **`+=`** `z.joint_offset` |
+| anything else | **else-branch** → joint | **writes nothing** (its if/elif has no else) |
+| frequencies | `+= frequency_shift` | absolute assign |
+| pre-condition | — | offset must lie inside the swept span |
+
+So `UpdateSpec` gained `op` (`assign` / `add_to_current` /
+`subtract_from_current` / `assign_ceil4`), `route_on` / `route_when` (with `"*"`
+as an explicit else that fires only when no exact branch did), and `guard`.
+`power_rabi`'s path became `…xy.operations.{operation}.amplitude` — this chip's
+pulse is `x180_DragCosine`, so the old hardcoded `x180` addressed a field that
+**does not exist on it**; with no `operation` in the run's parameters the row is
+SKIPPED, never guessed.
+
+`FIT_TARGET_MAP` parity is preserved by resolving the placeholder before
+comparing, not by reverting to a literal.
+
+### 15.4b Two more things the nodes do that we did not
+
+Reading the real `node.json` patches (no replay needed — `patches[].old/value`
+IS the node's own write) turned up two writes the registry was missing entirely.
+
+**(a) The run names an ALIAS; the node writes its target.** Every chip in the
+corpus carries
+
+```
+operations.x180           = "#./x180_DragCosine"     ← what the run parameter names
+operations.x180_DragCosine = {amplitude: …}          ← what the node patches
+```
+
+485 real patches address `x180_DragCosine`; **zero** address `x180`. So filling
+`{operation}` from the run parameters — P2c's fix — was still one hop short:
+the write would have landed on a path whose value is a *pointer string*.
+`families.resolve_alias_path` now follows `#/`, `#./` and `#../` aliases with
+the same frame `pointer_resolver` uses, **verifying every hop by reading the
+result** and refusing (no row) when it can't. A segment the reader simply cannot
+answer is left alone — a non-existent path fails loudly at the transactional
+write, whereas a silent rewrite would not.
+
+Verified against three labs' real chips: the resolved paths equal the nodes' own
+patch paths **exactly**.
+
+**(b) Power Rabi writes π/2 as well.** `update_x90` is true in all 222 real
+runs, and the π/2 amplitude is bit-exactly half the π amplitude in 477 of 479
+patch pairs (the 2 outliers ±1.5%; 6 more pairs are stored as TEXT — the r14
+class). Without that row every x90 gate would sit stale behind a freshly
+calibrated x180. `UpdateSpec` gained `factor` for exactly this node-applied
+ratio.
+
+**(c) And the FSP coupling was half-wired.** `power_rows.py` already builds the
+rvp node's ATOMIC update (frequency + readout amp + the SHARED port FSP +
+power-preserving sibling rescales), but only the diagnose ROUTE called it — the
+engine's own `_forward_rows` wrote the frequency half alone. In `full` autonomy
+that is a silent partial write that de-couples the readout power calibration.
+The engine now builds the coupled rows too, through a `merged_view()` on the
+Writer protocol (the feedline port resolves through the wiring pointer chain, so
+`state` alone would make every port lookup quietly refuse), and any refusal or
+DAC-clip warning is written to the ledger rather than swallowed.
+
+### 15.5 G5 was dead — and wrong
+
+`gates.py` implemented the history-drift gate and `engine.py` accepted a
+provider, but **`web/routes.py` never passed one**, so in production G5 never
+ran. Wiring it exposed a second defect that could only exist because nothing
+had ever exercised the code path: the gate compared **`val`, the loop variable
+left over from the metric-gate pass** — so it measured the last metric (an r² of
+0.99) against a flux-offset trend and reported a 614-σ drift on a clean run.
+
+Fixed together:
+
+* G5 reads `entry[fam.value_key]` explicitly;
+* `families.trend_path_for` resolves the anchor the SAME way `resolve_updates`
+  resolves the write — routed families take the branch that will actually fire,
+  because independent and joint offsets carry genuinely different histories and
+  comparing against the wrong one manufactures drift;
+* with no state reader the else-branch is NOT assumed (we cannot tell "else"
+  from "unknown"), and verify-only families answer `None` — no writable home,
+  no trend;
+* the provider is handed the whole `{target: dot_path}` map at once and answers
+  from `HistoryManager.column_history` — **one snapshot pass per run**, not one
+  per qubit (17 qubits × 60 snapshots of direct parsing per step would have made
+  the gate a performance bug instead of a safety net);
+* any failure returns empty and the gate abstains. A history hiccup must never
+  manufacture a verdict.
+
+What it buys, measured: the 06 `drift` corruption (a 0.4 V offset step) is
+inside every physical band and leaves the ridge metrics intact — a documented
+blind spot **without** history, a `suspect` **with** it.
+
+### 15.6 The sim corpus grew to the whole chain
+
+`synth.py` gained generators for 05 / 06 / 07 / 08b / 09 / 10, so all nine
+families now run hardware-free through the real gates, the real writer and the
+real engine. Design notes worth keeping:
+
+* the flux arch is modelled as the **parabolic approximation** around the sweet
+  spot, not the full `sqrt|cos|` — over a realistic ±0.25 V window they agree to
+  <1%, while the arch would sweep the qubit 800 MHz out of any real span;
+* the sim now emits the fields the shipped gates actually read (`peak_snr`,
+  `dip_snr`, `multipulse_fit_quality`, `prefactor_extrapolated`,
+  `pi_amp_reachable`, the ridge metrics). Omitting them left the real gates
+  abstaining against sim data — the sim is supposed to be indistinguishable to
+  every SM reader, and **gates are readers**;
+* `peak_snr` / `dip_snr` are computed from the SAME trace the gate reads
+  (prominence over the point-noise floor), not fabricated per corruption mode;
+* a run must **name its own pulse** in `parameters.operation`. It didn't, and
+  the moment power_rabi's path became `{operation}`-templated the sim's
+  power-rabi step resolved **zero** write rows — the loop's single most
+  important write silently stopped being exercised while every engine test
+  stayed green (they assert on other quantities). Now pinned by a test that
+  resolves the update from the run's own node.json.
+
+### 15.7 Ledger cells that MOVED (never silently)
+
+`tests/test_autofit_gates.py` says tightening is progress and downgrading is a
+regression, so each move is stated with its evidence:
+
+| cell | was | now | why |
+|---|---|---|---|
+| `08_qubit_spectroscopy` / noisy | not_pass | **pass_allowed** | the catch came from `r2 ≥ 0.75`, which the corpus proved rejects 12/34 node-accepted fits. The synthetic claim lands within fwhm/6 of truth — a GOOD value with an ugly fit. Rejecting it is a production false-reject, not a catch. |
+| `11_power_rabi` / wrong_peak | fail | **not_pass** | the hard prefactor band was false-rejecting; a locked harmonic is now a suspect via `multipulse_fit_quality`, and a deterministic FAIL is reserved for physically impossible values. |
+| `11_power_rabi` / noisy | pass_allowed | **not_pass** | tightened — the family now has a quality metric, and a noisy multipulse sweep lands on the corpus's reject side. |
+| `11_power_rabi` / out_of_band | fail | fail | unchanged verdict, re-based corruption: "out of band" must now mean an amplitude the port cannot play (×8), because ×3 sits INSIDE the corpus-widened envelope. |
+
+### 15.8 Verification
+
+* `tests/test_runner_p2.py` (**new**, 43 tests): family registration + archive
+  node-name resolution, the corpus-derived floors pinned as numbers, routed
+  updates (06 else-branch vs 09 no-else, `+=` vs assign, span guard, opt-in
+  `min_offset`, `{operation}` skip), the trend anchor (routed / no-reader /
+  verify-only / `{operation}`), G5 catching what the other gates cannot and
+  NOT flagging a value on its own trend, an end-to-end engine run proving the
+  provider receives resolved dot-paths and its answer reaches the ledger, and
+  alias following (all three pointer forms, the x90 half-row, refusal on an
+  unresolvable alias), power coupling (the engine builds the coupled rows and
+  ledgers the refusal; only the rvp family is coupled), and sim-fidelity checks
+  (every gated field present; the run names its operation; the flux cube really
+  carries a parabolic ridge whose fitted vertex is the sweet spot).
+* `tests/test_autofit_gates.py`: ledger extended from 10 to 16 node × mode
+  rows — **146 passed**.
+* autofit + fit-audit + P0 suites together: **273 passed, 9 skipped**.
+* real-archive accuracy ledger re-run after every change: **0 false rejects**.
+
+### 15.9 Carried into P3
+
+* the 40 uncaught rejects are the vision round's brief — with the per-family
+  reasons in §15.3, not as an undifferentiated "AI looks at it";
+* `qubit_spectroscopy_vs_power` (the #575 class: a self-consistent noise fit
+  that a replay AGREES with) remains the canonical case that deterministic
+  gates provably cannot close;
+* `resonator_spectroscopy_vs_coupler_flux` has no rejected side in the corpus
+  at all — its false-accept coverage is UNMEASURED, and that must be stated in
+  any report the loop produces, not silently rendered as "passed".

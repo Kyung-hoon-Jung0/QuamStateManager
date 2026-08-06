@@ -119,6 +119,11 @@ class SimWriter:
     def current_value_of(self, dotted: str):
         return self.chip.get(dotted)
 
+    def merged_view(self) -> dict | None:
+        """The sim chip has no wiring ports, so power coupling refuses on it —
+        honestly and out loud, which is the behavior we want to exercise."""
+        return {**self.chip.state, **self.chip.wiring}
+
     def apply_rows(self, rows, *, label: str) -> dict:
         paths = []
         for r in rows:

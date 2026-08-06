@@ -424,8 +424,16 @@ def evaluate_target(run, fam: Family, target: str, *,
     v.checks["G2_metrics"] = g2
 
     # --- G5: history drift (optional; engine supplies trend points) ---------
+    # The compared quantity is the family's HEADLINE value — reading the loop
+    # variable left over from the metric-gate pass above would compare the last
+    # metric (e.g. an r² of 0.99) against a flux-offset trend and report a
+    # 600-σ drift on a perfectly good run. The gate had never been supplied with
+    # points in production, so nothing had exercised it (docs/78 P2d).
+    hist_val = entry.get(fam.value_key)
     if history_points and len(history_points) >= 3 \
-            and isinstance(val, (int, float)) and not isinstance(val, bool):
+            and isinstance(hist_val, (int, float)) \
+            and not isinstance(hist_val, bool) and math.isfinite(hist_val):
+        val = hist_val
         pts = np.asarray(history_points, dtype=float)
         med = float(np.median(pts))
         mad = float(np.median(np.abs(pts - med))) * 1.4826
