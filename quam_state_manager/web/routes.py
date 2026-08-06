@@ -4688,13 +4688,27 @@ def _kind_of(v: Any) -> str:
 def _type_fix_offer(store, target_path: str, raw_value: str) -> dict | None:
     """The r14 stored-as-text repair offer, else None (edit proceeds normally).
 
-    Fires only when EVERY leg holds: the current value is a string that reads
-    like a number; the typed input is an UNQUOTED number (explicit quotes mean
-    "I want text" — no gate); and no enforced expectation covers the path (an
-    env schema / user assignment already repairs the type on plain edits).
+    Fires only when EVERY leg holds: the target is NOT inside an ``extras``
+    block; the current value is a string that reads like a number; the typed
+    input is an UNQUOTED number (explicit quotes mean "I want text" — no
+    gate); and no enforced expectation covers the path (an env schema / user
+    assignment already repairs the type on plain edits).
+
+    The ``extras`` leg is what keeps this offer from blocking ordinary
+    editing. ``extras`` is user-declared free form with no schema, so a
+    numeric-looking string there is a LABEL, not a number that got
+    string-ified — and a lab that stores ``extras.cz_branch = "02"`` could not
+    change it to ``"03"`` at all without knowing the undocumented quoting
+    escape hatch, because every attempt came back as a 409 offering to convert
+    the label into a number. Shares one definition with the detector so the
+    warning and the repair cannot disagree about what counts as text.
+
     Read-only; never raises."""
     try:
         from quam_state_manager.core import type_policy as _tp
+        from quam_state_manager.core.edit_policy import is_free_form_path
+        if is_free_form_path(target_path):
+            return None
         raw = (raw_value or "").strip()
         if raw.startswith('"') or raw.startswith("'"):
             return None
@@ -4722,8 +4736,26 @@ def _type_fix_offer(store, target_path: str, raw_value: str) -> dict | None:
 
 def _parse_for_target(store, target_path: str, raw_value: str):
     """Parse typed text against the resolved target's ENFORCED expectation;
-    without one this is ``type_policy.parse_value`` byte-identical."""
+    without one this is ``type_policy.parse_value`` byte-identical.
+
+    One carve-out: a TEXT leaf inside ``extras`` keeps what the user typed,
+    verbatim. Everywhere else the legacy pipeline parses ``"03"`` to the
+    number 3 and the coercer casts it back to the field's original type,
+    which for a string field silently stores ``"3"`` — the leading zero gone.
+    For a schema-backed field that round trip is the point; for a lab's own
+    label (``extras.cz_branch``) it is data loss on an ordinary edit, and
+    leading zeros are exactly how labels are written. Free-form means the text
+    is the value.
+    """
     from quam_state_manager.core import type_policy as _tp
+    from quam_state_manager.core.edit_policy import is_free_form_path
+    if is_free_form_path(target_path):
+        try:
+            current = store.get_value(target_path)
+        except Exception:  # noqa: BLE001 — fall through to the normal path
+            current = None
+        if isinstance(current, str) and not is_pointer(current):
+            return raw_value
     policy = getattr(store, "type_policy", None)
     expected = None
     if policy is not None:
