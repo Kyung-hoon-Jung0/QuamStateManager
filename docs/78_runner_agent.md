@@ -1010,3 +1010,108 @@ and regenerated figures were compared side-by-side against the archived PNGs.
   bit-identical invariant re-proven after migration).
 * `gate_hash` churns while the tree is edited — verdicts must always be read
   together with their `root_rev`/`root_kind`.
+
+---
+
+## 14. P1 implementation record (2026-08-06) — SHIPPED
+
+Branch `fix/interactive-flux-axes`. The plan called this the highest-risk edit
+in the whole programme (R1) despite looking cosmetic. It was.
+
+### 14.1 What shipped
+
+| change | why |
+|---|---|
+| `recipes/resonator_2d.py::_vs_flux` (06 + 07) | x = flux, y = frequency; heatmap cube transposed; idle-offset marker `hline` → `vline`; contract axes swapped |
+| `recipes/qubit_spec_vs_flux.py` (09) | same transpose + contract swap; flux target moved FIRST and a top-level `axis` declared (see §14.4) |
+| `recipes/qubit_spec_vs_coupler_flux.py` (**new**, 10) | the node had NO recipe: it resolved to `fallback`, i.e. an empty Interactive menu — static PNG only, no click-to-apply |
+| `registry.py` | registers the new recipe |
+| `tests/test_interactive_axis_parity.py` (**new**) | the invariants the existing goldens structurally cannot express |
+
+Value math (`scale` / `offset`) was deliberately **not** touched, so every
+existing click golden stays valid — they pin the arithmetic, this batch pins the
+geometry.
+
+### 14.2 The gap that made R1 real
+
+`tests/test_click_contracts.py` asserts `staged == scale*clicked + offset` and
+**never reads a target's `axis`**. So a figure could be transposed while its
+contracts still read the old axis, and every golden would stay green while a
+click wrote the clicked FREQUENCY into the flux field. Worse, the pre-transpose
+orientation was pinned in a second file (`test_interactive_plots.py`) which was
+NOT updated by the first pass — the repo briefly asserted two mutually
+exclusive contracts, and a future revert of the transpose would have been
+"confirmed correct" by the stale pin. Both are fixed; the stale pin now carries
+a comment saying why it must move with the figures.
+
+### 14.3 Four things must move together
+
+A transpose is not one edit. It is four, and any one left behind is silently
+wrong:
+
+1. the **axis titles**,
+2. the **heatmap cube** (plotly `z` is `[y][x]`),
+3. every **overlay and shape** (a flux marker becomes a `vline`; a ridge's x/y
+   swap),
+4. every **click-contract `axis`**.
+
+`tests/test_interactive_axis_parity.py` pins all four, and each is
+**mutation-proven**: reverting any single one turns the suite red.
+
+| single-point revert | caught |
+|---|---|
+| axis titles only | ✅ 3 failures |
+| heatmap cube only (09) | ✅ 3 |
+| heatmap cube only (06/07) | ✅ 6 |
+| contract axis only | ✅ 1 |
+| dim-order guard neutered (10) | ✅ 1 |
+| an `axis` key dropped from a target | ✅ 1 |
+
+Two properties of the test made that possible, both learned from the review:
+
+* The synthetic cube is **identity-valued** (`cell = second*1000 + det`), not
+  random. With noise, a wrong dim-order guard and the deliberate transpose
+  cancel in SHAPE while scrambling the mapping — the map renders mirrored and
+  nothing notices. The check is **scale-invariant** (it compares per-axis step
+  sizes, not values) because several recipes legitimately rescale V → mV.
+* **Both** archive dim orders are exercised for every family. Pinning one order
+  left half of every orientation guard as dead code — proven by neutering both
+  guards and watching the suite stay green.
+
+### 14.4 Adjacent defects the review surfaced
+
+* **A missing `axis` is not "not applicable".** The client defaults it to `x`,
+  so a 2-D target without an axis silently reads the wrong quantity. The test
+  now FAILS on it instead of skipping (it had been skipping the
+  highest-consequence leg).
+* **An unavailable figure is not a valid skip.** The synthetic bundle is
+  well-formed by construction, so a recipe refusing it is a defect. Skipping
+  let a broken orientation guard hide behind an honest degrade — the dim-order
+  mutation went from CAUGHT to MISSED until this became an assertion.
+* **Axis→target equivalence is not identity.** A dBm axis legitimately writes an
+  amplitude (`dbm_to_amp` / `dbm_gridfs`), so the coherence rule allows
+  {power, amp} on a power axis. Without that the invariant would go red on
+  correct code as soon as the fixture grew a realistic snapshot.
+* **The toast read the wrong axis.** The client reports the clicked value from
+  `clickable.axis` (defaulting to x) and labels it with `targets[0]`'s path.
+  With frequency first, node 09 announced `x=0.0137 → …f_01` — the flux number
+  under the frequency's name, exactly the confusion the transpose removes.
+* **Node 10 hardening**: `menu()` advertised on `IQ_abs` while `build()` needs
+  `full_freq`; duplicate targets (a star coupler layout reports the same
+  measured qubit for every pair) collapsed several tiles onto slice 0; the fit
+  index was taken positionally from the CUBE on the one family whose fit and
+  cube vocabularies are documented to diverge (§13.4); a detuning-valued ridge
+  was drawn as absolute when the carrier could not be computed. All fixed —
+  the ridge now draws nothing rather than claiming the qubit sits at DC.
+
+### 14.5 Verification
+
+* axis suite **32 passed** (8 skips, all deliberate)
+* interactive + contract + P0 suites together: **174 passed**
+* **real-data click round-trip** on three archived node-06/09 runs: every target
+  reproduces the node's own patch, and — the part a self-consistent test cannot
+  fake — each clicked value lands INSIDE the range of the axis it declares
+  (flux in [−2.5, 2.5] V, frequency in [7.067, 7.077] GHz). Under the old
+  mapping the flux value would have had to fall in the frequency range.
+* side-by-side against the archived lab PNGs: same arch, same orientation, same
+  ranges; node 10 matches its lab panel.

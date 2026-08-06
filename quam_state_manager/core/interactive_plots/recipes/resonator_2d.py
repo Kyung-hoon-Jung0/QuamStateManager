@@ -1,13 +1,17 @@
-"""Resonator spectroscopy 2D maps — vs power (1Q_05) and vs flux (1Q_06).
+"""Resonator spectroscopy 2D maps — vs power (1Q_05), vs flux (1Q_06) and vs
+coupler flux (1Q_07).
 
 vs_power: |IQ| heatmap over (frequency × readout power[dBm]) with a **twin
 amplitude axis** (amp = max_amp·10^((dBm−max_power_dbm)/20)), the optimal power
 marked. Clickable on the power axis → `resonator.operations.readout.amplitude`
 via the `dbm_to_amp` transform (the node updates amplitude, not dBm).
 
-vs_flux: |IQ| heatmap over (frequency × flux bias) with the resonator-dip curve.
-Clickable sets **two values** from one click: `y(flux)→z.joint_offset` and
-`x(freq)→resonator.f_01`+`resonator.RF_frequency`.
+vs_flux: |IQ| heatmap over (flux bias × frequency) — **flux on x**, frequency on
+y, the lab's own convention for every flux sweep (docs/78 §4.1); the power map
+above keeps frequency on x because the lab draws THAT one the other way round.
+Clickable sets **two values** from one click: `x(flux)→z.joint_offset` and
+`y(freq)→resonator.f_01`+`resonator.RF_frequency`. The coupler-flux variant is
+view-only (its per-qubit z-offset target does not apply).
 """
 from __future__ import annotations
 
@@ -203,18 +207,29 @@ def _vs_power(bundle, key, qname, qidx, x_ghz):
 
 
 def _vs_flux(bundle, key, qname, qidx, x_ghz):
+    """|IQ| over (flux × RF frequency) — **flux on x**, frequency on y.
+
+    The lab's own ``plotting.py`` draws every flux sweep this way
+    (``IQ_abs.plot(x="flux_bias", y="freq_GHz")``), while it puts frequency on x
+    for POWER sweeps. SM used to apply "frequency is always x" universally, so
+    this family rendered transposed: the physicist's near-flat resonator band
+    became a vertical stripe, and the flux arch a sideways C (docs/78 §4.2).
+    """
     raw, fit = bundle.raw, bundle.fit
     flux = np.asarray(raw["coords"].get("flux_bias", []), dtype=float)
     z = _oriented(raw, "IQ_abs", qidx, "flux_bias")     # [flux_bias, detuning]
-    data = [pb.heatmap(x_ghz, flux, z, colorbar_title="|IQ|", robust=True)]
+    # heatmap z is indexed [y][x]; y is now frequency, so transpose the cube.
+    data = [pb.heatmap(flux, x_ghz, np.asarray(z).T if np.ndim(z) == 2 else z,
+                       colorbar_title="|IQ|", robust=True)]
     shapes = []
     idle = _scalar(fit, "idle_offset", qidx)
     if idle is not None and np.isfinite(idle):
-        shapes.append(pb.hline(idle, color=pb.FIT_COLOR, dash="dash", width=1.2))
+        # the idle offset is a FLUX value → a vertical line now
+        shapes.append(pb.vline(idle, color=pb.FIT_COLOR, dash="dash", width=1.2))
     coupler = _is_coupler(bundle)
-    ylabel = "coupler flux bias [V]" if coupler else "flux bias [V]"
-    layout = {"xaxis": {"title": {"text": "RF frequency [GHz]"}},
-              "yaxis": {"title": {"text": ylabel}},
+    xlabel = "coupler flux bias [V]" if coupler else "flux bias [V]"
+    layout = {"xaxis": {"title": {"text": xlabel}},
+              "yaxis": {"title": {"text": "RF frequency [GHz]"}},
               "shapes": shapes, "margin": {"l": 60, "r": 30, "t": 50, "b": 50}}
     clickable = None
     if not coupler:
@@ -223,17 +238,21 @@ def _vs_flux(bundle, key, qname, qidx, x_ghz):
         # += with shift = clicked − RF_at_run collapses to the clicked value),
         # but f_01 is a true INCREMENT — wrong by (f_01 − RF divergence) if
         # overwritten absolutely (real chips diverge, e.g. qB5 −1.23 MHz).
-        flux_t = (contracts.flux_absolute_targets(bundle, qname, axis="y")
+        # The AXES MOVE WITH THE FIGURE: flux now reads x, frequency reads y.
+        # (Transposing the plot without swapping these writes the clicked
+        # frequency into the flux field — docs/78 §4.3.) The value math
+        # (scale/offset) is untouched, so the click goldens still hold.
+        flux_t = (contracts.flux_absolute_targets(bundle, qname, axis="x")
                   or {}).get("targets", [])
         f01_t = []
-        _inc = contracts.freq_increment_targets(bundle, qname, axis="x",
+        _inc = contracts.freq_increment_targets(bundle, qname, axis="y",
                                                 axis_scale=1e9, resonator=True)
         if _inc:
             f01_t = [t for t in _inc["targets"] if t["path"].endswith(".f_01")]
         clickable = {
             "qubit": qname, "label": "Set flux offset + resonator frequency",
             "targets": (flux_t + f01_t + [
-                {"path": "qubits.{q}.resonator.RF_frequency", "axis": "x", "scale": 1e9},
+                {"path": "qubits.{q}.resonator.RF_frequency", "axis": "y", "scale": 1e9},
             ])}
     title = "Resonator vs coupler flux" if coupler else "Resonator vs flux"
     return FigureSpec(key=key, title=title, kind="2d",

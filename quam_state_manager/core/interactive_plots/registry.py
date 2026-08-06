@@ -21,7 +21,8 @@ from . import h5reader
 from .plotbuild import jsonable
 from .recipes import (
     all_xy, chevron, cz_2d_maps, cz_phase, drag, fallback, flux_qubitspec, flux_ramsey,
-    flux_short_distortion, iq_blobs, iq_blobs_gef, power_rabi, qubit_spec_vs_flux,
+    flux_short_distortion, iq_blobs, iq_blobs_gef, power_rabi,
+    qubit_spec_vs_coupler_flux, qubit_spec_vs_flux,
     qubit_spec_vs_power, qubit_spectroscopy, ramsey, ramsey_vs_flux, rb, readout_opt,
     resonator, resonator_2d, time_of_flight, two_qubit_rb, xyz_delay,
 )
@@ -36,7 +37,8 @@ _RECIPES = [
     resonator, power_rabi, flux_qubitspec, flux_ramsey,
     qubit_spectroscopy, qubit_spec_vs_power, ramsey, rb, all_xy, xyz_delay, drag,
     readout_opt,
-    resonator_2d, qubit_spec_vs_flux, iq_blobs_gef, iq_blobs, time_of_flight,
+    resonator_2d, qubit_spec_vs_coupler_flux, qubit_spec_vs_flux,
+    iq_blobs_gef, iq_blobs, time_of_flight,
     ramsey_vs_flux, flux_short_distortion, chevron, two_qubit_rb, cz_phase,
     cz_2d_maps,
 ]
