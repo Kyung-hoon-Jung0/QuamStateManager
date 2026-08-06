@@ -4,10 +4,10 @@
     <span class="muted">(read-only)</span>
   </span>
   <span class="preview-banner-actions">
-    {% if diag_summary.total > 0 %}
+    {% if diag_summary.issues > 0 %}
       <button type="button"
               class="btn-sm outline diag-badge {% if diag_summary.error %}diag-error{% elif diag_summary.warning %}diag-warning{% else %}diag-info{% endif %}"
-              onclick="togglePreviewIssues()">&#9888; {{ diag_summary.total }} issue{{ 's' if diag_summary.total != 1 }}</button>
+              onclick="togglePreviewIssues()">&#9888; {{ diag_summary.issues }} issue{{ 's' if diag_summary.issues != 1 }}</button>
     {% else %}
       <span class="diag-badge diag-ok-badge">&#10003; no broken references</span>
     {% endif %}
