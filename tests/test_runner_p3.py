@@ -300,6 +300,64 @@ class TestComparisonAsk:
         assert v.comparison == "better" and v.discarded_numeric
 
 
+class TestTwoStageLooking:
+    """docs/78 §18. A real chip's figure is one sheet of N panels. Asking
+    "is qubit 5 good?" against it is the D-11.1 defect; asking "WHICH panels
+    look wrong?" is a different, well-posed question — and it costs ONE call
+    instead of N, which is what makes the judge affordable at all (40/plan)."""
+
+    def test_triage_is_a_router_and_never_invents_a_target(self):
+        v = auditor.parse_triage(
+            '{"state":"some_suspect","suspects":["qA1","qZ9"],"reason":"r"}',
+            known_targets=["qA1", "qA2"])
+        assert v.state == "some_suspect"
+        assert v.suspects == ["qA1"]        # qZ9 is not on this chip
+
+    @pytest.mark.parametrize("text", ["", "junk", '{"state":"maybe"}',
+                                      '{"suspects":["qA1"]}'])
+    def test_an_unusable_reply_widens_the_net(self, text):
+        """A router that fails must escalate EVERYTHING, never nothing."""
+        v = auditor.parse_triage(text)
+        assert v.state == "unreadable"
+        assert auditor.dedicated_look_set([], v, ["qA1", "qA2"]) == \
+            ["qA1", "qA2"]
+
+    def test_an_unavailable_judge_escalates_every_target(self):
+        off = auditor.Auditor({"provider": "off"})
+        b = auditor.build_triage_bundle(
+            family_key="power_rabi", family_label="Power Rabi",
+            targets=["qA1", "qA2"], figure_path=None)
+        assert off.triage(b).state == "unreadable"
+
+    def test_the_look_set_is_the_UNION_of_gates_and_eye(self):
+        """The two fail differently — the gates miss a self-consistent fit of
+        noise (the archived #575 class), the eye misses a small numeric error.
+        Letting either filter the other reintroduces D-11.1 in a new hat."""
+        eye = auditor.parse_triage(
+            '{"state":"some_suspect","suspects":["qA1"]}',
+            known_targets=["qA1", "qA2", "qA3"])
+        assert auditor.dedicated_look_set(["qA3"], eye,
+                                          ["qA1", "qA2", "qA3"]) == \
+            ["qA1", "qA3"]
+
+    def test_all_fine_never_overrides_a_gate_suspect(self):
+        """The single most important case: the overview says everything is
+        fine, but the deterministic gates flagged one. It STILL gets a look."""
+        eye = auditor.parse_triage('{"state":"all_fine","suspects":[]}')
+        assert auditor.dedicated_look_set(["qA3"], eye,
+                                          ["qA1", "qA2", "qA3"]) == ["qA3"]
+
+    def test_a_clean_sheet_with_clean_gates_costs_no_extra_calls(self):
+        eye = auditor.parse_triage('{"state":"all_fine","suspects":[]}')
+        assert auditor.dedicated_look_set([], eye, ["qA1", "qA2"]) == []
+
+    def test_the_triage_prompt_asks_for_names_not_verdicts(self):
+        sys_txt = auditor._TRIAGE_SYSTEM
+        assert "NOT deciding whether any panel is acceptable" in sys_txt
+        assert "Prefer naming a panel over staying silent" in sys_txt
+        assert "NEVER estimate, correct, or emit any numeric value" in sys_txt
+
+
 class TestSchemasStayNumberFree:
     def test_no_ask_declares_a_numeric_field(self):
         """docs/47: the schemas are structurally number-free. This pins the

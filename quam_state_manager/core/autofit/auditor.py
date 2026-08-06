@@ -36,7 +36,7 @@ import logging
 import re
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +58,14 @@ COMPARISONS = ("better", "worse", "same")
 _SETTINGS_FILE = "autofit_ai.json"
 # the judge model D-10 selected; see the fallback in _call_anthropic
 DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5"
+
+# P3c-0, two-stage looking (docs/78 §18). A real chip's figure is one sheet of
+# N panels. Asking "is qubit 5 good?" against that sheet is the D-11.1 defect;
+# asking "WHICH panels look wrong?" is a different, well-posed question about
+# the same picture — and it costs ONE call instead of N, which is what makes
+# the judge affordable on a 17-qubit chip at all (the plan budget is 40 calls).
+# The targets it names are then re-plotted ALONE and judged individually.
+TRIAGE_STATES = ("all_fine", "some_suspect", "unreadable")
 _DEFAULTS = {
     "provider": "off",            # off | fake | anthropic | openai_compat
     "api_key": "",
@@ -158,8 +166,48 @@ class ComparisonVerdict:
                 "discarded_numeric": self.discarded_numeric}
 
 
+@dataclass
+class TriageVerdict:
+    """Stage 1 of two-stage looking: which panels of a multi-target sheet want a
+    dedicated look. It is a ROUTER, never a verdict — nothing terminates or
+    fails on it, so its worst outcome is a wasted per-target call."""
+    state: str                          # all_fine | some_suspect | unreadable
+    suspects: list[str] = field(default_factory=list)
+    reason: str = ""
+    provider: str = ""
+    model: str = ""
+    discarded_numeric: bool = False
+
+    def as_dict(self) -> dict:
+        return {"state": self.state, "suspects": list(self.suspects),
+                "reason": self.reason, "provider": self.provider,
+                "model": self.model,
+                "discarded_numeric": self.discarded_numeric}
+
+
 _UNCLEAR = SignatureVerdict(signature="unclear", reason="judge unavailable")
 _SAME = ComparisonVerdict(comparison="same", reason="judge unavailable")
+
+
+def dedicated_look_set(gate_suspects, triage: "TriageVerdict | None",
+                       targets) -> list[str]:
+    """WHO gets a per-target panel: the UNION of what the deterministic gates
+    flagged and what the overview flagged (docs/78 §18).
+
+    Union, not either alone, because the two fail differently: the gates miss
+    the self-consistent noise fit (the archived #575 class — a fit that agrees
+    with itself on garbage), and the eye misses a small numeric error no picture
+    shows. Neither is a superset of the other, so trusting one to filter the
+    other reintroduces D-11.1 wearing a different hat. An unreadable sheet
+    escalates EVERY target rather than none.
+    """
+    order = list(targets)
+    if triage is not None and triage.state == "unreadable":
+        return order
+    want = set(gate_suspects or ())
+    if triage is not None:
+        want |= {s for s in triage.suspects if s in set(order)}
+    return [t for t in order if t in want]        # caller's order, deduped
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +250,25 @@ Judge SHAPE and RELATIVE GEOMETRY only. Where a feature sits inside the swept \
 window is an artefact of the window the experimenter chose, not physics — \
 never use it as evidence, and never report a position. When you cannot tell, \
 answer "unclear"; never guess "clear"."""
+
+_TRIAGE_SYSTEM = """You are triaging one calibration figure that contains \
+SEVERAL panels — one per qubit or per qubit pair, each labelled with its own \
+name. Your ONLY job is to say which panels deserve a closer look on their own. \
+You are NOT deciding whether any panel is acceptable; a second, dedicated look \
+at each named panel does that. You NEVER estimate, correct, or emit any numeric \
+value, and you never report a position. Respond with EXACTLY one JSON object:
+{"state": "all_fine"|"some_suspect"|"unreadable", \
+"suspects": ["<panel name>", ...], "reason": "<one sentence>"}
+all_fine = every panel carries the expected signature; suspects is [].
+some_suspect = list the panel names that look wrong, empty, or unlike their \
+neighbours. Copy each name EXACTLY as printed on the panel.
+unreadable = the panels are too small, unlabelled, or otherwise not judgeable \
+from this image; suspects is [].
+Prefer naming a panel over staying silent — a named panel only costs one closer \
+look, while a missed one is never looked at again. Judge shape and relative \
+geometry only; where a feature sits inside a sweep is the experimenter's \
+choice, not physics."""
+
 
 _COMPARE_SYSTEM = """You compare two figures from the SAME calibration \
 measurement on the same qubit: the PREVIOUS attempt and the CURRENT one, in \
@@ -268,6 +335,46 @@ def build_signature_bundle(*, family_key: str, family_label: str, target: str,
     return {"context": ctx, "system": _SIGNATURE_SYSTEM,
             "images_b64": [b for b in (_b64(figure_path),) if b],
             "kind": "signature"}
+
+
+def build_triage_bundle(*, family_key: str, family_label: str,
+                        targets: list[str], figure_path,
+                        pack_version: str = judge_pack.DEFAULT_VERSION) -> dict:
+    """Stage 1: the whole sheet, once, asking WHICH panels want a closer look."""
+    entry = judge_pack.entry_for(family_key, pack_version)
+    ctx = {"family": family_label, "ask": "triage",
+           "panels_expected": list(targets),
+           "family_knowledge": judge_pack.prompt_block(entry),
+           "taught": bool(entry)}
+    return {"context": ctx, "system": _TRIAGE_SYSTEM,
+            "images_b64": [b for b in (_b64(figure_path),) if b],
+            "kind": "triage"}
+
+
+def parse_triage(text: str, provider: str = "", model: str = "",
+                 known_targets: list[str] | None = None) -> TriageVerdict:
+    obj = _extract_obj(text)
+    if obj is None:
+        # unparseable ⇒ escalate everything: a router that fails must widen the
+        # net, never narrow it
+        return TriageVerdict(state="unreadable", reason="unparseable reply",
+                             provider=provider, model=model)
+    state = obj.get("state")
+    if state not in TRIAGE_STATES:
+        return TriageVerdict(state="unreadable",
+                             reason="invalid state value",
+                             provider=provider, model=model)
+    raw = obj.get("suspects")
+    names = [str(s) for s in raw] if isinstance(raw, list) else []
+    if known_targets is not None:
+        known = set(known_targets)
+        names = [n for n in names if n in known]   # never invent a target
+    return TriageVerdict(
+        state=state, suspects=names,
+        reason=str(obj.get("reason") or "")[:500], provider=provider,
+        model=model,
+        discarded_numeric=_numeric_emission(obj, ("state", "suspects",
+                                                  "reason")))
 
 
 def build_comparison_bundle(*, family_label: str, target: str,
@@ -461,6 +568,8 @@ class FakeProvider:
                 if ask == "signature" else \
                 {"comparison": "same", "reason": "fake default"} \
                 if ask == "compare" else \
+                {"state": "unreadable", "suspects": [],
+                 "reason": "fake default"} if ask == "triage" else \
                 {"verdict": "abstain", "failure_mode": None,
                  "reason": "fake default"}
         return json.dumps(obj)
@@ -558,6 +667,21 @@ class Auditor:
         v = parse_signature(text, provider, model)
         if v.discarded_numeric:
             logger.info("signature verdict carried a numeric field — discarded")
+        return v
+
+    def triage(self, bundle: dict,
+               known_targets: list[str] | None = None) -> TriageVerdict:
+        """Stage 1. An unavailable judge answers `unreadable`, which escalates
+        EVERY target to a dedicated look — the router's failure must widen the
+        net, never narrow it."""
+        text, provider, model = self._raw(bundle)
+        if text is None:
+            return TriageVerdict(state="unreadable",
+                                 reason="judge unavailable or budget spent",
+                                 provider=provider, model=model)
+        v = parse_triage(text, provider, model, known_targets)
+        if v.discarded_numeric:
+            logger.info("triage verdict carried a numeric field — discarded")
         return v
 
     def compare(self, bundle: dict) -> ComparisonVerdict:

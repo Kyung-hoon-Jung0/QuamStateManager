@@ -1687,3 +1687,103 @@ Steps 1 and 4 are the ones a demo will skip and a night run will not survive.
 * P5b no longer claims the pairwise-vision comparator as future work: D-8 tier
   2b shipped in P3b; only the deterministic metric-trend half (tier 2a) remains.
 * P2b's "no `verify_wide`" for `power_rabi` is still true and stays open.
+
+---
+
+## 18. Two-stage looking, and testing the judge without a key (2026-08-07)
+
+Two user decisions, both of which changed the design for the better.
+
+### 18.1 The multi-panel problem, solved by changing the question
+
+§17 B2: a real chip's figure is ONE sheet of N panels, and the judge was being
+handed that sheet once per target and asked "is qubit 5 good?". D-11.1 calls
+that a correctness bug, and the obvious fix — always send a single-panel
+figure — turns out to be **unaffordable**: 17 qubits × one step = 17 judge
+calls against a plan budget of 40, so five steps would exhaust it before the
+chain finished. The obvious fix was never going to survive a real chip.
+
+**The user's design instead: look twice, and change the question the first
+time.**
+
+1. **Stage 1 — triage.** Show the whole sheet ONCE and ask *"which panels want
+   a closer look?"* That is a well-posed question about that picture — unlike
+   "is qubit 5 good?", which is not. Cost: one call, whatever N is.
+2. **Stage 2 — dedicated look.** Re-plot the named panels ALONE through the
+   lab's own plotting module (`figure_gen.generate(..., targets=[...])`, built
+   in P0 and until now with zero callers) and ask the per-target signature
+   question on a picture that contains only that target.
+
+The second stage is what P0's figure machinery was for; the first stage is what
+makes the whole thing fit in the budget.
+
+### 18.2 The rule that keeps it honest
+
+Stage 1's silence is where this design can quietly go wrong: if a panel the
+overview glossed over is then declared **done** on the strength of that glance,
+D-11.1 is back wearing a different hat. So:
+
+> **The set that gets a dedicated look = (targets the deterministic gates
+> flagged) ∪ (targets triage flagged).** Union — never either alone.
+
+Because the two fail **differently**. The gates miss the self-consistent noise
+fit (the archived #575 class: a fit that agrees with itself on garbage, which a
+node-faithful replay also agrees with). The eye misses a 3% amplitude error that
+no picture shows. Neither is a superset of the other, so letting one filter the
+other loses exactly the cases the other was there to catch.
+
+Consequences, all pinned in `tests/test_runner_p3.py::TestTwoStageLooking`:
+
+* triage `all_fine` **never** overrides a gate suspect — that target still gets
+  its own look;
+* an unusable or unavailable triage answers `unreadable`, which escalates
+  **every** target: a router that fails must widen the net, never narrow it;
+* triage may only name targets that exist on this chip (a hallucinated name is
+  dropped, not looked up);
+* triage is a **router, not a verdict** — nothing terminates or fails on it, so
+  its worst case is a wasted call. The prompt therefore biases it toward naming:
+  *"a named panel only costs one closer look, while a missed one is never
+  looked at again."*
+* a target in neither set terminates on gates + overview, and the ledger must
+  stamp it **overview only** so no report implies it got a dedicated look.
+
+### 18.3 Testing the judge before the key exists
+
+The user's second decision: run the judge as **fresh-context Sonnet subagents**
+rather than waiting for an API key. Each call gets exactly the payload the API
+would receive — the system prompt plus the request context rendered by
+`build_triage_bundle` — and one real archived figure, with an explicit
+instruction not to read the run's `node.json`, `data.json` or any stored fit.
+The answer comes from the picture and the pack alone.
+
+This is not a simulation of the judge; it is the judge, minus the HTTP call. It
+measures **Sonnet with our prompt and our pack**, which is the part we wrote and
+the part most likely to be wrong. When the key lands, the same case set re-runs
+against the real API and the numbers should reproduce; if they don't, the
+difference is the transport, not the design.
+
+**Ground truth costs nothing:** each archived run records its own per-target
+outcomes, so a sheet where every target succeeded should triage `all_fine`, and
+one with failures should be `some_suspect` naming those targets.
+
+**The two sides are scored differently, and conflating them would be
+dishonest:**
+
+| side | what a wrong answer costs | metric |
+|---|---|---|
+| good sheet | one wasted per-target look — triage is a router, so this is **not** a false reject | escalation cost (extra panels requested per sheet) |
+| bad sheet | the failed panel is **never looked at again** | recall over the failed targets |
+
+Sample counts are reported beside every rate. A rate without its count is not a
+measurement (docs/47's accuracy-ledger discipline, and R11's reason).
+
+### 18.4 Deferred, deliberately (user decision)
+
+§17's other two open items are **parked, not forgotten**:
+
+* stamping `env` / `root_kind` / `root_rev` on every verdict (§17 B3);
+* blocking `load_data_id` on the agent path (§17.6) — the key that makes a node
+  replay archived data instead of measuring. Nothing sets it today; the risk
+  arrives with P4, which is where it must be fixed.
+
+Both keep their §17 owners. Neither is a prerequisite for the two-stage work.
