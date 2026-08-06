@@ -82,3 +82,70 @@ survives, bare numbers stay text, non-numeric text still works, a numeric
 extras value still edits as a number).
 
 Verified on the reporting chip: 2 warnings → 0, `03` stored as `"03"`.
+
+---
+
+# Band-edge headroom: SM's guideline, said as one
+
+*Same session, same root cause in a different place: SM stating an opinion
+with more force than it has evidence for.*
+
+## The report
+
+A lab retuned a real LO because of this:
+
+> LO (upconverter_frequency) 7.48 GHz sits only 20 MHz from the band 2 edge
+> [4.5, 7.5] GHz; band 3 ([6.5, 10.5] GHz) would place it 980 MHz from its
+> nearest edge. The bands partially overlap, so this LO works in band 2;
+> placing the coupled pair (this port + in1) in band 3 would leave more
+> headroom from the band edge (a more comfortable LO range margin — this does
+> not guarantee better signal quality). Optional, not required. Note: …
+
+Then they asked the right question: **is that in the QM documentation?**
+
+It is not. The official guide (`Guides/opx1000_fems.md`) states the bands, that
+they "partially overlap to provide greater flexibility in frequency
+allocation", the settable range per band, and one binary rule:
+
+> Values outside the band's specified range will not meet the performance
+> specification.
+
+7.48 GHz is inside band 2, so by the official specification it is simply in
+spec. A search of the whole docs repo for band-edge / edge-of-band /
+centre-of-band guidance returns **nothing**. The 50 MHz margin was SM's own
+number, and no QM document asks for headroom at all.
+
+## What was wrong with how we said it
+
+The finding already carried `advisory=True` and its own text already said
+"Optional, not required". Two things drowned that out:
+
+* **The badge counted it.** `summarize()` correctly kept advisories out of the
+  `warning` tier, but the badge leads with `total` — and `total` included
+  them. The number a user actually reads said "⚠ 7 issues".
+* **The message buried the point.** 489 characters, four hedging clauses, with
+  the word "Optional" at the very end.
+
+## What changed
+
+* `BAND_EDGE_MARGIN_HZ` 50 MHz → **5 MHz**. The reported LO (20 MHz of margin,
+  comfortably in spec) is now silent; only an LO practically sitting on the
+  boundary is mentioned.
+* `summarize()` gains **`issues`** = error + warning + info. The four badge
+  headlines use it, so an optional recommendation never inflates the count a
+  user reads. `total` keeps its meaning for other callers, and the Diagnostics
+  page's "No structural issues found" still keys on `total` — with a
+  recommendation present, claiming nothing was found would be a lie.
+* The message is **210 characters**: the two margins, that it is optional and
+  in spec, and the coupled-mate consequence when there is one.
+
+Deliberately NOT done: adding "this is SM's own guideline, not a QM
+requirement" to the message. It is accurate but it makes a short message long
+again, and a recommendation that no longer shouts does not need the disclaimer.
+
+## Pins
+
+`tests/test_diagnostics_tier2.py::TestBandEdge` — the reported 20 MHz LO is
+silent, a 2 MHz LO still recommends, and the message stays under 260
+characters with "Optional" in it. The existing coupled-mate feasibility cases
+moved to 7.498 GHz so they still exercise the gate at the new threshold.
