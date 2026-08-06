@@ -1787,3 +1787,51 @@ measurement (docs/47's accuracy-ledger discipline, and R11's reason).
   arrives with P4, which is where it must be fixed.
 
 Both keep their §17 owners. Neither is a prerequisite for the two-stage work.
+
+### 18.5 Stage-1 pilot result (2026-08-07) — 16 real figures, real Sonnet
+
+16 fresh-context Sonnet judges, each handed the byte-identical
+`build_triage_bundle` payload plus one real archived sheet, forbidden from
+reading the run's `node.json` / `data.json` / stored fits. Ground truth = the
+node's own per-target outcomes. Cases spread over two families, three chips and
+five months.
+
+| family | good sheets | clean | extra looks/sheet | bad sheets | flagged | panel recall |
+|---|---:|---:|---:|---:|---:|---:|
+| qubit_spectroscopy | 4 | 50% (2/4) | 1.25 | 4 | 100% | **100%** (8/8) |
+| power_rabi | 4 | 75% (3/4) | 1.25 | 4 | 100% | **89%** (8/9) |
+
+**The side that matters passes.** Every sheet containing a node-failed target
+was flagged, and 16 of 17 failed panels were named. The one miss (`qC5`, c14) is
+not categorical — the same judge named `qC5` correctly in c07.
+
+**The escalations look like signal, not noise.** On c00 — nine qubits, all
+node-accepted — Sonnet flagged q4, q5, q7, q8. Two neighbouring runs on the SAME
+chip the SAME day are in the bad set: c04 (node failed q7) and c05 (node failed
+q4, q7). The "false" escalations land on exactly the qubits that chip was
+struggling with, which that particular run's threshold happened to pass. Read as
+marginal panels being noticed, not invented.
+
+This is why the router framing earns its keep: **none of the above is a false
+reject.** c00 costs four extra per-panel looks, which the signature ask then
+adjudicates on single-panel pictures. At 1.25 extra calls per clean sheet, a
+9-qubit chip stays far inside the 40-call plan budget — the affordability
+argument for two-stage looking survives contact with data.
+
+**Caveats, on the record:**
+
+* n = 16, two families. A pilot. Every rate is printed with its count.
+* Ground truth is the node's own verdict, and a node can fail a target for
+  reasons the picture cannot show (a fit that failed to converge on data that
+  looks fine). A "miss" is therefore sometimes "not visible", not "not seen".
+* This measures **Sonnet + our prompt + our pack** — the part we authored and
+  the part most likely to be wrong. The same case set re-runs against the real
+  API when a key exists; a difference then is transport, not design.
+
+**Method note (a mistake worth keeping).** The first attempt was scored against
+hand-transcribed figure paths and pointed at the wrong runs; it surfaced only
+because one path happened not to exist and the judge said so. Had all sixteen
+wrong paths existed, confident numbers would have been computed against
+mismatched ground truth. The case file is now the single source for both the
+run arguments and the scorer, so the two cannot disagree — the same discipline
+§15 applies to bands, applied to the experiment itself.
