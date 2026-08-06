@@ -836,3 +836,177 @@ PYTHONUTF8=1 conda run -n <env-new> python -m pytest tests/ -q \
    `x180_DragCosine`, and flux writes are routed by `qubit.z.flux_point`.
 3. **§4.5b / R6** — the coupler families can never be numerically scored;
    signature and `outcomes` only.
+
+---
+
+## 13. P0 implementation record (2026-08-06) — SHIPPED
+
+Branch `feat/runner-p0-foundation`. Everything below was measured on the real
+archives; where a plan claim turned out incomplete it is corrected here rather
+than edited above, so the reasoning history stays readable.
+
+### 13.1 What shipped
+
+| module | role |
+|---|---|
+| `generator/run_quam_load_probe.py` | env-side: can THIS interpreter `Quam.load` THIS run's state? Reports the missing module explicitly |
+| `core/autofit/envmatrix.py` | classified compatibility probe + `choose_context`; version+content-keyed cache |
+| `core/autofit/sourceroot.py` | **new axis** — read-only `git archive` materialization of a pinned analysis-tree revision |
+| `core/autofit/corpus.py` | archive index → per-family observed parameter ranges (D-5) + sweep steps (tier-B input) |
+| `core/autofit/figure_gen.py` + `generator/run_figure_gen.py` | lab-faithful figure regeneration, per-target panels, wrong-fit injection seam |
+| `core/fit_audit.py` | `FAMILIES` 2 → 9, unit-aware drift text, honest missing-value verdict |
+| `generator/run_fit_audit.py` | pair-shaped runs, folder-name fallback, `run_params` unwrap, byte-coord `.sel` |
+| `tests/test_runner_p0.py` | 60+ synthetic pins for all of the above |
+
+### 13.2 D-13 CORRECTED — compatibility is a TRIPLE, not a pair
+
+The plan modelled it as **env × state generation**. Measured reality adds a
+third axis: **the analysis tree's own revision**.
+
+While P0 was being built, the source-of-truth tree's working copy gained a
+`quam_config` import requiring quam ≥ 0.6. From that moment the older env could
+not import `quam_config` from the LIVE tree *at all* — so every pre-0.6-era
+archive (including the only coupler-flux data) became unreplayable, even though
+nothing about those runs had changed. A **pinned revision of the same tree**
+replays them bit-identically.
+
+> **Binding: a verification context is (env, source root, run generation).**
+> Every verdict records all three (`env`, `root_kind`/`root_rev`,
+> `lib_versions`, `gate_hash`).
+
+`sourceroot.py` owns the root axis. It uses `git archive` — no checkout, no
+worktree registration, no index write — so the customer tree is never modified
+(pinned by a test that snapshots the tree's entries before and after).
+`candidates()` returns the live root (flagged `dirty` when it differs from
+HEAD) followed by pinned revisions; `envmatrix.choose_context` probes
+(env × root) in preference order.
+
+**The generation split is bidirectional** (this too was not in the plan):
+
+| run era | quam 0.5-era env | quam 0.6-era env |
+|---|---|---|
+| 2026-03 / 05 | ✅ (with a pinned tree) | ✗ `duration_control`→`duration_qubit`, unknown `grid_location`/`isolation` |
+| 2026-07 | ✗ `Attribute isolation is not a valid attr` | ✅ |
+
+**No single env covers the corpus.** Env selection is mandatory, not a nicety.
+
+### 13.3 Classification buckets (envmatrix)
+
+`ok` · `generation_mismatch` · **`tree_incompatible`** · `no_quam` ·
+`no_quam_config` · `state_unreadable` · `error`.
+
+Two rules learned the hard way:
+
+* **Classify on the probe's `missing_module`, never on the traceback text.**
+  The traceback always renders the source line `from quam_config import Quam`,
+  so text-sniffing labelled *every* import failure `no_quam_config` and made
+  `no_quam` unreachable.
+* A **dotted** miss inside an installed package (`quam.components._waveform_tools`)
+  is `tree_incompatible` — the tree wants a newer library than the env ships.
+  Calling that "no quam" would send the user to reinstall what they already have.
+
+Only deterministic buckets are cached; transient failures stay retryable. The
+cache key is `env | env-versions | state-generation | quam_config-tree-hash` —
+**the interpreter itself is in the key** because `quam_config` is not a probed
+package, so equal versions do not imply equal loadability (`fit_audit`'s own
+long-standing doctrine, which P0 initially failed to follow).
+
+### 13.4 D-14 EXTENDED — target vocabularies differ per family
+
+The plan said update targets must be run-derived. Measured: **the two coupler
+families report different names for the same slot.**
+
+| family | fit_results keyed by | cube coord | pair |
+|---|---|---|---|
+| `07 resonator_spectroscopy_vs_coupler_flux` | **pair** (`q0-1`) | pair | `q0-1` |
+| `10 qubit_spectroscopy_vs_coupler_flux` | **measured qubit** (`q3`) | qubit | `q0-3` |
+
+So a figure request must resolve a target against **all three** vocabularies
+(pair name, cube label, measured-qubit name) — assuming one is how a judge ends
+up grading another qubit's panel (R7).
+
+Additionally, node 10's plotter draws on a **pair grid** and indexes the data by
+pair name, while older archives of that same node stored the measured-qubit
+name. `run_figure_gen._relabel_qubit` bridges exactly that (the same rename a
+newer node performs at acquisition), and is a no-op when the archive already
+uses pair names.
+
+Pair identity itself always comes from the run's own record
+(`data.parameters.model["qubit_pairs"]`, cross-checked against
+`data.outcomes`) — never inferred from the machine: a qubit belongs to several
+pairs (`q0 ∈ q0-1` and `q0-3`), and guessing mis-sizes the cube
+(`AlignmentError: conflicting dimension sizes {1, 2}`).
+
+### 13.5 Corpus (D-5 / tier-B input) — measured
+
+2,841 runs indexed across the archives; 638 in the 9 scoped families.
+
+| family | runs | median sweep step | observed `num_shots` |
+|---|---|---|---|
+| resonator_spectroscopy | 89 | freq 100 kHz | 10 – 1000 |
+| resonator_spectroscopy_vs_power | 54 | freq 100 kHz · power 0.45 dB | 50 – 200 |
+| resonator_spectroscopy_vs_flux | 26 | freq 100 kHz · flux 50 mV | 3 – 100 |
+| resonator_spectroscopy_vs_coupler_flux | 11 | freq 100 kHz · flux 40 mV | 3 – 1000 |
+| qubit_spectroscopy | 115 | freq 250 kHz | 87 – 500 |
+| qubit_spectroscopy_vs_power | 21 | freq 250 kHz · power 0.92 dB | 10 – 100 |
+| qubit_spectroscopy_vs_flux | 77 | freq 500 kHz · flux 10 mV | 10 – 300 |
+| qubit_spectroscopy_vs_coupler_flux | 12 | freq 1 MHz · flux 30 mV | 10 – 100 |
+| power_rabi | 233 | amp prefactor 0.005 | 1 – 200 |
+
+Confirming D-5's warning: observed values leave the schema defaults far behind
+(`num_shots` 3 vs a default of 100; flux ±2.5 V vs ±0.5 V). **Bounds must come
+from the corpus, never from defaults.**
+
+The flux vocabulary is not uniform either — three shapes exist
+(`min/max_flux_offset_in_v`, `min_flux/max_flux`, a centered
+`flux_offset_span_in_v`), so the step rule tries each. An axis a family's rule
+cannot derive is reported with `n: 0` rather than dropped: a missing row would
+read as "no grid" instead of "unknown".
+
+The archive walk is **depth-bounded recursive**, not two-level: real archives
+also nest as `root/<chip>/<date>/#N` (the reason the sidebar tree v2 exists,
+docs/68), and a fixed two-level walk indexes such a root to a silent zero.
+
+### 13.6 Invariants added by the adversarial review
+
+A 5-lens review with per-finding adversarial verification confirmed 19 defects
+in the P0 diff; all are fixed and pinned. The ones that changed a *contract*:
+
+* **A missing comparable value is `unverifiable`, never `agrees`.** With 9
+  families, a cross-generation field rename (archive `sweet_spot_frequency`,
+  today's fitter `resonator_frequency`) made both sides claim success with no
+  number to compare — and the old fall-through returned the strongest verdict on
+  evidence we did not have, silencing exactly the drift the auditor exists to
+  find.
+* **A wrong-fit injection that cannot be applied RAISES.** Silently skipping it
+  (misspelled variable, renamed field) hands the harness a pristine figure
+  labelled "manufactured wrong fit" — the D-7 leniency number would then be
+  measuring nothing. Overrides are also filtered to the panel being drawn, so a
+  multi-target manufacture run no longer loses every figure.
+* **One parameter unwrap** (`run_fit_audit.run_params`) shared by the replay,
+  figure and corpus paths; a private copy would drift and the agent's bound
+  table would describe values the fitter never saw.
+* Failure envelopes carry every documented key (callers must not `KeyError` on
+  the failure path); figure filenames include `fit_source` (a fidelity check
+  regenerates the same run both ways); byte coord labels are honoured on
+  NetCDF-classic archives.
+
+### 13.7 Exit criterion
+
+`for every family, ≥5 real runs replay AND regenerate a per-target figure,
+under an automatically chosen (env, root)` — met. Under a single fixed env the
+same sweep reaches only 20/45, which is the measurement that forced §13.2.
+
+Fidelity spot-check: the same-generation qubit-spec anchor still replays
+**bit-identically** (`5715387535.868236`) through every change in this batch,
+and regenerated figures were compared side-by-side against the archived PNGs.
+
+### 13.8 Open items carried into P1+
+
+* The live tree is **actively edited** and its `quam_config` is moving to
+  quam 0.6 only (confirmed intentional). Old-generation archives therefore
+  depend on pinned revisions indefinitely; `migrate_state_to_quam06.py` exists
+  in the tree and is the candidate steady-state alternative (would need the
+  bit-identical invariant re-proven after migration).
+* `gate_hash` churns while the tree is edited — verdicts must always be read
+  together with their `root_rev`/`root_kind`.

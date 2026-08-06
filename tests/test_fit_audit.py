@@ -25,14 +25,27 @@ from quam_state_manager.generator import run_fit_audit as ENG
     ("1Q_08_qubit_spectroscopy", "qubit_spectroscopy"),
     ("1Q_08_qubit_spectroscopy_new", "qubit_spectroscopy"),   # alias
     ("08_qubit_spectroscopy_new", "qubit_spectroscopy"),
+    # docs/78 P0c — the 9 x180-chain families
+    ("03_resonator_spectroscopy_single", "resonator_spectroscopy"),      # alias
+    ("1Q_03_resonator_spectroscopy_single_v2", "resonator_spectroscopy"),
+    ("06_resonator_spectroscopy_vs_flux", "resonator_spectroscopy_vs_flux"),
+    ("07_resonator_spectroscopy_vs_coupler_flux",
+     "resonator_spectroscopy_vs_coupler_flux"),
+    ("08b_qubit_spectroscopy_vs_power", "qubit_spectroscopy_vs_power"),
+    ("1Q_09_qubit_spectroscopy_vs_flux", "qubit_spectroscopy_vs_flux"),
+    ("10_qubit_spectroscopy_vs_coupler_flux",
+     "qubit_spectroscopy_vs_coupler_flux"),
+    ("1Q_11_power_rabi", "power_rabi"),
 ])
 def test_family_for_registered(node_name, expected):
     assert FA.family_for(node_name) == expected
 
 
 @pytest.mark.parametrize("node_name", [
-    "2Q_24_Bell_State_Tomography", "1Q_09_qubit_spectroscopy_vs_flux",
+    "2Q_24_Bell_State_Tomography",
     "1Q_28_Qubit_Spectroscopy_E_to_F", "", "random_thing",
+    "29_power_rabi_ef",            # EF family — deliberately NOT power_rabi
+    "02_resonator_spectroscopy_wide_pyloop",   # wide util — out of the 9-scope
 ])
 def test_family_for_unregistered_is_none(node_name):
     assert FA.family_for(node_name) is None
