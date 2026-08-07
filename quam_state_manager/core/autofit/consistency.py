@@ -42,42 +42,57 @@ class CrossCheck:
     why: str = ""
 
 
-# Curated from the corpus: the keys ≥2 of the nine families genuinely claim for
-# the SAME physical quantity on the SAME target.
+# CORPUS-CALIBRATED (docs/78 §20). The candidate list came from harvesting which
+# keys ≥2 families claim; the surviving list, and the factor, came from
+# MEASURING how much the lab's own gate-passing runs disagree. Adjacent runs
+# (≤5 run ids apart, i.e. the same chip state), fits that pass OUR gates, per
+# pair, in units of the reported linewidth:
+#
+#   pair      n    p50    p90    p99   ⇒ verdict
+#   03-05    47  0.108  0.368    4.6   keep
+#   03-06    86  0.072  0.791   13.2   keep  (06 reports at the sweet spot)
+#   08-08b   84  0.120  0.561   57.1   DROP — see below
+#   08-09    62  0.288   46.7     97   DROP
+#   06f-09f   3  0.019   1.47   1.47   DROP — 3 samples cannot calibrate anything
+#
+# The first design used 2.0 for everything and produced a **37.5%
+# false-contradiction rate** on real accepted pairs. That is the P2 lesson for
+# the third time: a threshold written from physical intuition, however sound the
+# reasoning, is a hypothesis until the lab's data has answered it.
 CROSS_CHECKS: tuple[CrossCheck, ...] = (
     CrossCheck(
         quantity="resonator frequency",
         sources=(("resonator_spectroscopy", "frequency"),
                  ("resonator_spectroscopy_vs_power", "resonator_frequency"),
                  ("resonator_spectroscopy_vs_flux", "resonator_frequency")),
-        scale_keys=("fwhm",), scale_factor=2.0,
-        why="three nodes measure this resonator; two answers differing by more "
-            "than a couple of linewidths means one of them fitted the wrong "
-            "feature, and each looks fine on its own"),
-    CrossCheck(
-        quantity="qubit frequency",
-        sources=(("qubit_spectroscopy", "frequency"),
-                 ("qubit_spectroscopy_vs_power", "frequency"),
-                 ("qubit_spectroscopy_vs_flux", "qubit_frequency")),
-        scale_keys=("fwhm",), scale_factor=2.0,
-        why="the power sweep and the flux map must agree with the plain "
-            "spectroscopy at the same bias, or the chain built on it is wrong"),
-    CrossCheck(
-        quantity="flux sweet spot",
-        sources=(("resonator_spectroscopy_vs_flux", "idle_offset"),
-                 ("qubit_spectroscopy_vs_flux", "idle_offset")),
-        scale_keys=("flux_step", "dv_phi0"), scale_factor=0.1,
-        fallback_rel=0.05,
-        why="the resonator map and the qubit map look at the SAME flux line; "
-            "if they disagree on where the sweet spot is, one of them tracked "
-            "the wrong ridge — the classic pair that is each self-consistent "
-            "and mutually impossible"),
-    # deliberately NOT cross-checked, and the reason is the point:
-    #   frequency_shift  — 06 is qubit flux, 07 is coupler flux: different
-    #                      knobs, so a difference is expected, not a fault
-    #   optimal_power    — 05 and 08b optimise DIFFERENT lines (readout vs
-    #                      drive); agreement would be the surprise
+        scale_keys=("fwhm",), scale_factor=20.0, fallback_rel=0.01,
+        why="three nodes measure this resonator. 20 linewidths is far wider "
+            "than these nodes ever disagree on real gate-passing data (p99 = "
+            "13.2) and far narrower than the spacing between neighbouring "
+            "resonators — so it catches 'one of them fitted the WRONG "
+            "resonator', which is the failure each run hides on its own"),
 )
+
+# DROPPED, and the measurement is the reason — recording it so nobody re-adds
+# them from the same intuition that put them here:
+#
+#   qubit frequency (08 / 08b / 09) — usable only at 86-146 linewidths
+#     (340-580 MHz on a 4 MHz line), which is WIDER than the spacing to a
+#     neighbouring qubit line. A check that cannot catch the error it exists
+#     for is not a loose check, it is not a check.
+#     08-vs-09 additionally compares the frequency at the CURRENT bias with the
+#     frequency at the SWEET SPOT — different quantities by construction, which
+#     is the whole purpose of node 09.
+#
+#   flux sweet spot (06 / 09) — the one this module was designed around, the
+#     "each internally consistent and mutually impossible" pair. Only THREE
+#     gate-passing pairs exist in the entire corpus. Three samples cannot
+#     calibrate a threshold, and shipping one anyway would be exactly the
+#     invented number this module refuses elsewhere. It returns when there is
+#     data (docs/78 §20.3).
+#
+#   frequency_shift — 06 is qubit flux, 07 is coupler flux: different knobs.
+#   optimal_power   — 05 and 08b optimise different lines (readout vs drive).
 
 
 @dataclass

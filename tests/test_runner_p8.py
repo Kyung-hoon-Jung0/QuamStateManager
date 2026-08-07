@@ -74,13 +74,54 @@ class TestCompareToHuman:
         assert out["matches_human"] is None and out["changed"] == []
 
 
+class TestRunsSaved:
+    """docs/78 §20.4 — the metric that IS computable offline. Re-measuring a
+    chip from an archive is impossible, so "did the proposal work?" cannot be
+    answered; "the operator only reached this k+n runs later" can."""
+
+    POINTS = R.build_points("s1", SESSION, "qA1")
+
+    def test_proposing_the_eventual_winner_early_scores_the_saving(self):
+        """The operator averaged only at step 4 after widening three times.
+        An agent that proposes it at step 1 saved those runs."""
+        p = self.POINTS[0]                       # k=1, three runs still to go
+        out = R.runs_saved(p, {"num_shots": 400}, p.future)
+        assert out and out["runs_saved"] == 2 and out["matched_at"] == 3
+
+    def test_doing_what_the_operator_did_next_saves_nothing(self):
+        p = self.POINTS[0]
+        out = R.runs_saved(p, {"frequency_span_in_mhz": 80}, p.future)
+        assert out and out["runs_saved"] == 0
+        assert "no time saved" in out["note"]
+
+    def test_the_same_decision_counts_even_at_a_different_number(self):
+        """Demanding equality would score a correct call as a miss because the
+        agent said 78 where the operator typed 80."""
+        p = self.POINTS[0]
+        assert R.runs_saved(p, {"frequency_span_in_mhz": 78}, p.future)
+
+    def test_a_proposal_the_operator_never_made_is_unscoreable_not_wrong(self):
+        """It may have been better or nonsense — the archive cannot say, so the
+        harness says so rather than guessing."""
+        p = self.POINTS[0]
+        assert R.runs_saved(p, {"frequency_span_in_mhz": 3.3}, p.future) is None
+
+    def test_an_empty_proposal_scores_nothing(self):
+        p = self.POINTS[0]
+        assert R.runs_saved(p, {}, p.future) is None
+        assert R.runs_saved(p, None, p.future) is None
+
+
 class TestScore:
     POINTS = R.build_points("s1", SESSION, "qA1")
 
-    def test_without_measured_outcomes_it_refuses_to_claim_the_metric(self):
+    def test_without_measured_outcomes_it_offers_the_offline_metric(self):
+        """No re-measurement is possible from an archive, so `measured` stays 0
+        — but `runs_saved` still answers the real question."""
         out = R.score(self.POINTS, {("s1", 1): {"num_shots": 400}})
         assert out["measured"] == 0
-        assert "agreement measures the wrong thing" in out["caveat"]
+        assert "NOT the metric" in out["caveat"]
+        assert out["early_moves"] == 1 and out["runs_saved"] == 2
 
     def test_skipping_a_dead_end_scores_BETTER_than_reproducing_it(self):
         """The reference case: the operator burned three attempts widening

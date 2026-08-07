@@ -1989,3 +1989,135 @@ someone points this at an instrument.
 * P6b is minimal by decision: the board carries `vision`/`panel`, and no new
   screen was built — browser verification is not something this session could do
   honestly.
+
+---
+
+## 20. Empirical validation of P6c and P8 (2026-08-07)
+
+User: *"우리는 데이터가 꽤 풍부하게 있잖아 — 최대한 실증해보자."* Both were
+built from physical reasoning and neither had been measured. Measuring them
+changed one substantially and stopped the other.
+
+### 20.1 P6c: a 37.5% false-contradiction rate
+
+First measurement: pair every cross-checked family within a session on the same
+qubit, keep only fits the NODE accepted, and run the review.
+
+> **80 comparisons → 30 contradictions → 37.5% false alarm.**
+
+An alarm that fires on more than a third of good pairs is not a loose alarm; it
+is noise with an authoritative voice. The design used `2.0 × linewidth`
+everywhere — physically well-reasoned (a Lorentzian's frequency uncertainty
+scales with its own linewidth) and simply wrong as a number.
+
+**This is the P2 lesson for the third time.** A threshold written from physical
+intuition is a *hypothesis* until the lab's data has answered it, no matter how
+sound the reasoning behind it.
+
+### 20.2 What the breakdown showed
+
+Splitting by family pair, restricting to ADJACENT runs (≤5 run ids apart — the
+same chip state), and keeping only fits that pass OUR gates rather than the
+node's looser bar:
+
+| pair | n | p50 | p90 | p99 | usable factor |
+|---|---:|---:|---:|---:|---:|
+| 03–05 resonator | 47 | 0.108 | 0.368 | **4.6** | 7 |
+| 03–06 resonator | 86 | 0.072 | 0.791 | **13.2** | 20 |
+| 08–08b qubit | 84 | 0.120 | 0.561 | **57.1** | 86 |
+| 08–09 qubit | 62 | 0.288 | 46.7 | **97** | 146 |
+| 06f–09f flux | **3** | — | — | — | — |
+
+Three conclusions, none of which were guessable:
+
+1. **The resonator check survives** at 20 linewidths, and that is still a real
+   check: neighbouring resonators sit ~50 linewidths apart, so it catches "this
+   node fitted the WRONG resonator" — the failure each run hides on its own.
+2. **The qubit checks do not.** Usable only at 86–146 linewidths (340–580 MHz on
+   a 4 MHz line), which is *wider than the spacing to a neighbouring qubit
+   line*. A check that cannot catch the error it exists for is not a loose
+   check — it is not a check. Dropped. (08-vs-09 additionally compares the
+   frequency at the CURRENT bias against the frequency at the SWEET SPOT, which
+   are different quantities by construction: that is what node 09 is for.)
+3. **The flux check — the one this module was designed around** — has exactly
+   **three** gate-passing pairs in the entire corpus. Three samples cannot
+   calibrate a threshold. Shipping one anyway would be precisely the invented
+   number the module refuses everywhere else. Dropped, with a test that exists
+   to keep the gap visible (`test_the_flux_sweet_spot_case_is_NOT_covered…`,
+   which says to delete it when the data arrives).
+
+Also learned: the ORDER of investigation mattered. The first hypothesis — "these
+are different physical quantities, so of course they differ" — was wrong;
+03-vs-06 (current bias vs sweet spot) has the TIGHTEST median of all (0.072).
+The second — "my pairing spans chip retunes" — was also wrong; the tail survives
+at run-id adjacency. What actually removed it was applying OUR gates: much of
+the tail was fits the node waved through and ours reject.
+
+**Result: 0 false contradictions in 133 gate-passing adjacent pairs**, and the
+dropped pairs do exceed the threshold (08–09 in 7 cases), so the drop decision
+is itself data-confirmed.
+
+### 20.3 P6c is now much smaller than designed, and that is the honest outcome
+
+One quantity, three sources, one factor. It answers exactly one question — *do
+two nodes agree about which resonator this is?* — and answers it with a number
+the lab's own data chose. Everything else waits for evidence.
+
+### 20.4 P8: the offline metric, implemented
+
+`runs_saved()` closes the gap named in §19.6. Re-measuring a chip from an
+archive is impossible, so "did the agent's proposal work?" is unanswerable —
+but this is not:
+
+> the agent proposed at step *k* what the operator only reached at *k+n*
+> ⇒ **n runs saved**
+
+Pure archive arithmetic: no re-measurement, no hardware, no key. Matching is by
+DECISION, not by number (within 25%): demanding equality would score a correct
+call as a miss because the agent said 78 where the operator typed 80. A proposal
+the operator never made returns `None` — unscoreable, not wrong, because the
+archive genuinely cannot say whether it was better or nonsense.
+
+### 20.5 P8: and then the measurement said stop
+
+Before scoring an agent, measure what it is competing against. Across five
+archives and five families:
+
+| | |
+|---|---|
+| recovery sequences (a target that failed, then later passed) | **14** |
+| decision points in all of them | **19** |
+| targets that ever needed a retry | 12–15% |
+| runs still needed from the first failure | **median 1**, p90 3, max 3 |
+| sequences needing more than one run | **3 of 14 (21%)** |
+| parameter changes observed between failures | **1** (a `num_shots`) |
+
+**The corpus does not contain the experiment P8 was designed to run.** These
+operators almost never tune-and-retry; 79% of recoveries take a single run and
+essentially nothing is adjusted in between. docs/56 §6V case C — three
+drive-power attempts and a day lost before densifying the grid — is a
+*documented incident*, not the typical pattern in what we hold.
+
+So the harness ships tested and unused. Running a scoring campaign on 19 points
+with one observed knob change would produce a number with no statistical
+meaning, which is worse than no number: it would be quoted. What would make P8
+real, in order of cost: (a) the specific archives where operators genuinely
+iterated, (b) sessions captured from here on with the loop running, (c) the sim
+— where recovery sequences can be manufactured, though then the agent is being
+scored against our own adaptation ladders rather than against a human, which is
+a different experiment and should not be reported as this one.
+
+### 20.6 What this session's measurements have now overturned
+
+| what | written from | what the data said |
+|---|---|---|
+| `r2 ≥ 0.75` (qubit spec) | intuition | rejects 12/34 fits the node accepted |
+| prefactor ∈ [0.5, 2.0] | intuition | rejects 4/55 accepted |
+| jump limits | intuition | 37 accepted moves exceeded them |
+| P6c `2.0 × linewidth` | physical reasoning | 37.5% false contradictions |
+| P8's premise | a documented incident | 19 decision points exist, total |
+
+Five for five. The pattern is not that the reasoning was careless — the flux
+tolerance argument in §19.4 is still *correct physics*. It is that a threshold
+is a claim about a particular lab's data, and the only thing that settles a
+claim about data is the data.

@@ -29,6 +29,7 @@ class DecisionPoint:
     family: str
     target: str
     seen: list[dict] = field(default_factory=list)     # the first k runs
+    future: list[dict] = field(default_factory=list)   # the operator's rest
     human_next: dict | None = None      # what the operator actually ran next
     human_runs_to_success: int | None = None   # from HERE to their first pass
     resolved_at: int | None = None      # index of the human's first pass
@@ -63,7 +64,7 @@ def build_points(session: str, runs: list[dict], target: str, *,
         out.append(DecisionPoint(
             session=session, index=k,
             family=family or str(runs[k - 1].get("family") or ""),
-            target=target, seen=runs[:k],
+            target=target, seen=runs[:k], future=runs[k:],
             human_next=(runs[k].get("parameters") if k < len(runs) else None),
             human_runs_to_success=first_ok - k + 1,
             resolved_at=first_ok))
@@ -110,6 +111,53 @@ def compare_to_human(point: DecisionPoint, proposal: dict | None) -> dict:
             "note": f"{len(agree)}/{len(changed)} knobs moved the same way"}
 
 
+def runs_saved(point: DecisionPoint, proposal: dict | None,
+               future: list[dict], *, rel_tol: float = 0.25) -> dict | None:
+    """**The metric that IS computable offline** (docs/78 §20.4).
+
+    Re-measuring a chip from an archive is impossible, so "did the agent's
+    proposal work?" cannot be answered directly. But this can:
+
+        the agent proposed at step k what the operator only reached at k+n
+        ⇒ n runs saved.
+
+    Pure archive arithmetic — no re-measurement, no hardware, no key. It scores
+    exactly the thing that matters (fewer runs to the same conclusion) instead
+    of agreement, which is the baseline's opinion of itself.
+
+    ``future`` = the runs AFTER this point, oldest first (i.e. the operator's
+    remaining path). Returns ``None`` when the proposal never matches anything
+    the operator went on to do — which is not a failure, just unscoreable this
+    way: it may have been better or nonsense, and we say so rather than guess.
+    """
+    prop = {k: _num(v) for k, v in (proposal or {}).items()}
+    prop = {k: v for k, v in prop.items() if v is not None}
+    if not prop:
+        return None
+    for n, run in enumerate(future, start=1):
+        params = run.get("parameters") or {}
+        shared = [k for k in prop if _num(params.get(k)) is not None]
+        if not shared:
+            continue
+        if all(_close(prop[k], _num(params[k]), rel_tol) for k in shared):
+            return {"matched_at": n, "runs_saved": n - 1,
+                    "on": sorted(shared),
+                    "note": (f"the operator reached these values {n} run(s) "
+                             f"later" if n > 1 else
+                             "the operator did this next — no time saved")}
+    return None
+
+
+def _close(a: float, b: float, rel: float) -> bool:
+    """Same DECISION, not the same number: a proposal within a quarter of the
+    operator's value is the same move. Demanding equality would score a correct
+    call as a miss because the agent said 78 where the human typed 80."""
+    if a == b:
+        return True
+    scale = max(abs(a), abs(b))
+    return scale > 0 and abs(a - b) / scale <= rel
+
+
 def score(points: list[DecisionPoint], proposals: dict,
           outcomes: dict | None = None) -> dict:
     """Aggregate. ``proposals`` = ``{(session, index): params}``.
@@ -120,12 +168,20 @@ def score(points: list[DecisionPoint], proposals: dict,
     agreement, which measures the wrong thing.
     """
     rows, faster, slower, same = [], 0, 0, 0
+    saved_total, saved_n = 0, 0
     for p in points:
         prop = proposals.get((p.session, p.index))
         cmp_ = compare_to_human(p, prop)
         got = (outcomes or {}).get((p.session, p.index))
+        # the offline metric: did the agent propose early what the operator
+        # only reached later? `p.seen` is everything up to k, so the operator's
+        # remaining path is what the session held after it.
+        saved = runs_saved(p, prop, p.future) if p.future else None
+        if saved:
+            saved_total += saved["runs_saved"]
+            saved_n += 1
         row = {**p.as_dict(), "proposed": prop, "comparison": cmp_,
-               "agent_runs_to_success": got}
+               "agent_runs_to_success": got, "early_move": saved}
         if got is not None and p.human_runs_to_success is not None:
             if got < p.human_runs_to_success:
                 faster += 1
@@ -140,13 +196,18 @@ def score(points: list[DecisionPoint], proposals: dict,
         "n_answered": sum(1 for r in rows if r["proposed"]),
         "measured": measured,
         "faster": faster, "same": same, "slower": slower,
+        # the offline metric — computable from the archive alone
+        "early_moves": saved_n,
+        "runs_saved": saved_total,
+        "runs_saved_mean": (round(saved_total / saved_n, 2) if saved_n else None),
         "agreement_rate": _rate([r["comparison"].get("matches_human")
                                  for r in rows]),
         "rows": rows,
         "caveat": ("agreement with the operator is NOT the metric — a human "
                    "who burned three attempts is the baseline, not the ground "
-                   "truth. Without measured outcomes only agreement is "
-                   "reported, and agreement measures the wrong thing."
+                   "truth. `runs_saved` is the offline stand-in: what the "
+                   "agent proposed at step k that the operator only reached "
+                   "later."
                    if not measured else
                    "measured against runs-to-success, which is the metric"),
     }

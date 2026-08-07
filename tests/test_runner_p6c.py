@@ -30,22 +30,57 @@ class TestRegistry:
             keys = {k for _f, k in check.sources}
             assert "frequency_shift" not in keys
 
+    def test_the_factor_is_corpus_calibrated(self):
+        """docs/78 §20. The first design used 2.0 everywhere and produced a
+        37.5% false-contradiction rate on real accepted pairs. 20 is p99=13.2
+        (measured over 133 gate-passing adjacent pairs) with margin, and yields
+        ZERO false contradictions on that population."""
+        rc = next(c for c in C.CROSS_CHECKS
+                  if c.quantity == "resonator frequency")
+        assert rc.scale_factor == 20.0
+
+    def test_the_uncalibratable_checks_stayed_out(self):
+        """A check usable only at 86-146 linewidths is WIDER than the spacing
+        to a neighbouring line — it cannot catch the error it exists for. And
+        the flux cross-check, the one this module was designed around, has
+        exactly THREE gate-passing pairs in the whole corpus: three samples
+        cannot calibrate a threshold, and shipping one anyway would be the
+        invented number this module refuses everywhere else."""
+        pairs = {(f, k) for c in C.CROSS_CHECKS for f, k in c.sources}
+        assert not any(f.startswith("qubit_spectroscopy") for f, _k in pairs)
+        assert ("resonator_spectroscopy_vs_flux", "idle_offset") not in pairs
+
 
 class TestReconcile:
     def test_the_mutually_impossible_pair_is_caught(self):
-        """The case no per-run gate and no judge can see: two clean fits, two
-        different flux sweet spots for the SAME flux line."""
+        """The case no per-run gate and no judge can see: two clean fits on the
+        same qubit naming resonators 100 MHz apart — 50 linewidths, i.e. one of
+        them fitted a NEIGHBOURING resonator. Each figure looks fine alone."""
         rep = C.reconcile({
-            ("resonator_spectroscopy_vs_flux", "qA1"):
-                {"idle_offset": 0.08, "dv_phi0": 1.0},
-            ("qubit_spectroscopy_vs_flux", "qA1"):
-                {"idle_offset": -0.30, "dv_phi0": 1.0},
+            ("resonator_spectroscopy", "qA1"): {"frequency": 7.200e9,
+                                                "fwhm": 2e6},
+            ("resonator_spectroscopy_vs_power", "qA1"):
+                {"resonator_frequency": 7.300e9, "fwhm": 2e6},
         })
         assert len(rep.findings) == 1
         f = rep.findings[0]
-        assert f.quantity == "flux sweet spot" and f.target == "qA1"
-        assert set(f.values) == {"resonator_spectroscopy_vs_flux",
-                                 "qubit_spectroscopy_vs_flux"}
+        assert f.quantity == "resonator frequency" and f.target == "qA1"
+        assert set(f.values) == {"resonator_spectroscopy",
+                                 "resonator_spectroscopy_vs_power"}
+
+    def test_the_flux_sweet_spot_case_is_NOT_covered_and_that_is_deliberate(self):
+        """The case this module was designed around — 06 and 09 disagreeing
+        about the same flux line — is currently NOT checked, because the corpus
+        holds exactly THREE gate-passing pairs to calibrate against (docs/78
+        §20.3). Shipping a threshold on three samples would be the invented
+        number this module refuses everywhere else. This test exists so the gap
+        is visible rather than forgotten: DELETE it when the data arrives."""
+        rep = C.reconcile({
+            ("resonator_spectroscopy_vs_flux", "qA1"): {"idle_offset": 0.08,
+                                                        "dv_phi0": 1.0},
+            ("qubit_spectroscopy_vs_flux", "qA1"): {"idle_offset": -0.30,
+                                                    "dv_phi0": 1.0}})
+        assert rep.compared == 0 and rep.findings == []
 
     def test_agreement_within_the_reported_scale_is_not_a_finding(self):
         rep = C.reconcile({
@@ -118,10 +153,11 @@ class TestSummary:
 
     def test_a_finding_explains_itself(self):
         rep = C.reconcile({
-            ("resonator_spectroscopy_vs_flux", "qA1"): {"idle_offset": 0.08,
-                                                        "dv_phi0": 1.0},
-            ("qubit_spectroscopy_vs_flux", "qA1"): {"idle_offset": -0.30,
-                                                    "dv_phi0": 1.0}})
+            ("resonator_spectroscopy", "qA1"): {"frequency": 7.200e9,
+                                                "fwhm": 2e6},
+            ("resonator_spectroscopy_vs_power", "qA1"):
+                {"resonator_frequency": 7.300e9, "fwhm": 2e6}})
         text = C.summarize(rep)
-        assert "qA1" in text and "flux sweet spot" in text
-        assert "same flux line" in text.lower() or "SAME flux line" in text
+        assert "qA1" in text and "resonator frequency" in text
+        assert "WRONG" in text or "wrong" in text     # names the failure mode
+        assert "fwhm" in text                         # names the scale used
