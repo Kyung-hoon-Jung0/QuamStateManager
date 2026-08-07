@@ -39,6 +39,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import warnings
 from collections import OrderedDict
 from contextlib import contextmanager
 from pathlib import Path
@@ -73,6 +74,29 @@ _MAX_RAW_ELEMENTS = 50_000_000
 
 # Entity dims: the qubit/pair selectors — never plotted on an axis.
 _ENTITY_DIM_NAMES = frozenset({"qubit", "qubit_pair", "pair", "spec_qubit"})
+# Repetition ("shot") dims: an index over IDENTICAL repeats of the same
+# measurement. Its ordering carries no physics — shot 7 is not "after" shot 6
+# in any sense the plot can show — so it is the WRONG default x-axis, and it is
+# usually the biggest dim in the file, which is exactly how the size-ordered
+# default used to pick it (a readout_power_optimization run plotted I against
+# n_runs=2000 instead of against amp_prefactor=10).
+#
+# A handful of ~50 node types in the real archive save one at all: the
+# single-shot nodes (readout_power_optimization, iq_blobs, iq_blobs_gef,
+# confusion_matrix) and the two-qubit RB family — every other node averages on
+# the OPX and ships the average. Names below are the ones those nodes emit
+# (n_runs 1836×, average/repeat 41× each, shots 30×, n 4×) plus the obvious
+# spellings of the same QUA loop variable.
+#
+# The line is IDENTICAL repeats vs DISTINCT realizations: nothing tells shot 7
+# from shot 6, so averaging them loses nothing — whereas `sequence`,
+# `sequence_index` and `nb_of_sequences` index different circuits (an RB random
+# sequence, an all_xy gate pair), and those stay plottable.
+_SHOT_DIM_NAMES = frozenset({
+    "n_runs", "n_shots", "n_avg", "n_averages", "n",
+    "shot", "shots", "average", "averages", "repeat", "repeats", "repetition",
+    "repetitions",
+})
 # A cat dim this small defaults to overlaid curves instead of a slider.
 _OVERLAY_MAX = 4
 # netCDF placeholder NAME attr on dimension scales that carry no real coord.
@@ -502,20 +526,27 @@ def probe_file(h5_path: Path) -> dict:
 
 def _classify_dim(name: str, size: int, coord: np.ndarray | None,
                   has_coord: bool) -> str:
-    """'entity' | 'cat' | 'sweep' | 'synthetic' — name/dtype-based, never positional."""
+    """'entity' | 'cat' | 'shot' | 'sweep' | 'synthetic' — name/dtype-based,
+    never positional."""
     if name in _ENTITY_DIM_NAMES:
         return "entity"
     if coord is not None and coord.dtype == object:      # string coords
         return "entity" if size > _OVERLAY_MAX else "cat"
+    if name in _SHOT_DIM_NAMES:
+        return "shot"
     if not has_coord or coord is None:
         return "synthetic"
     return "sweep"
 
 
 def _default_view(dims: list[dict]) -> dict:
-    """Assign roles: entity→selector, small dims→overlay, sweeps→x/y/sliders."""
-    view: dict = {"x": None, "y": None, "entity": None, "overlay": [], "sliders": {}}
+    """Assign roles: entity→selector, small dims→overlay, sweeps→x/y/sliders,
+    repetition dims→averaged away (``reduced``)."""
+    view: dict = {"x": None, "y": None, "entity": None, "overlay": [],
+                  "sliders": {}, "reduced": []}
     sweeps: list[dict] = []
+    shots: list[dict] = []
+    small_sweeps: list[dict] = []      # sweeps diverted to overlay — reclaimable
     for d in dims:
         if d["size"] == 1:
             continue   # squeezed client-side
@@ -528,19 +559,69 @@ def _default_view(dims: list[dict]) -> dict:
                 view["overlay"].append(d["name"])
             else:
                 view["sliders"][d["name"]] = 0
+        elif kind == "shot":
+            # Never an overlay and never a slider: 2,000 identical repeats are
+            # 2,000 indistinguishable curves / 2,000 selector chips.
+            shots.append(d)
         elif kind in ("sweep", "synthetic"):
             if d["size"] <= _OVERLAY_MAX and len(view["overlay"]) < 2:
                 view["overlay"].append(d["name"])
+                small_sweeps.append(d)
             else:
                 sweeps.append(d)
     sweeps.sort(key=lambda d: d["size"], reverse=True)
+    shots.sort(key=lambda d: d["size"], reverse=True)
+    if not sweeps and shots:
+        if small_sweeps:
+            # A real quantity that was only diverted to overlay because it is
+            # short still beats a shot index as the x-axis.
+            best = max(small_sweeps, key=lambda z: z["size"])
+            view["overlay"].remove(best["name"])
+            sweeps = [best]
+        else:
+            # Nothing to plot the repeats AGAINST — then the repeats ARE the
+            # view. This is the iq_blobs case (Ig(qubit, n_runs)): the per-shot
+            # scatter is the whole point of the node, so averaging it away
+            # would leave an empty plot. (In the real archive this is the ONLY
+            # way a shot axis reaches x: of 502 such cubes, none had any other
+            # plottable dim.) The largest repetition dim becomes x; any others
+            # still average.
+            sweeps = [shots.pop(0)]
     if sweeps:
         view["x"] = sweeps[0]["name"]
     if len(sweeps) >= 2:
         view["y"] = sweeps[1]["name"]
     for extra in sweeps[2:]:
         view["sliders"][extra["name"]] = 0
+    view["reduced"] = [{"name": d["name"], "size": d["size"], "op": "mean"}
+                       for d in shots]
     return view
+
+
+def _reduce_dims(data: np.ndarray, dims: list[dict],
+                 names: list[str]) -> tuple[np.ndarray, list[dict]]:
+    """Average ``data`` over the named dims and drop them from ``dims``.
+
+    Repetition axes are averaged rather than sliced because the mean over
+    identical repeats is precisely what the other ~47 node types already ship
+    (they average on the OPX and never save the shot axis) — so the default
+    view of a single-shot node matches the default view of every other node.
+    Showing shot #0 instead would be one noisy trace of a 2,000-shot average.
+    """
+    axes = tuple(i for i, d in enumerate(dims) if d["name"] in names)
+    if not axes or len(axes) >= data.ndim:
+        return data, dims                       # nothing to do / would 0-d it
+    return _mean_over(data, axes), [d for i, d in enumerate(dims)
+                                    if i not in axes]
+
+
+def _mean_over(arr: np.ndarray, axes: tuple[int, ...]) -> np.ndarray:
+    """``nanmean`` over ``axes``, quietly. An all-NaN repeat set is a real (if
+    unhappy) run: the mean is NaN, which ``_nan_to_none_list`` already ships as
+    null — not a warning worth raising."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        return np.nanmean(arr, axis=axes)
 
 
 def _iq_partner(name: str, all_names: set[str]) -> str | None:
@@ -850,8 +931,18 @@ def _build_cube_uncached(h5_path: Path, var: str, *,
             all_names = set(r.keys())
             partner = _iq_partner(var, all_names)
 
-            # Decimation to budget — sweep dims only, largest first.
+            # Repetition axes are averaged away BEFORE anything is budgeted —
+            # a 2,000-shot axis is 2,000× the payload of the view it produces.
             view = _default_view(dims)
+            reduce_names = [r["name"] for r in view["reduced"]]
+            if reduce_names:
+                reduce_axes = tuple(i for i, d in enumerate(dims)
+                                    if d["name"] in reduce_names)
+                data, dims = _reduce_dims(data, dims, reduce_names)
+            else:
+                reduce_axes = ()
+
+            # Decimation to budget — sweep dims only, largest first.
             total = int(np.prod(data.shape)) if data.ndim else 1
             kept: dict[str, list[int]] = {}
             if total > element_budget:
@@ -881,13 +972,20 @@ def _build_cube_uncached(h5_path: Path, var: str, *,
                                 partner_data = np.abs(partner_data)
                             if partner_data.dtype.kind not in ("f",):
                                 partner_data = None
+                            elif reduce_axes:
+                                # The shape check above is against the FILE's
+                                # dims (both siblings are still un-reduced
+                                # here) — average the partner over the same
+                                # axes or the pair walks out of lockstep.
+                                partner_data = _mean_over(partner_data,
+                                                          reduce_axes)
                     except Exception:   # noqa: BLE001 — partner unreadable → solo
                         partner_data = None
                 order = sorted(range(len(dims)), key=lambda i: dims[i]["size"],
                                reverse=True)
                 for axis in order:
                     d = dims[axis]
-                    if d["kind"] not in ("sweep", "synthetic"):
+                    if d["kind"] not in ("sweep", "synthetic", "shot"):
                         continue
                     is_heat_axis = d["name"] in (view["x"], view["y"]) and view["y"]
                     budget = _HEATMAP_AXIS_BUDGET if is_heat_axis else _LINE_POINT_BUDGET

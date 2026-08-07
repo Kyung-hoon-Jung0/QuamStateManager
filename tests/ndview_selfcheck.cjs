@@ -11,8 +11,9 @@
  * handler attached inside the render promise, run-switch generation guard,
  * /field/peek dot_path= param, esc("'")==="&#39;", data-raw attr escaping,
  * candidate dim-name axis resolution (swapped x/y), default_view null guard,
- * unknown-transform skip, Interactive-tab chip-identity token, and the
- * non-blocking amplitude/offset domain warning in the apply popup.
+ * unknown-transform skip, Interactive-tab chip-identity token, the
+ * averaged-repeat-axis disclosure (docs/82), and the non-blocking
+ * amplitude/offset domain warning in the apply popup.
  *
  * Run: NODE_PATH=<node_modules> node tests/ndview_selfcheck.cjs
  * (driven by tests/test_ndview_client.py)
@@ -180,6 +181,29 @@ async function main() {
        '2-sweep cube renders a heatmap');
     ok(JSON.stringify(plots[0].data[0].z[0]) === JSON.stringify([1, 2, 3, 4]),
        'heatmap z rows extracted correctly');
+
+    /* ══ 2b. averaged-repeat note (docs/82) ════════════════════════════ */
+    // The server averages shot axes away before shipping the cube. The plot
+    // then shows a MEAN, not one of the shots — never silently.
+    feedCube({
+        ok: true, var: 'Imean', dtype: 'float64', units: 'V', long_name: null,
+        dims: [{ name: 'amp_prefactor', size: 3, kind: 'sweep', coord: [0.1, 0.5, 0.9],
+                 units: null, decimated: false }],
+        data: [1, 2, 3], kept: null, aux_axes: [], iq_partner: null,
+        default_view: { x: 'amp_prefactor', y: null, entity: null, overlay: [],
+                        sliders: {}, reduced: [{ name: 'n_runs', size: 2000, op: 'mean' }] },
+    });
+    plots.length = 0;
+    card.setAttribute('data-var', 'Imean');
+    card.click();
+    await sleep(30);
+    const redCtl = document.getElementById('ndv-controls');
+    ok(!redCtl.hidden && redCtl.textContent.indexOf('averaged over n_runs') !== -1,
+       'reduced repeat axis is disclosed: ' + JSON.stringify(redCtl.textContent.trim()));
+    ok(redCtl.textContent.indexOf('2,000 shots') !== -1,
+       'the note names how many shots went into the mean');
+    ok(redCtl.querySelectorAll('.ndv-chip[data-dim]').length === 0,
+       'an averaged axis leaves NO selector chips (2,000 chips would gut the DOM)');
 
     /* ══ 3. classified fallback + esc("'") entity ═══════════════════════ */
     feedCube({ ok: false, error: "synthetic failure — it's broken",
