@@ -812,11 +812,20 @@ class TestExport:
 
 
 class TestDiffRedirect:
-    """Legacy /diff → Compare hub (docs/49 P4). The 2-way diff surface is
-    the hub's bucket ① now; these pin the translation contract."""
+    """Legacy /diff → Compare hub (docs/49 P4), amended by docs/84.
 
-    def test_diff_get_redirects_to_hub(self, loaded_client):
+    A BARE ``/diff`` is the diff workbench now — that is the front door users
+    asked for. What still translates to the hub is the legacy grammar: the old
+    form POST, and any GET carrying the hub's own query params (those are the
+    URLs that were ever bookmarked)."""
+
+    def test_bare_diff_get_is_the_workbench(self, loaded_client):
         resp = loaded_client.get("/diff")
+        assert resp.status_code == 200
+        assert b'id="diff-root"' in resp.data
+
+    def test_hub_shaped_diff_get_still_redirects(self, loaded_client, synth_folder):
+        resp = loaded_client.get(f"/diff?src=ws:{synth_folder}")
         assert resp.status_code == 302
         assert resp.headers["Location"].startswith("/compare-hub")
 
@@ -845,10 +854,12 @@ class TestDiffRedirect:
         assert resp.status_code == 302
         assert resp.headers["Location"] == "/compare-hub?from=diff"
 
-    def test_diff_gone_from_sidebar(self, client):
+    def test_the_sidebar_compare_entry_opens_the_diff(self, client):
+        """docs/84 moved the front door: Compare opens the diff workbench and
+        the hub sits behind its "Advanced…" link."""
         html = client.get("/").data.decode()
-        assert 'href="/diff"' not in html
-        assert 'href="/compare-hub"' in html
+        assert 'href="/diff"' in html
+        assert 'href="/chip-compare"' not in html
 
     def test_nav_sync_script_loaded(self, client):
         html = client.get("/").data.decode()
