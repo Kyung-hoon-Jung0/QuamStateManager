@@ -545,6 +545,71 @@ def stats(conn: sqlite3.Connection) -> dict:
                 "truncated": False, "version": None}
 
 
+def changes_by_snapshot(conn: sqlite3.Connection, *, limit_snaps: int = 20,
+                        rows_per_snap: int = 25, prefix: str | None = None,
+                        before_ts: str | None = None,
+                        at_ts: str | None = None) -> list[dict]:
+    """The feed, paged by SNAPSHOT rather than by row.
+
+    A change point never happens alone: a run writes a handful of parameters at
+    once, and a regenerate rewrites thousands (2,716 measured on a real chip).
+    Paging by row would spend a whole page on one such snapshot and hide every
+    other; paging by snapshot always shows the last N *events*, each with its
+    true count and the first ``rows_per_snap`` of its rows. ``at_ts`` opens one
+    snapshot in full.
+    """
+    where = [f"l.kind IN ({KIND_NUM}, {KIND_PTR_NUM})"]
+    params: list[Any] = []
+    if prefix:
+        where.append("p.path LIKE ? ESCAPE '\\'")
+        params.append(prefix.replace("%", r"\%").replace("_", r"\_") + "%")
+    if at_ts:
+        where.append("s.ts = ?")
+        params.append(at_ts)
+    elif before_ts:
+        where.append("s.ts < ?")
+        params.append(before_ts)
+    cond = " AND ".join(where)
+
+    snaps = conn.execute(
+        "SELECT s.id, s.ts, s.trigger, s.run_id, s.experiment, s.folder, "
+        "       COUNT(*) AS n "
+        "  FROM leaf_cp l "
+        "  JOIN leaf_paths p ON p.id = l.path_id "
+        "  JOIN leaf_snaps s ON s.id = l.snap_id "
+        f" WHERE {cond} "
+        " GROUP BY s.id ORDER BY s.id DESC LIMIT ?",
+        params + [int(limit_snaps)]).fetchall()
+
+    out: list[dict] = []
+    for sid, ts, trigger, run_id, experiment, folder, n in snaps:
+        rows = conn.execute(
+            "SELECT p.path, l.value, l.path_id "
+            "  FROM leaf_cp l JOIN leaf_paths p ON p.id = l.path_id "
+            f" WHERE l.snap_id = ? AND l.kind IN ({KIND_NUM}, {KIND_PTR_NUM})"
+            + (" AND p.path LIKE ? ESCAPE '\\'" if prefix else "")
+            + " ORDER BY p.path LIMIT ?",
+            ([sid] + ([prefix.replace("%", r"\%").replace("_", r"\_") + "%"]
+                      if prefix else []) + [int(rows_per_snap)])).fetchall()
+        items = []
+        for path, value, pid in rows:
+            prev = conn.execute(
+                "SELECT value, kind FROM leaf_cp WHERE path_id=? AND snap_id<? "
+                "ORDER BY snap_id DESC LIMIT 1", (pid, sid)).fetchone()
+            items.append({
+                "path": path, "value": value,
+                "previous": (prev[0] if prev and prev[1] in (KIND_NUM, KIND_PTR_NUM)
+                             else None),
+                "is_first": prev is None,
+            })
+        out.append({
+            "timestamp": ts, "trigger": trigger, "run_id": run_id,
+            "experiment": experiment, "experiment_folder_path": folder,
+            "total": n, "shown": len(items), "rows": items,
+        })
+    return out
+
+
 def recent_changes(conn: sqlite3.Connection, *, limit: int = 200,
                    prefix: str | None = None,
                    before_ts: str | None = None) -> list[dict]:

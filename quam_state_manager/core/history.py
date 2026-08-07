@@ -2877,7 +2877,7 @@ class HistoryManager:
     def leaf_changes(self, quam_state_path: str | Path, *, limit: int = 200,
                      prefix: str | None = None,
                      before_ts: str | None = None) -> list[dict]:
-        """The "what changed" feed — newest change points first."""
+        """The "what changed" feed as a flat row list — newest first."""
         try:
             self._ensure_leaf_index_fresh(Path(quam_state_path))
             conn = self._open_index(Path(quam_state_path))
@@ -2886,6 +2886,26 @@ class HistoryManager:
         try:
             return leaf_index.recent_changes(
                 conn, limit=limit, prefix=prefix, before_ts=before_ts)
+        except sqlite3.Error:
+            return []
+        finally:
+            conn.close()
+
+    def leaf_change_groups(self, quam_state_path: str | Path, *,
+                           limit_snaps: int = 20, rows_per_snap: int = 25,
+                           prefix: str | None = None,
+                           before_ts: str | None = None,
+                           at_ts: str | None = None) -> list[dict]:
+        """The feed paged by SNAPSHOT — the shape the UI shows."""
+        try:
+            self._ensure_leaf_index_fresh(Path(quam_state_path))
+            conn = self._open_index(Path(quam_state_path))
+        except sqlite3.Error:
+            return []
+        try:
+            return leaf_index.changes_by_snapshot(
+                conn, limit_snaps=limit_snaps, rows_per_snap=rows_per_snap,
+                prefix=prefix, before_ts=before_ts, at_ts=at_ts)
         except sqlite3.Error:
             return []
         finally:

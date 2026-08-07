@@ -1,0 +1,160 @@
+{# "What changed" — every numeric parameter's change points, newest first
+   (docs/83). The curated dashboard answers "how has T1 drifted"; this answers
+   the question users arrive with: "what did that run change?".
+
+   Grouped by snapshot, because a change point never happens alone — a run
+   writes a handful of parameters at once, and reading them together is what
+   makes the feed mean something. #}
+{% from '_delta_macros.html' import delta_chip %}
+
+<div id="param-history-root" class="param-history">
+  <div class="param-history-header">
+    <h2 style="margin:0">Param History{% if project_scope %} <span class="scope-suffix">— {{ project_scope }}</span>{% endif %}</h2>
+    <p class="muted" style="margin:0">
+      Every numeric parameter in <code>state.json</code> and <code>wiring.json</code> —
+      {{ '{:,}'.format(stats.paths) }} of them — with the moment each one changed.
+    </p>
+  </div>
+
+  <div class="ph-tabs">
+    <button type="button" class="ph-tab" hx-get="/param-history"
+            hx-target="#param-history-root" hx-swap="outerHTML"
+            hx-push-url="true">Trends</button>
+    <button type="button" class="ph-tab active" aria-current="page">Changes</button>
+  </div>
+
+  <form class="ph-changes-bar" hx-get="/param-history/changes"
+        hx-target="#param-history-root" hx-swap="outerHTML"
+        hx-trigger="submit, keyup changed delay:400ms from:find input[name=prefix]">
+    <span class="tree-search-icon">&#128269;</span>
+    <input type="text" name="prefix" class="tree-search" value="{{ prefix }}"
+           placeholder="Filter by path — e.g. qubits.qA1 or ports"
+           autocomplete="off" list="ph-param-paths">
+    <datalist id="ph-param-paths"></datalist>
+    {% if prefix %}
+    <button type="button" class="btn-sm outline"
+            hx-get="/param-history/changes" hx-target="#param-history-root"
+            hx-swap="outerHTML">Clear</button>
+    {% endif %}
+    <span class="muted ph-changes-stat">
+      {{ '{:,}'.format(stats.rows) }} recorded changes over
+      {{ '{:,}'.format(stats.snapshots) }} snapshot{{ '' if stats.snapshots == 1 else 's' }}
+      {%- if stats.dirty %} &middot; index rebuilding&hellip;{% endif %}
+    </span>
+  </form>
+
+  {% if not groups %}
+    <p class="ph-changes-empty muted">
+      {% if prefix %}
+        No parameter matching <code>{{ prefix }}</code> has changed.
+      {% elif stats.snapshots == 0 %}
+        No snapshots yet — Param History records one on every save, edit and
+        experiment run.
+      {% else %}
+        Nothing has changed across {{ '{:,}'.format(stats.snapshots) }} snapshots.
+      {% endif %}
+    </p>
+  {% else %}
+  <div class="ph-changes">
+    {% for g in groups %}
+    <div class="ph-change-group">
+      <div class="ph-change-head">
+        <span class="ph-change-when">{{ g.when }}</span>
+        {% if g.trigger %}<span class="history-trigger-badge history-trigger-{{ g.trigger }}">{{ g.trigger }}</span>{% endif %}
+        {% if g.experiment %}
+          <span class="ph-change-exp" title="{{ g.experiment }}">{% if g.run_id is not none %}#{{ g.run_id }} {% endif %}{{ g.experiment }}</span>
+        {% endif %}
+        {% if g.uid %}
+        <button type="button" class="btn-xs outline"
+                hx-get="/dataset/{{ g.uid }}" hx-target="#inspector-pane"
+                hx-swap="innerHTML" title="Open the run that made these changes">Data</button>
+        {% endif %}
+        <span class="muted ph-change-count">{{ '{:,}'.format(g.total) }} parameter{{ '' if g.total == 1 else 's' }}</span>
+      </div>
+      <table class="ph-change-table">
+        <tbody>
+        {% for r in g.rows %}
+          <tr>
+            <td class="ph-change-path">
+              <button type="button" class="ph-path-btn"
+                      hx-get="/field/history?path={{ r.path | urlencode }}"
+                      hx-target="#inspector-pane" hx-swap="innerHTML"
+                      title="Open this parameter's full timeline">{{ r.path }}</button>
+            </td>
+            <td class="ph-change-old">
+              {%- if r.is_first -%}<span class="muted">first recorded</span>
+              {%- elif r.previous is none -%}<span class="muted">&mdash;</span>
+              {%- else -%}<code>{{ r.previous | groupdigits }}</code>{%- endif -%}
+            </td>
+            <td class="ph-change-arrow">&rarr;</td>
+            <td class="ph-change-new"><code>{{ r.value | groupdigits }}</code></td>
+            <td class="ph-change-delta">{{ delta_chip(r.previous, r.value) }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% if g.total > g.shown %}
+      <div class="ph-change-rest">
+        <button type="button" class="btn-xs outline"
+                hx-get="/param-history/changes?at={{ g.timestamp }}{% if prefix %}&amp;prefix={{ prefix | urlencode }}{% endif %}"
+                hx-target="#param-history-root" hx-swap="outerHTML">
+          Show all {{ '{:,}'.format(g.total) }} from this snapshot</button>
+        <span class="muted">&hellip; and {{ '{:,}'.format(g.total - g.shown) }} more</span>
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if at_ts %}
+  <div class="ph-changes-more">
+    <button type="button" class="btn-sm outline"
+            hx-get="/param-history/changes{% if prefix %}?prefix={{ prefix | urlencode }}{% endif %}"
+            hx-target="#param-history-root" hx-swap="outerHTML">
+      &larr; Back to all changes</button>
+  </div>
+  {% elif has_more %}
+  <div class="ph-changes-more">
+    <button type="button" class="btn-sm outline"
+            hx-get="/param-history/changes?before={{ oldest_ts }}{% if prefix %}&amp;prefix={{ prefix | urlencode }}{% endif %}"
+            hx-target="#param-history-root" hx-swap="outerHTML">
+      Load older changes</button>
+  </div>
+  {% endif %}
+  {% endif %}
+</div>
+
+<script>
+(function () {
+    // Typeahead over the indexed paths: 8,000 of them is not a dropdown, so
+    // the datalist is filled from the server as the user types. A failure here
+    // is silent — the filter box still works as plain text.
+    var input = document.querySelector('#param-history-root input[name=prefix]');
+    var list = document.getElementById('ph-param-paths');
+    if (!input || !list || input._phBound) return;
+    input._phBound = true;
+    var timer = null;
+    input.addEventListener('input', function () {
+        var q = input.value.trim();
+        if (timer) clearTimeout(timer);
+        if (q.length < 2) { list.innerHTML = ''; return; }
+        timer = setTimeout(function () {
+            fetch('/param-history/param-search?q=' + encodeURIComponent(q))
+                .then(function (r) { return r.ok ? r.json() : null; })
+                .then(function (d) {
+                    if (!d || !d.results) return;
+                    var html = '';
+                    for (var i = 0; i < d.results.length; i++) {
+                        var h = d.results[i];
+                        var opt = document.createElement('option');
+                        opt.value = h.path;
+                        opt.label = h.changes + (h.changes === 1 ? ' change' : ' changes');
+                        html += opt.outerHTML;
+                    }
+                    list.innerHTML = html;
+                })
+                .catch(function () {});
+        }, 250);
+    });
+})();
+</script>

@@ -12953,6 +12953,76 @@ def param_history():
     )
 
 
+_CHANGES_SNAPS = 20        # snapshots per page — the feed's unit is the EVENT
+_CHANGES_ROWS = 25         # rows shown per snapshot before "and N more"
+_CHANGES_ROWS_AT = 2000    # one snapshot opened in full
+
+
+@bp.route("/param-history/changes")
+def param_history_changes():
+    """"What changed" — every numeric parameter's change points, newest first.
+
+    The curated dashboard answers "how has T1 drifted"; this answers the
+    question a user actually arrives with — "what did that run change?" — over
+    ALL ~8,000 numeric parameters, which only became affordable once they were
+    stored as change points (docs/83).
+
+    Paged by SNAPSHOT, not by row: a regenerate rewrites thousands of
+    parameters at once (2,716 measured on a real chip) and a row-paged feed
+    would spend the whole page on it and hide every other event.
+    """
+    store = _store()
+    if not store:
+        return render_template("_empty_state.html", page="parameter history")
+    hm = _history()
+    path = Path(_active_path())
+    prefix = (request.args.get("prefix") or "").strip()
+    before = (request.args.get("before") or "").strip() or None
+    at = (request.args.get("at") or "").strip() or None
+    try:
+        groups = hm.leaf_change_groups(
+            path, limit_snaps=1 if at else _CHANGES_SNAPS + 1,
+            rows_per_snap=_CHANGES_ROWS_AT if at else _CHANGES_ROWS,
+            prefix=prefix or None, before_ts=before, at_ts=at)
+    except Exception as exc:      # noqa: BLE001 — never 500 the menu
+        logger.warning("param-history changes failed: %s", exc, exc_info=True)
+        groups = []
+    has_more = (not at) and len(groups) > _CHANGES_SNAPS
+    groups = groups[:1 if at else _CHANGES_SNAPS]
+
+    roots = _uid_roots()
+    for g in groups:
+        ts = g.get("timestamp") or ""
+        g["when"] = (f"{ts[0:4]}-{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}"
+                     if len(ts) >= 13 else ts)
+        g["uid"] = _uid_for_run_ref(g.get("experiment_folder_path"),
+                                    g.get("run_id"), roots)
+
+    stats = hm.leaf_stats(path)
+    oldest = groups[-1]["timestamp"] if groups else None
+    template = ("_param_history_changes.html" if _is_htmx()
+                else "param_history_changes.html")
+    return render_template(
+        template, **_ctx(page="param_history", groups=groups, stats=stats,
+                         prefix=prefix, has_more=has_more, oldest_ts=oldest,
+                         at_ts=at))
+
+
+@bp.route("/param-history/param-search")
+def param_history_param_search():
+    """Typeahead over every indexed parameter path (docs/83). 8,000 paths is
+    not a dropdown — this is how a user finds the one they mean."""
+    if not _store():
+        return jsonify(ok=False, results=[]), 400
+    q = (request.args.get("q") or "").strip()
+    try:
+        hits = _history().leaf_search(Path(_active_path()), q, limit=30)
+    except Exception:      # noqa: BLE001
+        logger.debug("param search failed", exc_info=True)
+        hits = []
+    return jsonify(ok=True, results=hits)
+
+
 def _pending_decisions_for(loaded_path: Path) -> list[dict[str, Any]]:
     """Return the list of pending chip-decision prompts from the last backfill."""
     key = str(Path(loaded_path).resolve())
