@@ -72,15 +72,28 @@ def generate(run_folder, *, family: str, env: str | None = None,
     """
     from quam_state_manager.core.fit_audit import FAMILIES
 
+    # what the CALLER asked for, kept separate from what was actually used:
+    # on the no-compatible-env path `source_root` is rebound to None, and a
+    # context built from that would report "the env's installed analysis" —
+    # naming an analysis that never ran (docs/78 §17 B3: the stamp exists to
+    # stop exactly this kind of confident blank).
+    requested_root = source_root
+
     def _fail(stage, trace, *, env=None, probes=None, source_root=None,
               root_kind=None, root_rev=None):
         """Every return carries the SAME keys — a caller reading `source_root`
         or `lib_versions` must not KeyError on the failure path."""
+        from quam_state_manager.core.autofit import verification
+
         return {"ok": False, "figures": [], "errors": [{"stage": stage,
                                                         "trace": trace}],
                 "env": env, "probes": probes or [], "source_root": source_root,
                 "root_kind": root_kind, "root_rev": root_rev,
                 "lib_versions": {}, "gate_hash": None,
+                "context": verification.for_lab_replay(
+                    env=env, source_root=source_root or requested_root,
+                    root_kind=root_kind or (None if env is None else "installed"),
+                    root_rev=root_rev, run_folder=run_folder).as_dict(),
                 "fit_source": fit_source, "out_dir": str(out_dir) if out_dir else None}
 
     spec = FIGSPEC.get(family)
@@ -114,15 +127,23 @@ def generate(run_folder, *, family: str, env: str | None = None,
         Path(out_dir).mkdir(parents=True, exist_ok=True)
     envelope = _spawn(env, run_folder, spec, fam["util"], source_root,
                       targets, fit_source, override_fit, out_dir, timeout)
+    from quam_state_manager.core.autofit import verification
+
     figures = envelope.get("figures") or []
     errors = envelope.get("errors") or []
-    return {"ok": bool(figures) and not errors, "figures": figures,
-            "errors": errors, "env": env, "probes": probes,
-            "source_root": source_root, "root_kind": root_kind,
-            "root_rev": root_rev,
-            "lib_versions": envelope.get("lib_versions") or {},
-            "gate_hash": envelope.get("gate_hash"),
-            "fit_source": fit_source, "out_dir": str(out_dir)}
+    out = {"ok": bool(figures) and not errors, "figures": figures,
+           "errors": errors, "env": env, "probes": probes,
+           "source_root": source_root, "root_kind": root_kind,
+           "root_rev": root_rev,
+           "lib_versions": envelope.get("lib_versions") or {},
+           "gate_hash": envelope.get("gate_hash"),
+           "fit_source": fit_source, "out_dir": str(out_dir)}
+    # the same shape fit_audit and the engine stamp (docs/78 §17 B3) — this
+    # path already carried all four axes, so here it is only a re-expression;
+    # having ONE dict is what lets a reader compare across the three.
+    out["context"] = verification.from_figure_gen(
+        out, run_folder=run_folder).as_dict()
+    return out
 
 
 def _spawn(env, run_folder, spec, util, source_root, targets, fit_source,

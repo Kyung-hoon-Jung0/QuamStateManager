@@ -541,6 +541,33 @@ _register(Family(
                  # is resolved by scanning tighter and finer around the parked
                  # amplitude, never by editing the fitted number.
                  "wrong_peak": _rabi_narrow_window},
+    # docs/78 §17.6 — the family had NO wide verification, and the obvious
+    # generalization ("span x 4", as the four spectroscopy families use) is
+    # REFUTED by the corpus (230 real runs, 899 accepted prefactors):
+    #
+    #  * power_rabi is TWO experiments, not one with different settings. The
+    #    survey mode runs 1 pulse over the full prefactor window (103 of 122
+    #    coarse runs use exactly [0.001, 1.99], step 0.005); the
+    #    error-amplification mode runs 20-160 pulses over a window whose
+    #    median width is 0.3. Pulse count and window width are anti-correlated
+    #    and physically coupled — N pulses alias unless the range stays inside
+    #    roughly 1/N of a Rabi period about 1.0.
+    #  * so widening the NARROW window x4 is wrong twice over: it still stops
+    #    at [0.6, 1.6] (short of the survey range that accepted optima span,
+    #    0.0024-2.366) AND it keeps the high pulse count, where that range
+    #    folds. It would not survey; it would alias.
+    #
+    # The honest broad survey here is the lab's OWN survey mode — and it is
+    # exactly the measurement that separates a true pi amplitude from a locked
+    # harmonic, because a full single-pulse Rabi curve shows the whole
+    # oscillation. `num_shots` is deliberately NOT pinned: whatever averaging
+    # the ladder climbed to is kept (more shots never weakens a confirmation).
+    verify_wide={"survey_params": {"max_number_pulses_per_sweep": 1,
+                                   "min_amp_factor": 0.001,
+                                   "max_amp_factor": 1.99,
+                                   "amp_factor_step": 0.005},
+                 "note": "full single-pulse Rabi survey about the newly "
+                         "parked amplitude — a harmonic lock cannot survive it"},
 ))
 
 _register(Family(

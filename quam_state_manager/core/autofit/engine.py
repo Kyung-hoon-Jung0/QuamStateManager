@@ -38,7 +38,8 @@ from typing import Any, Callable, Protocol
 from quam_state_manager.core import safe_io
 from quam_state_manager.core.autofit import families as fam_mod
 from quam_state_manager.core.autofit import gates as gates_mod
-from quam_state_manager.core.autofit import consistency, notify, power_rows, stoploss
+from quam_state_manager.core.autofit import (consistency, notify, power_rows,
+                                             stoploss, verification)
 from quam_state_manager.core.autofit import auditor as auditor_mod
 from quam_state_manager.core.autofit.auditor import Auditor, build_bundle
 from quam_state_manager.core.autofit.plan import Plan, Step
@@ -202,6 +203,9 @@ class PlanEngine:
         # cross-experiment review (P6c) is the only thing that reads across
         # runs, so this is the only place the whole night is in one dict.
         self._fits: dict[tuple[str, str], dict] = {}
+        # the verification context each accepted fit was obtained under, so the
+        # review can refuse to compare two that were not (docs/78 §17 B3)
+        self._fit_contexts: dict[tuple[str, str], dict | None] = {}
         # (step_id, target) → {"patches": [...]}: a value DISCOVERED on a
         # retry after window-class failures, pending wide verification
         self._discoveries: dict[tuple[str, str], dict] = {}
@@ -338,7 +342,8 @@ class PlanEngine:
             # each internally consistent and mutually impossible is invisible
             # until the results are laid side by side.
             try:
-                rep = consistency.reconcile(self._fits)
+                rep = consistency.reconcile(self._fits,
+                                            contexts=self._fit_contexts)
                 self._ledger("consistency_review", **rep.as_dict())
                 with self._lock:
                     self.state["consistency"] = rep.as_dict()
@@ -523,9 +528,18 @@ class PlanEngine:
         vw = getattr(fam, "verify_wide", None) if fam is not None else None
         if not vw:
             return
-        span_param = vw.get("span_param", "frequency_span_in_mhz")
-        span = float(params.get(span_param, vw.get("span_default", 60.0)))
-        vparams = {**params, span_param: span * float(vw.get("factor", 4.0))}
+        survey = vw.get("survey_params")
+        if survey:
+            # An ABSOLUTE mode switch, not a relative widening. power_rabi is
+            # the family that needed this (docs/78 §17.6): its wide check is
+            # "go back to the single-pulse survey", and scaling its window
+            # instead would alias rather than survey. Everything the family
+            # does not pin is carried through untouched.
+            vparams = {**params, **survey}
+        else:
+            span_param = vw.get("span_param", "frequency_span_in_mhz")
+            span = float(params.get(span_param, vw.get("span_default", 60.0)))
+            vparams = {**params, span_param: span * float(vw.get("factor", 4.0))}
         vstep = Step(id=f"{step.id}__verify_wide", node=step.node,
                      family=step.family,
                      label=f"wide verification of {step.id}",
@@ -670,13 +684,32 @@ class PlanEngine:
 
     # ---- evaluation ------------------------------------------------------
 
+    def _stamp(self, verdicts: dict, run: dict | None,
+               figure_source: str | None) -> dict:
+        """Attach the verification triple to every verdict (docs/78 §17 B3).
+
+        Stamped on the way OUT rather than at construction, so no return path
+        can forget it — including the two that never reach the gate pipeline.
+        A verdict whose context is unrecorded is one nothing downstream may
+        compare, and the ledger has to be able to say that.
+        """
+        ctx = verification.for_sm_gates(
+            (run or {}).get("folder_path"),
+            figure_source=figure_source).as_dict()
+        for v in verdicts.values():
+            if v.context is None:
+                v.context = ctx
+        return verdicts
+
     def _evaluate(self, step: Step, res: StepRunResult,
                   targets: list[str]) -> dict[str, gates_mod.GateVerdict]:
         if res.status != "done" or not res.run:
-            return {t: gates_mod.GateVerdict(
+            # no run ⇒ no data and no figure, but the gate revision that
+            # refused is still part of the record
+            return self._stamp({t: gates_mod.GateVerdict(
                 target=t, verdict="fail", failure_mode="node_failed",
                 reasons=[res.error or f"run status {res.status}"])
-                for t in targets}
+                for t in targets}, None, "none")
         run = res.run
         fam = fam_mod.family_for(run["experiment_name"])
         if fam is None:
@@ -688,7 +721,7 @@ class PlanEngine:
                     target=t, verdict="suspect" if ok else "fail",
                     failure_mode=None if ok else "node_failed",
                     reasons=["no autofit family registered — node outcome only"])
-            return out
+            return self._stamp(out, run, "none")
 
         patched_old = {patch_path_to_dotted(p.get("path", "")): p.get("old")
                        for p in (run.get("patches") or [])}
@@ -737,12 +770,17 @@ class PlanEngine:
         # the verdict stays a fail either way.
         # ---- stage 1: ONE triage call over the sheet (docs/78 §18) ---------
         sheet = _first_figure(run)
+        # the engine feeds the judge the run's OWN saved PNGs; it never
+        # regenerates. That is a different analysis revision from anything we
+        # replay, so the verdict has to say which it was.
+        saw_figure = False
         triage = None
         if self.auditor.enabled and len(targets) > 1 and sheet is not None:
             tb = auditor_mod.build_triage_bundle(
                 family_key=fam.key, family_label=fam.label, targets=targets,
                 figure_path=sheet)
             triage = self.auditor.triage(tb, known_targets=targets)
+            saw_figure = True
             with self._lock:
                 self.state["llm_calls"] = self.auditor.calls_made
             self._ledger("llm_triage", step=step.id, **triage.as_dict())
@@ -767,6 +805,7 @@ class PlanEngine:
             panel = _panel_figure(run, t)
             figure = panel or sheet
             v.panel_kind = "panel" if panel is not None else "sheet"
+            saw_figure = saw_figure or figure is not None
             if v.verdict == "suspect":
                 bundle = build_bundle(family_label=fam.label, target=t,
                                       fit_entry=entry, gate_reasons=v.reasons,
@@ -828,6 +867,7 @@ class PlanEngine:
                 # told "unclear" by a judge shown nothing
                 v.vision = "no_figure"
                 continue
+            saw_figure = True
             sb = auditor_mod.build_signature_bundle(
                 family_key=fam.key, family_label=fam.label, target=t,
                 figure_path=fig)
@@ -844,7 +884,8 @@ class PlanEngine:
             v.verdict = "fail"
             v.failure_mode = sv.failure_mode or v.failure_mode or "noisy"
             v.reasons.append(f"signature {sv.signature}: {sv.reason}")
-        return verdicts
+        return self._stamp(verdicts, run,
+                           "archived" if saw_figure else "none")
 
     # ---- decision + writes ------------------------------------------------
 
@@ -866,6 +907,11 @@ class PlanEngine:
             entry = (run.get("fit_results") or {}).get(target)
             if isinstance(entry, dict):
                 self._fits[(fam.key, target)] = entry
+                # the review is the ONE place that reasons across runs, so it
+                # is the one place D-13 can actually bite: two values obtained
+                # under different gate revisions or state generations are not
+                # a contradiction, they are a category error.
+                self._fit_contexts[(fam.key, target)] = v.context
 
         # P6b (minimal): the board carries HOW this target was looked at, so a
         # cell reading "pass" can never be mistaken for a vision-verified one.

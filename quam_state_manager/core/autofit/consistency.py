@@ -138,12 +138,54 @@ def _scale(check: CrossCheck, entries: dict) -> tuple[float | None, str | None]:
     return None, None
 
 
-def reconcile(results: dict) -> Report:
+def _same_context_only(present: dict, target: str, contexts: dict
+                       ) -> tuple[dict, list[str]]:
+    """Keep the largest set of mutually-comparable values; report the rest.
+
+    Grouping by context key rather than anchoring on one family is deliberate:
+    if a plan re-ran three families under a new gate revision and one under the
+    old, the majority is the one worth comparing, and the minority is named
+    rather than quietly dropped. Ties break on the sorted family name so the
+    report is reproducible.
+    """
+    from quam_state_manager.core.autofit import verification
+
+    groups: dict[tuple, list[str]] = {}
+    unknown: list[str] = []
+    for fam in sorted(present):
+        ctx = verification.from_dict(contexts.get((fam, target)))
+        if ctx is None or ctx.missing():
+            unknown.append(fam)
+            continue
+        groups.setdefault(ctx.key(), []).append(fam)
+    if not groups:
+        return {}, [f"{target}: no verification context on any value — "
+                    f"not compared ({', '.join(unknown)})"]
+    keep = sorted(groups.values(), key=lambda g: (-len(g), g[0]))[0]
+    dropped = [f for f in present if f not in keep]
+    notes = []
+    if dropped:
+        notes.append(
+            f"{target}: {', '.join(sorted(dropped))} produced under a different "
+            f"verification context than {', '.join(keep)} — not compared "
+            f"(docs/78 D-13: a verdict is only valid inside its own context)")
+    return {f: present[f] for f in keep}, notes
+
+
+def reconcile(results: dict, contexts: dict | None = None) -> Report:
     """``results`` = ``{(family, target): fit_entry}`` from a whole plan.
 
     Returns every pair of families that claim the same physical quantity for
     the same target and disagree by more than the scale those runs reported.
     Reports only — deciding which one to keep is a human's call.
+
+    ``contexts`` = ``{(family, target): verification context}`` (docs/78 §17
+    B3). When given, two values obtained under DIFFERENT verification contexts
+    are not compared: a disagreement between a value read by one gate revision
+    and one read by another is not a contradiction about the chip, it is a
+    category error — and reporting it as physics is how a review loses its
+    authority. The skip is recorded with its reason, never silent. Omitting
+    ``contexts`` keeps the previous behaviour byte-identically.
     """
     by_target: dict[str, dict[str, dict]] = {}
     for (fam, target), entry in (results or {}).items():
@@ -159,6 +201,11 @@ def reconcile(results: dict) -> Report:
                     present[fam] = v
             if len(present) < 2:
                 continue                       # nothing to cross-check
+            if contexts:
+                present, dropped = _same_context_only(present, target, contexts)
+                rep.skipped.extend(dropped)
+                if len(present) < 2:
+                    continue
             rep.compared += 1
             entries = {f: fams[f] for f in present}
             scale, scale_from = _scale(check, entries)

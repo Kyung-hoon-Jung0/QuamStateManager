@@ -64,13 +64,20 @@ class GateVerdict:
     # that never happened.
     vision: str | None = None
     panel_kind: str | None = None       # panel | sheet
+    # the verification triple this verdict is only valid inside (docs/78 D-13.3,
+    # §17 B3) — see core.autofit.verification. Sixteen of these bands were
+    # overturned by measurement in one session; a verdict that cannot name the
+    # revision that produced it silently mixes with verdicts that mean
+    # something else.
+    context: dict | None = None
 
     def as_dict(self) -> dict:
         return {"target": self.target, "verdict": self.verdict,
                 "failure_mode": self.failure_mode, "reasons": self.reasons,
                 "checks": self.checks, "feature_present": self.feature_present,
                 "direction_hint": self.direction_hint,
-                "vision": self.vision, "panel_kind": self.panel_kind}
+                "vision": self.vision, "panel_kind": self.panel_kind,
+                "context": self.context}
 
 
 def _attr(run, key, default=None):
