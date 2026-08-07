@@ -90,25 +90,43 @@ def _attr(run, key, default=None):
 # G3 — raw-data feature cross-check
 # ---------------------------------------------------------------------------
 
+def _row_of(reader, handle, idx) -> np.ndarray:
+    """One target's row. h5py slices lazily; the NetCDF adapter has already
+    read the variable, so it is indexed after the fact."""
+    try:
+        return np.asarray(handle[idx], dtype=float)
+    except TypeError:                       # not sliceable (the NetCDF handle)
+        return np.asarray(reader.read(handle)[idx], dtype=float)
+
+
 def _read_target_trace(raw_path: Path, fc: FeatureCheck, target: str,
                        kind: str) -> tuple[np.ndarray, np.ndarray] | str:
-    """Return (axis, y) for *target*'s row, or an error string."""
-    import h5py
+    """Return (axis, y) for *target*'s row, or an error string.
+
+    Routed through the ndview reader adapter (docs/67), NOT raw h5py: newer
+    runner envs write NetCDF-classic under an ``.h5`` name, and h5py answers
+    those with "file signature not found". This gate is the raw-data
+    cross-check — the one thing that can tell a fit that missed the feature
+    from one that found it — so a format it cannot open is not a degraded
+    check, it is no check, silently, on every run from those envs.
+    """
+    from quam_state_manager.core.ndview import _h5_lock_for, _open_reader
 
     dim0 = "qubit" if kind == "qubits" else "qubit_pair"
     try:
-        with h5py.File(raw_path, "r") as f:
-            if fc.var not in f or dim0 not in f:
+        with _h5_lock_for(str(raw_path)), _open_reader(Path(raw_path)) as f:
+            var = f.get(fc.var)
+            coord = f.read_coord(dim0)
+            if var is None or coord is None:
                 return f"var {fc.var!r} or coord {dim0!r} missing in ds_raw"
             names = [n.decode() if isinstance(n, bytes) else str(n)
-                     for n in f[dim0][()]]
+                     for n in np.asarray(coord).tolist()]
             if target not in names:
                 return f"target {target!r} not in {dim0} coord"
             idx = names.index(target)
-            var = f[fc.var]
             if var.ndim < 2:
                 return f"var {fc.var!r} is {var.ndim}-D (need ≥2-D target×sweep)"
-            y = np.asarray(var[idx], dtype=float)
+            y = _row_of(f, var, idx)
             if fc.mode == "span":
                 # signal-presence only. Orientation-aware reduction: treat the
                 # LONGEST axis as the sweep, then keep the most-structured
@@ -122,15 +140,15 @@ def _read_target_trace(raw_path: Path, fc: FeatureCheck, target: str,
                 return np.arange(y.size, dtype=float), y
             if var.ndim != 2:
                 return f"var {fc.var!r} is {var.ndim}-D (peak/dip needs 2-D)"
-            if fc.axis_var not in f:
+            ax_ds = f.get(fc.axis_var)
+            if ax_ds is None:
                 return f"axis {fc.axis_var!r} missing"
-            ax_ds = f[fc.axis_var]
-            axis = np.asarray(ax_ds[idx] if ax_ds.ndim == 2 else ax_ds[()],
-                              dtype=float)
+            axis = (_row_of(f, ax_ds, idx) if ax_ds.ndim == 2
+                    else np.asarray(f.read(ax_ds), dtype=float))
             if axis.shape != y.shape:
                 return "axis/trace shape mismatch"
             return axis, y
-    except (OSError, ValueError, KeyError) as exc:
+    except (OSError, ValueError, KeyError, TypeError) as exc:
         return f"ds_raw unreadable: {exc}"
 
 

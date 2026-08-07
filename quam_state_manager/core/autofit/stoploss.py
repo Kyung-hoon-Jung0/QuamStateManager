@@ -103,10 +103,14 @@ def metric_trend(history: list[dict]) -> dict:
             if prev is None:
                 best[k] = v
                 continue
-            if v > prev * (1 + _REL_EPS) if prev > 0 else v > prev:
-                best[k] = v
+            if (v > prev * (1 + _REL_EPS)) if prev > 0 else (v > prev):
                 if k not in moved:
                     moved.append(k)
+            # the running maximum, unconditionally — it used to advance only on
+            # a value that CLEARED the noise floor, so `best` reported the last
+            # value that happened to jump rather than the best seen, and a
+            # reader trusting the name got a number that is neither
+            best[k] = max(prev, v)
     if history and len(history) >= 2:
         last, prev_best = history[-1] or {}, {}
         for entry in history[:-1]:

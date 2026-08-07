@@ -8,8 +8,13 @@
 > **The loop closes** (§19.1): a target is done only when the gates pass AND
 > the judge signs off on its own panel — or, with no judge configured, on the
 > gates alone and STAMPED as not vision-verified.
-> Still open: the signature calibration (needs a key), verdicts recording
-> `env`/`root_rev` (§17 B3, deferred), and P9.
+> **§17 B3 is CLOSED** (§21.1 — every verdict now stamps its verification
+> context, and the cross-run review refuses to compare across contexts), and so
+> is §17.6 (§21.2 — `power_rabi`'s wide check, where the corpus refuted the
+> obvious generalization). §22 records a six-way audit of every remaining
+> un-measured constant and the first real two-sided run of the signature ask:
+> **leniency 0/12, and the stinginess bar is not measurable against a scalar
+> success flag.** Still open: the items listed in §22.4, and P9.
 > Design discussion + investigation: 2026-08-05.
 > Lineage: docs/40 (Scheduler chassis) · docs/47 (LLM doctrine + Phase-0
 > measurements) · docs/50 (fit-audit) · docs/56 (Autofit v1/v2) ·
@@ -2222,3 +2227,197 @@ Worth stating plainly: without the pinned-revision walk, **every archive older
 than the tree's current HEAD is unreplayable**, and P3c would have had no case
 set at all. The amendment that added the third axis to the verification triple
 is what makes the calibration possible.
+
+---
+
+## 22. The constant audit, and the calibration that corrected its own labels (2026-08-07)
+
+Two campaigns, both device-free. The first applied §20.6's method to every
+remaining un-measured constant in `core/autofit/`; the second ran the shipped
+signature ask against real per-target panels, now that §21.3 showed they can be
+made. Each measurement was re-run by an independent agent told to REFUTE it, and
+only what survived that pass is reported as fact.
+
+### 22.1 Six audits, each adversarially verified
+
+The pattern held: the constants written from intuition did not survive, and —
+more usefully — **three of the six audits found that the constant did not matter
+because the code around it was inert or broken.** Measuring a threshold is how
+we discovered nobody was reading it.
+
+**Confirmed, and structural:**
+
+* **Stop-loss tiers 2 and 3 have no caller.** The engine constructs
+  `stoploss.Budget` and never calls `should_stop`, `no_progress`, `metric_trend`
+  or `harm`. Every constant in that module is currently inert — including the
+  ones this audit was convened to measure. Worse, two of them are *unreachable
+  by construction*: the ladders index `rungs[min(count, len-1)]` under
+  `retry_max <= 2`, so the seed rung (index 2) and the escalate rung (index 3)
+  never fire, which makes `unconsumed_seeds >= 3` and `upstream_escalations >= 2`
+  dead conditions. D-8 said "a counter is not a stop-loss"; the honest amendment
+  is that a stop-loss nobody calls is not a stop-loss either.
+* **`PROGRESS_KEYS` covers almost nothing.** Four of the nine families emit none
+  of the eight metrics, ever (284 entries); two more emit them in 2-3% of runs.
+  Tier 2a is therefore blind on most of the chain, and would read "no metric
+  improved" as evidence rather than as absence of evidence. Those families must
+  be declared metric-blind, not silently treated as flat.
+* **`action_space.sanitize` contradicted its own policy.** `classify` documents
+  that an unclassified key is one nobody has thought about, and
+  `reduced_schema`/`validate_proposal` both refuse one — but `sanitize`, the
+  function on the real backend path, passed it straight through. Two halves of
+  one policy disagreeing means the stricter half was decorative. **Fixed.**
+* **`gates._read_target_trace` was h5py-only.** G3 is the raw-data cross-check —
+  the one gate that can distinguish a fit which missed the feature from one
+  which found it — and it opened `ds_raw.h5` with raw h5py. Runs from envs that
+  write NetCDF-classic under that name (732 targets in the corpus) answered
+  "unreadable": not a degraded check, **no check, silently**. **Fixed** by
+  routing through the ndview reader adapter. (The same bug bit this session's
+  own scratch script, which is how confident one should be that a second copy
+  of a format sniff drifts.)
+* **The judge could take the plan down.** The provider call path caught network
+  and value errors but not the payload-SHAPE errors an unexpected response
+  raises. A judge that cannot answer must fail to its safe default, never
+  upward. **Fixed** at both call sites, all four asks.
+* **`metric_trend`'s `best` was not a running maximum** — it advanced only on
+  values that cleared the noise floor, so it reported the last value that
+  happened to jump. **Fixed**, with the noise floor left where it is (the fix
+  must not turn noise into learning).
+
+**Confirmed, and the constant is wrong — but not changed here:**
+
+* **`replay_score`'s `rel_tol = 0.25` erases 20.2% of real operator changes**
+  (n=644) and sits *on* an operator step mode rather than in a gap: a 1.333x
+  step lands at exactly 0.25 and the comparison is `<=`, so 78 canonical steps
+  are declared "the same decision". The evidence supports 0.05-0.10. Not changed
+  yet because the same verifier found a defect **no constant fixes**: `_close`
+  applies a *relative* tolerance to *log-unit* (dBm) keys, where the same
+  physical 10 dB step scores 0.125, 0.25 or 0.50 depending only on the
+  reference. That needs an absolute-delta branch, and the two belong in one edit.
+* **`action_space`'s corpus bounds are a zero-slack envelope.** The branch only
+  ever widens to `[min_observed, max_observed]`, so it is *vacuous on its own
+  training set* (0 rejections in 636 runs) and rejects real usage the moment it
+  meets an archive it was not built from — 2.0% to 22.6% depending on how the
+  held-out set is drawn, and the verifier declined to stake any single headline.
+  Two shape defects underneath it: sweep-EDGE knobs are bounded from both sides
+  when the danger is one-sided, and **69 of 101 corpus bound edges land exactly
+  on a recorded schema default** — the docstring promises bounds are "never
+  taken from the schema's defaults", and the corpus path violates that in
+  outcome for a knob nobody varied.
+* **Several gate bands do not survive the full corpus.** The strongest single
+  finding is a **unit defect** in the T1 family (a `x1e-9` that reaches the band,
+  the relative-jump limit and the `UpdateSpec` write, proven against the node's
+  own patches). Alongside it: the spectral-presence floor rejects 44 of 77
+  accepted node-09 fits, `_ERROR_RATIO_MAX` does not discriminate on ramsey
+  (57.3%), `_FEATURE_Z_MIN` rejects 40.9% of accepted node-08 targets, and a
+  `qubit_pair`/`qubit` coord mismatch has kept two families from ever running a
+  feature check at all. **The "0 false rejects over 276/115" ledger does not
+  survive extension to the full corpus.**
+
+  *Nothing here is re-tuned in this commit*, on the verifier's own condition:
+  the error-amplification, e->f and vs-flux-calibration populations must be split
+  out of their host families first, because that contamination is upstream of
+  every per-band number in the report. Re-deriving a band from a mixed
+  population would repeat §20.1's mistake with better manners.
+
+**Confirmed about the judge pack:** the Clause-B lint has ~0 recall on
+prose-form violations (it catches units and explicit window fractions, not
+"near the centre"), so `lint_dropped == []` is silence, not a clean bill of
+health; `notes` is linted but never rendered (19 kB of maintainer caveats in a
+dead field); and a whole `axes` description is blanked on a single token hit.
+Eight of nine pack entries were authored from fewer than ten figures.
+
+**Refuted, and worth recording as method:** several headline numbers in the
+first-pass reports did not survive — a slack table that was internally
+impossible, "half the hits are floor rejections" (31%), a claimed density
+minimum that finer sampling erased, and a 26-run count that was 8. The verify
+pass earned its cost: roughly a fifth of the quantitative claims were wrong in
+detail while the directions held.
+
+### 22.2 P3c — the calibration corrected its own labels twice
+
+64 per-target panels across five families, regenerated through the lab's own
+plotting (§21.3), each judged by a single call using the SHIPPED
+`_SIGNATURE_SYSTEM` and the shipped v1 pack — one panel per call, which is the
+shipped contract.
+
+**The first labelling was wrong, and D-13 is why.** Labels came from the
+archived `node.json` outcome; pictures were drawn with `fit_source="fresh"`,
+i.e. the CURRENT analysis revision. Those are two different verification
+contexts. Verified on a real panel: a target marked `successful` in the archive
+draws NO FIT over pure noise under the fresh analysis — the judge called it
+absent and was **right**. Re-labelling with `fit_audit.audit_run` (same env,
+same pinned root, same analysis as the figure) **flipped 18 of 64 labels — 28%
+of the case set.** The stamp introduced in §21.1 is what made the error
+diagnosable rather than mysterious.
+
+Against labels that share the pictures' context:
+
+| | n | result |
+|---|---:|---|
+| **leniency** (bad panel -> judge says clear) | 12 | **0 (0%)** |
+| **stinginess** (good panel -> judge says clear) | 52 | 39 (75%) |
+
+The leniency result is the one that protects the loop: under §1.3 a "clear" is
+the last word before a target is declared done, and **no bad panel got one.**
+
+**The 90% stinginess bar, as written, cannot be measured this way** — and that
+is the second label correction. Inspecting the 13 disagreements shows the judge
+naming real defects that the label cannot see, because the label is a *scalar*
+success flag and the judge is asked about a *picture*:
+
+* on the 2-D power-sweep family, the node's own per-row centre chain rails onto
+  a parasitic tone for several rows while the ridge itself is unmistakable — the
+  scalar frequency is fine, the picture is not;
+* on a resonator panel the judge called unclear, **the lab's own plotting had
+  already titled it "(freq OK, shape poor)"** — its analysis carries a separate
+  `success_shape` verdict and renders three title states from it.
+
+That is the judge agreeing with the lab's picture-level verdict and disagreeing
+with its scalar one, which is exactly what §1.3 asks for (gates AND judge, not
+judge ~ gates). Only 4 of the 64 panels carry an archived `success_shape`, so
+the correlation is a **lead at n=4**, corroborated by direct inspection of two
+panels — not a measurement. Recording it as more would repeat the error this
+section is about.
+
+**So D-7's stinginess bar needs a picture-level label, and the project does not
+have one.** Options, in order of cost: hand-label a set; or derive one from the
+labs' own quality flags where they exist (they do, and they are not exposed
+through `fit_audit` today).
+
+### 22.3 P3d — the seam runs, and the deception has to be visible
+
+`figure_gen`'s `override_fit` had also never been exercised. It works: nine
+manufactured wrong-fit panels were produced for `power_rabi` by halving the pi
+amplitude and its prefactor **together** (halving both is what makes the lie
+self-consistent, which is what makes it deceptive).
+
+They were not judged, because looking at them showed the deception **is not
+rendered**: that family's primary figure is a raw chevron map with no fit
+overlay, so changing the claimed number changes nothing in the picture. Two
+consequences, both worth stating plainly:
+
+1. **A wrong-fit injection can only test a judge where the family's figure
+   actually draws the overridden quantity.** D-7's leniency calibration
+   therefore has a per-family precondition the plan never recorded.
+2. More importantly: for that family's error-amplification variant, **the vision
+   judge cannot catch a wrong pi amplitude at all** — the figure it is shown does
+   not display the claim. That is consistent with D-1 (the number is the gates'
+   job), but it means "the judge signed off" carries less information there than
+   elsewhere, and a report must not let it read the same.
+
+The spectroscopy half of the manufactured set was not built: the fresh analysis
+names its centre `f0` where the archive stores `position` (§4.5b drift again),
+and the override plumbing hit a dtype refusal after the schema probe was added.
+Fixable; not fixed.
+
+### 22.4 What is now open, in the order the evidence supports
+
+1. Split the contaminated populations out of their host families, then re-derive
+   the bands §22.1 flags — including the T1 unit defect, which is a bug rather
+   than a calibration and should be fixed first.
+2. Wire tiers 2 and 3 of the stop-loss to a caller, and declare the
+   metric-blind families rather than letting a blind check read as a passed one.
+3. `rel_tol` + the dB-key absolute-delta branch, in one edit.
+4. Re-shape the corpus bounds (slack, one-sided edges, no default-derived edge).
+5. A picture-level label source for D-7's stinginess bar.
+6. Harden the Clause-B lint against prose, and surface or drop `notes`.

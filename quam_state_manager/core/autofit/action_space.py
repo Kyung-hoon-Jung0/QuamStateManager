@@ -90,7 +90,7 @@ def sanitize(params: dict | None, *, targets_name: str | None = None
         kind = classify(k)
         if k == targets_name:
             kind = "reserved"
-        if kind in ("reserved", "frozen"):
+        if kind in ("reserved", "frozen", "unknown"):
             dropped.append({"key": k, "value": v, "class": kind,
                             "reason": _DROP_REASON[kind]})
             continue
@@ -103,6 +103,14 @@ _DROP_REASON = {
                 "replay archived data instead of measuring)",
     "frozen": "frozen — a fact about the wiring; changing it silently "
               "rescales every power",
+    # `classify` says an unclassified key is one nobody has thought about, and
+    # `reduced_schema` already refuses to expose one — but `sanitize` used to
+    # let it THROUGH, and sanitize is the function that runs on the real
+    # backend path. Two halves of one policy disagreeing means the stricter
+    # half was decorative. Dropping is the safe direction: a key we cannot
+    # classify is one whose wrong value we cannot predict.
+    "unknown": "unclassified — no one has judged whether a wrong value here "
+               "would be self-revealing or deceptive, so it is not offered",
 }
 
 

@@ -625,7 +625,14 @@ class Auditor:
                 text = _call_openai_compat(self.settings, bundle)
             else:  # pragma: no cover
                 return _ABSTAIN
-        except (urllib.error.URLError, OSError, ValueError, KeyError) as exc:
+        # AttributeError/TypeError/IndexError belong here too: a provider
+        # that answers with an unexpected PAYLOAD SHAPE (a list where a
+        # dict was expected, a missing content block) raises one of those,
+        # and an exception escaping here would take down the plan instead
+        # of abstaining. A judge that cannot answer must fail to the safe
+        # default, never upward.
+        except (urllib.error.URLError, OSError, ValueError, KeyError,
+                AttributeError, TypeError, IndexError) as exc:
             logger.warning("LLM audit call failed: %s", exc)
             return AuditVerdict(verdict="abstain",
                                 reason=f"provider error: {exc}",
@@ -656,7 +663,14 @@ class Auditor:
                 return _call_anthropic(self.settings, bundle), provider, model
             if provider == "openai_compat":
                 return _call_openai_compat(self.settings, bundle), provider, model
-        except (urllib.error.URLError, OSError, ValueError, KeyError) as exc:
+        # AttributeError/TypeError/IndexError belong here too: a provider
+        # that answers with an unexpected PAYLOAD SHAPE (a list where a
+        # dict was expected, a missing content block) raises one of those,
+        # and an exception escaping here would take down the plan instead
+        # of abstaining. A judge that cannot answer must fail to the safe
+        # default, never upward.
+        except (urllib.error.URLError, OSError, ValueError, KeyError,
+                AttributeError, TypeError, IndexError) as exc:
             logger.warning("LLM call failed: %s", exc)
         return None, provider, model
 
