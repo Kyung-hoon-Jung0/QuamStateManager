@@ -5965,7 +5965,11 @@ def schema_missing_keys():
     anchored = _anchor(manifest, node)
     if anchored is _NO_ANCHOR or anchored is None:
         return jsonify(ok=True, warm=True, scope=scope, missing=[])
-    fields = anchored[1]
+    # ("fields", (class, canonical class, fields)) — the payload gained the
+    # class identity in docs/79 so a caller can name the class·field a verdict
+    # is scoped to; the fields map moved to [2] and this datalist 500'd on the
+    # tuple it kept reading as a dict.
+    fields = anchored[1][2]
     missing = []
     for fname, f in sorted(fields.items()):
         if fname in node:
