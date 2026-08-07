@@ -9820,3 +9820,76 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
     color: var(--pico-contrast); white-space: nowrap;
 }
 .tray-revert-apply:hover { border-color: var(--cell-ok-color, #ff7f0e); color: var(--cell-ok-color, #ff7f0e); }
+
+/* ── Param History: Trends / Changes tabs + the change feed (docs/83) ──────
+   The feed lists every numeric parameter's change points. Rows are dense on
+   purpose — a run typically writes a handful of parameters and the useful
+   unit is the group, not the row. All colours come from existing SM tokens so
+   both themes follow automatically. */
+.ph-tabs {
+    display: flex; gap: 0.25rem; margin: 0.5rem 0 0.25rem;
+    border-bottom: 1px solid var(--pico-muted-border-color);
+}
+.ph-tab {
+    background: none; border: none; border-bottom: 2px solid transparent;
+    margin: 0; padding: 0.3rem 0.75rem; width: auto; cursor: pointer;
+    color: var(--pico-muted-color); font-size: 0.9em; line-height: 1.6;
+    border-radius: 0;
+}
+.ph-tab:hover { color: var(--pico-contrast); background: none; }
+.ph-tab.active {
+    color: var(--pico-contrast); font-weight: 600;
+    border-bottom-color: var(--pico-primary);
+}
+.ph-changes-bar {
+    display: flex; align-items: center; gap: 0.4rem;
+    margin: 0.5rem 0; flex-wrap: wrap;
+}
+.ph-changes-bar .tree-search { flex: 1 1 18rem; max-width: 32rem; }
+.ph-changes-stat { margin-left: auto; font-size: 0.82em; }
+.ph-changes-empty { margin: 1.5rem 0.2rem; }
+.ph-changes { display: flex; flex-direction: column; gap: 0.55rem; }
+.ph-change-group {
+    border: 1px solid var(--pico-muted-border-color);
+    border-radius: 6px; overflow: hidden;
+}
+.ph-change-head {
+    display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+    padding: 0.3rem 0.55rem;
+    background: var(--pico-card-sectioning-background-color);
+    border-bottom: 1px solid var(--pico-muted-border-color);
+    font-size: 0.85em;
+}
+.ph-change-when { font-variant-numeric: tabular-nums; font-weight: 600; }
+.ph-change-exp {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    max-width: 28rem;
+}
+.ph-change-count { margin-left: auto; font-size: 0.92em; }
+.ph-change-table { margin: 0; font-size: 0.85em; }
+.ph-change-table td {
+    padding: 0.15rem 0.55rem; border: none;
+    border-top: 1px solid var(--pico-muted-border-color);
+    vertical-align: baseline;
+}
+.ph-change-table tr:first-child td { border-top: none; }
+.ph-change-path { width: 45%; word-break: break-all; }
+.ph-path-btn {
+    background: none; border: none; padding: 0; margin: 0; width: auto;
+    color: var(--pico-primary); cursor: pointer; text-align: left;
+    font-family: var(--pico-font-family-monospace, monospace);
+    font-size: 0.95em; line-height: 1.5;
+}
+.ph-path-btn:hover { text-decoration: underline; background: none; }
+.ph-change-old, .ph-change-new {
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.ph-change-old code, .ph-change-new code { font-size: 0.95em; }
+.ph-change-arrow { color: var(--pico-muted-color); padding: 0 0.2rem; }
+.ph-change-delta { white-space: nowrap; }
+.ph-changes-more { margin: 0.75rem 0 0.25rem; text-align: center; }
+.ph-change-rest {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.25rem 0.55rem; font-size: 0.82em;
+    border-top: 1px solid var(--pico-muted-border-color);
+}

@@ -272,6 +272,46 @@ class TestTheFeedAndSearch:
         assert li.search_paths(conn, "  ") == []
 
 
+class TestPagingBySnapshot:
+    """A regenerate rewrites thousands of parameters in one snapshot (2,716
+    measured). Paging by row would spend a page on it and hide every other
+    event, so the feed's unit is the snapshot."""
+
+    def test_a_group_reports_its_true_count_while_capping_rows(self, conn):
+        _ingest(conn, "20260101_000000", _chip())
+        big = _chip()
+        big["qubits"]["qA1"]["bulk"] = {f"k{i}": i for i in range(50)}
+        _ingest(conn, "20260101_000100", big)
+        g = li.changes_by_snapshot(conn, limit_snaps=5, rows_per_snap=10)[0]
+        assert g["total"] == 50 and g["shown"] == 10
+
+    def test_groups_are_newest_first_and_carry_their_meta(self, conn):
+        _ingest(conn, "20260101_000000", _chip(t1=1e-5))
+        _ingest(conn, "20260101_000100", _chip(t1=2e-5), trigger="experiment",
+                experiment="05_T1", run_id=7)
+        groups = li.changes_by_snapshot(conn, limit_snaps=5)
+        assert groups[0]["timestamp"] == "20260101_000100"
+        assert groups[0]["experiment"] == "05_T1" and groups[0]["run_id"] == 7
+
+    def test_at_ts_opens_exactly_one_snapshot(self, conn):
+        _ingest(conn, "20260101_000000", _chip(t1=1e-5))
+        _ingest(conn, "20260101_000100", _chip(t1=2e-5))
+        groups = li.changes_by_snapshot(conn, at_ts="20260101_000000")
+        assert len(groups) == 1 and groups[0]["timestamp"] == "20260101_000000"
+
+    def test_before_ts_excludes_the_newest(self, conn):
+        _ingest(conn, "20260101_000000", _chip(t1=1e-5))
+        _ingest(conn, "20260101_000100", _chip(t1=2e-5))
+        groups = li.changes_by_snapshot(conn, before_ts="20260101_000100")
+        assert [g["timestamp"] for g in groups] == ["20260101_000000"]
+
+    def test_a_snapshot_with_no_matching_change_is_not_an_empty_group(self, conn):
+        _ingest(conn, "20260101_000000", _chip())
+        _ingest(conn, "20260101_000100", _chip(t1=9e-5))
+        groups = li.changes_by_snapshot(conn, prefix="qubits.qA1.xy")
+        assert [g["timestamp"] for g in groups] == ["20260101_000000"]
+
+
 class TestThroughTheHistoryManager:
     """The capture path writes it, the read path heals it."""
 

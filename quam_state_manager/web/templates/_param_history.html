@@ -27,6 +27,19 @@
     </p>
   </div>
 
+  {# docs/83: the curated grid answers "how has T1 drifted"; Changes answers
+     "what did that run change?" across EVERY numeric parameter. Only on the
+     loaded chip — the feed reads the loaded chip's index. #}
+  {% if is_loaded_chip %}
+  <div class="ph-tabs">
+    <button type="button" class="ph-tab active" aria-current="page">Trends</button>
+    <button type="button" class="ph-tab" hx-get="/param-history/changes"
+            hx-target="#param-history-root" hx-swap="outerHTML"
+            hx-push-url="true"
+            title="Every numeric parameter's change points, newest first">Changes</button>
+  </div>
+  {% endif %}
+
   {% if index_error %}
   <div class="toast toast-warning" style="margin:0.5rem 0">
     <p style="margin:0">{{ index_error }}
