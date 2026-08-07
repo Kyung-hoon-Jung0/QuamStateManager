@@ -2121,3 +2121,104 @@ Five for five. The pattern is not that the reasoning was careless — the flux
 tolerance argument in §19.4 is still *correct physics*. It is that a threshold
 is a claim about a particular lab's data, and the only thing that settles a
 claim about data is the data.
+
+---
+
+## 21. B3, §17.6, and the panel machinery exercised (2026-08-07)
+
+Everything reachable without a device. Two open §17 items closed, and the
+blocker §17 called "the top blocker for P3c" turned out to be a missing caller
+rather than a missing capability.
+
+### 21.1 B3 — a verdict now records the context it is only valid inside
+
+§13.2 was binding and unimplemented: *"a verification context is (env, source
+root, run generation); every verdict records all three."* Three paths produced
+verdicts and each answered differently — `fit_audit.audit_run` put env and root
+in its cache KEY and handed the payload back unlabelled, `figure_gen` carried
+all four axes, the engine's gate verdicts carried none.
+
+`core/autofit/verification.py` is the one shape all three stamp. The design
+point worth keeping: **two analyses are stamped differently on purpose.**
+
+* `lab_replay` — the lab's own analysis re-run in a customer env. Identity =
+  (env, `lib_versions`, root + revision, `gate_hash` over the analysis bytes).
+* `sm_gates` — SM's deterministic gates, computed in-process. No interpreter is
+  spawned, so naming one would be a fiction. Identity = `analysis_rev`, a
+  content hash of `families.py` + `gates.py`.
+
+Collapsing them into one shape would have been the same class of error the
+stamp exists to prevent. And `analysis_rev` is not hypothetical bookkeeping: it
+is the axis that actually moved — sixteen shipped bands were overturned by
+measurement in one session (§15.2b) and five more thresholds in the next
+(§20.6). Every verdict written before those edits means something different
+from one written after.
+
+**The stamp has a consumer, which is the point.** `consistency.reconcile` — the
+only place in the system that reasons ACROSS runs, and therefore the only place
+D-13 can bite — now refuses to compare values obtained under different
+contexts, and records the refusal in `skipped`. A disagreement between a value
+read by one gate revision and one read by another is not a contradiction about
+the chip; it is a category error, and reporting it as physics is how a review
+loses its authority. Passing no `contexts` keeps the previous behaviour
+byte-identically, so the pin from §20.2 still holds.
+
+Fixed on the way: `figure_gen`'s no-compatible-env path built its context from a
+`source_root` that had already been rebound to `None`, and so reported "the
+env's installed analysis" for an analysis that never ran. A confident blank is
+exactly what the stamp is supposed to make impossible.
+
+### 21.2 §17.6 — power_rabi's wide check, and the shape the corpus refused
+
+The family shipped with no `verify_wide`. The obvious fix was the shape the four
+spectroscopy families use — multiply the swept span by four — and 230 archived
+runs (899 accepted prefactors) refuse it:
+
+| mode | runs | window | pulses |
+|---|---:|---|---:|
+| survey | 122 | **[0.001, 1.99]** in 103 of them, step 0.005 | 1 |
+| error-amplified | 108 | median width **0.3** | 20–160 |
+
+Pulse count and window width are anti-correlated because they are physically
+coupled: N pulses alias unless the range stays near 1/N of a Rabi period about
+1.0. So scaling the narrow window by four is wrong **twice**: it reaches only
+[0.6, 1.6] — short of the 0.0024–2.366 that accepted optima actually span — and
+it keeps the pulse count that makes that range fold. It would not survey; it
+would alias.
+
+The honest wide check here is a **mode switch to the lab's own survey**, which
+is also the one measurement that can unmask a locked harmonic: a full
+single-pulse Rabi curve shows the whole oscillation. `verify_wide` gained a
+`survey_params` form for absolute mode switches; `num_shots` is deliberately not
+pinned, so whatever averaging the ladder climbed to is kept.
+
+**This is the sixth threshold this line of work has had overturned by
+measurement, and the first where the refuted thing was a SHAPE rather than a
+number.** "Generalize the mechanism that already works" is the same species of
+claim as "0.75 is a reasonable r²" — plausible, and answerable only by data.
+
+### 21.3 §17 B2 was a missing caller, not a missing capability
+
+§17 called per-target panel extraction "the top blocker for P3c" and recorded
+that `figure_gen.generate(..., targets=[...])` had **zero consumers** — which
+means it had never been run end to end. Running it is what settles it.
+
+On a real 9-qubit archived run, requesting `targets=["q0","q4","q2"]` produced
+three genuine single-target panels through the lab's own plotting module in
+40 s. Inspected: `q0` carries a Lorentzian fit with its parameter box; `q4` —
+which the node itself failed — is pure noise watermarked NO FIT. That is exactly
+the artifact D-11.1 asks for.
+
+Getting there exercised D-13's designed answer for the first time on real data.
+The live analysis tree could serve **neither** env: the 0.5-era env cannot
+import its `quam_config` (needs quam ≥ 0.6), and the 0.6 env cannot load a
+2026-05 run's `quam_state`. `sourceroot.candidates(..., revs="auto")` walked the
+revisions of the analysis-defining paths, materialized each read-only via
+`git archive`, and the **third** pinned revision loaded cleanly. Ten candidate
+roots, four failed (env × root) probes, then a compatible pair — and the
+resulting figure carries that pair in its context stamp.
+
+Worth stating plainly: without the pinned-revision walk, **every archive older
+than the tree's current HEAD is unreplayable**, and P3c would have had no case
+set at all. The amendment that added the third axis to the verification triple
+is what makes the calibration possible.
