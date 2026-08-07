@@ -57,12 +57,20 @@ class GateVerdict:
     # a failed fit, and the window-edge direction hint for a seed-shift rung
     feature_present: bool | None = None
     direction_hint: str | None = None   # left | right | None
+    # two-stage looking (docs/78 §18). `vision` is the §1.3 terminator's answer
+    # — clear | unclear | absent | overview_only | unavailable — and
+    # `panel_kind` says whether the judge saw this target ALONE or on a shared
+    # sheet. A report that cannot tell those apart would imply a dedicated look
+    # that never happened.
+    vision: str | None = None
+    panel_kind: str | None = None       # panel | sheet
 
     def as_dict(self) -> dict:
         return {"target": self.target, "verdict": self.verdict,
                 "failure_mode": self.failure_mode, "reasons": self.reasons,
                 "checks": self.checks, "feature_present": self.feature_present,
-                "direction_hint": self.direction_hint}
+                "direction_hint": self.direction_hint,
+                "vision": self.vision, "panel_kind": self.panel_kind}
 
 
 def _attr(run, key, default=None):

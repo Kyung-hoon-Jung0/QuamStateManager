@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 import uuid
@@ -37,7 +38,8 @@ from typing import Any, Callable, Protocol
 from quam_state_manager.core import safe_io
 from quam_state_manager.core.autofit import families as fam_mod
 from quam_state_manager.core.autofit import gates as gates_mod
-from quam_state_manager.core.autofit import power_rows
+from quam_state_manager.core.autofit import consistency, notify, power_rows, stoploss
+from quam_state_manager.core.autofit import auditor as auditor_mod
 from quam_state_manager.core.autofit.auditor import Auditor, build_bundle
 from quam_state_manager.core.autofit.plan import Plan, Step
 from quam_state_manager.core.autofit.synth import patch_path_to_dotted
@@ -147,7 +149,15 @@ class PlanEngine:
                  | None = None,
                  abstain_policy: str = "defer",
                  is_sim: bool = False,
+                 budget: "stoploss.Budget | None" = None,
                  resolve_node: Callable[[str], str | None] | None = None):
+        # Tier 1 (docs/78 D-8). An unset budget is UNLIMITED, not zero — but
+        # the plan cap and wall clock now EXIST, which §4.7 listed as absent
+        # from the day the plan was written.
+        self.budget = budget or stoploss.Budget(
+            max_steps=(int(plan.max_steps) if plan.max_steps else None),
+            wall_clock_s=(float(plan.wall_clock_min) * 60.0
+                          if plan.wall_clock_min else None))
         self.instance_path = str(instance_path)
         self.plan = plan
         self.targets = list(targets)
@@ -188,6 +198,10 @@ class PlanEngine:
         # scan seed: restored on terminal failure, consumed on success
         # (docs/56 v2 rail ③ — the node's own write supersedes a good seed)
         self._seeds: dict[tuple[str, str], list[dict]] = {}
+        # (family, target) -> the fit entry the plan finally accepted. The
+        # cross-experiment review (P6c) is the only thing that reads across
+        # runs, so this is the only place the whole night is in one dict.
+        self._fits: dict[tuple[str, str], dict] = {}
         # (step_id, target) → {"patches": [...]}: a value DISCOVERED on a
         # retry after window-class failures, pending wide verification
         self._discoveries: dict[tuple[str, str], dict] = {}
@@ -264,6 +278,14 @@ class PlanEngine:
             cell.update(state=state, **extra)
         self._persist()
 
+    def _notify(self, event: str, **payload) -> None:
+        """Best-effort (docs/78 D-9) — a notifier must never fail a night."""
+        try:
+            notify.notify(self.instance_path, event,
+                          {"plan_run_id": self.plan_run_id, **payload})
+        except Exception:  # noqa: BLE001
+            logger.warning("autofit notify failed", exc_info=True)
+
     def _record_preplan(self, dotted: str, old_value) -> None:
         if dotted not in self._preplan_values:
             self._preplan_values[dotted] = old_value
@@ -285,7 +307,23 @@ class PlanEngine:
             while queue:
                 if self.abort_event.is_set():
                     break
+                # Tier 1 (docs/78 D-8). The queue is a work queue that runtime
+                # rungs push INTO, so "steps left" is not a bound — without a
+                # cap and a clock a plan that keeps finding new work has
+                # nothing to stop it. Checked before each step so the ledger
+                # records where the night ended.
+                spent = self.budget.plan_exhausted()
+                if spent:
+                    self._ledger("plan_stopped", tier=1, reason=spent,
+                                 steps_run=self.budget.steps_run,
+                                 elapsed_s=round(self.budget.elapsed_s(), 1))
+                    with self._lock:
+                        self.state["stopped_reason"] = spent
+                    self._notify("plan_stopped", tier=1, reason=spent,
+                                 plan=self.plan.name)
+                    break
                 step = queue.popleft()
+                self.budget.note_step()
                 alive = [t for t in self.targets
                          if t not in self.state["halted"]]
                 if not alive:
@@ -295,6 +333,21 @@ class PlanEngine:
                     if not alive:
                         continue        # its targets halted — skip, not end
                 self._run_step(step, alive, queue)
+            # P6c (docs/78 §1.1 #3): the review that only exists across runs.
+            # Every gate so far judged one run against itself; the pair that is
+            # each internally consistent and mutually impossible is invisible
+            # until the results are laid side by side.
+            try:
+                rep = consistency.reconcile(self._fits)
+                self._ledger("consistency_review", **rep.as_dict())
+                with self._lock:
+                    self.state["consistency"] = rep.as_dict()
+                if rep.findings:
+                    self._notify("needs_human", plan=self.plan.name,
+                                 question=consistency.summarize(rep),
+                                 contradictions=len(rep.findings))
+            except Exception:  # noqa: BLE001 — a review must not lose a night
+                logger.exception("consistency review failed")
             if self.autonomy == "review" and not self.abort_event.is_set():
                 self._end_restore()
             with self._lock:
@@ -304,6 +357,11 @@ class PlanEngine:
                 self.state["current"] = None
             self._ledger("plan_done", status=self.state["status"],
                          review_queue=len(self.state["review_queue"]))
+            self._notify("plan_done", status=self.state["status"],
+                         plan=self.plan.name,
+                         review_queue=len(self.state["review_queue"]),
+                         halted=len(self.state.get("halted") or {}),
+                         stopped_reason=self.state.get("stopped_reason"))
         except Exception as exc:  # noqa: BLE001 — the engine must never die silently
             logger.exception("autofit plan crashed")
             with self._lock:
@@ -677,11 +735,38 @@ class PlanEngine:
         # deterministic raw-data localizer (the 2-D vs_power class): vision
         # refines WHICH failure ladder applies (fit-died vs empty-window) —
         # the verdict stays a fail either way.
+        # ---- stage 1: ONE triage call over the sheet (docs/78 §18) ---------
+        sheet = _first_figure(run)
+        triage = None
+        if self.auditor.enabled and len(targets) > 1 and sheet is not None:
+            tb = auditor_mod.build_triage_bundle(
+                family_key=fam.key, family_label=fam.label, targets=targets,
+                figure_path=sheet)
+            triage = self.auditor.triage(tb, known_targets=targets)
+            with self._lock:
+                self.state["llm_calls"] = self.auditor.calls_made
+            self._ledger("llm_triage", step=step.id, **triage.as_dict())
+        gate_suspects = [t for t, v in verdicts.items() if v.verdict != "pass"]
+        look_at: set[str] = set()
+        if self.auditor.enabled:
+            if triage is None and len(targets) <= 1:
+                # a one-target run HAS no overview to lean on — and the sheet
+                # already IS that target's panel, so the whole cost is one
+                # call. "overview_only" here would be a lie.
+                look_at = set(targets)
+            else:
+                look_at = set(auditor_mod.dedicated_look_set(
+                    gate_suspects, triage, targets))
+
         for t, v in verdicts.items():
             if not self.auditor.enabled:
                 break
             entry = (run.get("fit_results") or {}).get(t) or {}
-            figure = _first_figure(run)
+            # stage 2: this target's OWN panel where one exists; the sheet is
+            # the honest fallback and the ledger records which was used
+            panel = _panel_figure(run, t)
+            figure = panel or sheet
+            v.panel_kind = "panel" if panel is not None else "sheet"
             if v.verdict == "suspect":
                 bundle = build_bundle(family_label=fam.label, target=t,
                                       fit_entry=entry, gate_reasons=v.reasons,
@@ -721,6 +806,44 @@ class PlanEngine:
                     v.direction_hint = av.direction
                     v.reasons.append(f"vision: window empty — {av.reason}")
                 # null → stays node_failed (defer)
+
+        # ---- the §1.3 terminator -------------------------------------------
+        # "done ONLY when the gates PASS and the judge ACCEPTS the signature."
+        # Asked of every target that the gates passed AND that stage 1 (or the
+        # gates) singled out — a target nobody flagged terminates on gates +
+        # overview and is STAMPED as such, so no report can imply it got a
+        # dedicated look it never got.
+        for t, v in verdicts.items():
+            if v.verdict != "pass":
+                continue
+            if not self.auditor.enabled:
+                v.vision = "unavailable"          # policy: gates-only, stamped
+                continue
+            if t not in look_at:
+                v.vision = "overview_only"
+                continue
+            fig = _panel_figure(run, t) or sheet
+            if fig is None:
+                # nothing to look AT — asking anyway would spend a call to be
+                # told "unclear" by a judge shown nothing
+                v.vision = "no_figure"
+                continue
+            sb = auditor_mod.build_signature_bundle(
+                family_key=fam.key, family_label=fam.label, target=t,
+                figure_path=fig)
+            sv = self.auditor.signature(sb)
+            with self._lock:
+                self.state["llm_calls"] = self.auditor.calls_made
+            self._ledger("llm_signature", step=step.id, target=t,
+                         panel=v.panel_kind, **sv.as_dict())
+            v.vision = sv.signature
+            if sv.accepted:
+                v.reasons.append(f"signature clear: {sv.reason}")
+                continue
+            # gates pass + judge does not accept ⇒ NOT done. This is the loop.
+            v.verdict = "fail"
+            v.failure_mode = sv.failure_mode or v.failure_mode or "noisy"
+            v.reasons.append(f"signature {sv.signature}: {sv.reason}")
         return verdicts
 
     # ---- decision + writes ------------------------------------------------
@@ -735,6 +858,20 @@ class PlanEngine:
         for p in target_patches:
             self._record_preplan(patch_path_to_dotted(p.get("path", "")),
                                  p.get("old"))
+
+        # Only an ACCEPTED fit enters the cross-experiment review: comparing a
+        # value the plan itself rejected against a good one would report a
+        # contradiction we already resolved.
+        if fam is not None and v.verdict == "pass":
+            entry = (run.get("fit_results") or {}).get(target)
+            if isinstance(entry, dict):
+                self._fits[(fam.key, target)] = entry
+
+        # P6b (minimal): the board carries HOW this target was looked at, so a
+        # cell reading "pass" can never be mistaken for a vision-verified one.
+        self._cell(step.id, target, self.state["board"].get(step.id, {})
+                   .get(target, {}).get("state", "running"),
+                   vision=v.vision, panel=v.panel_kind)
 
         effective = v.verdict
         if effective == "suspect":
@@ -826,6 +963,10 @@ class PlanEngine:
                         f"hard step {step.id!r} failed ({v.failure_mode})")
                 self._ledger("target_halted", step=step.id, target=target,
                              reason=v.failure_mode)
+                # FYI, not an alarm: the other targets continue (D-8's
+                # revert-and-continue), so this must not read as a night lost
+                self._notify("target_halted", step=step.id, target=target,
+                             reason=v.failure_mode, plan=self.plan.name)
             return "defer"
 
         # defer (abstain policy / unverifiable) — the node's write is KEPT for
@@ -927,12 +1068,40 @@ def _patch_target(p: dict) -> str | None:
     return parts[1] if len(parts) > 1 else None
 
 
+# `figures.<name>.png` is the SHEET; `figures.<name>.<target>.png` is one
+# target's panel. The difference is a segment count, not a suffix — matching on
+# the tail alone calls every sheet a panel, which silently disables the whole
+# vision round (caught in the first end-to-end run).
+_SHEET_RE = re.compile(r"^figures\.[^.]+\.png$")
+
+
 def _first_figure(run: dict) -> Path | None:
+    """The run's SHEET — every target on one picture. Stage 1 (triage) only."""
     folder = run.get("folder_path")
     if not folder:
         return None
     try:
-        for f in sorted(Path(folder).glob("figures.*.png")):
+        files = sorted(Path(folder).glob("figures.*.png"))
+    except OSError:
+        return None
+    for f in files:
+        if _SHEET_RE.match(f.name):
+            return f
+    return files[0] if files else None      # honest degrade, never nothing
+
+
+def _panel_figure(run: dict, target: str) -> Path | None:
+    """The single-panel figure for ONE target, or None.
+
+    Stage 2 asks the per-target question; asking it against a sheet holding
+    every target is the D-11.1 defect. When no panel exists the caller must
+    fall back to the sheet AND say so — never silently.
+    """
+    folder = run.get("folder_path")
+    if not folder or not target:
+        return None
+    try:
+        for f in sorted(Path(folder).glob(f"figures.*.{target}.png")):
             return f
     except OSError:
         pass

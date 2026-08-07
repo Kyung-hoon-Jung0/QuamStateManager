@@ -1165,6 +1165,21 @@ def synth_run(node_name: str, chip: SimChip, targets: list[str], out_root: Path,
             fig.savefig(folder / fname)
             _plt.close(fig)
             fig_refs[figname] = f"./{fname}"
+            # ALSO one panel per target (docs/78 §18): stage 2 asks the
+            # per-target question, and asking it against a sheet holding every
+            # target is the D-11.1 defect. Real archives ship a panel grid the
+            # lab's own plotting can re-render per target; the sim drew
+            # everything on one axes, so there was nothing to extract.
+            for t, (x, y, marker) in per_target.items():
+                f1, a1 = _plt.subplots(figsize=(4, 2.6), dpi=80)
+                a1.plot(x, y, lw=0.9)
+                if marker is not None:
+                    a1.axvline(marker, color="red", ls="--", lw=0.8)
+                a1.set_title(f"{node_name} — {t}", fontsize=8)
+                pname = f"figures.{figname}.{t}.png"
+                f1.savefig(folder / pname)
+                _plt.close(f1)
+                fig_refs[f"{figname}.{t}"] = f"./{pname}"
 
     # ---- data.json ----------------------------------------------------------
     data_json = {"ds_raw": "./ds_raw.h5", "ds_fit": "./ds_fit.h5",

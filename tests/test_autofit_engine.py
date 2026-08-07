@@ -176,11 +176,20 @@ class TestLLMIntegration:
     def test_llm_resolves_suspects_accept_and_reject(self, tmp_path):
         # noisy T1 on both qubits → gate suspect(noisy). Fake LLM: accept qA1
         # (keep the node's write), reject qA2 (revert + no budget → defer).
+        # Since docs/78 §18 an LLM accept on the TRUST question no longer
+        # terminates by itself: §1.3 also needs the signature to be `clear`, so
+        # the script must answer both asks. (Scripting only the trust answer
+        # leaves the signature at its safe default `unclear`, and the target
+        # correctly fails to finish — that is the terminator working.)
         fake = FakeProvider({
             "qA1": {"verdict": "accept", "failure_mode": None,
                     "reason": "decay visible, fit tracks it"},
             "qA2": {"verdict": "reject", "failure_mode": "noisy",
                     "reason": "fit does not track the decay"},
+            ("signature", "qA1"): {"signature": "clear",
+                                   "reason": "clean decay"},
+            ("signature", "qA2"): {"signature": "clear",
+                                   "reason": "not reached — qA2 already failed"},
         })
         auditor = Auditor({"provider": "fake", "max_calls_per_plan": 10},
                           fake_provider=fake)
@@ -196,10 +205,88 @@ class TestLLMIntegration:
         assert st["board"]["t1"]["qA1"]["state"] == "pass"       # LLM accept
         assert st["board"]["t1"]["qA2"]["state"] == "reverted"   # LLM reject
         assert chip.get("qubits.qA2.T1") == pytest.approx(pre_t1_qA2)
-        assert st["llm_calls"] == 2
         ev = [e for e in _ledger(eng) if e["event"] == "llm_verdict"]
         assert {e["target"]: e["verdict"] for e in ev} == \
             {"qA1": "accept", "qA2": "reject"}
+
+    def test_the_1_3_terminator_gates_pass_is_not_enough(self, tmp_path):
+        """docs/78 §1.3: done ONLY when the gates PASS **and** the judge accepts
+        the signature. A clean run whose picture the judge will not sign off on
+        must NOT finish — this is the loop, and until §18 nothing enforced it."""
+        fake = FakeProvider({("signature", "qA1"): {
+            "signature": "absent", "failure_mode": "no_signal",
+            "reason": "no decay anywhere in the window"}})
+        auditor = Auditor({"provider": "fake", "max_calls_per_plan": 10},
+                          fake_provider=fake)
+        steps = [{"id": "t1", "family": "T1", "retry_max": 0,
+                  "criticality": "soft"}]
+        eng, chip, _, _ = _mk(tmp_path, _plan(steps), auditor=auditor,
+                              targets=("qA1",))
+        st = _run(eng)
+        assert st["board"]["t1"]["qA1"]["state"] != "pass"
+        sig = [e for e in _ledger(eng) if e["event"] == "llm_signature"]
+        assert sig and sig[0]["signature"] == "absent"
+        assert sig[0]["panel"] == "panel", "judged on a shared sheet"
+
+    def test_two_stage_looking_end_to_end(self, tmp_path):
+        """docs/78 §18 through the REAL engine: one triage call per sheet, a
+        dedicated look only for the union set, and a target the judge refuses
+        does not terminate — it drops out of the downstream step."""
+        import json as _json
+
+        class _Triage(FakeProvider):
+            def __call__(self, bundle):
+                ctx = bundle.get("context") or {}
+                if ctx.get("ask") == "triage":
+                    self.calls.append(bundle)
+                    return _json.dumps({"state": "some_suspect",
+                                        "suspects": ["qA3"], "reason": "flat"})
+                return FakeProvider.__call__(self, bundle)
+
+        fake = _Triage({
+            ("signature", "qA3"): {"signature": "absent",
+                                   "failure_mode": "no_signal",
+                                   "reason": "no peak anywhere"}})
+        chip = synth.make_sim_chip(("qA1", "qA2", "qA3"), ("qA2-qA1",), seed=7)
+        plan = _plan([{"id": "qs", "family": "qubit_spectroscopy",
+                       "retry_max": 0},
+                      {"id": "rabi", "family": "power_rabi", "retry_max": 0}],
+                     targets=["qA1", "qA2", "qA3"])
+        eng, chip, _, _ = _mk(tmp_path, plan, chip=chip,
+                              targets=("qA1", "qA2", "qA3"),
+                              auditor=Auditor(
+                                  {"provider": "fake",
+                                   "max_calls_per_plan": 40},
+                                  fake_provider=fake))
+        st = _run(eng)
+        led = _ledger(eng)
+
+        # ONE triage per multi-target run, not one per target
+        assert len([e for e in led if e["event"] == "llm_triage"]) == 2
+        # the dedicated look went ONLY to the union set
+        sig = [e for e in led if e["event"] == "llm_signature"]
+        assert [e["target"] for e in sig] == ["qA3"]
+        assert sig[0]["panel"] == "panel", "judged on a shared sheet"
+        # gates passed, judge refused ⇒ not done, and gone from the next step
+        assert st["board"]["qs"]["qA3"]["state"] != "pass"
+        assert "qA3" not in st["board"].get("rabi", {})
+        assert st["board"]["qs"]["qA1"]["state"] == "pass"
+        # …and the untouched ones are STAMPED as overview-only
+        v = [e for e in led if e["event"] == "verdict" and e["step"] == "qs"]
+        assert {e["target"]: e["vision"] for e in v} == \
+            {"qA1": "overview_only", "qA2": "overview_only", "qA3": "absent"}
+
+    def test_no_judge_terminates_on_gates_but_stamps_the_run(self, tmp_path):
+        """The approved policy (docs/78 §18.2): with no judge available the
+        loop still finishes on the gates — but every target is stamped so no
+        report can imply a vision check that never happened."""
+        steps = [{"id": "t1", "family": "T1", "retry_max": 0,
+                  "criticality": "soft"}]
+        eng, chip, _, _ = _mk(tmp_path, _plan(steps), targets=("qA1",))
+        st = _run(eng)
+        assert st["board"]["t1"]["qA1"]["state"] in ("pass", "applied")
+        ev = [e for e in _ledger(eng) if e["event"] == "verdict"]
+        assert ev and ev[0]["vision"] == "unavailable"
 
     def test_llm_disabled_suspects_defer_without_reverting_good_data(
             self, tmp_path):

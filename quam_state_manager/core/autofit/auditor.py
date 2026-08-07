@@ -558,8 +558,13 @@ class FakeProvider:
         ctx = bundle.get("context") or {}
         ask = ctx.get("ask") or "judge"
         key = (ctx.get("family"), ctx.get("target"))
-        obj = self.script.get((ask, *key)) or self.script.get((ask, ctx.get("target"))) \
-            or self.script.get(key) or self.script.get(ctx.get("target"))
+        obj = self.script.get((ask, *key)) or self.script.get((ask, ctx.get("target")))
+        if obj is None and ask in ("judge", "presence"):
+            # bare keys answer the TRUST asks only. Letting a judge-shaped
+            # script also answer `signature`/`compare`/`triage` would hand the
+            # parser a payload of the wrong shape and read as a scripted
+            # verdict when it is really a fallthrough.
+            obj = self.script.get(key) or self.script.get(ctx.get("target"))
         if obj is None:
             # the default per ask is the SAFE one: never "clear", never a
             # progress claim (docs/78 D-7 — an absent judge must not terminate

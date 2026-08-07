@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from quam_state_manager.core import node_scan, safe_io, scheduler
+from quam_state_manager.core.autofit import action_space
 from quam_state_manager.core.autofit.engine import StepRunResult
 from quam_state_manager.core.autofit.families import normalize_node_name
 from quam_state_manager.core.autofit.plan import Step
@@ -94,13 +95,26 @@ class RealBackend:
             return StepRunResult(status="failed",
                                  error=f"node unparseable: {info_scan.error}")
         window_start = datetime.now(timezone.utc)
+        # THE agent-authored override choke point (docs/78 P4/§17.6). The
+        # scheduler strips its own reserved set for human-queued items, but
+        # `load_data_id` is not on that list — and it is the one that matters:
+        # a node given it replays archived data instead of measuring, so a
+        # plan could report a calibrated chip with the fridge idle. Human
+        # replay stays legal; the agent's path does not.
+        safe_params, dropped = action_space.sanitize(
+            params, targets_name=info_scan.targets_name)
+        if dropped:
+            logger.warning("autofit dropped %d forbidden override(s) for %s: %s",
+                           len(dropped), step.id,
+                           "; ".join(f"{d['key']} ({d['class']})"
+                                     for d in dropped))
         item = scheduler.add_item(inst, {
             "file": str(source),
             "name": info_scan.name,
             "kind": info_scan.kind,
             "has_hook": info_scan.has_hook,
             "targets_name": info_scan.targets_name,
-            "param_overrides": dict(params),
+            "param_overrides": safe_params,
             "label": f"{_AUTOFIT_LABEL}: {step.id} (attempt {attempt + 1})",
         }, targets=list(targets))
         item_id = item["id"]

@@ -1,12 +1,15 @@
 # 78 — Runner + AI calibration agent (PLAN, final)
 
-> Status (2026-08-07): **P0, P1, P2, P3a/P3b SHIPPED — P3c onward not started.**
+> Status (2026-08-07): **P0–P8 SHIPPED except P3c/P3d (needs an API key) and P9 (needs hardware).**
 > Records: §13 (P0) · §14 (P1) · §15 (P2) · §16 (P3a/P3b) · **§17 (audit —
-> read this before trusting any earlier section)**. The line is a stack of
-> branches off `origin/main @ 8e5fa99`: `9cf30dd` → `37e7e25` → `9e6de68` →
-> `8ceee44`, on `feat/runner-p3-judge`; not merged to main.
-> **The loop does not close yet**: the §1.3 terminator is implemented but has
-> no caller (§17 B1), and P4–P9 are untouched.
+> read this before trusting any earlier section)** · §18 (two-stage looking +
+> the stage-1 pilot) · §19 (P4–P8). A stack of branches off
+> `origin/main @ 8e5fa99` on `feat/runner-p3-judge`; not merged to main.
+> **The loop closes** (§19.1): a target is done only when the gates pass AND
+> the judge signs off on its own panel — or, with no judge configured, on the
+> gates alone and STAMPED as not vision-verified.
+> Still open: the signature calibration (needs a key), verdicts recording
+> `env`/`root_rev` (§17 B3, deferred), and P9.
 > Design discussion + investigation: 2026-08-05.
 > Lineage: docs/40 (Scheduler chassis) · docs/47 (LLM doctrine + Phase-0
 > measurements) · docs/50 (fit-audit) · docs/56 (Autofit v1/v2) ·
@@ -1835,3 +1838,154 @@ wrong paths existed, confident numbers would have been computed against
 mismatched ground truth. The case file is now the single source for both the
 run arguments and the scorer, so the two cannot disagree — the same discipline
 §15 applies to bands, applied to the experiment itself.
+
+---
+
+## 19. P4–P8 in one pass (2026-08-07) — the loop closes
+
+User decisions taken as given: judge-unavailable ⇒ gates-only **stamped**;
+default autonomy `review`; P6b minimal; P8 harness + small pilot.
+
+### 19.1 The §1.3 terminator is now WIRED (closes §17 B1)
+
+`_evaluate` gained the round that was missing: for every target the gates
+PASSED, the judge is asked whether the picture carries a correct signature, and
+**a refusal turns the pass into a fail**. That is the loop; until now the plan
+described it and nothing enforced it.
+
+Who gets asked follows §18's two-stage rule: one triage call for the sheet, then
+a dedicated look for the **union** of (gates flagged) and (triage flagged).
+Measured in the sim on 3 qubits × 2 steps: **3 LLM calls**, one target refused,
+that target dropped from the downstream step. Naive per-target would have been
+six calls and climbing — the affordability argument, demonstrated rather than
+argued.
+
+Three states the ledger now distinguishes, because a report that cannot tell
+them apart implies a check that never happened:
+
+| `vision` | meaning |
+|---|---|
+| `clear` | a dedicated look, signed off |
+| `overview_only` | nobody flagged it; it terminated on gates + the sheet |
+| `unavailable` | no judge configured — the approved policy, stamped |
+
+Plus `panel_kind` (`panel` / `sheet`) so "judged on its own picture" is never
+assumed. The sim now renders per-target panels; before, everything was drawn on
+one axes and there was nothing to extract.
+
+**A single-target run is a special case and was initially wrong.** Triage only
+runs on multi-target sheets, so a 1-qubit run had no overview *and* no dedicated
+look — nobody looked at all. Now a one-target run always gets its look: the
+sheet already IS that panel, and the whole cost is one call.
+
+### 19.2 P4 — the action space, and the key that was never blocked
+
+`action_space.py` classifies by **"can a wrong choice lie to us?"**, not by
+number-ness (D-3). `num_shots = 3` is a number and is safe — wrong ⇒ visibly
+noisy. `use_state_discrimination = True` without calibrated blobs is a boolean
+and is dangerous — clean-looking populations that are garbage.
+
+* **class A** picks real numbers inside code-owned bounds; **class B** may only
+  propose, and code checks the precondition; **frozen** is never touched;
+  **reserved** includes **`load_data_id`** — §17.6's finding, now enforced at
+  the agent's own write path in `realbackend`, where every drop is logged. A
+  human may still replay archived data; the agent may not.
+* an **unclassified** key is `unknown`, not class A. A parameter nobody
+  classified is one nobody thought about, and the deceptive ones look harmless.
+* **bounds are data-derived** (D-5): hardware reach from `spec_constraints`,
+  widened by what this lab has actually run — never from schema defaults, which
+  observed values leave far behind. The corpus can widen a soft floor; it can
+  never widen a physical ceiling.
+* an out-of-bound proposal is **rejected, not clamped** — clamping hands the
+  loop a number nobody chose and hides that the agent asked for the impossible.
+* a class-B precondition that cannot be CHECKED refuses. An unverifiable
+  precondition is not a satisfied one.
+
+### 19.3 P5 — a counter is not a stop-loss
+
+`stoploss.py`, three tiers, one entry point ordered harm → budget → no-progress.
+
+* **Tier 1** finally has the plan **step cap** and **wall clock** §4.7 listed as
+  absent from the day the plan was written. They matter precisely because the
+  work queue accepts runtime-inserted rungs: "steps remaining" is not a bound.
+  Unset means unlimited (an unset clock is not a zero clock); `max_steps: 0` is
+  rejected as the typo it is rather than silently doing nothing.
+* **Tier 2** needs BOTH signals flat — the metric trend (free: the gates already
+  compute `peak_snr`/`r2`/`contrast` every attempt) and the pairwise vision
+  comparison. Either alone would stop runs that are genuinely improving on the
+  other axis. A metric wobbling inside ±5% is not progress, and this is the only
+  thing that catches **oscillation**, where every individual step is justified
+  and a counter never fires.
+* **Tier 3** is harm: seeds written and never consumed, drive at the ceiling,
+  and the same target escalating upstream twice — which means the problem is
+  not where we think it is.
+
+### 19.4 P6c — the review that only exists across runs
+
+Every gate so far judges ONE run against itself. The failure that survives all
+of them is the pair that is each internally consistent and mutually impossible:
+node 06 puts a qubit's sweet spot at one bias, node 09 puts it elsewhere, both
+with clean fits and convincing figures. No per-run gate sees it; neither does
+the judge.
+
+**What to compare is corpus-derived.** Harvesting the archives showed which
+quantities ≥2 families actually claim. The list is then **curated**, because the
+same key name is not the same quantity — `frequency_shift` appears in four
+families, but 06's is a qubit-flux response and 07's is a coupler-flux one, so
+comparing them would manufacture disagreement. `optimal_power` is excluded for
+the same reason: 05 and 08b optimise different lines.
+
+**The tolerance is a physical scale the runs themselves report** — a linewidth
+for frequencies, the flux step for offsets — never a constant typed into the
+module. A hardcoded Hz is the Clause-B mistake in numeric form: right for the
+chip it was written on, wrong for the next. A broad resonance tolerates a wider
+disagreement than a sharp one, and the same two numbers correctly produce two
+different verdicts.
+
+The review **reports only**. Deciding which of two contradictory results to keep
+is not something a consistency check has the standing to do — it fires
+`needs_human`, which D-8 calls a normal terminal state, not an exhaustion.
+
+### 19.5 P7 — four events, best-effort
+
+`notify.py`: `plan_done` · `target_halted` · `plan_stopped` · `needs_human`.
+A notifier that fires on everything gets muted, and a muted notifier reads as
+coverage while delivering nothing. Webhook + a persisted browser queue (a closed
+laptop must not lose the night). A dead webhook never raises, and a notifier
+that explodes cannot kill a plan.
+
+### 19.6 P8 — the harness, and why agreement is the wrong metric
+
+`replay_score.py` carves decision points out of a real session — the first *k*
+runs, what the operator did next, and how many runs they still needed — and
+scores proposals against them.
+
+**The metric is "reaches the same conclusion in fewer runs", not agreement.**
+The reference case is docs/56 §6V case C: the operator burned three drive-power
+attempts and a day before refining the step. Agreeing with that is not success.
+So the harness scores an agent that skips the dead end as **faster** even though
+it agrees with the human *less*, and a knob the operator never touched is
+**not** counted as disagreement — it may be the shortcut, and punishing it would
+suppress exactly the behaviour the experiment exists to find. Without measured
+outcomes the report says so instead of substituting agreement.
+
+It never calls a model: the caller supplies proposals, which is what lets the
+same case set run against a subagent today and the real API later and be
+compared.
+
+### 19.7 P9 — not done, and not doable here
+
+Real hardware. There is no fridge on this machine, and its pre-flight requires
+observing a scheduler-run node produce a dataset with `fit_results` **and**
+`patches`. Everything upstream is offline-verified in the sim; P9 begins when
+someone points this at an instrument.
+
+### 19.8 Still open
+
+* **P3c/P3d** — the signature calibration needs a key. §18.5's pilot measured
+  stage 1 only; the ≥90% bar belongs to the signature ask.
+* §17 B3 — verdicts still do not record `env`/`root_rev` (user deferred).
+* `power_rabi` still has no `verify_wide` (§17.6).
+* P6b is minimal by decision: the board carries `vision`/`panel`, and no new
+  screen was built — browser verification is not something this session could do
+  honestly.

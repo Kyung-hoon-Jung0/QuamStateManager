@@ -222,10 +222,16 @@ class TestInLoopVision:
         monkeypatch.setitem(
             fam.adaptations, "no_signal",
             [Rung(kind="seed_shift", seed_paths=_XY, span_default=40.0)])
-        fake = FakeProvider({"qA1": {
-            "verdict": "abstain", "failure_mode": None,
-            "reason": "flat noise; structure suggested below the window",
-            "feature_visible": False, "direction": "left"}})
+        fake = FakeProvider({
+            "qA1": {
+                "verdict": "abstain", "failure_mode": None,
+                "reason": "flat noise; structure suggested below the window",
+                "feature_visible": False, "direction": "left"},
+            # §1.3 (docs/78 §18): converging is not finishing — the judge must
+            # also sign off on the picture the re-measure produced.
+            ("signature", "qA1"): {"signature": "clear",
+                                   "reason": "peak now inside the window"},
+        })
         plan = _plan([{"id": "qs", "family": "qubit_spectroscopy",
                        "retry_max": 2,
                        "params": {"frequency_span_in_mhz": 40}}])
