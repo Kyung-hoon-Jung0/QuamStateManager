@@ -271,6 +271,16 @@ class Family:
     metric_gates: list[MetricGate] = field(default_factory=list)
     plausibility: list[Plausibility] = field(default_factory=list)
     feature_check: FeatureCheck | None = None
+    # fit key -> multiplier applied ONCE when that key is read, so the gate and
+    # the write can never disagree about units (docs/78 §22.4 item 1). That
+    # disagreement is exactly how the T1 defect survived: the band was written
+    # in seconds, the write inherited the fit's nanoseconds, and neither had
+    # been exercised. Measured: the chips store T1/T2 in SECONDS (n=8,379,
+    # p50 3e-5) while node 05's fit reports ~3e4 — so an ungated write would
+    # have put 30,000 SECONDS into a field where 30 microseconds belongs.
+    # Scoped by measurement, not by family shape: ramsey's `decay` (n=635) and
+    # echo's `T2_echo` (n=143) are already in seconds and are NOT scaled.
+    fit_scale: dict[str, float] = field(default_factory=dict)
     updates: list[UpdateSpec] = field(default_factory=list)
     # failure_mode → rule | [rung, …] — a bare callable is the v1 single
     # params rule (re-applied every retry); a list is a LADDER walked one
@@ -286,6 +296,29 @@ class Family:
     # feature_present_fit_failed), the engine inserts a one-shot wide scan
     # of the same family before trusting the discovery.
     verify_wide: dict | None = None
+
+
+def fit_value(fam, fit_entry: dict, key: str) -> float | None:
+    """THE one read of a fit number, with the family's unit scale applied.
+
+    Every consumer goes through here — the plausibility band, the jump limit,
+    the history trend and the write. That is the whole point: the T1 defect
+    (docs/78 §22.4) existed because the band and the write reached the same key
+    by two paths and disagreed about its unit, and neither path had been
+    exercised on real data. One reader cannot disagree with itself.
+
+    Returns None for anything that is not a finite real number — bools
+    included, since ``True`` is an ``int`` in Python and has no business in a
+    physical band.
+    """
+    import math as _math
+
+    v = (fit_entry or {}).get(key)
+    if isinstance(v, bool) or not isinstance(v, (int, float)) \
+            or not _math.isfinite(v):
+        return None
+    scale = (getattr(fam, "fit_scale", None) or {}).get(key)
+    return float(v) * float(scale) if scale else float(v)
 
 
 def rungs_for(fam: "Family", mode: str) -> list[Rung]:
@@ -606,6 +639,10 @@ _register(Family(
     plausibility=[Plausibility("t1", lo=0.5e-6, hi=1e-3, max_rel_jump=2.5,
                                state_path="qubits.{q}.T1")],
     feature_check=FeatureCheck(var="I", axis_var="idle_time", mode="span"),
+    # the node reports t1 in NANOSECONDS and the chip stores seconds — the band
+    # above (correct, and matching the 8,379 stored values) rejected 6 of 6
+    # accepted fits, and the write below would have been off by 1e9
+    fit_scale={"t1": 1e-9},
     updates=[UpdateSpec("t1", "qubits.{q}.T1", label="T1")],
     adaptations={"noisy": _more_shots, "no_signal": _more_shots},
 ))
@@ -1054,9 +1091,8 @@ def resolve_updates(fam: Family, target: str, fit_entry: dict,
                 matched.add((spec.fit_key, spec.route_on))
 
     for spec in fam.updates:
-        v = fit_entry.get(spec.fit_key)
-        if isinstance(v, bool) or not isinstance(v, (int, float)) \
-                or not _math.isfinite(v):
+        v = fit_value(fam, fit_entry, spec.fit_key)
+        if v is None:
             continue
         if spec.guard is not None:
             try:

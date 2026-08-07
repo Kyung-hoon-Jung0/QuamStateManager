@@ -2412,12 +2412,53 @@ Fixable; not fixed.
 
 ### 22.4 What is now open, in the order the evidence supports
 
-1. Split the contaminated populations out of their host families, then re-derive
-   the bands §22.1 flags — including the T1 unit defect, which is a bug rather
-   than a calibration and should be fixed first.
+1. ~~the T1 unit defect~~ — **done, §22.5.** What remains is to split the
+   contaminated populations out of their host families and then re-derive the
+   *bands* §22.1 flags.
 2. Wire tiers 2 and 3 of the stop-loss to a caller, and declare the
    metric-blind families rather than letting a blind check read as a passed one.
 3. `rel_tol` + the dB-key absolute-delta branch, in one edit.
 4. Re-shape the corpus bounds (slack, one-sided edges, no default-derived edge).
 5. A picture-level label source for D-7's stinginess bar.
 6. Harden the Clause-B lint against prose, and surface or drop `notes`.
+
+### 22.5 The T1 unit defect — and the sim that was validating it
+
+§22.4 ranked this first because it is a bug, not a calibration. Confirming it
+independently took four measurements, and the third and fourth are the
+interesting ones.
+
+1. **The chips store seconds.** `qubits.*.T1` / `T2ramsey` / `T2echo` across 399
+   archived snapshots: n = 8,379 / 7,354 / 7,980, p50 ≈ 3e-5. The shipped band
+   `[0.5e-6, 1e-3]` is *correct* for those values.
+2. **The node's fit reports nanoseconds.** `t1` ≈ 3e4. So the band accepted
+   **0 of 6** accepted fits, and the `UpdateSpec` would have written ~30,000
+   SECONDS into a field holding 30 microseconds — a 1e9 error, straight to the
+   live chip.
+3. **Six fits from three runs is not a convention.** They all came from ONE
+   node variant in ONE archive, which is exactly the sample-population trap that
+   §20.1 and §22.1 keep catching. The corpus turns out to hold **two** T1 node
+   versions; measuring the other gives **n = 141 across 27 runs, also
+   nanoseconds**. n = 147 over two node versions and two archives — now it is a
+   convention.
+4. **The sim was emitting seconds**, which is why nothing had ever failed.
+   `synth.py` produced `t1` in the same units the band expected, so the ledger's
+   T1 rows agreed with a gate that rejects every real T1 fit. **A simulator
+   built to match the code rather than the instrument validates the bug.** The
+   sim now emits nanoseconds for the fit and keeps seconds for the patch —
+   which is what the real node does.
+
+The fix is deliberately *not* a scale bolted onto the band or onto the write.
+Both of those exist, and the defect's real cause is that **there were two
+readers**: `gates` read `entry[pl.key]` for the band while `families` read
+`fit_entry[spec.fit_key]` for the write, and nothing made them agree about
+units. So the fix is **one reader** — `families.fit_value(fam, entry, key)`,
+through which the band, the jump limit, the G5 history anchor and the write all
+now pass. A test pins the property directly: what the band judged is exactly
+what gets written.
+
+The scale is scoped by measurement, not by family shape: ramsey's `decay`
+(n=635) and echo's `T2_echo` (n=143) already report seconds and are **not**
+scaled — scaling them would have created the same defect in the other
+direction. A test pins that too, and pins that no other family acquires a scale
+by accident.

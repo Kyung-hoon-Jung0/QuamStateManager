@@ -30,6 +30,7 @@ from typing import Any, Callable
 
 import numpy as np
 
+from quam_state_manager.core.autofit import families as fam_mod
 from quam_state_manager.core.autofit.families import Family, FeatureCheck
 
 logger = logging.getLogger(__name__)
@@ -338,9 +339,10 @@ def evaluate_target(run, fam: Family, target: str, *,
 
     # --- G4 first for HARD physical bands (cheapest hard reject) ------------
     for pl in fam.plausibility:
-        val = entry.get(pl.key)
-        if not isinstance(val, (int, float)) or isinstance(val, bool) \
-                or not math.isfinite(val):
+        # through the family's one reader, so the band and the WRITE can never
+        # disagree about the unit (docs/78 §22.4 — the T1 defect)
+        val = fam_mod.fit_value(fam, entry, pl.key)
+        if val is None:
             continue
         if (pl.lo is not None and val < pl.lo) or \
                 (pl.hi is not None and val > pl.hi):
@@ -462,10 +464,11 @@ def evaluate_target(run, fam: Family, target: str, *,
     # metric (e.g. an r² of 0.99) against a flux-offset trend and report a
     # 600-σ drift on a perfectly good run. The gate had never been supplied with
     # points in production, so nothing had exercised it (docs/78 P2d).
-    hist_val = entry.get(fam.value_key)
-    if history_points and len(history_points) >= 3 \
-            and isinstance(hist_val, (int, float)) \
-            and not isinstance(hist_val, bool) and math.isfinite(hist_val):
+    # the same reader again: the history trend comes from STATE, so an unscaled
+    # fit value here would compare nanoseconds against a seconds series — the
+    # very shape of the P2d bug this gate was fixed for
+    hist_val = fam_mod.fit_value(fam, entry, fam.value_key)
+    if history_points and len(history_points) >= 3 and hist_val is not None:
         val = hist_val
         pts = np.asarray(history_points, dtype=float)
         med = float(np.median(pts))

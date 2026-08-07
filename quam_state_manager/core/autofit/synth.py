@@ -586,7 +586,15 @@ def _decay_family(chip, targets, params, corrupt_for, rng, *, which: str):
             claimed, success = truth * float(rng.normal(1, 0.03)), True
         err = abs(claimed) * (0.35 if corrupt == "noisy" else 0.06)
         if which == "t1":
-            fits[q] = {"t1": claimed, "t1_error": err, "success": success}
+            # The real node reports `t1` in NANOSECONDS while the chip stores
+            # seconds — measured across BOTH archived T1 node versions (n=141
+            # and n=6), so this is the convention, not one lab's quirk. The sim
+            # used to emit seconds, which meant it agreed with a gate band that
+            # rejected every real fit: a sim built to match the code instead of
+            # the instrument validates the bug (docs/78 §22.4 item 1). The
+            # PATCH stays in seconds, because that is what the node writes.
+            fits[q] = {"t1": claimed * 1e9, "t1_error": err * 1e9,
+                       "success": success}
             patches.append((f"qubits.{q}.T1", claimed))
         else:
             fits[q] = {"T2_echo": claimed, "T2_echo_error": err, "success": success}
