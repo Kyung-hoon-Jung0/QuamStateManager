@@ -34,7 +34,7 @@ from collections import Counter, OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from flask import (
     Blueprint,
@@ -58,6 +58,7 @@ from quam_state_manager.core import (
     cr_semantics,
     diagnostics,
     gen_presets,
+    json_diff,
     node_scan,
     path_match,
     qualibrate_config,
@@ -1817,8 +1818,17 @@ def _chip_prompt_memo_file() -> Path:
 
 
 def _load_chip_prompt_memo() -> dict:
+    # ONE attempt, and only when the file is there. This is read from _ctx()
+    # — i.e. on EVERY page render — and until a user has declined a prompt the
+    # file does not exist. safe_io.read_json's 4-attempt/0.9 s retry ladder is
+    # right for a live state.json being replaced under us and pure latency
+    # here: measured 906 ms of time.sleep on every single render of a fresh
+    # instance.
+    path = _chip_prompt_memo_file()
     try:
-        data = safe_io.read_json(_chip_prompt_memo_file())
+        if not path.exists():
+            return {}
+        data = safe_io.read_json(path, attempts=1)
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
@@ -10262,29 +10272,282 @@ def _legacy_src_token(path: str) -> str:
     return f"ws:{path}"
 
 
+_DIFF_TABS = ("state", "wiring", "node", "data")
+_DIFF_LIST_PAGE = 300      # ranked rows per list page
+# One diff is one flatten of two documents (20-45 ms measured on real chips).
+# The tab strip and the tree/list toggle re-ask for the same pair, so a small
+# content-hash-keyed memo makes those switches free.
+_DIFF_MEMO: "OrderedDict[tuple, dict]" = OrderedDict()
+_DIFF_MEMO_MAX = 6
+_diff_memo_lock = threading.Lock()
+
+
+def _diff_side_doc(src, tab: str) -> tuple[Any, str]:
+    """``(document, unavailable_reason)`` for one side of one tab."""
+    if tab in ("state", "wiring"):
+        entry = compare_sources.DEFAULT_POOL.get(src.content_hash)
+        if entry is None:
+            entry = compare_sources.resolve_source(
+                src.ref, history_root=_hub_history_root(),
+                working_lookup=_hub_working_lookup)
+            entry = compare_sources.DEFAULT_POOL.get(src.content_hash)
+        if entry is None:
+            return None, "content unavailable"
+        return (entry.state if tab == "state" else entry.wiring), ""
+    if tab == "node":
+        # A run's node.json sits BESIDE its quam_state folder. Snapshots and
+        # the working copy have no run behind them — say so rather than
+        # pretending the tab is empty.
+        node = Path(src.path).parent / "node.json"
+        if src.origin in ("history", "working") or not node.exists():
+            return None, "no node.json — this side is not an experiment run"
+        try:
+            return safe_io.read_json(node), ""
+        except (OSError, ValueError) as exc:
+            return None, f"node.json unreadable ({type(exc).__name__})"
+    if tab == "data":
+        folder = Path(src.path).parent
+        if src.origin in ("history", "working"):
+            return None, "no data files — this side is not an experiment run"
+        try:
+            from quam_state_manager.core import ndview
+            files = ndview.list_h5_files(folder)
+        except Exception:      # noqa: BLE001
+            files = []
+        if not files:
+            return None, "no .h5 data files in this run"
+        inv: dict[str, Any] = {}
+        for name in files:
+            probe = ndview.probe_file(folder / name)
+            if not probe.get("ok"):
+                inv[name] = {"error": probe.get("error") or "unreadable"}
+                continue
+            inv[name] = {v["name"]: {"shape": v.get("shape"),
+                                     "dims": v.get("dims")}
+                         for v in probe.get("vars", [])}
+        return inv, ""
+    return None, "unknown tab"
+
+
+def _diff_payload(src_a, src_b, tab: str, *, with_rows: bool) -> dict:
+    key = (src_a.content_hash, src_b.content_hash, src_a.ref, src_b.ref, tab)
+    with _diff_memo_lock:
+        hit = _DIFF_MEMO.get(key)
+        if hit is not None:
+            _DIFF_MEMO.move_to_end(key)
+            return hit
+    doc_a, why_a = _diff_side_doc(src_a, tab)
+    doc_b, why_b = _diff_side_doc(src_b, tab)
+    if doc_a is None or doc_b is None:
+        return {"ok": False, "unavailable": why_a or why_b,
+                "counts": {}, "rows": [], "tree_a": {}, "tree_b": {}}
+    res = json_diff.build(doc_a, doc_b)
+    res["ok"] = True
+    res["unavailable"] = ""
+    with _diff_memo_lock:
+        _DIFF_MEMO[key] = res
+        _DIFF_MEMO.move_to_end(key)
+        while len(_DIFF_MEMO) > _DIFF_MEMO_MAX:
+            _DIFF_MEMO.popitem(last=False)
+    return res if with_rows else {**res, "rows": []}
+
+
+def _diff_default_refs() -> tuple[str, str]:
+    """The pair a bare /diff opens on: the newest snapshot vs what is loaded.
+
+    That is the question a user has when they arrive without having picked
+    anything — *what have I changed?* — and it needs no picking at all.
+    """
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam":
+        return "", ""
+    path = ctx.get("path") or ""
+    b = f"working:{path}"
+    try:
+        hm = _history()
+        chip_dir = hm.resolve_chip_dir(Path(path))[0]
+        snaps = hm.list_snapshots(path)
+        if snaps:
+            return f"hist:{Path(chip_dir).name}/{snaps[0].timestamp}", b
+    except Exception:      # noqa: BLE001 — a bare /diff must still open
+        logger.debug("diff default refs failed", exc_info=True)
+    return "", b
+
+
+def _diff_source_options() -> list[dict]:
+    """What the two pickers offer: the loaded chip, then its snapshots."""
+    out: list[dict] = []
+    ctx = _active_ctx()
+    if ctx and ctx.get("type") == "quam" and ctx.get("path"):
+        out.append({"ref": f"working:{ctx['path']}",
+                    "label": "Loaded chip (with unsaved edits)"})
+    try:
+        hm = _history()
+        path = ctx.get("path") if ctx else None
+        if path:
+            chip = Path(hm.resolve_chip_dir(Path(path))[0]).name
+            for m in hm.list_snapshots(path)[:60]:
+                ts = m.timestamp
+                when = (f"{ts[0:4]}-{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}"
+                        if len(ts) >= 13 else ts)
+                what = m.experiment_name or (m.trigger or "snapshot")
+                out.append({"ref": f"hist:{chip}/{ts}",
+                            "label": f"{when} · {what}"})
+    except Exception:      # noqa: BLE001
+        logger.debug("diff source options failed", exc_info=True)
+    return out
+
+
 @bp.route("/diff", methods=["GET", "POST"])
 def diff_view():
-    """Legacy 2-folder diff → Compare hub (docs/49 P4).
+    """The diff workbench (docs/84) — two sources, four tabs, differences only.
 
-    POST translates ``path_a``/``path_b`` into hub ``src`` tokens
-    (hint=1 — the hub verifies the fingerprints and may offer the ①
-    one-Enter CTA). Templates/fragments stay on disk until the redirect
-    soaks; the hub's bucket ① owns 2-way diffing now.
+    Replaces the legacy 2-folder form as the front door. The Compare hub still
+    owns the hard cases (mapping entities across different devices); this owns
+    the common one, which is the one users actually have.
+
+    Legacy callers are still honoured: a POST, or a GET carrying the hub's own
+    query grammar, redirects into the hub exactly as before.
     """
-    params: list[tuple[str, str]] = []
-    if request.method == "POST":
-        for key in ("path_a", "path_b"):
-            path = (request.form.get(key) or "").strip()
-            if path:
-                params.append(("src", _legacy_src_token(path)))
-        # NO hint=1: legacy forms are MANUAL baskets — U1b reserves the
-        # focused primary CTA for State/Param-History deep links, and the
-        # full fingerprint token provably collides across different
-        # physical devices (LabA/deviceB measured), so an autofocused
-        # "Compare as ①" for a manual pair invites a wrong-bucket Enter.
-    if not params:
-        params.append(("from", "diff"))
-    return _hub_redirect(f"/compare-hub?{urlencode(params)}")
+    legacy = request.method == "POST" or any(
+        request.args.get(k) for k in ("src", "bucket", "preset", "map"))
+    if legacy:
+        params: list[tuple[str, str]] = []
+        if request.method == "POST":
+            for key in ("path_a", "path_b"):
+                path = (request.form.get(key) or "").strip()
+                if path:
+                    params.append(("src", _legacy_src_token(path)))
+        else:
+            params = list(request.args.items(multi=True))
+        if not params:
+            params.append(("from", "diff"))
+        return _hub_redirect(f"/compare-hub?{urlencode(params)}")
+
+    a_ref = (request.args.get("a") or "").strip()
+    b_ref = (request.args.get("b") or "").strip()
+    tab = (request.args.get("tab") or "state").strip()
+    if tab not in _DIFF_TABS:
+        tab = "state"
+    view = "list" if (request.args.get("view") or "").strip() == "list" else "tree"
+    # The list is server-rendered, so it pages: 2,257 ranked rows of a real
+    # cross-generation diff serialise to 1.2 MB, and the rows a user reads are
+    # the first screenful.
+    limit = _int_arg("rows", _DIFF_LIST_PAGE, minimum=1)
+    limit = min(limit, json_diff.ROW_CAP)
+    if not a_ref and not b_ref:
+        a_ref, b_ref = _diff_default_refs()
+
+    error = ""
+    src_a = src_b = None
+    for ref, slot in ((a_ref, "a"), (b_ref, "b")):
+        if not ref:
+            continue
+        try:
+            resolved = _hub_resolve_one(ref)
+        except compare_sources.SourceError as exc:
+            error = str(exc)
+            continue
+        if slot == "a":
+            src_a = resolved
+        else:
+            src_b = resolved
+
+    payload = None
+    rows = []
+    more = 0
+    if src_a is not None and src_b is not None and not error:
+        try:
+            payload = _diff_payload(src_a, src_b, tab, with_rows=(view == "list"))
+            if view == "list":
+                all_rows = payload.get("rows") or []
+                rows = all_rows[:limit]
+                more = max(0, len(all_rows) - len(rows))
+        except Exception as exc:      # noqa: BLE001 — never 500 the menu
+            logger.warning("diff build failed: %s", exc, exc_info=True)
+            error = "Could not build this diff."
+
+    template = "_diff_workbench.html" if _is_htmx() else "diff_workbench.html"
+    return render_template(
+        template,
+        **_ctx(page="diff", a_ref=a_ref, b_ref=b_ref, tab=tab, view=view,
+               src_a=src_a, src_b=src_b, payload=payload, error=error,
+               rows=rows, more=more, next_rows=limit + _DIFF_LIST_PAGE,
+               tabs=_DIFF_TABS, options=_diff_source_options()))
+
+
+@bp.route("/diff/snapshots")
+def diff_snapshots():
+    """Two snapshot timestamps → the diff workbench.
+
+    The entry point for BOTH "Compare selected" buttons in the history pages.
+    They used to land on two different surfaces; the chip dir is resolved here
+    so neither page has to carry it in the DOM.
+    """
+    ts_a = (request.args.get("ts_a") or "").strip()
+    ts_b = (request.args.get("ts_b") or "").strip()
+    if not ts_a or not ts_b:
+        return _hub_redirect("/diff")
+    chip = (request.args.get("chip_key") or "").strip()
+    if not chip:
+        try:
+            chip = Path(_history().resolve_chip_dir(Path(_active_path()))[0]).name
+        except Exception:      # noqa: BLE001
+            return _hub_redirect("/diff")
+    # Oldest on the left, so the diff reads forward in time like every other
+    # before→after surface.
+    a, b = sorted((ts_a, ts_b))
+    return _hub_redirect(
+        f"/diff?a=hist:{quote(chip)}/{quote(a)}&b=hist:{quote(chip)}/{quote(b)}")
+
+
+@bp.route("/diff/runs")
+def diff_runs():
+    """Two run uids → the diff workbench, opened on the node.json tab.
+
+    Two runs differ in what was ASKED (node parameters) more often than in the
+    chip state, so that is the tab this lands on.
+    """
+    uids = [u for u in (request.args.get("uids") or "").split(",") if u.strip()]
+    refs: list[str] = []
+    for uid in uids[:2]:
+        resolved = _resolve_run(uid.strip())
+        if not resolved:
+            continue
+        store, run_id, _label = resolved
+        run = store.get_run(run_id) or {}
+        folder = run.get("folder_path")
+        if folder:
+            refs.append(f"run:{Path(folder) / 'quam_state'}")
+    if len(refs) != 2:
+        return _hub_redirect("/diff")
+    return _hub_redirect(
+        f"/diff?a={quote(refs[0])}&b={quote(refs[1])}&tab=node")
+
+
+@bp.route("/diff/data")
+def diff_data():
+    """The pruned trees for the tree view — JSON, rendered by the JSON tree."""
+    a_ref = (request.args.get("a") or "").strip()
+    b_ref = (request.args.get("b") or "").strip()
+    tab = (request.args.get("tab") or "state").strip()
+    if tab not in _DIFF_TABS:
+        tab = "state"
+    try:
+        src_a = _hub_resolve_one(a_ref)
+        src_b = _hub_resolve_one(b_ref)
+    except compare_sources.SourceError as exc:
+        return jsonify(ok=False, error=str(exc)), 200
+    try:
+        res = _diff_payload(src_a, src_b, tab, with_rows=False)
+    except Exception as exc:      # noqa: BLE001
+        logger.warning("diff data failed: %s", exc, exc_info=True)
+        return jsonify(ok=False, error="Could not build this diff."), 200
+    return jsonify(ok=res.get("ok", False), unavailable=res.get("unavailable", ""),
+                   counts=res.get("counts", {}), tree_a=res.get("tree_a", {}),
+                   tree_b=res.get("tree_b", {}),
+                   truncated=res.get("truncated", False),
+                   label_a=src_a.label, label_b=src_b.label)
 
 
 # ======================================================================
