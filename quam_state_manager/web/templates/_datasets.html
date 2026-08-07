@@ -296,6 +296,12 @@
     <button id="ds-compare-btn" class="btn-sm"
             onclick="compareSelectedDatasets()" disabled
             aria-label="Compare the selected runs">Compare</button>
+    {# docs/84: with exactly two runs picked, the useful answer is a diff —
+       what was asked differently, and what the chip looked like. #}
+    <button id="ds-diff-btn" class="btn-sm outline"
+            onclick="diffSelectedDatasets()" disabled
+            title="Show only what differs between these two runs"
+            aria-label="Diff the two selected runs">Diff</button>
     <button class="btn-sm outline"
             onclick="clearDatasetCheckboxes()"
             aria-label="Clear the compare selection">Clear</button>

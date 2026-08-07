@@ -9893,3 +9893,51 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
     padding: 0.25rem 0.55rem; font-size: 0.82em;
     border-top: 1px solid var(--pico-muted-border-color);
 }
+
+/* ── Diff workbench (docs/84) ─────────────────────────────────────────────
+   Two sources, four tabs, differences only. The tree itself is the Explorer's
+   (.json-tree); everything here is the frame around it. */
+.diff-wb-head { margin-bottom: 0.4rem; }
+.diff-wb-pickers {
+    display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+    margin: 0.4rem 0;
+}
+.diff-side { display: flex; align-items: center; gap: 0.35rem; margin: 0; flex: 1 1 20rem; }
+.diff-side select { margin: 0; font-size: 0.88em; padding: 0.25rem 0.5rem; height: auto; }
+.diff-side-tag {
+    font-weight: 700; font-size: 0.8em; padding: 0.1rem 0.4rem; border-radius: 4px;
+    background: var(--color-neutral-bg); color: var(--color-neutral-text);
+}
+.diff-vs { color: var(--pico-muted-color); font-size: 0.85em; }
+.diff-wb-tabs { align-items: center; }
+.diff-view-toggle { margin-left: auto; display: flex; gap: 0.25rem; padding-bottom: 0.2rem; }
+.diff-wb-counts {
+    display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap;
+    margin: 0.5rem 0; font-size: 0.85em;
+}
+.diff-count { font-weight: 600; }
+.diff-count-changed { color: var(--color-warning-text); }
+.diff-count-added   { color: var(--color-success-text); }
+.diff-count-removed { color: var(--color-error-text); }
+.diff-wb-labels { margin-left: auto; font-size: 0.95em; }
+.diff-wb-msg { margin: 1.2rem 0.2rem; }
+.diff-tree-toolbar { margin-top: 0.3rem; }
+.diff-tree-legend { margin-left: auto; font-size: 0.8em; }
+.diff-wb-list { font-size: 0.85em; margin-top: 0.3rem; }
+.diff-wb-list th { font-size: 0.9em; text-align: left; }
+.diff-wb-list td { padding: 0.15rem 0.5rem; vertical-align: baseline; }
+.diff-list-path { width: 45%; word-break: break-all; }
+.diff-list-a, .diff-list-b { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.diff-list-arrow { color: var(--pico-muted-color); }
+.diff-row-added  .diff-list-path code { color: var(--color-success-text); }
+.diff-row-removed .diff-list-path code { color: var(--color-error-text); }
+
+/* Added / removed markers inside the JSON tree — the tree used to render
+   nothing at all for a key only one side has. */
+.tree-sidetag {
+    margin-left: 0.4rem; padding: 0 0.3rem; border-radius: 3px;
+    font-size: 0.72em; font-weight: 600; text-transform: uppercase;
+}
+.tree-tag-added   { background: var(--color-success-bg); color: var(--color-success-text); }
+.tree-tag-removed { background: var(--color-error-bg); color: var(--color-error-text); }
+.tree-node.tree-removed > .tree-row > .tree-val { text-decoration: line-through; opacity: 0.75; }
