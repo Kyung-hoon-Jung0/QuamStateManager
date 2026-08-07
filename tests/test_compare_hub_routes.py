@@ -104,12 +104,14 @@ class TestHubShell:
         assert b"cmp-headline" not in r.data
 
     def test_sidebar_has_compare_entry(self, env):
+        """docs/84 moved the front door: the sidebar's Compare opens the DIFF
+        workbench, and the hub is one click deeper (its "Advanced…" link). The
+        hub still owns the hard cases, so it must stay reachable — what must
+        not come back is the old three-entry sidebar."""
         c, _a, _b = env
         r = c.get("/compare-hub")   # full page (no HX-Request header)
-        assert b'href="/compare-hub"' in r.data
-        # P4: sidebar went 3→1 — the legacy entries are gone
+        assert b'href="/diff"' in r.data
         assert b'href="/chip-compare"' not in r.data
-        assert b'href="/diff"' not in r.data
 
     def test_two_sources_without_bucket_prompts_for_context(self, env):
         """Axiom 2 — the context is user-declared, never auto-run."""
@@ -888,10 +890,11 @@ class TestP4Redirects:
         assert b"first 8 of" in r.data and b"12" in r.data
 
     def test_command_palette_points_at_hub(self, env):
+        """The palette follows the front door (docs/84): Compare opens the diff
+        workbench. The legacy chip-compare entry stays gone."""
         c, _a, _b = env
         html = c.get("/compare-hub").data.decode()
-        assert '"/compare-hub"' in html
-        assert '"/diff"' not in html
+        assert '"/diff"' in html
         assert '"/chip-compare"' not in html   # the palette entry too
 
 
@@ -902,9 +905,13 @@ class TestP4Redirects:
 
 class TestFinalAuditHardening:
     def test_legacy_get_with_htmx_uses_hx_redirect(self, env):
-        """The palette/recents path issues htmx GETs — A7 applies to GET too."""
-        c, _a, _b = env
-        for url in ("/diff", "/chip-compare"):
+        """The palette/recents path issues htmx GETs — A7 applies to GET too.
+
+        docs/84: a BARE ``/diff`` is now the diff workbench, so the legacy
+        translation is keyed on the hub's own query grammar (``src=`` and
+        friends) — those URLs are the ones that were ever bookmarked."""
+        c, a, _b = env
+        for url in (f"/diff?src=ws:{a}", "/chip-compare"):
             r = c.get(url, headers={"HX-Request": "true"})
             assert r.status_code == 200
             assert r.headers["HX-Redirect"].startswith("/compare-hub")

@@ -451,10 +451,15 @@
                                    onclick="return chipNavView('calibration', event)">Calibration</a></li>
                         </ul>
                     </li>
-                    {# Compare hub — replaced /diff + /compare + /chip-compare
-                       (docs/49 P4: sidebar 3→1; the legacy URLs redirect here). #}
-                    <li><a href="/compare-hub" hx-get="/compare-hub" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           {% if page == 'compare_hub' %}class="active"{% endif %}>Compare</a></li>
+                    {# Compare — docs/84 made the DIFF the front door: the hub
+                       works but asks for a context, a preset and sometimes an
+                       entity mapping before it shows anything, and users stopped
+                       using it. The hub keeps the hard cases (mapping across
+                       different devices, N-way baskets) one click deeper, from
+                       the diff's "Advanced…". #}
+                    <li><a href="/diff" hx-get="/diff" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           title="Show only what differs between two versions of this chip"
+                           {% if page in ('diff', 'compare_hub') %}class="active"{% endif %}>Compare</a></li>
                     <li class="nav-with-sub">
                         <div class="nav-sub-row">
                             <a href="/bulk" hx-get="/bulk" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
@@ -818,7 +823,7 @@
                 {"label": "Couplers",          "url": "/couplers"},
                 {"label": "Diagnostics",       "url": "/diagnostics"},
                 {"label": "Chip Status",       "url": "/topology"},
-                {"label": "Compare",           "url": "/compare-hub"},
+                {"label": "Compare",           "url": "/diff"},
                 {"label": "Live State Edit",   "url": "/bulk"},
                 {"label": "Json Tree View",    "url": "/explorer"},
                 {"label": "Pulses",            "url": "/pulses"},

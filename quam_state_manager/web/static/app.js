@@ -2715,12 +2715,20 @@ window.selectHistoryEntry = function(checkbox) {
 window.compareSelectedSnapshots = function() {
     var checked = document.querySelectorAll(".history-compare-cb:checked");
     if (checked.length !== 2) return;
-    var ts_a = checked[0].value, ts_b = checked[1].value;
-    if (window.htmx) {
-        htmx.ajax("GET", "/api/history/compare?ts_a=" + ts_a + "&ts_b=" + ts_b,
-                   {target: "#history-detail-area", swap: "innerHTML"});
-    }
+    // docs/84: "Compare selected" used to land on three different surfaces
+    // depending on which page you started from. It now always opens the diff
+    // workbench, which resolves the chip dir server-side.
+    _openDiffForSnapshots(checked[0].value, checked[1].value);
 };
+
+/* Two snapshot timestamps -> the diff workbench. HX-Redirect when htmx is
+   present (the response navigates), a plain location change otherwise. */
+function _openDiffForSnapshots(tsA, tsB) {
+    var url = "/diff/snapshots?ts_a=" + encodeURIComponent(tsA)
+            + "&ts_b=" + encodeURIComponent(tsB);
+    if (window.htmx) { htmx.ajax("GET", url, {target: "body", swap: "none"}); }
+    else { window.location.href = url; }
+}
 
 /* State History page: pick exactly two snapshots and diff them. Reuses the
    existing /api/history/compare endpoint; renders into the State History
@@ -2742,16 +2750,9 @@ window.StateHistory = (function () {
     }
     function compareSelected() {
         var sel = selected();
-        if (sel.length !== 2 || !window.htmx) return;
-        var p = htmx.ajax('GET', '/api/history/compare?ts_a=' + encodeURIComponent(sel[0].value)
-                  + '&ts_b=' + encodeURIComponent(sel[1].value),
-                  { target: '#state-history-detail', swap: 'innerHTML' });
-        // Belt-and-suspenders to the delegated afterSwap reveal: the result lands below
-        // the timeline (off-screen), so scroll it into view (audit P0-2, the canary).
-        if (p && p.then) p.then(function () {
-            var d = document.getElementById('state-history-detail');
-            if (d && d.innerHTML.trim() !== '') d.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        });
+        if (sel.length !== 2) return;
+        // docs/84: same destination as every other "Compare selected".
+        _openDiffForSnapshots(sel[0].value, sel[1].value);
     }
     function init() {
         var btn = document.getElementById('sh-compare-btn');
@@ -4529,9 +4530,42 @@ window.clearDetailPanelSearch = function(btnEl) {
      * children are only materialised on first expand, keeping the initial
      * render O(visible-nodes) instead of O(total-keys).
      */
-    function _buildNode(key, value, path, depth, refValue, hasDiff, valueClick) {
+    /* A key the primary side does not have. Distinct from `undefined`, which a
+       document can legitimately contain as a missing optional. */
+    var _ABSENT = {absent: true};
+
+    /* Union of both sides' keys, primary order first (docs/84). Used only in
+       union mode so the live-diff overlay keeps iterating one document. */
+    function _unionKeys(value, refValue, union, hasDiff) {
+        var keys = (value && typeof value === "object" && !Array.isArray(value))
+            ? Object.keys(value) : [];
+        if (!union || !hasDiff || !refValue || typeof refValue !== "object"
+            || Array.isArray(refValue)) return keys;
+        var seen = {};
+        for (var i = 0; i < keys.length; i++) seen[keys[i]] = 1;
+        var extra = Object.keys(refValue);
+        for (var j = 0; j < extra.length; j++) {
+            if (!seen[extra[j]]) keys.push(extra[j]);
+        }
+        return keys;
+    }
+
+    function _buildNode(key, value, path, depth, refValue, hasDiff, valueClick, union) {
         valueClick = valueClick || "edit";
-        var type = _typeOf(value);
+        // UNION mode (docs/84): the two sides are compared as a SET of keys, so
+        // a key only one side has still gets a row — "added" / "removed" are
+        // differences an IDE shows and this tree used to render as nothing at
+        // all (it iterated the primary document's keys only). Off by default:
+        // the live-diff overlay is a before→after of one document and must
+        // keep its exact behaviour.
+        // The primary document is the BEFORE side and refData is the AFTER
+        // side, so every row reads "A value → B value" like every other
+        // before→after surface in the app.
+        var onlyRef = (value === _ABSENT);          // appeared on the after side
+        var isAbsent = onlyRef;                     // (kept: read as "not here")
+        var shown = onlyRef ? refValue : value;
+        var onlyPrimary = !!(union && hasDiff && !onlyRef && refValue === undefined);
+        var type = _typeOf(shown);
         var isContainer = (type === "object" || type === "array");
         var node = document.createElement("div");
         node.className = "tree-node";
@@ -4540,12 +4574,14 @@ window.clearDetailPanelSearch = function(btnEl) {
         // Stashed so a whole-container JSON edit can rebuild this node in place
         // (see _makeContainerEditable / _rebuildNode) without re-fetching the tree.
         node._meta = {key: key, path: path, depth: depth, refValue: refValue,
-                      hasDiff: hasDiff, valueClick: valueClick};
+                      hasDiff: hasDiff, valueClick: valueClick, union: union};
         node._value = value;   // current value (kept fresh by _rebuildNode) — for key-copy
 
-        if (hasDiff && refValue !== undefined && !_deepEqual(value, refValue)) {
+        if (hasDiff && refValue !== undefined && !isAbsent && !_deepEqual(value, refValue)) {
             node.classList.add("tree-diff");
         }
+        if (onlyRef) node.classList.add("tree-diff", "tree-added");
+        if (onlyPrimary) node.classList.add("tree-diff", "tree-removed");
 
         var row = document.createElement("div");
         row.className = "tree-row";
@@ -4599,17 +4635,17 @@ window.clearDetailPanelSearch = function(btnEl) {
             var summary = document.createElement("span");
             summary.className = "tree-summary";
             if (type === "object") {
-                var n = Object.keys(value).length;
+                var n = Object.keys(shown).length;
                 summary.textContent = "{" + n + " key" + (n !== 1 ? "s" : "") + "}";
             } else {
-                summary.textContent = "[" + value.length + " item" + (value.length !== 1 ? "s" : "") + "]";
+                summary.textContent = "[" + shown.length + " item" + (shown.length !== 1 ? "s" : "") + "]";
             }
             row.appendChild(summary);
 
             // Edit the WHOLE list/dict as JSON — the only way to enter a list value
             // (the scalar leaf editor can't). Read-only trees (copy / livediff) get
             // no edit affordance. Click is stopped so it never toggles expand.
-            if (valueClick === "edit") {
+            if (valueClick === "edit" && !isAbsent) {
                 var jsonBtn = document.createElement("button");
                 jsonBtn.type = "button";
                 jsonBtn.className = "tree-json-edit-btn";
@@ -4627,18 +4663,20 @@ window.clearDetailPanelSearch = function(btnEl) {
             children.style.display = "none";
 
             // Store data for deferred rendering (closure captures value/refValue)
-            node._lazyData = { value: value, type: type, path: path, depth: depth, refValue: refValue, hasDiff: hasDiff, valueClick: valueClick };
+            node._lazyData = { value: isAbsent ? _ABSENT : value, type: type, path: path,
+                               depth: depth, refValue: refValue, hasDiff: hasDiff,
+                               valueClick: valueClick, union: union };
 
             node.appendChild(row);
             node.appendChild(children);
         } else {
             var valEl = document.createElement("span");
             var valClass = "tree-val tree-val-" + type;
-            if (_isPointer(value)) valClass = "tree-val tree-val-pointer";
+            if (_isPointer(shown)) valClass = "tree-val tree-val-pointer";
             valEl.className = valClass;
-            valEl.textContent = _formatValue(value);
+            valEl.textContent = _formatValue(shown);
             // raw value for the edit input (strings without display-quotes) / copy
-            valEl.dataset.editVal = (typeof value === "string") ? value : _formatValue(value);
+            valEl.dataset.editVal = (typeof shown === "string") ? shown : _formatValue(shown);
             if (valueClick === "copy") {
                 // Read-only tree (e.g. a dataset's frozen parameters): click copies
                 // the value. Editing here would wrongly POST against the live store.
@@ -4651,8 +4689,22 @@ window.clearDetailPanelSearch = function(btnEl) {
                         window.copyWithFeedback(raw, el);
                     };
                 })(valEl);
+            } else if (valueClick === "diff" || isAbsent) {
+                // Read-only comparison view (docs/84): the two sides come from
+                // arbitrary sources \u2014 one of them is usually not even editable \u2014
+                // so a click must never open an editor against the LOADED chip.
+                // Copying the value is the useful action here.
+                valEl.title = "Click to copy value";
+                valEl.style.cursor = "copy";
+                (function(el) {
+                    el.onclick = function(e) {
+                        e.stopPropagation();
+                        var raw = el.dataset.editVal != null ? el.dataset.editVal : el.textContent;
+                        window.copyWithFeedback(raw, el);
+                    };
+                })(valEl);
             } else {
-                valEl.title = _isPointer(value) ? "Pointer \u2014 click to edit" : "Click to edit";
+                valEl.title = _isPointer(shown) ? "Pointer \u2014 click to edit" : "Click to edit";
                 valEl.style.cursor = "pointer";
                 (function(el, p) {
                     el.onclick = function(e) { e.stopPropagation(); _makeValueEditable(el, p); };
@@ -4664,7 +4716,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             // offer the SAME multi-line JSON editor as containers so a list / matrix /
             // object can be entered comfortably, not just squeezed into the one-line
             // box. (The one-line editor still works for a scalar.)
-            if (value === null && valueClick === "edit") {
+            if (shown === null && valueClick === "edit" && !isAbsent) {
                 var nullJsonBtn = document.createElement("button");
                 nullJsonBtn.type = "button";
                 nullJsonBtn.className = "tree-json-edit-btn";
@@ -4676,11 +4728,21 @@ window.clearDetailPanelSearch = function(btnEl) {
                 row.appendChild(nullJsonBtn);
             }
 
-            if (hasDiff && refValue !== undefined && !_deepEqual(value, refValue)) {
+            if (onlyRef || onlyPrimary) {
+                // A key only ONE side has. The tree used to render nothing for
+                // these — it iterated the primary document's keys only — which
+                // is precisely what an IDE diff must show.
+                var tag = document.createElement("span");
+                tag.className = "tree-sidetag " +
+                    (onlyRef ? "tree-tag-added" : "tree-tag-removed");
+                tag.textContent = onlyRef ? "added" : "removed";
+                row.appendChild(tag);
+            } else if (hasDiff && refValue !== undefined && !_deepEqual(value, refValue)) {
                 // "livediff" is the workbench's before→after mode: value = the SM
                 // working copy (before), refValue = Qualibrate's live value (after).
                 var liveDiff = (valueClick === "livediff");
-                if (liveDiff) {
+                var cmpDiff = (valueClick === "diff");
+                if (liveDiff || cmpDiff) {
                     row.classList.add("tree-row-incoming");
                     var arrow = document.createElement("span");
                     arrow.className = "tree-incoming-arrow";
@@ -4690,20 +4752,24 @@ window.clearDetailPanelSearch = function(btnEl) {
                     inEl.className = "tree-incoming-val tree-val-" + _typeOf(refValue) +
                         (_isPointer(refValue) ? " tree-val-pointer" : "");
                     inEl.textContent = _formatValue(refValue);
-                    inEl.title = "Qualibrate's live value";
+                    inEl.title = cmpDiff ? "the other side's value"
+                                         : "Qualibrate's live value";
                     row.appendChild(inEl);
                 }
-                if (typeof value === "number" && typeof refValue === "number") {
-                    // livediff reads "after - before" (Qualibrate's change); the
-                    // N-way compare keeps its original "primary - ref" orientation.
-                    var delta = liveDiff ? (refValue - value) : (value - refValue);
-                    var deltaEl = document.createElement("span");
-                    var cls = delta > 0 ? "delta-pos" : (delta < 0 ? "delta-neg" : "delta-zero");
-                    deltaEl.className = "tree-delta " + cls;
-                    var a2 = Math.abs(delta);
-                    var fmt = (a2 >= 1e6 || (a2 > 0 && a2 < 1e-3)) ? delta.toExponential(3) : delta.toFixed(6);
-                    deltaEl.textContent = " (" + (delta > 0 ? "+" : "") + fmt + ")";
-                    row.appendChild(deltaEl);
+                // ONE delta implementation (docs/76). This tree printed its own
+                // toFixed(6)/toExponential(3), so the same change read
+                // "(+0.000123)" here and "+100,000,000 (+1.96%)" in the Review
+                // tray. ValueDelta is the JS mirror of the server filter, so
+                // every surface now agrees character for character.
+                // Both modes read the same way now: the primary document is
+                // the BEFORE side, the ref document the AFTER side.
+                var oldV = value, newV = refValue;
+                var chipHtml = window.ValueDelta
+                    ? window.ValueDelta.chipHtml(oldV, newV, "tree-delta") : "";
+                if (chipHtml) {
+                    var holder = document.createElement("span");
+                    holder.innerHTML = chipHtml;
+                    while (holder.firstChild) row.appendChild(holder.firstChild);
                 }
                 if (liveDiff) {
                     var acc = document.createElement("button");
@@ -4744,21 +4810,30 @@ window.clearDetailPanelSearch = function(btnEl) {
         var children = nodeEl.querySelector(":scope > .tree-children");
         if (!children) return;
 
+        // An absent container renders from the OTHER side, so a whole removed
+        // subtree can still be expanded and read.
+        var src = (d.value === _ABSENT) ? d.refValue : d.value;
         if (d.type === "object") {
-            var keys = Object.keys(d.value);
+            var keys = _unionKeys(src, (d.value === _ABSENT) ? undefined : d.refValue,
+                                  d.union, d.hasDiff);
             for (var i = 0; i < keys.length; i++) {
                 var childPath = d.path ? d.path + "." + keys[i] : keys[i];
                 var childRef = (d.hasDiff && d.refValue && typeof d.refValue === "object" && !Array.isArray(d.refValue))
                     ? d.refValue[keys[i]] : undefined;
-                children.appendChild(_buildNode(keys[i], d.value[keys[i]], childPath, d.depth + 1, childRef, d.hasDiff, d.valueClick));
+                var childVal = (d.value === _ABSENT) ? _ABSENT
+                    : (Object.prototype.hasOwnProperty.call(src, keys[i]) ? src[keys[i]] : _ABSENT);
+                children.appendChild(_buildNode(keys[i], childVal, childPath, d.depth + 1,
+                                                childRef, d.hasDiff, d.valueClick, d.union));
             }
         } else {
-            for (var j = 0; j < d.value.length; j++) {
+            for (var j = 0; j < src.length; j++) {
                 // Canonical dot-form numeric segment (a.b.3) — matches the server
                 // path grammar so element edits POST directly to /field/edit.
                 var itemPath = d.path + "." + j;
                 var itemRef = (d.hasDiff && Array.isArray(d.refValue)) ? d.refValue[j] : undefined;
-                children.appendChild(_buildNode(String(j), d.value[j], itemPath, d.depth + 1, itemRef, d.hasDiff, d.valueClick));
+                var itemVal = (d.value === _ABSENT) ? _ABSENT : src[j];
+                children.appendChild(_buildNode(String(j), itemVal, itemPath, d.depth + 1,
+                                                itemRef, d.hasDiff, d.valueClick, d.union));
             }
         }
 
@@ -5811,18 +5886,25 @@ window.clearDetailPanelSearch = function(btnEl) {
         var refData = options.refData || null;
         var defaultDepth = options.defaultDepth !== undefined ? options.defaultDepth : 1;
         var hasDiff = !!refData;
+        // Compare BOTH sides' key sets, so keys only one side has still render
+        // (docs/84). Opt-in: the live-diff overlay is a before→after of one
+        // document and keeps its exact behaviour.
+        var union = !!options.union;
         // "edit" (default) keeps the existing live-state behavior; "copy" makes
         // scalar values click-to-copy for read-only trees (dataset params/results).
         var valueClick = options.valueClick || "edit";
 
         if (typeof data === "object" && data !== null && !Array.isArray(data)) {
-            var keys = Object.keys(data);
+            var keys = _unionKeys(data, refData, union, hasDiff);
             for (var i = 0; i < keys.length; i++) {
                 var refVal = (hasDiff && refData && typeof refData === "object") ? refData[keys[i]] : undefined;
-                container.appendChild(_buildNode(keys[i], data[keys[i]], keys[i], 0, refVal, hasDiff, valueClick));
+                var own = Object.prototype.hasOwnProperty.call(data, keys[i]);
+                container.appendChild(_buildNode(
+                    keys[i], own ? data[keys[i]] : _ABSENT, keys[i], 0, refVal,
+                    hasDiff, valueClick, union));
             }
         } else {
-            container.appendChild(_buildNode(null, data, "", 0, refData, hasDiff, valueClick));
+            container.appendChild(_buildNode(null, data, "", 0, refData, hasDiff, valueClick, union));
         }
 
         // Stash the source object so search runs against data (not the DOM).
@@ -9462,6 +9544,9 @@ window.updateCompareButton = function() {
     bar.setAttribute('data-state', newState);
     var btn = document.getElementById('ds-compare-btn');
     if (btn) btn.disabled = (newState !== 'ready');
+    // Diff is a TWO-run question (docs/84); the N-run compare covers 3+.
+    var dbtn = document.getElementById('ds-diff-btn');
+    if (dbtn) dbtn.disabled = (count !== 2);
     var counter = document.getElementById('ds-compare-count');
     if (counter) counter.textContent = String(count);
 };
@@ -9489,6 +9574,20 @@ window.compareSelectedDatasets = function() {
     }
     htmx.ajax('GET', '/datasets/compare?ids=' + ids.join(','),
               {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'});
+};
+
+/* docs/84: exactly two runs is the case an IDE-style diff answers best —
+   what was ASKED differently (node.json), what the chip looked like, what
+   data came out. The N-run comparison above stays for 3+. */
+window.diffSelectedDatasets = function() {
+    var uids = _selectedRunIds();   // the virtual table's selection IS uids
+    if (uids.length !== 2) {
+        if (window.showToast) window.showToast('Pick exactly two runs to diff.', 'info');
+        return;
+    }
+    var url = '/diff/runs?uids=' + uids.map(encodeURIComponent).join(',');
+    if (window.htmx) { htmx.ajax('GET', url, {target: 'body', swap: 'none'}); }
+    else { window.location.href = url; }
 };
 
 /**
