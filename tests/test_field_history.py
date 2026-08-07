@@ -95,9 +95,17 @@ class TestFieldHistoryCore:
                          experiment_name="08b_vs_power", run_id=44)
         _mutate_and_snap(env, _state(anh=190e6))
         out = env["hm"].field_history(env["live"], "qubits.qA1.anharmonicity")
-        assert out["source"] == "scan"
+        # docs/83: an untracked NUMERIC leaf is now answered by the
+        # change-point index instead of the capped scan. What must not move is
+        # the answer — the tier is an implementation detail, the values are the
+        # contract (cross-checked against the scan tier below).
+        assert out["source"] == "leaf-index"
         assert [p["value"] for p in out["points"]] == [190e6, 200e6]
         assert out["points"][0]["experiment"] == "08b_vs_power"
+        scan, _n, _t = env["hm"]._scan_field_series(
+            env["live"], env["hm"].list_snapshots(env["live"]),
+            "qubits.qA1.anharmonicity", 150)
+        assert [r[1] for r in scan][-1] == out["points"][0]["value"]
 
     def test_wiring_side_path_merges_wiring(self, env):
         _mutate_and_snap(env, _state())
@@ -107,7 +115,7 @@ class TestFieldHistoryCore:
         env["hm"].check_and_snapshot(str(env["live"]), "manual", force=True)
         out = env["hm"].field_history(env["live"],
                                       "ports.mw_outputs.con1.1.2.band")
-        assert out["source"] == "scan"
+        assert out["source"] == "leaf-index"      # wiring leaves index too
         assert [p["value"] for p in out["points"]] == [3, 1]
 
     def test_pointer_leaf_resolves_per_snapshot(self, env):
@@ -125,12 +133,29 @@ class TestFieldHistoryCore:
         assert [p["value"] for p in out["points"]] == [None]
 
     def test_scan_limit_truncates_honestly(self, env):
+        """The scan tier still says so when it only looked at part of the
+        history. Reached here through a leaf the index declines: a dangling
+        pointer resolves to nothing numeric, and only the scan can show the
+        raw string."""
+        for f in (5.0e9, 5.1e9, 5.2e9, 5.3e9):
+            _mutate_and_snap(env, _state(anh=f / 25,
+                                         extra={"ref": "#/qubits/qA1/nowhere"}))
+        out = env["hm"].field_history(env["live"], "qubits.qA1.ref",
+                                      scan_limit=2)
+        assert out["source"] == "scan"
+        assert out["truncated"] is True and out["scanned"] == 2
+
+    def test_an_indexed_leaf_ignores_scan_limit(self, env):
+        """docs/83: the cap existed because the scan was expensive. A leaf the
+        index covers is answered over the FULL history no matter how low the
+        caller sets scan_limit — that is the whole point of the tier."""
         for f in (5.0e9, 5.1e9, 5.2e9, 5.3e9):
             _mutate_and_snap(env, _state(anh=f / 25))
         out = env["hm"].field_history(env["live"], "qubits.qA1.anharmonicity",
                                       scan_limit=2)
-        assert out["truncated"] is True and out["scanned"] == 2
-        assert len(out["points"]) == 2  # only the newest two snapshots seen
+        assert out["source"] == "leaf-index" and out["truncated"] is False
+        assert [p["value"] for p in out["points"]] == [
+            5.3e9 / 25, 5.2e9 / 25, 5.1e9 / 25, 5.0e9 / 25]
 
 
 class TestFieldHistoryRoute:
