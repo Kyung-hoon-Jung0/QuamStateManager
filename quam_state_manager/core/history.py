@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from quam_state_manager.core import safe_io
+from quam_state_manager.core import leaf_index, safe_io
 from quam_state_manager.core.differ import DiffEntry, Differ
 from quam_state_manager.core.loader import QuamStore
 from quam_state_manager.core.query import QueryEngine
@@ -2171,6 +2171,18 @@ class HistoryManager:
                 out["scanned"] = len(rows)
                 series = [tuple(r) + (None,) for r in rows]
         if not series:
+            # Tier 0 (docs/83): the all-numeric-parameter change-point index.
+            # Measured on a real 264-snapshot chip, this is the difference
+            # between 0.02 ms over the FULL history and 555 ms truncated at 150
+            # snapshots. It declines (returns None) for a leaf it never indexed
+            # and for one that is a pointer anywhere in its history — the scan
+            # below is the only tier that can resolve those.
+            leaf_rows = self.leaf_field_series(path, dot_path)
+            if leaf_rows:
+                out["source"] = "leaf-index"
+                out["scanned"] = len(snapshots)
+                series = [tuple(r) for r in leaf_rows]
+        if not series:
             out["source"] = "scan"
             series, out["scanned"], out["truncated"] = self._scan_field_series(
                 path, snapshots, dot_path, scan_limit)
@@ -2424,6 +2436,11 @@ class HistoryManager:
                 "CREATE INDEX IF NOT EXISTS idx_trigger_ts "
                 "ON param_history (trigger, timestamp)"
             )
+            # The all-numeric-parameters change-point tables (docs/83) live in
+            # the same per-chip file. They carry their OWN version marker in
+            # leaf_meta — PRAGMA user_version belongs to param_history and
+            # drives its pair-row upgrade, which this must never trigger.
+            leaf_index.ensure_schema(conn)
             # A brand-new file's rows can only ever be current-generation —
             # stamp it so the one-time v2 verification never force-rebuilds
             # an index that a capture path (not rebuild_index) created.
@@ -2502,6 +2519,7 @@ class HistoryManager:
         *,
         conn: sqlite3.Connection | None = None,
         state: dict | None = None,
+        wiring: dict | None = None,
     ) -> None:
         """Append rows to the SQLite index sitting at ``<target_chip_dir>/index.sqlite``.
 
@@ -2519,11 +2537,24 @@ class HistoryManager:
         * ``state`` — already-loaded state.json dict. The capture path has
           this in memory; passing it down skips a redundant safe_io read.
         """
-        if state is not None:
-            rows = _extract_index_rows_from_state(state, meta)
-        else:
-            rows = self._extract_index_rows(snap_dir, meta)
-        if not rows:
+        snap_state = state
+        if snap_state is None:
+            try:
+                snap_state = safe_io.read_json(snap_dir / "state.json")
+            except (OSError, ValueError):
+                logger.warning("Could not load snapshot %s for indexing",
+                               snap_dir.name, exc_info=True)
+        rows = (_extract_index_rows_from_state(snap_state, meta)
+                if isinstance(snap_state, dict) else [])
+        # The leaf index (docs/83) covers every numeric parameter, so it must
+        # still run for a chip whose curated properties are all absent.
+        if wiring is None and isinstance(snap_state, dict):
+            wpath = snap_dir / "wiring.json"
+            try:
+                wiring = safe_io.read_json(wpath) if wpath.exists() else None
+            except (OSError, ValueError):
+                wiring = None
+        if not rows and not isinstance(snap_state, dict):
             return
         target_chip_dir.mkdir(parents=True, exist_ok=True)
         idx_path = target_chip_dir / "index.sqlite"
@@ -2548,12 +2579,30 @@ class HistoryManager:
             if own_conn:
                 conn.execute("BEGIN IMMEDIATE")
             try:
-                conn.executemany(
-                    "INSERT OR REPLACE INTO param_history "
-                    "(timestamp, qubit, property, value, raw_pointer, trigger, run_id, experiment) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    rows,
-                )
+                if rows:
+                    conn.executemany(
+                        "INSERT OR REPLACE INTO param_history "
+                        "(timestamp, qubit, property, value, raw_pointer, trigger, run_id, experiment) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        rows,
+                    )
+                if isinstance(snap_state, dict):
+                    # Rides the SAME transaction as the curated rows, but can
+                    # never cost them: a leaf-index failure is logged and the
+                    # dirty flag is what makes the next read rebuild it.
+                    try:
+                        leaf_index.ingest_snapshot(
+                            conn, ts=meta.timestamp, trigger=meta.trigger,
+                            run_id=meta.run_id, experiment=meta.experiment_name,
+                            folder=meta.experiment_folder_path,
+                            state=snap_state, wiring=wiring)
+                    except sqlite3.Error:
+                        logger.warning("Leaf index ingest failed for %s",
+                                       meta.timestamp, exc_info=True)
+                        try:
+                            leaf_index.mark_dirty(conn, "ingest failed")
+                        except sqlite3.Error:
+                            pass
                 if own_conn:
                     conn.execute("COMMIT")
             except BaseException:
@@ -2705,7 +2754,167 @@ class HistoryManager:
             # any cached summary / chip-list result is now stale. Bump the
             # chip version so the next read recomputes.
             self._bump_chip_version(hist_dir)
+        if force:
+            # "Rebuild the index" means the whole index (docs/83). The
+            # incremental path doesn't need this: the leaf index self-heals on
+            # read from its own dirty/count check.
+            try:
+                self.rebuild_leaf_index(path)
+            except Exception:       # noqa: BLE001 — never fail the curated rebuild
+                logger.warning("Leaf index rebuild failed", exc_info=True)
         return indexed
+
+    # ------------------------------------------------------------------
+    # All-numeric-parameter leaf index (docs/83)
+    # ------------------------------------------------------------------
+
+    def _leaf_load_snapshot(self, hist_dir: Path,
+                            meta_by_ts: dict[str, SnapshotMeta]):
+        """``load(ts)`` for :func:`leaf_index.rebuild` — one snapshot at a time.
+
+        Streaming matters: a 1,154-snapshot chip materialised together would be
+        several GB of parsed dicts.
+        """
+        def load(ts: str):
+            snap_dir = hist_dir / ts
+            try:
+                state = safe_io.read_json(snap_dir / "state.json")
+            except (OSError, ValueError):
+                return None
+            if not isinstance(state, dict):
+                return None
+            wiring = None
+            wpath = snap_dir / "wiring.json"
+            if wpath.exists():
+                try:
+                    wiring = safe_io.read_json(wpath)
+                except (OSError, ValueError):
+                    wiring = None
+            m = meta_by_ts.get(ts)
+            return ({"ts": ts,
+                     "trigger": m.trigger if m else None,
+                     "run_id": m.run_id if m else None,
+                     "experiment": m.experiment_name if m else None,
+                     "folder": m.experiment_folder_path if m else None},
+                    state, wiring)
+        return load
+
+    def rebuild_leaf_index(self, quam_state_path: str | Path) -> dict:
+        """Recompute the change-point index from the snapshots on disk.
+
+        This is the repair for BOTH failure modes: a dirty flag (a snapshot
+        arrived out of order, so its neighbours' change points are undefined)
+        and a plain gap (snapshots exist that were never ingested). Measured at
+        0.9-2.7 s on real chips, which is why there is no incremental repair
+        algorithm to get wrong.
+        """
+        path = Path(quam_state_path)
+        hist_dir = self._history_dir(path)
+        snapshots = self._list_snapshots_uncached(path)
+        meta_by_ts = {m.timestamp: m for m in snapshots}
+        available = [m.timestamp for m in snapshots
+                     if (hist_dir / m.timestamp / "state.json").exists()]
+        conn = self._open_index(path)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                res = leaf_index.rebuild(
+                    conn, timestamps=available,
+                    load=self._leaf_load_snapshot(hist_dir, meta_by_ts))
+                conn.execute("COMMIT")
+            except BaseException:
+                try:
+                    conn.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+                raise
+        finally:
+            conn.close()
+        self._bump_chip_version(hist_dir)
+        return res
+
+    def _ensure_leaf_index_fresh(self, quam_state_path: Path) -> None:
+        """Rebuild when dirty or behind. Cheap in the steady state: two small
+        reads against a table that is ~10k rows on a real chip."""
+        try:
+            snapshots = self.list_snapshots(quam_state_path)
+            if not snapshots:
+                return
+            idx = self._index_path(quam_state_path)
+            if not idx.exists():
+                return                       # nothing captured yet — no repair
+            conn = self._open_index(quam_state_path)
+            try:
+                dirty = leaf_index.is_dirty(conn)
+                have = leaf_index.snapshot_count(conn)
+            finally:
+                conn.close()
+            if dirty or have < len(snapshots):
+                self.rebuild_leaf_index(quam_state_path)
+        except sqlite3.Error:
+            logger.warning("Leaf index freshness check failed", exc_info=True)
+
+    def leaf_field_series(self, quam_state_path: str | Path,
+                          dot_path: str) -> list[tuple] | None:
+        """Change points for ONE dot-path, or None when this index cannot
+        answer for it (never indexed, or the leaf is a pointer somewhere in
+        its history and only the resolving scan can follow it)."""
+        try:
+            self._ensure_leaf_index_fresh(Path(quam_state_path))
+            conn = self._open_index(Path(quam_state_path))
+        except sqlite3.Error:
+            return None
+        try:
+            if leaf_index.path_needs_scan(conn, dot_path):
+                return None
+            rows = leaf_index.series(conn, dot_path)
+            return rows or None
+        except sqlite3.Error:
+            return None
+        finally:
+            conn.close()
+
+    def leaf_changes(self, quam_state_path: str | Path, *, limit: int = 200,
+                     prefix: str | None = None,
+                     before_ts: str | None = None) -> list[dict]:
+        """The "what changed" feed — newest change points first."""
+        try:
+            self._ensure_leaf_index_fresh(Path(quam_state_path))
+            conn = self._open_index(Path(quam_state_path))
+        except sqlite3.Error:
+            return []
+        try:
+            return leaf_index.recent_changes(
+                conn, limit=limit, prefix=prefix, before_ts=before_ts)
+        except sqlite3.Error:
+            return []
+        finally:
+            conn.close()
+
+    def leaf_search(self, quam_state_path: str | Path, query: str, *,
+                    limit: int = 50) -> list[dict]:
+        try:
+            conn = self._open_index(Path(quam_state_path))
+        except sqlite3.Error:
+            return []
+        try:
+            return leaf_index.search_paths(conn, query, limit=limit)
+        except sqlite3.Error:
+            return []
+        finally:
+            conn.close()
+
+    def leaf_stats(self, quam_state_path: str | Path) -> dict:
+        empty = {"snapshots": 0, "paths": 0, "rows": 0,
+                 "dirty": False, "truncated": False, "version": None}
+        try:
+            conn = self._open_index(Path(quam_state_path))
+        except sqlite3.Error:
+            return empty
+        try:
+            return leaf_index.stats(conn)
+        finally:
+            conn.close()
 
     def _ensure_index_fresh(self, quam_state_path: Path) -> None:
         """Self-heal: rebuild missing rows if the index is behind disk.
@@ -3521,7 +3730,7 @@ class HistoryManager:
                     # QuamStore-per-snap construction.
                     self._index_snapshot_into(
                         target_dir, snap_dir, meta,
-                        conn=conn, state=state,
+                        conn=conn, state=state, wiring=wiring,
                     )
                     if (ingested + 1) % _BACKFILL_TXN_BATCH == 0:
                         conn.execute("COMMIT")
@@ -3843,6 +4052,7 @@ def _ensure_param_history_schema(idx_path: Path) -> None:
             "CREATE INDEX IF NOT EXISTS idx_trigger_ts "
             "ON param_history (trigger, timestamp)"
         )
+        leaf_index.ensure_schema(conn)      # docs/83 — same file, own version
     finally:
         conn.close()
 
