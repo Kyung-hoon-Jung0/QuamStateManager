@@ -3306,6 +3306,70 @@ td.col-delta .val-delta { margin-left: 0; }
 /* Discoverability hint under the topology diagram. */
 .topo-hint { margin: .1rem 0 .5rem; }
 
+/* ── Hero chip map (docs/92 P1) — the at-a-glance SVG map on Chip Status.
+   Continuous metric fills are inline (the active heatmap palette, set by JS);
+   the pass/warn/fail classes ride the app's status tokens so age/diagnostics
+   agree with the health tiles in both themes. ───────────────────────────── */
+.topo-hero { margin: .25rem 0 .75rem; }
+.topo-hero-none { margin: 0; }
+.topo-hero-bar { display: flex; gap: .3rem; flex-wrap: wrap; margin-bottom: .45rem; }
+.topo-hero-mbtn {
+    font-size: .78em; padding: .18rem .6rem; border-radius: 999px;
+    border: 1px solid var(--pico-muted-border-color); background: transparent;
+    color: var(--pico-muted-color); cursor: pointer; line-height: 1.35;
+}
+.topo-hero-mbtn:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
+.topo-hero-mbtn.active {
+    background: var(--pico-primary); border-color: var(--pico-primary);
+    color: var(--pico-primary-inverse); font-weight: 600;
+}
+.topo-hero-mbtn.active .metric-label { color: inherit; }
+.topo-hero-map { position: relative; }
+.topo-hero-scroll { overflow-x: auto; }
+.topo-hero-note {
+    position: absolute; top: 6px; left: 6px; z-index: 2; pointer-events: none;
+    font-size: .78em; font-weight: 600; padding: .15rem .55rem; border-radius: 4px;
+    background: var(--color-warning-bg); border: 1px solid var(--color-warning-border);
+    color: var(--color-warning-text);
+}
+.topo-hero-svg { display: block; }
+.topo-hero-node { cursor: pointer; }
+.topo-hero-node:focus { outline: none; }
+.topo-hero-stone {
+    fill: var(--pico-card-background-color, #f6f6f6);
+    stroke: var(--pico-muted-border-color, rgba(128,128,128,.5)); stroke-width: 1.5;
+}
+.topo-hero-node:hover .topo-hero-stone,
+.topo-hero-node:focus .topo-hero-stone { stroke: var(--pico-primary); stroke-width: 2.5; }
+.topo-hero-node.hs-pass .topo-hero-stone { fill: var(--color-success-bg); stroke: var(--color-success-border); }
+.topo-hero-node.hs-warn .topo-hero-stone { fill: var(--color-warning-bg); stroke: var(--color-warning-border); }
+.topo-hero-node.hs-fail .topo-hero-stone { fill: var(--color-error-bg); stroke: var(--color-error-border); }
+.topo-hero-node.hs-badfit .topo-hero-stone { stroke: var(--color-error-border); stroke-dasharray: 4 3; }
+.topo-hero-node.hs-badfit .topo-hero-val { text-decoration: line-through; }
+.topo-hero-id { font-size: 11.5px; font-weight: 700; text-anchor: middle; fill: var(--pico-color); pointer-events: none; }
+.topo-hero-val { font-size: 9.5px; text-anchor: middle; fill: var(--pico-muted-color); pointer-events: none; }
+.topo-hero-node.hs-pass .topo-hero-id, .topo-hero-node.hs-pass .topo-hero-val { fill: var(--color-success-text); }
+.topo-hero-node.hs-warn .topo-hero-id, .topo-hero-node.hs-warn .topo-hero-val { fill: var(--color-warning-text); }
+.topo-hero-node.hs-fail .topo-hero-id, .topo-hero-node.hs-fail .topo-hero-val { fill: var(--color-error-text); }
+.topo-hero-edge-hit { cursor: pointer; }
+.topo-hero-legend {
+    display: flex; gap: .9rem; align-items: center; flex-wrap: wrap;
+    font-size: .74em; color: var(--pico-muted-color); margin-top: .35rem;
+}
+.topo-hero-lg-item { display: inline-flex; align-items: center; gap: .3rem; }
+.topo-hero-lg-grad {
+    display: inline-block; width: 110px; height: 10px; border-radius: 3px;
+    border: 1px solid var(--pico-muted-border-color); margin: 0 .15rem;
+}
+.topo-hero-lg-swatch {
+    display: inline-block; width: 12px; height: 12px; border-radius: 3px;
+    border: 1px solid var(--pico-muted-border-color);
+}
+.topo-hero-lg-swatch.hs-pass { background: var(--color-success-bg); border-color: var(--color-success-border); }
+.topo-hero-lg-swatch.hs-warn { background: var(--color-warning-bg); border-color: var(--color-warning-border); }
+.topo-hero-lg-swatch.hs-fail { background: var(--color-error-bg); border-color: var(--color-error-border); }
+.topo-hero-lg-swatch.hs-badfit-swatch { background: transparent; border: 1.5px dashed var(--color-error-border); }
+
 /* Loading skeleton for lazily-rendered plot tiles (interactive / Raw Data).
    A shimmer makes the pending tile area visible instead of a frozen blank /
    bare "Loading…" string while its data + Plotly fetch in. */
