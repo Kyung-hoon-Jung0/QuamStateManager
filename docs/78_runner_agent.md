@@ -2706,3 +2706,88 @@ record instead of looking identical to "we carried the node's own write".
 targets and every write matched; the chain asked a question §23 never posed —
 *would the chip end up where the physicist left it?* — and the answer was yes
 for two steps out of three, for a reason worth knowing.
+
+---
+
+## 26. "Is node 06's write actually right?" — the question that found a live hole (2026-08-09)
+
+Everything up to §25 used the node's own patches as the answer key. That is
+fair for *"does our automation compute the same thing"* and says nothing about
+whether the thing is **correct**. Asked directly, the answer changed the code.
+
+### 26.1 The first check was wrong, and the figure said so
+
+The independent check: trace the resonator ridge out of `ds_raw` — per flux
+column, the frequency where |S21| is extremal — and ask how far the node's
+claimed sweet spot sits from where the ridge turns over.
+
+First pass: median 2.4 flux steps, p90 23, max 31. That reads like the node
+being sloppy. **Looking at the figure showed the checker was sloppy instead.**
+The arc runs several PERIODS across a wide flux window, so it has several
+turning points; taking the *global* extremum of the smoothed ridge lands on a
+different lobe and manufactures a 20–30-step "error" out of nothing. The
+claimed spot sits exactly on the local maximum nearest the working point, which
+is the physically right answer.
+
+Corrected to the nearest LOCAL turning point:
+
+| | n | distance to a real ridge turn | outside the swept window |
+|---|---:|---|---:|
+| the node **wrote** these | 74 | median **0.4** steps, p90 1.0, max 2.2 | **0** |
+| succeeded, node wrote nothing | 86 | median 0.5, **p90 35.4, max 53.1** | **12** |
+
+So node 06's writes are right — sub-pixel — and its *decision to withhold* is
+discriminating, not arbitrary.
+
+### 26.2 The hole
+
+Those 12 out-of-window claims name a flux offset the sweep never visited. All
+12 were marked `successful` by the node, and the node declined to write every
+one. **Nothing on our side would have stopped them:**
+
+* G1 follows the node's outcome — which was success;
+* the metric gates skip a metric the run reports as `None`, and all 12 do;
+* the plausibility band is the flux line's ±10 V envelope, and these are
+  0.08–0.95 V;
+* this family's `feature_check` is **span mode** — it asks whether a signal
+  exists and never where the claim sits.
+
+So the engine's forward path would have written a value the data does not
+contain. And `families.py` carried a comment saying a value outside the swept
+window "is caught by the consistency check" — **a protection that did not
+exist**. The comment was the only thing guarding it.
+
+### 26.3 The gate, and why the bound is the run's own
+
+`_claim_inside_swept_flux` compares `idle_offset` and `min_offset` against
+`[min_flux_offset_in_v, max_flux_offset_in_v]` **from the run's own
+parameters** — never a constant, because a chip swept over ±0.2 V must not be
+judged by one swept over ±2.5 V, and one archived run swept an asymmetric
+`[−2.5, −0.5]`. The edge tolerance is likewise the run's own flux step (a small
+overshoot at the boundary is normal fitting behaviour), falling back to 2% of
+the window when the point count is absent. A run that does not report its
+window gets **no opinion** — an unverifiable premise is not a violation either.
+
+This required the gate pipeline to hand run parameters to consistency checks;
+one-argument checks (the majority) are untouched.
+
+Two-sided on the corpus that found it:
+
+> **fires on exactly those 12; silent on all 148 others, including every one of
+> the 74 the node itself wrote. 0 false rejects.**
+
+The gate and the instrument agree target for target on all 160 — which is the
+strongest corroboration available without a device.
+
+### 26.4 What this says about the method
+
+The chain (§25) found that we wrote where the operator did not. Checking
+*whether that write was right* found that on that particular chain it was
+(0.1–0.6 flux steps, r² ≥ 0.98) — and that on twelve other targets it would not
+have been. **A per-run replay could not have asked this, and neither could a
+chain replay; only "is the answer key itself correct?" gets there.**
+
+It also cost two wrong turns worth recording: an aggregated key listing
+mis-read as evidence a field was present (§25.2), and a ridge estimator that
+accused the instrument before the figure exonerated it. Both were caught by
+looking at the thing itself.

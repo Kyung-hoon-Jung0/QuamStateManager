@@ -437,7 +437,14 @@ def evaluate_target(run, fam: Family, target: str, *,
     # cross-metric internal consistency (e.g. chevron cz_len vs 1/(2J))
     for check in fam.consistency_checks:
         try:
-            why = check(entry)
+            # a check may ask for the run's own parameters — the sweep window
+            # is knowable only from them, and a window claim cannot be judged
+            # against a constant (docs/78 §26). One-argument checks are the
+            # majority and keep working untouched.
+            try:
+                why = check(entry, _attr(run, "parameters", None) or {})
+            except TypeError:
+                why = check(entry)
         except Exception:  # noqa: BLE001
             why = None
         if why:

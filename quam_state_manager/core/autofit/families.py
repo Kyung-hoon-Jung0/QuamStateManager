@@ -710,6 +710,47 @@ _register(Family(
     adaptations={"noisy": _more_shots},
 ))
 
+def _claim_inside_swept_flux(entry: dict, params: dict) -> str | None:
+    """A flux sweet spot outside the flux range the run actually swept.
+
+    Measured 2026-08-09 across every archived node-06 run (docs/78 §26): **12
+    claims name an offset the sweep never visited**, and every one of them was
+    marked `successful` by the node — which then declined to write it. Nothing
+    on our side stopped them: G1 follows the node's outcome, the metric gates
+    skip a metric the run reports as `None` (all 12 do), the plausibility band
+    is the flux line's ±10 V envelope, and this family's feature check is span
+    mode, which asks whether a signal EXISTS and never where the claim sits. So
+    the engine's forward path would have written a value the data does not
+    contain.
+
+    The bound is the run's OWN sweep, never a constant — a chip swept over
+    ±0.2 V is not judged by one swept over ±2.5 V. A small overshoot at the
+    edge is normal fitting behaviour and is allowed; the tolerance is one flux
+    step where the run reports enough to derive it, else 2% of the window.
+    """
+    import math as _math
+
+    lo, hi = params.get("min_flux_offset_in_v"), params.get("max_flux_offset_in_v")
+    if not isinstance(lo, (int, float)) or not isinstance(hi, (int, float)) \
+            or isinstance(lo, bool) or isinstance(hi, bool) or hi <= lo:
+        return None                        # the run did not say — no opinion
+    n = params.get("num_flux_points")
+    span = float(hi) - float(lo)
+    tol = (span / (float(n) - 1.0)) if isinstance(n, (int, float)) \
+        and not isinstance(n, bool) and float(n) > 1 else span * 0.02
+    for key in ("idle_offset", "min_offset"):
+        v = entry.get(key)
+        if not isinstance(v, (int, float)) or isinstance(v, bool):
+            continue
+        if not _math.isfinite(v):
+            continue
+        if lo - tol <= v <= hi + tol:
+            continue
+        return (f"{key} lies outside the flux range this run swept "
+                f"([{lo:g}, {hi:g}] V) — the sweep never visited it")
+    return None
+
+
 def _chevron_len_vs_j(entry: dict) -> str | None:
     """cz_len must agree with the fitted coupling: half swap period = 1/(2J).
     A doubled/halved length with a consistent J is the classic wrong-fringe
@@ -940,7 +981,8 @@ _register(Family(
                   MetricGate("ridge_r2", min=0.40, reason="sinusoidal flux fit quality")],
     # idle/min offsets are DC volts on this hardware; the physical envelope is
     # the flux line's own range, and a value outside the swept window is caught
-    # by the consistency check rather than a chip-specific constant.
+    # by `_claim_inside_swept_flux` below — which, until 2026-08-09, this
+    # comment claimed without the check existing (docs/78 §26).
     plausibility=[Plausibility("idle_offset", lo=-10.0, hi=10.0),
                   Plausibility("frequency_shift", lo=-500e6, hi=500e6)],
     # 2-D map: no honest 1-D localizer (docs/47) — signal presence only.
@@ -967,6 +1009,7 @@ _register(Family(
     consistency_checks=[
         lambda e: ("flat flux response — no dispersive shift to fit"
                    if e.get("flat_response") else None),
+        _claim_inside_swept_flux,
     ],
     adaptations={"noisy": _more_shots,
                  "no_signal": [_widen_flux(2.0), _power_up],
