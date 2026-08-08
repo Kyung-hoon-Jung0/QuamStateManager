@@ -1151,24 +1151,13 @@ window.ChipStatus.mount = function (opts) {
 
         // Coincident DECLARED cells happen on real chips (a 10Q chip declares
         // q2 and q10 both at "4,0"): fan the stones around the shared centre so
-        // BOTH stay visible — a visual de-overlap at the same cell, never a
-        // fabricated new cell. Dashed ring marks the shared-cell members.
+        // BOTH stay visible — TopoGraph.spreadCoincident is the ONE fan-out
+        // (the component maps use the same). Dashed ring marks shared members.
         var offsets = {};
         (function() {
-            var byCell = {};
-            topo.nodes.forEach(function(n) {
-                var p = lay.positions[n.id];
-                if (!p) return;
-                var k = p.col + '|' + p.row;
-                (byCell[k] = byCell[k] || []).push(n.id);
-            });
-            Object.keys(byCell).forEach(function(k) {
-                var ids = byCell[k];
-                if (ids.length < 2) return;
-                ids.forEach(function(id, i) {
-                    var a = (2 * Math.PI * i) / ids.length;
-                    offsets[id] = { dx: Math.cos(a) * CELL * 0.22, dy: Math.sin(a) * CELL * 0.22, shared: true };
-                });
+            var offC = TG.spreadCoincident(lay.positions, 0.22);
+            Object.keys(offC).forEach(function(id) {
+                offsets[id] = { dx: offC[id].dx * CELL, dy: offC[id].dy * CELL, shared: true };
             });
         })();
 

@@ -699,6 +699,10 @@ class QueryEngine:
                 "source": source,
                 "target": target,
                 "has_cz": has_cz,
+                # same convention as get_pair's has_coupler: a dict-valued
+                # coupler counts, an explicit null does not (docs/92 — the
+                # component-map coupler symbols key on this)
+                "has_coupler": isinstance(p.get("coupler"), dict),
                 "cz_fidelity": best_fidelity,
                 "fidelity_source": fidelity_source,
                 "gate_kind": "cr" if _is_cr_pair else ("cz" if macros else "none"),

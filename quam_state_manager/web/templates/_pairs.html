@@ -7,6 +7,10 @@
     </div>
 </div>
 
+{% set cmap_highlight = 'pairs' %}
+{% set cmap_label = '— pair adjacency highlighted' %}
+{% include '_component_map.html' %}
+
 {% if pair_vocab == 'cr' %}
 {# CR-native columns (docs/54): drive levers + canonical 2Q fidelity + the
    emulated effective IF; rows arrive adjacency-sorted so both DIRECTIONS of

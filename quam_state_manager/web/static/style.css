@@ -3370,6 +3370,76 @@ td.col-delta .val-delta { margin-left: 0; }
 .topo-hero-lg-swatch.hs-fail { background: var(--color-error-bg); border-color: var(--color-error-border); }
 .topo-hero-lg-swatch.hs-badfit-swatch { background: transparent; border: 1.5px dashed var(--color-error-border); }
 
+/* ── Component-page chip layout (docs/92 P2) — ONE shared no-numbers drawing
+   above every component table. The page picks a highlight mode (cm-hl-*);
+   colour means selected / not selected, nothing else (docs/91 §3.4). ─────── */
+.cmap {
+    margin: 0 0 .9rem; padding: .35rem .6rem .5rem;
+    border: 1px solid var(--pico-muted-border-color); border-radius: 8px;
+    background: var(--pico-card-background-color, transparent);
+}
+.cmap-summary { cursor: pointer; font-size: .85em; font-weight: 600; color: var(--pico-muted-color); list-style-position: inside; }
+.cmap-summary small { font-weight: 400; }
+.cmap-body { position: relative; margin-top: .4rem; }
+.cm-scroll { overflow-x: auto; }
+.cm-svg { display: block; }
+.cm-note {
+    position: absolute; top: 4px; left: 4px; z-index: 2; pointer-events: none;
+    font-size: .76em; font-weight: 600; padding: .12rem .5rem; border-radius: 4px;
+    background: var(--color-warning-bg); border: 1px solid var(--color-warning-border);
+    color: var(--color-warning-text);
+}
+
+/* base symbols — calm, muted; the highlight layer provides the emphasis */
+.cm-stone { fill: var(--pico-card-background-color, #f7f7f7); stroke: var(--pico-muted-border-color, rgba(128,128,128,.55)); stroke-width: 1.4; }
+.cm-id { font-size: 10.5px; font-weight: 600; fill: var(--pico-color); pointer-events: none; }
+.cm-edge-line { stroke: var(--pico-muted-border-color, rgba(128,128,128,.55)); stroke-width: 2; stroke-linecap: round; }
+.cm-arrow { fill: var(--pico-muted-border-color, rgba(128,128,128,.65)); }
+.cm-coupler { fill: var(--pico-card-background-color, #f7f7f7); stroke: var(--pico-muted-border-color, rgba(128,128,128,.65)); stroke-width: 1.4; }
+.cm-res { fill: none; stroke: var(--pico-muted-border-color, rgba(128,128,128,.65)); stroke-width: 1.6; }
+.cm-flux { stroke: var(--pico-muted-border-color, rgba(128,128,128,.65)); stroke-width: 2; stroke-linecap: round; }
+.cm-feed { fill: none; stroke: var(--pico-muted-border-color, rgba(128,128,128,.5)); stroke-width: 1.3; stroke-dasharray: 5 4; }
+.cm-hit { stroke: transparent; stroke-width: 12; cursor: pointer; }
+.cm-node { cursor: pointer; }
+.cm-edge .cm-edge-line, .cm-edge .cm-arrow, .cm-edge .cm-coupler { transition: opacity .12s; }
+.cm-off { opacity: .35; }
+
+/* highlight modes (docs/91 §3.3) — emphasis only, nothing appears/disappears */
+.cm-hl-qubits .cm-edge-line, .cm-hl-qubits .cm-arrow, .cm-hl-qubits .cm-coupler,
+.cm-hl-qubits .cm-res, .cm-hl-qubits .cm-flux, .cm-hl-qubits .cm-feed { opacity: .22; }
+.cm-hl-qubits .cm-stone { stroke: var(--pico-primary); stroke-width: 2.2; }
+
+.cm-hl-pairs .cm-res, .cm-hl-pairs .cm-flux, .cm-hl-pairs .cm-feed, .cm-hl-pairs .cm-coupler { opacity: .22; }
+.cm-hl-pairs .cm-stone, .cm-hl-pairs .cm-id { opacity: .5; }
+.cm-hl-pairs .cm-edge-line { stroke: var(--pico-primary); stroke-width: 3; }
+.cm-hl-pairs .cm-arrow { fill: var(--pico-primary); }
+
+.cm-hl-resonators .cm-edge-line, .cm-hl-resonators .cm-arrow, .cm-hl-resonators .cm-coupler,
+.cm-hl-resonators .cm-flux { opacity: .22; }
+.cm-hl-resonators .cm-stone, .cm-hl-resonators .cm-id { opacity: .5; }
+.cm-hl-resonators .cm-res { stroke: var(--pico-primary); stroke-width: 2.2; }
+.cm-hl-resonators .cm-feed { stroke: var(--pico-primary); stroke-width: 2; opacity: .9; }
+
+.cm-hl-flux .cm-res, .cm-hl-flux .cm-feed, .cm-hl-flux .cm-coupler { opacity: .22; }
+.cm-hl-flux .cm-stone, .cm-hl-flux .cm-id { opacity: .5; }
+.cm-hl-flux .cm-edge-line, .cm-hl-flux .cm-arrow { opacity: .55; }   /* neighbour links = crosstalk candidates */
+.cm-hl-flux .cm-flux { stroke: var(--pico-primary); stroke-width: 3; }
+
+.cm-hl-couplers .cm-res, .cm-hl-couplers .cm-flux, .cm-hl-couplers .cm-feed { opacity: .22; }
+.cm-hl-couplers .cm-stone, .cm-hl-couplers .cm-id { opacity: .5; }
+.cm-hl-couplers .cm-edge-line, .cm-hl-couplers .cm-arrow { opacity: .3; }
+.cm-hl-couplers .cm-edge-hascoupler .cm-edge-line { stroke: var(--pico-primary); stroke-width: 3; opacity: 1; }
+.cm-hl-couplers .cm-coupler { stroke: var(--pico-primary); fill: var(--pico-primary); opacity: 1; }
+
+/* entity hover (map↔table, both directions) — AFTER the mode rules so the
+   accent overrides any dim at equal specificity */
+.cm-svg .cm-hot .cm-stone { stroke: var(--pico-primary); stroke-width: 3; opacity: 1; }
+.cm-svg .cm-hot .cm-id { opacity: 1; }
+.cm-svg .cm-hot .cm-edge-line { stroke: var(--pico-primary); stroke-width: 4; opacity: 1; }
+.cm-svg .cm-hot .cm-arrow { fill: var(--pico-primary); opacity: 1; }
+.cm-svg .cm-hot .cm-res, .cm-svg .cm-hot .cm-flux, .cm-svg .cm-hot .cm-coupler { opacity: 1; }
+.data-table tr.cm-row-hot > td { background: var(--pico-primary-focus, rgba(2,154,232,.14)); }
+
 /* Loading skeleton for lazily-rendered plot tiles (interactive / Raw Data).
    A shimmer makes the pending tile area visible instead of a frozen blank /
    bare "Loading…" string while its data + Plotly fetch in. */
