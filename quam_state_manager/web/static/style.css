@@ -929,7 +929,7 @@ html.topbar-hidden .topbar-reveal { display: block; }
 .settings-btn:hover { background: var(--pico-muted-border-color); color: var(--pico-contrast); }
 
 .settings-dropdown {
-    position: absolute; right: 0; top: 100%; z-index: 98;
+    position: absolute; right: 0; top: 100%; z-index: 120;
     min-width: 140px;
     background: var(--pico-background-color);
     border: 1px solid var(--pico-muted-border-color);
@@ -979,7 +979,7 @@ html.topbar-hidden .topbar-reveal { display: block; }
    BIGGER — 12.5px was too small to read at a glance; width grows with it so
    rows don't flex-wrap into ragged empty space. */
 .calc-popover {
-    position: absolute; right: 0; top: 100%; z-index: 98;
+    position: absolute; right: 0; top: 100%; z-index: 120;
     width: 348px; max-width: 92vw; max-height: min(560px, 80vh); overflow-y: auto;
     background: var(--pico-background-color);
     border: 1px solid var(--pico-muted-border-color);
@@ -9949,3 +9949,42 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .tree-tag-added   { background: var(--color-success-bg); color: var(--color-success-text); }
 .tree-tag-removed { background: var(--color-error-bg); color: var(--color-error-text); }
 .tree-node.tree-removed > .tree-row > .tree-val { text-decoration: line-through; opacity: 0.75; }
+
+
+/* ──────────────────────────────────────────────────────────────────
+ * docs/89 — Settings + Calculator as sidebar tools
+ * ────────────────────────────────────────────────────────────────── */
+
+/* Body-level popovers, placed by _anchorPopover in viewport coords. The
+   `right/top:auto` reset matters: the base rules still carry right:0;top:100%
+   from when these lived in a positioned topbar <li>. */
+.pop-anchored { position: fixed !important; right: auto !important; bottom: auto !important;
+                margin-top: 0 !important; z-index: 130; }
+
+/* The tool row: icons + labels, visually a tier above the navigation. */
+.sidebar-tools { display: flex; flex-direction: column; gap: 2px; margin-bottom: 0.35rem; }
+.sidebar-tool {
+    display: flex; align-items: center; gap: 0.5rem; width: 100%;
+    background: none; border: none; cursor: pointer;
+    padding: 0.3rem 0.4rem; margin: 0; border-radius: 5px;
+    font-size: inherit; font-weight: 500; line-height: 1.4;
+    color: var(--pico-muted-color); text-align: left;
+}
+.sidebar-tool:hover { background: var(--pico-muted-border-color); color: var(--pico-contrast); }
+.sidebar-tool:focus-visible { outline: 2px solid var(--pico-primary); outline-offset: 1px; }
+.sidebar-tool .ic { flex: 0 0 auto; }
+.sidebar-tool-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sidebar-tool.calc-open { color: var(--pico-primary); }
+.sidebar-tools-divider { margin-top: 0.15rem; }
+
+/* Topbar fallback — ONLY while the sidebar is collapsed (it collapses to
+   width 0, so the sidebar row is gone, not merely narrow). Exactly one of the
+   two is ever visible, so this is a fallback and not a duplicate control. */
+.topbar-tools-fallback { display: none; }
+.sidebar-collapsed .topbar-tools-fallback { display: flex; gap: 0.15rem; align-items: center; }
+.topbar-tool {
+    background: none; border: none; cursor: pointer; padding: 0.2rem 0.35rem;
+    border-radius: 4px; color: var(--pico-muted-color); line-height: 0;
+}
+.topbar-tool:hover { background: var(--pico-muted-border-color); color: var(--pico-contrast); }
+.topbar-tool.calc-open { color: var(--pico-primary); }

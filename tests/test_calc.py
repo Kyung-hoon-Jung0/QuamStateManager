@@ -23,18 +23,25 @@ _STATIC = _ROOT / "quam_state_manager" / "web" / "static"
 
 
 class TestCalcMarkup:
-    def test_base_includes_calc_js_and_badge(self):
+    def test_base_includes_calc_js_and_trigger(self):
         b = _BASE.read_text(encoding="utf-8")
         assert "calc.js" in b
-        assert 'id="calc-btn"' in b and 'class="calc-wrap"' in b and 'id="calc-popover"' in b
+        assert 'id="calc-btn"' in b and 'id="calc-popover"' in b
 
-    def test_calc_mounts_between_search_and_settings(self):
-        # the "personal tools" right-rail order: search · calc · settings
+    def test_calc_lives_in_the_sidebar_tool_row(self):
+        """docs/89 — the calculator moved out of the top-right rail (nobody
+        found it there, and its ∵ glyph meant nothing) into the sidebar's tool
+        row, with Settings above it. The popover is body-level, AFTER the
+        sidebar, because #sidebar is overflow-y:auto and would clip it."""
         b = _BASE.read_text(encoding="utf-8")
-        i_search = b.index("search-box")
-        i_calc = b.index('class="calc-wrap"')
-        i_settings = b.index('class="settings-wrap"')
-        assert i_search < i_calc < i_settings
+        assert 'class="calc-wrap"' not in b and 'class="settings-wrap"' not in b
+        i_tools = b.index('class="sidebar-tools"')
+        i_btn = b.index('id="calc-btn"')
+        i_aside = b.index("</aside>")
+        i_pop = b.index('id="calc-popover"')
+        assert i_tools < i_btn < i_aside < i_pop
+        # Settings first inside the row
+        assert b.index("Settings</span>") < b.index("Calculator</span>")
 
     def test_calc_js_never_uses_eval_or_function(self):
         # the free expression box is parsed by a whitelisted recursive-descent parser;

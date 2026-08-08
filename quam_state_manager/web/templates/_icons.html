@@ -1,0 +1,35 @@
+{# Inline SVG icons (docs/89).
+
+   Why SVG and not a character: the two tools used ⚙ (U+2699) and ∵ (U+2235).
+   The second is the "because" sign — it has nothing to do with a calculator,
+   which is why nobody recognised the button. Emoji (🧮/🔢) would render
+   differently on every platform and cannot take the theme colour. These are
+   stroke drawings on `currentColor`, so they inherit light/dark/colorblind
+   themes and the UI scale for free, and stay legible at 16-18px.
+
+   Both use a 24×24 viewBox and 1.7 stroke: matched weight, so the two sit
+   evenly beside each other in the sidebar's tool row. #}
+
+{% macro icon_gear(size=18) -%}
+<svg class="ic ic-gear" width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24"
+     fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
+     stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <circle cx="12" cy="12" r="3.1"/>
+  {# Eight teeth as one path — a 6-tooth gear reads as a flower at this size. #}
+  <path d="M12 2.4v2.3M12 19.3v2.3M21.6 12h-2.3M4.7 12H2.4
+           M18.8 5.2l-1.6 1.6M6.8 17.2l-1.6 1.6M18.8 18.8l-1.6-1.6M6.8 6.8L5.2 5.2"/>
+</svg>
+{%- endmacro %}
+
+{% macro icon_calculator(size=18) -%}
+<svg class="ic ic-calc" width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24"
+     fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
+     stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <rect x="4" y="2.6" width="16" height="18.8" rx="2.2"/>
+  <rect x="7" y="5.6" width="10" height="3.4" rx="0.8"/>
+  {# 2×3 keypad: the display bar plus a key grid is what makes it unmistakably
+     a calculator rather than a phone or a document. #}
+  <path d="M8 12.6h.01M12 12.6h.01M16 12.6h.01M8 16.6h.01M12 16.6h.01M16 16.6h.01"
+        stroke-width="2.4"/>
+</svg>
+{%- endmacro %}
