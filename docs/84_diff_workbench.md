@@ -43,9 +43,9 @@ Real snapshot pairs, server-side:
 
 | pair | leaves | changed | tree nodes to render | build |
 |---|---|---|---|---|
-| neighbours (KRISS) | 15,285 | 1 | **4 (0.0 %)** | 24 ms |
+| neighbours (LabA) | 15,285 | 1 | **4 (0.0 %)** | 24 ms |
 | 30 apart | 12,665 | 2,758 (117 numeric) | 3,249 (26 %) | 28 ms |
-| first vs last (QRS) | 1,657 | 690 (138 numeric) | 876 (53 %) | 5 ms |
+| first vs last (LabB) | 1,657 | 690 (138 numeric) | 876 (53 %) | 5 ms |
 
 Two consequences:
 
