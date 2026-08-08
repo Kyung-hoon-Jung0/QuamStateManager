@@ -7,6 +7,10 @@
     </div>
 </div>
 
+{% set cmap_highlight = 'flux' %}
+{% set cmap_label = '— flux lines + neighbour links highlighted' %}
+{% include '_component_map.html' %}
+
 <nav class="chain-tabs">
     <ul>
         <li><a href="/flux?per_page={{ per_page }}" hx-get="/flux?per_page={{ per_page }}" hx-target="#table-pane"

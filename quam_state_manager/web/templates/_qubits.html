@@ -7,6 +7,10 @@
     </div>
 </div>
 
+{% set cmap_highlight = 'qubits' %}
+{% set cmap_label = '— qubit positions highlighted' %}
+{% include '_component_map.html' %}
+
 <nav class="chain-tabs">
     <ul>
         <li><a href="/qubits?per_page={{ per_page }}" hx-get="/qubits?per_page={{ per_page }}" hx-target="#table-pane"
