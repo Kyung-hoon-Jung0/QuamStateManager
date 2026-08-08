@@ -89,17 +89,26 @@ _QUBIT_PROPERTY_MAP: list[tuple[str, str, str | None]] = [
 # Drive-amplitude columns use the operation ALIAS (.operations.x180.amplitude,
 # a "#./" pointer) not a hardcoded _DragCosine suffix, so non-DragCosine chips work.
 # `unit` is the stored physical unit shown in the header (mandatory, user req).
-# default_on=False columns (ports) start hidden — opt in via the Property panel.
+#
+# EVERY column here is shown by default (r17). This list used to mark 31 of the
+# 46 as ``default_on: False`` — T1/T2/χ/f₁₂/grid_location and the whole port
+# block — while r7 had already flipped the DERIVED columns to default-visible.
+# The result was backwards: a chip showed ~200 obscure derived leaves and hid
+# T1. Hiding costs nothing to render either way (the server emits every cell
+# regardless; ``.bulk-col-hidden`` is one CSS rule), so an opt-OUT model is
+# strictly better — the user hides what they don't want, per chip, persisted.
+# A column can still be marked ``"default_on": False`` if a future one is
+# genuinely noise; the route reads it via ``.get("default_on", True)``.
 _BULK_COLUMNS_SPEC: list[dict[str, Any]] = [
-    # ── Qubit fields (shown by default) ───────────────────────────────────────
+    # ── Qubit fields ──────────────────────────────────────────────────────────
     {"section": "Frequencies", "key": "f_01", "label": "Qubit f₀₁", "tmpl": "qubits.{name}.f_01", "unit": "Hz"},
     {"section": "Frequencies", "key": "readout_frequency", "label": "Readout freq", "tmpl": "qubits.{name}.resonator.f_01", "unit": "Hz"},
     {"section": "Frequencies", "key": "readout_RF_frequency", "label": "Readout RF", "tmpl": "qubits.{name}.resonator.RF_frequency", "unit": "Hz"},
     {"section": "Frequencies", "key": "xy_RF_frequency", "label": "XY RF", "tmpl": "qubits.{name}.xy.RF_frequency", "unit": "Hz"},
     {"section": "Frequencies", "key": "xy_intermediate_frequency", "label": "XY IF", "tmpl": "qubits.{name}.xy.intermediate_frequency", "unit": "Hz"},
     {"section": "Frequencies", "key": "anharmonicity", "label": "Anharmonicity", "tmpl": "qubits.{name}.anharmonicity", "unit": "Hz"},
-    {"section": "Frequencies", "key": "f_12", "label": "Qubit f₁₂", "tmpl": "qubits.{name}.f_12", "unit": "Hz", "default_on": False},
-    {"section": "Frequencies", "key": "chi", "label": "Chi (χ)", "tmpl": "qubits.{name}.chi", "unit": "Hz", "default_on": False},
+    {"section": "Frequencies", "key": "f_12", "label": "Qubit f₁₂", "tmpl": "qubits.{name}.f_12", "unit": "Hz"},
+    {"section": "Frequencies", "key": "chi", "label": "Chi (χ)", "tmpl": "qubits.{name}.chi", "unit": "Hz"},
     {"section": "XY Drive", "key": "x180_amplitude", "label": "x180 amp", "tmpl": "qubits.{name}.xy.operations.x180.amplitude", "unit": ""},
     {"section": "XY Drive", "key": "x90_amplitude", "label": "x90 amp", "tmpl": "qubits.{name}.xy.operations.x90.amplitude", "unit": ""},
     {"section": "XY Drive", "key": "saturation_amplitude", "label": "Sat amp", "tmpl": "qubits.{name}.xy.operations.saturation.amplitude", "unit": ""},
@@ -108,39 +117,39 @@ _BULK_COLUMNS_SPEC: list[dict[str, Any]] = [
     {"section": "Readout", "key": "readout_threshold", "label": "RO threshold", "tmpl": "qubits.{name}.resonator.operations.readout.threshold", "unit": ""},
     {"section": "Readout", "key": "readout_iw_angle", "label": "RO IW angle", "tmpl": "qubits.{name}.resonator.operations.readout.integration_weights_angle", "unit": "rad"},
     {"section": "Readout", "key": "time_of_flight", "label": "Time of flight", "tmpl": "qubits.{name}.resonator.time_of_flight", "unit": "ns"},
-    {"section": "Readout", "key": "depletion_time", "label": "Depletion time", "tmpl": "qubits.{name}.resonator.depletion_time", "unit": "ns", "default_on": False},
+    {"section": "Readout", "key": "depletion_time", "label": "Depletion time", "tmpl": "qubits.{name}.resonator.depletion_time", "unit": "ns"},
     {"section": "Flux", "key": "z_joint_offset", "label": "Flux offset", "tmpl": "qubits.{name}.z.joint_offset", "unit": "V"},
-    {"section": "Flux", "key": "z_min_offset", "label": "Z min offset", "tmpl": "qubits.{name}.z.min_offset", "unit": "V", "default_on": False},
-    {"section": "Flux", "key": "z_settle_time", "label": "Z settle", "tmpl": "qubits.{name}.z.settle_time", "unit": "ns", "default_on": False},
-    {"section": "Flux", "key": "z_flux_point", "label": "Flux point", "tmpl": "qubits.{name}.z.flux_point", "unit": "", "default_on": False},
-    {"section": "Flux", "key": "phi0_voltage", "label": "Φ₀ voltage", "tmpl": "qubits.{name}.phi0_voltage", "unit": "V", "default_on": False},
-    {"section": "Flux", "key": "phi0_current", "label": "Φ₀ current", "tmpl": "qubits.{name}.phi0_current", "unit": "", "default_on": False},
-    # ── Coherence (opt-in) ────────────────────────────────────────────────────
-    {"section": "Coherence", "key": "T1", "label": "T1", "tmpl": "qubits.{name}.T1", "unit": "s", "default_on": False},
-    {"section": "Coherence", "key": "T2ramsey", "label": "T2 Ramsey", "tmpl": "qubits.{name}.T2ramsey", "unit": "s", "default_on": False},
-    {"section": "Coherence", "key": "T2echo", "label": "T2 echo", "tmpl": "qubits.{name}.T2echo", "unit": "s", "default_on": False},
-    # ── Gate fidelity + identity (opt-in) ─────────────────────────────────────
-    {"section": "Gate Fidelity", "key": "gate_fidelity_avg", "label": "Gate fid (avg)", "tmpl": "qubits.{name}.gate_fidelity.averaged", "unit": "", "default_on": False},
-    {"section": "Identity", "key": "grid_location", "label": "Grid loc", "tmpl": "qubits.{name}.grid_location", "unit": "", "default_on": False},
-    # ── Port fields (hidden by default — opt in) ──────────────────────────────
-    {"section": "XY Port", "key": "xy_delay", "label": "XY delay", "tmpl": "qubits.{name}.xy.opx_output.delay", "unit": "ns", "default_on": False},
-    {"section": "XY Port", "key": "xy_power", "label": "XY power", "tmpl": "qubits.{name}.xy.opx_output.full_scale_power_dbm", "unit": "dBm", "default_on": False},
-    {"section": "XY Port", "key": "xy_upconv", "label": "XY LO (upconv)", "tmpl": "qubits.{name}.xy.opx_output.upconverter_frequency", "unit": "Hz", "default_on": False},
-    {"section": "XY Port", "key": "xy_samp", "label": "XY samp rate", "tmpl": "qubits.{name}.xy.opx_output.sampling_rate", "unit": "Hz", "default_on": False},
-    {"section": "XY Port", "key": "xy_band", "label": "XY band", "tmpl": "qubits.{name}.xy.opx_output.band", "unit": "", "default_on": False},
-    {"section": "Z Port", "key": "z_delay", "label": "Z delay", "tmpl": "qubits.{name}.z.opx_output.delay", "unit": "ns", "default_on": False},
-    {"section": "Z Port", "key": "z_offset", "label": "Z offset", "tmpl": "qubits.{name}.z.opx_output.offset", "unit": "V", "default_on": False},
-    {"section": "Z Port", "key": "z_output_mode", "label": "Z output mode", "tmpl": "qubits.{name}.z.opx_output.output_mode", "unit": "", "default_on": False},
-    {"section": "Z Port", "key": "z_samp", "label": "Z samp rate", "tmpl": "qubits.{name}.z.opx_output.sampling_rate", "unit": "Hz", "default_on": False},
-    {"section": "Z Port", "key": "z_upsamp", "label": "Z upsamp mode", "tmpl": "qubits.{name}.z.opx_output.upsampling_mode", "unit": "", "default_on": False},
-    {"section": "RO Out Port", "key": "ro_out_delay", "label": "RO-out delay", "tmpl": "qubits.{name}.resonator.opx_output.delay", "unit": "ns", "default_on": False},
-    {"section": "RO Out Port", "key": "ro_out_power", "label": "RO-out power", "tmpl": "qubits.{name}.resonator.opx_output.full_scale_power_dbm", "unit": "dBm", "default_on": False},
-    {"section": "RO Out Port", "key": "ro_out_upconv", "label": "RO-out LO (upconv)", "tmpl": "qubits.{name}.resonator.opx_output.upconverter_frequency", "unit": "Hz", "default_on": False},
-    {"section": "RO Out Port", "key": "ro_out_band", "label": "RO-out band", "tmpl": "qubits.{name}.resonator.opx_output.band", "unit": "", "default_on": False},
-    {"section": "RO In Port", "key": "ro_in_downconv", "label": "RO-in LO (downconv)", "tmpl": "qubits.{name}.resonator.opx_input.downconverter_frequency", "unit": "Hz", "default_on": False},
-    {"section": "RO In Port", "key": "ro_in_samp", "label": "RO-in samp rate", "tmpl": "qubits.{name}.resonator.opx_input.sampling_rate", "unit": "Hz", "default_on": False},
-    {"section": "RO In Port", "key": "ro_in_band", "label": "RO-in band", "tmpl": "qubits.{name}.resonator.opx_input.band", "unit": "", "default_on": False},
-    {"section": "RO In Port", "key": "ro_in_gain", "label": "RO-in gain", "tmpl": "qubits.{name}.resonator.opx_input.gain_db", "unit": "dB", "default_on": False},
+    {"section": "Flux", "key": "z_min_offset", "label": "Z min offset", "tmpl": "qubits.{name}.z.min_offset", "unit": "V"},
+    {"section": "Flux", "key": "z_settle_time", "label": "Z settle", "tmpl": "qubits.{name}.z.settle_time", "unit": "ns"},
+    {"section": "Flux", "key": "z_flux_point", "label": "Flux point", "tmpl": "qubits.{name}.z.flux_point", "unit": ""},
+    {"section": "Flux", "key": "phi0_voltage", "label": "Φ₀ voltage", "tmpl": "qubits.{name}.phi0_voltage", "unit": "V"},
+    {"section": "Flux", "key": "phi0_current", "label": "Φ₀ current", "tmpl": "qubits.{name}.phi0_current", "unit": ""},
+    # ── Coherence ─────────────────────────────────────────────────────────────
+    {"section": "Coherence", "key": "T1", "label": "T1", "tmpl": "qubits.{name}.T1", "unit": "s"},
+    {"section": "Coherence", "key": "T2ramsey", "label": "T2 Ramsey", "tmpl": "qubits.{name}.T2ramsey", "unit": "s"},
+    {"section": "Coherence", "key": "T2echo", "label": "T2 echo", "tmpl": "qubits.{name}.T2echo", "unit": "s"},
+    # ── Gate fidelity + identity ──────────────────────────────────────────────
+    {"section": "Gate Fidelity", "key": "gate_fidelity_avg", "label": "Gate fid (avg)", "tmpl": "qubits.{name}.gate_fidelity.averaged", "unit": ""},
+    {"section": "Identity", "key": "grid_location", "label": "Grid loc", "tmpl": "qubits.{name}.grid_location", "unit": ""},
+    # ── Port fields ───────────────────────────────────────────────────────────
+    {"section": "XY Port", "key": "xy_delay", "label": "XY delay", "tmpl": "qubits.{name}.xy.opx_output.delay", "unit": "ns"},
+    {"section": "XY Port", "key": "xy_power", "label": "XY power", "tmpl": "qubits.{name}.xy.opx_output.full_scale_power_dbm", "unit": "dBm"},
+    {"section": "XY Port", "key": "xy_upconv", "label": "XY LO (upconv)", "tmpl": "qubits.{name}.xy.opx_output.upconverter_frequency", "unit": "Hz"},
+    {"section": "XY Port", "key": "xy_samp", "label": "XY samp rate", "tmpl": "qubits.{name}.xy.opx_output.sampling_rate", "unit": "Hz"},
+    {"section": "XY Port", "key": "xy_band", "label": "XY band", "tmpl": "qubits.{name}.xy.opx_output.band", "unit": ""},
+    {"section": "Z Port", "key": "z_delay", "label": "Z delay", "tmpl": "qubits.{name}.z.opx_output.delay", "unit": "ns"},
+    {"section": "Z Port", "key": "z_offset", "label": "Z offset", "tmpl": "qubits.{name}.z.opx_output.offset", "unit": "V"},
+    {"section": "Z Port", "key": "z_output_mode", "label": "Z output mode", "tmpl": "qubits.{name}.z.opx_output.output_mode", "unit": ""},
+    {"section": "Z Port", "key": "z_samp", "label": "Z samp rate", "tmpl": "qubits.{name}.z.opx_output.sampling_rate", "unit": "Hz"},
+    {"section": "Z Port", "key": "z_upsamp", "label": "Z upsamp mode", "tmpl": "qubits.{name}.z.opx_output.upsampling_mode", "unit": ""},
+    {"section": "RO Out Port", "key": "ro_out_delay", "label": "RO-out delay", "tmpl": "qubits.{name}.resonator.opx_output.delay", "unit": "ns"},
+    {"section": "RO Out Port", "key": "ro_out_power", "label": "RO-out power", "tmpl": "qubits.{name}.resonator.opx_output.full_scale_power_dbm", "unit": "dBm"},
+    {"section": "RO Out Port", "key": "ro_out_upconv", "label": "RO-out LO (upconv)", "tmpl": "qubits.{name}.resonator.opx_output.upconverter_frequency", "unit": "Hz"},
+    {"section": "RO Out Port", "key": "ro_out_band", "label": "RO-out band", "tmpl": "qubits.{name}.resonator.opx_output.band", "unit": ""},
+    {"section": "RO In Port", "key": "ro_in_downconv", "label": "RO-in LO (downconv)", "tmpl": "qubits.{name}.resonator.opx_input.downconverter_frequency", "unit": "Hz"},
+    {"section": "RO In Port", "key": "ro_in_samp", "label": "RO-in samp rate", "tmpl": "qubits.{name}.resonator.opx_input.sampling_rate", "unit": "Hz"},
+    {"section": "RO In Port", "key": "ro_in_band", "label": "RO-in band", "tmpl": "qubits.{name}.resonator.opx_input.band", "unit": ""},
+    {"section": "RO In Port", "key": "ro_in_gain", "label": "RO-in gain", "tmpl": "qubits.{name}.resonator.opx_input.gain_db", "unit": "dB"},
 ]
 
 # f_01 ↔ RF_frequency twin-path suffix rules (see the module docstring NOTE:

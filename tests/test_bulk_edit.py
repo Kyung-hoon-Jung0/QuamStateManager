@@ -83,11 +83,18 @@ class TestBulkRender:
         # every column shows its stored unit in the header (mandatory)
         assert "(Hz)" in body and "(ns)" in body and "(dBm)" in body
 
-    def test_port_columns_default_hidden(self, client):
+    def test_port_columns_visible_by_default(self, client):
+        """r17: port columns ship VISIBLE. They used to be opt-in, which meant
+        the grid hid T1 and the port block while showing ~200 derived leaves."""
         body = client.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
-        # a port column header carries the hidden class until opted-in via the menu
         m = re.search(r'<th[^>]*data-col-key="xy_delay"[^>]*>', body)
-        assert m and "bulk-col-hidden" in m.group(0)
+        assert m and "bulk-col-hidden" not in m.group(0)
+
+    def test_nothing_ships_hidden(self, client):
+        """The whole point, as one assertion: a fresh render hides NO column.
+        Hiding is the user's choice (persisted client-side), never the default."""
+        body = client.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert "bulk-col-hidden" not in body
 
     def test_has_apply_controls(self, client):
         body = client.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
@@ -136,9 +143,10 @@ class TestBulkRender:
         assert freq and "bulk-group-head" in freq.group(0)
         # a visible section spans its columns and isn't collapsed
         assert "colspan=" in freq.group(0) and "bulk-col-hidden" not in freq.group(0)
-        # an all-default-off port section's group head is collapsed until opted in
+        # r17: the port sections are no longer collapsed — they open with the rest
         port = re.search(r'<th[^>]*data-group="XY Port"[^>]*>', body)
-        assert port and "bulk-col-hidden" in port.group(0)
+        assert port and "bulk-col-hidden" not in port.group(0)
+        assert "colspan=" in port.group(0)
         # the group boundary separator class is carried into the cells
         assert "bulk-col-group-start" in body
 
@@ -197,13 +205,16 @@ class TestBulkCompletenessPhase0:
             row = re.search(rf'data-qubit="{qid}"(.*?)</tr>', body, re.S).group(1)
             assert f"qubits.{qid}.resonator.time_of_flight" in row
 
-    def test_new_optin_scalar_columns_render_but_hidden(self, client):
+    def test_formerly_optin_scalar_columns_render_visible(self, client):
+        """These eleven were the customer complaint: T1/T2/χ/f₁₂ and friends
+        rendered into the DOM but arrived hidden, so the grid could not show —
+        and the search could not find — the numbers people actually retune."""
         body = client.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
         for key in ("f_12", "chi", "depletion_time", "z_settle_time", "z_flux_point",
                     "T1", "T2ramsey", "T2echo", "gate_fidelity_avg", "phi0_voltage", "grid_location"):
             th = re.search(rf'<th[^>]*data-col-key="{key}"[^>]*>', body)
             assert th, f"{key} column must render"
-            assert "bulk-col-hidden" in th.group(0), f"{key} must be opt-in (default hidden)"
+            assert "bulk-col-hidden" not in th.group(0), f"{key} must ship visible"
 
     def test_time_of_flight_round_trips_through_edit_batch(self, client):
         jb = client.post("/field/edit-batch", json={"updates": [
