@@ -282,6 +282,14 @@ class Family:
     # echo's `T2_echo` (n=143) are already in seconds and are NOT scaled.
     fit_scale: dict[str, float] = field(default_factory=dict)
     updates: list[UpdateSpec] = field(default_factory=list)
+    # Paths the node ALSO writes that the forward path deliberately does not
+    # compute, each with why (measured against the archive, 2026-08-08). The
+    # forward path only runs when the node wrote nothing, and writing half of
+    # what the node writes is the "quiet partial" r12 forbids — so the gap is
+    # DECLARED and ledgered, never silently skipped. Reverse-engineering the
+    # node's formula to close it is what D-14 forbids; the honest move is to
+    # say the write is incomplete.
+    forward_gaps: dict[str, str] = field(default_factory=dict)
     # failure_mode → rule | [rung, …] — a bare callable is the v1 single
     # params rule (re-applied every retry); a list is a LADDER walked one
     # rung per use of that failure mode (rung index clamps at the end)
@@ -779,11 +787,19 @@ _register(Family(
     plausibility=[Plausibility("resonator_frequency", lo=2e9, hi=15e9,
                                max_abs_jump=50e6,
                                state_path="qubits.{q}.resonator.f_01")],
+    # The readout amplitude + shared FSP + feedline siblings are carried by
+    # `power_rows.coupled_power_rows` (this IS the coupled family), so the only
+    # write the forward path was missing is the bare-resonator frequency —
+    # `bare_resonator_frequency` matched what the node wrote in 21 of 21
+    # archived writes (2026-08-08), i.e. it is the node's own number.
     updates=[UpdateSpec("resonator_frequency", "qubits.{q}.resonator.f_01",
                         label="Resonator frequency"),
              UpdateSpec("resonator_frequency",
                         "qubits.{q}.resonator.RF_frequency",
-                        label="Resonator RF frequency")],
+                        label="Resonator RF frequency"),
+             UpdateSpec("bare_resonator_frequency",
+                        "qubits.{q}.resonator.frequency_bare",
+                        label="Bare resonator frequency")],
     consistency_checks=[
         lambda e: ("the node produced no power split (target full-scale / "
                    "amplitude absent) — its own analysis declined this fit"
@@ -820,9 +836,28 @@ _register(Family(
     # WIDER of the two measurements rather than the accident of a small sample.
     plausibility=[Plausibility("frequency", lo=1e9, hi=12e9, max_abs_jump=200e6,
                                state_path="qubits.{q}.f_01")],
+    # Measured against every archived write this node made (2026-08-08): the
+    # node writes SIX fields per target, and the forward path used to compute
+    # two. `anharmonicity_fitted` matched the written `anharmonicity` in 36 of
+    # 36 cases, so that one is the node's own number and is safe to carry; the
+    # rest are NOT in the fit entry and are declared as gaps below rather than
+    # guessed (D-14: run-derived or skipped, never reverse-engineered).
     updates=[UpdateSpec("frequency", "qubits.{q}.f_01", label="Qubit f_01"),
              UpdateSpec("frequency", "qubits.{q}.xy.RF_frequency",
-                        label="XY RF frequency")],
+                        label="XY RF frequency"),
+             UpdateSpec("anharmonicity_fitted", "qubits.{q}.anharmonicity",
+                        label="Anharmonicity")],
+    forward_gaps={
+        "qubits.{q}.xy.operations.saturation.amplitude":
+            "the node re-derives the saturation drive; `optimal_amplitude` "
+            "matched what it wrote in only 10 of 38 archived writes, so the "
+            "rest comes from a formula we do not have",
+        "qubits.{q}.xy.operations.x180_DragCosine.amplitude":
+            "no fit key reports it (0 of 23) — the node rescales the pi "
+            "amplitude alongside the saturation drive",
+        "qubits.{q}.xy.operations.x90_DragCosine.amplitude":
+            "no fit key reports it (0 of 23) — rescaled with x180",
+    },
     adaptations={
         "noisy": _more_shots,
         # case A's full ladder incl. the cross-node rung: #578's feature came

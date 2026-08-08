@@ -1035,6 +1035,31 @@ class PlanEngine:
         except Exception:  # noqa: BLE001
             logger.exception("resolve_updates failed")
             return []
+        # Declared gaps: fields this node writes that we cannot compute from
+        # its own fit output (measured, docs/78 §23). The forward path only
+        # runs when the node wrote nothing, so writing our subset leaves the
+        # rest stale — a quiet partial, which r12 forbids. It is written (the
+        # calibrated frequency is still worth having) but never silently: the
+        # ledger and the review queue both name what was left behind.
+        gaps = getattr(fam, "forward_gaps", None) or {}
+        if rows and gaps:
+            listed = {p.replace("{q}", target).replace("{pair}", target): why
+                      for p, why in gaps.items()}
+            self._ledger("forward_partial", target=target, family=fam.key,
+                         wrote=[r["path"] for r in rows],
+                         not_written=sorted(listed))
+            with self._lock:
+                self.state["review_queue"].append({
+                    "step_id": None, "target": target,
+                    "reason": (f"{fam.label}: wrote {len(rows)} field(s); "
+                               f"{len(listed)} field(s) this node also writes "
+                               f"were left unchanged — " +
+                               "; ".join(f"{p} ({why})"
+                                         for p, why in sorted(listed.items()))),
+                    "failure_mode": None, "reverted": False,
+                    "verdict": {"forward_gaps": sorted(listed)},
+                })
+            self._persist()
         # The rvp node's update is ATOMIC across frequency + readout amplitude
         # + the SHARED port FSP + every sibling amp on that feedline. Writing
         # only the frequency half silently de-couples the readout power

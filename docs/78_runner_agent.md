@@ -2462,3 +2462,74 @@ The scale is scoped by measurement, not by family shape: ramsey's `decay`
 scaled — scaling them would have created the same defect in the other
 direction. A test pins that too, and pins that no other family acquires a scale
 by accident.
+
+---
+
+## 23. Does the fit automation actually work? Replayed on the two vs_power families (2026-08-08)
+
+No device was available, so the check was run against the archive — which is
+better than a smoke test, because each archived run carries the answer key:
+`patches[].old` is the state before and `patches[].value` is what the
+instrument's own node decided. `current_value_of` returns the PRE-update state
+(patch `old` first), since a run's `quam_state` snapshot is POST-update whenever
+patches exist and reading it would hand the automation the answer.
+
+The engine has **two** write paths and they had to be checked separately: when
+the node produced its own patches the engine KEEPS them and only the gate
+verdict decides the chip's fate; when the node wrote nothing, the engine
+computes the write itself from the family's `UpdateSpec`s.
+
+### 23.1 The gates, over 252 real targets
+
+| family | node accepted | ours pass / suspect / fail | node rejected | ours fail |
+|---|---:|---|---:|---:|
+| qubit spectroscopy vs power | 87 | **87 / 0 / 0** | 3 | **3** |
+| resonator spectroscopy vs power | 136 | 79 / 57 / 0 | 26 | **26** |
+
+**Zero false rejects and zero false accepts.** Every one of the 29 targets the
+node itself rejected is caught; nothing the node accepted is thrown away.
+
+The 57 suspects are not rejections — they route to the judge — and they have one
+cause: the family's own consistency check firing on runs where *"the node
+produced no power split (target full-scale / amplitude absent) — its own
+analysis declined this fit"*. That is a real signal, but 42% of accepted targets
+escalating is a cost worth naming, and it is the first candidate for the
+population split §22.4 already calls for.
+
+### 23.2 The forward write, and a coverage gap the replay found
+
+Parity on the paths the forward path computes: **189 match, 2 mismatch.** Both
+mismatches are the same target in one run, where the node emitted a *no-op*
+patch (old == value) while our fit-derived value moved 3.2 MHz — and our gates
+had already marked that target `suspect`, so the loop would never have written
+it. The system disagreeing with a node that declined its own fit is the system
+working.
+
+The real finding is coverage. Node 08b writes **six** fields per target and the
+forward path computed **two**; node 05 writes three (plus the coupled power
+rows) and it computed two. Measured against every archived write:
+
+| path | in the fit? | action |
+|---|---|---|
+| `qubits.{q}.anharmonicity` | `anharmonicity_fitted`, **36/36** | **added** |
+| `qubits.{q}.resonator.frequency_bare` | `bare_resonator_frequency`, **21/21** | **added** |
+| `qubits.{q}.resonator.operations.readout.amplitude` | — | already built by `power_rows` |
+| `qubits.{q}.xy.operations.saturation.amplitude` | `optimal_amplitude`, only **10/38** | declared gap |
+| `…x180_DragCosine.amplitude` | nothing matches, **0/23** | declared gap |
+| `…x90_DragCosine.amplitude` | nothing matches, **0/23** | declared gap |
+
+The two additions are the node's own numbers, verified on every archived write.
+The three that are left are **not** closed by inference: no fit key reports
+them, so writing them would mean reverse-engineering the node's formula, and
+D-14 says run-derived or skipped, never guessed.
+
+But skipping them silently is the other failure. The forward path only runs when
+the node wrote nothing, so writing our subset leaves the rest stale — the "quiet
+partial" r12 forbids, and the same hazard `power_rows` already guards for the
+resonator family. So `Family.forward_gaps` declares each missing path **with the
+measurement that made it a gap**, and the engine ledgers `forward_partial` and
+files a review-queue entry naming the fields it left alone, resolved for that
+target. The calibrated frequency is still written — it is worth having — but no
+report can now imply the write was complete.
+
+Parity after the additions: **189 / 2**, up from 132 / 2.
