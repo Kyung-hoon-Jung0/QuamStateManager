@@ -8173,8 +8173,16 @@ button.diag-badge { cursor: pointer; }
 
 /* Conflict tray: the destructive 'Overwrite live (force)' must LOOK dangerous
    (coloured text + border per the theme rule), not like a neutral outline button. */
-.tray-force-btn { color: var(--color-error-text); border-color: var(--color-error-text); }
-.tray-force-btn:hover { background: var(--color-error-text); color: var(--pico-card-background-color); border-color: var(--color-error-text); }
+/* One visual language for "this writes over the live chip" (docs/86): the
+   conflict tray's force button and the drift banner / review modal's
+   "Keep mine — overwrite live" are the same act, so they must not look like
+   two different weights of decision. */
+.tray-force-btn,
+.state-review-overwrite-btn,
+.live-diverged-overwrite { color: var(--color-error-text); border-color: var(--color-error-text); }
+.tray-force-btn:hover,
+.state-review-overwrite-btn:hover,
+.live-diverged-overwrite:hover { background: var(--color-error-text); color: var(--pico-card-background-color); border-color: var(--color-error-text); }
 /* visibility layers (checkbox manager + search) */
 .bulk-col-hidden, .bulk-search-hidden, .bulk-row-hidden { display: none !important; }
 /* ⚏ Qubits row selection — its own layer, composing with the search layer the

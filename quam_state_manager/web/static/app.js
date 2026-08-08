@@ -2389,6 +2389,75 @@ window.doStateSync = function(mode, forced) {
         .finally(function() { window._applyInFlight = false; });
 };
 
+/* The THIRD choice when the live chip drifted (docs/86): keep the working state
+ * and overwrite the live chip with it.
+ *
+ * Until now the drift banner and the review modal offered only pull-or-close,
+ * which is one direction, not a choice — and the case that needs the other
+ * direction is common: a test run wrote parameters by mistake and the state SM
+ * is holding is the good one. The capability already existed (State History →
+ * restore-live; the conflict tray's force-overwrite); what was missing was
+ * reaching it at the moment the user learns about the drift.
+ *
+ * Pull and push are NOT symmetric, so this is never the primary action and
+ * never silent: the preflight names how many live values disappear, whether a
+ * run is writing this chip right now, and that the push snapshots the live
+ * state first so the tray's "Revert last apply" undoes it. ONE confirm — the
+ * push is forced, because the user has just been told exactly what it forces
+ * past (an unforced push would land on the staleness conflict screen and ask a
+ * second time). */
+window.overwriteLiveWithWorking = function () {
+    if (window._applyInFlight) return;   // shared guard with doStateSync
+    fetch("/state/overwrite-live/preflight", { headers: { "HX-Request": "true" } })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (!d || !d.ok) {
+                window.showToast((d && d.message) || "Cannot overwrite the live chip.", "error");
+                return;
+            }
+            var n = d.live_changes;
+            var lines = ["Overwrite the live chip with the working state?", ""];
+            if (n === null || n === undefined) {
+                lines.push("The live files could not be read, so what they hold right now is unknown.");
+            } else if (n === 0) {
+                lines.push("The live chip already matches the working state — nothing would change.");
+            } else {
+                lines.push(n + " value" + (n === 1 ? "" : "s") + " that differ on the live chip "
+                    + "will be REPLACED by the working state's. Whatever wrote them "
+                    + "(an experiment program, another window) loses those changes.");
+            }
+            if (d.unsaved) {
+                lines.push("Your " + d.unsaved + " unsaved edit" + (d.unsaved === 1 ? "" : "s")
+                    + " are saved and pushed along with it.");
+            }
+            if (d.run_active) {
+                lines.push("", "⚠ A run is in progress"
+                    + (d.run_label ? " (" + d.run_label + ")" : "")
+                    + " — it may write these values again when its next node finishes.");
+            }
+            if (d.reversible) {
+                lines.push("", "The current live state is snapshotted first, so the tray's "
+                    + "“Revert last apply” undoes this.");
+            }
+            if (!window.confirm(lines.join("\n"))) {
+                if (window.showToast) window.showToast("Cancelled — nothing was changed.", "info");
+                return;
+            }
+            window.closeReview();
+            if (!window.htmx) {
+                window.showToast("Open the top-bar tray and use “Apply to live chip”.", "info");
+                return;
+            }
+            window._applyInFlight = true;
+            htmx.ajax("POST", "/state/apply-to-live?force=1",
+                      { target: "#pending-tray", swap: "outerHTML" })
+                .finally(function () { window._applyInFlight = false; });
+        })
+        .catch(function () {
+            window.showToast("Could not check the live chip (network error).", "error");
+        });
+};
+
 /* The grid ⚡ "Apply to live now" buttons push the user's edits all the way to the
  * live chip in ONE click (the grids call this after applyAll commits the edits).
  * Routing is working-copy-state aware so it can never silently drop a saved edit AND
