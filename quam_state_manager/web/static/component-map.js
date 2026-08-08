@@ -131,6 +131,10 @@ window.ComponentMap = (function () {
             nodes: topo.nodes,
             edges: topo.edges || [],
             highlight: root.getAttribute("data-highlight") || "",
+            // docs/93 F2: users asked for ~1.9x — the mount declares the cell
+            // so the drawing AND its text scale together (renderLayout derives
+            // the id font from the cell).
+            cell: parseInt(root.getAttribute("data-cell"), 10) || undefined,
           });
           _bindMapEvents(body);
         })

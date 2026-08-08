@@ -103,6 +103,20 @@ function checkRenderLayout() {
   ok(strip(m.innerHTML) === strip(m2.innerHTML),
      'highlight changes EMPHASIS only — drawings byte-identical up to the mode class');
 
+  // F2 (docs/93): text scales with the cell — default cell keeps the exact
+  // legacy 10.5px; a 120px cell scales geometry AND font together.
+  const idEl = m.querySelector('.cm-id');
+  ok(idEl.getAttribute('font-size') === '10.5', 'default cell renders the legacy 10.5px id font');
+  const mBig = win.document.createElement('div');
+  win.document.body.appendChild(mBig);
+  win.TopoGraph.renderLayout(mBig, { nodes: TOPO.nodes, edges: TOPO.edges, highlight: 'pairs', cell: 120 });
+  const bigSvg = mBig.querySelector('svg');
+  ok(parseInt(bigSvg.getAttribute('width'), 10) === 240,
+     'cell:120 doubles the drawing width (2 cols -> 240, got ' + bigSvg.getAttribute('width') + ')');
+  ok(mBig.querySelector('.cm-stone').getAttribute('r') === '36', 'cell:120 -> 36px stones (0.30 ratio kept)');
+  ok(mBig.querySelector('.cm-id').getAttribute('font-size') === '19.7',
+     'cell:120 -> 19.7px id font (anchored to 10.5@64)');
+
   // entity hover hook
   api.highlightEntity('pair', 'qA2-qA1', true);
   const hotEdge = m.querySelector('[data-cm="p:qA2-qA1"]');
@@ -195,6 +209,14 @@ async function checkComponentMap() {
   await tick(); await tick();
   ok(fetches === 1, 'opening it loads exactly once');
   ok(win2.localStorage.getItem('quam_component_map_open') === '1', 'the choice persists');
+
+  // F2: the mount's data-cell reaches renderLayout through ComponentMap
+  const win3 = makeWorld(PANE_HTML.replace('data-highlight="pairs"', 'data-highlight="pairs" data-cell="120"'));
+  win3.ComponentMap.mount(win3.document.getElementById('component-map'));
+  await tick(); await tick();
+  const bigStone = win3.document.querySelector('.cmap-body .cm-stone');
+  ok(bigStone && bigStone.getAttribute('r') === '36',
+     'data-cell="120" flows through ComponentMap.mount (36px stones)');
 }
 
 (async function main() {

@@ -520,6 +520,10 @@ window.TopoGraph = (function () {
     }
 
     // qubit stones + per-qubit component marks (resonator NE, flux stub S)
+    // id text scales WITH the cell (docs/93 F2) — a CSS-fixed size left tiny
+    // labels inside 1.9x stones. Anchored to the original 10.5px at the
+    // original 64px cell, so a default-cell render keeps its exact font.
+    var idFont = Math.round((CELL * 10.5 / 64) * 10) / 10;
     for (var ni = 0; ni < nodes.length; ni++) {
       var n = nodes[ni];
       var pt = px(n.id);
@@ -528,7 +532,7 @@ window.TopoGraph = (function () {
       svg += '<g class="cm-node" data-cm="q:' + esc(n.id) + '">' +
              '<circle class="cm-stone" cx="' + pt.x + '" cy="' + pt.y + '" r="' + R + '"' +
              (pt.shared ? ' stroke-dasharray="3 2"' : "") + "/>" +
-             '<text class="cm-id" x="' + pt.x + '" y="' + pt.y +
+             '<text class="cm-id" font-size="' + idFont + '" x="' + pt.x + '" y="' + pt.y +
              '" text-anchor="middle" dominant-baseline="central">' + esc(n.id) + "</text>";
       if (n.rr_port) {
         svg += '<circle class="cm-res" cx="' + ra.x + '" cy="' + ra.y + '" r="' + (R * 0.42) + '">' +

@@ -3392,7 +3392,10 @@ td.col-delta .val-delta { margin-left: 0; }
 
 /* base symbols — calm, muted; the highlight layer provides the emphasis */
 .cm-stone { fill: var(--pico-card-background-color, #f7f7f7); stroke: var(--pico-muted-border-color, rgba(128,128,128,.55)); stroke-width: 1.4; }
-.cm-id { font-size: 10.5px; font-weight: 600; fill: var(--pico-color); pointer-events: none; }
+/* font-size deliberately NOT set here: a CSS rule would override the SVG
+   font-size ATTRIBUTE renderLayout writes (attrs lose to any stylesheet rule),
+   and the attr is what scales the id with the cell (docs/93 F2). */
+.cm-id { font-weight: 600; fill: var(--pico-color); pointer-events: none; }
 .cm-edge-line { stroke: var(--pico-muted-border-color, rgba(128,128,128,.55)); stroke-width: 2; stroke-linecap: round; }
 .cm-arrow { fill: var(--pico-muted-border-color, rgba(128,128,128,.65)); }
 .cm-coupler { fill: var(--pico-card-background-color, #f7f7f7); stroke: var(--pico-muted-border-color, rgba(128,128,128,.65)); stroke-width: 1.4; }
