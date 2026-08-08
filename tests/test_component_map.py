@@ -26,7 +26,8 @@ def _state():
     return {
         "qubits": {
             "qA1": {"id": "qA1", "grid_location": "0,0", "T1": 2.4e-5,
-                    "resonator": {"operations": {"readout": {"amplitude": 0.04}}}},
+                    "resonator": {"operations": {"readout": {"amplitude": 0.04}}},
+                    "z": {"flux_point": "independent"}},
             "qA2": {"id": "qA2", "grid_location": "1,0", "T1": 1.8e-5},
         },
         "qubit_pairs": {
@@ -67,10 +68,14 @@ def test_topology_edges_carry_has_coupler():
 
 
 # Every component page mounts the map ABOVE its table with its own highlight,
-# and the table keeps its binding hooks (rows untouched). P2 ships Pairs;
-# P3 adds the remaining four (docs/91 §4).
+# and the table keeps its binding hooks (rows untouched). P2 shipped Pairs;
+# P3 added the remaining four (docs/91 §4).
 _PAGES = [
+    ("/qubits", "qubits", 'data-qubit-id="qA1"'),
     ("/pairs", "pairs", 'data-pair-id="qA2-qA1"'),
+    ("/resonators", "resonators", 'data-qubit-id="qA1"'),
+    ("/flux", "flux", 'data-qubit-id="qA1"'),
+    ("/couplers", "couplers", 'data-pair-id="qA2-qA1"'),
 ]
 
 
