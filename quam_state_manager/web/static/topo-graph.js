@@ -388,6 +388,180 @@ window.TopoGraph = (function () {
     };
   }
 
+  // Coincident positions (real chips DECLARE them — a 10Q chip carries two
+  // qubits at "4,0") -> fan the members of each shared cell around its centre
+  // so every stone stays visible: a visual de-overlap at the same cell, never
+  // a fabricated new cell. Returns {id: {dx, dy, shared:true}} in CELL units
+  // (multiply by the renderer's cell px); ids not in a shared cell are absent.
+  function spreadCoincident(positions, spread) {
+    var byCell = {}, out = {};
+    for (var id in positions) {
+      if (!Object.prototype.hasOwnProperty.call(positions, id)) continue;
+      var p = positions[id];
+      var k = p.col + "|" + p.row;
+      (byCell[k] = byCell[k] || []).push(id);
+    }
+    for (var k2 in byCell) {
+      if (!Object.prototype.hasOwnProperty.call(byCell, k2)) continue;
+      var ids = byCell[k2];
+      if (ids.length < 2) continue;
+      for (var i = 0; i < ids.length; i++) {
+        var a = (2 * Math.PI * i) / ids.length;
+        out[ids[i]] = { dx: Math.cos(a) * spread, dy: Math.sin(a) * spread, shared: true };
+      }
+    }
+    return out;
+  }
+
+  // --- shared component-page layout renderer (docs/92 P2) --------------------
+  // ONE no-numbers drawing of every component type — qubit stones, pair edges
+  // (direction arrows, coupler dots), resonator marks, flux stubs, feedline
+  // buses (nodes sharing one rr_port) — reused by every component page; the
+  // page only chooses WHAT LIGHTS UP (opts.highlight; emphasis, never
+  // content). Geometry + honesty mode come from layoutFor (§2.1): a logical
+  // layout wears LOGICAL_LAYOUT_NOTE ON the map, a no-layout chip gets one
+  // honest line. Numbers are deliberately absent (§2.4 — the table beside it
+  // has every number).
+  //   opts: { nodes, edges, highlight, cell, noneMessage }
+  //     nodes: get_topology nodes ({id, grid_location, rr_port, z_port, ...})
+  //     edges: get_topology edges ({pair_id, source, target, directed,
+  //            has_coupler, active, ...})
+  //     highlight: 'qubits'|'pairs'|'resonators'|'flux'|'couplers'|'' — the
+  //            svg root gets class cm-hl-<highlight>; CSS owns the dimming.
+  // Returns {mode, highlightEntity(kind, id, on)} — the map↔table hover hook
+  // ('qubit'|'pair' + entity id -> .cm-hot on the matching [data-cm] group).
+  function renderLayout(mount, opts) {
+    var noop = { mode: "none", highlightEntity: function () {} };
+    if (!mount) return noop;
+    opts = opts || {};
+    var nodes = opts.nodes || [], edges = opts.edges || [];
+    var lay = layoutFor(nodes, edges);
+    if (lay.mode === "none") {
+      mount.innerHTML = '<p class="muted cm-none" style="margin:0">' +
+        esc(opts.noneMessage || "No chip layout — this chip declares no positions and no pairs.") +
+        "</p>";
+      return noop;
+    }
+
+    var CELL = opts.cell || 64;
+    var R = Math.round(CELL * 0.30);
+    var W = Math.max(CELL, Math.round(lay.cols * CELL));
+    var H = Math.max(CELL, Math.round(lay.rows * CELL));
+    var offC = spreadCoincident(lay.positions, 0.22);
+    function px(id) {
+      var p = lay.positions[id], o = offC[id];
+      if (!p) return null;
+      return { x: (p.col + 0.5) * CELL + (o ? o.dx * CELL : 0),
+               y: (p.row + 0.5) * CELL + (o ? o.dy * CELL : 0),
+               shared: !!(o && o.shared) };
+    }
+    function resAnchor(pt) { return { x: pt.x + R * 0.95, y: pt.y - R * 0.95 }; }
+
+    var svg = "";
+
+    // feedline buses (bottom layer): nodes sharing one rr_port label share the
+    // physical readout line — a thin bus through their resonator marks.
+    var feeds = {}, feedOrder = [];
+    for (var fi = 0; fi < nodes.length; fi++) {
+      var fp = nodes[fi].rr_port;
+      if (!fp || !lay.positions[nodes[fi].id]) continue;
+      if (!Object.prototype.hasOwnProperty.call(feeds, fp)) { feeds[fp] = []; feedOrder.push(fp); }
+      feeds[fp].push(nodes[fi].id);
+    }
+    for (var fo = 0; fo < feedOrder.length; fo++) {
+      var members = feeds[feedOrder[fo]];
+      if (members.length < 2) continue;
+      var pts = [];
+      for (var mi = 0; mi < members.length; mi++) {
+        var mp = px(members[mi]);
+        if (mp) pts.push(resAnchor(mp));
+      }
+      if (pts.length < 2) continue;
+      // order along the dominant axis so the bus reads as one line
+      pts.sort(W >= H ? function (a, b) { return a.x - b.x || a.y - b.y; }
+                      : function (a, b) { return a.y - b.y || a.x - b.x; });
+      var ptStr = "";
+      for (var pi = 0; pi < pts.length; pi++) ptStr += (pi ? " " : "") + pts[pi].x + "," + pts[pi].y;
+      svg += '<polyline class="cm-feed" data-cm-feed="' + esc(feedOrder[fo]) + '" points="' + ptStr + '">' +
+             "<title>readout feedline " + esc(feedOrder[fo]) + " — " + members.length + " resonators</title></polyline>";
+    }
+
+    // pair edges (+ CR direction arrows, coupler dots)
+    for (var ei = 0; ei < edges.length; ei++) {
+      var e = edges[ei];
+      var a = px(e.source), b = px(e.target);
+      if (!a || !b) continue;
+      var x1 = a.x, y1 = a.y, x2 = b.x, y2 = b.y;
+      if (e.directed) {
+        var ddx = x2 - x1, ddy = y2 - y1, dl = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
+        var doff = CELL * 0.06;
+        x1 += -ddy / dl * doff; y1 += ddx / dl * doff;
+        x2 += -ddy / dl * doff; y2 += ddx / dl * doff;
+      }
+      var cls = "cm-edge" + (e.has_coupler ? " cm-edge-hascoupler" : "") +
+                (e.active === false ? " cm-off" : "");
+      svg += '<g class="' + cls + '" data-cm="p:' + esc(e.pair_id) + '">' +
+             '<line class="cm-edge-line" x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"/>';
+      if (e.directed) {
+        var ux = (x2 - x1), uy = (y2 - y1), ul = Math.sqrt(ux * ux + uy * uy) || 1;
+        ux /= ul; uy /= ul;
+        var tx = x2 - ux * R * 1.15, ty = y2 - uy * R * 1.15;
+        var ah = R * 0.5, aw = R * 0.24, sx = tx - ux * ah, sy = ty - uy * ah;
+        svg += '<polygon class="cm-arrow" points="' +
+               (sx + -uy * aw) + "," + (sy + ux * aw) + " " +
+               (sx - -uy * aw) + "," + (sy - ux * aw) + " " + tx + "," + ty + '"/>';
+      }
+      if (e.has_coupler) {
+        svg += '<circle class="cm-coupler" cx="' + ((x1 + x2) / 2) + '" cy="' + ((y1 + y2) / 2) +
+               '" r="' + Math.round(R * 0.38) + '"/>';
+      }
+      svg += '<line class="cm-hit" x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"/>' +
+             "<title>" + esc(e.pair_id) + "</title></g>";
+    }
+
+    // qubit stones + per-qubit component marks (resonator NE, flux stub S)
+    for (var ni = 0; ni < nodes.length; ni++) {
+      var n = nodes[ni];
+      var pt = px(n.id);
+      if (!pt) continue;
+      var ra = resAnchor(pt);
+      svg += '<g class="cm-node" data-cm="q:' + esc(n.id) + '">' +
+             '<circle class="cm-stone" cx="' + pt.x + '" cy="' + pt.y + '" r="' + R + '"' +
+             (pt.shared ? ' stroke-dasharray="3 2"' : "") + "/>" +
+             '<text class="cm-id" x="' + pt.x + '" y="' + pt.y +
+             '" text-anchor="middle" dominant-baseline="central">' + esc(n.id) + "</text>";
+      if (n.rr_port) {
+        svg += '<circle class="cm-res" cx="' + ra.x + '" cy="' + ra.y + '" r="' + (R * 0.42) + '">' +
+               "<title>" + esc(n.id) + " readout — " + esc(n.rr_port) + "</title></circle>";
+      }
+      if (n.z_port) {
+        svg += '<line class="cm-flux" x1="' + pt.x + '" y1="' + (pt.y + R * 0.6) +
+               '" x2="' + pt.x + '" y2="' + (pt.y + R * 1.5) + '">' +
+               "<title>" + esc(n.id) + " flux — " + esc(n.z_port) + "</title></line>";
+      }
+      svg += "<title>" + esc(n.id) + "</title></g>";
+    }
+
+    var hl = opts.highlight ? " cm-hl-" + esc(String(opts.highlight)) : "";
+    mount.innerHTML =
+      (lay.mode === "logical" ? '<div class="cm-note">' + esc(LOGICAL_LAYOUT_NOTE) + "</div>" : "") +
+      '<div class="cm-scroll"><svg class="cm-svg' + hl + '" width="' + W + '" height="' + H +
+      '" viewBox="0 0 ' + W + " " + H + '">' + svg + "</svg></div>";
+
+    function cssEsc(s) {
+      return (typeof window !== "undefined" && window.CSS && window.CSS.escape)
+        ? window.CSS.escape(String(s)) : String(s);
+    }
+    return {
+      mode: lay.mode,
+      highlightEntity: function (kind, id, on) {
+        var sel = '[data-cm="' + (kind === "pair" ? "p" : "q") + ":" + cssEsc(id) + '"]';
+        var els = mount.querySelectorAll(sel);
+        for (var i = 0; i < els.length; i++) els[i].classList.toggle("cm-hot", !!on);
+      },
+    };
+  }
+
   // --- gate -> edge style + legend (the SHARED convention) -------------------
   // One source for how a chip type's 2-qubit gate is drawn, used by BOTH the
   // editable board (wiring-grid.js) and the read-only Populate view (renderStatic)
@@ -520,6 +694,8 @@ window.TopoGraph = (function () {
     pairGridPositions: pairGridPositions,
     layoutFor: layoutFor,
     LOGICAL_LAYOUT_NOTE: LOGICAL_LAYOUT_NOTE,
+    spreadCoincident: spreadCoincident,
+    renderLayout: renderLayout,
     edgeStyleForGate: edgeStyleForGate,
     legendForGate: legendForGate,
     renderStatic: renderStatic,
