@@ -30,6 +30,13 @@ a = Analysis(
         # The config generator runs under an external QM-capable interpreter,
         # so it must ship as a plain .py file, not be frozen into the exe.
         (os.path.join(_pkg, "generator"), os.path.join("quam_state_manager", "generator")),
+        # The vision judge's family knowledge is DATA, read off disk by
+        # judge_pack._PACK_ROOT (Path(__file__).parent) — freezing the module
+        # leaves that directory behind.  load_pack() answers {} for a missing
+        # pack rather than raising, so the omission does not crash: it silently
+        # strips every exemplar the judge reasons from.  Ship the packs.
+        (os.path.join(_pkg, "core", "autofit", "judge_packs"),
+         os.path.join("quam_state_manager", "core", "autofit", "judge_packs")),
     ],
     hiddenimports=[
         "quam_state_manager",

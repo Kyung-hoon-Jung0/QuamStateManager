@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 import uuid
@@ -37,6 +38,9 @@ from typing import Any, Callable, Protocol
 from quam_state_manager.core import safe_io
 from quam_state_manager.core.autofit import families as fam_mod
 from quam_state_manager.core.autofit import gates as gates_mod
+from quam_state_manager.core.autofit import (consistency, notify, power_rows,
+                                             stoploss, verification)
+from quam_state_manager.core.autofit import auditor as auditor_mod
 from quam_state_manager.core.autofit.auditor import Auditor, build_bundle
 from quam_state_manager.core.autofit.plan import Plan, Step
 from quam_state_manager.core.autofit.synth import patch_path_to_dotted
@@ -75,6 +79,10 @@ class Writer(Protocol):
     def apply_rows(self, rows: list[dict], *, label: str) -> dict: ...
     def revert_patches(self, patches: list[dict], *, label: str) -> dict: ...
     def restore_values(self, rows: list[dict], *, label: str) -> dict: ...
+    # optional: the MERGED state+wiring view. Power coupling resolves a
+    # feedline port through the wiring pointer chain, so `state` alone would
+    # make every port lookup (silently) refuse.
+    def merged_view(self) -> dict | None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -137,11 +145,20 @@ class PlanEngine:
                  backend: Backend, writer: Writer, auditor: Auditor, *,
                  autonomy: str | None = None,
                  snapshot_fn: Callable[[str], Any] | None = None,
-                 history_points_of: Callable[[str, str], list[float] | None]
+                 history_points_of: Callable[[dict[str, str]],
+                                             dict[str, list[float]]]
                  | None = None,
                  abstain_policy: str = "defer",
                  is_sim: bool = False,
+                 budget: "stoploss.Budget | None" = None,
                  resolve_node: Callable[[str], str | None] | None = None):
+        # Tier 1 (docs/78 D-8). An unset budget is UNLIMITED, not zero — but
+        # the plan cap and wall clock now EXIST, which §4.7 listed as absent
+        # from the day the plan was written.
+        self.budget = budget or stoploss.Budget(
+            max_steps=(int(plan.max_steps) if plan.max_steps else None),
+            wall_clock_s=(float(plan.wall_clock_min) * 60.0
+                          if plan.wall_clock_min else None))
         self.instance_path = str(instance_path)
         self.plan = plan
         self.targets = list(targets)
@@ -182,6 +199,20 @@ class PlanEngine:
         # scan seed: restored on terminal failure, consumed on success
         # (docs/56 v2 rail ③ — the node's own write supersedes a good seed)
         self._seeds: dict[tuple[str, str], list[dict]] = {}
+        # (family, target) -> the fit entry the plan finally accepted. The
+        # cross-experiment review (P6c) is the only thing that reads across
+        # runs, so this is the only place the whole night is in one dict.
+        self._fits: dict[tuple[str, str], dict] = {}
+        # the verification context each accepted fit was obtained under, so the
+        # review can refuse to compare two that were not (docs/78 §17 B3)
+        self._fit_contexts: dict[tuple[str, str], dict | None] = {}
+        # D-8 tier 2/3 inputs, per (step, target): the fit entry of every
+        # attempt (the metric trend), the vision comparisons where a comparator
+        # exists, and per-target upstream escalations (tier 3's "the problem is
+        # not where we think it is").
+        self._attempt_history: dict[tuple[str, str], list[dict]] = {}
+        self._comparisons: dict[tuple[str, str], list[str]] = {}
+        self._escalations: dict[str, int] = {}
         # (step_id, target) → {"patches": [...]}: a value DISCOVERED on a
         # retry after window-class failures, pending wide verification
         self._discoveries: dict[tuple[str, str], dict] = {}
@@ -258,6 +289,14 @@ class PlanEngine:
             cell.update(state=state, **extra)
         self._persist()
 
+    def _notify(self, event: str, **payload) -> None:
+        """Best-effort (docs/78 D-9) — a notifier must never fail a night."""
+        try:
+            notify.notify(self.instance_path, event,
+                          {"plan_run_id": self.plan_run_id, **payload})
+        except Exception:  # noqa: BLE001
+            logger.warning("autofit notify failed", exc_info=True)
+
     def _record_preplan(self, dotted: str, old_value) -> None:
         if dotted not in self._preplan_values:
             self._preplan_values[dotted] = old_value
@@ -279,7 +318,23 @@ class PlanEngine:
             while queue:
                 if self.abort_event.is_set():
                     break
+                # Tier 1 (docs/78 D-8). The queue is a work queue that runtime
+                # rungs push INTO, so "steps left" is not a bound — without a
+                # cap and a clock a plan that keeps finding new work has
+                # nothing to stop it. Checked before each step so the ledger
+                # records where the night ended.
+                spent = self.budget.plan_exhausted()
+                if spent:
+                    self._ledger("plan_stopped", tier=1, reason=spent,
+                                 steps_run=self.budget.steps_run,
+                                 elapsed_s=round(self.budget.elapsed_s(), 1))
+                    with self._lock:
+                        self.state["stopped_reason"] = spent
+                    self._notify("plan_stopped", tier=1, reason=spent,
+                                 plan=self.plan.name)
+                    break
                 step = queue.popleft()
+                self.budget.note_step()
                 alive = [t for t in self.targets
                          if t not in self.state["halted"]]
                 if not alive:
@@ -289,6 +344,22 @@ class PlanEngine:
                     if not alive:
                         continue        # its targets halted — skip, not end
                 self._run_step(step, alive, queue)
+            # P6c (docs/78 §1.1 #3): the review that only exists across runs.
+            # Every gate so far judged one run against itself; the pair that is
+            # each internally consistent and mutually impossible is invisible
+            # until the results are laid side by side.
+            try:
+                rep = consistency.reconcile(self._fits,
+                                            contexts=self._fit_contexts)
+                self._ledger("consistency_review", **rep.as_dict())
+                with self._lock:
+                    self.state["consistency"] = rep.as_dict()
+                if rep.findings:
+                    self._notify("needs_human", plan=self.plan.name,
+                                 question=consistency.summarize(rep),
+                                 contradictions=len(rep.findings))
+            except Exception:  # noqa: BLE001 — a review must not lose a night
+                logger.exception("consistency review failed")
             if self.autonomy == "review" and not self.abort_event.is_set():
                 self._end_restore()
             with self._lock:
@@ -298,6 +369,11 @@ class PlanEngine:
                 self.state["current"] = None
             self._ledger("plan_done", status=self.state["status"],
                          review_queue=len(self.state["review_queue"]))
+            self._notify("plan_done", status=self.state["status"],
+                         plan=self.plan.name,
+                         review_queue=len(self.state["review_queue"]),
+                         halted=len(self.state.get("halted") or {}),
+                         stopped_reason=self.state.get("stopped_reason"))
         except Exception as exc:  # noqa: BLE001 — the engine must never die silently
             logger.exception("autofit plan crashed")
             with self._lock:
@@ -393,6 +469,32 @@ class PlanEngine:
                 if decision in ("retry", "defer") and v.verdict == "fail":
                     any_reject = True
                 if decision == "retry":
+                    # D-8 tiers 2 and 3, which had no caller until now
+                    # (docs/78 §22.1). Checked HERE because this is the only
+                    # place a retry is granted: "not learning" and "doing
+                    # harm" have to be able to stop a chain that every
+                    # individual step justifies. On a stop this target is
+                    # deferred and the plan continues — never a half-adapted
+                    # chip, never a lost night.
+                    self._attempt_history.setdefault((step.id, t), []).append(
+                        (res.run.get("fit_results") or {}).get(t) or {})
+                    rungs = fam_mod.rungs_for(fam, v.failure_mode) if fam else []
+                    idx = mode_counts.get(v.failure_mode, 0)
+                    untried_escalate = any(getattr(r, "kind", "") == "escalate"
+                                           for r in rungs[idx:])
+                    stop = stoploss.should_stop(
+                        history=self._attempt_history[(step.id, t)],
+                        comparisons=self._comparisons.get((step.id, t)),
+                        budget=self.budget, target=t,
+                        allow_no_progress=not untried_escalate,
+                        upstream_escalations=self._escalations.get(t, 0))
+                    if stop:
+                        self._ledger("target_stopped", step=step.id, target=t,
+                                     **stop)
+                        self._defer(step, t,
+                                    f"stop-loss tier {stop['tier']}: "
+                                    f"{stop['reason']}", v)
+                        continue
                     retry_targets.append(t)
                     retry_mode = retry_mode or v.failure_mode
                     if v.failure_mode in _WINDOW_MODES:
@@ -459,9 +561,18 @@ class PlanEngine:
         vw = getattr(fam, "verify_wide", None) if fam is not None else None
         if not vw:
             return
-        span_param = vw.get("span_param", "frequency_span_in_mhz")
-        span = float(params.get(span_param, vw.get("span_default", 60.0)))
-        vparams = {**params, span_param: span * float(vw.get("factor", 4.0))}
+        survey = vw.get("survey_params")
+        if survey:
+            # An ABSOLUTE mode switch, not a relative widening. power_rabi is
+            # the family that needed this (docs/78 §17.6): its wide check is
+            # "go back to the single-pulse survey", and scaling its window
+            # instead would alias rather than survey. Everything the family
+            # does not pin is carried through untouched.
+            vparams = {**params, **survey}
+        else:
+            span_param = vw.get("span_param", "frequency_span_in_mhz")
+            span = float(params.get(span_param, vw.get("span_default", 60.0)))
+            vparams = {**params, span_param: span * float(vw.get("factor", 4.0))}
         vstep = Step(id=f"{step.id}__verify_wide", node=step.node,
                      family=step.family,
                      label=f"wide verification of {step.id}",
@@ -543,6 +654,10 @@ class PlanEngine:
                         carry_window_failure=tuple(pending))
             queue.appendleft(cont)
             queue.appendleft(recal)
+            # tier 3 input: escalating the SAME target twice means the problem
+            # is not where we think it is, and a human should look
+            for _t in pending:
+                self._escalations[_t] = self._escalations.get(_t, 0) + 1
             self._ledger("escalation_inserted", step=step.id,
                          recal_family=rung.escalate_family,
                          targets=list(pending), note=rung.note)
@@ -606,13 +721,32 @@ class PlanEngine:
 
     # ---- evaluation ------------------------------------------------------
 
+    def _stamp(self, verdicts: dict, run: dict | None,
+               figure_source: str | None) -> dict:
+        """Attach the verification triple to every verdict (docs/78 §17 B3).
+
+        Stamped on the way OUT rather than at construction, so no return path
+        can forget it — including the two that never reach the gate pipeline.
+        A verdict whose context is unrecorded is one nothing downstream may
+        compare, and the ledger has to be able to say that.
+        """
+        ctx = verification.for_sm_gates(
+            (run or {}).get("folder_path"),
+            figure_source=figure_source).as_dict()
+        for v in verdicts.values():
+            if v.context is None:
+                v.context = ctx
+        return verdicts
+
     def _evaluate(self, step: Step, res: StepRunResult,
                   targets: list[str]) -> dict[str, gates_mod.GateVerdict]:
         if res.status != "done" or not res.run:
-            return {t: gates_mod.GateVerdict(
+            # no run ⇒ no data and no figure, but the gate revision that
+            # refused is still part of the record
+            return self._stamp({t: gates_mod.GateVerdict(
                 target=t, verdict="fail", failure_mode="node_failed",
                 reasons=[res.error or f"run status {res.status}"])
-                for t in targets}
+                for t in targets}, None, "none")
         run = res.run
         fam = fam_mod.family_for(run["experiment_name"])
         if fam is None:
@@ -624,7 +758,7 @@ class PlanEngine:
                     target=t, verdict="suspect" if ok else "fail",
                     failure_mode=None if ok else "node_failed",
                     reasons=["no autofit family registered — node outcome only"])
-            return out
+            return self._stamp(out, run, "none")
 
         patched_old = {patch_path_to_dotted(p.get("path", "")): p.get("old")
                        for p in (run.get("patches") or [])}
@@ -636,7 +770,28 @@ class PlanEngine:
 
         hp = None
         if self.history_points_of is not None:
-            hp = lambda t: self.history_points_of(fam.value_key, t)  # noqa: E731
+            # The trend anchor is the STATE path this family WRITES, not the
+            # bare fit key — a family whose value has no writable home (the
+            # verify-only coupler nodes) honestly has no history to drift
+            # against, and the provider is told the paths rather than guessing
+            # them (docs/78 P2d). Resolved for every target in ONE map so the
+            # provider can serve a whole column from a single snapshot pass
+            # instead of re-parsing the history N times.
+            run_params = run.get("parameters") or {}
+            path_map = {}
+            for t in targets:
+                p = fam_mod.trend_path_for(fam, fam.value_key, t, run_params,
+                                           self.writer.current_value_of)
+                if p:
+                    path_map[t] = p
+            series: dict = {}
+            if path_map:
+                try:
+                    series = self.history_points_of(path_map) or {}
+                except Exception:  # noqa: BLE001 — history must never gate-block
+                    logger.warning("history trend lookup failed", exc_info=True)
+                    series = {}
+            hp = series.get
 
         verdicts = gates_mod.evaluate_run(
             run, fam, targets,
@@ -650,11 +805,44 @@ class PlanEngine:
         # deterministic raw-data localizer (the 2-D vs_power class): vision
         # refines WHICH failure ladder applies (fit-died vs empty-window) —
         # the verdict stays a fail either way.
+        # ---- stage 1: ONE triage call over the sheet (docs/78 §18) ---------
+        sheet = _first_figure(run)
+        # the engine feeds the judge the run's OWN saved PNGs; it never
+        # regenerates. That is a different analysis revision from anything we
+        # replay, so the verdict has to say which it was.
+        saw_figure = False
+        triage = None
+        if self.auditor.enabled and len(targets) > 1 and sheet is not None:
+            tb = auditor_mod.build_triage_bundle(
+                family_key=fam.key, family_label=fam.label, targets=targets,
+                figure_path=sheet)
+            triage = self.auditor.triage(tb, known_targets=targets)
+            saw_figure = True
+            with self._lock:
+                self.state["llm_calls"] = self.auditor.calls_made
+            self._ledger("llm_triage", step=step.id, **triage.as_dict())
+        gate_suspects = [t for t, v in verdicts.items() if v.verdict != "pass"]
+        look_at: set[str] = set()
+        if self.auditor.enabled:
+            if triage is None and len(targets) <= 1:
+                # a one-target run HAS no overview to lean on — and the sheet
+                # already IS that target's panel, so the whole cost is one
+                # call. "overview_only" here would be a lie.
+                look_at = set(targets)
+            else:
+                look_at = set(auditor_mod.dedicated_look_set(
+                    gate_suspects, triage, targets))
+
         for t, v in verdicts.items():
             if not self.auditor.enabled:
                 break
             entry = (run.get("fit_results") or {}).get(t) or {}
-            figure = _first_figure(run)
+            # stage 2: this target's OWN panel where one exists; the sheet is
+            # the honest fallback and the ledger records which was used
+            panel = _panel_figure(run, t)
+            figure = panel or sheet
+            v.panel_kind = "panel" if panel is not None else "sheet"
+            saw_figure = saw_figure or figure is not None
             if v.verdict == "suspect":
                 bundle = build_bundle(family_label=fam.label, target=t,
                                       fit_entry=entry, gate_reasons=v.reasons,
@@ -694,7 +882,47 @@ class PlanEngine:
                     v.direction_hint = av.direction
                     v.reasons.append(f"vision: window empty — {av.reason}")
                 # null → stays node_failed (defer)
-        return verdicts
+
+        # ---- the §1.3 terminator -------------------------------------------
+        # "done ONLY when the gates PASS and the judge ACCEPTS the signature."
+        # Asked of every target that the gates passed AND that stage 1 (or the
+        # gates) singled out — a target nobody flagged terminates on gates +
+        # overview and is STAMPED as such, so no report can imply it got a
+        # dedicated look it never got.
+        for t, v in verdicts.items():
+            if v.verdict != "pass":
+                continue
+            if not self.auditor.enabled:
+                v.vision = "unavailable"          # policy: gates-only, stamped
+                continue
+            if t not in look_at:
+                v.vision = "overview_only"
+                continue
+            fig = _panel_figure(run, t) or sheet
+            if fig is None:
+                # nothing to look AT — asking anyway would spend a call to be
+                # told "unclear" by a judge shown nothing
+                v.vision = "no_figure"
+                continue
+            saw_figure = True
+            sb = auditor_mod.build_signature_bundle(
+                family_key=fam.key, family_label=fam.label, target=t,
+                figure_path=fig)
+            sv = self.auditor.signature(sb)
+            with self._lock:
+                self.state["llm_calls"] = self.auditor.calls_made
+            self._ledger("llm_signature", step=step.id, target=t,
+                         panel=v.panel_kind, **sv.as_dict())
+            v.vision = sv.signature
+            if sv.accepted:
+                v.reasons.append(f"signature clear: {sv.reason}")
+                continue
+            # gates pass + judge does not accept ⇒ NOT done. This is the loop.
+            v.verdict = "fail"
+            v.failure_mode = sv.failure_mode or v.failure_mode or "noisy"
+            v.reasons.append(f"signature {sv.signature}: {sv.reason}")
+        return self._stamp(verdicts, run,
+                           "archived" if saw_figure else "none")
 
     # ---- decision + writes ------------------------------------------------
 
@@ -708,6 +936,25 @@ class PlanEngine:
         for p in target_patches:
             self._record_preplan(patch_path_to_dotted(p.get("path", "")),
                                  p.get("old"))
+
+        # Only an ACCEPTED fit enters the cross-experiment review: comparing a
+        # value the plan itself rejected against a good one would report a
+        # contradiction we already resolved.
+        if fam is not None and v.verdict == "pass":
+            entry = (run.get("fit_results") or {}).get(target)
+            if isinstance(entry, dict):
+                self._fits[(fam.key, target)] = entry
+                # the review is the ONE place that reasons across runs, so it
+                # is the one place D-13 can actually bite: two values obtained
+                # under different gate revisions or state generations are not
+                # a contradiction, they are a category error.
+                self._fit_contexts[(fam.key, target)] = v.context
+
+        # P6b (minimal): the board carries HOW this target was looked at, so a
+        # cell reading "pass" can never be mistaken for a vision-verified one.
+        self._cell(step.id, target, self.state["board"].get(step.id, {})
+                   .get(target, {}).get("state", "running"),
+                   vision=v.vision, panel=v.panel_kind)
 
         effective = v.verdict
         if effective == "suspect":
@@ -742,7 +989,19 @@ class PlanEngine:
             for r in rows:
                 self._record_preplan(r["path"], r.get("old_hint"))
             out = self.writer.apply_rows(rows, label=f"{step.id}:{target}")
-            self._ledger("write_applied", step=step.id, target=target, **out)
+            # `node_reported_no_write` is not a detail. Replaying a real
+            # 03 -> 05 -> 06 chain (docs/78 §25) showed the first two steps
+            # matching the operator field for field and the third diverging
+            # for exactly this reason: node 06 self-applies in 12 of 27
+            # archived runs and on that run chose not to, while the engine
+            # forward-wrote. Both are defensible policies; a report that
+            # cannot tell them apart is not.
+            self._ledger("write_applied", step=step.id, target=target,
+                         node_reported_no_write=True,
+                         forward_paths=[r["path"] for r in rows], **out)
+            with self._lock:
+                self.state["forward_writes"] = \
+                    self.state.get("forward_writes", 0) + 1
             if out.get("ok"):
                 # capture the ACTUAL applied write as replace-patches so a
                 # later verify-fail revert works for forward-applied writes
@@ -799,6 +1058,10 @@ class PlanEngine:
                         f"hard step {step.id!r} failed ({v.failure_mode})")
                 self._ledger("target_halted", step=step.id, target=target,
                              reason=v.failure_mode)
+                # FYI, not an alarm: the other targets continue (D-8's
+                # revert-and-continue), so this must not read as a night lost
+                self._notify("target_halted", step=step.id, target=target,
+                             reason=v.failure_mode, plan=self.plan.name)
             return "defer"
 
         # defer (abstain policy / unverifiable) — the node's write is KEPT for
@@ -815,12 +1078,70 @@ class PlanEngine:
             return []
         entry = (run.get("fit_results") or {}).get(target) or {}
         try:
-            return fam_mod.resolve_updates(fam, target, entry,
+            rows = fam_mod.resolve_updates(fam, target, entry,
                                            run.get("parameters") or {},
                                            self.writer.current_value_of)
         except Exception:  # noqa: BLE001
             logger.exception("resolve_updates failed")
             return []
+        # Declared gaps: fields this node writes that we cannot compute from
+        # its own fit output (measured, docs/78 §23). The forward path only
+        # runs when the node wrote nothing, so writing our subset leaves the
+        # rest stale — a quiet partial, which r12 forbids. It is written (the
+        # calibrated frequency is still worth having) but never silently: the
+        # ledger and the review queue both name what was left behind.
+        gaps = getattr(fam, "forward_gaps", None) or {}
+        if rows and gaps:
+            listed = {p.replace("{q}", target).replace("{pair}", target): why
+                      for p, why in gaps.items()}
+            self._ledger("forward_partial", target=target, family=fam.key,
+                         wrote=[r["path"] for r in rows],
+                         not_written=sorted(listed))
+            with self._lock:
+                self.state["review_queue"].append({
+                    "step_id": None, "target": target,
+                    "reason": (f"{fam.label}: wrote {len(rows)} field(s); "
+                               f"{len(listed)} field(s) this node also writes "
+                               f"were left unchanged — " +
+                               "; ".join(f"{p} ({why})"
+                                         for p, why in sorted(listed.items()))),
+                    "failure_mode": None, "reverted": False,
+                    "verdict": {"forward_gaps": sorted(listed)},
+                })
+            self._persist()
+        # The rvp node's update is ATOMIC across frequency + readout amplitude
+        # + the SHARED port FSP + every sibling amp on that feedline. Writing
+        # only the frequency half silently de-couples the readout power
+        # calibration (docs/56 §6G) — so build the coupled rows here too, and
+        # when they can't be built from node-authored numbers say so in the
+        # ledger rather than writing a quiet partial (r12 doctrine).
+        if fam.key == power_rows.POWER_COUPLED_FAMILY and rows:
+            merged = None
+            view = getattr(self.writer, "merged_view", None)
+            if callable(view):
+                try:
+                    merged = view()
+                except Exception:  # noqa: BLE001
+                    logger.exception("merged_view failed")
+            if not isinstance(merged, dict):
+                self._ledger("power_rows_skipped", target=target,
+                             reason="no merged state+wiring view available")
+            else:
+                try:
+                    pr = power_rows.coupled_power_rows(fam.key, target,
+                                                       dict(entry), merged)
+                except Exception as exc:  # noqa: BLE001
+                    self._ledger("power_rows_skipped", target=target,
+                                 reason=f"power rows failed: {exc}")
+                else:
+                    rows = rows + pr["rows"]
+                    if pr["skipped"]:
+                        self._ledger("power_rows_skipped", target=target,
+                                     reason=pr["skipped"])
+                    for w in pr["warnings"]:
+                        self._ledger("power_rows_warning", target=target,
+                                     reason=w)
+        return rows
 
     def _defer(self, step: Step, target: str, reason: str,
                v: gates_mod.GateVerdict, *, reverted: bool = False) -> None:
@@ -867,12 +1188,40 @@ def _patch_target(p: dict) -> str | None:
     return parts[1] if len(parts) > 1 else None
 
 
+# `figures.<name>.png` is the SHEET; `figures.<name>.<target>.png` is one
+# target's panel. The difference is a segment count, not a suffix — matching on
+# the tail alone calls every sheet a panel, which silently disables the whole
+# vision round (caught in the first end-to-end run).
+_SHEET_RE = re.compile(r"^figures\.[^.]+\.png$")
+
+
 def _first_figure(run: dict) -> Path | None:
+    """The run's SHEET — every target on one picture. Stage 1 (triage) only."""
     folder = run.get("folder_path")
     if not folder:
         return None
     try:
-        for f in sorted(Path(folder).glob("figures.*.png")):
+        files = sorted(Path(folder).glob("figures.*.png"))
+    except OSError:
+        return None
+    for f in files:
+        if _SHEET_RE.match(f.name):
+            return f
+    return files[0] if files else None      # honest degrade, never nothing
+
+
+def _panel_figure(run: dict, target: str) -> Path | None:
+    """The single-panel figure for ONE target, or None.
+
+    Stage 2 asks the per-target question; asking it against a sheet holding
+    every target is the D-11.1 defect. When no panel exists the caller must
+    fall back to the sheet AND say so — never silently.
+    """
+    folder = run.get("folder_path")
+    if not folder or not target:
+        return None
+    try:
+        for f in sorted(Path(folder).glob(f"figures.*.{target}.png")):
             return f
     except OSError:
         pass

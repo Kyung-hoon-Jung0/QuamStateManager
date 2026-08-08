@@ -59,15 +59,94 @@ LEDGER = {
         "wrong_peak": "fail", "no_signal": "fail", "noisy": "not_pass",
         "out_of_band": "fail", "drift": "fail",
     },
+    "05_resonator_spectroscopy_vs_power": {
+        "wrong_peak": "pass_allowed",   # +3 MHz inside the jump limit — vision's
+        "no_signal": "not_pass",        # domain (docs/47 A2). Empty window is
+        "noisy": "pass_allowed",        # caught by the node's own power split
+        "out_of_band": "fail",          # being absent (corpus: 7/7 rejects)
+        "drift": "not_pass",
+    },
+    "06_resonator_spectroscopy_vs_flux": {
+        "wrong_peak": "pass_allowed",   # a vertex read off a noise ridge stays
+        # DELIBERATE WIDENING (docs/78 §27, never silent). This cell was
+        # `fail` under the SHARED spectral floor of 50 — which the corpus
+        # proved rejects 17 of 160 accepted targets in this family, because
+        # span mode reduces a 2-D map to one row and an arc's power is spread
+        # across all of them (accepted runs bottom out at a ratio of 6). The
+        # floor is now 4.5 and no longer catches a manufactured empty window.
+        # What still does: ridge_amp_snr / coverage / r2, which ARE this
+        # family's presence check, plus the swept-window claim gate (§26).
+        "no_signal": "pass_allowed",
+        "noisy": "not_pass",            # ridge_amp_snr / coverage / r2 collapse
+        "out_of_band": "fail",
+        "drift": "pass_allowed",        # needs G5 history (pinned separately)
+    },
+    "07_resonator_spectroscopy_vs_coupler_flux": {
+        "wrong_peak": "pass_allowed",
+        "no_signal": "fail",
+        "noisy": "pass_allowed",        # the corpus has NO rejected side for
+        "out_of_band": "fail",          # this family — no metric to calibrate
+        "drift": "pass_allowed",
+    },
     "08_qubit_spectroscopy": {
-        "wrong_peak": "fail", "no_signal": "fail", "noisy": "not_pass",
+        "wrong_peak": "fail", "no_signal": "fail",
+        # DELIBERATE WIDENING (docs/78 §15, never silent): this cell was
+        # `not_pass` under `r2 >= 0.75`, which the corpus proved rejects 12/34
+        # fits the node itself ACCEPTED (real accepted r² runs down to 0.452).
+        # The synthetic noisy claim lands within fwhm/6 of truth — a GOOD value
+        # with an ugly fit — and its peak SNR clears the corpus-derived floor of
+        # 5.0. Rejecting it would be a production false-reject, not a catch.
+        "noisy": "pass_allowed",
         "out_of_band": "fail", "drift": "fail",
     },
-    "11_power_rabi": {
-        "wrong_peak": "fail",        # ×3 harmonic ⇒ prefactor outside [0.5, 2]
-        "no_signal": "fail",         # span check: flat trace
-        "noisy": "pass_allowed",     # value ≈ truth, no quality metric in fit
+    "08b_qubit_spectroscopy_vs_power": {
+        "wrong_peak": "pass_allowed",   # the real-archive #575 class: a
+        "no_signal": "pass_allowed",    # self-consistent noise fit. THE case
+        "noisy": "pass_allowed",        # that mandates the vision round —
+        "out_of_band": "fail",          # deterministic gates provably can't.
+        "drift": "pass_allowed",
+    },
+    "09_qubit_spectroscopy_vs_flux": {
+        "wrong_peak": "pass_allowed",   # corpus: 0/17 node-rejects were caught
+        # DELIBERATE WIDENING (docs/78 §27, never silent) and the most costly
+        # one in this ledger. The shared spectral floor of 50 rejected 122 of
+        # 185 accepted targets here — two thirds of the good work, including a
+        # panel carrying an unmistakable bright parabolic arc that the node's
+        # own fit follows (ratio 13). Accepted runs bottom out at 4, so the
+        # floor is 3.0 and a manufactured empty window now passes.
+        #
+        # BE CLEAR ABOUT WHAT THIS COSTS: this family declares NO metric gates,
+        # so the spectral check was its only deterministic presence guard and
+        # it no longer is. What remains is the plausibility band, G5 history,
+        # and the vision round — which makes the judge load-bearing here in a
+        # way it is not for 06 (whose ridge metrics do the job). Closing it
+        # properly needs a presence discriminator this family's fit output does
+        # not currently report; that is a docs/78 §22.4 item, not a number.
+        "no_signal": "pass_allowed",
+        # the same widening reaches `noisy`: G3 was the only gate refusing it
+        # (G1/G2/G4 all read ok), so a lower floor lets it through too
+        "noisy": "pass_allowed",
         "out_of_band": "fail",
+        "drift": "not_pass",            # 600 MHz > the 500 MHz jump limit
+    },
+    "10_qubit_spectroscopy_vs_coupler_flux": {
+        "wrong_peak": "pass_allowed",
+        "no_signal": "fail",            # num_crossings == 0 IS the node's own
+        "noisy": "not_pass",            # verdict (corpus: 14/14 rejects caught)
+        "out_of_band": "fail",
+        "drift": "n/a",
+    },
+    "11_power_rabi": {
+        # TIGHTENED + RE-BASED (docs/78 §15). The old `fail` came from a hard
+        # prefactor band [0.5, 2.0] the corpus proved false-rejecting (4/55
+        # node-accepted fits sat outside it during bring-up). Detection moved to
+        # the node's own `multipulse_fit_quality`, which flags rather than hard-
+        # fails — so a locked harmonic is now a SUSPECT, and `out_of_band` means
+        # an amplitude the port cannot play, not merely a large prefactor.
+        "wrong_peak": "not_pass",
+        "no_signal": "fail",         # span check: flat trace
+        "noisy": "not_pass",         # was pass_allowed — the quality metric
+        "out_of_band": "fail",       # now exists and lands on the reject side
         "drift": "n/a",
     },
     "12_ramsey": {
@@ -267,6 +346,19 @@ class TestUpdateResolution:
         assert all(r["op"] != "subtract_from_current" for r in rows)
 
 
+def _resolve_template(template: str, reference: str) -> str:
+    """Fill ``{operation}`` in an autofit path from the SAME segment of the
+    fit-target path. Returns the template unchanged when the shapes differ, so
+    a genuine path divergence still fails the assertion."""
+    if "{operation}" not in template:
+        return template
+    tparts, rparts = template.split("."), reference.split(".")
+    if len(tparts) != len(rparts):
+        return template
+    return ".".join(r if t == "{operation}" else t
+                    for t, r in zip(tparts, rparts))
+
+
 class TestFitTargetsParity:
     def test_shared_paths_agree_with_fit_target_map(self):
         """Where FIT_TARGET_MAP covers a (family, fit_key), the autofit registry
@@ -284,7 +376,12 @@ class TestFitTargetsParity:
         for ft_prefix, fit_key, fam_key in pairs:
             ft_path = FIT_TARGET_MAP[ft_prefix][fit_key]["path"]
             fam = families.FAMILIES[fam_key]
-            fam_paths = [u.path for u in fam.updates if u.fit_key == fit_key]
+            # `{operation}` is run-derived (docs/78 D-14): FIT_TARGET_MAP names
+            # the canonical operation literally, autofit fills it from the run's
+            # own parameters. The invariant is that they agree once resolved —
+            # comparing the raw templates would forbid the run-derived form.
+            fam_paths = [_resolve_template(u.path, ft_path)
+                         for u in fam.updates if u.fit_key == fit_key]
             assert ft_path in fam_paths, (ft_prefix, fit_key, fam_paths)
 
     def test_iq_blobs_is_verify_only(self):

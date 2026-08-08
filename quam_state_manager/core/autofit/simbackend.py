@@ -30,6 +30,18 @@ from quam_state_manager.core.autofit.synth import SimChip, patch_path_to_dotted
 # family key → synth generator node name
 FAMILY_TO_NODE: dict[str, str] = {
     "resonator_spectroscopy": "03_resonator_spectroscopy",
+    # P2's six. Without these a family-keyed step is silently `skipped` while
+    # the plan still reports `done` — so the sim demo, the one path that is
+    # supposed to exercise the whole x180 chain hardware-free, could not run
+    # the families P2 was built for (docs/78 §17).
+    "resonator_spectroscopy_vs_power": "05_resonator_spectroscopy_vs_power",
+    "resonator_spectroscopy_vs_flux": "06_resonator_spectroscopy_vs_flux",
+    "resonator_spectroscopy_vs_coupler_flux":
+        "07_resonator_spectroscopy_vs_coupler_flux",
+    "qubit_spectroscopy_vs_power": "08b_qubit_spectroscopy_vs_power",
+    "qubit_spectroscopy_vs_flux": "09_qubit_spectroscopy_vs_flux",
+    "qubit_spectroscopy_vs_coupler_flux":
+        "10_qubit_spectroscopy_vs_coupler_flux",
     "qubit_spectroscopy": "08_qubit_spectroscopy",
     "power_rabi": "11_power_rabi",
     "ramsey": "12_ramsey",
@@ -118,6 +130,11 @@ class SimWriter:
 
     def current_value_of(self, dotted: str):
         return self.chip.get(dotted)
+
+    def merged_view(self) -> dict | None:
+        """The sim chip has no wiring ports, so power coupling refuses on it —
+        honestly and out loud, which is the behavior we want to exercise."""
+        return {**self.chip.state, **self.chip.wiring}
 
     def apply_rows(self, rows, *, label: str) -> dict:
         paths = []

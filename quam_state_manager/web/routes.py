@@ -23,6 +23,7 @@ import hashlib
 import io
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -17517,8 +17518,36 @@ def _autofit_start_real(inst, p, data, auditor):
             logger.exception("escalation node resolve failed")
             return None
 
+    def history_points(path_map):
+        """G5's trend series: what THIS chip has historically held at the fields
+        the family is about to write (docs/78 P2d).
+
+        Without this the drift gate is dead code — a node can hand back a number
+        that is physically plausible in the abstract yet 40 robust-σ off what
+        this qubit has read for months, and nothing notices. Reads the whole
+        target set as ONE grid column so the snapshot store is parsed once per
+        run, not once per qubit. An empty answer means "no trend" and the gate
+        abstains: a history hiccup must never manufacture a verdict.
+        """
+        try:
+            with app.app_context():
+                series = hm.column_history(str(live_path), dict(path_map),
+                                           scan_limit=60)
+        except Exception:  # noqa: BLE001
+            logger.warning("autofit history lookup failed", exc_info=True)
+            return {}
+        out = {}
+        for row, rows in (series or {}).items():
+            vals = [float(r[1]) for r in rows
+                    if isinstance(r[1], (int, float))
+                    and not isinstance(r[1], bool) and math.isfinite(r[1])]
+            if len(vals) >= 3:          # below that G5 abstains anyway
+                out[row] = vals
+        return out
+
     eng = PlanEngine(inst, p, targets, backend, RealWriter(handle), auditor,
                      autonomy=p.autonomy, snapshot_fn=snapshot,
+                     history_points_of=history_points,
                      resolve_node=resolve_node_for)
     return eng, None, 200
 

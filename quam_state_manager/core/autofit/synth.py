@@ -70,6 +70,14 @@ class QubitTruth:
     iw_angle: float       # radians
     res_fwhm: float = 2e6
     q_fwhm: float = 4e6
+    # flux arch (docs/78 P2). Near a sweet spot BOTH the qubit and its readout
+    # resonator move quadratically with flux, and that parabola is what nodes
+    # 06/09 fit — so the model is the parabolic approximation, not the full
+    # sqrt|cos| arch: over a realistic ±0.25 V window the two agree to <1%,
+    # while the arch would sweep the qubit 800 MHz out of any real span.
+    flux_sweet_spot: float = 0.0    # V — the offset the nodes are looking for
+    flux_curv_q: float = 4.0e8      # Hz/V² — qubit frequency curvature
+    flux_curv_res: float = 2.0e7    # Hz/V² — dispersive resonator curvature
 
 
 @dataclass
@@ -78,6 +86,8 @@ class PairTruth:
     cz_amp: float         # V (flux-pulse amplitude at the 11<->02 resonance)
     cz_len: float         # ns (true gate length; nodes ceil to 4 ns)
     phase_amp: float      # V (conditional-phase optimal amplitude; near cz_amp)
+    coupler_sweet_spot: float = 0.0   # V — coupler-flux idle point (nodes 07/10)
+    coupler_curv: float = 1.5e7       # Hz/V² — response curvature at that point
 
 
 @dataclass
@@ -118,6 +128,14 @@ class SimChip:
                                  "length": 48},
                         "saturation": {"amplitude": 0.05, "length": 10000},
                     },
+                },
+                # the flux block the 06/09 nodes route on and write into; it
+                # starts at 0 V so a calibration must actually move it
+                "z": {
+                    "independent_offset": 0.0,
+                    "joint_offset": 0.0,
+                    "min_offset": 0.0,
+                    "flux_point": "independent",
                 },
                 "resonator": {
                     "f_01": t.f_res + 1e6,
@@ -204,6 +222,7 @@ def make_sim_chip(qubit_names: tuple[str, ...] = ("qA1", "qA2"),
             t2_echo=float(rng.uniform(20e-6, 60e-6)),
             ro_opt_freq=7.2e9 + i * 0.11e9 + float(rng.uniform(-1.5e6, -0.5e6)),
             iw_angle=float(rng.uniform(-0.8, 0.8)),
+            flux_sweet_spot=float(rng.uniform(-0.14, 0.14)),
         )
     pairs = {}
     for pname in pair_names:
@@ -212,6 +231,7 @@ def make_sim_chip(qubit_names: tuple[str, ...] = ("qA1", "qA2"),
             cz_amp=float(rng.uniform(0.15, 0.3)),
             cz_len=float(rng.uniform(30, 70)),
             phase_amp=0.0,   # filled below (near cz_amp)
+            coupler_sweet_spot=float(rng.uniform(-0.12, 0.12)),
         )
         pairs[pname].phase_amp = pairs[pname].cz_amp * float(rng.uniform(0.98, 1.02))
     return SimChip(qubits=qubits, pairs=pairs)
@@ -366,8 +386,18 @@ def _spec_family(chip: SimChip, targets: list[str], params: dict, corrupt_for,
             claimed = truth + float(rng.normal(0, fwhm / 40))
             r2, success = float(np.clip(rng.normal(0.96, 0.015), 0, 1)), True
 
+        # The node's own significance number, computed from the SAME trace the
+        # gates read (docs/78 P2): peak/dip prominence over the point-noise
+        # floor. The shipped bands are corpus-derived from these very fields,
+        # so a sim run that omitted them would leave the real gate abstaining —
+        # the sim must be indistinguishable to every reader, gates included.
+        _med = float(np.median(y))
+        _noise_f = float(np.median(np.abs(np.diff(y)))) * 1.4826 / math.sqrt(2) + 1e-12
+        _ext = float(np.min(y)) if is_dip else float(np.max(y))
         entry: dict[str, Any] = {"frequency": claimed, "fwhm": fwhm,
-                                 "r2": r2, "success": success}
+                                 "r2": r2, "success": success,
+                                 ("dip_snr" if is_dip else "peak_snr"):
+                                     abs(_ext - _med) / _noise_f}
         if is_dip:
             fits[q] = entry
             patches += [(f"qubits.{q}.resonator.f_01", claimed),
@@ -424,20 +454,40 @@ def _gen_power_rabi(chip, targets, params, corrupt_for, rng):
         y = p_e + _noise(rng, p_e.shape, 0.12 if corrupt == "noisy" else 0.03, shots)
 
         opt_apf_true = t.x180_amp / cur_amp
+        # multipulse_fit_quality is the node's own agreement number between the
+        # error-amplification model and the raw sweep — the corpus-strongest
+        # signal this family has (docs/78 §15), so the sim must report it.
+        quality = float(np.clip(rng.normal(0.72, 0.06), 0, 1))
         if corrupt == "wrong_peak":       # locks a Rabi harmonic (×3 error)
             claimed_apf, success = opt_apf_true / 3.0, True
+            quality = float(np.clip(rng.normal(0.14, 0.04), 0, 1))
         elif corrupt == "out_of_band":
-            claimed_apf, success = 3.0, True
+            # ×8: the corpus widened the prefactor envelope to [0.05, 5], so an
+            # "out of band" claim must be genuinely unplayable (amp > 1.5 V)
+            # rather than merely large — the old ×3 now sits INSIDE the band.
+            claimed_apf, success = 8.0, True
+            quality = float(np.clip(rng.normal(0.20, 0.05), 0, 1))
         elif corrupt == "no_signal":
             claimed_apf, success = float(rng.uniform(0.7, 1.3)), True
             y = _noise(rng, p_e.shape, 0.05, shots) + 0.5
+            quality = float(np.clip(rng.normal(0.06, 0.03), 0, 1))
         elif corrupt == "noisy":
             claimed_apf, success = opt_apf_true * float(rng.normal(1, 0.03)), True
+            # corpus: accepted quality runs [0.37, 0.82], node-rejects median
+            # 0.12 — a genuinely noisy multipulse sweep lands on the reject side
+            quality = float(np.clip(rng.normal(0.22, 0.04), 0, 1))
         else:
             claimed_apf, success = opt_apf_true * float(rng.normal(1, 0.004)), True
         claimed_amp = claimed_apf * cur_amp
         fits[q] = {"opt_amp_prefactor": claimed_apf, "opt_amp": claimed_amp,
-                   "operation": "x180", "success": success}
+                   "operation": "x180", "success": success,
+                   "multipulse_fit_quality": quality,
+                   # the node flags an optimum it had to EXTRAPOLATE past the
+                   # swept prefactor window — its own honest self-report
+                   "prefactor_extrapolated": bool(
+                       claimed_apf < apf.min() or claimed_apf > apf.max()),
+                   "pi_amp_reachable": bool(abs(claimed_amp) <= 1.0),
+                   "raw_fit_consistent": corrupt != "wrong_peak"}
         patches.append((f"qubits.{q}.xy.operations.x180.amplitude", claimed_amp))
         state.append(y)
         figs[q] = (apf, y.mean(axis=0), claimed_apf)
@@ -536,7 +586,15 @@ def _decay_family(chip, targets, params, corrupt_for, rng, *, which: str):
             claimed, success = truth * float(rng.normal(1, 0.03)), True
         err = abs(claimed) * (0.35 if corrupt == "noisy" else 0.06)
         if which == "t1":
-            fits[q] = {"t1": claimed, "t1_error": err, "success": success}
+            # The real node reports `t1` in NANOSECONDS while the chip stores
+            # seconds — measured across BOTH archived T1 node versions (n=141
+            # and n=6), so this is the convention, not one lab's quirk. The sim
+            # used to emit seconds, which meant it agreed with a gate band that
+            # rejected every real fit: a sim built to match the code instead of
+            # the instrument validates the bug (docs/78 §22.4 item 1). The
+            # PATCH stays in seconds, because that is what the node writes.
+            fits[q] = {"t1": claimed * 1e9, "t1_error": err * 1e9,
+                       "success": success}
             patches.append((f"qubits.{q}.T1", claimed))
         else:
             fits[q] = {"T2_echo": claimed, "T2_echo_error": err, "success": success}
@@ -757,10 +815,262 @@ def _gen_cz_conditional_phase(chip, targets, params, corrupt_for, rng):
     return coords, variables, fits, patches, {"phase": figs}
 
 
+# ---------------------------------------------------------------------------
+# The flux-map families (nodes 06 / 07 / 09 / 10 — docs/78 P2)
+# ---------------------------------------------------------------------------
+# These four share one picture: a 2-D (flux × frequency) map carrying a
+# parabolic ridge whose vertex IS the number the node reports. They have NO
+# honest 1-D localizer (docs/47), so the deterministic raw-data gate is signal
+# PRESENCE only — which is exactly why the corpus shows them catching wrong
+# vertices poorly and empty windows perfectly. The ledger below states that
+# split instead of hiding it.
+
+def _flux_ridge_cube(flux, detuning, ridge_hz, fwhm, *, is_dip, contrast,
+                     rng, shots, noise_scale):
+    """(n_flux, n_freq) map with a Lorentzian feature tracking ``ridge_hz``."""
+    prof = _lorentzian(detuning[None, :], ridge_hz[:, None], fwhm) * contrast
+    base = 1.0 - prof if is_dip else prof
+    return base + _noise(rng, base.shape, noise_scale, shots)
+
+
+def _flux_axis(params, rng):
+    span = float(params.get("flux_offset_span_in_v", 0.5))
+    n_flux = int(params.get("num_flux_points", 51))
+    return np.linspace(-span / 2, span / 2, max(n_flux, 9)), span
+
+
+def _flux_map_family(chip, targets, params, corrupt_for, rng, *, kind):
+    """kind ∈ resonator_flux | qubit_flux | resonator_coupler | qubit_coupler."""
+    flux, flux_span = _flux_axis(params, rng)
+    is_pair = kind.endswith("coupler")
+    is_dip = kind.startswith("resonator")
+    shots = float(params.get("num_shots", params.get("num_averages", 400)))
+    freq_span = float(params.get("frequency_span_in_mhz",
+                                 20.0 if is_dip else 120.0)) * 1e6
+    n_freq = int(params.get("num_freq_points", 121))
+    detuning = np.linspace(-freq_span / 2, freq_span / 2, n_freq)
+
+    cubes, fits, patches, figs = [], {}, [], {}
+    for t in targets:
+        corrupt = corrupt_for(t)
+        if is_pair:
+            pt = chip.pairs[t]
+            control, _ = _split_pair(t)
+            qt = chip.qubits[control]
+            sweet, curv = pt.coupler_sweet_spot, pt.coupler_curv
+        else:
+            qt = chip.qubits[t]
+            control = t
+            sweet = qt.flux_sweet_spot
+            curv = qt.flux_curv_res if is_dip else qt.flux_curv_q
+        fwhm = qt.res_fwhm if is_dip else qt.q_fwhm
+        centre_path = (f"qubits.{control}.resonator.RF_frequency" if is_dip
+                       else f"qubits.{control}.xy.RF_frequency")
+        centre = chip.get(centre_path)
+        peak_true = qt.f_res if is_dip else qt.f_01
+        # ridge, in DETUNING units around the current carrier
+        ridge = (peak_true - centre) - curv * (flux - sweet) ** 2
+        noise_scale = 0.14 if corrupt == "noisy" else 0.02
+        contrast = 1.0
+        if corrupt == "no_signal":
+            contrast = 0.0
+        cube = _flux_ridge_cube(flux, detuning, ridge, fwhm, is_dip=is_dip,
+                                contrast=contrast, rng=rng, shots=shots,
+                                noise_scale=noise_scale)
+        cubes.append(cube)
+
+        # ---- the CLAIM (corruption-aware, mirroring the node's fit dict) ----
+        f_at_sweet = peak_true
+        f_at_zero = peak_true - curv * (0.0 - sweet) ** 2
+        shift = float(f_at_sweet - f_at_zero)
+        claimed_offset = sweet + float(rng.normal(0, 0.002))
+        success = True
+        quality = {"ridge_amp_snr": float(rng.uniform(18, 45)),
+                   "ridge_coverage": float(rng.uniform(0.93, 1.0)),
+                   "ridge_r2": float(rng.uniform(0.95, 0.999))}
+        crossings = 1
+        if corrupt == "noisy":
+            # a real noisy map still fits SOMETHING; what collapses is the
+            # ridge quality the node itself reports
+            quality = {"ridge_amp_snr": float(rng.uniform(1.1, 2.2)),
+                       "ridge_coverage": float(rng.uniform(0.30, 0.50)),
+                       "ridge_r2": float(rng.uniform(0.10, 0.35))}
+        elif corrupt == "no_signal":
+            quality = {"ridge_amp_snr": float(rng.uniform(0.2, 0.8)),
+                       "ridge_coverage": float(rng.uniform(0.0, 0.15)),
+                       "ridge_r2": float(rng.uniform(0.0, 0.08))}
+            claimed_offset = float(rng.uniform(-flux_span / 2, flux_span / 2))
+            crossings = 0
+        elif corrupt == "wrong_peak":
+            # vertex read off a noise ridge: still inside the swept window and
+            # inside every physical band — the documented blind spot
+            claimed_offset = sweet + flux_span * 0.35
+            shift = shift * 0.25
+            crossings = 1
+        elif corrupt == "out_of_band":
+            claimed_offset = 42.0            # V — beyond any flux line
+            shift = 3.5e9
+            crossings = 25
+        elif corrupt == "drift":
+            claimed_offset = sweet + 0.4     # plausible, but off its own history
+            shift = shift * 1.1
+
+        entry: dict[str, Any] = {"idle_offset": float(claimed_offset),
+                                 "min_offset": float(claimed_offset - 0.05),
+                                 "frequency_shift": float(shift),
+                                 "flat_response": corrupt == "no_signal",
+                                 "success": success}
+        if kind == "resonator_flux":
+            entry.update(quality)
+        elif kind == "resonator_coupler":
+            entry["resonator_frequency"] = float(f_at_sweet)
+        elif kind == "qubit_flux":
+            qf = float(f_at_sweet)
+            if corrupt == "out_of_band":
+                qf = 2.0e10
+            elif corrupt == "drift":
+                qf = float(chip.get(f"qubits.{t}.f_01")) + 6.0e8
+            elif corrupt == "wrong_peak":
+                qf = float(f_at_sweet) + 3.0e7
+            elif corrupt == "no_signal":
+                qf = float(rng.uniform(4.5e9, 5.5e9))
+            entry["qubit_frequency"] = qf
+        elif kind == "qubit_coupler":
+            entry["num_crossings"] = int(crossings)
+
+        fits[t] = entry
+        if kind == "resonator_flux":
+            patches += [(f"qubits.{t}.z.independent_offset", float(claimed_offset)),
+                        (f"qubits.{t}.resonator.f_01",
+                         float(chip.get(f"qubits.{t}.resonator.f_01")) + shift),
+                        (f"qubits.{t}.resonator.RF_frequency",
+                         float(chip.get(f"qubits.{t}.resonator.RF_frequency")) + shift)]
+        elif kind == "qubit_flux":
+            patches += [(f"qubits.{t}.z.independent_offset", float(claimed_offset)),
+                        (f"qubits.{t}.f_01", entry["qubit_frequency"]),
+                        (f"qubits.{t}.xy.RF_frequency", entry["qubit_frequency"])]
+        # 07 and 10 write nothing — their nodes don't either (verify-only)
+        figs[t] = (flux, cube.min(axis=1) if is_dip else cube.max(axis=1),
+                   float(claimed_offset))
+
+    dim0 = "qubit_pair" if is_pair else "qubit"
+    coords = {dim0: np.asarray(targets, dtype=object),
+              "flux_bias": flux, "detuning": detuning}
+    variables = {"IQ_abs": ((dim0, "flux_bias", "detuning"), np.asarray(cubes))}
+    return coords, variables, fits, patches, {"flux_map": figs}
+
+
+def _power_map_family(chip, targets, params, corrupt_for, rng, *, is_dip: bool):
+    """Nodes 05 / 08b — the (power × frequency) maps docs/47 calls the
+    genuinely hard family: no honest 1-D localizer at all, so these two declare
+    NO feature_check and their deterministic coverage is G1 + physical bands +
+    (for 05) the node's own power-split evidence."""
+    shots = float(params.get("num_shots", params.get("num_averages", 400)))
+    n_pow = int(params.get("num_power_points", 31))
+    power = np.linspace(-50.0, -20.0, max(n_pow, 9))          # dBm
+    freq_span = float(params.get("frequency_span_in_mhz",
+                                 15.0 if is_dip else 60.0)) * 1e6
+    detuning = np.linspace(-freq_span / 2, freq_span / 2,
+                           int(params.get("num_freq_points", 121)))
+
+    cubes, fits, patches, figs = [], {}, [], {}
+    for q in targets:
+        corrupt = corrupt_for(q)
+        qt = chip.qubits[q]
+        centre = chip.get(f"qubits.{q}.resonator.RF_frequency" if is_dip
+                          else f"qubits.{q}.xy.RF_frequency")
+        truth = qt.f_res if is_dip else qt.f_01
+        fwhm = qt.res_fwhm if is_dip else qt.q_fwhm
+        # punch-out (resonator) / power-broadening (qubit): the feature MOVES
+        # with drive, which is the whole reason these nodes exist
+        frac = (power - power.min()) / max(power.ptp(), 1e-9)
+        ridge = (truth - centre) + (2.5e6 * frac if is_dip
+                                    else np.zeros_like(frac))
+        width = fwhm * (1.0 + (np.zeros_like(frac) if is_dip else 3.0 * frac))
+        contrast = 0.0 if corrupt == "no_signal" else 1.0
+        prof = np.stack([_lorentzian(detuning, ridge[i], width[i])
+                         for i in range(power.size)]) * contrast
+        cube = (1.0 - prof if is_dip else prof) + \
+            _noise(rng, prof.shape, 0.14 if corrupt == "noisy" else 0.02, shots)
+        cubes.append(cube)
+
+        claimed = float(truth + rng.normal(0, 2e5))
+        entry: dict[str, Any] = {"success": True,
+                                 "optimal_power": float(rng.uniform(-45, -30))}
+        if corrupt == "out_of_band":
+            claimed = 2.0e10
+        elif corrupt == "drift":
+            claimed = float(chip.get(f"qubits.{q}.resonator.f_01" if is_dip
+                                     else f"qubits.{q}.f_01")) + 8.0e7
+        elif corrupt == "wrong_peak":
+            claimed = float(truth) + 3.0e6
+        elif corrupt == "no_signal":
+            claimed = float(centre + rng.uniform(-freq_span / 2, freq_span / 2))
+        if is_dip:
+            entry["resonator_frequency"] = claimed
+            # the node emits its power split ONLY when its own analysis is
+            # satisfied — absence is the corpus's perfect reject signal
+            if corrupt not in ("no_signal", "out_of_band"):
+                entry["target_full_scale_power_dbm"] = float(
+                    math.ceil(entry["optimal_power"] + 6.02))
+                entry["target_amplitude"] = float(rng.uniform(0.02, 0.4))
+            patches += [(f"qubits.{q}.resonator.f_01", claimed),
+                        (f"qubits.{q}.resonator.RF_frequency", claimed)]
+        else:
+            entry["frequency"] = claimed
+            patches += [(f"qubits.{q}.f_01", claimed),
+                        (f"qubits.{q}.xy.RF_frequency", claimed)]
+        fits[q] = entry
+        figs[q] = (detuning + centre, cube[cube.shape[0] // 2], claimed)
+
+    coords = {"qubit": np.asarray(targets, dtype=object),
+              "power": power, "detuning": detuning}
+    variables = {"IQ_abs": (("qubit", "power", "detuning"), np.asarray(cubes))}
+    return coords, variables, fits, patches, {"power_map": figs}
+
+
+def _gen_res_spec_vs_power(chip, targets, params, corrupt_for, rng):
+    return _power_map_family(chip, targets, params, corrupt_for, rng,
+                             is_dip=True)
+
+
+def _gen_qubit_spec_vs_power(chip, targets, params, corrupt_for, rng):
+    return _power_map_family(chip, targets, params, corrupt_for, rng,
+                             is_dip=False)
+
+
+def _gen_res_spec_vs_flux(chip, targets, params, corrupt_for, rng):
+    return _flux_map_family(chip, targets, params, corrupt_for, rng,
+                            kind="resonator_flux")
+
+
+def _gen_res_spec_vs_coupler_flux(chip, targets, params, corrupt_for, rng):
+    return _flux_map_family(chip, targets, params, corrupt_for, rng,
+                            kind="resonator_coupler")
+
+
+def _gen_qubit_spec_vs_flux(chip, targets, params, corrupt_for, rng):
+    return _flux_map_family(chip, targets, params, corrupt_for, rng,
+                            kind="qubit_flux")
+
+
+def _gen_qubit_spec_vs_coupler_flux(chip, targets, params, corrupt_for, rng):
+    return _flux_map_family(chip, targets, params, corrupt_for, rng,
+                            kind="qubit_coupler")
+
+
 # node_name → (generator, targets_kind)
 GENERATORS: dict[str, tuple[Callable, str]] = {
     "03_resonator_spectroscopy": (_gen_resonator_spec, "qubits"),
+    "05_resonator_spectroscopy_vs_power": (_gen_res_spec_vs_power, "qubits"),
+    "06_resonator_spectroscopy_vs_flux": (_gen_res_spec_vs_flux, "qubits"),
+    "07_resonator_spectroscopy_vs_coupler_flux":
+        (_gen_res_spec_vs_coupler_flux, "qubit_pairs"),
     "08_qubit_spectroscopy": (_gen_qubit_spec, "qubits"),
+    "08b_qubit_spectroscopy_vs_power": (_gen_qubit_spec_vs_power, "qubits"),
+    "09_qubit_spectroscopy_vs_flux": (_gen_qubit_spec_vs_flux, "qubits"),
+    "10_qubit_spectroscopy_vs_coupler_flux":
+        (_gen_qubit_spec_vs_coupler_flux, "qubit_pairs"),
     "11_power_rabi": (_gen_power_rabi, "qubits"),
     "12_ramsey": (_gen_ramsey, "qubits"),
     "25_T1": (_gen_t1, "qubits"),
@@ -863,6 +1173,21 @@ def synth_run(node_name: str, chip: SimChip, targets: list[str], out_root: Path,
             fig.savefig(folder / fname)
             _plt.close(fig)
             fig_refs[figname] = f"./{fname}"
+            # ALSO one panel per target (docs/78 §18): stage 2 asks the
+            # per-target question, and asking it against a sheet holding every
+            # target is the D-11.1 defect. Real archives ship a panel grid the
+            # lab's own plotting can re-render per target; the sim drew
+            # everything on one axes, so there was nothing to extract.
+            for t, (x, y, marker) in per_target.items():
+                f1, a1 = _plt.subplots(figsize=(4, 2.6), dpi=80)
+                a1.plot(x, y, lw=0.9)
+                if marker is not None:
+                    a1.axvline(marker, color="red", ls="--", lw=0.8)
+                a1.set_title(f"{node_name} — {t}", fontsize=8)
+                pname = f"figures.{figname}.{t}.png"
+                f1.savefig(folder / pname)
+                _plt.close(f1)
+                fig_refs[f"{figname}.{t}"] = f"./{pname}"
 
     # ---- data.json ----------------------------------------------------------
     data_json = {"ds_raw": "./ds_raw.h5", "ds_fit": "./ds_fit.h5",
@@ -874,6 +1199,15 @@ def synth_run(node_name: str, chip: SimChip, targets: list[str], out_root: Path,
     model[kind] = list(targets)
     if node_name not in ("31_chevron_11_02",) and kind == "qubit_pairs":
         model.setdefault("operation", str(params.get("operation", "cz_unipolar")))
+    # A node that names its pulse must SAY so in its own parameters — that is
+    # where an update path's `{operation}` comes from (docs/78 D-14). Without
+    # this the sim's power-rabi run resolves ZERO write rows and the loop's
+    # single most important write path goes unexercised.
+    for _entry in fits.values():
+        _op = _entry.get("operation") if isinstance(_entry, dict) else None
+        if _op:
+            model.setdefault("operation", str(_op))
+            break
     outcomes = {t: ("successful" if (fits.get(t) or {}).get("success") else "failed")
                 for t in targets}
     node_json = {

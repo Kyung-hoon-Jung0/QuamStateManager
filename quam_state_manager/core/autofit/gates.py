@@ -30,6 +30,7 @@ from typing import Any, Callable
 
 import numpy as np
 
+from quam_state_manager.core.autofit import families as fam_mod
 from quam_state_manager.core.autofit.families import Family, FeatureCheck
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,20 @@ _ERROR_RATIO_MAX = 0.25     # <key>_error / |<key>| above this ⇒ noisy
 _HISTORY_Z_MAX = 6.0        # robust z vs param-history trend ⇒ drifted
 
 
+def _spectral_floor(fc) -> float:
+    """The presence floor for THIS family (docs/78 §27).
+
+    One constant cannot serve both shapes. Span mode reduces a cube to its
+    most-structured ROW: a 1-D oscillation puts all its power there, a 2-D arc
+    spreads it over every row. Measured across the corpus, accepted runs bottom
+    out at 18-79 for the 1-D families and at 4-6 for the 2-D ones, so the
+    shared 50 rejected 122 of 185 accepted qubit-flux targets — two thirds of
+    the good ones. Families that declare nothing keep the default.
+    """
+    v = getattr(fc, "spectral_min", None)
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool)         else _SPECTRAL_RATIO_MIN
+
+
 @dataclass
 class GateVerdict:
     target: str
@@ -57,12 +72,27 @@ class GateVerdict:
     # a failed fit, and the window-edge direction hint for a seed-shift rung
     feature_present: bool | None = None
     direction_hint: str | None = None   # left | right | None
+    # two-stage looking (docs/78 §18). `vision` is the §1.3 terminator's answer
+    # — clear | unclear | absent | overview_only | unavailable — and
+    # `panel_kind` says whether the judge saw this target ALONE or on a shared
+    # sheet. A report that cannot tell those apart would imply a dedicated look
+    # that never happened.
+    vision: str | None = None
+    panel_kind: str | None = None       # panel | sheet
+    # the verification triple this verdict is only valid inside (docs/78 D-13.3,
+    # §17 B3) — see core.autofit.verification. Sixteen of these bands were
+    # overturned by measurement in one session; a verdict that cannot name the
+    # revision that produced it silently mixes with verdicts that mean
+    # something else.
+    context: dict | None = None
 
     def as_dict(self) -> dict:
         return {"target": self.target, "verdict": self.verdict,
                 "failure_mode": self.failure_mode, "reasons": self.reasons,
                 "checks": self.checks, "feature_present": self.feature_present,
-                "direction_hint": self.direction_hint}
+                "direction_hint": self.direction_hint,
+                "vision": self.vision, "panel_kind": self.panel_kind,
+                "context": self.context}
 
 
 def _attr(run, key, default=None):
@@ -75,25 +105,43 @@ def _attr(run, key, default=None):
 # G3 — raw-data feature cross-check
 # ---------------------------------------------------------------------------
 
+def _row_of(reader, handle, idx) -> np.ndarray:
+    """One target's row. h5py slices lazily; the NetCDF adapter has already
+    read the variable, so it is indexed after the fact."""
+    try:
+        return np.asarray(handle[idx], dtype=float)
+    except TypeError:                       # not sliceable (the NetCDF handle)
+        return np.asarray(reader.read(handle)[idx], dtype=float)
+
+
 def _read_target_trace(raw_path: Path, fc: FeatureCheck, target: str,
                        kind: str) -> tuple[np.ndarray, np.ndarray] | str:
-    """Return (axis, y) for *target*'s row, or an error string."""
-    import h5py
+    """Return (axis, y) for *target*'s row, or an error string.
+
+    Routed through the ndview reader adapter (docs/67), NOT raw h5py: newer
+    runner envs write NetCDF-classic under an ``.h5`` name, and h5py answers
+    those with "file signature not found". This gate is the raw-data
+    cross-check — the one thing that can tell a fit that missed the feature
+    from one that found it — so a format it cannot open is not a degraded
+    check, it is no check, silently, on every run from those envs.
+    """
+    from quam_state_manager.core.ndview import _h5_lock_for, _open_reader
 
     dim0 = "qubit" if kind == "qubits" else "qubit_pair"
     try:
-        with h5py.File(raw_path, "r") as f:
-            if fc.var not in f or dim0 not in f:
+        with _h5_lock_for(str(raw_path)), _open_reader(Path(raw_path)) as f:
+            var = f.get(fc.var)
+            coord = f.read_coord(dim0)
+            if var is None or coord is None:
                 return f"var {fc.var!r} or coord {dim0!r} missing in ds_raw"
             names = [n.decode() if isinstance(n, bytes) else str(n)
-                     for n in f[dim0][()]]
+                     for n in np.asarray(coord).tolist()]
             if target not in names:
                 return f"target {target!r} not in {dim0} coord"
             idx = names.index(target)
-            var = f[fc.var]
             if var.ndim < 2:
                 return f"var {fc.var!r} is {var.ndim}-D (need ≥2-D target×sweep)"
-            y = np.asarray(var[idx], dtype=float)
+            y = _row_of(f, var, idx)
             if fc.mode == "span":
                 # signal-presence only. Orientation-aware reduction: treat the
                 # LONGEST axis as the sweep, then keep the most-structured
@@ -107,15 +155,15 @@ def _read_target_trace(raw_path: Path, fc: FeatureCheck, target: str,
                 return np.arange(y.size, dtype=float), y
             if var.ndim != 2:
                 return f"var {fc.var!r} is {var.ndim}-D (peak/dip needs 2-D)"
-            if fc.axis_var not in f:
+            ax_ds = f.get(fc.axis_var)
+            if ax_ds is None:
                 return f"axis {fc.axis_var!r} missing"
-            ax_ds = f[fc.axis_var]
-            axis = np.asarray(ax_ds[idx] if ax_ds.ndim == 2 else ax_ds[()],
-                              dtype=float)
+            axis = (_row_of(f, ax_ds, idx) if ax_ds.ndim == 2
+                    else np.asarray(f.read(ax_ds), dtype=float))
             if axis.shape != y.shape:
                 return "axis/trace shape mismatch"
             return axis, y
-    except (OSError, ValueError, KeyError) as exc:
+    except (OSError, ValueError, KeyError, TypeError) as exc:
         return f"ds_raw unreadable: {exc}"
 
 
@@ -139,9 +187,10 @@ def _feature_check(raw_path: Path, fc: FeatureCheck, target: str, kind: str,
         psd = np.abs(np.fft.rfft(y0)) ** 2 / y0.size
         psd = psd[1:]                       # DC guard
         ratio = float(np.max(psd)) / (float(np.median(psd)) + 1e-30)
-        if ratio < _SPECTRAL_RATIO_MIN:
+        floor = _spectral_floor(fc)
+        if ratio < floor:
             return "no_signal", (f"trace carries no coherent structure (spectral "
-                                 f"peak/median {ratio:.0f} < {_SPECTRAL_RATIO_MIN:.0f})")
+                                 f"peak/median {ratio:.0f} < {floor:.0f})")
         return "ok", f"signal present (spectral peak/median {ratio:.0f})"
 
     claim = fit_entry.get(fc.claim_key)
@@ -233,7 +282,7 @@ def _presence_probe(raw_path: Path, fc: FeatureCheck, target: str, kind: str,
         psd = np.abs(np.fft.rfft(y0)) ** 2 / y0.size
         psd = psd[1:]
         ratio = float(np.max(psd)) / (float(np.median(psd)) + 1e-30)
-        if ratio >= _SPECTRAL_RATIO_MIN:
+        if ratio >= _spectral_floor(fc):
             return True, (f"coherent structure present despite the failed fit "
                           f"(spectral peak/median {ratio:.0f})"), None
         return False, (f"no coherent structure (spectral peak/median "
@@ -305,9 +354,10 @@ def evaluate_target(run, fam: Family, target: str, *,
 
     # --- G4 first for HARD physical bands (cheapest hard reject) ------------
     for pl in fam.plausibility:
-        val = entry.get(pl.key)
-        if not isinstance(val, (int, float)) or isinstance(val, bool) \
-                or not math.isfinite(val):
+        # through the family's one reader, so the band and the WRITE can never
+        # disagree about the unit (docs/78 §22.4 — the T1 defect)
+        val = fam_mod.fit_value(fam, entry, pl.key)
+        if val is None:
             continue
         if (pl.lo is not None and val < pl.lo) or \
                 (pl.hi is not None and val > pl.hi):
@@ -402,7 +452,14 @@ def evaluate_target(run, fam: Family, target: str, *,
     # cross-metric internal consistency (e.g. chevron cz_len vs 1/(2J))
     for check in fam.consistency_checks:
         try:
-            why = check(entry)
+            # a check may ask for the run's own parameters — the sweep window
+            # is knowable only from them, and a window claim cannot be judged
+            # against a constant (docs/78 §26). One-argument checks are the
+            # majority and keep working untouched.
+            try:
+                why = check(entry, _attr(run, "parameters", None) or {})
+            except TypeError:
+                why = check(entry)
         except Exception:  # noqa: BLE001
             why = None
         if why:
@@ -424,8 +481,17 @@ def evaluate_target(run, fam: Family, target: str, *,
     v.checks["G2_metrics"] = g2
 
     # --- G5: history drift (optional; engine supplies trend points) ---------
-    if history_points and len(history_points) >= 3 \
-            and isinstance(val, (int, float)) and not isinstance(val, bool):
+    # The compared quantity is the family's HEADLINE value — reading the loop
+    # variable left over from the metric-gate pass above would compare the last
+    # metric (e.g. an r² of 0.99) against a flux-offset trend and report a
+    # 600-σ drift on a perfectly good run. The gate had never been supplied with
+    # points in production, so nothing had exercised it (docs/78 P2d).
+    # the same reader again: the history trend comes from STATE, so an unscaled
+    # fit value here would compare nanoseconds against a seconds series — the
+    # very shape of the P2d bug this gate was fixed for
+    hist_val = fam_mod.fit_value(fam, entry, fam.value_key)
+    if history_points and len(history_points) >= 3 and hist_val is not None:
+        val = hist_val
         pts = np.asarray(history_points, dtype=float)
         med = float(np.median(pts))
         mad = float(np.median(np.abs(pts - med))) * 1.4826

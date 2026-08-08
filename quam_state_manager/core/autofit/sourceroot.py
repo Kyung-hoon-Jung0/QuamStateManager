@@ -111,10 +111,31 @@ def cache_dir_for(instance_path) -> Path:
     return Path(instance_path) / _CACHE_DIRNAME
 
 
+def history_revs(root, *, paths=("quam_config",), limit: int = 8) -> list[str]:
+    """SHAs that touched ``paths``, newest first — the revisions at which the
+    analysis contract could have changed.
+
+    Pinning HEAD alone is not enough: the lab keeps committing, and the moment a
+    commit moves ``quam_config`` onto a newer library, HEAD stops serving every
+    older archive (measured — a single commit made the whole pre-0.6 corpus
+    unreplayable again). The honest fallback is the newest revision that STILL
+    serves the run, and these are the only revisions worth probing.
+    """
+    out = _git(root, "log", f"--max-count={int(limit)}", "--format=%H",
+               "--", *paths)
+    return [ln.strip() for ln in (out or "").splitlines() if ln.strip()]
+
+
 def candidates(live_root, instance_path, *, revs=("HEAD",),
                include_live: bool = True) -> list[dict]:
     """Ordered candidate roots for verification: the live tree first (it is the
     lab's current truth), then pinned revisions as fallbacks for older runs.
+
+    ``revs="auto"`` walks the history of the analysis-defining paths
+    (:func:`history_revs`) so a run that HEAD can no longer serve falls back to
+    the newest revision that still can. Materialization is lazy per revision and
+    cached by SHA, so the walk costs one archive extraction per revision ever
+    used — not per run.
 
     Each entry is ``{path, kind, rev, dirty}`` so a verdict can name exactly
     which analysis tree produced it (docs/78 D-13.3).
@@ -125,6 +146,8 @@ def candidates(live_root, instance_path, *, revs=("HEAD",),
                     "rev": resolve_rev(live_root), "dirty": is_dirty(live_root)})
     if not is_git_tree(live_root):
         return out
+    if revs == "auto":
+        revs = ["HEAD", *history_revs(live_root)]
     cache = cache_dir_for(instance_path)
     for rev in revs:
         sha = resolve_rev(live_root, rev)

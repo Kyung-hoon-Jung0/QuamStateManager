@@ -65,6 +65,11 @@ class Plan:
     autonomy: str = "review"       # full | review
     version: int = 1
     preset: str | None = None      # provenance: which preset seeded this plan
+    # Tier-1 stop-loss (docs/78 D-8). None = unlimited, which is the honest
+    # default: an unset wall clock is not a zero wall clock. The engine's work
+    # queue accepts runtime-inserted rungs, so "steps remaining" is not a bound.
+    max_steps: int | None = None
+    wall_clock_min: float | None = None
 
     def as_dict(self) -> dict:
         d = asdict(self)
@@ -138,9 +143,27 @@ def validate_plan(raw: dict) -> Plan:
                           params=dict(params), retry_max=retry_max,
                           criticality=crit,
                           enabled=bool(s.get("enabled", True))))
+    max_steps = _opt_positive(raw.get("max_steps"), "max_steps")
+    wall_min = _opt_positive(raw.get("wall_clock_min"), "wall_clock_min")
     return Plan(name=name, targets_kind=kind, steps=steps, targets=targets,
                 autonomy=autonomy, version=int(raw.get("version", 1)),
-                preset=raw.get("preset"))
+                preset=raw.get("preset"), max_steps=max_steps,
+                wall_clock_min=wall_min)
+
+
+def _opt_positive(v, label: str):
+    """None stays None (unlimited); anything present must be a real positive
+    number — a plan asking for `max_steps: 0` is a typo, not a request to do
+    nothing, and silently honouring it would look like a hung run."""
+    if v is None or v == "":
+        return None
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        raise PlanError(f"{label} must be a number") from None
+    if not n > 0:
+        raise PlanError(f"{label} must be > 0 (omit it for unlimited)")
+    return n
 
 
 # ---------------------------------------------------------------------------

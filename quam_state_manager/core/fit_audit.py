@@ -392,12 +392,25 @@ def audit_run(node_name, folder, env, source_root, *, timeout=180) -> dict:
             "detail": detail,
         })
     counts = {v: sum(1 for r in rows if r["verdict"] == v) for v in VERDICTS}
+    # docs/78 §17 B3: env and source root were already IN this function's cache
+    # key but were handed back unlabelled, so two verdicts from different
+    # analysis revisions were indistinguishable downstream — the exact thing
+    # D-13 was written to prevent. `context` is the one shape figure_gen and
+    # the autofit engine also stamp; the flat gate_hash/lib_versions keys stay
+    # for the existing readers.
+    from quam_state_manager.core.autofit import verification
+
+    ctx = verification.for_lab_replay(
+        env=env, source_root=source_root,
+        lib_versions=env_json.get("lib_versions"),
+        gate_hash=env_json.get("gate_hash"), run_folder=folder)
     return {
         "auditable": True, "family": fam, "family_label": spec["label"],
         "gate_hash": env_json.get("gate_hash"),
         "lib_versions": env_json.get("lib_versions") or {},
         "value_field": spec["value_field"], "value_tol": spec["value_tol"],
         "rows": rows, "counts": counts, "errors": errors,
+        "context": ctx.as_dict(), "context_note": ctx.describe(),
     }
 
 

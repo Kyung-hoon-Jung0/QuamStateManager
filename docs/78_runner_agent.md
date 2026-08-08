@@ -1,8 +1,21 @@
 # 78 — Runner + AI calibration agent (PLAN, final)
 
-> Status: **PLAN ONLY — nothing implemented.**
-> Worktree `.claude/worktrees/runner-agent`, branch `feat/runner-agent`,
-> based on `origin/main @ 8e5fa99`. Design discussion + investigation: 2026-08-05.
+> Status (2026-08-07): **P0–P8 SHIPPED except P3c/P3d (needs an API key) and P9 (needs hardware).**
+> Records: §13 (P0) · §14 (P1) · §15 (P2) · §16 (P3a/P3b) · **§17 (audit —
+> read this before trusting any earlier section)** · §18 (two-stage looking +
+> the stage-1 pilot) · §19 (P4–P8). A stack of branches off
+> `origin/main @ 8e5fa99` on `feat/runner-p3-judge`; not merged to main.
+> **The loop closes** (§19.1): a target is done only when the gates pass AND
+> the judge signs off on its own panel — or, with no judge configured, on the
+> gates alone and STAMPED as not vision-verified.
+> **§17 B3 is CLOSED** (§21.1 — every verdict now stamps its verification
+> context, and the cross-run review refuses to compare across contexts), and so
+> is §17.6 (§21.2 — `power_rabi`'s wide check, where the corpus refuted the
+> obvious generalization). §22 records a six-way audit of every remaining
+> un-measured constant and the first real two-sided run of the signature ask:
+> **leniency 0/12, and the stinginess bar is not measurable against a scalar
+> success flag.** Still open: the items listed in §22.4, and P9.
+> Design discussion + investigation: 2026-08-05.
 > Lineage: docs/40 (Scheduler chassis) · docs/47 (LLM doctrine + Phase-0
 > measurements) · docs/50 (fit-audit) · docs/56 (Autofit v1/v2) ·
 > docs/48 (ndview + click contracts) · docs/52 (env capability probing).
@@ -158,7 +171,7 @@ matters is whether a wrong choice yields an **obviously bad figure**
 | **A — self-revealing** | `frequency_span_in_mhz`, `frequency_step_in_mhz`, `num_shots`, `num_flux_points`, `min/max_flux_offset_in_v`, **drive power / amplitude factor**, target selection, next-node selection | **picks real numbers**, inside code-owned bounds |
 | **B — deceptive** | `reset_type`, `use_state_discrimination`, `multiplexed` | **proposes only**; code checks the precondition and may refuse |
 | **frozen** | `line_attenuation_in_db`, `input_line_impedance_in_ohm` | never touched — facts about the wiring; changing them silently rescales every power |
-| **reserved** | `simulate`, `timeout`, `load_data_id`, targets keys | already blocked by the scheduler (docs/40 Phase 2b) |
+| **reserved** | `simulate`, `timeout`, `load_data_id`, targets keys | ⚠️ **FALSE as written — see §17.6.** Only `simulate` + the targets keys are blocked (`node_inject.RESERVED_OVERRIDE_KEYS`). **`load_data_id` is NOT**, and it is the dangerous one: it makes a node replay archived data instead of measuring. Blocking it is P4's first item. |
 
 `num_shots = 3` is a number and is perfectly safe (wrong ⇒ visibly noisy).
 `use_state_discrimination = True` without calibrated IQ blobs is a boolean and
@@ -509,15 +522,20 @@ so families 4 and 8 die at `analysis.py:87` with `KeyError: 'qubit_pairs'`.
 
 ### 4.7 What does NOT exist
 
+*(As surveyed 2026-08-05, before P0–P3. The ✅ rows were closed by the phases
+named; the ❌ rows are still true today — re-verified 2026-08-07, §17.)*
+
 | | status |
 |---|---|
-| plan-level **step cap** | **absent** — the work queue is a `deque` runtime rungs `appendleft` into, with no global bound |
-| plan-level **wall clock** | **absent** (docs/56 §2e claims both — doc/code drift) |
-| notifications (email / webhook / browser) | **absent entirely** |
-| `fit_audit.FAMILIES` | only **2** entries |
-| `families.py` coverage | **4 of our 9 families are ABSENT** (`06`, `07`, `09`, `10`); `power_rabi` is a shell (`metric_gates=[]`, presence-only check, 2 trivial adaptations, no ladder, no `verify_wide`) and its update path is **wrong for this chip** (D-14) |
-| G5 history-drift gate | **dead in production** — routes build `PlanEngine` without `history_points_of` |
-| cross-experiment consistency review (goal §1.1 #3) | **absent entirely** |
+| plan-level **step cap** | ❌ **still absent** — the work queue is a `deque` runtime rungs `appendleft` into, with no global bound |
+| plan-level **wall clock** | ❌ **still absent** (docs/56 §2e claims both — doc/code drift) |
+| notifications (email / webhook / browser) | ❌ **still absent entirely** |
+| `fit_audit.FAMILIES` | ✅ closed by P0c — 9 entries |
+| `families.py` coverage | ✅ closed by P2a/P2b/P2c — all 9 registered, `power_rabi` gated on `multipulse_fit_quality` with a ladder, update path run-derived |
+| G5 history-drift gate | ✅ closed by P2d — `routes.py` passes `history_points_of` |
+| cross-experiment consistency review (goal §1.1 #3) | ❌ **still absent entirely** (P6c) |
+| per-target figure for the judge (D-11.1) | ❌ **still absent** — the whole multi-target sheet is sent per target (§17 B2) |
+| the §1.3 terminator in the loop | ❌ **implemented, no caller** (§17 B1) |
 
 Present and healthy: per-step `retry_max` (0–5, default 1), LLM budget
 (40 calls/plan), per-step timeout (3600 s), target-scoped `criticality`,
@@ -1115,3 +1133,1853 @@ Two properties of the test made that possible, both learned from the review:
   mapping the flux value would have had to fall in the frequency range.
 * side-by-side against the archived lab PNGs: same arch, same orientation, same
   ranges; node 10 matches its lab panel.
+
+---
+
+## 15. P2 implementation record (2026-08-06) — SHIPPED
+
+Branch `feat/runner-p2-families`. P2 is the physics layer: the nine families of
+the x180 chain get real gates, real update grammar, and — for the first time —
+a history gate that is actually connected.
+
+### 15.1 The method: bands are MEASURED, never invented
+
+Every number added in this phase came from replaying real archived runs through
+the lab's own analysis and splitting the results by the node's OWN verdict:
+
+* harvest: 119 runs across the 9 families (`--per-family 14`, spread evenly over
+  every root and date so no single campaign dominates), replayed via the P0
+  env × pinned-revision matrix;
+* for each candidate field, compare the node-ACCEPTED distribution against the
+  node-REJECTED one;
+* a floor is only worth having if it sits **below the accepted minimum** and
+  still separates. Anything else buys false-rejects.
+
+The verdict is the **accuracy ledger** — gates vs the node's own success flag
+over 276 accepted and 115 rejected targets:
+
+| family | accepted | FALSE REJECTS | rejected | caught |
+|---|---:|---:|---:|---:|
+| resonator_spectroscopy | 23 | **0** | 7 | 7 |
+| resonator_spectroscopy_vs_power | 31 | **0** | 7 | 7 |
+| resonator_spectroscopy_vs_flux | 40 | **0** | 42 | 25 |
+| resonator_spectroscopy_vs_coupler_flux | 15 | **0** | 0 | — |
+| qubit_spectroscopy | 34 | **0** | 15 | 14 |
+| qubit_spectroscopy_vs_power | 45 | **0** | 2 | 0 |
+| qubit_spectroscopy_vs_flux | 30 | **0** | 17 | 0 |
+| qubit_spectroscopy_vs_coupler_flux | 3 | **0** | 14 | 14 |
+| power_rabi | 55 | **0** | 8 | 8 |
+
+**0 false rejects, 75/115 rejects caught deterministically.** The uncaught 40
+are the honest scope of the vision round (P3) — they are not a gap to be closed
+by inventing a tighter band, and §15.3 says exactly why for each family.
+
+### 15.2 What the corpus overturned in ALREADY-SHIPPED code
+
+Sixteen production false-rejects existed before this phase — gates written from
+physical intuition that the real data contradicts:
+
+| family | shipped band | what the corpus says | fix |
+|---|---|---|---|
+| `qubit_spectroscopy` | `r2 ≥ 0.75` | the node ACCEPTED r² down to **0.452**; 12 of 34 good fits would have been flagged | `peak_snr ≥ 5.0` leads (accepted [6.6, 24.3], all 15 rejects below, median 3.0); r² drops to 0.30 as a garbage backstop |
+| `power_rabi` | `prefactor ∈ [0.5, 2.0]`, a HARD G4 fail | 4 of 55 accepted fits sit outside it — real bring-up prefactors run down to 0.20 | envelope widened to [0.05, 5.0]; detection moves to `multipulse_fit_quality ≥ 0.30` (accepted [0.37, 0.82], rejects median 0.12) |
+| `qubit_spectroscopy_vs_flux` | (proposed) `vertex_extrapolated` check | the node's own analysis treats it as a WARNING and accepts anyway — one accepted target carries it | check dropped before it ever shipped |
+
+The lesson generalizes: **a gate is a claim about the lab's data, so it needs the
+lab's data as evidence.** The `_R2_FLOOR` that was safe for resonator
+spectroscopy (accepted floor 0.82) was catastrophic one family over.
+
+### 15.2b The jump limits — measured separately, and 37 more false alarms
+
+The accuracy ledger covers bands, metric gates and consistency checks, but a
+`max_abs_jump` needs a **pre-update anchor**, which no fit dict carries. That
+anchor is sitting in every run's own `node.json`: `patches[].old` IS the
+pre-update state and `patches[].value` IS the claim — so every accepted patch is
+a jump the node itself was happy with. No replay needed.
+
+| family / anchor | limit | accepted moves | largest accepted | over the limit |
+|---|---:|---:|---:|---:|
+| resonator_spectroscopy / frequency | 50 MHz | 122 | 30.5 MHz | 0 |
+| resonator_spectroscopy_vs_power / resonator_frequency | 50 MHz | 27 | 4.5 MHz | 0 |
+| qubit_spectroscopy / frequency | ~~100~~ → **200 MHz** | 114 | **139 MHz** | ~~2~~ → 0 |
+| qubit_spectroscopy_vs_power / frequency | ~~100~~ → **200 MHz** | 29 | 47 MHz | 0 |
+| qubit_spectroscopy_vs_flux / qubit_frequency | 500 MHz | 47 | 31 MHz | 0 |
+| power_rabi / opt_amp | ~~0.25~~ → **0.8** | 1004 | **0.538** | ~~35~~ → 0 |
+
+Two findings, and the second is the important one:
+
+1. the old limits fired on **37 moves the nodes themselves accepted** — 3.5% of
+   every power-rabi write, which in `review` autonomy means one in thirty
+   perfectly good calibrations queued for a human;
+2. **not one node-rejected target emits a patch at all** (the nodes skip failed
+   targets), so on this corpus a jump limit has *zero measured detection value*.
+   Its entire measured effect was false alarms.
+
+That settles what a jump limit is FOR: a sanity envelope against an absurd step,
+not drift detection. Real drift detection is G5's job — which is only true now
+that G5 is actually wired (§15.5). `qubit_spectroscopy_vs_power` inherits node
+08's wider measurement rather than its own thin 29-sample maximum, because it
+writes the same physical quantity in the same bring-up regime.
+
+Totals after the recalibration: **0 false rejects across bands, metric gates,
+consistency checks AND jump limits.**
+
+### 15.3 The four new families, and their honest coverage
+
+| node | family | what it can catch | what it CANNOT |
+|---|---|---|---|
+| 06 res-vs-flux | `resonator_spectroscopy_vs_flux` | `ridge_amp_snr ≥ 2.5` (27/42), `ridge_coverage ≥ 0.55` (17 more), `ridge_r2 ≥ 0.40` | a vertex read off a noise ridge — inside every band |
+| 07 res-vs-coupler-flux | `resonator_spectroscopy_vs_coupler_flux` | physical envelope + signal presence | everything else: the corpus has **no rejected side at all** (15/15 accepted), so there is nothing to calibrate a metric against. Declaring one would be guessing. |
+| 09 qubit-vs-flux | `qubit_spectroscopy_vs_flux` | 500 MHz jump limit, swept-range guard, presence | the fitted vertex: **no numeric field separates** accepted from rejected — every reject is non-finite, i.e. the node's own gate is finiteness. A fabricated metric would add false-rejects without adding detection. |
+| 10 qubit-vs-coupler-flux | `qubit_spectroscopy_vs_coupler_flux` | `num_crossings ≥ 1` — **perfect separation** (3/3 accepted found exactly one crossing, 14/14 rejects found zero) | — |
+
+Both COUPLER families are **verify-only** (`updates=[]`): node 07's
+`update_state` is an empty stub and node 10 writes only a bookkeeping `extras`
+key. Inventing a write target from the figure's axis is precisely the D-1 trap
+("the figure axis is not the state value").
+
+### 15.4 The update grammar is run-derived (D-14), and the families disagree
+
+Two families read the SAME fit key and write it DIFFERENTLY. Any attempt to
+share one update rule corrupts one of them:
+
+| | node 06 | node 09 |
+|---|---|---|
+| `flux_point == "independent"` | assign `z.independent_offset` | assign `z.independent_offset` |
+| `flux_point == "joint"` | assign `z.joint_offset` | **`+=`** `z.joint_offset` |
+| anything else | **else-branch** → joint | **writes nothing** (its if/elif has no else) |
+| frequencies | `+= frequency_shift` | absolute assign |
+| pre-condition | — | offset must lie inside the swept span |
+
+So `UpdateSpec` gained `op` (`assign` / `add_to_current` /
+`subtract_from_current` / `assign_ceil4`), `route_on` / `route_when` (with `"*"`
+as an explicit else that fires only when no exact branch did), and `guard`.
+`power_rabi`'s path became `…xy.operations.{operation}.amplitude` — this chip's
+pulse is `x180_DragCosine`, so the old hardcoded `x180` addressed a field that
+**does not exist on it**; with no `operation` in the run's parameters the row is
+SKIPPED, never guessed.
+
+`FIT_TARGET_MAP` parity is preserved by resolving the placeholder before
+comparing, not by reverting to a literal.
+
+### 15.4b Two more things the nodes do that we did not
+
+Reading the real `node.json` patches (no replay needed — `patches[].old/value`
+IS the node's own write) turned up two writes the registry was missing entirely.
+
+**(a) The run names an ALIAS; the node writes its target.** Every chip in the
+corpus carries
+
+```
+operations.x180           = "#./x180_DragCosine"     ← what the run parameter names
+operations.x180_DragCosine = {amplitude: …}          ← what the node patches
+```
+
+485 real patches address `x180_DragCosine`; **zero** address `x180`. So filling
+`{operation}` from the run parameters — P2c's fix — was still one hop short:
+the write would have landed on a path whose value is a *pointer string*.
+`families.resolve_alias_path` now follows `#/`, `#./` and `#../` aliases with
+the same frame `pointer_resolver` uses, **verifying every hop by reading the
+result** and refusing (no row) when it can't. A segment the reader simply cannot
+answer is left alone — a non-existent path fails loudly at the transactional
+write, whereas a silent rewrite would not.
+
+Verified against three labs' real chips: the resolved paths equal the nodes' own
+patch paths **exactly**.
+
+**(b) Power Rabi writes π/2 as well.** `update_x90` is true in all 222 real
+runs, and the π/2 amplitude is bit-exactly half the π amplitude in 477 of 479
+patch pairs (the 2 outliers ±1.5%; 6 more pairs are stored as TEXT — the r14
+class). Without that row every x90 gate would sit stale behind a freshly
+calibrated x180. `UpdateSpec` gained `factor` for exactly this node-applied
+ratio.
+
+**(c) And the FSP coupling was half-wired.** `power_rows.py` already builds the
+rvp node's ATOMIC update (frequency + readout amp + the SHARED port FSP +
+power-preserving sibling rescales), but only the diagnose ROUTE called it — the
+engine's own `_forward_rows` wrote the frequency half alone. In `full` autonomy
+that is a silent partial write that de-couples the readout power calibration.
+The engine now builds the coupled rows too, through a `merged_view()` on the
+Writer protocol (the feedline port resolves through the wiring pointer chain, so
+`state` alone would make every port lookup quietly refuse), and any refusal or
+DAC-clip warning is written to the ledger rather than swallowed.
+
+### 15.5 G5 was dead — and wrong
+
+`gates.py` implemented the history-drift gate and `engine.py` accepted a
+provider, but **`web/routes.py` never passed one**, so in production G5 never
+ran. Wiring it exposed a second defect that could only exist because nothing
+had ever exercised the code path: the gate compared **`val`, the loop variable
+left over from the metric-gate pass** — so it measured the last metric (an r² of
+0.99) against a flux-offset trend and reported a 614-σ drift on a clean run.
+
+Fixed together:
+
+* G5 reads `entry[fam.value_key]` explicitly;
+* `families.trend_path_for` resolves the anchor the SAME way `resolve_updates`
+  resolves the write — routed families take the branch that will actually fire,
+  because independent and joint offsets carry genuinely different histories and
+  comparing against the wrong one manufactures drift;
+* with no state reader the else-branch is NOT assumed (we cannot tell "else"
+  from "unknown"), and verify-only families answer `None` — no writable home,
+  no trend;
+* the provider is handed the whole `{target: dot_path}` map at once and answers
+  from `HistoryManager.column_history` — **one snapshot pass per run**, not one
+  per qubit (17 qubits × 60 snapshots of direct parsing per step would have made
+  the gate a performance bug instead of a safety net);
+* any failure returns empty and the gate abstains. A history hiccup must never
+  manufacture a verdict.
+
+What it buys, measured: the 06 `drift` corruption (a 0.4 V offset step) is
+inside every physical band and leaves the ridge metrics intact — a documented
+blind spot **without** history, a `suspect` **with** it.
+
+### 15.6 The sim corpus grew to the whole chain
+
+`synth.py` gained generators for 05 / 06 / 07 / 08b / 09 / 10, so all nine
+families now run hardware-free through the real gates, the real writer and the
+real engine. Design notes worth keeping:
+
+* the flux arch is modelled as the **parabolic approximation** around the sweet
+  spot, not the full `sqrt|cos|` — over a realistic ±0.25 V window they agree to
+  <1%, while the arch would sweep the qubit 800 MHz out of any real span;
+* the sim now emits the fields the shipped gates actually read (`peak_snr`,
+  `dip_snr`, `multipulse_fit_quality`, `prefactor_extrapolated`,
+  `pi_amp_reachable`, the ridge metrics). Omitting them left the real gates
+  abstaining against sim data — the sim is supposed to be indistinguishable to
+  every SM reader, and **gates are readers**;
+* `peak_snr` / `dip_snr` are computed from the SAME trace the gate reads
+  (prominence over the point-noise floor), not fabricated per corruption mode;
+* a run must **name its own pulse** in `parameters.operation`. It didn't, and
+  the moment power_rabi's path became `{operation}`-templated the sim's
+  power-rabi step resolved **zero** write rows — the loop's single most
+  important write silently stopped being exercised while every engine test
+  stayed green (they assert on other quantities). Now pinned by a test that
+  resolves the update from the run's own node.json.
+
+### 15.7 Ledger cells that MOVED (never silently)
+
+`tests/test_autofit_gates.py` says tightening is progress and downgrading is a
+regression, so each move is stated with its evidence:
+
+| cell | was | now | why |
+|---|---|---|---|
+| `08_qubit_spectroscopy` / noisy | not_pass | **pass_allowed** | the catch came from `r2 ≥ 0.75`, which the corpus proved rejects 12/34 node-accepted fits. The synthetic claim lands within fwhm/6 of truth — a GOOD value with an ugly fit. Rejecting it is a production false-reject, not a catch. |
+| `11_power_rabi` / wrong_peak | fail | **not_pass** | the hard prefactor band was false-rejecting; a locked harmonic is now a suspect via `multipulse_fit_quality`, and a deterministic FAIL is reserved for physically impossible values. |
+| `11_power_rabi` / noisy | pass_allowed | **not_pass** | tightened — the family now has a quality metric, and a noisy multipulse sweep lands on the corpus's reject side. |
+| `11_power_rabi` / out_of_band | fail | fail | unchanged verdict, re-based corruption: "out of band" must now mean an amplitude the port cannot play (×8), because ×3 sits INSIDE the corpus-widened envelope. |
+
+### 15.8 Verification
+
+* `tests/test_runner_p2.py` (**new**, 43 tests): family registration + archive
+  node-name resolution, the corpus-derived floors pinned as numbers, routed
+  updates (06 else-branch vs 09 no-else, `+=` vs assign, span guard, opt-in
+  `min_offset`, `{operation}` skip), the trend anchor (routed / no-reader /
+  verify-only / `{operation}`), G5 catching what the other gates cannot and
+  NOT flagging a value on its own trend, an end-to-end engine run proving the
+  provider receives resolved dot-paths and its answer reaches the ledger, and
+  alias following (all three pointer forms, the x90 half-row, refusal on an
+  unresolvable alias), power coupling (the engine builds the coupled rows and
+  ledgers the refusal; only the rvp family is coupled), and sim-fidelity checks
+  (every gated field present; the run names its operation; the flux cube really
+  carries a parabolic ridge whose fitted vertex is the sweet spot).
+* `tests/test_autofit_gates.py`: ledger extended from 10 to 16 node × mode
+  rows — **146 passed**.
+* autofit + fit-audit + P0 suites together: **273 passed, 9 skipped**.
+* real-archive accuracy ledger re-run after every change: **0 false rejects**.
+
+### 15.9 Carried into P3
+
+* the 40 uncaught rejects are the vision round's brief — with the per-family
+  reasons in §15.3, not as an undifferentiated "AI looks at it";
+* `qubit_spectroscopy_vs_power` (the #575 class: a self-consistent noise fit
+  that a replay AGREES with) remains the canonical case that deterministic
+  gates provably cannot close;
+* `resonator_spectroscopy_vs_coupler_flux` has no rejected side in the corpus
+  at all — its false-accept coverage is UNMEASURED, and that must be stated in
+  any report the loop produces, not silently rendered as "passed".
+
+---
+
+## 16. P3a/P3b implementation record (2026-08-07) — SHIPPED
+
+Branch `feat/runner-p3-judge`. P3a is what the judge KNOWS; P3b is what it may
+SAY. The judge's calibration (P3c/P3d) is measured, not designed, and needs a
+real provider — see §16.6.
+
+### 16.1 The pack is authored from real figures, per family
+
+`quam_state_manager/core/autofit/judge_packs/v1/<family>.json` — nine entries,
+each written by reading the **real archived PNGs** of runs the node itself
+accepted and (where any exist) rejected, across two chips' archives. Each entry
+carries `axes` · `correct_signature` (3–7 bullets) · `failure_appearance` per
+mode · `abstain_when` · `localizer` · `notes`.
+
+Versioned data, not code: a lab edits a JSON file. `judge_pack.prompt_block()`
+renders one family's entry into the prompt; an unknown family renders **nothing**
+and the judge leans on abstain — honest, because we have taught it nothing about
+that node.
+
+### 16.2 Clause B is enforced at LOAD, not just reviewed
+
+docs/47 Clause B: a feature's position inside the sweep window is an artefact of
+the window the experimenter chose, not physics. An exemplar that says "the peak
+sits near the middle of the window" doesn't merely fail to help — it transfers a
+falsehood to the next chip, whose window is centred elsewhere.
+
+So `lint_entry` runs at load and violating strings are **dropped and logged**,
+never handed to the judge. A hand-edited pack can degrade the judge's knowledge;
+it cannot teach it a window-dependent lie.
+
+The lint refuses four shapes: a quantity with a physical unit, a
+position-in-window or fractional-of-axis claim, a path/run-id, and — added after
+the critic pass — **a feature sized against the swept window**.
+
+That last one is the finding worth keeping. Five violations in the first-draft
+pack were written entirely in words, with no digit anywhere:
+
+> "the band is many times **narrower than the swept frequency range**"
+> "excursions that are a small **fraction of the plotted frequency window**"
+> "a few pixels wide and far **narrower than the swept frequency span**"
+
+No number/unit check can see any of these, and each one means the identical
+physics, zoomed in, scores differently. Sizing against the **feature** is the
+correct form and must pass — "a fraction of the notch's own width", "narrower
+than the visible hump" — so the rule keys on the window noun, not on "fraction".
+`part of the sweep` is also allowed: that is a COVERAGE statement, and coverage
+is itself one of the deterministic gates.
+
+Shipped pack: **0 violations**, pinned by a test.
+
+### 16.3 What the cross-family critic caught that a per-family author could not
+
+Nine independent authors produce nine locally-sensible entries that contradict
+each other. The findings, all fixed:
+
+| # | fault | why it matters |
+|---|---|---|
+| D1 | one family declared **dark = resonance** as fact; two siblings say polarity must be read off the panel | a colour-inverted panel would read as broken |
+| D2 | **extremum at the sweep edge**: a failure in one family, an abstain in two others | identical geometry, three verdicts — and the failure version scored position-in-window |
+| D3 | qubit spectroscopy hard-coded the peak as pointing **up**, against three siblings that call the sign a readout convention | a sign-flipped panel reads as suspicious |
+| D4 | the three-band drive structure asserted unconditionally in one vs_power family, abstained on in the other | a partial drive range routes to reject in one and abstain in the other |
+| E1 | power-rabi bullets 1–6 written unscoped, only bullet 7 marked "map variant" | a judge shown the 2-D map looks for a single sine, which a correct error-amplification map does not contain |
+| E2 | the map's convergence identified by "widest fringe spacing" | not the discriminator — the convergence is *which fringe stays vertical as pulse count grows* |
+| F1 | a family with no rejected runs opened all four failure descriptions with "**Observed:**" | reads as witnessed; it was inferred from update-less panels inside accepted runs |
+| F2 | a bullet demanding contrast "several times the cell-to-cell scatter" | would reject that family's ONLY known-good exemplar, described in its own notes as the floor of acceptability |
+
+F2 is the same disease as P2's shipped bands: **a criterion written from
+intuition that the lab's own accepted data contradicts.** It is worth stating
+that the judge's exemplars are exactly as falsifiable as the gates' numbers.
+
+### 16.4 Power Rabi: what the archive actually ships
+
+docs/78 P3a asks for the 2-D error-amplification signature. The archived figure
+is usually **per-qubit 1-D** (drive amplitude vs readout, one panel per qubit),
+with the pulse-count map as a variant. The entry therefore carries **both**, and
+says which bullets apply to which — the sine bullets are explicitly scoped to
+the 1-D layout, and the map is judged solely by fringe convergence: one fringe
+vertical at the same amplitude from the lowest pulse-count row to the highest,
+the fringes either side bending toward it and crowding as pulse count grows.
+
+### 16.5 P3b — two more asks, both structurally number-free
+
+| ask | schema | unavailable/unparseable ⇒ |
+|---|---|---|
+| `signature` (the §1.3 terminator) | `{signature: clear\|unclear\|absent, failure_mode, reason}` | **`unclear`** |
+| `compare` (D-8 tier 2b) | `{comparison: better\|worse\|same, reason}` | **`same`** |
+
+Design points:
+
+* the signature verdict is a **separate field** from the trust verdict. "The fit
+  is consistent with the data" and "this experiment worked" are different
+  questions; a loop that conflated them could terminate on a self-consistent fit
+  of noise;
+* the signature bundle carries **no fit numbers at all** — handing over the
+  claimed value invites reasoning backwards from it;
+* the defaults are the safe ones and this is load-bearing: an unavailable judge
+  that answered `clear` would let the loop terminate because nobody looked, and
+  one that answered `better`/`worse` would respectively keep a hopeless target
+  running or trip the stop-loss on a good run. Budget exhaustion answers the
+  same way;
+* comparison images are ordered **previous, then current**, and a dropped image
+  shortens the list rather than silently shifting the pair — a re-order inverts
+  the verdict;
+* the numeric-emission guard is now **one implementation** (`_numeric_emission`)
+  shared by all three asks, rather than three copies free to drift.
+
+### 16.6 Not done, and why
+
+**P3c/P3d — the two-sided calibration (D-7) — is unmeasured.** There is no API
+key in this environment, so no accept-rate on known-good figures and no
+reject-rate on manufactured wrong-fit figures exists. Until it does, the D-7
+pre-flight gate cannot be evaluated and the decision point ("does Sonnet clear
+both bars per family?") cannot be reached. Everything that must hold *before* a
+model is called is shipped and pinned; the numbers are not, and nothing in the
+code pretends otherwise.
+
+Note for whoever runs it: the wrong-fit set is buildable today — P0's
+`figure_gen` regenerates a run's figure through the lab's own plotting module
+with an injected wrong fit, which is exactly what docs/47 asked for and could
+not build.
+
+### 16.7 Packaging
+
+The pack is DATA inside the package, and left out of the wheel it fails
+**silently**: `load_pack()` returns `{}` and the judge rules on figures it was
+taught nothing about, with no error anywhere. Added to `MANIFEST.in` and
+`package-data`, and pinned by a test.
+
+### 16.8 Verification
+
+* `tests/test_runner_p3.py` (**new**, 56 tests): the Clause-B lint in both
+  directions (violations caught / relative-geometry and coverage language
+  preserved), the shipped pack clean, every scoped family present, the 2-D map
+  families declaring no localizer, power-rabi carrying the map signature with
+  the sine bullets scoped, a hand-edited violation dropped rather than taught,
+  both new schemas incl. every unusable-reply path, the safe defaults, budget
+  exhaustion, image order, the shared numeric guard, packaging, and the
+  identifier-shape leak scan.
+* autofit + P2 suites re-run green after the auditor changes (200 passed).
+
+---
+
+## 17. Audit of the plan against the shipped code (2026-08-07)
+
+Six independent auditors read docs/78 §1–§16 against the code at `8ceee44` and
+a consolidator re-verified every claim at its cited line. **This section
+overrides any earlier section it contradicts.** What it found splits three ways:
+defects (fixed here), plan staleness (fixed here), and *phase-ownership gaps* —
+work nobody owned, which is the part a plan is actually for.
+
+### 17.1 The document lied about its own status
+
+The header read **"PLAN ONLY — nothing implemented"** while §13–§16 recorded
+four shipped phases, and §12 routes a fresh context to §1 — straight past the
+records. A design document whose first line is false is worse than no document:
+it is the one line that gets believed. Fixed, and the header now names what
+does NOT work as well as what does.
+
+Same class, §4.7 ("What does NOT exist"): four of seven rows had been closed by
+P0/P2 and still read as gaps. Now marked ✅/❌ with the closing phase, and the
+two new ❌ rows below added.
+
+### 17.2 Defects found and fixed in this pass
+
+**D1 — G5's trend anchor was frame-correct only for `assign` families.**
+`ramsey` writes `f_01 -= freq_offset`: the FIELD holds ~5 GHz while the FIT KEY
+is a ~MHz offset. `trend_path_for` returned the written path, and G5 then
+compared the offset against the f_01 series — reproduced on a clean synthetic
+run as *"freq_offset=2.998e+06 is 449,605 robust-σ off its own history (median
+5.002e+09)"*. Ramsey is step 6 of the shipped `1q_bringup` preset and
+`_autofit_start_real` supplies the provider, so this was live.
+
+This is **§15.5's defect one layer up**: that fix made G5 read the right
+*value*, and it still read the wrong *series*. `trend_path_for` now returns
+`None` unless the anchoring write is a plain `assign` with no factor — an
+offset or a scaled write has no honest history to compare against, so the gate
+abstains rather than invent one. The lesson generalizes: **fixing a symptom in
+the consumer does not fix the contract.**
+
+**D2 — the sim could not run six of the nine families.**
+`simbackend.FAMILY_TO_NODE` never gained P2's six, so a family-keyed step for
+any of them returned `status="skipped"` while the plan still reported `done`.
+`synth.GENERATORS` had all nine — it was pure wiring, missed because the P2
+tests drive the generators directly. The demo path that is supposed to exercise
+the whole x180 chain hardware-free could not touch the families P2 was built
+for. Fixed.
+
+**D3 — three families could be flagged `wrong_peak` with no rung to answer it.**
+G2 emits `wrong_peak` for *every* consistency-check hit, and `power_rabi`
+declares three. With no matching adaptation `can_retry` is False, so the target
+**defers instead of re-measuring** — and §15.7 re-based `power_rabi/wrong_peak`
+from fail to suspect *on the assumption that a rung existed*. Added, each from
+the node's own knobs: power rabi halves the prefactor window and step about the
+parked amplitude (a harmonic outside the tightened window cannot be locked);
+the two resonator families take their existing signal / refine ladders.
+`chevron_11_02` has the same shape and is deliberately left — it is outside the
+nine-family scope and we have no corpus evidence for a CZ rung.
+
+**D4 — a blank `model` silently ran the model D-10 rejected.**
+`_DEFAULTS["model"] = ""` and the anthropic call fell back to Haiku — which
+docs/47 measured at ~17% false-accept, concentrated in the hard 2-D families,
+which are 7 of our 9. D-10's "no code change needed" was true only if the
+operator also typed a model name. The fallback is now `DEFAULT_ANTHROPIC_MODEL
+= "claude-sonnet-5"`, i.e. the recorded decision holds by default.
+
+### 17.3 Open defects — NOT fixed here, and why
+
+**B1 — the §1.3 terminator has no caller.** `Auditor.signature()`,
+`build_signature_bundle`, `parse_signature` and `SignatureVerdict` are reachable
+only from tests. The engine consults the auditor in exactly two places, both on
+the *failure* side (`suspect` → judge, node-failed → presence); `_decide`'s
+success branch closes a target with no vision judgment at all. A 7-step × 2-target
+sim chain finishes `status: done, llm_calls: 0`.
+
+Not fixed here because it is a **policy** decision, not a wiring one: with no
+provider configured the judge answers `unclear` by design, so switching the
+termination rule on today would stop every target from ever completing. The rule
+needs its unavailable-judge branch decided (gates-only termination with an
+honest ledger note, versus refusing to run at all), and that belongs to the
+phase that owns the loop. **§17.5 gives it an owner.**
+
+**B2 — the judge is shown the whole multi-target sheet, once per target.**
+`_first_figure(run)` globs `figures.*.png` and returns the first, inside the
+per-target loop. D-11.1 calls per-target panels *"correctness, not polish"* and
+R7's stated mitigation was "a P0e requirement with a test" — neither the
+extraction nor the test exists, and P0's record does not list it as outstanding.
+`figure_gen.generate(..., targets=[...])` produces exactly the right artifact
+and has **zero consumers** outside its own module.
+
+This is now the **top blocker for P3c**: calibrating a judge on whole sheets
+measures the wrong thing, and a 90% bar cleared that way means nothing. In the
+sim it is worse than a wrong panel — `synth.py` plots every target on one axes,
+so there is no panel to extract; the sim's plotting must go per-target too.
+
+**B3 — a verdict does not record the context that produced it.** §13.2 is
+binding: *"a verification context is (env, source root, run generation); every
+verdict records all three."* `fit_audit.audit_run` returns `gate_hash` and
+`lib_versions` but no `env` and no `root_kind`/`root_rev`; `audit_run_cached`
+puts them in the cache KEY and hands the payload back unlabelled. So two
+verdicts from different analysis revisions are indistinguishable downstream —
+which is precisely what D-13 was written to prevent. `figure_gen` does carry all
+four, so the two paths disagree.
+
+### 17.4 Plan gaps — work nobody owned
+
+| gap | now owned by |
+|---|---|
+| wiring the §1.3 terminator, incl. the unavailable-judge branch | **P6a** (was: nobody; P3b owned only the *ask*) |
+| per-target panel extraction + its test (D-11.2), and per-target sim plotting | **P3c-0**, a prerequisite of calibration (was: P0e, silently unbuilt) |
+| stamping `env` / `root_kind` / `root_rev` on every verdict | **P3c-0** (was: asserted as done in §13.2) |
+| judge-pack maintenance: who re-authors an entry when a lab's plotting changes | **P6d** (new) |
+| re-measuring the accuracy ledger when a lab's nodes change | **P6d** (new) |
+| the two families with NO node-rejected runs in the corpus | tracked as **R11** below |
+
+**R11 (new risk).** `resonator_spectroscopy_vs_coupler_flux` has zero rejected
+runs in the corpus and `qubit_spectroscopy_vs_coupler_flux` has three accepted
+targets. Their false-accept coverage is **unmeasured, not good**, and any report
+that renders them as "passed" without the sample count is misleading. The
+pack entries say so in their own notes; the calibration report must too.
+
+### 17.5 The shortest honest path to the one-button loop
+
+1. **P3c-0 (new, blocks everything downstream)** — per-target figures: teach
+   `synth.py` to plot per target, wire `figure_gen`'s per-target extraction into
+   the engine, add the D-11.2 fidelity test, and stamp env/root on verdicts.
+   Without this, every judgment and every calibration number is about the wrong
+   picture.
+2. **P3c/P3d** — the two-sided calibration, per family with sample counts,
+   thin families visibly thin (R11). Needs the operator's key.
+3. **P6a** — the terminator: gates PASS **and** signature `clear`, with the
+   unavailable-judge branch decided and recorded in the ledger either way.
+4. **P5a tier 1** — the plan step cap and wall clock (§4.7's two oldest ❌
+   rows); without them a non-terminating loop has nothing to stop it, and step 3
+   is exactly what makes non-termination possible.
+5. Then P4 (action space), P5b–d, P6b/P6c, P7, P8.
+
+Steps 1 and 4 are the ones a demo will skip and a night run will not survive.
+
+### 17.6 Also corrected in the plan text
+
+* **D-3's "reserved keys" row was wrong.** It claimed `simulate`, `timeout`,
+  `load_data_id` and the targets keys are "already blocked by the scheduler".
+  `node_inject.RESERVED_OVERRIDE_KEYS` is `("simulate", "qubits",
+  "qubit_pairs", "targets")` — **`load_data_id` is not blocked**, and it is the
+  one that matters: a node given `load_data_id` replays archived data instead of
+  measuring, so an agent could "calibrate" a chip without touching hardware.
+  P4's action space is planned on top of that false assertion; D-3 now says so,
+  and blocking it is P4's first item.
+* §2's "out of scope: the `…_vs_power_iq` variant" is stale — `fit_audit` and
+  `families` both alias it, deliberately, or every such run silently drops from
+  the backlog.
+* P5b no longer claims the pairwise-vision comparator as future work: D-8 tier
+  2b shipped in P3b; only the deterministic metric-trend half (tier 2a) remains.
+* P2b's "no `verify_wide`" for `power_rabi` is still true and stays open.
+
+---
+
+## 18. Two-stage looking, and testing the judge without a key (2026-08-07)
+
+Two user decisions, both of which changed the design for the better.
+
+### 18.1 The multi-panel problem, solved by changing the question
+
+§17 B2: a real chip's figure is ONE sheet of N panels, and the judge was being
+handed that sheet once per target and asked "is qubit 5 good?". D-11.1 calls
+that a correctness bug, and the obvious fix — always send a single-panel
+figure — turns out to be **unaffordable**: 17 qubits × one step = 17 judge
+calls against a plan budget of 40, so five steps would exhaust it before the
+chain finished. The obvious fix was never going to survive a real chip.
+
+**The user's design instead: look twice, and change the question the first
+time.**
+
+1. **Stage 1 — triage.** Show the whole sheet ONCE and ask *"which panels want
+   a closer look?"* That is a well-posed question about that picture — unlike
+   "is qubit 5 good?", which is not. Cost: one call, whatever N is.
+2. **Stage 2 — dedicated look.** Re-plot the named panels ALONE through the
+   lab's own plotting module (`figure_gen.generate(..., targets=[...])`, built
+   in P0 and until now with zero callers) and ask the per-target signature
+   question on a picture that contains only that target.
+
+The second stage is what P0's figure machinery was for; the first stage is what
+makes the whole thing fit in the budget.
+
+### 18.2 The rule that keeps it honest
+
+Stage 1's silence is where this design can quietly go wrong: if a panel the
+overview glossed over is then declared **done** on the strength of that glance,
+D-11.1 is back wearing a different hat. So:
+
+> **The set that gets a dedicated look = (targets the deterministic gates
+> flagged) ∪ (targets triage flagged).** Union — never either alone.
+
+Because the two fail **differently**. The gates miss the self-consistent noise
+fit (the archived #575 class: a fit that agrees with itself on garbage, which a
+node-faithful replay also agrees with). The eye misses a 3% amplitude error that
+no picture shows. Neither is a superset of the other, so letting one filter the
+other loses exactly the cases the other was there to catch.
+
+Consequences, all pinned in `tests/test_runner_p3.py::TestTwoStageLooking`:
+
+* triage `all_fine` **never** overrides a gate suspect — that target still gets
+  its own look;
+* an unusable or unavailable triage answers `unreadable`, which escalates
+  **every** target: a router that fails must widen the net, never narrow it;
+* triage may only name targets that exist on this chip (a hallucinated name is
+  dropped, not looked up);
+* triage is a **router, not a verdict** — nothing terminates or fails on it, so
+  its worst case is a wasted call. The prompt therefore biases it toward naming:
+  *"a named panel only costs one closer look, while a missed one is never
+  looked at again."*
+* a target in neither set terminates on gates + overview, and the ledger must
+  stamp it **overview only** so no report implies it got a dedicated look.
+
+### 18.3 Testing the judge before the key exists
+
+The user's second decision: run the judge as **fresh-context Sonnet subagents**
+rather than waiting for an API key. Each call gets exactly the payload the API
+would receive — the system prompt plus the request context rendered by
+`build_triage_bundle` — and one real archived figure, with an explicit
+instruction not to read the run's `node.json`, `data.json` or any stored fit.
+The answer comes from the picture and the pack alone.
+
+This is not a simulation of the judge; it is the judge, minus the HTTP call. It
+measures **Sonnet with our prompt and our pack**, which is the part we wrote and
+the part most likely to be wrong. When the key lands, the same case set re-runs
+against the real API and the numbers should reproduce; if they don't, the
+difference is the transport, not the design.
+
+**Ground truth costs nothing:** each archived run records its own per-target
+outcomes, so a sheet where every target succeeded should triage `all_fine`, and
+one with failures should be `some_suspect` naming those targets.
+
+**The two sides are scored differently, and conflating them would be
+dishonest:**
+
+| side | what a wrong answer costs | metric |
+|---|---|---|
+| good sheet | one wasted per-target look — triage is a router, so this is **not** a false reject | escalation cost (extra panels requested per sheet) |
+| bad sheet | the failed panel is **never looked at again** | recall over the failed targets |
+
+Sample counts are reported beside every rate. A rate without its count is not a
+measurement (docs/47's accuracy-ledger discipline, and R11's reason).
+
+### 18.4 Deferred, deliberately (user decision)
+
+§17's other two open items are **parked, not forgotten**:
+
+* stamping `env` / `root_kind` / `root_rev` on every verdict (§17 B3);
+* blocking `load_data_id` on the agent path (§17.6) — the key that makes a node
+  replay archived data instead of measuring. Nothing sets it today; the risk
+  arrives with P4, which is where it must be fixed.
+
+Both keep their §17 owners. Neither is a prerequisite for the two-stage work.
+
+### 18.5 Stage-1 pilot result (2026-08-07) — 16 real figures, real Sonnet
+
+16 fresh-context Sonnet judges, each handed the byte-identical
+`build_triage_bundle` payload plus one real archived sheet, forbidden from
+reading the run's `node.json` / `data.json` / stored fits. Ground truth = the
+node's own per-target outcomes. Cases spread over two families, three chips and
+five months.
+
+| family | good sheets | clean | extra looks/sheet | bad sheets | flagged | panel recall |
+|---|---:|---:|---:|---:|---:|---:|
+| qubit_spectroscopy | 4 | 50% (2/4) | 1.25 | 4 | 100% | **100%** (8/8) |
+| power_rabi | 4 | 75% (3/4) | 1.25 | 4 | 100% | **89%** (8/9) |
+
+**The side that matters passes.** Every sheet containing a node-failed target
+was flagged, and 16 of 17 failed panels were named. The one miss (`qC5`, c14) is
+not categorical — the same judge named `qC5` correctly in c07.
+
+**The escalations look like signal, not noise.** On c00 — nine qubits, all
+node-accepted — Sonnet flagged q4, q5, q7, q8. Two neighbouring runs on the SAME
+chip the SAME day are in the bad set: c04 (node failed q7) and c05 (node failed
+q4, q7). The "false" escalations land on exactly the qubits that chip was
+struggling with, which that particular run's threshold happened to pass. Read as
+marginal panels being noticed, not invented.
+
+This is why the router framing earns its keep: **none of the above is a false
+reject.** c00 costs four extra per-panel looks, which the signature ask then
+adjudicates on single-panel pictures. At 1.25 extra calls per clean sheet, a
+9-qubit chip stays far inside the 40-call plan budget — the affordability
+argument for two-stage looking survives contact with data.
+
+**Caveats, on the record:**
+
+* n = 16, two families. A pilot. Every rate is printed with its count.
+* Ground truth is the node's own verdict, and a node can fail a target for
+  reasons the picture cannot show (a fit that failed to converge on data that
+  looks fine). A "miss" is therefore sometimes "not visible", not "not seen".
+* This measures **Sonnet + our prompt + our pack** — the part we authored and
+  the part most likely to be wrong. The same case set re-runs against the real
+  API when a key exists; a difference then is transport, not design.
+
+**Method note (a mistake worth keeping).** The first attempt was scored against
+hand-transcribed figure paths and pointed at the wrong runs; it surfaced only
+because one path happened not to exist and the judge said so. Had all sixteen
+wrong paths existed, confident numbers would have been computed against
+mismatched ground truth. The case file is now the single source for both the
+run arguments and the scorer, so the two cannot disagree — the same discipline
+§15 applies to bands, applied to the experiment itself.
+
+---
+
+## 19. P4–P8 in one pass (2026-08-07) — the loop closes
+
+User decisions taken as given: judge-unavailable ⇒ gates-only **stamped**;
+default autonomy `review`; P6b minimal; P8 harness + small pilot.
+
+### 19.1 The §1.3 terminator is now WIRED (closes §17 B1)
+
+`_evaluate` gained the round that was missing: for every target the gates
+PASSED, the judge is asked whether the picture carries a correct signature, and
+**a refusal turns the pass into a fail**. That is the loop; until now the plan
+described it and nothing enforced it.
+
+Who gets asked follows §18's two-stage rule: one triage call for the sheet, then
+a dedicated look for the **union** of (gates flagged) and (triage flagged).
+Measured in the sim on 3 qubits × 2 steps: **3 LLM calls**, one target refused,
+that target dropped from the downstream step. Naive per-target would have been
+six calls and climbing — the affordability argument, demonstrated rather than
+argued.
+
+Three states the ledger now distinguishes, because a report that cannot tell
+them apart implies a check that never happened:
+
+| `vision` | meaning |
+|---|---|
+| `clear` | a dedicated look, signed off |
+| `overview_only` | nobody flagged it; it terminated on gates + the sheet |
+| `unavailable` | no judge configured — the approved policy, stamped |
+
+Plus `panel_kind` (`panel` / `sheet`) so "judged on its own picture" is never
+assumed. The sim now renders per-target panels; before, everything was drawn on
+one axes and there was nothing to extract.
+
+**A single-target run is a special case and was initially wrong.** Triage only
+runs on multi-target sheets, so a 1-qubit run had no overview *and* no dedicated
+look — nobody looked at all. Now a one-target run always gets its look: the
+sheet already IS that panel, and the whole cost is one call.
+
+### 19.2 P4 — the action space, and the key that was never blocked
+
+`action_space.py` classifies by **"can a wrong choice lie to us?"**, not by
+number-ness (D-3). `num_shots = 3` is a number and is safe — wrong ⇒ visibly
+noisy. `use_state_discrimination = True` without calibrated blobs is a boolean
+and is dangerous — clean-looking populations that are garbage.
+
+* **class A** picks real numbers inside code-owned bounds; **class B** may only
+  propose, and code checks the precondition; **frozen** is never touched;
+  **reserved** includes **`load_data_id`** — §17.6's finding, now enforced at
+  the agent's own write path in `realbackend`, where every drop is logged. A
+  human may still replay archived data; the agent may not.
+* an **unclassified** key is `unknown`, not class A. A parameter nobody
+  classified is one nobody thought about, and the deceptive ones look harmless.
+* **bounds are data-derived** (D-5): hardware reach from `spec_constraints`,
+  widened by what this lab has actually run — never from schema defaults, which
+  observed values leave far behind. The corpus can widen a soft floor; it can
+  never widen a physical ceiling.
+* an out-of-bound proposal is **rejected, not clamped** — clamping hands the
+  loop a number nobody chose and hides that the agent asked for the impossible.
+* a class-B precondition that cannot be CHECKED refuses. An unverifiable
+  precondition is not a satisfied one.
+
+### 19.3 P5 — a counter is not a stop-loss
+
+`stoploss.py`, three tiers, one entry point ordered harm → budget → no-progress.
+
+* **Tier 1** finally has the plan **step cap** and **wall clock** §4.7 listed as
+  absent from the day the plan was written. They matter precisely because the
+  work queue accepts runtime-inserted rungs: "steps remaining" is not a bound.
+  Unset means unlimited (an unset clock is not a zero clock); `max_steps: 0` is
+  rejected as the typo it is rather than silently doing nothing.
+* **Tier 2** needs BOTH signals flat — the metric trend (free: the gates already
+  compute `peak_snr`/`r2`/`contrast` every attempt) and the pairwise vision
+  comparison. Either alone would stop runs that are genuinely improving on the
+  other axis. A metric wobbling inside ±5% is not progress, and this is the only
+  thing that catches **oscillation**, where every individual step is justified
+  and a counter never fires.
+* **Tier 3** is harm: seeds written and never consumed, drive at the ceiling,
+  and the same target escalating upstream twice — which means the problem is
+  not where we think it is.
+
+### 19.4 P6c — the review that only exists across runs
+
+Every gate so far judges ONE run against itself. The failure that survives all
+of them is the pair that is each internally consistent and mutually impossible:
+node 06 puts a qubit's sweet spot at one bias, node 09 puts it elsewhere, both
+with clean fits and convincing figures. No per-run gate sees it; neither does
+the judge.
+
+**What to compare is corpus-derived.** Harvesting the archives showed which
+quantities ≥2 families actually claim. The list is then **curated**, because the
+same key name is not the same quantity — `frequency_shift` appears in four
+families, but 06's is a qubit-flux response and 07's is a coupler-flux one, so
+comparing them would manufacture disagreement. `optimal_power` is excluded for
+the same reason: 05 and 08b optimise different lines.
+
+**The tolerance is a physical scale the runs themselves report** — a linewidth
+for frequencies, the flux step for offsets — never a constant typed into the
+module. A hardcoded Hz is the Clause-B mistake in numeric form: right for the
+chip it was written on, wrong for the next. A broad resonance tolerates a wider
+disagreement than a sharp one, and the same two numbers correctly produce two
+different verdicts.
+
+The review **reports only**. Deciding which of two contradictory results to keep
+is not something a consistency check has the standing to do — it fires
+`needs_human`, which D-8 calls a normal terminal state, not an exhaustion.
+
+### 19.5 P7 — four events, best-effort
+
+`notify.py`: `plan_done` · `target_halted` · `plan_stopped` · `needs_human`.
+A notifier that fires on everything gets muted, and a muted notifier reads as
+coverage while delivering nothing. Webhook + a persisted browser queue (a closed
+laptop must not lose the night). A dead webhook never raises, and a notifier
+that explodes cannot kill a plan.
+
+### 19.6 P8 — the harness, and why agreement is the wrong metric
+
+`replay_score.py` carves decision points out of a real session — the first *k*
+runs, what the operator did next, and how many runs they still needed — and
+scores proposals against them.
+
+**The metric is "reaches the same conclusion in fewer runs", not agreement.**
+The reference case is docs/56 §6V case C: the operator burned three drive-power
+attempts and a day before refining the step. Agreeing with that is not success.
+So the harness scores an agent that skips the dead end as **faster** even though
+it agrees with the human *less*, and a knob the operator never touched is
+**not** counted as disagreement — it may be the shortcut, and punishing it would
+suppress exactly the behaviour the experiment exists to find. Without measured
+outcomes the report says so instead of substituting agreement.
+
+It never calls a model: the caller supplies proposals, which is what lets the
+same case set run against a subagent today and the real API later and be
+compared.
+
+### 19.7 P9 — not done, and not doable here
+
+Real hardware. There is no fridge on this machine, and its pre-flight requires
+observing a scheduler-run node produce a dataset with `fit_results` **and**
+`patches`. Everything upstream is offline-verified in the sim; P9 begins when
+someone points this at an instrument.
+
+### 19.8 Still open
+
+* **P3c/P3d** — the signature calibration needs a key. §18.5's pilot measured
+  stage 1 only; the ≥90% bar belongs to the signature ask.
+* §17 B3 — verdicts still do not record `env`/`root_rev` (user deferred).
+* `power_rabi` still has no `verify_wide` (§17.6).
+* P6b is minimal by decision: the board carries `vision`/`panel`, and no new
+  screen was built — browser verification is not something this session could do
+  honestly.
+
+---
+
+## 20. Empirical validation of P6c and P8 (2026-08-07)
+
+User: *"우리는 데이터가 꽤 풍부하게 있잖아 — 최대한 실증해보자."* Both were
+built from physical reasoning and neither had been measured. Measuring them
+changed one substantially and stopped the other.
+
+### 20.1 P6c: a 37.5% false-contradiction rate
+
+First measurement: pair every cross-checked family within a session on the same
+qubit, keep only fits the NODE accepted, and run the review.
+
+> **80 comparisons → 30 contradictions → 37.5% false alarm.**
+
+An alarm that fires on more than a third of good pairs is not a loose alarm; it
+is noise with an authoritative voice. The design used `2.0 × linewidth`
+everywhere — physically well-reasoned (a Lorentzian's frequency uncertainty
+scales with its own linewidth) and simply wrong as a number.
+
+**This is the P2 lesson for the third time.** A threshold written from physical
+intuition is a *hypothesis* until the lab's data has answered it, no matter how
+sound the reasoning behind it.
+
+### 20.2 What the breakdown showed
+
+Splitting by family pair, restricting to ADJACENT runs (≤5 run ids apart — the
+same chip state), and keeping only fits that pass OUR gates rather than the
+node's looser bar:
+
+| pair | n | p50 | p90 | p99 | usable factor |
+|---|---:|---:|---:|---:|---:|
+| 03–05 resonator | 47 | 0.108 | 0.368 | **4.6** | 7 |
+| 03–06 resonator | 86 | 0.072 | 0.791 | **13.2** | 20 |
+| 08–08b qubit | 84 | 0.120 | 0.561 | **57.1** | 86 |
+| 08–09 qubit | 62 | 0.288 | 46.7 | **97** | 146 |
+| 06f–09f flux | **3** | — | — | — | — |
+
+Three conclusions, none of which were guessable:
+
+1. **The resonator check survives** at 20 linewidths, and that is still a real
+   check: neighbouring resonators sit ~50 linewidths apart, so it catches "this
+   node fitted the WRONG resonator" — the failure each run hides on its own.
+2. **The qubit checks do not.** Usable only at 86–146 linewidths (340–580 MHz on
+   a 4 MHz line), which is *wider than the spacing to a neighbouring qubit
+   line*. A check that cannot catch the error it exists for is not a loose
+   check — it is not a check. Dropped. (08-vs-09 additionally compares the
+   frequency at the CURRENT bias against the frequency at the SWEET SPOT, which
+   are different quantities by construction: that is what node 09 is for.)
+3. **The flux check — the one this module was designed around** — has exactly
+   **three** gate-passing pairs in the entire corpus. Three samples cannot
+   calibrate a threshold. Shipping one anyway would be precisely the invented
+   number the module refuses everywhere else. Dropped, with a test that exists
+   to keep the gap visible (`test_the_flux_sweet_spot_case_is_NOT_covered…`,
+   which says to delete it when the data arrives).
+
+Also learned: the ORDER of investigation mattered. The first hypothesis — "these
+are different physical quantities, so of course they differ" — was wrong;
+03-vs-06 (current bias vs sweet spot) has the TIGHTEST median of all (0.072).
+The second — "my pairing spans chip retunes" — was also wrong; the tail survives
+at run-id adjacency. What actually removed it was applying OUR gates: much of
+the tail was fits the node waved through and ours reject.
+
+**Result: 0 false contradictions in 133 gate-passing adjacent pairs**, and the
+dropped pairs do exceed the threshold (08–09 in 7 cases), so the drop decision
+is itself data-confirmed.
+
+### 20.3 P6c is now much smaller than designed, and that is the honest outcome
+
+One quantity, three sources, one factor. It answers exactly one question — *do
+two nodes agree about which resonator this is?* — and answers it with a number
+the lab's own data chose. Everything else waits for evidence.
+
+### 20.4 P8: the offline metric, implemented
+
+`runs_saved()` closes the gap named in §19.6. Re-measuring a chip from an
+archive is impossible, so "did the agent's proposal work?" is unanswerable —
+but this is not:
+
+> the agent proposed at step *k* what the operator only reached at *k+n*
+> ⇒ **n runs saved**
+
+Pure archive arithmetic: no re-measurement, no hardware, no key. Matching is by
+DECISION, not by number (within 25%): demanding equality would score a correct
+call as a miss because the agent said 78 where the operator typed 80. A proposal
+the operator never made returns `None` — unscoreable, not wrong, because the
+archive genuinely cannot say whether it was better or nonsense.
+
+### 20.5 P8: and then the measurement said stop
+
+Before scoring an agent, measure what it is competing against. Across five
+archives and five families:
+
+| | |
+|---|---|
+| recovery sequences (a target that failed, then later passed) | **14** |
+| decision points in all of them | **19** |
+| targets that ever needed a retry | 12–15% |
+| runs still needed from the first failure | **median 1**, p90 3, max 3 |
+| sequences needing more than one run | **3 of 14 (21%)** |
+| parameter changes observed between failures | **1** (a `num_shots`) |
+
+**The corpus does not contain the experiment P8 was designed to run.** These
+operators almost never tune-and-retry; 79% of recoveries take a single run and
+essentially nothing is adjusted in between. docs/56 §6V case C — three
+drive-power attempts and a day lost before densifying the grid — is a
+*documented incident*, not the typical pattern in what we hold.
+
+So the harness ships tested and unused. Running a scoring campaign on 19 points
+with one observed knob change would produce a number with no statistical
+meaning, which is worse than no number: it would be quoted. What would make P8
+real, in order of cost: (a) the specific archives where operators genuinely
+iterated, (b) sessions captured from here on with the loop running, (c) the sim
+— where recovery sequences can be manufactured, though then the agent is being
+scored against our own adaptation ladders rather than against a human, which is
+a different experiment and should not be reported as this one.
+
+### 20.6 What this session's measurements have now overturned
+
+| what | written from | what the data said |
+|---|---|---|
+| `r2 ≥ 0.75` (qubit spec) | intuition | rejects 12/34 fits the node accepted |
+| prefactor ∈ [0.5, 2.0] | intuition | rejects 4/55 accepted |
+| jump limits | intuition | 37 accepted moves exceeded them |
+| P6c `2.0 × linewidth` | physical reasoning | 37.5% false contradictions |
+| P8's premise | a documented incident | 19 decision points exist, total |
+
+Five for five. The pattern is not that the reasoning was careless — the flux
+tolerance argument in §19.4 is still *correct physics*. It is that a threshold
+is a claim about a particular lab's data, and the only thing that settles a
+claim about data is the data.
+
+---
+
+## 21. B3, §17.6, and the panel machinery exercised (2026-08-07)
+
+Everything reachable without a device. Two open §17 items closed, and the
+blocker §17 called "the top blocker for P3c" turned out to be a missing caller
+rather than a missing capability.
+
+### 21.1 B3 — a verdict now records the context it is only valid inside
+
+§13.2 was binding and unimplemented: *"a verification context is (env, source
+root, run generation); every verdict records all three."* Three paths produced
+verdicts and each answered differently — `fit_audit.audit_run` put env and root
+in its cache KEY and handed the payload back unlabelled, `figure_gen` carried
+all four axes, the engine's gate verdicts carried none.
+
+`core/autofit/verification.py` is the one shape all three stamp. The design
+point worth keeping: **two analyses are stamped differently on purpose.**
+
+* `lab_replay` — the lab's own analysis re-run in a customer env. Identity =
+  (env, `lib_versions`, root + revision, `gate_hash` over the analysis bytes).
+* `sm_gates` — SM's deterministic gates, computed in-process. No interpreter is
+  spawned, so naming one would be a fiction. Identity = `analysis_rev`, a
+  content hash of `families.py` + `gates.py`.
+
+Collapsing them into one shape would have been the same class of error the
+stamp exists to prevent. And `analysis_rev` is not hypothetical bookkeeping: it
+is the axis that actually moved — sixteen shipped bands were overturned by
+measurement in one session (§15.2b) and five more thresholds in the next
+(§20.6). Every verdict written before those edits means something different
+from one written after.
+
+**The stamp has a consumer, which is the point.** `consistency.reconcile` — the
+only place in the system that reasons ACROSS runs, and therefore the only place
+D-13 can bite — now refuses to compare values obtained under different
+contexts, and records the refusal in `skipped`. A disagreement between a value
+read by one gate revision and one read by another is not a contradiction about
+the chip; it is a category error, and reporting it as physics is how a review
+loses its authority. Passing no `contexts` keeps the previous behaviour
+byte-identically, so the pin from §20.2 still holds.
+
+Fixed on the way: `figure_gen`'s no-compatible-env path built its context from a
+`source_root` that had already been rebound to `None`, and so reported "the
+env's installed analysis" for an analysis that never ran. A confident blank is
+exactly what the stamp is supposed to make impossible.
+
+### 21.2 §17.6 — power_rabi's wide check, and the shape the corpus refused
+
+The family shipped with no `verify_wide`. The obvious fix was the shape the four
+spectroscopy families use — multiply the swept span by four — and 230 archived
+runs (899 accepted prefactors) refuse it:
+
+| mode | runs | window | pulses |
+|---|---:|---|---:|
+| survey | 122 | **[0.001, 1.99]** in 103 of them, step 0.005 | 1 |
+| error-amplified | 108 | median width **0.3** | 20–160 |
+
+Pulse count and window width are anti-correlated because they are physically
+coupled: N pulses alias unless the range stays near 1/N of a Rabi period about
+1.0. So scaling the narrow window by four is wrong **twice**: it reaches only
+[0.6, 1.6] — short of the 0.0024–2.366 that accepted optima actually span — and
+it keeps the pulse count that makes that range fold. It would not survey; it
+would alias.
+
+The honest wide check here is a **mode switch to the lab's own survey**, which
+is also the one measurement that can unmask a locked harmonic: a full
+single-pulse Rabi curve shows the whole oscillation. `verify_wide` gained a
+`survey_params` form for absolute mode switches; `num_shots` is deliberately not
+pinned, so whatever averaging the ladder climbed to is kept.
+
+**This is the sixth threshold this line of work has had overturned by
+measurement, and the first where the refuted thing was a SHAPE rather than a
+number.** "Generalize the mechanism that already works" is the same species of
+claim as "0.75 is a reasonable r²" — plausible, and answerable only by data.
+
+### 21.3 §17 B2 was a missing caller, not a missing capability
+
+§17 called per-target panel extraction "the top blocker for P3c" and recorded
+that `figure_gen.generate(..., targets=[...])` had **zero consumers** — which
+means it had never been run end to end. Running it is what settles it.
+
+On a real 9-qubit archived run, requesting `targets=["q0","q4","q2"]` produced
+three genuine single-target panels through the lab's own plotting module in
+40 s. Inspected: `q0` carries a Lorentzian fit with its parameter box; `q4` —
+which the node itself failed — is pure noise watermarked NO FIT. That is exactly
+the artifact D-11.1 asks for.
+
+Getting there exercised D-13's designed answer for the first time on real data.
+The live analysis tree could serve **neither** env: the 0.5-era env cannot
+import its `quam_config` (needs quam ≥ 0.6), and the 0.6 env cannot load a
+2026-05 run's `quam_state`. `sourceroot.candidates(..., revs="auto")` walked the
+revisions of the analysis-defining paths, materialized each read-only via
+`git archive`, and the **third** pinned revision loaded cleanly. Ten candidate
+roots, four failed (env × root) probes, then a compatible pair — and the
+resulting figure carries that pair in its context stamp.
+
+Worth stating plainly: without the pinned-revision walk, **every archive older
+than the tree's current HEAD is unreplayable**, and P3c would have had no case
+set at all. The amendment that added the third axis to the verification triple
+is what makes the calibration possible.
+
+---
+
+## 22. The constant audit, and the calibration that corrected its own labels (2026-08-07)
+
+Two campaigns, both device-free. The first applied §20.6's method to every
+remaining un-measured constant in `core/autofit/`; the second ran the shipped
+signature ask against real per-target panels, now that §21.3 showed they can be
+made. Each measurement was re-run by an independent agent told to REFUTE it, and
+only what survived that pass is reported as fact.
+
+### 22.1 Six audits, each adversarially verified
+
+The pattern held: the constants written from intuition did not survive, and —
+more usefully — **three of the six audits found that the constant did not matter
+because the code around it was inert or broken.** Measuring a threshold is how
+we discovered nobody was reading it.
+
+**Confirmed, and structural:**
+
+* **Stop-loss tiers 2 and 3 have no caller.** The engine constructs
+  `stoploss.Budget` and never calls `should_stop`, `no_progress`, `metric_trend`
+  or `harm`. Every constant in that module is currently inert — including the
+  ones this audit was convened to measure. Worse, two of them are *unreachable
+  by construction*: the ladders index `rungs[min(count, len-1)]` under
+  `retry_max <= 2`, so the seed rung (index 2) and the escalate rung (index 3)
+  never fire, which makes `unconsumed_seeds >= 3` and `upstream_escalations >= 2`
+  dead conditions. D-8 said "a counter is not a stop-loss"; the honest amendment
+  is that a stop-loss nobody calls is not a stop-loss either.
+* **`PROGRESS_KEYS` covers almost nothing.** Four of the nine families emit none
+  of the eight metrics, ever (284 entries); two more emit them in 2-3% of runs.
+  Tier 2a is therefore blind on most of the chain, and would read "no metric
+  improved" as evidence rather than as absence of evidence. Those families must
+  be declared metric-blind, not silently treated as flat.
+* **`action_space.sanitize` contradicted its own policy.** `classify` documents
+  that an unclassified key is one nobody has thought about, and
+  `reduced_schema`/`validate_proposal` both refuse one — but `sanitize`, the
+  function on the real backend path, passed it straight through. Two halves of
+  one policy disagreeing means the stricter half was decorative. **Fixed.**
+* **`gates._read_target_trace` was h5py-only.** G3 is the raw-data cross-check —
+  the one gate that can distinguish a fit which missed the feature from one
+  which found it — and it opened `ds_raw.h5` with raw h5py. Runs from envs that
+  write NetCDF-classic under that name (732 targets in the corpus) answered
+  "unreadable": not a degraded check, **no check, silently**. **Fixed** by
+  routing through the ndview reader adapter. (The same bug bit this session's
+  own scratch script, which is how confident one should be that a second copy
+  of a format sniff drifts.)
+* **The judge could take the plan down.** The provider call path caught network
+  and value errors but not the payload-SHAPE errors an unexpected response
+  raises. A judge that cannot answer must fail to its safe default, never
+  upward. **Fixed** at both call sites, all four asks.
+* **`metric_trend`'s `best` was not a running maximum** — it advanced only on
+  values that cleared the noise floor, so it reported the last value that
+  happened to jump. **Fixed**, with the noise floor left where it is (the fix
+  must not turn noise into learning).
+
+**Confirmed, and the constant is wrong — but not changed here:**
+
+* **`replay_score`'s `rel_tol = 0.25` erases 20.2% of real operator changes**
+  (n=644) and sits *on* an operator step mode rather than in a gap: a 1.333x
+  step lands at exactly 0.25 and the comparison is `<=`, so 78 canonical steps
+  are declared "the same decision". The evidence supports 0.05-0.10. Not changed
+  yet because the same verifier found a defect **no constant fixes**: `_close`
+  applies a *relative* tolerance to *log-unit* (dBm) keys, where the same
+  physical 10 dB step scores 0.125, 0.25 or 0.50 depending only on the
+  reference. That needs an absolute-delta branch, and the two belong in one edit.
+* **`action_space`'s corpus bounds are a zero-slack envelope.** The branch only
+  ever widens to `[min_observed, max_observed]`, so it is *vacuous on its own
+  training set* (0 rejections in 636 runs) and rejects real usage the moment it
+  meets an archive it was not built from — 2.0% to 22.6% depending on how the
+  held-out set is drawn, and the verifier declined to stake any single headline.
+  Two shape defects underneath it: sweep-EDGE knobs are bounded from both sides
+  when the danger is one-sided, and **69 of 101 corpus bound edges land exactly
+  on a recorded schema default** — the docstring promises bounds are "never
+  taken from the schema's defaults", and the corpus path violates that in
+  outcome for a knob nobody varied.
+* **Several gate bands do not survive the full corpus.** The strongest single
+  finding is a **unit defect** in the T1 family (a `x1e-9` that reaches the band,
+  the relative-jump limit and the `UpdateSpec` write, proven against the node's
+  own patches). Alongside it: the spectral-presence floor rejects 44 of 77
+  accepted node-09 fits, `_ERROR_RATIO_MAX` does not discriminate on ramsey
+  (57.3%), `_FEATURE_Z_MIN` rejects 40.9% of accepted node-08 targets, and a
+  `qubit_pair`/`qubit` coord mismatch has kept two families from ever running a
+  feature check at all. **The "0 false rejects over 276/115" ledger does not
+  survive extension to the full corpus.**
+
+  *Nothing here is re-tuned in this commit*, on the verifier's own condition:
+  the error-amplification, e->f and vs-flux-calibration populations must be split
+  out of their host families first, because that contamination is upstream of
+  every per-band number in the report. Re-deriving a band from a mixed
+  population would repeat §20.1's mistake with better manners.
+
+**Confirmed about the judge pack:** the Clause-B lint has ~0 recall on
+prose-form violations (it catches units and explicit window fractions, not
+"near the centre"), so `lint_dropped == []` is silence, not a clean bill of
+health; `notes` is linted but never rendered (19 kB of maintainer caveats in a
+dead field); and a whole `axes` description is blanked on a single token hit.
+Eight of nine pack entries were authored from fewer than ten figures.
+
+**Refuted, and worth recording as method:** several headline numbers in the
+first-pass reports did not survive — a slack table that was internally
+impossible, "half the hits are floor rejections" (31%), a claimed density
+minimum that finer sampling erased, and a 26-run count that was 8. The verify
+pass earned its cost: roughly a fifth of the quantitative claims were wrong in
+detail while the directions held.
+
+### 22.2 P3c — the calibration corrected its own labels twice
+
+64 per-target panels across five families, regenerated through the lab's own
+plotting (§21.3), each judged by a single call using the SHIPPED
+`_SIGNATURE_SYSTEM` and the shipped v1 pack — one panel per call, which is the
+shipped contract.
+
+**The first labelling was wrong, and D-13 is why.** Labels came from the
+archived `node.json` outcome; pictures were drawn with `fit_source="fresh"`,
+i.e. the CURRENT analysis revision. Those are two different verification
+contexts. Verified on a real panel: a target marked `successful` in the archive
+draws NO FIT over pure noise under the fresh analysis — the judge called it
+absent and was **right**. Re-labelling with `fit_audit.audit_run` (same env,
+same pinned root, same analysis as the figure) **flipped 18 of 64 labels — 28%
+of the case set.** The stamp introduced in §21.1 is what made the error
+diagnosable rather than mysterious.
+
+Against labels that share the pictures' context:
+
+| | n | result |
+|---|---:|---|
+| **leniency** (bad panel -> judge says clear) | 12 | **0 (0%)** |
+| **stinginess** (good panel -> judge says clear) | 52 | 39 (75%) |
+
+The leniency result is the one that protects the loop: under §1.3 a "clear" is
+the last word before a target is declared done, and **no bad panel got one.**
+
+**The 90% stinginess bar, as written, cannot be measured this way** — and that
+is the second label correction. Inspecting the 13 disagreements shows the judge
+naming real defects that the label cannot see, because the label is a *scalar*
+success flag and the judge is asked about a *picture*:
+
+* on the 2-D power-sweep family, the node's own per-row centre chain rails onto
+  a parasitic tone for several rows while the ridge itself is unmistakable — the
+  scalar frequency is fine, the picture is not;
+* on a resonator panel the judge called unclear, **the lab's own plotting had
+  already titled it "(freq OK, shape poor)"** — its analysis carries a separate
+  `success_shape` verdict and renders three title states from it.
+
+That is the judge agreeing with the lab's picture-level verdict and disagreeing
+with its scalar one, which is exactly what §1.3 asks for (gates AND judge, not
+judge ~ gates). Only 4 of the 64 panels carry an archived `success_shape`, so
+the correlation is a **lead at n=4**, corroborated by direct inspection of two
+panels — not a measurement. Recording it as more would repeat the error this
+section is about.
+
+**So D-7's stinginess bar needs a picture-level label, and the project does not
+have one.** Options, in order of cost: hand-label a set; or derive one from the
+labs' own quality flags where they exist (they do, and they are not exposed
+through `fit_audit` today).
+
+### 22.3 P3d — the seam runs, and the deception has to be visible
+
+`figure_gen`'s `override_fit` had also never been exercised. It works: nine
+manufactured wrong-fit panels were produced for `power_rabi` by halving the pi
+amplitude and its prefactor **together** (halving both is what makes the lie
+self-consistent, which is what makes it deceptive).
+
+They were not judged, because looking at them showed the deception **is not
+rendered**: that family's primary figure is a raw chevron map with no fit
+overlay, so changing the claimed number changes nothing in the picture. Two
+consequences, both worth stating plainly:
+
+1. **A wrong-fit injection can only test a judge where the family's figure
+   actually draws the overridden quantity.** D-7's leniency calibration
+   therefore has a per-family precondition the plan never recorded.
+2. More importantly: for that family's error-amplification variant, **the vision
+   judge cannot catch a wrong pi amplitude at all** — the figure it is shown does
+   not display the claim. That is consistent with D-1 (the number is the gates'
+   job), but it means "the judge signed off" carries less information there than
+   elsewhere, and a report must not let it read the same.
+
+The spectroscopy half of the manufactured set was not built: the fresh analysis
+names its centre `f0` where the archive stores `position` (§4.5b drift again),
+and the override plumbing hit a dtype refusal after the schema probe was added.
+Fixable; not fixed.
+
+### 22.4 What is now open, in the order the evidence supports
+
+1. ~~the T1 unit defect~~ — **done, §22.5.** What remains is to split the
+   contaminated populations out of their host families and then re-derive the
+   *bands* §22.1 flags.
+2. Wire tiers 2 and 3 of the stop-loss to a caller, and declare the
+   metric-blind families rather than letting a blind check read as a passed one.
+3. `rel_tol` + the dB-key absolute-delta branch, in one edit.
+4. Re-shape the corpus bounds (slack, one-sided edges, no default-derived edge).
+5. A picture-level label source for D-7's stinginess bar.
+6. Harden the Clause-B lint against prose, and surface or drop `notes`.
+
+### 22.5 The T1 unit defect — and the sim that was validating it
+
+§22.4 ranked this first because it is a bug, not a calibration. Confirming it
+independently took four measurements, and the third and fourth are the
+interesting ones.
+
+1. **The chips store seconds.** `qubits.*.T1` / `T2ramsey` / `T2echo` across 399
+   archived snapshots: n = 8,379 / 7,354 / 7,980, p50 ≈ 3e-5. The shipped band
+   `[0.5e-6, 1e-3]` is *correct* for those values.
+2. **The node's fit reports nanoseconds.** `t1` ≈ 3e4. So the band accepted
+   **0 of 6** accepted fits, and the `UpdateSpec` would have written ~30,000
+   SECONDS into a field holding 30 microseconds — a 1e9 error, straight to the
+   live chip.
+3. **Six fits from three runs is not a convention.** They all came from ONE
+   node variant in ONE archive, which is exactly the sample-population trap that
+   §20.1 and §22.1 keep catching. The corpus turns out to hold **two** T1 node
+   versions; measuring the other gives **n = 141 across 27 runs, also
+   nanoseconds**. n = 147 over two node versions and two archives — now it is a
+   convention.
+4. **The sim was emitting seconds**, which is why nothing had ever failed.
+   `synth.py` produced `t1` in the same units the band expected, so the ledger's
+   T1 rows agreed with a gate that rejects every real T1 fit. **A simulator
+   built to match the code rather than the instrument validates the bug.** The
+   sim now emits nanoseconds for the fit and keeps seconds for the patch —
+   which is what the real node does.
+
+The fix is deliberately *not* a scale bolted onto the band or onto the write.
+Both of those exist, and the defect's real cause is that **there were two
+readers**: `gates` read `entry[pl.key]` for the band while `families` read
+`fit_entry[spec.fit_key]` for the write, and nothing made them agree about
+units. So the fix is **one reader** — `families.fit_value(fam, entry, key)`,
+through which the band, the jump limit, the G5 history anchor and the write all
+now pass. A test pins the property directly: what the band judged is exactly
+what gets written.
+
+The scale is scoped by measurement, not by family shape: ramsey's `decay`
+(n=635) and echo's `T2_echo` (n=143) already report seconds and are **not**
+scaled — scaling them would have created the same defect in the other
+direction. A test pins that too, and pins that no other family acquires a scale
+by accident.
+
+---
+
+## 23. Does the fit automation actually work? Replayed on the two vs_power families (2026-08-08)
+
+No device was available, so the check was run against the archive — which is
+better than a smoke test, because each archived run carries the answer key:
+`patches[].old` is the state before and `patches[].value` is what the
+instrument's own node decided. `current_value_of` returns the PRE-update state
+(patch `old` first), since a run's `quam_state` snapshot is POST-update whenever
+patches exist and reading it would hand the automation the answer.
+
+The engine has **two** write paths and they had to be checked separately: when
+the node produced its own patches the engine KEEPS them and only the gate
+verdict decides the chip's fate; when the node wrote nothing, the engine
+computes the write itself from the family's `UpdateSpec`s.
+
+### 23.1 The gates, over 252 real targets
+
+| family | node accepted | ours pass / suspect / fail | node rejected | ours fail |
+|---|---:|---|---:|---:|
+| qubit spectroscopy vs power | 87 | **87 / 0 / 0** | 3 | **3** |
+| resonator spectroscopy vs power | 136 | 79 / 57 / 0 | 26 | **26** |
+
+**Zero false rejects and zero false accepts.** Every one of the 29 targets the
+node itself rejected is caught; nothing the node accepted is thrown away.
+
+The 57 suspects are not rejections — they route to the judge — and they have one
+cause: the family's own consistency check firing on runs where *"the node
+produced no power split (target full-scale / amplitude absent) — its own
+analysis declined this fit"*. That is a real signal, but 42% of accepted targets
+escalating is a cost worth naming, and it is the first candidate for the
+population split §22.4 already calls for.
+
+### 23.2 The forward write, and a coverage gap the replay found
+
+Parity on the paths the forward path computes: **189 match, 2 mismatch.** Both
+mismatches are the same target in one run, where the node emitted a *no-op*
+patch (old == value) while our fit-derived value moved 3.2 MHz — and our gates
+had already marked that target `suspect`, so the loop would never have written
+it. The system disagreeing with a node that declined its own fit is the system
+working.
+
+The real finding is coverage. Node 08b writes **six** fields per target and the
+forward path computed **two**; node 05 writes three (plus the coupled power
+rows) and it computed two. Measured against every archived write:
+
+| path | in the fit? | action |
+|---|---|---|
+| `qubits.{q}.anharmonicity` | `anharmonicity_fitted`, **36/36** | **added** |
+| `qubits.{q}.resonator.frequency_bare` | `bare_resonator_frequency`, **21/21** | **added** |
+| `qubits.{q}.resonator.operations.readout.amplitude` | — | already built by `power_rows` |
+| `qubits.{q}.xy.operations.saturation.amplitude` | `optimal_amplitude`, only **10/38** | declared gap |
+| `…x180_DragCosine.amplitude` | nothing matches, **0/23** | declared gap |
+| `…x90_DragCosine.amplitude` | nothing matches, **0/23** | declared gap |
+
+The two additions are the node's own numbers, verified on every archived write.
+The three that are left are **not** closed by inference: no fit key reports
+them, so writing them would mean reverse-engineering the node's formula, and
+D-14 says run-derived or skipped, never guessed.
+
+But skipping them silently is the other failure. The forward path only runs when
+the node wrote nothing, so writing our subset leaves the rest stale — the "quiet
+partial" r12 forbids, and the same hazard `power_rows` already guards for the
+resonator family. So `Family.forward_gaps` declares each missing path **with the
+measurement that made it a gap**, and the engine ledgers `forward_partial` and
+files a review-queue entry naming the fields it left alone, resolved for that
+target. The calibrated frequency is still written — it is worth having — but no
+report can now imply the write was complete.
+
+Parity after the additions: **189 / 2**, up from 132 / 2.
+
+---
+
+## 24. Working the §22.4 list (2026-08-08)
+
+Four of the six, in the order the evidence supported. Two are left, with the
+reason.
+
+### 24.1 Stop-loss tiers 2 and 3 now have a caller — after two bugs were removed
+
+The audit's finding was that `should_stop` / `no_progress` / `metric_trend` /
+`harm` had **no caller at all**. Wiring them naively introduces two defects,
+and both had to be fixed first — which is the whole reason this was ranked
+after the measurement rather than before it.
+
+1. **Metric blindness is not flatness.** Four of the nine families emit none of
+   the eight progress metrics, ever. `metric_trend` now reports `present`, and
+   `no_progress` returns None when nothing is present — otherwise tier 2a would
+   stop every metric-blind family after three attempts, reading absence of
+   evidence as evidence. (2b may still speak alone there, but only to say the
+   picture is *degrading*.)
+2. **Tier 2 must not pre-empt an untried escalation.** "We are not learning" is
+   a claim about what we have *tried*; a cross-node re-calibration nobody has
+   attempted is not one of those things — and it is precisely the fix for the
+   case the escalate rung exists for (a qubit invisible because the READOUT is
+   mis-centred, where no same-node knob can help). `should_stop` gained
+   `allow_no_progress`, and the engine clears it while the mode's ladder still
+   holds an escalate rung. Tiers 1 and 3 still apply: a budget is a fact and
+   harm is harm, whatever remains untried.
+
+   This was not foreseen — the LOOP_STUDY case-A scenario test failed the
+   moment the wiring landed, which is the test doing its job.
+
+On a stop the target is deferred and the plan continues (D-8: never a
+half-adapted chip, never a lost night), and `target_stopped` carries the tier
+and reason. Escalations are counted per target, which is tier 3's input.
+
+### 24.2 `rel_tol`, and the defect no constant fixes
+
+0.25 → **0.075**. It erased 20.2% of 644 real class-A parameter changes and sat
+*on* an operator step mode rather than in a gap: 1.333× lands at exactly 0.25
+and the comparison is `<=`, so 78 canonical steps (1.2×, 1.25×, 1.333×) were
+all declared "the same decision". 0.075 keeps the docstring's own 78-vs-80 case
+with more than 3× headroom.
+
+Shipped in the same edit, because it is the same bug: a **relative** tolerance
+on **log-unit** keys is reference-arbitrary — the same physical 10 dB step
+scores 0.125 at −80→−70 dBm, 0.25 at −40→−30 and 0.50 at +10→+20. No value of
+`rel_tol` makes that consistent. dB-valued keys now take an absolute 1 dB
+tolerance, and a test pins that the same step is judged identically wherever it
+sits.
+
+### 24.3 The corpus bounds are a sample, not a limit
+
+Three shape defects, each measured (§22.1), each fixed:
+
+* **slack** — an observed range is stretched ×3 before it binds. A zero-slack
+  `[min, max]` is vacuous on its own training data (0 rejections in 636 runs)
+  and rejects 2–22% of held-out usage.
+* **one-sided edges** — a sweep edge is bounded only on its dangerous side.
+  `min_power_dbm = −40` was refused for being *above* the observed −50, and
+  `num_flux_points = 41` for being *below* 101; starting a sweep higher or
+  coarser is strictly safer, and bounding it is a category error.
+* **no default-derived edge** — a knob nobody varied has a one-point "range",
+  and that point is the schema default, so enforcing it enforces the default —
+  the one source the docstring promises never to use (69 of 101 corpus edges
+  landed exactly on a recorded default). `bounds_for` now takes
+  `schema_defaults` and drops a degenerate range that merely echoes one.
+
+### 24.4 The Clause-B lint gets recall — as a WARN tier, and the split is a measurement
+
+The audit was right that the lint is silent rather than clean: it catches units
+and explicit window-fractions and almost nothing written in words, which is the
+form an author reaches for. Three prose rules were added — word-form position
+claims, unqualified size adjectives, and counts of periodic features.
+
+They are **not** drop rules. Run against the shipped v1 pack they flag ten
+strings, and reading those ten shows most are false positives: *"one fringe runs
+vertical"* is a shape statement, *"instead of a narrow band"* is a contrast, and
+*"several periods across the window is a legitimate signature"* exists precisely
+to PREVENT a Clause-B misjudgement. P3c measured the judge's weak side to be
+**stinginess** (0/12 leniency, 75% stinginess), so thinning the pack on a
+regex's guess would worsen the measured weakness to fix a hypothetical one.
+
+So they warn: logged at load, exposed as `lint_warnings`, never removed. And
+the docstring's implicit claim is corrected — `lint_dropped == []` means nothing
+was *dropped*, which is not the same as clean, and reading it that way is what
+let the word-form violations ship.
+
+### 24.5 Left open, with the reason
+
+* **Re-deriving the bands** (§22.4 item 1's remainder) still waits on splitting
+  the error-amplification / e→f / vs-flux-calibration populations out of their
+  host families. That contamination is upstream of every per-band number, and
+  re-deriving from a mixed population would repeat §20.1's mistake politely.
+  §23.1 adds a first target: 42% of accepted `resonator_spectroscopy_vs_power`
+  targets escalate on one consistency check, which is the same smell.
+* **A picture-level label for D-7's stinginess bar** needs the labs' own
+  quality flags (`success_shape` and its siblings) surfaced through
+  `fit_audit`, which today reports only the scalar `success`. Four of 64 panels
+  carry the flag in the archive — enough to see the mechanism, not enough to
+  calibrate on.
+
+---
+
+## 25. The chain test: 03 → 05 → 06, walked the way a human walked it (2026-08-09)
+
+§23 replayed runs one at a time. A chain is different, because each step writes
+the state the NEXT step is measured under — it is the only place compounding
+error can appear. Fourteen real 03 → 05 → 06 resonator chains exist in the
+archives; the replay used the tightest: three consecutive run ids on one chip,
+same day, nine shared qubits, with the first two steps carrying the operator's
+own patches as the answer key.
+
+The replay starts at the state before step 1 (reconstructed from
+`patches[].old`) and walks the same three runs, taking the engine's decision at
+each: gates pass → keep the node's own write (or forward-write when the node
+wrote nothing); suspect → defer with the write kept and flagged; fail → revert.
+
+**Validity is stated, not assumed.** Run k+1's raw data was taken under the
+OPERATOR's state after run k. Replaying k+1 is only legitimate while our state
+still matches theirs, so the script reports where it stops matching instead of
+carrying on quietly.
+
+### 25.1 Result
+
+| step | node | gates | decision | state vs the operator |
+|---|---|---|---|---|
+| 1 · resonator spectroscopy | 9/9 successful | 9 pass | keep node write | **identical** |
+| 2 · vs power | 9/9 successful | 9 pass | keep node write | **identical** |
+| 3 · vs flux | 4 successful, 5 failed | 4 pass, 5 fail | forward-write ×4, revert ×5 | **diverged: 12 fields** |
+
+Two steps in, across nine qubits and six watched fields each, the automation's
+state is **field-for-field identical** to what the physicist produced — and the
+five targets node 06 failed were caught and reverted, none of them wrongly.
+
+### 25.2 Why step 3 diverged, established by content and not by inference
+
+Node 06 reported no write. The first reading — "the operator declined to apply
+this run" — could not be trusted, because **2,151 of 3,459 archived runs carry
+no `patches` key at all**, so an absent write record is not evidence of an
+absent write. (An early pass of this analysis also mis-read an aggregated key
+listing as showing the key present; both readings had to be thrown out.)
+
+The runs' own snapshots settle it. Snapshots are post-run, which the control
+confirms: #521 → #522 differ by exactly 33 leaves, which is exactly the 33
+patches #522 recorded. And #522 → #523 differ by **0 of 10,304 leaves**. Node
+06 ran, produced four good fits, and wrote nothing.
+
+The engine's forward path then wrote 12 fields across those four qubits. Those
+writes are *faithful* — measured against every archived 06 run that DID write,
+the node writes `z.joint_offset`, `resonator.f_01` and `resonator.RF_frequency`,
+which is what our `UpdateSpec`s produce. Nothing was written that the node would
+not have written. The divergence is not about **what**; it is about **whether**.
+
+### 25.3 What that means, and what changed
+
+The forward path exists because some runners do not self-apply, and there it is
+the only way a calibration reaches the chip. But node 06 self-applies in 12 of
+27 archived runs, so on this chain the automation was simply **more aggressive
+than this operator was**. Both are defensible policies. A report that cannot
+tell them apart is not.
+
+So the write is now disclosed: `write_applied` carries
+`node_reported_no_write=True` plus the paths, and the plan state counts
+`forward_writes`. No behaviour change — a loop whose backend never self-applies
+is unaffected — but "the node had nothing to say and we acted anyway" is on the
+record instead of looking identical to "we carried the node's own write".
+
+**This is the finding a per-run replay could not produce.** §23 checked 252
+targets and every write matched; the chain asked a question §23 never posed —
+*would the chip end up where the physicist left it?* — and the answer was yes
+for two steps out of three, for a reason worth knowing.
+
+---
+
+## 26. "Is node 06's write actually right?" — the question that found a live hole (2026-08-09)
+
+Everything up to §25 used the node's own patches as the answer key. That is
+fair for *"does our automation compute the same thing"* and says nothing about
+whether the thing is **correct**. Asked directly, the answer changed the code.
+
+### 26.1 The first check was wrong, and the figure said so
+
+The independent check: trace the resonator ridge out of `ds_raw` — per flux
+column, the frequency where |S21| is extremal — and ask how far the node's
+claimed sweet spot sits from where the ridge turns over.
+
+First pass: median 2.4 flux steps, p90 23, max 31. That reads like the node
+being sloppy. **Looking at the figure showed the checker was sloppy instead.**
+The arc runs several PERIODS across a wide flux window, so it has several
+turning points; taking the *global* extremum of the smoothed ridge lands on a
+different lobe and manufactures a 20–30-step "error" out of nothing. The
+claimed spot sits exactly on the local maximum nearest the working point, which
+is the physically right answer.
+
+Corrected to the nearest LOCAL turning point:
+
+| | n | distance to a real ridge turn | outside the swept window |
+|---|---:|---|---:|
+| the node **wrote** these | 74 | median **0.4** steps, p90 1.0, max 2.2 | **0** |
+| succeeded, node wrote nothing | 86 | median 0.5, **p90 35.4, max 53.1** | **12** |
+
+So node 06's writes are right — sub-pixel — and its *decision to withhold* is
+discriminating, not arbitrary.
+
+### 26.2 The hole
+
+Those 12 out-of-window claims name a flux offset the sweep never visited. All
+12 were marked `successful` by the node, and the node declined to write every
+one. **Nothing on our side would have stopped them:**
+
+* G1 follows the node's outcome — which was success;
+* the metric gates skip a metric the run reports as `None`, and all 12 do;
+* the plausibility band is the flux line's ±10 V envelope, and these are
+  0.08–0.95 V;
+* this family's `feature_check` is **span mode** — it asks whether a signal
+  exists and never where the claim sits.
+
+So the engine's forward path would have written a value the data does not
+contain. And `families.py` carried a comment saying a value outside the swept
+window "is caught by the consistency check" — **a protection that did not
+exist**. The comment was the only thing guarding it.
+
+### 26.3 The gate, and why the bound is the run's own
+
+`_claim_inside_swept_flux` compares `idle_offset` and `min_offset` against
+`[min_flux_offset_in_v, max_flux_offset_in_v]` **from the run's own
+parameters** — never a constant, because a chip swept over ±0.2 V must not be
+judged by one swept over ±2.5 V, and one archived run swept an asymmetric
+`[−2.5, −0.5]`. The edge tolerance is likewise the run's own flux step (a small
+overshoot at the boundary is normal fitting behaviour), falling back to 2% of
+the window when the point count is absent. A run that does not report its
+window gets **no opinion** — an unverifiable premise is not a violation either.
+
+This required the gate pipeline to hand run parameters to consistency checks;
+one-argument checks (the majority) are untouched.
+
+Two-sided on the corpus that found it:
+
+> **fires on exactly those 12; silent on all 148 others, including every one of
+> the 74 the node itself wrote. 0 false rejects.**
+
+The gate and the instrument agree target for target on all 160 — which is the
+strongest corroboration available without a device.
+
+### 26.4 What this says about the method
+
+The chain (§25) found that we wrote where the operator did not. Checking
+*whether that write was right* found that on that particular chain it was
+(0.1–0.6 flux steps, r² ≥ 0.98) — and that on twelve other targets it would not
+have been. **A per-run replay could not have asked this, and neither could a
+chain replay; only "is the answer key itself correct?" gets there.**
+
+It also cost two wrong turns worth recording: an aggregated key listing
+mis-read as evidence a field was present (§25.2), and a ridge estimator that
+accused the instrument before the figure exonerated it. Both were caught by
+looking at the thing itself.
+
+---
+
+## 27. The qubit chain: 08 → 08b → 09, and one constant serving two shapes (2026-08-09)
+
+Sixteen real 08 → 08b → 09 chains exist in the archives. The replay used the
+best: three runs on one chip on one day, **all three carrying the operator's
+own patches** (the resonator chain of §25 had none on its last step), five
+shared qubits.
+
+### 27.1 First pass: two steps perfect, four reverts on the third
+
+| step | node | our gates | state vs the operator |
+|---|---|---|---|
+| 1 · qubit spectroscopy | 5/5 successful | 5 pass | **identical** |
+| 2 · vs power | 5/5 successful | 5 pass | **identical** |
+| 3 · vs flux | 5/5 successful | **4 fail**, 1 pass | diverged: 12 fields |
+
+Four reverts against the operator on one step is either a real catch or four
+false rejects, and that difference matters more than the chain result. Every
+one came from the same gate: G3's spectral presence check, `peak/median` of
+6–13 against a floor of **50**. The one that passed scored 253.
+
+### 27.2 The figure said false reject, and the corpus said why
+
+`qD3`'s panel carries an **unmistakable bright parabolic arc** that the node's
+own fit follows through its apex. It scored 13. That is not a marginal call.
+
+The cause is structural rather than a mis-tuned number. Span mode reduces a
+cube to its most-structured **row**; a 1-D oscillation concentrates all its
+power there, while a 2-D flux arc spreads it across every row. Measured over
+every span-mode family:
+
+| family | shape | accepted min | accepted p50 | rejected by the floor of 50 |
+|---|---|---:|---:|---:|
+| T1 | 1-D | 45 (n=36) | 3,472 | 1/36 |
+| echo | 1-D | 79 (n=14) | 282 | 0/14 |
+| ramsey | 1-D | 18 (n=262) | 795 | 9/262 |
+| **qubit spec vs flux** | **2-D** | **4 (n=185)** | 25 | **122/185** |
+| **resonator spec vs flux** | **2-D** | **6 (n=160)** | 445 | 17/160 |
+
+The 1-D families sit comfortably above the floor; the 2-D ones sit an order of
+magnitude below it. **One constant cannot serve both shapes** — it was
+discarding two thirds of the good work on one family.
+
+`FeatureCheck.spectral_min` is now per-family: 3.0 for qubit-vs-flux (below the
+accepted minimum of 4, still catching 4 of 74 rejects) and 4.5 for
+resonator-vs-flux. The 1-D families keep the default, because re-deriving them
+needs the population split §22.4 still calls for and their false-reject rates
+are 0–3%.
+
+**Replayed after the change: 45 of 45 watched fields identical to the
+operator's, across all three steps.** The chain ends exactly where the
+physicist left it.
+
+### 27.3 What it costs, stated in the ledger
+
+Lowering a floor to stop false rejects buys a blind spot, and the accuracy
+ledger records it rather than quietly dropping the assertion. Two cells moved
+to `pass_allowed`:
+
+* **06** — its ridge metrics (`ridge_amp_snr`, `coverage`, `r2`) are the real
+  presence check for that family, plus the swept-window gate from §26. Losing
+  the spectral catch there costs little.
+* **09** — costly, and worth saying plainly: **this family declares no metric
+  gates at all**, so the spectral check was its only deterministic presence
+  guard and no longer is. What remains is the plausibility band, G5 history and
+  the vision round — which makes the judge load-bearing for this family in a
+  way it is not for 06. Closing it properly needs a presence discriminator the
+  family's fit output does not currently report. That is a §22.4 item, not a
+  number to pick.
+
+The trade was not close: 122 false rejects against a manufactured empty window
+that the vision round is there to catch.
+
+### 27.4 Two chains, one pattern
+
+Both chains reproduced the operator exactly for the first two steps and both
+diverged on the flux step — for opposite reasons. The resonator chain diverged
+because we **wrote where the operator declined** (§25), and the qubit chain
+because we **refused what the operator accepted**. Both were invisible to
+per-run replay: §23 checked 252 targets and found every write matching.
+
+The flux step is where this loop is weakest, and it took walking the sequence to
+see it twice.
+
+---
+
+## 28. The full bring-up chain, and the scorecard that replaces it (2026-08-09)
+
+### 28.1 The seven-step chain exists, and it is the wrong instrument
+
+107 candidate chains; three cover all seven steps
+(03 → 05 → 06 → 08 → 08b → 09 → 11). The best walkable one runs #233–#243 in a
+single day with two shared qubits.
+
+Result: **all seven steps, both qubits, our gate verdict matched the node's own
+outcome** (six pass, one fail). Final state: 16 watched fields identical, 6
+different — and every difference is a field only WE wrote, on the four steps
+where the operator ran the node and applied nothing.
+
+Which is exactly why one chain cannot grade a loop. **This operator applied 3 of
+7 steps.** "Does the final state match theirs" is not a question with a
+meaningful answer when the reference trajectory is mostly no-ops, and two qubits
+is not a sample. The chain is a good demonstration and a bad measurement.
+
+### 28.2 The scorecard: every archived run of all seven families
+
+So the evaluation runs the CURRENT gates over the whole corpus instead —
+**635 runs, 2,434 targets** — asking the two questions that decide whether the
+loop is safe to leave alone.
+
+| family | runs | accepted: pass / suspect / fail | rejected: fail / pass |
+|---|---:|---|---|
+| resonator spectroscopy | 106 | 204 / 47 / **40** (291) | 47 / **0** |
+| … vs power | 52 | 79 / 57 / 0 (136) | 26 / **0** |
+| … vs flux | 30 | 148 / 12 / 0 (160) | 7 / **0** |
+| qubit spectroscopy | 111 | 188 / 2 / **122** (312) | 67 / **0** |
+| … vs power | 24 | 87 / 0 / 0 (87) | 3 / **0** |
+| … vs flux | 80 | 185 / 1 / 0 (186) | 80 / **0** |
+| power rabi | 232 | 538 / 347 / 16 (901) | 131 / **0** |
+| **all seven** | **635** | **1,429 / 466 / 178 (2,073)** | **361 / 0** |
+
+> **False accepts: 0 of 361.** Nothing the node rejected is passed, in any
+> family. That is the side that silently writes a wrong number, and it is clean.
+>
+> **False rejects: 178 of 2,073 (8.6%)**, and they are not spread out — 122 of
+> them are `qubit_spectroscopy` and 40 `resonator_spectroscopy`. The flux
+> families, which §27 fixed, now sit at zero.
+>
+> **Escalated to the judge: 466 (22%).**
+
+The write path, over every path the node actually wrote:
+**1,938 identical / 67 different — 96.7%.**
+
+### 28.3 What the write disagreements were, one of them a real bug
+
+**Fixed — the π/2 amplitude, and the split is total.** Our `UpdateSpec` writes
+`x90 = opt_amp / 2` on the rule that π/2 is half of π. Measured: with
+`operation="x180"` the node wrote HALF in **494 of 494** archived x90 patches —
+the rule is right. With `operation="x90"` it wrote the **FULL** amplitude in
+**10 of 10** — because there `opt_amp` already IS the π/2 amplitude. Our second
+row fired anyway and overwrote the first with half, silently installing a
+half-strength π/2 gate. The row now stands aside when the run was the x90.
+(1,938/67 above is post-fix; it was 1,938/77.)
+
+**Open, characterised, not guessed at.** 26 `z.joint_offset` writes on
+`qubit_spectroscopy_vs_flux` differ **on targets our gates PASS** — so we would
+write them. They split into at least two sub-patterns: in several the node's
+change is exactly *minus* the fitted `idle_offset` where ours is *plus*, and in
+others it is a flat ±0.01 V regardless of the fit. Neither is rounding, and the
+split does not follow the node version. Fourteen of ~190 flux-offset writes
+(7%) is a live risk worth naming; picking a sign from half-understood evidence
+is how §20.1 happened, so it is recorded rather than patched.
+
+Also seen and deliberately left: two cases where the node wrote the **string**
+`'7248143863.589256'` where we write the float (the docs/56 r14 stored-as-text
+class — same number), a handful of sub-1% differences, and five π amplitudes
+the node set to exactly 0.8 where the fit said 0.34–0.55 (**not** a ceiling
+clamp — the node wrote *higher* than the fit; cause unknown, n=5).
+
+### 28.4 Where this leaves the loop
+
+* **Safe on the dangerous side.** Zero false accepts over 361 rejected targets
+  across all seven families, and 96.7% write parity.
+* **Costly on the cautious side, in two known places.** 122 false rejects on
+  `qubit_spectroscopy` and 40 on `resonator_spectroscopy` — 8.6% overall. Both
+  are §22.4 item 1 (re-derive the bands after splitting the contaminated
+  sub-populations); the flux families show what that work buys, having gone
+  from 122/185 rejected to zero.
+* **One live write risk** — the flux-offset sign/step disagreement above.
+* **22% escalation** means roughly one target in five needs the judge, which
+  makes P3c's calibration load-bearing rather than optional.
+
+### 28.5 The pack has to reach the machine that runs it
+
+A pre-merge check of the branch against `main` found the judge pack shipped in
+the wheel (`MANIFEST.in` + `package-data`) and **not** in the PyInstaller
+bundle, whose `datas` collected only `web/templates`, `web/static` and
+`generator/`.
+
+The failure mode is the one this programme keeps legislating against.
+`load_pack()` answers `{}` for a missing directory instead of raising — correct
+at runtime, since a lab that deletes a pack should lose exemplars rather than
+lose the app. Frozen, the same politeness means the `.exe` runs a judge that
+was taught nothing and says so to no one: every `signature` ask still returns a
+verdict, drawn from no family knowledge at all. A silent degradation of the
+thing that terminates the loop.
+
+Both distributions are now pinned by `TestThePackReachesEveryDistribution`
+(`tests/test_runner_p3.py`), including a guard that the source tree has packs
+to ship — otherwise the class would pass vacuously on the day the packs move.

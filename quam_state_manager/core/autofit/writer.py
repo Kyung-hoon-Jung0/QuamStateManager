@@ -327,6 +327,11 @@ class RealWriter:
     def current_value_of(self, dotted: str):
         return _current_value(self.chip, dotted)
 
+    def merged_view(self) -> dict | None:
+        """State + wiring in one root — power coupling resolves the feedline
+        port through the wiring pointer chain, which `state` alone can't see."""
+        return getattr(self.chip.store, "merged", None)
+
     def apply_rows(self, rows, *, label: str) -> dict:
         return apply_rows(self.chip, rows, apply_live=self.apply_live,
                           label=label).as_dict()
