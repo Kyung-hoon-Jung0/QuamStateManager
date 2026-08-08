@@ -546,15 +546,19 @@ class QueryEngine:
             if name and len(name) >= 2:
                 chain = name[1] if name[0] == "q" and name[1].isalpha() else ""
 
-            xy = q.get("xy", {})
+            # ``or {}`` (not ``.get(k, {})``): a trimmed real chip carries
+            # explicitly-NULL channels ("z": null — docs/72), and dict.get
+            # falls back only when the key is missing, not when it's None; a
+            # null z used to AttributeError → 500 the whole topology.
+            xy = q.get("xy") or {}
             x180 = _get_nested(xy, "operations", "x180_DragCosine") or {}
             x90 = _get_nested(xy, "operations", "x90_DragCosine") or {}
             sat = _get_nested(xy, "operations", "saturation") or {}
-            rr = q.get("resonator", {})
+            rr = q.get("resonator") or {}
             ro = _get_nested(rr, "operations", "readout") or {}
 
-            z = q.get("z", {})
-            gf = q.get("gate_fidelity", {})
+            z = q.get("z") or {}
+            gf = q.get("gate_fidelity") or {}
 
             node = {
                 "id": name,
@@ -1243,17 +1247,30 @@ def _get_nested(obj: Any, *keys: str) -> Any:
 def _extract_port_label(store: QuamStore, q: dict, qname: str, channel: str) -> str | None:
     """Return a compact port label like 'con1/fem1/p2' for a qubit channel.
 
-    Follows the pointer in state (e.g. '#/qubits/qA1/xy/opx_output') to the
-    wiring reference (e.g. '#/ports/mw_outputs/con1/1/2'), then parses that
-    string without fully resolving the port dict. Resolution goes through
-    *store*'s per-instance pointer cache.
+    Follows the pointer in state (e.g. '#/qubits/qA1/xy/opx_output'). On real
+    chips the chain resolves ALL the way to the port dict itself
+    (state → wiring → ports), so the label is built from the port's identity
+    fields; a string result means resolution stopped at a dangling/partial
+    reference and is parsed as before. (The string-only version returned None
+    for EVERY fully-resolving chip — the docs/92 feedline grouping was the
+    first real consumer and exposed it.) Resolution goes through *store*'s
+    per-instance pointer cache.
     """
-    ch = q.get(channel, {})
+    ch = q.get(channel)
+    if not isinstance(ch, dict):        # absent or explicitly-null channel
+        return None
     raw = ch.get("opx_output")
     if not raw:
         return None
-    # First resolve: pointer in state → wiring reference string
     resolved = _resolve(store, raw, ("qubits", qname, channel, "opx_output"))
+    if isinstance(resolved, dict):
+        ctrl = resolved.get("controller_id")
+        fem = resolved.get("fem_id")
+        port = resolved.get("port_id")
+        if ctrl is not None and port is not None:
+            return (f"{ctrl}/fem{fem}/p{port}" if fem is not None
+                    else f"{ctrl}/p{port}")
+        return None
     ref_str = resolved if isinstance(resolved, str) else None
     return _port_ref_to_label(ref_str)
 

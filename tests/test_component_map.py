@@ -59,6 +59,28 @@ def _client(tmp_path):
     return client
 
 
+def test_port_labels_survive_full_pointer_resolution():
+    """Real chips' channel refs chain state → wiring → ports and resolve to the
+    PORT DICT itself; the label must come from its identity fields. The old
+    string-only parser returned None for EVERY fully-resolving chip — the
+    docs/92 feedline grouping was the first real consumer and exposed it.
+    An explicitly-null channel must yield None, never crash."""
+    state = {"qubits": {"qA1": {
+        "id": "qA1",
+        "resonator": {"opx_output": "#/wiring/qubits/qA1/rr/opx_output"},
+        "z": None,
+    }}}
+    wiring = {
+        "wiring": {"qubits": {"qA1": {"rr": {"opx_output": "#/ports/mw_outputs/con1/1/2"}}}},
+        "ports": {"mw_outputs": {"con1": {"1": {"2": {
+            "controller_id": "con1", "fem_id": 1, "port_id": 2, "band": 1}}}}},
+    }
+    topo = QueryEngine(QuamStore.from_dicts(state, wiring)).get_topology()
+    node = topo["nodes"][0]
+    assert node["rr_port"] == "con1/fem1/p2"
+    assert node["z_port"] is None
+
+
 def test_topology_edges_carry_has_coupler():
     eng = QueryEngine(QuamStore.from_dicts(_state(), {"wiring": {"qubits": {}}}))
     edges = {e["pair_id"]: e for e in eng.get_topology()["edges"]}
