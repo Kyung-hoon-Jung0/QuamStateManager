@@ -219,9 +219,17 @@ def derive_pair_columns(store) -> tuple[list[dict], dict[str, dict[str, tuple]]]
     """Return ``(columns, path_map)`` for the loaded chip's qubit pairs.
 
     ``columns`` — ordered list of ``{key, label, section, unit, default_on,
-    editable, kind}`` (same shape the qubit grid + ``bulk-edit.js`` consume,
-    plus ``editable``/``kind`` for read-only cells).  Empty list when the chip
-    has no pairs / no editable pair leaves.
+    headline_on, editable, kind}`` (same shape the qubit grid +
+    ``bulk-edit.js`` consume, plus ``editable``/``kind`` for read-only cells).
+    Empty list when the chip has no pairs / no editable pair leaves.
+
+    ``default_on`` is TRUE for every column (r17 — the grid shows everything
+    and the user opts OUT; see ``param_specs._BULK_COLUMNS_SPEC``).
+    ``headline_on`` keeps the OLD default-visibility formula (confusion group,
+    or an editable headline leaf) because ``compare.py`` used ``default_on`` to
+    pick which pair rows a comparison summarises — a different question from
+    "which columns does the editing grid show". Splitting the two keeps the
+    Compare hub's row set byte-identical while the grid opens up.
 
     ``path_map`` — ``{pair_id: {col_key: (real_dot_path, mode)}}`` where ``mode``
     is ``"edit"`` | ``"runtime"`` | ``"list"``.  A pair missing a column has no
@@ -282,10 +290,10 @@ def derive_pair_columns(store) -> tuple[list[dict], dict[str, dict[str, tuple]]]
             kind, editable = "runtime", False
         else:
             kind, editable = "scalar", True   # any editable cell ⇒ editable column
-        default_on = (c["group_slug"] == "confusion") or (bool(c["headline"]) and editable)
+        headline_on = (c["group_slug"] == "confusion") or (bool(c["headline"]) and editable)
         out.append({
             "key": c["key"], "label": c["label"], "section": c["section"],
-            "unit": c["unit"], "default_on": default_on,
+            "unit": c["unit"], "default_on": True, "headline_on": headline_on,
             "editable": editable, "kind": kind,
         })
     return out, path_map

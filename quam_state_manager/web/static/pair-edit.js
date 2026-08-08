@@ -19,7 +19,11 @@
 (function () {
     'use strict';
 
-    var HIDE_KEY = 'quam_bulk_hidden_cols_pair';
+    // r17 one-time reset — see the twin note in bulk-edit.js. The pair grid
+    // hid the most (99 of 141 columns on a real 31-pair chip), so a persisted
+    // pre-r17 set would have kept almost all of it invisible forever.
+    var HIDE_KEY = 'quam_bulk_hidden_cols_pair_v2';
+    try { localStorage.removeItem('quam_bulk_hidden_cols_pair'); } catch (e) {}
     var WIDTH_KEY = 'quam_bulk_col_widths_pair';
     var SEARCH_KEY = 'quam_bulk_search';   // shared with the qubit grid
     var COLS = [];
@@ -694,6 +698,31 @@
         applySearch: applySearch,
         showAllColumns: function () { _saveHidden(new Set()); _buildColMenu(); _applyColumnVisibility(); _recomputeStats(); },
         resetColumns: function () { try { localStorage.removeItem(HIDE_KEY); } catch (e) {} _buildColMenu(); _applyColumnVisibility(); _recomputeStats(); },
+
+        // The shared #bulk-search box lives in the qubit grid's toolbar, and so
+        // does the "N hidden columns match — Show" chip. These two hooks let it
+        // speak for the PAIR columns too, so "search finds every property"
+        // holds for both tables without a second chip competing for the same
+        // element. Narrow + additive on purpose: the grids stay isolated.
+        hiddenMatching: function (tokens) {
+            if (!tokens || !tokens.length) return [];
+            var hide = _hiddenSet(), out = [];
+            COLS.forEach(function (c) {
+                if (!hide.has(c.key)) return;
+                var hay = (c.label + ' ' + c.key + ' ' + (c.section || '')).toLowerCase();
+                if (tokens.every(function (tok) { return hay.indexOf(tok) >= 0; })) out.push(c.key);
+            });
+            return out;
+        },
+        showColumns: function (keys) {
+            if (!keys || !keys.length) return;
+            var hide = _hiddenSet();
+            keys.forEach(function (k) { hide.delete(k); });
+            _saveHidden(hide);
+            _buildColMenu();
+            _applyColumnVisibility();
+            _recomputeStats();
+        },
         openPair: function (id) {
             var url = '/pair/' + encodeURIComponent(id);
             if (window.htmx && document.getElementById('inspector-pane')) {

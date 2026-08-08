@@ -103,10 +103,13 @@ let fails = 0;
 function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } }
 function tick(ms) { return new Promise(function (r) { setTimeout(r, ms || 5); }); }
 
-function makeWorld() {
+function makeWorld(seed) {
   const dom = new JSDOM('<!DOCTYPE html><html><body>' + DOM + '</body></html>',
     { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/' });
   const win = dom.window;
+  // `seed` runs BEFORE bulk-edit.js — the only way to observe what the module
+  // does to pre-existing localStorage at load (the r17 one-time reset).
+  if (seed) seed(win);
   win.__chipToken = 'tok';
   win._log = { peek: 0, editBatch: [], tray: [], diag: 0, ajax: [] };
   win._editBatchQueue = [];       // shift()ed per POST; empty → generic ok
@@ -323,9 +326,82 @@ async function checkConfigRequest() {
     'empty hidden set strips a stale dynhide (hide nothing = show all)');
 }
 
+// r17 — "show everything by default, search finds everything".
+//  - the legacy hidden-columns key is DROPPED at load, so the flipped server
+//    defaults actually reach users who had ever touched the Properties menu
+//  - a CURATED column the user hid is still found by search (it used to be
+//    invisible to it: applySearch only ever looked at visible columns, and the
+//    hint chip only knew about dynamic columns)
+//  - revealing a rendered column is pure CSS — no /bulk round-trip
+//  - the pair grid's hidden columns report through the same one chip
+async function checkCuratedHiddenSearch() {
+  const win = makeWorld(function (w) {
+    w.localStorage.setItem('quam_bulk_hidden_cols', JSON.stringify(['f_01']));
+  });
+  const doc = win.document;
+  ok(win.localStorage.getItem('quam_bulk_hidden_cols') === null,
+    'the legacy hidden-columns key is dropped at load (one-time r17 reset)');
+
+  // the user then hides a curated column themselves, under the NEW key
+  win.localStorage.setItem('quam_bulk_hidden_cols_v2', JSON.stringify(['f_01']));
+  win.BulkEdit.mount(COLS, { bands: {} }, DYN);
+  const th = doc.querySelector('th[data-col-key="f_01"]');
+  ok(th.classList.contains('bulk-col-hidden'), 'the user-hidden curated column is hidden');
+
+  const search = doc.getElementById('bulk-search');
+  const hint = doc.getElementById('bulk-dyncol-hint');
+  search.value = 'f01';
+  search.dispatchEvent(new win.Event('input', { bubbles: true }));
+  await tick(200);                       // debounce
+  ok(!hint.hidden, 'search finds a HIDDEN CURATED column (was invisible to it)');
+  ok(/1 hidden column match/.test(hint.textContent),
+    'the chip counts it, got: ' + hint.textContent);
+
+  const ajaxBefore = win._log.ajax.length;
+  win.BulkEdit.showMatchedDynCols();
+  ok(!th.classList.contains('bulk-col-hidden'), 'Show reveals the curated column');
+  ok(win._log.ajax.length === ajaxBefore,
+    'revealing a RENDERED column costs no /bulk round-trip');
+  ok(JSON.parse(win.localStorage.getItem('quam_bulk_hidden_cols_v2')).length === 0,
+    'the reveal persists (hidden set emptied)');
+  ok(hint.hidden, 'the chip retires once nothing hidden matches');
+}
+
+async function checkPairGridHook() {
+  const win = makeWorld();
+  const doc = win.document;
+  const shown = [];
+  win.BulkPairEdit = {
+    hiddenMatching: function (tokens) {
+      return tokens.join(' ') === 'coupler' ? ['pair__coupler_offset'] : [];
+    },
+    showColumns: function (keys) { shown.push.apply(shown, keys); }
+  };
+  win.BulkEdit.mount(COLS, { bands: {} }, DYN);
+  const search = doc.getElementById('bulk-search');
+  const hint = doc.getElementById('bulk-dyncol-hint');
+  search.value = 'coupler';
+  search.dispatchEvent(new win.Event('input', { bubbles: true }));
+  await tick(200);
+  ok(!hint.hidden && /1 hidden column match/.test(hint.textContent),
+    'the qubit grid\'s chip also speaks for the PAIR grid, got: ' + hint.textContent);
+  win.BulkEdit.showMatchedDynCols();
+  ok(shown.length === 1 && shown[0] === 'pair__coupler_offset',
+    'Show delegates the pair keys to BulkPairEdit.showColumns');
+
+  // absent module (a page with no pair grid) must not throw
+  delete win.BulkPairEdit;
+  search.value = 'coupler';
+  search.dispatchEvent(new win.Event('input', { bubbles: true }));
+  await tick(200);
+  ok(hint.hidden, 'no pair module → no hint, no crash');
+}
+
 (async function () {
   await checkJsonModal();
   await checkSearchHint();
+  await checkCuratedHiddenSearch();
+  await checkPairGridHook();
   await checkConfigRequest();
   if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
   console.log('bulk dyncols selfcheck: all checks passed');

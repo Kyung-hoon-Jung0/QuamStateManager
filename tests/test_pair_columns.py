@@ -263,19 +263,34 @@ class TestColumnModelSanity:
     def test_columns_have_required_keys(self):
         cols, _ = _derive(_state_flux_cz())
         for c in cols:
-            assert {"key", "label", "section", "unit", "default_on", "editable", "kind"} <= set(c)
+            assert {"key", "label", "section", "unit", "default_on", "headline_on",
+                    "editable", "kind"} <= set(c)
             assert isinstance(c["default_on"], bool) and isinstance(c["editable"], bool)
+            assert isinstance(c["headline_on"], bool)
             assert c["kind"] in ("scalar", "runtime", "list")
 
     def test_empty_when_no_pairs(self):
         cols, path_map = _derive({"qubit_pairs": {}})
         assert cols == [] and path_map == {}
 
-    def test_default_visible_count_is_tight(self):
-        # "all gate bands expanded" still means HEADLINE leaves only on first paint.
+    def test_grid_shows_every_column(self):
+        """r17: the pair GRID opens fully — it used to hide 99 of 141 columns on
+        a real 31-pair chip, which is where "I can't find my parameter" came
+        from. The user opts out per column instead (persisted client-side)."""
         cols, _ = _derive(_state_flux_cz())
-        visible = [c for c in cols if c["default_on"]]
-        assert 0 < len(visible) <= max(8, len(cols)), "a reasonable headline subset is visible"
+        assert cols and all(c["default_on"] for c in cols)
+
+    def test_headline_on_is_the_old_curated_subset(self):
+        """``compare.py`` picks pair ROWS off ``headline_on``, not ``default_on``
+        — "which columns does the grid show" and "which rows does a comparison
+        summarise" are different questions. Splitting them is what let the grid
+        open up without ballooning the Compare hub. So headline_on must stay a
+        PROPER subset, and must still be the confusion-group-or-headline rule."""
+        cols, _ = _derive(_state_flux_cz())
+        headline = [c for c in cols if c["headline_on"]]
+        assert 0 < len(headline) < len(cols)
+        for c in headline:
+            assert c["editable"] or c["key"].startswith("confusion")
 
 
 # ── optional: real chips under the granted quam_states folder (auto-skip) ──────
