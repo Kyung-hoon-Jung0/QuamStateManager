@@ -88,6 +88,11 @@
             Edge labels
         </label>
     </div>
+    {# Hero chip map (docs/92 P1): the at-a-glance SVG map — geometry/mode from
+       TopoGraph.layoutFor (physical / labelled-logical / none), node fill = the
+       selected metric through the SAME palette + physical gate as the heatmaps.
+       Built client-side by ChipStatus.mount's buildHeroMap. #}
+    <div id="topo-hero" class="topo-hero"></div>
     <div id="topology-legend" class="topology-legend"></div>
     <p class="topo-hint"><small class="muted">Tip: click a qubit to inspect it &middot; double-click for its wiring JSON &middot; <kbd>Tab</kbd> into the grid, <kbd>&larr;&uarr;&darr;&rarr;</kbd> to move, <kbd>Enter</kbd> to inspect, <kbd>Esc</kbd> to close</small></p>
     <div class="topo-html-wrap" id="topo-html-wrap"></div>

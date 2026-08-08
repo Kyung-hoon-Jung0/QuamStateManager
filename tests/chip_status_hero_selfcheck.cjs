@@ -1,0 +1,210 @@
+/* Behavioral check for the Chip Status HERO chip map (docs/92 P1) against the
+ * REAL app.js + topo-graph.js + chip-status.js under jsdom.
+ *
+ * Pins the honesty contract + the reuse contract:
+ *  - physical chips render the SVG map with the selected metric's VALUE text on
+ *    every node (numbers stay ON this map — docs/91 §2.4), a gradient legend
+ *    with a distinct "no data" swatch, and NO logical-layout note;
+ *  - a grid-less chip with pairs still renders (connectivity layout) but wears
+ *    TopoGraph.LOGICAL_LAYOUT_NOTE ON the map itself (docs/91 §2.1/§6.4);
+ *  - no grid AND no pairs -> one honest line, no SVG, no fabricated raster;
+ *  - coincident DECLARED cells (real 10Q chip: two qubits at "4,0") fan out —
+ *    BOTH stones stay visible, marked shared;
+ *  - edge colours come from the SAME _edgePaint as the card diagram
+ *    (good >= 95% / none), metric switch re-renders + persists, a bad fit is
+ *    ringed + struck through, and the card diagram below is still built.
+ *
+ * Run: node tests/chip_status_hero_selfcheck.cjs   (driven by tests/test_topology_hero.py)
+ */
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+
+let JSDOM;
+try {
+  ({ JSDOM } = require('jsdom'));
+} catch (e) {
+  console.error('jsdom not installed');
+  process.exit(2);
+}
+
+const ROOT = path.join(__dirname, '..');
+const read = (f) => fs.readFileSync(path.join(ROOT, 'quam_state_manager', 'web', 'static', f), 'utf8');
+const APP_JS = read('app.js');
+const TOPO_JS = read('topo-graph.js');
+const CS_JS = read('chip-status.js');
+
+let fails = 0;
+function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } }
+
+function makeWorld() {
+  const dom = new JSDOM(
+    '<!DOCTYPE html><html><body>'
+    + '<div id="topo-hero"></div><div id="topo-html-wrap"></div>'
+    + '</body></html>',
+    { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/' });
+  const win = dom.window;
+  win.htmx = { ajax: function () { win._htmxCalls.push(Array.prototype.slice.call(arguments)); } };
+  win._htmxCalls = [];
+  win.fetch = function () { return new win.Promise(function () {}); };
+  // One Function scope so app.js's UI_CONFIG + topo-graph's window.TopoGraph are
+  // visible to chip-status.js exactly as in the browser (<head> load order).
+  new win.Function(APP_JS + '\n;\n' + TOPO_JS + '\n;\n' + CS_JS).call(win);
+  return win;
+}
+
+function mount(win, topo, findings) {
+  win.ChipStatus.mount({ topo: topo, rawWiring: {}, defaultThresholds: {},
+                         diagFindings: findings || [], metricMeta: {} });
+}
+
+// ── 1) physical chip: map + values + legend, no logical note ────────────────
+{
+  const win = makeWorld();
+  const topo = {
+    nodes: [
+      { id: 'qA1', grid_location: '0,0', T1: 2.4e-5, last_calibrated: Date.now() - 2 * 86400000 },
+      { id: 'qA2', grid_location: '1,0', T1: 1.1e-5 },
+      { id: 'qA3', grid_location: '0,1', T1: null },
+      // a bad fit: raw present, gated value null, not unresolved
+      { id: 'qA4', grid_location: '1,1', T1: -4.7e-5,
+        metrics: { T1: { value: null, raw: -4.7e-5, unresolved: false } } },
+    ],
+    edges: [
+      { pair_id: 'qA2-qA1', source: 'qA2', target: 'qA1', has_cz: true, cz_fidelity: 0.97,
+        gate_kind: 'cz', directed: false, active: null, best_gate: 'cz' },
+      { pair_id: 'qA3-qA4', source: 'qA3', target: 'qA4', has_cz: false, cz_fidelity: null,
+        gate_kind: 'none', directed: false, active: null, best_gate: null },
+    ],
+  };
+  mount(win, topo, [{ severity: 'error', jump_path: 'qubits.qA2.xy.thing', category: 'x', location: '', message: '' }]);
+
+  const hero = win.document.getElementById('topo-hero');
+  const svg = hero.querySelector('svg.topo-hero-svg');
+  ok(!!svg, 'physical: hero SVG rendered');
+  const stones = hero.querySelectorAll('.topo-hero-node');
+  ok(stones.length === 4, 'physical: all 4 qubits drawn (got ' + stones.length + ')');
+  ok(!hero.querySelector('.topo-hero-note'), 'physical: NO logical-layout note');
+
+  // numbers ON the map: qA1's T1 value text is rendered
+  const q1 = hero.querySelector('[data-hero-qubit="qA1"]');
+  ok(q1 && /24\.0/.test(q1.textContent), 'physical: qA1 shows its T1 value on the map');
+  const q3 = hero.querySelector('[data-hero-qubit="qA3"]');
+  ok(q3 && q3.textContent.indexOf('—') !== -1, 'physical: missing T1 renders the honest dash');
+  // bad fit: ringed + struck, never a heat colour
+  const q4 = hero.querySelector('[data-hero-qubit="qA4"]');
+  ok(q4 && q4.getAttribute('class').indexOf('hs-badfit') !== -1, 'physical: unphysical fit wears hs-badfit');
+
+  // edge parity with the card diagram: BOTH surfaces go through _edgePaint,
+  // so the hero's stroke multiset must equal the card SVG's stroke multiset.
+  const edges = hero.querySelectorAll('.topo-hero-edge');
+  ok(edges.length === 2, 'physical: both edges drawn');
+  const heroStrokes = Array.prototype.map.call(edges, function (g) {
+    return g.querySelector('line').getAttribute('stroke');
+  }).sort();
+  const cardStrokes = Array.prototype.map.call(
+    win.document.querySelectorAll('#topo-html-wrap .topo-edges-svg line'),
+    function (l) { return l.getAttribute('stroke'); }).sort();
+  ok(JSON.stringify(heroStrokes) === JSON.stringify(cardStrokes),
+     'edge colours IDENTICAL to the card diagram (one _edgePaint) — hero '
+     + JSON.stringify(heroStrokes) + ' vs cards ' + JSON.stringify(cardStrokes));
+  ok(heroStrokes[0] !== heroStrokes[1],
+     'physical: the 97% CZ edge and the no-data edge are visibly different');
+
+  // legend: gradient + a distinct no-data swatch
+  const legend = hero.querySelector('.topo-hero-legend');
+  ok(!!legend && !!legend.querySelector('.topo-hero-lg-grad'), 'physical: continuous legend gradient present');
+  ok(/no data/.test(legend.textContent), 'physical: legend names the no-data colour');
+
+  // metric bar: T1 active by default; switching to Diagnostics re-renders,
+  // persists, and colours qA2 (1 error finding) as fail
+  const bar = hero.querySelector('.topo-hero-bar');
+  ok(!!bar, 'physical: metric bar present');
+  const t1btn = hero.querySelector('[data-hero-metric="T1"]');
+  ok(t1btn && t1btn.className.indexOf('active') !== -1, 'physical: T1 selected by default');
+  const diagBtn = hero.querySelector('[data-hero-metric="diag"]');
+  ok(!!diagBtn, 'physical: Diagnostics metric offered');
+  diagBtn.dispatchEvent(new win.Event('click', { bubbles: true }));
+  ok(win.localStorage.getItem('quam_topo_hero_metric') === 'diag', 'metric switch persists to localStorage');
+  const q2d = hero.querySelector('[data-hero-qubit="qA2"]');
+  ok(q2d && q2d.getAttribute('class').indexOf('hs-fail') !== -1, 'diagnostics view: qA2 (1 error) wears hs-fail');
+  const q1d = hero.querySelector('[data-hero-qubit="qA1"]');
+  ok(q1d && q1d.getAttribute('class').indexOf('hs-pass') !== -1, 'diagnostics view: clean qubit wears hs-pass');
+
+  // the card diagram below is still built (hero is additive)
+  ok(win.document.querySelectorAll('#topo-html-wrap .topo-node-card').length === 4,
+     'card diagram still renders all 4 property cards');
+
+  // single-click -> inspector (after the dbl-click window)
+  const target = hero.querySelector('[data-hero-qubit="qA1"]');
+  target.dispatchEvent(new win.Event('click', { bubbles: true }));
+  setTimeout(function () {
+    ok(win._htmxCalls.some(function (c) { return c[1] === '/qubit/qA1'; }),
+       'node single-click opens the qubit inspector');
+    part2();
+  }, 550);
+}
+
+// ── 2) grid-less chip + pairs: logical layout, labelled ON the map ──────────
+function part2() {
+  const win = makeWorld();
+  const topo = {
+    nodes: [{ id: 'q1', T1: 1e-5 }, { id: 'q2', T1: 2e-5 }, { id: 'q3' }, { id: 'q4' }],
+    edges: [
+      { pair_id: 'q1-2', source: 'q1', target: 'q2', has_cz: false, cz_fidelity: null, gate_kind: 'none' },
+      { pair_id: 'q2-3', source: 'q2', target: 'q3', has_cz: false, cz_fidelity: null, gate_kind: 'none' },
+      { pair_id: 'q3-4', source: 'q3', target: 'q4', has_cz: false, cz_fidelity: null, gate_kind: 'none' },
+    ],
+  };
+  mount(win, topo, []);
+  const hero = win.document.getElementById('topo-hero');
+  ok(!!hero.querySelector('svg.topo-hero-svg'), 'logical: map still drawn from connectivity');
+  ok(hero.querySelectorAll('.topo-hero-node').length === 4, 'logical: every node placed');
+  const note = hero.querySelector('.topo-hero-note');
+  ok(!!note, 'logical: the layout note is ON the map');
+  ok(note && note.textContent === win.TopoGraph.LOGICAL_LAYOUT_NOTE,
+     'logical: note text IS TopoGraph.LOGICAL_LAYOUT_NOTE (one wording everywhere)');
+  part3();
+}
+
+// ── 3) no grid AND no pairs: the honest line, never a fabricated raster ─────
+function part3() {
+  const win = makeWorld();
+  mount(win, { nodes: [{ id: 'q1', T1: 1e-5 }, { id: 'q2' }], edges: [] }, []);
+  const hero = win.document.getElementById('topo-hero');
+  ok(!hero.querySelector('svg'), 'none: no SVG map is drawn');
+  ok(/No chip map/.test(hero.textContent), 'none: the honest one-line message renders');
+  ok(/declares no positions and no pairs/.test(hero.textContent), 'none: the message says WHY');
+  part4();
+}
+
+// ── 4) coincident declared cells fan out — both stones visible ──────────────
+function part4() {
+  const win = makeWorld();
+  const topo = {
+    nodes: [
+      { id: 'q2', grid_location: '4,0', T1: 1e-5 },
+      { id: 'q10', grid_location: '4,0', T1: 2e-5 },
+      { id: 'q1', grid_location: '0,0', T1: 3e-5 },
+    ],
+    edges: [],
+  };
+  mount(win, topo, []);
+  const hero = win.document.getElementById('topo-hero');
+  const a = hero.querySelector('[data-hero-qubit="q2"]');
+  const b = hero.querySelector('[data-hero-qubit="q10"]');
+  ok(!!a && !!b, 'coincident: BOTH declared-same-cell stones render');
+  if (a && b) {
+    ok(a.getAttribute('transform') !== b.getAttribute('transform'),
+       'coincident: fanned apart (not hidden under each other)');
+    ok(a.querySelector('circle').hasAttribute('stroke-dasharray'),
+       'coincident: shared-cell members wear the dashed ring');
+  }
+  finish();
+}
+
+function finish() {
+  if (fails) { console.error(fails + ' check(s) FAILED'); process.exit(1); }
+  console.log('chip_status_hero_selfcheck: all checks passed');
+}
