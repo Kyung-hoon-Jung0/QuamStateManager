@@ -5,17 +5,21 @@ before it merges to `main`, written to be read with **no prior conversation
 context**. Everything here was taken from git and from test runs, not from
 memory; where a claim rests on something weaker than a passing test, it says so.*
 
-> **Scope.** This covers **the 22-commit chain that reaches `main` through
-> `feat/sidebar-tools`** — no more, no less. Two caveats an auditor should hold:
+> **Scope — all seven branches, in full.** This covers **the 22-commit chain
+> that reaches `main` through `feat/sidebar-tools`**. That explicitly and
+> deliberately **includes `feat/multi-instance-safety` (docs/78–82)**: it is the
+> first branch off the base and the other six are stacked on it, so merging the
+> tip brings it whether or not anyone wants it separately. It is in scope, it is
+> audited here, and §3 documents it like the rest. The only qualifier is a
+> *verification* one, not a scope one: it was completed before the authoring
+> session's visible context, so §4 grades it "not re-verified in this pass" —
+> read its own docs (78–82) rather than assuming this file re-checked it.
 >
-> - It **includes** `feat/multi-instance-safety` (docs/78–82), which was **not**
->   produced in the authoring session's visible context. It is in the chain, so
->   it is in scope, but it is graded *"not re-verified in this pass"* in §4.
-> - It **excludes** another session's runner/AI-agent line
->   (`origin/feat/runner-p2-families`, `origin/feat/runner-p3-judge`, 10 commits
->   off the same base, `docs/78_runner_agent.md`). That work is unrelated to this
->   chain and is being audited separately. See §6.6 for the docs/78 collision the
->   two lines create.
+> **Out of scope: exactly one thing** — another session's runner/AI-agent line
+> (`origin/feat/runner-p2-families`, `origin/feat/runner-p3-judge`, 10 commits
+> off the same base `8e5fa99`, `docs/78_runner_agent.md`). It is not in this
+> chain and is being audited separately. See §6.6 for the docs/78 filename
+> collision the two lines create when both land.
 
 ---
 
