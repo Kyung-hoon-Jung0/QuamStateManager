@@ -1,13 +1,13 @@
-# 93 — Component-map feedback round 1 (PLAN, not shipped) + main audit
+# 93 — Component-map feedback round 1 (SHIPPED as F1–F5) + main audit
 
-*Status: **PLAN ONLY** — written 2026-08-09 from five user-relayed feedback
-items on the docs/92 component maps, plus an independent audit of the three
-commits that just landed on main (`8e5fa99..37e7e25`). Every item is
-investigated to root cause and the approach is decided; implement as written.
-House rules that keep applying: docs/91 §2.4 (component map carries NO
-numbers), §3.4 (colour = selected/not-selected... amended by item 4 below,
-see §2.4 here), the standing screenshot rule (real-browser screenshots into
-`D:\work\sm-screenshots\`, never committed).*
+*Status: **SHIPPED 2026-08-09** — implemented as planned in five commits
+(F1 `df40627`, F2 `16d9b25`, F3 `c3cf3d4`, F4 `1a065c1`, F5 `4fae62a`), each
+with its own pins + a per-phase audit; §7 records what the audits caught and
+the two deliberate deviations. Verified in a real browser on the real 21Q
+chip (screenshots: `D:\work\sm-screenshots\2026-08-09_component-map-feedback\`
+— feedline colours dark+light, chevrons, chain emphasis with all buttons).
+Sections 0–5 below are the original plan, kept verbatim; the audit of main's
+commits (§3) stands unchanged.*
 
 ---
 
@@ -242,3 +242,33 @@ exactly the kind of visual claims jsdom cannot carry.
 - Do not re-order or re-step the palette without re-running the validator
   against BOTH SM surfaces — the first candidate looked fine and failed
   dark-mode CVD at ΔE 1.6.
+
+## 7. Implementation record — what the per-phase audits caught
+
+The plan survived contact almost unchanged; three defects were caught by the
+phase audits BEFORE commit, and two details deviate deliberately:
+
+1. **The stylesheet-beats-attribute trap, three times.** An SVG presentation
+   attribute loses to ANY stylesheet rule, and jsdom (no stylesheets) cannot
+   see it. (F2) the planned "CSS font-size stays as fallback" was impossible —
+   the CSS rule had to be REMOVED or every browser would have stayed at
+   10.5px; (F4) the slot-0 bus's unique dash became an inline `style`, since
+   the base `.cm-feed` dasharray rule would beat the attribute; (F5) the
+   chevron's cell-scaled `stroke-width` ships as an attribute with NO width
+   rule in CSS at all. Confirmed in the real browser: computed id font at
+   cell 120 is 19.7px.
+2. **Jinja `default()` does not cover None** (F3): unfiltered qubits passes
+   `active_chain=None`, which `| default('')` renders as `"None"` — caught by
+   the server pin; `or ''` is the correct guard.
+3. **Chevron placement deviates from the plan's wording** (F5): drawn
+   top-level with its own per-mode CSS dimming, NOT inside one direction's
+   edge group — the glyph describes the PHYSICAL pair, and riding one CR
+   direction's group would dim it whenever that direction is inactive. Same
+   intent (dims with the pairs layer), cleaner semantics.
+4. **Chain-list scope** (F1): `chains` is computed from the unfiltered but
+   also un-SCOPED qubit list in the shared helper — exactly the pre-fix
+   scoping semantics, only the filter ordering moved.
+5. Verified live on the 21Q chip: 4 feedline slots in screen order with the
+   legend naming each port + count; 31 chevrons (every pair has both f_01s);
+   `/qubits?chain=A` renders all five tab buttons with the six chain-A stones
+   lit and the rest dimmed.
