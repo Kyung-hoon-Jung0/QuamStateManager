@@ -1003,11 +1003,64 @@ window.freqSyncFlag = function () {
  * Toggle the settings dropdown in the topbar.  Clicking outside the
  * dropdown will close it (handled by a one-time document click listener).
  */
-window.toggleSettings = function() {
+/* Anchor a body-level popover under the trigger that opened it (docs/89).
+ *
+ * Both tool popovers used `position:absolute; right:0; top:100%` inside their
+ * topbar <li>. From the sidebar that cannot work twice over: the sidebar is
+ * `overflow-y:auto`, which CLIPS an absolutely-positioned child, and it
+ * collapses to width 0. So they live at body level and get placed here, in
+ * viewport coordinates, from the trigger's own rect.
+ *
+ * Placement is below-and-left-aligned, flipping to right-aligned or above when
+ * that would leave the viewport — the calculator is ~348×560, which does not
+ * fit under a trigger near the bottom of a short window. */
+window._anchorPopover = function (pop, btn) {
+    if (!pop || !btn || !btn.getBoundingClientRect) return;
+    pop.classList.add("pop-anchored");
+    // measure with the popover laid out but before we commit a position
+    pop.style.left = "0px";
+    pop.style.top = "0px";
+    var r = btn.getBoundingClientRect();
+    var w = pop.offsetWidth || 280;
+    var h = pop.offsetHeight || 200;
+    var pad = 6;
+    var left = r.left;
+    if (left + w > window.innerWidth - pad) left = window.innerWidth - w - pad;
+    if (left < pad) left = pad;
+    var top = r.bottom + 4;
+    if (top + h > window.innerHeight - pad) {
+        var above = r.top - h - 4;
+        top = above >= pad ? above : Math.max(pad, window.innerHeight - h - pad);
+    }
+    pop.style.left = Math.round(left) + "px";
+    pop.style.top = Math.round(top) + "px";
+};
+
+/* The VISIBLE trigger for a tool: the sidebar row normally, the topbar
+ * fallback while the sidebar is collapsed. Decided from the collapsed class
+ * rather than from layout (`offsetParent`/rects) — that is the actual
+ * condition, it needs no layout pass, and it stays checkable. A trigger the
+ * user really clicked always wins. */
+window._toolTrigger = function (selector, preferred) {
+    if (preferred && preferred.isConnected) return preferred;
+    var all = Array.prototype.slice.call(document.querySelectorAll(selector));
+    if (!all.length) return null;
+    var collapsed = !!document.querySelector(".app-layout.sidebar-collapsed");
+    var wanted = all.filter(function (b) {
+        return b.classList.contains("topbar-tool") === collapsed;
+    });
+    return wanted[0] || all[0];
+};
+
+window.toggleSettings = function(trigger) {
     var dd = document.getElementById("settings-dropdown");
     if (!dd) return;
     var opening = dd.classList.toggle("settings-hidden");
     if (!opening) {
+        // singleton: never overlap the calculator (mirrors toggleCalc)
+        var cp = document.getElementById("calc-popover");
+        if (cp) cp.classList.add("calc-hidden");
+        window._anchorPopover(dd, window._toolTrigger(".settings-btn", trigger));
         setTimeout(function() {
             document.addEventListener("click", function closer(e) {
                 if (!dd.contains(e.target) && !e.target.closest(".settings-btn")) {
