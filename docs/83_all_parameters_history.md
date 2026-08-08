@@ -35,7 +35,7 @@ Index every numeric leaf of every snapshot:
 
 | chip | numeric leaves | snapshots | rows | at the ~235 B/row the existing index really costs |
 |---|---|---|---|---|
-| KRISS | 7,992 | 111 | 887k | ~200 MB |
+| LabA | 7,992 | 111 | 887k | ~200 MB |
 | 17Q | 8,424 | 264 | 2.2M | ~500 MB |
 
 Not acceptable for one chip's sidecar.
@@ -46,10 +46,10 @@ Measured over the real snapshot series:
 
 ```
                  numeric leaves    leaves that CHANGE between neighbours
-KRISS                     7,992    median 4    p90 23    max 832
+LabA                     7,992    median 4    p90 23    max 832
 17Q                       8,424    median 3    p90 17    max 2,716
-Novera_1Q                 1,300    median 2    p90 18    max 818
-QRS                         550    median 2    p90 10    max 87
+ExampleChip_1Q                 1,300    median 2    p90 18    max 818
+LabB                         550    median 2    p90 10    max 87
 ```
 
 A calibration run rewrites almost nothing. Storing only the transitions turns
@@ -58,10 +58,10 @@ eleven-property one it sits beside**:
 
 | chip | snapshots | parameters | change points | file | curated index |
 |---|---|---|---|---|---|
-| KRISS | 111 | 10,981 | 12,072 | **2.02 MB** | 6.1 MB |
+| LabA | 111 | 10,981 | 12,072 | **2.02 MB** | 6.1 MB |
 | 17Q | 264 | 11,344 | 17,256 | **2.22 MB** | 13.4 MB |
-| Novera_1Q | 1,154 | 2,902 | 15,312 | **1.09 MB** | 26.9 MB |
-| QRS | 659 | 1,186 | 4,803 | **0.47 MB** | 8.5 MB |
+| ExampleChip_1Q | 1,154 | 2,902 | 15,312 | **1.09 MB** | 26.9 MB |
+| LabB | 659 | 1,186 | 4,803 | **0.47 MB** | 8.5 MB |
 
 One path's full history: **0.01–0.06 ms**. Full rebuild: **1.2–5.4 s**.
 

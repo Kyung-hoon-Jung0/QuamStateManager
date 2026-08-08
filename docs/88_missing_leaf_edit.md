@@ -14,7 +14,7 @@ Both spellings failing is the tell: this was never about the value.
 
 ## The chain
 
-Reproduced verbatim on a real chip (KRISS_CR):
+Reproduced verbatim on a real chip (LabA_CR):
 
 1. `qubits.<q>.resonator.opx_input` is a **pointer** —
    `"#/wiring/qubits/qA1/rr/opx_input"` → `ports.mw_inputs.con1.3.1`.
