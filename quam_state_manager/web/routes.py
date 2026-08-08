@@ -790,6 +790,17 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict, *,
             # That is exactly the moment a string-ified or schema-drifted value
             # arrives, so let the next render raise the type popup once.
             _arm_type_alarm(ctx, "node-finished")
+            # docs/94: adopted content can also carry NEW __class__ values (an
+            # out-of-band class migration) — re-attach the policy and re-probe
+            # so validation never judges new content by the old manifest.
+            try:
+                _inst = current_app.instance_path
+                _attach_type_policy(ctx, _inst)
+                _warm_state_schema_async(store, _inst,
+                                         live_folder=ctx.get("path"))
+            except Exception:  # noqa: BLE001 — healing must never break adopt
+                logger.warning("post-adopt schema re-attach failed",
+                               exc_info=True)
             # The live chip visibly changed and we adopted it — record a
             # Param History snapshot like the explicit /state/sync does.
             try:
@@ -1049,7 +1060,28 @@ def _attach_type_policy(ctx, inst=None) -> None:
                 # Carry the PRISTINE env manifest, never the verdict-overlaid
                 # one — re-attaching would otherwise overlay an overlay and
                 # bake a revoked verdict in (docs/79).
-                manifest = getattr(prev, "env_manifest", None) or prev.manifest
+                carried = getattr(prev, "env_manifest", None) or prev.manifest
+                # docs/94 carry GATE: carry only while the previous manifest
+                # still COVERS the chip's current class inventory. An
+                # out-of-band class migration (a lab script swapping pulse
+                # classes mid-session) grows the inventory; carrying then
+                # guarantees "harvest drift" errors against a manifest KNOWN
+                # to be stale — the false positive a user reported as 10×
+                # error on a perfectly healthy chip. Not covered → abstain
+                # (diagnostics show "Probe now") and kick the warm re-probe,
+                # which heals in seconds.
+                try:
+                    with store._lock:
+                        inv = set(state_env_schema.harvest_classes(store.state))
+                except Exception:  # noqa: BLE001
+                    inv = None
+                if inv is not None and inv <= set(carried.get("classes") or {}):
+                    manifest = carried
+                else:
+                    try:
+                        _warm_state_schema_async(store, inst, live_folder=live)
+                    except Exception:  # noqa: BLE001
+                        pass
         store.type_policy = type_policy.load_policy(inst, live, manifest)
         store._type_manifest_env = python_path if manifest is not None else None
         if manifest is not None and manifest.get("pulse_roster"):
@@ -1179,6 +1211,17 @@ def _rebuild_after_working_copy_replaced(ctx: dict) -> None:
     # docs/78: content the user did not type just landed — let the next render
     # raise the type-anomaly popup once (pull / stage / restore / run load).
     _arm_type_alarm(ctx, ctx.pop("_alarm_reason", None) or "live-pull")
+    # docs/94: the same content-entry moment must also re-attach the type
+    # policy and re-probe the env schema — a migration script can have CHANGED
+    # the chip's class inventory out-of-band, and the store's old policy would
+    # otherwise keep validating the new content against the old manifest
+    # ("harvest drift" errors on a healthy chip) until the next activation.
+    try:
+        inst = current_app.instance_path
+        _attach_type_policy(ctx, inst)
+        _warm_state_schema_async(store, inst, live_folder=ctx.get("path"))
+    except Exception:  # noqa: BLE001 — healing must never break the rebuild
+        logger.warning("post-rebuild schema re-attach failed", exc_info=True)
 
 
 def _reseed_drift_baseline_if_chip_changed(ctx: dict) -> None:
@@ -16843,7 +16886,20 @@ def _env_schema_findings(store: QuamStore) -> list:
         versions = manifest.get("versions") or {}
         label = " ".join(f"{k} {v}" for k, v in sorted(versions.items())
                          if k in ("quam", "quam_builder") and v)
-        return state_env_validate.to_diag_findings(analysis, env_label=label)
+        # docs/94 fix 3: while a schema probe for the selected env is in
+        # flight, an unknown class is a not-yet-known — downgrade to warning
+        # ("probing the environment…") for the seconds the probe needs.
+        probing = False
+        try:
+            _pp = config_generator.get_selected_env(current_app.instance_path)
+            if _pp:
+                with _schema_warm_lock:
+                    probing = any(k.startswith(_pp + "|")
+                                  for k in _schema_warm_inflight)
+        except Exception:  # noqa: BLE001
+            probing = False
+        return state_env_validate.to_diag_findings(analysis, env_label=label,
+                                                   probing=probing)
     except Exception:  # noqa: BLE001 — env findings must never break /diagnostics
         logger.warning("env-schema findings failed", exc_info=True)
         return []

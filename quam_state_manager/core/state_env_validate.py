@@ -499,8 +499,14 @@ def _manifest_key(manifest: dict | None) -> tuple:
     v = manifest.get("versions") or {}
     # The verdict overlay is part of the manifest's identity (docs/79): without
     # it, saving a verdict would keep serving the findings it just answered.
+    # The CLASS SET is too (docs/94): a re-probe after an out-of-band class
+    # migration returns the same env versions with MORE classes — keying on
+    # versions alone kept serving the pre-probe findings, which is why the
+    # Probe button visibly "did nothing" (the 10× harvest-drift errors
+    # survived a successful probe until an unrelated edit bumped the seq).
     return (tuple(sorted((str(k), str(x)) for k, x in v.items()))
-            + (str(manifest.get("verdict_sig") or ""),))
+            + (str(manifest.get("verdict_sig") or ""),)
+            + (tuple(sorted(manifest.get("classes") or ())),))
 
 
 def analysis_for_store(store, manifest: dict | None) -> dict:
@@ -521,11 +527,19 @@ def analysis_for_store(store, manifest: dict | None) -> dict:
     return res
 
 
-def to_diag_findings(analysis: dict, env_label: str = "") -> list:
+def to_diag_findings(analysis: dict, env_label: str = "", *,
+                     probing: bool = False) -> list:
     """Bridge the analyzer's aggregated findings into diagnostics ``Finding``
     objects (category ``env_*`` → the "Environment match" domain) so the
     existing badge / banner / list / Explorer-marks machinery renders them
-    with zero new plumbing."""
+    with zero new plumbing.
+
+    ``probing`` — a schema probe for the selected env is in flight (docs/94
+    fix 3): an ``unknown_class`` is then a not-yet-known, not a verdict — the
+    class that just appeared is being probed right now — so it downgrades to
+    a warning that says so instead of screaming error for the few seconds the
+    probe needs.
+    """
     from quam_state_manager.core.diagnostics import Finding
     out: list = []
     for rec in analysis.get("findings") or []:
@@ -540,11 +554,17 @@ def to_diag_findings(analysis: dict, env_label: str = "") -> list:
             detail = f"{detail} — {rec['fix_hint']}"
         if env_label:
             detail = f"{detail} [env: {env_label}]"
+        sev = "error" if rec.get("severity") == "error" else "warning"
+        msg = rec.get("detail") or rec.get("kind") or "env mismatch"
+        if probing and rec.get("kind") == "unknown_class":
+            sev = "warning"
+            msg = f"{msg} — probing the environment…"
+            detail = f"{detail} — a schema probe is in flight; this resolves when it lands"
         out.append(Finding(
-            severity="error" if rec.get("severity") == "error" else "warning",
+            severity=sev,
             category=f"env_{rec.get('kind') or 'finding'}",
             location=loc + suffix,
-            message=rec.get("detail") or rec.get("kind") or "env mismatch",
+            message=msg,
             detail=detail,
             jump_path=examples[0] if examples else "",
         ))
