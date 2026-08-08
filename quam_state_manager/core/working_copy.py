@@ -459,8 +459,17 @@ def _try_sync(wc: WorkingCopy,
     return RECONCILE_SYNCED
 
 
-def reconcile_with_live(wc: WorkingCopy, *, sync_if_clean: bool = True) -> str:
+def reconcile_with_live(wc: WorkingCopy, *, sync_if_clean: bool = True,
+                        out: dict | None = None) -> str:
     """Content-aware staleness decision for an existing working copy.
+
+    Pass *out* (an empty dict) to receive the contents this call already had
+    to read: ``{"live": (state, wiring), "working": (state, wiring)}``, set
+    only when the live mtimes moved AND both reads succeeded. It exists so a
+    caller that reports "N parameters changed on the live chip" can diff them
+    for free — the alternative is re-reading the live files on a surface that
+    renders on every page, which docs/28 forbids. Omitted ⇒ byte-identical
+    behaviour.
 
     Called on the *load/select* path (never from background polls -- those
     stay ``os.stat``-only). Decides what an out-of-band live-file change
@@ -524,6 +533,10 @@ def reconcile_with_live(wc: WorkingCopy, *, sync_if_clean: bool = True) -> str:
         # copy is worthless -- it may hold saved unapplied edits. Keep it
         # and prompt instead of re-seeding over it.
         return RECONCILE_STALE
+
+    if out is not None:
+        out["live"] = (live_state, live_wiring)
+        out["working"] = (w_state, w_wiring)
 
     def _adopt(new_hash: str, why: str) -> str:
         """Record (mtimes, hash) as the new sync point; working copy kept."""

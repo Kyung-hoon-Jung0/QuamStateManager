@@ -5,9 +5,14 @@
    Clean working copies never get here — they are auto-synced on load. #}
 {% if live_diverged %}
 <div class="topo-change-banner live-diverged-banner" id="live-diverged-banner" role="alert">
+    {# docs/87: the count is FREE — the reconcile that raised this banner had to
+       read both sides to reach its verdict, so it hands the diff back. It is
+       "as of that check"; Review is the authority. None ⇒ say nothing rather
+       than invent a number. #}
     <span class="topo-change-banner-text">
         &#9888;&#65039; The live state files for <b>{{ active_name or "this chip" }}</b> changed on disk
-        &mdash; you are viewing the working state, which may show an <b>older chip</b>.
+        {%- if live_drift_count %} &mdash; <b>{{ live_drift_count }}</b> value{{ 's' if live_drift_count != 1 }} differ{{ '' if live_drift_count != 1 else 's' }}
+        {%- endif %} &mdash; you are viewing the working state, which may show an <b>older chip</b>.
     </span>
     {# This banner only renders when the working copy MAY hold unapplied
        edits (clean copies are auto-synced silently) — so the discard path

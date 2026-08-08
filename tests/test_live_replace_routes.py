@@ -101,9 +101,18 @@ class TestRestartCleanCopy:
         client2 = _app_client(tmp_path)
         client2.post("/load", data={"folder": str(live_folder)})
         html = _shown_qubits(client2)
-        assert _has_qubit(html, "q0")                  # the NEW chip
+        # docs/87: a CLEAN copy used to be pulled over silently here. It is now
+        # asked about like every other out-of-band change — the stale-chip bug
+        # was the SILENCE, not the absence of automation, so what must hold is
+        # that the user is told and is one click from the new chip.
+        assert _has_qubit(html, "qA1")                 # not swapped underneath
+        assert "live-diverged-banner" in html          # ...and said so
+        data = client2.post("/state/sync", data={"mode": "discard"}).get_json()
+        assert data["status"] == "ok"
+        html = _shown_qubits(client2)
+        assert _has_qubit(html, "q0")                  # the NEW chip, one click away
         assert not _has_qubit(html, "qA1")
-        assert "live-diverged-banner" not in html      # clean → silent refresh
+        assert "live-diverged-banner" not in html
 
     def test_legacy_meta_replaced_shows_banner_not_clobber(self, tmp_path, live_folder):
         # Pre-fix working copies have no recorded hash: a replaced live can't
@@ -163,13 +172,20 @@ class TestRestartDirtyCopy:
 # ---------------------------------------------------------------------------
 
 class TestInMemoryCache:
-    def test_reselect_after_replace_shows_new_chip(self, tmp_path, live_folder):
+    def test_reselect_after_replace_asks_then_shows_new_chip(self, tmp_path, live_folder):
+        """docs/87 — the cache-hit twin of the restart case: opening the chip
+        is a USER action, so the reconcile asks instead of adopting."""
         client = _app_client(tmp_path)
         client.post("/load", data={"folder": str(live_folder)})
         assert "qA1" in _shown_qubits(client)
 
         _write_live(live_folder, _chip_state(("q0", "q1")))
         client.post("/load", data={"folder": str(live_folder)})   # cache hit
+        html = _shown_qubits(client)
+        assert _has_qubit(html, "qA1")                 # not swapped underneath
+        assert "live-diverged-banner" in html
+        assert client.post("/state/sync",
+                           data={"mode": "discard"}).get_json()["status"] == "ok"
         html = _shown_qubits(client)
         assert _has_qubit(html, "q0")
         assert not _has_qubit(html, "qA1")
