@@ -2,7 +2,8 @@
 
 *Status: **PLAN ONLY** — nothing in this document is implemented. Written
 2026-08-09 to be picked up in a fresh context alongside
-`docs/90_merge_audit_handoff.md`. Read §1–§3 before writing any code.*
+`docs/90_merge_audit_handoff.md`. Read §1–§3 before writing any code.
+**Every open question is answered (§6) — this is ready to implement as written.***
 
 ---
 
@@ -60,8 +61,11 @@ So: **three honest states, never two.**
 | chip declares | render | label |
 |---|---|---|
 | valid `grid_location` for every node | physical map | (none needed) |
-| none / partial | **connectivity** layout derived from `qubit_pairs` only | visibly labelled *"logical layout — this chip declares no physical positions"* |
+| none / partial | **connectivity** layout derived from `qubit_pairs` only | **visibly labelled on the map** — *"logical layout — this chip declares no physical positions"* |
 | no positions **and** no pairs | no map; keep the table | one honest line, not an empty box |
+
+Row 2 is **decided** (§6.4): draw it, and make the label unmissable — on the map
+itself, not in a tooltip or a legend that can go unopened.
 
 The existing `strict` mode already encodes exactly this distinction
 (`placed:false` unless *every* node has a valid grid_location) — use it, and
@@ -242,33 +246,36 @@ Following this repo's standard (see `docs/90` §4 for how prior work was graded)
   that no browser check was possible for the last chain; a visual feature is
   where that gap costs the most.
 
-## 6. Questions — answered and still open
+## 6. Questions — ALL ANSWERED (2026-08-09)
 
-**Answered by the user (2026-08-09):**
+Nothing in this plan is blocked on the user. Implement it as written.
 
 1. **Which surface is "Chip Topology"?** → the Chip Status map, and it **keeps
    its own distinct purpose**: *"T1, T2, Fidelity등의 수치를 통합적으로 보여주는
-   맵"*. It is not superseded by the component map; §2.4 is the division of
-   labour between them.
+   맵"*. Not superseded by the component map; §2.4 is the division of labour.
 2. **Instrument space too?** → yes, folded into the shared layout as a highlight
-   layer (§2.5), not a separate view.
-3. **Does the plan still cover modernising Chip Topology itself?** → yes, §3.1;
-   it is half the work, not a side effect of ②.
+   layer (§2.5), not a separate view. (This is why there is no P4.)
+3. **Does the plan still cover modernising Chip Topology itself?** → yes, §3.1.
+   It is half the work, not a side effect of ②.
+4. **Chips with no `grid_location`** → **draw the logical layout, and label it so
+   the user knows.**
+   > ④ 논리 레이아웃 라벨 붙여서 그리자 다만, 사용자가 알수있게 표시는 해야해.
 
-**Still open — decide before the phase that needs them:**
-
-4. **Chips with no `grid_location`** (§2.1) — labelled *logical* layout, or no
-   map at all for those chips? Recommend the labelled logical layout. What is
-   NOT negotiable either way is that a fabricated raster must never be drawn
-   unlabelled. *Needed by P0.*
-5. **Map default open or collapsed** on component pages? Recommend **open** —
-   the whole report is that people cannot see this information at all —  with
-   the collapse persisted per house convention. *Needed by P2.*
-6. **How much of the layout is "every component type"?** (§3.2) Drawing qubits +
-   pairs + couplers + resonators + flux lines at once may crowd a 50-qubit chip.
-   Proposal: draw all of them, but let the non-highlighted layers dim far enough
-   to read as background texture rather than content; revisit after seeing P2 on
-   a real chip. *Needed by P2.*
+   So the middle row of §2.1's table is the chosen behaviour, and the *label is
+   the load-bearing part*: it must be visible on the map itself, not only in a
+   tooltip or a legend the user may never open. A logical layout that reads as
+   physical is the failure this plan exists to prevent (§2.1). Suggested wording
+   on the map: **"logical layout — this chip declares no physical positions"**.
+   Test it as a first-class case in P0.
+5. **Map default open or collapsed?** → **open.** The whole report is that people
+   cannot see this information at all. Collapse state still persists per house
+   convention (`localStorage`), so anyone doing bulk numeric work can reclaim the
+   space and keep it reclaimed.
+6. **How much of the layout is "every component type"?** → **proceed as
+   proposed**: draw all of them, let the non-highlighted layers dim far enough to
+   read as background texture rather than content, and revisit after seeing P2 on
+   a real chip. If a 50-qubit chip turns out to be crowded, that is a tuning
+   decision made against a real render, not in advance.
 
 ## 7. What NOT to do
 
