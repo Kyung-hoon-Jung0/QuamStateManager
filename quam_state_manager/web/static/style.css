@@ -322,6 +322,20 @@
     --color-info-text:       #0c5460;  /* text on info backgrounds (history-trigger-auto, toast-info) */
     --color-info-bg:         #d1ecf1;  /* background for info states */
     --color-info-border:     #17a2b8;  /* border/accent for info states */
+
+    /* -- Feedline categorical palette (docs/93 F4) — validated with the
+       dataviz six-checks against SM's real surfaces (light #ffffff); the
+       ORDER is the CVD-safety mechanism (adjacent pairs pass ΔE ≥ 8 in both
+       modes as ordered — a reorder without re-validating broke dark mode at
+       ΔE 1.6). Blue deliberately absent: it would impersonate the selection
+       accent. Never reuse these for series/status. -- */
+    --cm-feed-1: #eb6834;   /* orange  */
+    --cm-feed-2: #1baf7a;   /* aqua    */
+    --cm-feed-3: #eda100;   /* yellow  */
+    --cm-feed-4: #e87ba4;   /* magenta */
+    --cm-feed-5: #008300;   /* green   */
+    --cm-feed-6: #4a3aa7;   /* violet  */
+    --cm-feed-7: #e34948;   /* red     */
     /* Blue 'suggestion' diagnostics text — kept as TEXT (not a fill/border token)
        so it stays legible in both themes; see the theme-contrast rule. */
     --diag-info-text:        #46688f;  /* readable on light bg (~5.3:1) */
@@ -541,6 +555,17 @@ html[data-font-size="large"] { --font-size-base: 19px; }
     --color-info-bg:         #18303a;  /* dark cyan tint */
     --color-info-border:     #17a2b8;
     --diag-info-text:        #93b4dc;  /* lighter blue 'suggestion' text for dark bg (~8:1) */
+
+    /* -- Feedline palette, dark steps (docs/93 F4) — the SAME seven hues
+       re-stepped for the dark surface (#181c25) and validated there as a
+       set (adjacent CVD ΔE ≥ 8.4); not an automatic flip. -- */
+    --cm-feed-1: #d95926;
+    --cm-feed-2: #199e70;
+    --cm-feed-3: #c98500;
+    --cm-feed-4: #d55181;
+    --cm-feed-5: #008300;
+    --cm-feed-6: #9085e9;
+    --cm-feed-7: #e66767;
 
     /* -- Neutral -- */
     --color-neutral-text:    #b0b4b8;  /* light gray for dark bg */
@@ -3421,7 +3446,44 @@ td.col-delta .val-delta { margin-left: 0; }
 .cm-hl-resonators .cm-flux { opacity: .22; }
 .cm-hl-resonators .cm-stone, .cm-hl-resonators .cm-id { opacity: .5; }
 .cm-hl-resonators .cm-res { stroke: var(--pico-primary); stroke-width: 2.2; }
-.cm-hl-resonators .cm-feed { stroke: var(--pico-primary); stroke-width: 2; opacity: .9; }
+/* docs/93 F4 — colour encodes FEEDLINE IDENTITY on this page only (elsewhere
+   colour still means selected/not). Each slot pairs its validated hue with a
+   distinct dash so hue never carries identity alone; a slot-less bus (past 7,
+   unseen in real data) stays neutral with its inline unique dash. */
+.cm-hl-resonators .cm-feed { stroke-width: 2.5; opacity: .95; }
+.cm-hl-resonators .cm-feed-s1 { stroke: var(--cm-feed-1); stroke-dasharray: 6 3; }
+.cm-hl-resonators .cm-feed-s2 { stroke: var(--cm-feed-2); stroke-dasharray: 2 3; }
+.cm-hl-resonators .cm-feed-s3 { stroke: var(--cm-feed-3); stroke-dasharray: 8 3 2 3; }
+.cm-hl-resonators .cm-feed-s4 { stroke: var(--cm-feed-4); stroke-dasharray: 1 3; }
+.cm-hl-resonators .cm-feed-s5 { stroke: var(--cm-feed-5); stroke-dasharray: 10 3; }
+.cm-hl-resonators .cm-feed-s6 { stroke: var(--cm-feed-6); stroke-dasharray: 4 3 1 3; }
+.cm-hl-resonators .cm-feed-s7 { stroke: var(--cm-feed-7); stroke-dasharray: 12 4; }
+.cm-hl-resonators .cm-res.cm-feed-s1 { stroke: var(--cm-feed-1); }
+.cm-hl-resonators .cm-res.cm-feed-s2 { stroke: var(--cm-feed-2); }
+.cm-hl-resonators .cm-res.cm-feed-s3 { stroke: var(--cm-feed-3); }
+.cm-hl-resonators .cm-res.cm-feed-s4 { stroke: var(--cm-feed-4); }
+.cm-hl-resonators .cm-res.cm-feed-s5 { stroke: var(--cm-feed-5); }
+.cm-hl-resonators .cm-res.cm-feed-s6 { stroke: var(--cm-feed-6); }
+.cm-hl-resonators .cm-res.cm-feed-s7 { stroke: var(--cm-feed-7); }
+
+/* feedline legend (resonators page): swatch + port label + count per bus —
+   the identity anchor is the LABEL, colour is redundant (relief rule). */
+.cm-feed-legend {
+    display: flex; gap: .8rem; flex-wrap: wrap; align-items: center;
+    margin-top: .35rem; font-size: .74em; color: var(--pico-muted-color);
+}
+.cm-feed-lg { display: inline-flex; align-items: center; gap: .32rem; }
+.cm-feed-swatch {
+    display: inline-block; width: 14px; height: 4px; border-radius: 2px;
+    background: var(--pico-muted-border-color);
+}
+.cm-feed-swatch.cm-feed-s1 { background: var(--cm-feed-1); }
+.cm-feed-swatch.cm-feed-s2 { background: var(--cm-feed-2); }
+.cm-feed-swatch.cm-feed-s3 { background: var(--cm-feed-3); }
+.cm-feed-swatch.cm-feed-s4 { background: var(--cm-feed-4); }
+.cm-feed-swatch.cm-feed-s5 { background: var(--cm-feed-5); }
+.cm-feed-swatch.cm-feed-s6 { background: var(--cm-feed-6); }
+.cm-feed-swatch.cm-feed-s7 { background: var(--cm-feed-7); }
 
 .cm-hl-flux .cm-res, .cm-hl-flux .cm-feed, .cm-hl-flux .cm-coupler { opacity: .22; }
 .cm-hl-flux .cm-stone, .cm-hl-flux .cm-id { opacity: .5; }

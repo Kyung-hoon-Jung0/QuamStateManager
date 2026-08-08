@@ -70,6 +70,28 @@ window.ComponentMap = (function () {
     });
   }
 
+  // Feedline legend (docs/93 F4) — resonators page only: one swatch + port
+  // label + count per drawn bus. Built with DOM APIs (port labels come from
+  // wiring — textContent, never innerHTML) and doubles as the relief the
+  // light-mode contrast WARN obligates (identity is never colour-alone).
+  function _renderFeedLegend(body, highlight, api) {
+    if (highlight !== "resonators" || !api || !api.feeds || !api.feeds.length) return;
+    var box = document.createElement("div");
+    box.className = "cm-feed-legend";
+    for (var i = 0; i < api.feeds.length; i++) {
+      var f = api.feeds[i];
+      var item = document.createElement("span");
+      item.className = "cm-feed-lg";
+      var sw = document.createElement("i");
+      sw.className = "cm-feed-swatch cm-feed-s" + f.slot;
+      item.appendChild(sw);
+      item.appendChild(document.createTextNode(
+        f.label + " · " + f.count + " resonator" + (f.count === 1 ? "" : "s")));
+      box.appendChild(item);
+    }
+    body.appendChild(box);
+  }
+
   // table -> map: ONE delegated listener on the persistent pane; reads the
   // current mount at event time so swaps can't stack handlers.
   function _paneOver(ev) {
@@ -127,10 +149,11 @@ window.ComponentMap = (function () {
             body.innerHTML = '<p class="muted" style="margin:0">Chip layout unavailable.</p>';
             return;
           }
+          var highlight = root.getAttribute("data-highlight") || "";
           mine.api = window.TopoGraph.renderLayout(body, {
             nodes: topo.nodes,
             edges: topo.edges || [],
-            highlight: root.getAttribute("data-highlight") || "",
+            highlight: highlight,
             // docs/93 F2: users asked for ~1.9x — the mount declares the cell
             // so the drawing AND its text scale together (renderLayout derives
             // the id font from the cell).
@@ -138,6 +161,7 @@ window.ComponentMap = (function () {
             // docs/93 F3: the page's active chain filter lights its qubits
             emphasisChain: root.getAttribute("data-chain") || "",
           });
+          _renderFeedLegend(body, highlight, mine.api);
           _bindMapEvents(body);
         })
         .catch(function () {

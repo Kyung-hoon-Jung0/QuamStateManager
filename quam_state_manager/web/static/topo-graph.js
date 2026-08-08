@@ -461,6 +461,11 @@ window.TopoGraph = (function () {
 
     // feedline buses (bottom layer): nodes sharing one rr_port label share the
     // physical readout line — a thin bus through their resonator marks.
+    // docs/93 F4: each DRAWN bus takes a palette slot in SPATIAL order along
+    // the dominant axis, so palette adjacency coincides with screen adjacency
+    // (the gate the validated palette passes). Colour/dash live in CSS and
+    // apply only under the resonators highlight; past 7 buses the rest wear
+    // the neutral slot 0 with a unique inline dash — hues never cycle.
     var feeds = {}, feedOrder = [];
     for (var fi = 0; fi < nodes.length; fi++) {
       var fp = nodes[fi].rr_port;
@@ -468,6 +473,7 @@ window.TopoGraph = (function () {
       if (!Object.prototype.hasOwnProperty.call(feeds, fp)) { feeds[fp] = []; feedOrder.push(fp); }
       feeds[fp].push(nodes[fi].id);
     }
+    var buses = [];
     for (var fo = 0; fo < feedOrder.length; fo++) {
       var members = feeds[feedOrder[fo]];
       if (members.length < 2) continue;
@@ -480,10 +486,27 @@ window.TopoGraph = (function () {
       // order along the dominant axis so the bus reads as one line
       pts.sort(W >= H ? function (a, b) { return a.x - b.x || a.y - b.y; }
                       : function (a, b) { return a.y - b.y || a.x - b.x; });
+      var mean = 0;
+      for (var pm = 0; pm < pts.length; pm++) mean += (W >= H ? pts[pm].y : pts[pm].x);
+      buses.push({ label: feedOrder[fo], ids: members, pts: pts, mean: mean / pts.length });
+    }
+    // spatial slot order: buses sorted ACROSS the dominant axis (a landscape
+    // chip's feedlines stack vertically -> sort by mean y), ties by label
+    buses.sort(function (a, b) { return a.mean - b.mean || (a.label < b.label ? -1 : 1); });
+    var feedSlotById = {};
+    for (var bi = 0; bi < buses.length; bi++) {
+      var bus = buses[bi];
+      bus.slot = bi < 7 ? bi + 1 : 0;
+      for (var bm = 0; bm < bus.ids.length; bm++) feedSlotById[bus.ids[bm]] = bus.slot;
       var ptStr = "";
-      for (var pi = 0; pi < pts.length; pi++) ptStr += (pi ? " " : "") + pts[pi].x + "," + pts[pi].y;
-      svg += '<polyline class="cm-feed" data-cm-feed="' + esc(feedOrder[fo]) + '" points="' + ptStr + '">' +
-             "<title>readout feedline " + esc(feedOrder[fo]) + " — " + members.length + " resonators</title></polyline>";
+      for (var pi = 0; pi < bus.pts.length; pi++) ptStr += (pi ? " " : "") + bus.pts[pi].x + "," + bus.pts[pi].y;
+      // slot-0 unique dash as inline STYLE, not an attribute — a stylesheet
+      // dasharray rule beats any presentation attribute (same precedence trap
+      // as the F2 font-size)
+      svg += '<polyline class="cm-feed cm-feed-s' + bus.slot + '" data-cm-feed="' + esc(bus.label) + '"' +
+             (bus.slot === 0 ? ' style="stroke-dasharray:2 ' + (2 + (bi - 7)) + '"' : "") +
+             ' points="' + ptStr + '">' +
+             "<title>readout feedline " + esc(bus.label) + " — " + bus.ids.length + " resonators</title></polyline>";
     }
 
     // pair edges (+ CR direction arrows, coupler dots)
@@ -543,7 +566,9 @@ window.TopoGraph = (function () {
              '<text class="cm-id" font-size="' + idFont + '" x="' + pt.x + '" y="' + pt.y +
              '" text-anchor="middle" dominant-baseline="central">' + esc(n.id) + "</text>";
       if (n.rr_port) {
-        svg += '<circle class="cm-res" cx="' + ra.x + '" cy="' + ra.y + '" r="' + (R * 0.42) + '">' +
+        var fSlot = feedSlotById[n.id];
+        svg += '<circle class="cm-res' + (fSlot != null ? " cm-feed-s" + fSlot : "") +
+               '" cx="' + ra.x + '" cy="' + ra.y + '" r="' + (R * 0.42) + '">' +
                "<title>" + esc(n.id) + " readout — " + esc(n.rr_port) + "</title></circle>";
       }
       if (n.z_port) {
@@ -566,6 +591,9 @@ window.TopoGraph = (function () {
     }
     return {
       mode: lay.mode,
+      // drawn feedline buses in slot order — the resonators-page legend reads
+      // this (label = the shared rr_port, count = resonators on the line)
+      feeds: buses.map(function (b) { return { label: b.label, slot: b.slot, count: b.ids.length }; }),
       highlightEntity: function (kind, id, on) {
         var sel = '[data-cm="' + (kind === "pair" ? "p" : "q") + ":" + cssEsc(id) + '"]';
         var els = mount.querySelectorAll(sel);

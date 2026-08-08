@@ -117,6 +117,46 @@ function checkRenderLayout() {
   ok(mBig.querySelector('.cm-id').getAttribute('font-size') === '19.7',
      'cell:120 -> 19.7px id font (anchored to 10.5@64)');
 
+  // F4 (docs/93): feedline slots assigned in SPATIAL order (screen top first),
+  // NOT declaration order — palette adjacency must equal screen adjacency.
+  {
+    const mF = win.document.createElement('div');
+    win.document.body.appendChild(mF);
+    const apiF = win.TopoGraph.renderLayout(mF, {
+      nodes: [
+        // BOTTOM feedline declared FIRST — must still take slot 2
+        { id: 'qX1', grid_location: '0,0', rr_port: 'pBottom' },
+        { id: 'qX2', grid_location: '1,0', rr_port: 'pBottom' },
+        { id: 'qY1', grid_location: '0,1', rr_port: 'pTop' },
+        { id: 'qY2', grid_location: '1,1', rr_port: 'pTop' },
+      ],
+      edges: [], highlight: 'resonators',
+    });
+    ok(JSON.stringify(apiF.feeds) === JSON.stringify([
+      { label: 'pTop', slot: 1, count: 2 }, { label: 'pBottom', slot: 2, count: 2 }]),
+      'slots follow SCREEN order (top bus = slot 1) regardless of declaration order — got ' +
+      JSON.stringify(apiF.feeds));
+    ok(mF.querySelector('polyline.cm-feed-s1').getAttribute('data-cm-feed') === 'pTop',
+      'the top bus polyline wears slot 1');
+    const y1res = mF.querySelectorAll('.cm-node')[2].querySelector('.cm-res');
+    ok(y1res && y1res.getAttribute('class').indexOf('cm-feed-s1') !== -1,
+      'resonator marks inherit their bus slot');
+    // 8 buses: the 8th degrades to the neutral slot 0 with a unique dash — never an 8th hue
+    const many = [];
+    for (let g = 0; g < 8; g++) {
+      many.push({ id: 'qm' + g + 'a', grid_location: '0,' + g, rr_port: 'line' + g });
+      many.push({ id: 'qm' + g + 'b', grid_location: '1,' + g, rr_port: 'line' + g });
+    }
+    const mMany = win.document.createElement('div');
+    win.document.body.appendChild(mMany);
+    const apiMany = win.TopoGraph.renderLayout(mMany, { nodes: many, edges: [], highlight: 'resonators' });
+    const slots = apiMany.feeds.map((f) => f.slot);
+    ok(JSON.stringify(slots) === JSON.stringify([1, 2, 3, 4, 5, 6, 7, 0]),
+      '8th bus wears the neutral slot 0 (hues never cycle) — got ' + JSON.stringify(slots));
+    ok(/stroke-dasharray/.test(mMany.querySelector('polyline.cm-feed-s0').getAttribute('style') || ''),
+      'the neutral bus carries its own dash as inline STYLE (a stylesheet rule beats attributes)');
+  }
+
   // F3 (docs/93): chain emphasis — matching stones read selected, the rest
   // (with their satellite marks) drop to context; absent by default.
   ok(!m.querySelector('.cm-chain-emph, .cm-chain-dim'),
@@ -240,6 +280,38 @@ async function checkComponentMap() {
   ok(win4.document.querySelectorAll('.cmap-body .cm-node.cm-chain-emph').length === 2 &&
      win4.document.querySelectorAll('.cmap-body .cm-node.cm-chain-dim').length === 1,
      'data-chain="A" flows through ComponentMap.mount (2 emph / 1 dim)');
+
+  // F4: the feedline legend renders on the resonators page only, via DOM
+  // APIs (hostile port labels stay text)
+  const win5 = makeWorld(PANE_HTML.replace('data-highlight="pairs"', 'data-highlight="resonators"'));
+  win5.ComponentMap.mount(win5.document.getElementById('component-map'));
+  await tick(); await tick();
+  const legend = win5.document.querySelector('.cmap-body .cm-feed-legend');
+  ok(!!legend, 'resonators page renders the feedline legend');
+  ok(legend && /con1\/fem1\/p1 · 2 resonators/.test(legend.textContent),
+     'legend names the bus port label + count');
+  ok(legend && legend.querySelectorAll('.cm-feed-lg').length === 1,
+     'single-member rr groups draw no bus and get no legend row');
+  const win6 = makeWorld(PANE_HTML);   // pairs highlight
+  win6.ComponentMap.mount(win6.document.getElementById('component-map'));
+  await tick(); await tick();
+  ok(!win6.document.querySelector('.cm-feed-legend'), 'no legend outside the resonators page');
+  // injection: a wiring-borne hostile label must stay text
+  const winX = makeWorld(PANE_HTML.replace('data-highlight="pairs"', 'data-highlight="resonators"'));
+  const hostile = '<img src=x onerror=window._pwn=1>';
+  winX.fetch = function () {
+    return winX.Promise.resolve({ ok: true, json: function () {
+      return winX.Promise.resolve({ nodes: [
+        { id: 'q1', grid_location: '0,0', rr_port: hostile },
+        { id: 'q2', grid_location: '1,0', rr_port: hostile },
+      ], edges: [] });
+    } });
+  };
+  winX.ComponentMap.mount(winX.document.getElementById('component-map'));
+  await tick(); await tick();
+  const lgX = winX.document.querySelector('.cm-feed-legend');
+  ok(lgX && lgX.textContent.indexOf(hostile) !== -1 && !winX.document.querySelector('.cm-feed-legend img'),
+     'hostile port labels render as TEXT in the legend (no element injection)');
 }
 
 (async function main() {
