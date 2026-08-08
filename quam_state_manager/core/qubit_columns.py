@@ -59,7 +59,14 @@ _IO_KEYS = ("opx_output", "opx_input")
 _IO_SHORT = {"opx_output": "out", "opx_input": "in"}
 
 # Column-count armor: a pathological chip can't ship a 5,000-entry menu model.
-MAX_DYNAMIC_COLUMNS = 400
+# 400 silently cut a real 10Q tunable-coupler chip's model at 452 (the 27
+# gate-pulse classes under z.operations flood the order, pushing the z Port+
+# section — incl. exponential_filter, the column the user was LOOKING for —
+# past the cap; docs/94). The cap is armor against pathological chips, not a
+# budget: real models measure 231 (a 21Q) and 452 (this 10Q), so 1200 keeps
+# the armor far above reality. When it DOES trip, the truncation note now
+# renders in the grid instead of being filtered out.
+MAX_DYNAMIC_COLUMNS = 1200
 
 _CURATED_TMPLS: frozenset[str] = frozenset(c["tmpl"] for c in _BULK_COLUMNS_SPEC)
 
