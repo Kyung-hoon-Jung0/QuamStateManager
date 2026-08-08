@@ -542,6 +542,64 @@ window.TopoGraph = (function () {
              "<title>" + esc(e.pair_id) + "</title></g>";
     }
 
+    // Frequency-inequality chevrons (docs/93 F5): ONE glyph per PHYSICAL pair
+    // (CR chips carry both directions as separate edges — deduped by the
+    // sorted endpoint key), offset perpendicular off the midpoint so it never
+    // sits on a coupler dot or CR arrow. The apex points at the LOWER-f_01
+    // qubit — the glyph IS the inequality sign between the endpoints, read
+    // from either side (lo < hi / hi > lo). Honesty gates: BOTH endpoints
+    // numeric and |Δ| >= 1 MHz, else nothing; the exact Δ lives in the
+    // tooltip, never as drawn text (docs/91 §2.4). Top-level, not inside a
+    // direction's group: the glyph describes the PAIR, so one inactive CR
+    // direction must not dim it.
+    var fById = {};
+    for (var fbi = 0; fbi < nodes.length; fbi++) {
+      var fv = nodes[fbi].f_01;
+      if (typeof fv === "number" && isFinite(fv)) fById[nodes[fbi].id] = fv;
+    }
+    function fmtDf(hz) {
+      return hz >= 1e9 ? (hz / 1e9).toFixed(2) + " GHz" : (hz / 1e6).toFixed(1) + " MHz";
+    }
+    var chevW = Math.round(Math.max(1.6, CELL * 0.028) * 10) / 10;
+    var chevDone = {};
+    for (var ci = 0; ci < edges.length; ci++) {
+      var ce = edges[ci];
+      if (ce == null || ce.source == null || ce.target == null) continue;
+      var cpa = px(ce.source), cpb = px(ce.target);
+      if (!cpa || !cpb) continue;
+      var ckey = String(ce.source) < String(ce.target)
+        ? ce.source + "|" + ce.target : ce.target + "|" + ce.source;
+      if (chevDone[ckey]) continue;
+      chevDone[ckey] = true;
+      var fS = fById[ce.source], fT = fById[ce.target];
+      if (fS == null || fT == null) continue;
+      var dF = fS - fT;
+      if (Math.abs(dF) < 1e6) continue;
+      var loPt = dF > 0 ? cpb : cpa, hiPt = dF > 0 ? cpa : cpb;
+      var hiId = dF > 0 ? ce.source : ce.target;
+      var loId = dF > 0 ? ce.target : ce.source;
+      var cux = hiPt.x - loPt.x, cuy = hiPt.y - loPt.y;
+      var cul = Math.sqrt(cux * cux + cuy * cuy) || 1;
+      cux /= cul; cuy /= cul;
+      var cnx = -cuy, cny = cux;
+      var cmx = (loPt.x + hiPt.x) / 2 + cnx * CELL * 0.16;
+      var cmy = (loPt.y + hiPt.y) / 2 + cny * CELL * 0.16;
+      var arm = CELL * 0.10, half = CELL * 0.075, gap = CELL * 0.09;
+      var chev = "";
+      for (var cg = 0; cg < 2; cg++) {
+        // both apexes point toward the LOWER end (-u); arms open toward the higher
+        var apX = cmx + cux * (cg === 0 ? -gap / 2 : gap / 2);
+        var apY = cmy + cuy * (cg === 0 ? -gap / 2 : gap / 2);
+        chev += '<polyline class="cm-freqchev" stroke-width="' + chevW + '" points="' +
+                (apX + cux * arm + cnx * half) + "," + (apY + cuy * arm + cny * half) + " " +
+                apX + "," + apY + " " +
+                (apX + cux * arm - cnx * half) + "," + (apY + cuy * arm - cny * half) + '"/>';
+      }
+      svg += '<g class="cm-freq" data-cm-freq="' + esc(ckey) + '">' + chev +
+             "<title>Δf_01: " + esc(hiId) + " +" + fmtDf(Math.abs(dF)) + " vs " + esc(loId) +
+             "</title></g>";
+    }
+
     // qubit stones + per-qubit component marks (resonator NE, flux stub S)
     // id text scales WITH the cell (docs/93 F2) — a CSS-fixed size left tiny
     // labels inside 1.9x stones. Anchored to the original 10.5px at the

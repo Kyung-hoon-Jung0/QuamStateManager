@@ -41,8 +41,10 @@ function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } }
 
 const TOPO = {
   nodes: [
-    { id: 'qA1', grid_location: '0,0', chain: 'A', rr_port: 'con1/fem1/p1', z_port: 'con1/fem5/p1' },
-    { id: 'qA2', grid_location: '1,0', chain: 'A', rr_port: 'con1/fem1/p1', z_port: 'con1/fem5/p2' },
+    // f_01: qA2 is 200 MHz ABOVE qA1 -> the qA2-qA1 edge gets a chevron whose
+    // apex points at qA1; qA3 has NO f_01 -> its edge gets none (honesty gate)
+    { id: 'qA1', grid_location: '0,0', chain: 'A', f_01: 5.0e9, rr_port: 'con1/fem1/p1', z_port: 'con1/fem5/p1' },
+    { id: 'qA2', grid_location: '1,0', chain: 'A', f_01: 5.2e9, rr_port: 'con1/fem1/p1', z_port: 'con1/fem5/p2' },
     { id: 'qA3', grid_location: '0,1', chain: 'B', rr_port: 'con1/fem2/p1', z_port: null },
   ],
   edges: [
@@ -116,6 +118,57 @@ function checkRenderLayout() {
   ok(mBig.querySelector('.cm-stone').getAttribute('r') === '36', 'cell:120 -> 36px stones (0.30 ratio kept)');
   ok(mBig.querySelector('.cm-id').getAttribute('font-size') === '19.7',
      'cell:120 -> 19.7px id font (anchored to 10.5@64)');
+
+  // F5 (docs/93): the frequency-inequality chevron — one per PHYSICAL pair,
+  // apex at the lower-f_01 qubit, honest gates, Δ only in the tooltip.
+  {
+    const freqs = m.querySelectorAll('.cm-freq');
+    ok(freqs.length === 1,
+       'exactly ONE chevron: qA2-qA1 has both f_01s; qA1-qA3 lacks one (got ' + freqs.length + ')');
+    const g = freqs[0];
+    ok(/Δf_01: qA2 \+200\.0 MHz vs qA1/.test(g.querySelector('title').textContent),
+       'tooltip names the higher qubit and the exact Δ');
+    ok(g.querySelectorAll('.cm-freqchev').length === 2, 'double chevron (two strokes)');
+    // geometry: the apex (2nd point of the polyline) sits CLOSER to the
+    // lower-f qubit (qA1 at cell 0) than the arm tips do
+    const pts = g.querySelector('.cm-freqchev').getAttribute('points').split(' ')
+      .map((p) => p.split(',').map(Number));
+    const apex = pts[1], armTip = pts[0];
+    const qA1x = 0.5 * 64, qA2x = 1.5 * 64;   // stone centres, default cell
+    ok(Math.abs(apex[0] - qA1x) < Math.abs(armTip[0] - qA1x),
+       'chevron apex points toward the LOWER-f qubit (qA1)');
+    ok(Math.abs(apex[0] - qA2x) > Math.abs(armTip[0] - qA2x),
+       'chevron opens toward the HIGHER-f qubit (qA2)');
+    // reversed frequencies flip the glyph
+    const mRev = win.document.createElement('div');
+    win.document.body.appendChild(mRev);
+    win.TopoGraph.renderLayout(mRev, {
+      nodes: [{ id: 'qA1', grid_location: '0,0', f_01: 5.2e9 },
+              { id: 'qA2', grid_location: '1,0', f_01: 5.0e9 }],
+      edges: [{ pair_id: 'qA2-qA1', source: 'qA2', target: 'qA1' }], highlight: 'pairs',
+    });
+    ok(/Δf_01: qA1 \+200\.0 MHz vs qA2/.test(mRev.querySelector('.cm-freq title').textContent),
+       'flipped frequencies flip the chevron (qA1 now higher)');
+    const ptsR = mRev.querySelector('.cm-freqchev').getAttribute('points').split(' ')
+      .map((p) => p.split(',').map(Number));
+    ok(Math.abs(ptsR[1][0] - qA2x) < Math.abs(ptsR[0][0] - qA2x),
+       'flipped: apex now points at qA2 (the lower one)');
+    // CR both-directions dedupe + near-equal gate
+    const mCr = win.document.createElement('div');
+    win.document.body.appendChild(mCr);
+    win.TopoGraph.renderLayout(mCr, {
+      nodes: [{ id: 'q1', grid_location: '0,0', f_01: 5.0e9 },
+              { id: 'q2', grid_location: '1,0', f_01: 5.1e9 },
+              { id: 'q3', grid_location: '2,0', f_01: 5.1e9 + 5e5 }],
+      edges: [
+        { pair_id: 'q1-2', source: 'q1', target: 'q2', directed: true },
+        { pair_id: 'q2-1', source: 'q2', target: 'q1', directed: true },
+        { pair_id: 'q2-3', source: 'q2', target: 'q3' },
+      ], highlight: 'pairs',
+    });
+    ok(mCr.querySelectorAll('.cm-freq').length === 1,
+       'anti-parallel CR directions share ONE chevron, and |Δ| < 1 MHz draws none');
+  }
 
   // F4 (docs/93): feedline slots assigned in SPATIAL order (screen top first),
   // NOT declaration order — palette adjacency must equal screen adjacency.
