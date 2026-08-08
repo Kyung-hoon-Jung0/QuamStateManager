@@ -989,7 +989,19 @@ class PlanEngine:
             for r in rows:
                 self._record_preplan(r["path"], r.get("old_hint"))
             out = self.writer.apply_rows(rows, label=f"{step.id}:{target}")
-            self._ledger("write_applied", step=step.id, target=target, **out)
+            # `node_reported_no_write` is not a detail. Replaying a real
+            # 03 -> 05 -> 06 chain (docs/78 §25) showed the first two steps
+            # matching the operator field for field and the third diverging
+            # for exactly this reason: node 06 self-applies in 12 of 27
+            # archived runs and on that run chose not to, while the engine
+            # forward-wrote. Both are defensible policies; a report that
+            # cannot tell them apart is not.
+            self._ledger("write_applied", step=step.id, target=target,
+                         node_reported_no_write=True,
+                         forward_paths=[r["path"] for r in rows], **out)
+            with self._lock:
+                self.state["forward_writes"] = \
+                    self.state.get("forward_writes", 0) + 1
             if out.get("ok"):
                 # capture the ACTUAL applied write as replace-patches so a
                 # later verify-fail revert works for forward-applied writes

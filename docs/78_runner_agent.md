@@ -2635,3 +2635,74 @@ let the word-form violations ship.
   `fit_audit`, which today reports only the scalar `success`. Four of 64 panels
   carry the flag in the archive — enough to see the mechanism, not enough to
   calibrate on.
+
+---
+
+## 25. The chain test: 03 → 05 → 06, walked the way a human walked it (2026-08-09)
+
+§23 replayed runs one at a time. A chain is different, because each step writes
+the state the NEXT step is measured under — it is the only place compounding
+error can appear. Fourteen real 03 → 05 → 06 resonator chains exist in the
+archives; the replay used the tightest: three consecutive run ids on one chip,
+same day, nine shared qubits, with the first two steps carrying the operator's
+own patches as the answer key.
+
+The replay starts at the state before step 1 (reconstructed from
+`patches[].old`) and walks the same three runs, taking the engine's decision at
+each: gates pass → keep the node's own write (or forward-write when the node
+wrote nothing); suspect → defer with the write kept and flagged; fail → revert.
+
+**Validity is stated, not assumed.** Run k+1's raw data was taken under the
+OPERATOR's state after run k. Replaying k+1 is only legitimate while our state
+still matches theirs, so the script reports where it stops matching instead of
+carrying on quietly.
+
+### 25.1 Result
+
+| step | node | gates | decision | state vs the operator |
+|---|---|---|---|---|
+| 1 · resonator spectroscopy | 9/9 successful | 9 pass | keep node write | **identical** |
+| 2 · vs power | 9/9 successful | 9 pass | keep node write | **identical** |
+| 3 · vs flux | 4 successful, 5 failed | 4 pass, 5 fail | forward-write ×4, revert ×5 | **diverged: 12 fields** |
+
+Two steps in, across nine qubits and six watched fields each, the automation's
+state is **field-for-field identical** to what the physicist produced — and the
+five targets node 06 failed were caught and reverted, none of them wrongly.
+
+### 25.2 Why step 3 diverged, established by content and not by inference
+
+Node 06 reported no write. The first reading — "the operator declined to apply
+this run" — could not be trusted, because **2,151 of 3,459 archived runs carry
+no `patches` key at all**, so an absent write record is not evidence of an
+absent write. (An early pass of this analysis also mis-read an aggregated key
+listing as showing the key present; both readings had to be thrown out.)
+
+The runs' own snapshots settle it. Snapshots are post-run, which the control
+confirms: #521 → #522 differ by exactly 33 leaves, which is exactly the 33
+patches #522 recorded. And #522 → #523 differ by **0 of 10,304 leaves**. Node
+06 ran, produced four good fits, and wrote nothing.
+
+The engine's forward path then wrote 12 fields across those four qubits. Those
+writes are *faithful* — measured against every archived 06 run that DID write,
+the node writes `z.joint_offset`, `resonator.f_01` and `resonator.RF_frequency`,
+which is what our `UpdateSpec`s produce. Nothing was written that the node would
+not have written. The divergence is not about **what**; it is about **whether**.
+
+### 25.3 What that means, and what changed
+
+The forward path exists because some runners do not self-apply, and there it is
+the only way a calibration reaches the chip. But node 06 self-applies in 12 of
+27 archived runs, so on this chain the automation was simply **more aggressive
+than this operator was**. Both are defensible policies. A report that cannot
+tell them apart is not.
+
+So the write is now disclosed: `write_applied` carries
+`node_reported_no_write=True` plus the paths, and the plan state counts
+`forward_writes`. No behaviour change — a loop whose backend never self-applies
+is unaffected — but "the node had nothing to say and we acted anyway" is on the
+record instead of looking identical to "we carried the node's own write".
+
+**This is the finding a per-run replay could not produce.** §23 checked 252
+targets and every write matched; the chain asked a question §23 never posed —
+*would the chip end up where the physicist left it?* — and the answer was yes
+for two steps out of three, for a reason worth knowing.
