@@ -175,6 +175,129 @@ ok(TG.legendForGate('nope') === '', 'legendForGate unknown is empty');
   ok(!/onload=x>/.test(tinted.innerHTML), 'cls hook escapes hostile class strings');
 }
 
+// ── P0 (docs/91 §2.1): layoutFor — the honest layout selector ────────────────
+// Three states, never two: 'physical' ONLY when every node passes the strict
+// grid gate; 'logical' = positions derived from pair connectivity alone (never
+// the tolerant (i%4, i/4) raster promoted to a map); 'none' when neither
+// positions nor pairs exist. Pure + deterministic.
+{
+  ok(typeof TG.layoutFor === 'function', 'layoutFor exposed');
+
+  const dist = function (p, q) { return Math.hypot(p.col - q.col, p.row - q.row); };
+
+  // 2x3 lattice connectivity, given two ways (object edges + array pairs)
+  const LAT_EDGES = [
+    { source: 'q1', target: 'q2' }, { source: 'q2', target: 'q3' },
+    { source: 'q4', target: 'q5' }, { source: 'q5', target: 'q6' },
+    { source: 'q1', target: 'q4' }, { source: 'q2', target: 'q5' }, { source: 'q3', target: 'q6' },
+  ];
+  const LAT_PAIRS = LAT_EDGES.map(function (e) { return [e.source, e.target]; });
+
+  // 1) full valid grid -> physical, positions IDENTICAL to strict normalizeGrid
+  const ph = TG.layoutFor(CASES.full_grid, LAT_EDGES);
+  ok(ph.mode === 'physical', 'layoutFor full grid -> physical');
+  eq(ph.positions, TG.normalizeGrid(CASES.full_grid, { mode: 'strict' }).positions,
+     'physical positions == strict normalizeGrid (same math, same flip)');
+  eq([ph.cols, ph.rows], [3, 2], 'physical cols/rows from the strict gate');
+
+  // 1b) faithful to strict: duplicate declared positions still gate as physical
+  // (the chip's own claim — layoutFor adds NO new gates over normalizeGrid)
+  const dup = TG.layoutFor(
+    [{ id: 'q1', grid_location: '0,0' }, { id: 'q2', grid_location: '0,0' }], []);
+  ok(dup.mode === 'physical', 'duplicate declared positions stay physical (faithful to strict)');
+
+  // 2) grid-less chip + pairs -> logical, and NOT the (i%4, i/4) raster
+  const NOGRID = [{ id: 'q1' }, { id: 'q2' }, { id: 'q3' }, { id: 'q4' }, { id: 'q5' }, { id: 'q6' }];
+  const lg = TG.layoutFor(NOGRID, LAT_EDGES);
+  ok(lg.mode === 'logical', 'no grid + pairs -> logical');
+  const raster = {};
+  NOGRID.forEach(function (n, i) { raster[n.id] = { col: i % 4, row: Math.floor(i / 4) }; });
+  ok(JSON.stringify(lg.positions) !== JSON.stringify(raster),
+     'logical positions are NOT the tolerant i%4 raster (docs/91 §2.1 — the fabrication this exists to prevent)');
+  ok(Object.keys(lg.positions).length === 6, 'logical places every node');
+
+  // layout quality properties (loose bounds — this is a layout, not a golden):
+  // every edge lands near one cell; nothing overlaps; connectivity governs
+  // (mean edge length < mean non-edge distance).
+  let eSum = 0, eN = 0, neSum = 0, neN = 0, minPair = Infinity;
+  const ids = NOGRID.map(function (n) { return n.id; });
+  const isEdge = {};
+  LAT_EDGES.forEach(function (e) { isEdge[e.source + '|' + e.target] = isEdge[e.target + '|' + e.source] = true; });
+  for (let a = 0; a < ids.length; a++) {
+    for (let b = a + 1; b < ids.length; b++) {
+      const d = dist(lg.positions[ids[a]], lg.positions[ids[b]]);
+      if (d < minPair) minPair = d;
+      if (isEdge[ids[a] + '|' + ids[b]]) { eSum += d; eN++; } else { neSum += d; neN++; }
+    }
+  }
+  LAT_EDGES.forEach(function (e) {
+    const d = dist(lg.positions[e.source], lg.positions[e.target]);
+    ok(d > 0.4 && d < 2.5, 'logical edge length sane [' + e.source + '-' + e.target + '] got ' + d.toFixed(2));
+  });
+  ok(minPair > 0.3, 'logical layout never overlaps nodes (min pair dist ' + minPair.toFixed(2) + ')');
+  ok(eSum / eN < neSum / neN, 'connected nodes sit closer than unconnected ones');
+
+  // positions normalized to a 0-based box the renderer can size from
+  let minC = Infinity, minR = Infinity, maxC = -Infinity, maxR = -Infinity;
+  ids.forEach(function (id) {
+    const p = lg.positions[id];
+    minC = Math.min(minC, p.col); maxC = Math.max(maxC, p.col);
+    minR = Math.min(minR, p.row); maxR = Math.max(maxR, p.row);
+  });
+  ok(Math.abs(minC) < 1e-6 && Math.abs(minR) < 1e-6, 'logical layout is 0-based');
+  ok(lg.cols >= maxC + 1 - 1e-6 && lg.rows >= maxR + 1 - 1e-6, 'cols/rows cover the extent');
+
+  // 3) PARTIAL grid (the §2.1 first-class case) -> logical, never physical
+  const PARTIAL = [
+    { id: 'q1', grid_location: '0,0' }, { id: 'q2', grid_location: '' },
+    { id: 'q3', grid_location: '1,0' }, { id: 'q4', grid_location: '1,1' },
+  ];
+  const lp = TG.layoutFor(PARTIAL, [['q1', 'q2'], ['q2', 'q3'], ['q3', 'q4']]);
+  ok(lp.mode === 'logical', 'PARTIAL grid is NEVER physical (strict gate honored)');
+  ok(Object.keys(lp.positions).length === 4, 'partial-grid chip still places every node (from pairs alone)');
+
+  // 4) no grid AND no pairs -> none (no map; the honest line is the caller's job)
+  eq(TG.layoutFor(NOGRID, []).mode, 'none', 'no grid + no pairs -> none');
+  eq(TG.layoutFor(NOGRID, null).mode, 'none', 'no grid + null edges -> none');
+  // partial grid + no pairs is STILL none — half-fabricated maps do not exist
+  eq(TG.layoutFor(PARTIAL, []).mode, 'none', 'partial grid + no pairs -> none');
+  // edges that reference only unknown ids give no usable connectivity
+  eq(TG.layoutFor(NOGRID, [['qX', 'qY']]).mode, 'none', 'edges to unknown ids only -> none');
+  // self-loops are not connectivity
+  eq(TG.layoutFor(NOGRID, [['q1', 'q1']]).mode, 'none', 'self-loops only -> none');
+
+  // 5) empty / single-node chips
+  eq(TG.layoutFor([], []).mode, 'none', 'empty nodes -> none');
+  eq(TG.layoutFor([{ id: 'q1', grid_location: '0,0' }], []).mode, 'physical', 'single placed node -> physical');
+  eq(TG.layoutFor([{ id: 'q1' }], []).mode, 'none', 'single unplaced node -> none');
+
+  // 6) isolated nodes ride a visually separate strip BELOW the connected part
+  const ISO = [{ id: 'q1' }, { id: 'q2' }, { id: 'q3' }, { id: 'q4' }, { id: 'qz' }];
+  const li = TG.layoutFor(ISO, [['q1', 'q2'], ['q2', 'q3'], ['q3', 'q4'], ['q4', 'q1']]);
+  ok(li.mode === 'logical', 'isolated node does not break logical mode');
+  let connMaxRow = -Infinity;
+  ['q1', 'q2', 'q3', 'q4'].forEach(function (id) { connMaxRow = Math.max(connMaxRow, li.positions[id].row); });
+  ok(li.positions.qz.row >= connMaxRow + 0.9,
+     'isolated node sits on a separate strip below (row ' + li.positions.qz.row.toFixed(2) +
+     ' vs connected max ' + connMaxRow.toFixed(2) + ')');
+
+  // 7) deterministic: same input -> byte-identical output
+  eq(TG.layoutFor(NOGRID, LAT_EDGES), TG.layoutFor(NOGRID, LAT_EDGES), 'layoutFor is deterministic');
+
+  // 8) edge-shape agnostic: object edges and array pairs give the SAME layout
+  eq(TG.layoutFor(NOGRID, LAT_PAIRS), lg, 'array-pair edges == object edges');
+
+  // 9) CR chips carry BOTH directions as separate pairs — anti-parallel
+  // duplicates must not change the layout
+  const both = LAT_EDGES.concat(LAT_EDGES.map(function (e) { return { source: e.target, target: e.source }; }));
+  eq(TG.layoutFor(NOGRID, both), lg, 'anti-parallel duplicate edges are deduped');
+
+  // 10) the label contract: the note every logical render must show
+  ok(typeof TG.LOGICAL_LAYOUT_NOTE === 'string' && /logical layout/i.test(TG.LOGICAL_LAYOUT_NOTE),
+     'LOGICAL_LAYOUT_NOTE exposed and names the logical layout');
+  ok(/physical position/i.test(TG.LOGICAL_LAYOUT_NOTE), 'LOGICAL_LAYOUT_NOTE says positions are not physical');
+}
+
 // Emit the map for the Python cross-check vs run_build._quam_pair_id.
 const map = {};
 PAIRS.forEach(function (p) { map[p] = TG.quamPairId(p); });
