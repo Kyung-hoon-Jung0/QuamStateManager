@@ -95,9 +95,57 @@ class TestBounds:
                           "frequency_span_in_mhz": {"min": 0.05,
                                                     "max": 99_999}}}
         b = A.bounds_for("fam", ranges)
-        assert b["num_shots"]["max"] == 5_000_000        # widened by real use
+        # real use is accommodated — and then some, because an observed range
+        # is a SAMPLE, not a limit (docs/78 §22.1: a zero-slack envelope was
+        # vacuous on its own data and rejected 2-22% of held-out usage)
+        assert b["num_shots"]["max"] >= 5_000_000
         assert b["frequency_span_in_mhz"]["max"] < 99_999  # ceiling held
         assert b["frequency_span_in_mhz"]["min"] <= 0.05
+
+
+class TestTheEnvelopeIsASampleNotALimit:
+    """docs/78 §22.1 — three shape defects, each measured."""
+
+    def test_an_observed_range_is_widened_before_it_binds(self):
+        b = A.bounds_for("fam", {"fam": {"num_shots": {"min": 100,
+                                                       "max": 200}}})
+        assert b["num_shots"]["max"] > 200 and b["num_shots"]["min"] < 100
+
+    def test_a_sweep_edge_is_bounded_only_on_its_dangerous_side(self):
+        """`min_power_dbm = -40` was rejected for being ABOVE the observed
+        -50 — but starting a sweep higher is strictly safer."""
+        b = A.bounds_for("fam", {"fam": {"min_power_dbm": {"min": -50,
+                                                           "max": -45}}})
+        assert b["min_power_dbm"]["max"] is None
+        b2 = A.bounds_for("fam", {"fam": {"max_power_dbm": {"min": -10,
+                                                            "max": 0}}})
+        assert b2["max_power_dbm"]["min"] is None
+
+    def test_a_coarser_step_than_ever_observed_is_not_refused(self):
+        b = A.bounds_for("fam", {"fam": {"frequency_step_in_mhz":
+                                         {"min": 0.25, "max": 0.5}}})
+        ok, bad = A.validate_proposal(
+            {"frequency_step_in_mhz": 0.05},
+            {"properties": {"frequency_step_in_mhz":
+                            {k: v for k, v in
+                             (("minimum", b["frequency_step_in_mhz"]["min"]),
+                              ("maximum", b["frequency_step_in_mhz"]["max"]))
+                             if v is not None}}})
+        assert ok and not bad
+
+    def test_a_knob_nobody_varied_does_not_enforce_its_own_default(self):
+        """One observed value that IS the schema default is not evidence of a
+        limit — it is evidence nobody touched the knob."""
+        ranges = {"fam": {"num_freq_points": {"min": 101, "max": 101}}}
+        b = A.bounds_for("fam", ranges,
+                         schema_defaults={"fam": {"num_freq_points": 101}})
+        assert "num_freq_points" not in b
+
+    def test_a_single_value_that_is_NOT_the_default_still_bounds_loosely(self):
+        ranges = {"fam": {"num_freq_points": {"min": 101, "max": 101}}}
+        b = A.bounds_for("fam", ranges,
+                         schema_defaults={"fam": {"num_freq_points": 51}})
+        assert b["num_freq_points"]["max"] > 101   # widened, not pinned
 
 
 class TestReducedSchema:

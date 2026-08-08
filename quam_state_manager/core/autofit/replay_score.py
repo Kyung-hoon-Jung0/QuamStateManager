@@ -111,8 +111,24 @@ def compare_to_human(point: DecisionPoint, proposal: dict | None) -> dict:
             "note": f"{len(agree)}/{len(changed)} knobs moved the same way"}
 
 
+# Keys whose values are LOGARITHMIC. A relative tolerance on dBm is
+# reference-arbitrary: the same physical 10 dB step scores 0.125 at
+# −80 → −70 dBm, 0.25 at −40 → −30 and 0.50 at +10 → +20, so no choice of
+# `rel_tol` makes it consistent (docs/78 §22.1). They get an absolute
+# tolerance in their own unit instead.
+_LOG_UNIT_HINTS = ("_dbm", "_db", "power_dbm", "attenuation")
+# 1 dB — below the smallest deliberate step observed in the corpus, which
+# moves power in whole dB.
+_DB_ABS_TOL = 1.0
+
+
+def _is_log_unit(key: str) -> bool:
+    k = str(key).lower()
+    return any(h in k for h in _LOG_UNIT_HINTS)
+
+
 def runs_saved(point: DecisionPoint, proposal: dict | None,
-               future: list[dict], *, rel_tol: float = 0.25) -> dict | None:
+               future: list[dict], *, rel_tol: float = 0.075) -> dict | None:
     """**The metric that IS computable offline** (docs/78 §20.4).
 
     Re-measuring a chip from an archive is impossible, so "did the agent's
@@ -139,7 +155,8 @@ def runs_saved(point: DecisionPoint, proposal: dict | None,
         shared = [k for k in prop if _num(params.get(k)) is not None]
         if not shared:
             continue
-        if all(_close(prop[k], _num(params[k]), rel_tol) for k in shared):
+        if all(_close(prop[k], _num(params[k]), rel_tol, key=k)
+               for k in shared):
             return {"matched_at": n, "runs_saved": n - 1,
                     "on": sorted(shared),
                     "note": (f"the operator reached these values {n} run(s) "
@@ -148,12 +165,25 @@ def runs_saved(point: DecisionPoint, proposal: dict | None,
     return None
 
 
-def _close(a: float, b: float, rel: float) -> bool:
-    """Same DECISION, not the same number: a proposal within a quarter of the
-    operator's value is the same move. Demanding equality would score a correct
-    call as a miss because the agent said 78 where the human typed 80."""
+def _close(a: float, b: float, rel: float, *, key: str = "") -> bool:
+    """Same DECISION, not the same number — demanding equality would score a
+    correct call as a miss because the agent said 78 where the human typed 80.
+
+    The tolerance was 0.25 and that was measured wrong (docs/78 §22.1): across
+    644 real class-A parameter changes it **erased 20.2% of them**, and it sits
+    ON an operator step mode rather than in a gap — a 1.333x step lands at
+    exactly 0.25 and the comparison is ``<=``, so 78 canonical steps (1.2x,
+    1.25x, 1.333x) were all declared "the same decision". 0.075 absorbs the
+    78-vs-80 case with more than 3x headroom while cutting that theft ~8x.
+    Only 1.1% of real changes are within 0.025, so the floor is not tight.
+
+    Log-unit keys take an ABSOLUTE tolerance, because a relative one on dBm is
+    reference-arbitrary and no constant fixes it.
+    """
     if a == b:
         return True
+    if _is_log_unit(key):
+        return abs(a - b) <= _DB_ABS_TOL
     scale = max(abs(a), abs(b))
     return scale > 0 and abs(a - b) / scale <= rel
 

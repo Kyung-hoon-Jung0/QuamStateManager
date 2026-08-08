@@ -153,3 +153,44 @@ class TestScore:
     def test_no_answers_at_all_is_reported_not_crashed(self):
         out = R.score(self.POINTS, {})
         assert out["n_answered"] == 0 and out["agreement_rate"].startswith("n/a")
+
+
+class TestTheToleranceWasMeasured:
+    """docs/78 §22.1 — 0.25 erased 20.2% of 644 real class-A parameter
+    changes and sat ON an operator step mode rather than in a gap. 0.075 keeps
+    the docstring's own 78-vs-80 case and stops swallowing deliberate steps."""
+
+    def test_the_canonical_operator_steps_are_no_longer_erased(self):
+        for ratio in (1.2, 1.25, 1.3333):
+            assert not R._close(80.0, 80.0 * ratio, 0.075), ratio
+
+    def test_the_78_vs_80_case_the_docstring_promises_still_passes(self):
+        assert R._close(78.0, 80.0, 0.075)
+
+    def test_a_log_unit_key_uses_an_absolute_tolerance(self):
+        """A relative tolerance on dBm is reference-arbitrary: the SAME 10 dB
+        step scores 0.125, 0.25 or 0.50 depending only on where it sits. No
+        constant fixes that — the unit does."""
+        assert not R._close(-40.0, -30.0, 0.075, key="max_power_dbm")
+        assert not R._close(10.0, 20.0, 0.075, key="max_power_dbm")
+        assert not R._close(-80.0, -70.0, 0.075, key="max_power_dbm")
+
+    def test_the_same_10_db_step_is_judged_identically_wherever_it_sits(self):
+        near = R._close(-40.0, -30.0, 0.075, key="min_power_dbm")
+        far = R._close(-80.0, -70.0, 0.075, key="min_power_dbm")
+        assert near == far
+
+    def test_a_sub_db_nudge_on_a_log_key_is_still_the_same_decision(self):
+        assert R._close(-30.0, -30.5, 0.075, key="max_power_dbm")
+
+    def test_a_linear_key_is_untouched_by_the_log_rule(self):
+        assert R._close(400.0, 410.0, 0.075, key="num_shots")
+
+    def test_the_end_to_end_match_honours_the_log_rule(self):
+        pt = R.build_points("s", [
+            _run(False, max_power_dbm=-40),
+            _run(False, max_power_dbm=-30),
+            _run(True, max_power_dbm=-30)], "qA1")[0]
+        # proposing -39 dBm is NOT the operator's -30 dBm move
+        assert R.runs_saved(pt, {"max_power_dbm": -39.0}, pt.future) is None
+        assert R.runs_saved(pt, {"max_power_dbm": -30.4}, pt.future)

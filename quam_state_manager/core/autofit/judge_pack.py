@@ -76,6 +76,46 @@ _WINDOW_FRACTION_RE = re.compile(
 # mechanically checkable leakage: paths and archive run ids
 _PATH_RE = re.compile(r"[A-Za-z]:[\\/]|/mnt/|\\\\|(?<!\w)#\d{1,5}_")
 
+# PROSE Clause-B violations. The rules above catch units and explicit
+# window-fractions; an adversarial re-read of the shipped v1 pack found the
+# lint has ~0 recall on the ones written in words (docs/78 §22.1), which is the
+# form an author actually reaches for. "near the centre" teaches the same
+# falsehood as "at 50% of the sweep" — where a feature SITS is a property of
+# the window the experimenter chose.
+#
+# Deliberately NOT caught: "the trace returns to baseline at both EDGES", which
+# is a shape statement about the data, not a placement claim; and coverage
+# ("spans the full width"), which is a legitimate family gate.
+_PROSE_POSITION_RE = re.compile(
+    r"\b(?:near|close\s+to|around|about|toward(?:s)?|at)\s+the\s+"
+    r"(?:centre|center|middle|midpoint|left|right)\b"
+    r"|\bin\s+the\s+(?:middle|centre|center|left|right)\s+"
+    r"(?:third|half|quarter|part|portion|region)\b"
+    r"|\b(?:sits?|lies?|falls?|appears?|located)\s+(?:near|at|in)\s+the\s+"
+    r"(?:centre|center|middle|edge|left|right)\b"
+    r"|\bat\s+the\s+(?:left|right)\s+edge\b", re.I)
+
+# Implied absolute SCALE. "a broad feature" is broad compared to what? Unless
+# the comparison is named, it can only mean "broad on the sweep the author
+# happened to look at" — Clause B in an adjective. A comparison the pack DOES
+# name (broader than the linewidth, than the noise, than its neighbours) is
+# relative geometry and is exactly what the pack is for, so it passes.
+_BARE_SCALE_RE = re.compile(
+    r"\b(?:a|an|the|one|single)\s+(?:very\s+|fairly\s+|quite\s+)?"
+    r"(?:broad|narrow|wide|shallow|deep|tall|short|small|large|weak|strong)\s+"
+    r"(?:[a-z]+\s+){0,2}"
+    r"(?:feature|peak|dip|notch|ridge|band|arc|fringe|oscillation|resonance)\b"
+    r"(?!\s*(?:,\s*)?(?:than|compared|relative|with\s+respect|versus|vs)\b)",
+    re.I)
+
+# Counts that are really window-dependent: how many oscillations you see is a
+# statement about how far the sweep went, not about the qubit.
+_WINDOW_COUNT_RE = re.compile(
+    r"\b(?:about|around|roughly|approximately|some|at\s+least|more\s+than)?\s*"
+    r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|several|many)\s+"
+    r"(?:full\s+|complete\s+)?"
+    r"(?:oscillations?|periods?|cycles?|fringes?|revivals?|lobes?)\b", re.I)
+
 _LINT_RULES = (
     (_UNIT_RE, "a physical quantity with a unit (absolute, chip-specific)"),
     (_BARE_UNIT_RE, "a physical unit named as a quantity"),
@@ -86,12 +126,35 @@ _LINT_RULES = (
     (_PATH_RE, "a file path or archive run id"),
 )
 
+# Two tiers, and the split is itself a measurement. The rules above are precise
+# enough to DROP on: a unit or an explicit window-fraction is a violation with
+# no innocent reading. The prose rules below have real recall — the audit found
+# the drop-tier catches almost none of the word-form violations (docs/78
+# §22.1) — but running them against the shipped v1 pack flagged ten strings and
+# most were FALSE POSITIVES on inspection: "one fringe runs vertical" is a
+# shape statement, "instead of a narrow band" is a contrast, and "several
+# periods is a legitimate signature" exists precisely to PREVENT a Clause-B
+# misjudgement. Dropping those would thin the pack, and P3c measured the
+# judge's weak side to be stinginess, not leniency — so they WARN. A maintainer
+# rewords; the loader never silently deletes family knowledge on a guess.
+_LINT_WARN_RULES = (
+    (_PROSE_POSITION_RE,
+     "a position-in-window claim written in words (Clause B: where a feature "
+     "sits is the experimenter's choice of window, not physics)"),
+    (_BARE_SCALE_RE,
+     "an unqualified size adjective (broad/narrow compared to WHAT? — name "
+     "the comparison, e.g. broader than its own linewidth)"),
+    (_WINDOW_COUNT_RE,
+     "a count of periodic features (Clause B: how many oscillations are "
+     "visible says how far the sweep went, not what the qubit does)"),
+)
+
 _cache: dict[str, dict] = {}
 _cache_lock = threading.Lock()
 
 
 def lint_text(text: str) -> list[str]:
-    """Clause-B violations in one string, as human sentences (empty = clean)."""
+    """Clause-B violations that justify DROPPING the string (empty = clean)."""
     out = []
     for rx, why in _LINT_RULES:
         for m in rx.finditer(text or ""):
@@ -99,20 +162,43 @@ def lint_text(text: str) -> list[str]:
     return out
 
 
-def lint_entry(entry: dict) -> list[str]:
-    """Every violation in one family entry, each naming its field."""
+def warn_text(text: str) -> list[str]:
+    """Prose Clause-B suspicions — reported for a human, never auto-dropped."""
+    out = []
+    for rx, why in _LINT_WARN_RULES:
+        for m in rx.finditer(text or ""):
+            out.append(f"{why}: {m.group(0)!r}")
+    return out
+
+
+def warn_entry(entry: dict) -> list[str]:
+    """Every prose suspicion in one entry, each naming its field.
+
+    This is the recall half of the lint. `lint_entry() == []` means nothing
+    was DROPPED; it never meant the entry is clean, and reading it that way is
+    what let the word-form violations ship.
+    """
+    return _walk(entry, warn_text)
+
+
+def _walk(entry: dict, check) -> list[str]:
     out: list[str] = []
     for field in _TEXT_FIELDS:
-        for v in lint_text(str(entry.get(field) or "")):
+        for v in check(str(entry.get(field) or "")):
             out.append(f"{field}: {v}")
     for field in _LIST_FIELDS:
         for i, s in enumerate(entry.get(field) or []):
-            for v in lint_text(str(s)):
+            for v in check(str(s)):
                 out.append(f"{field}[{i}]: {v}")
     for mode, s in (entry.get("failure_appearance") or {}).items():
-        for v in lint_text(str(s or "")):
+        for v in check(str(s or "")):
             out.append(f"failure_appearance.{mode}: {v}")
     return out
+
+
+def lint_entry(entry: dict) -> list[str]:
+    """Every DROP-tier violation in one family entry, each naming its field."""
+    return _walk(entry, lint_text)
 
 
 def _scrub(entry: dict) -> tuple[dict, list[str]]:
@@ -177,6 +263,16 @@ def load_pack(version: str = DEFAULT_VERSION, *, use_cache: bool = True) -> dict
                            "Clause-B violations: %s", version, key,
                            len(dropped), "; ".join(dropped[:3]))
         clean["lint_dropped"] = dropped
+        # the recall half: surfaced for a maintainer, never auto-removed.
+        # `lint_dropped == []` means nothing was DROPPED — it never meant the
+        # entry is clean, and reading it that way is what let the word-form
+        # Clause-B violations ship (docs/78 §22.1).
+        warnings = warn_entry(entry)
+        if warnings:
+            logger.warning("judge pack %s/%s: %d prose Clause-B warning(s) "
+                           "(kept — reword, do not delete): %s", version, key,
+                           len(warnings), "; ".join(warnings[:3]))
+        clean["lint_warnings"] = warnings
         out[key] = clean
     with _cache_lock:
         _cache[version] = out

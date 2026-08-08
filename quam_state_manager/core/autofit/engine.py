@@ -206,6 +206,13 @@ class PlanEngine:
         # the verification context each accepted fit was obtained under, so the
         # review can refuse to compare two that were not (docs/78 §17 B3)
         self._fit_contexts: dict[tuple[str, str], dict | None] = {}
+        # D-8 tier 2/3 inputs, per (step, target): the fit entry of every
+        # attempt (the metric trend), the vision comparisons where a comparator
+        # exists, and per-target upstream escalations (tier 3's "the problem is
+        # not where we think it is").
+        self._attempt_history: dict[tuple[str, str], list[dict]] = {}
+        self._comparisons: dict[tuple[str, str], list[str]] = {}
+        self._escalations: dict[str, int] = {}
         # (step_id, target) → {"patches": [...]}: a value DISCOVERED on a
         # retry after window-class failures, pending wide verification
         self._discoveries: dict[tuple[str, str], dict] = {}
@@ -462,6 +469,32 @@ class PlanEngine:
                 if decision in ("retry", "defer") and v.verdict == "fail":
                     any_reject = True
                 if decision == "retry":
+                    # D-8 tiers 2 and 3, which had no caller until now
+                    # (docs/78 §22.1). Checked HERE because this is the only
+                    # place a retry is granted: "not learning" and "doing
+                    # harm" have to be able to stop a chain that every
+                    # individual step justifies. On a stop this target is
+                    # deferred and the plan continues — never a half-adapted
+                    # chip, never a lost night.
+                    self._attempt_history.setdefault((step.id, t), []).append(
+                        (res.run.get("fit_results") or {}).get(t) or {})
+                    rungs = fam_mod.rungs_for(fam, v.failure_mode) if fam else []
+                    idx = mode_counts.get(v.failure_mode, 0)
+                    untried_escalate = any(getattr(r, "kind", "") == "escalate"
+                                           for r in rungs[idx:])
+                    stop = stoploss.should_stop(
+                        history=self._attempt_history[(step.id, t)],
+                        comparisons=self._comparisons.get((step.id, t)),
+                        budget=self.budget, target=t,
+                        allow_no_progress=not untried_escalate,
+                        upstream_escalations=self._escalations.get(t, 0))
+                    if stop:
+                        self._ledger("target_stopped", step=step.id, target=t,
+                                     **stop)
+                        self._defer(step, t,
+                                    f"stop-loss tier {stop['tier']}: "
+                                    f"{stop['reason']}", v)
+                        continue
                     retry_targets.append(t)
                     retry_mode = retry_mode or v.failure_mode
                     if v.failure_mode in _WINDOW_MODES:
@@ -621,6 +654,10 @@ class PlanEngine:
                         carry_window_failure=tuple(pending))
             queue.appendleft(cont)
             queue.appendleft(recal)
+            # tier 3 input: escalating the SAME target twice means the problem
+            # is not where we think it is, and a human should look
+            for _t in pending:
+                self._escalations[_t] = self._escalations.get(_t, 0) + 1
             self._ledger("escalation_inserted", step=step.id,
                          recal_family=rung.escalate_family,
                          targets=list(pending), note=rung.note)

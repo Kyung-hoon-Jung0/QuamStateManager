@@ -2533,3 +2533,105 @@ target. The calibrated frequency is still written — it is worth having — but
 report can now imply the write was complete.
 
 Parity after the additions: **189 / 2**, up from 132 / 2.
+
+---
+
+## 24. Working the §22.4 list (2026-08-08)
+
+Four of the six, in the order the evidence supported. Two are left, with the
+reason.
+
+### 24.1 Stop-loss tiers 2 and 3 now have a caller — after two bugs were removed
+
+The audit's finding was that `should_stop` / `no_progress` / `metric_trend` /
+`harm` had **no caller at all**. Wiring them naively introduces two defects,
+and both had to be fixed first — which is the whole reason this was ranked
+after the measurement rather than before it.
+
+1. **Metric blindness is not flatness.** Four of the nine families emit none of
+   the eight progress metrics, ever. `metric_trend` now reports `present`, and
+   `no_progress` returns None when nothing is present — otherwise tier 2a would
+   stop every metric-blind family after three attempts, reading absence of
+   evidence as evidence. (2b may still speak alone there, but only to say the
+   picture is *degrading*.)
+2. **Tier 2 must not pre-empt an untried escalation.** "We are not learning" is
+   a claim about what we have *tried*; a cross-node re-calibration nobody has
+   attempted is not one of those things — and it is precisely the fix for the
+   case the escalate rung exists for (a qubit invisible because the READOUT is
+   mis-centred, where no same-node knob can help). `should_stop` gained
+   `allow_no_progress`, and the engine clears it while the mode's ladder still
+   holds an escalate rung. Tiers 1 and 3 still apply: a budget is a fact and
+   harm is harm, whatever remains untried.
+
+   This was not foreseen — the LOOP_STUDY case-A scenario test failed the
+   moment the wiring landed, which is the test doing its job.
+
+On a stop the target is deferred and the plan continues (D-8: never a
+half-adapted chip, never a lost night), and `target_stopped` carries the tier
+and reason. Escalations are counted per target, which is tier 3's input.
+
+### 24.2 `rel_tol`, and the defect no constant fixes
+
+0.25 → **0.075**. It erased 20.2% of 644 real class-A parameter changes and sat
+*on* an operator step mode rather than in a gap: 1.333× lands at exactly 0.25
+and the comparison is `<=`, so 78 canonical steps (1.2×, 1.25×, 1.333×) were
+all declared "the same decision". 0.075 keeps the docstring's own 78-vs-80 case
+with more than 3× headroom.
+
+Shipped in the same edit, because it is the same bug: a **relative** tolerance
+on **log-unit** keys is reference-arbitrary — the same physical 10 dB step
+scores 0.125 at −80→−70 dBm, 0.25 at −40→−30 and 0.50 at +10→+20. No value of
+`rel_tol` makes that consistent. dB-valued keys now take an absolute 1 dB
+tolerance, and a test pins that the same step is judged identically wherever it
+sits.
+
+### 24.3 The corpus bounds are a sample, not a limit
+
+Three shape defects, each measured (§22.1), each fixed:
+
+* **slack** — an observed range is stretched ×3 before it binds. A zero-slack
+  `[min, max]` is vacuous on its own training data (0 rejections in 636 runs)
+  and rejects 2–22% of held-out usage.
+* **one-sided edges** — a sweep edge is bounded only on its dangerous side.
+  `min_power_dbm = −40` was refused for being *above* the observed −50, and
+  `num_flux_points = 41` for being *below* 101; starting a sweep higher or
+  coarser is strictly safer, and bounding it is a category error.
+* **no default-derived edge** — a knob nobody varied has a one-point "range",
+  and that point is the schema default, so enforcing it enforces the default —
+  the one source the docstring promises never to use (69 of 101 corpus edges
+  landed exactly on a recorded default). `bounds_for` now takes
+  `schema_defaults` and drops a degenerate range that merely echoes one.
+
+### 24.4 The Clause-B lint gets recall — as a WARN tier, and the split is a measurement
+
+The audit was right that the lint is silent rather than clean: it catches units
+and explicit window-fractions and almost nothing written in words, which is the
+form an author reaches for. Three prose rules were added — word-form position
+claims, unqualified size adjectives, and counts of periodic features.
+
+They are **not** drop rules. Run against the shipped v1 pack they flag ten
+strings, and reading those ten shows most are false positives: *"one fringe runs
+vertical"* is a shape statement, *"instead of a narrow band"* is a contrast, and
+*"several periods across the window is a legitimate signature"* exists precisely
+to PREVENT a Clause-B misjudgement. P3c measured the judge's weak side to be
+**stinginess** (0/12 leniency, 75% stinginess), so thinning the pack on a
+regex's guess would worsen the measured weakness to fix a hypothetical one.
+
+So they warn: logged at load, exposed as `lint_warnings`, never removed. And
+the docstring's implicit claim is corrected — `lint_dropped == []` means nothing
+was *dropped*, which is not the same as clean, and reading it that way is what
+let the word-form violations ship.
+
+### 24.5 Left open, with the reason
+
+* **Re-deriving the bands** (§22.4 item 1's remainder) still waits on splitting
+  the error-amplification / e→f / vs-flux-calibration populations out of their
+  host families. That contamination is upstream of every per-band number, and
+  re-deriving from a mixed population would repeat §20.1's mistake politely.
+  §23.1 adds a first target: 42% of accepted `resonator_spectroscopy_vs_power`
+  targets escalate on one consistency check, which is the same smell.
+* **A picture-level label for D-7's stinginess bar** needs the labs' own
+  quality flags (`success_shape` and its siblings) surfaced through
+  `fit_audit`, which today reports only the scalar `success`. Four of 64 panels
+  carry the flag in the archive — enough to see the mechanism, not enough to
+  calibrate on.

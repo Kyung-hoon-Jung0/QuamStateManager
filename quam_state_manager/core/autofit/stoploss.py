@@ -94,6 +94,14 @@ def metric_trend(history: list[dict]) -> dict:
     best: dict[str, float] = {}
     moved: list[str] = []
     improving = False
+    # Whether ANY progress metric appeared at all. Measured (docs/78 §22.1):
+    # four of the nine families emit none of the eight, ever, and two more emit
+    # them in 2-3% of runs. Without this flag "no metric improved" is
+    # indistinguishable from "no metric exists", and tier 2a would stop every
+    # metric-blind family after `rounds` attempts — reading absence of evidence
+    # as evidence.
+    present = any(_num((e or {}).get(k)) is not None
+                  for e in history for k in PROGRESS_KEYS)
     for entry in history:
         for k in PROGRESS_KEYS:
             v = _num((entry or {}).get(k))
@@ -125,7 +133,7 @@ def metric_trend(history: list[dict]) -> dict:
             if (v > p * (1 + _REL_EPS)) if p > 0 else (v > p):
                 improving = True
     return {"improving": improving, "rounds": len(history), "best": best,
-            "moved": moved}
+            "moved": moved, "present": present}
 
 
 def no_progress(history: list[dict], comparisons: list[str] | None = None, *,
@@ -139,7 +147,16 @@ def no_progress(history: list[dict], comparisons: list[str] | None = None, *,
     if len(history) < rounds:
         return None
     recent = history[-rounds:]
-    if metric_trend(recent)["improving"]:
+    trend = metric_trend(recent)
+    if trend["improving"]:
+        return None
+    if not trend["present"]:
+        # This family reports none of the progress metrics, so 2a has no
+        # opinion — and 2b is the only remaining signal. Stopping here would
+        # read absence of evidence as evidence of no progress.
+        if comparisons and all(c == "worse" for c in comparisons[-rounds:]):
+            return (f"getting worse: {rounds} attempts, the figure degrading "
+                    f"(this family reports no progress metric)")
         return None
     if comparisons:
         if any(c == "better" for c in comparisons[-rounds:]):
@@ -173,11 +190,21 @@ def should_stop(*, history: list[dict] | None = None,
                 comparisons: list[str] | None = None,
                 budget: Budget | None = None, target: str | None = None,
                 rounds: int = DEFAULT_NO_PROGRESS_ROUNDS,
+                allow_no_progress: bool = True,
                 **harm_kw) -> dict | None:
     """THE one entry point. Returns ``{"tier", "reason"}`` or None.
 
     Order is deliberate — harm first (it means we are making things worse),
     then budget (a hard fact), then no-progress (a judgement).
+
+    ``allow_no_progress=False`` suppresses tier 2 only. The caller sets it when
+    the failure mode's ladder still holds an untried rung of a DIFFERENT kind —
+    a cross-node escalation. Tier 2 means "the things we are trying are not
+    working"; a re-calibration we have not attempted is not one of the things
+    we have tried, and stopping there would kill the very case the escalation
+    rung exists for (a qubit invisible because the READOUT is mis-centred,
+    where no same-node knob can help). Tiers 1 and 3 still apply — a budget is
+    a fact and harm is harm, whatever remains untried.
     """
     why = harm(**harm_kw)
     if why:
@@ -190,6 +217,8 @@ def should_stop(*, history: list[dict] | None = None,
             why = budget.target_exhausted(target)
             if why:
                 return {"tier": 1, "reason": why, "scope": "target"}
+    if not allow_no_progress:
+        return None
     why = no_progress(history or [], comparisons, rounds=rounds)
     if why:
         return {"tier": 2, "reason": why}

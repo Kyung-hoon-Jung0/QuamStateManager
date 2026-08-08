@@ -133,29 +133,72 @@ def _hardware_bounds() -> dict[str, tuple[float | None, float | None]]:
     }
 
 
-def bounds_for(family: str, corpus_ranges: dict | None = None) -> dict:
+# A corpus envelope is a sample, not a limit. Measured (docs/78 §22.1): a
+# zero-slack `[min_observed, max_observed]` is vacuous on the data it was built
+# from (0 rejections in 636 runs) and rejects 2-22% of real usage the moment it
+# meets an archive it was not built from. So an observed range is widened
+# before it is enforced.
+_CORPUS_SLACK = 3.0
+
+# Sweep EDGES. Their danger is ONE-SIDED — a narrower span, a coarser floor, a
+# smaller start power are all strictly safer than the observed extreme, and
+# bounding them from both sides rejected `min_power_dbm = -40` for being
+# "above the allowed -50" and `num_flux_points = 41` for being "below the
+# allowed 101". Only the outward side is constrained.
+_EDGE_ONLY_MAX = ("max_power_dbm", "max_amp", "max_amp_factor", "max_flux",
+                  "max_flux_offset_in_v", "max_wait_time_in_ns",
+                  "max_number_pulses_per_sweep", "flux_offset_span_in_v",
+                  "num_flux_points", "num_freq_points", "num_power_points",
+                  "num_time_points", "num_amps", "num_frames",
+                  "amp_factor_step", "frequency_step_in_mhz", "power_step_dbm")
+_EDGE_ONLY_MIN = ("min_power_dbm", "min_amp_factor", "min_flux",
+                  "min_flux_offset_in_v", "min_wait_time_in_ns")
+
+
+def bounds_for(family: str, corpus_ranges: dict | None = None,
+               schema_defaults: dict | None = None) -> dict:
     """``{param: {"min": x, "max": y, "source": "..."}}`` for one family.
 
-    The corpus is the better source and WIDENS the hardware envelope where the
-    lab has genuinely gone further (a bound that would reject what this lab has
-    actually run is a false constraint — the same rule the P2 bands are built
-    on). Hardware reach is never widened past its physical limit.
+    The corpus WIDENS the hardware envelope where the lab has genuinely gone
+    further; hardware reach is never widened past its physical limit. Three
+    rules keep an observed sample from becoming a false constraint:
+
+    * **slack** — an observed range is stretched by ``_CORPUS_SLACK`` before it
+      binds, because the next legitimate run is not obliged to fall inside the
+      last hundred;
+    * **one-sided edges** — a sweep edge is only bounded on its dangerous side;
+    * **no default-derived edge** — a knob nobody varied puts its schema
+      DEFAULT at both ends of its own envelope, which is precisely the source
+      the docstring promises never to use (measured: 69 of 101 corpus edges
+      landed exactly on a recorded default). Pass ``schema_defaults`` and a
+      degenerate range that merely echoes one is dropped.
     """
     hw = _hardware_bounds()
     out: dict[str, dict] = {}
     for k, (lo, hi) in hw.items():
         out[k] = {"min": lo, "max": hi, "source": "hardware"}
 
+    defaults = (schema_defaults or {}).get(family) or {}
     observed = ((corpus_ranges or {}).get(family) or {})
     for k, rng in observed.items():
         lo, hi = _range_of(rng)
         if lo is None and hi is None:
             continue
+        # a knob nobody varied: its "range" is one value, and that value is the
+        # schema default. Enforcing it would enforce the default.
+        if lo is not None and hi is not None and lo == hi:
+            d = _num(defaults.get(k))
+            if d is None or d == lo:
+                continue
+        lo, hi = _with_slack(lo, hi)
+        if k in _EDGE_ONLY_MAX:
+            lo = None
+        elif k in _EDGE_ONLY_MIN:
+            hi = None
         cur = out.get(k)
         if cur is None:
             out[k] = {"min": lo, "max": hi, "source": "corpus"}
             continue
-        # keep the hardware ceiling, but let real usage widen a soft floor
         new_lo = cur["min"] if cur["min"] is None else (
             min(cur["min"], lo) if lo is not None else cur["min"])
         new_hi = cur["max"] if cur["max"] is None else (
@@ -164,6 +207,18 @@ def bounds_for(family: str, corpus_ranges: dict | None = None) -> dict:
             new_hi = cur["max"]          # physical ceiling — never widened
         out[k] = {"min": new_lo, "max": new_hi, "source": "hardware+corpus"}
     return out
+
+
+def _with_slack(lo, hi):
+    """Widen an observed range about its own centre. A range of one point is
+    widened about that point, so a single observation does not become a pin."""
+    if lo is None or hi is None:
+        return lo, hi
+    if hi == lo:
+        pad = abs(lo) * (_CORPUS_SLACK - 1.0) or 1.0
+        return lo - pad, hi + pad
+    mid, half = (lo + hi) / 2.0, (hi - lo) / 2.0 * _CORPUS_SLACK
+    return mid - half, mid + half
 
 
 def _range_of(rng: Any) -> tuple[float | None, float | None]:
