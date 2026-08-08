@@ -567,9 +567,18 @@ _register(Family(
     # behind a freshly calibrated x180 (docs/78 §15.4b).
     updates=[UpdateSpec("opt_amp", "qubits.{q}.xy.operations.{operation}.amplitude",
                         label="pi amplitude"),
+             # ...unless the run was calibrating x90 ITSELF, in which case
+             # `opt_amp` already IS the pi/2 amplitude and halving it writes
+             # half the right value. Measured, and the split is total: with
+             # `operation="x180"` the node wrote HALF in 494 of 494 archived
+             # x90 patches; with `operation="x90"` it wrote the FULL amplitude
+             # in 10 of 10. The first row above already lands it on the right
+             # path in that case, so this row must stand aside (docs/78 §28).
              UpdateSpec("opt_amp", "qubits.{q}.xy.operations.x90.amplitude",
                         factor=0.5,
-                        guard=lambda e, p: bool(p.get("update_x90")),
+                        guard=lambda e, p: (bool(p.get("update_x90"))
+                                            and str(p.get("operation") or "")
+                                            != "x90"),
                         label="pi/2 amplitude (half of pi)")],
     consistency_checks=[
         lambda e: ("raw fit and multipulse estimator disagree"

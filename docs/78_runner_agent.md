@@ -2876,3 +2876,91 @@ per-run replay: §23 checked 252 targets and found every write matching.
 
 The flux step is where this loop is weakest, and it took walking the sequence to
 see it twice.
+
+---
+
+## 28. The full bring-up chain, and the scorecard that replaces it (2026-08-09)
+
+### 28.1 The seven-step chain exists, and it is the wrong instrument
+
+107 candidate chains; three cover all seven steps
+(03 → 05 → 06 → 08 → 08b → 09 → 11). The best walkable one runs #233–#243 in a
+single day with two shared qubits.
+
+Result: **all seven steps, both qubits, our gate verdict matched the node's own
+outcome** (six pass, one fail). Final state: 16 watched fields identical, 6
+different — and every difference is a field only WE wrote, on the four steps
+where the operator ran the node and applied nothing.
+
+Which is exactly why one chain cannot grade a loop. **This operator applied 3 of
+7 steps.** "Does the final state match theirs" is not a question with a
+meaningful answer when the reference trajectory is mostly no-ops, and two qubits
+is not a sample. The chain is a good demonstration and a bad measurement.
+
+### 28.2 The scorecard: every archived run of all seven families
+
+So the evaluation runs the CURRENT gates over the whole corpus instead —
+**635 runs, 2,434 targets** — asking the two questions that decide whether the
+loop is safe to leave alone.
+
+| family | runs | accepted: pass / suspect / fail | rejected: fail / pass |
+|---|---:|---|---|
+| resonator spectroscopy | 106 | 204 / 47 / **40** (291) | 47 / **0** |
+| … vs power | 52 | 79 / 57 / 0 (136) | 26 / **0** |
+| … vs flux | 30 | 148 / 12 / 0 (160) | 7 / **0** |
+| qubit spectroscopy | 111 | 188 / 2 / **122** (312) | 67 / **0** |
+| … vs power | 24 | 87 / 0 / 0 (87) | 3 / **0** |
+| … vs flux | 80 | 185 / 1 / 0 (186) | 80 / **0** |
+| power rabi | 232 | 538 / 347 / 16 (901) | 131 / **0** |
+| **all seven** | **635** | **1,429 / 466 / 178 (2,073)** | **361 / 0** |
+
+> **False accepts: 0 of 361.** Nothing the node rejected is passed, in any
+> family. That is the side that silently writes a wrong number, and it is clean.
+>
+> **False rejects: 178 of 2,073 (8.6%)**, and they are not spread out — 122 of
+> them are `qubit_spectroscopy` and 40 `resonator_spectroscopy`. The flux
+> families, which §27 fixed, now sit at zero.
+>
+> **Escalated to the judge: 466 (22%).**
+
+The write path, over every path the node actually wrote:
+**1,938 identical / 67 different — 96.7%.**
+
+### 28.3 What the write disagreements were, one of them a real bug
+
+**Fixed — the π/2 amplitude, and the split is total.** Our `UpdateSpec` writes
+`x90 = opt_amp / 2` on the rule that π/2 is half of π. Measured: with
+`operation="x180"` the node wrote HALF in **494 of 494** archived x90 patches —
+the rule is right. With `operation="x90"` it wrote the **FULL** amplitude in
+**10 of 10** — because there `opt_amp` already IS the π/2 amplitude. Our second
+row fired anyway and overwrote the first with half, silently installing a
+half-strength π/2 gate. The row now stands aside when the run was the x90.
+(1,938/67 above is post-fix; it was 1,938/77.)
+
+**Open, characterised, not guessed at.** 26 `z.joint_offset` writes on
+`qubit_spectroscopy_vs_flux` differ **on targets our gates PASS** — so we would
+write them. They split into at least two sub-patterns: in several the node's
+change is exactly *minus* the fitted `idle_offset` where ours is *plus*, and in
+others it is a flat ±0.01 V regardless of the fit. Neither is rounding, and the
+split does not follow the node version. Fourteen of ~190 flux-offset writes
+(7%) is a live risk worth naming; picking a sign from half-understood evidence
+is how §20.1 happened, so it is recorded rather than patched.
+
+Also seen and deliberately left: two cases where the node wrote the **string**
+`'7248143863.589256'` where we write the float (the docs/56 r14 stored-as-text
+class — same number), a handful of sub-1% differences, and five π amplitudes
+the node set to exactly 0.8 where the fit said 0.34–0.55 (**not** a ceiling
+clamp — the node wrote *higher* than the fit; cause unknown, n=5).
+
+### 28.4 Where this leaves the loop
+
+* **Safe on the dangerous side.** Zero false accepts over 361 rejected targets
+  across all seven families, and 96.7% write parity.
+* **Costly on the cautious side, in two known places.** 122 false rejects on
+  `qubit_spectroscopy` and 40 on `resonator_spectroscopy` — 8.6% overall. Both
+  are §22.4 item 1 (re-derive the bands after splitting the contaminated
+  sub-populations); the flux families show what that work buys, having gone
+  from 122/185 rejected to zero.
+* **One live write risk** — the flux-offset sign/step disagreement above.
+* **22% escalation** means roughly one target in five needs the judge, which
+  makes P3c's calibration load-bearing rather than optional.

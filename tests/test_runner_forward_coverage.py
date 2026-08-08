@@ -152,3 +152,51 @@ class TestTheEngineNeverWritesAQuietPartial:
                            "parameters": {"operation": "x180"}})
         assert not [e for e in eng.events if e[0] == "forward_partial"]
         assert eng.state["review_queue"] == []
+
+
+class TestX90IsNotHalvedWhenTheRunCalibratedX90:
+    """docs/78 §28 — the pi/2 row must stand aside when the run WAS the x90.
+
+    Measured, and the split is total: with `operation="x180"` the node wrote
+    HALF the fitted amplitude to x90 in 494 of 494 archived patches; with
+    `operation="x90"` it wrote the FULL amplitude in 10 of 10. In that second
+    case `opt_amp` already IS the pi/2 amplitude, so halving it silently
+    installs a half-strength pi/2 gate.
+    """
+
+    FAM = "power_rabi"
+
+    def _rows(self, operation):
+        return {r["path"]: r["value"] for r in fam_mod.resolve_updates(
+            _fam(self.FAM), "qA1", {"opt_amp": 0.4},
+            run_parameters={"update_x90": True, "operation": operation},
+            current_value_of=lambda p: None)}
+
+    def test_an_x180_run_still_writes_half_to_x90(self):
+        by = self._rows("x180")
+        assert by["qubits.qA1.xy.operations.x180.amplitude"] == pytest.approx(0.4)
+        assert by["qubits.qA1.xy.operations.x90.amplitude"] == pytest.approx(0.2)
+
+    def test_an_x90_run_writes_the_full_amplitude_once(self):
+        by = self._rows("x90")
+        assert by["qubits.qA1.xy.operations.x90.amplitude"] == pytest.approx(0.4)
+
+    def test_the_two_rows_cannot_both_target_x90(self):
+        """Both rows resolve to the same path when operation is x90, and the
+        second used to overwrite the first with half."""
+        rows = fam_mod.resolve_updates(
+            _fam(self.FAM), "qA1", {"opt_amp": 0.4},
+            run_parameters={"update_x90": True, "operation": "x90"},
+            current_value_of=lambda p: None)
+        x90 = [r for r in rows
+               if r["path"] == "qubits.qA1.xy.operations.x90.amplitude"]
+        assert len(x90) == 1
+
+    def test_update_x90_off_still_writes_nothing_to_x90(self):
+        by = self._rows("x180")
+        rows = fam_mod.resolve_updates(
+            _fam(self.FAM), "qA1", {"opt_amp": 0.4},
+            run_parameters={"operation": "x180"},
+            current_value_of=lambda p: None)
+        assert not any("x90" in r["path"] for r in rows)
+        assert by  # the x180 case above did produce rows
