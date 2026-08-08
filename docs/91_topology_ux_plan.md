@@ -83,23 +83,41 @@ Precedent in this codebase: docs/84 reused `renderJsonTree` rather than writing
 a diff tree, and docs/85 reused the existing hint chip rather than adding a
 second one. Both are noted as the reason those changes were small.
 
-### 2.3 The map must not replace the table
+### 2.3 The map must not replace the table — CONFIRMED by the user
+
+> 표를 없애자는게 절대 아니야! 표는 반드시 있어야지. 표 위에 렌더링을 해서,
+> 전체적인 component 맵을 보여주자는거야.
 
 The tables are dense and people use them for numbers. The picture answers
 *where / which neighbours / which feedline*; the table answers *what value*.
-Ship both, **linked** — that is where the actual UX win is (§3.2), not in the
-drawing itself.
+Ship both. The map is **added above** the table; the table is untouched.
 
-### 2.4 "Where does it exist" is ambiguous — and both answers are useful
+### 2.4 The division of labour that makes both maps easy
 
-- **Chip space** — position on the die (`grid_location`, pairs). Almost
-  certainly what the report means.
+This is the user's framing and it is the key design idea in this document:
+
+> Chip topology에서는 전체 그림을 수치들과 함께 보여주니까 layout하기가 힘들지만,
+> components는 일단 수치들을 표로 빼놓고 보니까, 그림만 그려도 충분하거든?
+
+| surface | carries numbers? | consequence |
+|---|---|---|
+| **Chip Status map** | **yes** — T1 / T2 / fidelity, integrated | layout is hard *because* values must coexist with position. This is what it is FOR, and it keeps its own meaning. |
+| **Component pages map** | **no** — the table beside it has every number | the drawing can be pure symbols, so it can be clean, dense and small |
+
+So they are not two attempts at the same picture. Getting the numbers out of
+the component map is what lets it be good.
+
+### 2.5 "Where does it exist" means BOTH — answered
+
+- **Chip space** — position on the die (`grid_location`, pairs).
 - **Instrument space** — which controller / FEM / port drives it, and *which
   components share* one (feedline multiplexing, LO-coupled port pairs).
 
-The second is invisible in every current table and is arguably the higher-value
-one for resonators (§3.3). Plan primary = chip space, secondary = a port/feedline
-strip. **Open question for the user in §6.**
+Originally raised as an open question; the user answered it by naming the case
+directly — "edge나 **readout feedline**등을 보면서 동시에 표를 볼수있다". So the
+shared layout carries both: die position as the geometry, and instrument
+grouping (feedline, shared port) as a highlight layer over it. No separate
+instrument-space view is needed.
 
 ---
 
@@ -126,42 +144,62 @@ board owns editing; Chip Status is read-only), or a chart library. SVG at
 17–50 qubits is trivial and the app already ships Plotly for the things that
 need it.
 
-### 3.2 ② Component pages — map + table, linked
+### 3.2 ② Component pages — ONE shared layout, selection highlights it
 
-Every component page becomes: **map on top, existing table below**, with the two
-bound in both directions.
+The user's model, which replaces an earlier and worse proposal (five different
+pictures, node fill driven by the table's sorted column — see §3.4):
 
-- hover a row → the corresponding node/edge highlights on the map
-- hover a node → the row highlights and scrolls into view
-- click a node → filters the table to that entity (click empty space clears)
-- the map's node fill follows the table's **currently sorted column** when that
-  column is numeric — so sorting by T1 recolours the chip by T1, for free
+> 1. 전체적인 공유 layout을 그린다. components들의 symbol들이 그려진 채로.
+>    수치는 없이.
+> 2. Qubits, Resonators, pairs등을 사용자가 선택할때마다 그 공유 layout에서
+>    highlight되는 부분이 음영으로 바뀌면서 highlight된다.
 
-That last one is the idea I would fight for: it makes the picture and the table
-the *same* view instead of two panels, and costs almost nothing because the
-table already knows its sort column.
+So:
 
-Collapsed state persisted in `localStorage` (house convention, e.g.
-`quam_topo_map_collapsed`), because someone doing bulk numeric work will want
-the space back.
+* **One drawing, drawn once.** The same chip layout appears above the table on
+  every component page, always showing every component type's symbols — qubit
+  nodes, resonators, couplers, flux lines, pair edges. It does **not** change
+  shape between pages.
+* **Selection changes emphasis, not content.** Opening *Pairs* dims everything
+  and lights the pair edges; opening *Resonators* lights the resonators and
+  their shared feedline grouping; and so on. Nothing appears or disappears —
+  the user keeps one stable mental picture of the chip and just looks at a
+  different layer of it.
+* **No numbers anywhere in it** (§2.4). Symbols and highlight only.
+* The table below is unchanged, and the two are bound: hovering a row lights
+  that entity in the map, hovering an entity lights the row.
 
-### 3.3 What each page's map should actually show
+Why this is better than what I first proposed: a single layout is **learnable**
+(you build one mental model instead of five), it is far less code (one renderer,
+one layout pass, a highlight layer), and it makes cross-component questions
+answerable *without changing page* — you can see, while reading the Pairs table,
+that two of those pairs sit on qubits sharing one readout feedline.
 
-They are **not** the same picture, and this is where the design earns its keep:
+### 3.3 What lights up per selection
 
-| page | nodes | edges | the point |
+Same drawing throughout; only the highlight layer changes.
+
+| page | highlighted | dimmed to context | the point |
 |---|---|---|---|
-| **Qubits** | qubits | pairs (thin, context) | where each qubit sits |
-| **Pairs** | qubits (dim) | **pairs (primary)** | adjacency — a table cannot show this at all |
-| **Resonators** | resonators | **shared feedline groups** | *which resonators share a readout line* — invisible in the table today, and the thing that explains readout crosstalk |
-| **Flux** | qubits | flux-neighbour links | which lines are adjacent ⇒ crosstalk candidates |
-| **Couplers** | qubits (dim) | **couplers (primary)** | same argument as Pairs |
+| **Qubits** | qubit nodes | everything else | where each qubit sits |
+| **Pairs** | **pair edges** | nodes, other components | adjacency — a table cannot show this at all |
+| **Resonators** | resonators + **shared-feedline grouping** | qubit grid | *which resonators share a readout line* — invisible in the table today, and the thing that explains readout crosstalk |
+| **Flux** | flux lines + neighbour links | qubit grid | which lines are adjacent ⇒ crosstalk candidates |
+| **Couplers** | **coupler edges** | nodes | same argument as Pairs |
 
-Resonator→feedline is the strongest single case in this document: it is real
-information the app already holds (state→wiring→`ports.mw_outputs.*` chains) and
-currently shows nowhere.
+Resonator→feedline remains the strongest single case in this document: the app
+already holds it (state→wiring→`ports.mw_outputs.*` chains) and shows it
+nowhere. The user named it directly ("readout feedline등을 보면서").
 
----
+### 3.4 Dropped from the first draft
+
+* **"The table's sorted numeric column drives node fill."** Dropped. It smuggles
+  numbers back into a map whose whole advantage is not having them (§2.4), and
+  it would make the component map compete with Chip Status instead of
+  complementing it. Colour in the component map means *selected / not selected*,
+  nothing else.
+* **"Each page gets a different picture."** Dropped in favour of one shared
+  layout with a highlight layer.
 
 ## 4. Suggested phasing
 
@@ -172,14 +210,18 @@ Each phase is independently shippable and independently revertible.
   positions}` implementing §2.1. Pure, no DOM. **Test first**, including a chip
   with no `grid_location` and a chip with partial. *No UI change in this phase.*
 - **P1 — Chip Status hero map** (§3.1) against the real chips.
-- **P2 — one component page end-to-end** (recommend **Pairs**: adjacency is the
-  clearest win and the edge case set is smallest), including the linking in §3.2.
-- **P3 — the remaining four**, reusing P2's component wholesale.
-- **P4 — the feedline/port view** (§3.3 Resonators, §2.4 instrument space), only
-  if the user confirms it is wanted.
+- **P2 — the shared layout + ONE page's highlight** (recommend **Pairs**:
+  adjacency is the clearest win and the edge-case set is smallest). This phase
+  builds the whole drawing — every component type's symbols — and one highlight
+  layer over it, plus the map↔table binding (§3.2).
+- **P3 — the remaining four highlight layers.** Cheap by construction: the
+  layout already exists, each page adds only *what lights up* (§3.3). Resonators
+  brings the feedline grouping (§2.5) and is the one with real new data behind
+  it, so do it first of the four.
 
 Do not start P2 before P0's tests are green; every later phase inherits the
-layout honesty from it.
+layout honesty from it. There is no P4 — the instrument-space view folded into
+the shared layout (§2.5) instead of becoming its own surface.
 
 ## 5. Verification expectations
 
@@ -200,18 +242,33 @@ Following this repo's standard (see `docs/90` §4 for how prior work was graded)
   that no browser check was possible for the last chain; a visual feature is
   where that gap costs the most.
 
-## 6. Open questions for the user
+## 6. Questions — answered and still open
 
-1. **Which surface is "Chip Topology"?** Best guess: the `topology` section of
-   the Chip Status dashboard (route `/topology`, sidebar "Chip Status"). Confirm
-   before P1 — there is also a topology tab inside chip-compare.
-2. **Instrument space too?** (§2.4) — is "어디에 존재하는지" the die position, or
-   also which FEM/port/feedline drives it? The plan assumes die position first.
-3. **Map default: open or collapsed** on the component pages? (Recommend open;
-   the report is that people cannot see the information at all.)
-4. **Chips with no `grid_location`** — is the connectivity ("logical") layout
-   wanted, or should those chips simply keep the table? (Recommend the labelled
-   logical layout; §2.1 forbids the silent fake either way.)
+**Answered by the user (2026-08-09):**
+
+1. **Which surface is "Chip Topology"?** → the Chip Status map, and it **keeps
+   its own distinct purpose**: *"T1, T2, Fidelity등의 수치를 통합적으로 보여주는
+   맵"*. It is not superseded by the component map; §2.4 is the division of
+   labour between them.
+2. **Instrument space too?** → yes, folded into the shared layout as a highlight
+   layer (§2.5), not a separate view.
+3. **Does the plan still cover modernising Chip Topology itself?** → yes, §3.1;
+   it is half the work, not a side effect of ②.
+
+**Still open — decide before the phase that needs them:**
+
+4. **Chips with no `grid_location`** (§2.1) — labelled *logical* layout, or no
+   map at all for those chips? Recommend the labelled logical layout. What is
+   NOT negotiable either way is that a fabricated raster must never be drawn
+   unlabelled. *Needed by P0.*
+5. **Map default open or collapsed** on component pages? Recommend **open** —
+   the whole report is that people cannot see this information at all —  with
+   the collapse persisted per house convention. *Needed by P2.*
+6. **How much of the layout is "every component type"?** (§3.2) Drawing qubits +
+   pairs + couplers + resonators + flux lines at once may crowd a 50-qubit chip.
+   Proposal: draw all of them, but let the non-highlighted layers dim far enough
+   to read as background texture rather than content; revisit after seeing P2 on
+   a real chip. *Needed by P2.*
 
 ## 7. What NOT to do
 
