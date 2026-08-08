@@ -138,11 +138,15 @@ class TestSettleMaxDefer:
 
 
 class TestAutoPullSurfaced:
-    def test_clean_auto_pull_surfaced_once(self, client):
+    def test_drift_poll_no_longer_announces_a_pull_after_the_fact(self, client):
+        """docs/87 — /state/drift used to carry a one-shot ``auto_pulled`` so a
+        SILENT clean auto-pull became a toast. The user-facing path no longer
+        pulls without asking, so there is nothing to announce afterwards: the
+        banner asks first and names the same count. A leftover field here would
+        mean an adoption path survived somewhere."""
         app = client._app
         with app.app_context():
-            _active_ctx(app)["_auto_pulled"] = {"count": 3}
-        r1 = client.get("/state/drift").get_json()
-        assert r1.get("auto_pulled") == {"count": 3}
-        r2 = client.get("/state/drift").get_json()
-        assert "auto_pulled" not in r2, "auto_pulled must be one-shot (popped)"
+            _active_ctx(app)["_auto_pulled"] = {"count": 3}   # a stale memo
+        body = client.get("/state/drift").get_json()
+        assert "auto_pulled" not in body
+        assert body["ok"] is True

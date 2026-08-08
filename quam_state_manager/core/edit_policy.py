@@ -45,6 +45,18 @@ def resolve_edit_path(store: Any, dot_path: str) -> str:
         ft = resolve_field_target(store.merged, dot_path)
         if ft["resolvable"] and ft["resolved_path"] != dot_path:
             return ft["resolved_path"]
+        # docs/88: the chain can resolve THROUGH pointers into a real container
+        # and dead-end only on the FINAL key — a port that doesn't carry
+        # ``lo_mode`` while its siblings do, which is exactly why the grid shows
+        # the column at all. Returning dot_path here handed the modifier a path
+        # whose parent is a POINTER STRING, producing the unactionable
+        # "Parent at 'qubits.qC4.resonator.opx_input.lo_mode' is str, not dict
+        # or list" and making the cell permanently uneditable. The honest write
+        # target is <resolved parent>.<leaf>; whether that key may be CREATED is
+        # the caller's decision (create_subtree still type-checks it).
+        target = resolve_missing_leaf_path(store, dot_path)
+        if target is not None:
+            return target
         return dot_path
     # Navigable as-is. Follow a leaf-pointer to its literal target (value-mode).
     if isinstance(current, str) and is_pointer(current):
@@ -52,6 +64,50 @@ def resolve_edit_path(store: Any, dot_path: str) -> str:
         if ft["resolvable"] and ft["resolved_path"] != dot_path:
             return ft["resolved_path"]
     return dot_path
+
+
+def resolve_missing_leaf_path(store: Any, dot_path: str) -> str | None:
+    """``<resolved parent>.<leaf>`` when only the FINAL key is absent, else None.
+
+    Answers one question: does everything up to the last segment resolve to a
+    real dict, with just the leaf missing? That is the shape produced by a
+    pointer-valued channel node (``qubits.q.resonator.opx_input`` →
+    ``ports.mw_inputs.con1.3.1``) whose port simply does not carry the field
+    yet. Returning the parent's RESOLVED path keeps the write on the real
+    object instead of on a path that runs through a pointer string.
+
+    A list parent returns None: appending to a list is not a "fill in the
+    missing field" operation and must never be inferred from a cell edit.
+    """
+    if "." not in dot_path:
+        return None
+    from quam_state_manager.core.pointer_path import resolve_field_target
+    parent, leaf = dot_path.rsplit(".", 1)
+    try:
+        pf = resolve_field_target(store.merged, parent)
+    except Exception:       # noqa: BLE001 — resolution is best-effort here
+        return None
+    if not pf.get("resolvable"):
+        return None
+    container = _container_at(store.merged,
+                             (pf.get("resolved_path") or parent).split("."))
+    if not isinstance(container, dict) or leaf in container:
+        return None
+    return f"{pf['resolved_path']}.{leaf}"
+
+
+def leaf_is_absent(store: Any, dot_path: str) -> bool:
+    """True when *dot_path*'s parent is a real dict but the final key is absent.
+
+    The single predicate both edit choke points use to decide ``set_value`` vs
+    ``create_subtree``, so they cannot disagree about what "this field isn't
+    there yet" means.
+    """
+    if "." not in dot_path:
+        return False
+    parent, leaf = dot_path.rsplit(".", 1)
+    container = _container_at(store.merged, parent.split("."))
+    return isinstance(container, dict) and leaf not in container
 
 
 def _container_at(merged: Any, segs: list[str]) -> Any:

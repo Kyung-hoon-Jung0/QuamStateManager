@@ -620,60 +620,86 @@ def _build_quam_context(folder: Path):
     Rehydrating an existing working copy runs
     :func:`working_copy.reconcile_with_live` first, so a live folder whose
     files were *replaced* out-of-band (e.g. a different chip's state.json
-    dropped in) is detected by content hash: a clean working copy is
-    auto-refreshed from live; one holding (possible) edits is served as-is
-    with ``live_diverged=True`` so the UI can prompt for a sync instead of
-    silently showing the old chip (the pre-fix behavior — the working copy
-    was rehydrated on nothing but file existence, surviving even restarts).
+    dropped in) is detected by content hash — instead of silently showing the
+    old chip (the pre-fix behaviour: the working copy was rehydrated on nothing
+    but file existence, surviving even restarts).
+
+    docs/87: this USER-FACING path never auto-adopts (``sync_if_clean=False``).
+    A clean working copy used to be pulled over silently, which meant the one
+    person most likely to be hurt by a mis-run — someone who had edited nothing
+    in SM, so SM held the good state — had it replaced without being asked. The
+    stale-chip bug was the SILENCE, not the absence of automation, so a banner
+    that offers the pull (and the other direction) closes it just as well. The
+    machine callers of :func:`_reconcile_cached_quam_ctx` still adopt; see
+    there.
     """
     instance = current_app.instance_path
     live_diverged = False
-    auto_synced = False
-    pulled_count = None
-    pre = None
+    drift_count = None
     wc = working_copy.load(instance, folder)
     if wc is None:
         wc = working_copy.create(instance, folder)
     else:
-        # Snapshot the pre-pull working content so a clean auto-pull can report HOW
-        # MANY params it pulled — the pull used to be SILENT (feedback #5: a user's
-        # IDE pulse edit was adopted on reload with zero UI signal, so they thought
-        # it was "not synced"). Best-effort; the diff is skipped if this read fails.
-        try:
-            pre = safe_io.read_state_wiring(wc.working_folder)
-        except Exception:  # noqa: BLE001
-            pre = None
-        result = working_copy.reconcile_with_live(wc, sync_if_clean=True)
+        seen: dict = {}
+        result = working_copy.reconcile_with_live(
+            wc, sync_if_clean=False, out=seen)
         live_diverged = result == working_copy.RECONCILE_STALE
-        auto_synced = result == working_copy.RECONCILE_SYNCED
+        drift_count = _drift_count(seen)
     store = QuamStore(wc.working_folder)
     index = SearchIndex.build(store.merged, wiring_keys=set(store.wiring.keys()))
     store.search_index = index
-    if auto_synced and pre is not None:
-        try:
-            pulled_count = len(Differ().diff(pre, (store.state, store.wiring)))
-        except Exception:  # noqa: BLE001
-            pulled_count = None
     # Recover the "working copy holds edits not yet on live" state across a
     # restart / LRU re-load: the change-log + in-memory working_dirty flag
     # are process-local, but the working FILES persist. If they no longer
     # match the recorded sync point, the copy carries saved-but-unapplied
     # edits — surface that instead of silently hiding them (a clean apply
-    # leaves working == synced, so this never false-positives). Skipped when
-    # the reconcile already adopted/pulled (working == live by then).
+    # leaves working == synced, so this never false-positives). docs/87: this
+    # path no longer adopts, so the old "skip when auto-synced" guard is gone
+    # with it (working == live is then simply not dirty).
     working_dirty = False
-    if not auto_synced and wc.synced_live_hash is not None:
+    if wc.synced_live_hash is not None:
         try:
             working_dirty = (
                 working_copy.content_hash(store.state, store.wiring)
                 != wc.synced_live_hash)
         except Exception:
             working_dirty = False
-    return wc, store, index, live_diverged, auto_synced, working_dirty, pulled_count
+    return wc, store, index, live_diverged, working_dirty, drift_count
 
 
-def _reconcile_cached_quam_ctx(key: str, ctx: dict) -> None:
+def _drift_count(seen: dict) -> int | None:
+    """How many values differ, from the contents the reconcile already read.
+
+    ``None`` when it could not be computed — the banner then says that the
+    live chip changed without inventing a number. Free by construction: the
+    reconcile had to read both sides to reach its verdict, so this never adds
+    a live-file read to a surface that renders on every page (docs/28).
+    """
+    live, work = seen.get("live"), seen.get("working")
+    if not live or not work:
+        return None
+    try:
+        return len(Differ().diff(work, live))
+    except Exception:       # noqa: BLE001 — a count is never worth an error page
+        logger.debug("drift count failed", exc_info=True)
+        return None
+
+
+def _reconcile_cached_quam_ctx(key: str, ctx: dict, *,
+                               auto_adopt: bool = True) -> None:
     """Refresh an in-memory cached QUAM context whose live mtimes moved.
+
+    *auto_adopt* is the docs/87 split, and it is a split between ACTORS, not
+    two UX behaviours:
+
+    - ``False`` — the user just opened or switched to this chip. Never swap
+      what they are looking at underneath them: keep the working copy, set
+      ``live_diverged``, and let the banner offer pull / overwrite / review.
+    - ``True`` — a machine mid-loop called us: the scheduler worker's
+      post-node hook, or the autofit engine's reconcile. Those must stay in
+      sync to keep WORKING: autofit's gates judge a fit against the
+      **pre-update anchor** (docs/47), so a stale store makes the verdict
+      itself wrong. A robot mid-loop does not stop to ask.
 
     Unlike the slow path, the cached context may hold state that exists
     NOWHERE on disk — unsaved change-log edits, the ``working_dirty`` flag,
@@ -695,10 +721,11 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict) -> None:
                             or bool(ctx.get("pending_reapply")))
             # Snapshot the pre-pull content (clean ctx only) so a clean auto-pull can
             # report HOW MANY params it pulled (feedback #5 — surface the silent pull).
-            pre_pull = (None if in_mem_dirty
+            pre_pull = (None if (in_mem_dirty or not auto_adopt)
                         else (copy.deepcopy(store.state), copy.deepcopy(store.wiring)))
+        seen: dict = {}
         result = working_copy.reconcile_with_live(
-            wc, sync_if_clean=not in_mem_dirty)
+            wc, sync_if_clean=auto_adopt and not in_mem_dirty, out=seen)
         if result == working_copy.RECONCILE_SYNCED:
             # Mirror the rebuild steps of /state/sync: the working folder
             # now holds the new live content; refresh every derived object.
@@ -780,6 +807,10 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict) -> None:
             # in_sync / stale are definitive verdicts; a transiently
             # unreadable live folder keeps whatever we knew before.
             ctx["live_diverged"] = result == working_copy.RECONCILE_STALE
+            if result == working_copy.RECONCILE_STALE:
+                ctx["live_drift_count"] = _drift_count(seen)
+            else:
+                ctx.pop("live_drift_count", None)
 
 
 def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
@@ -864,7 +895,9 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         except OSError:
             mtime_stale = False   # unreadable live is never treated as replaced
         if mtime_stale:
-            _reconcile_cached_quam_ctx(key, cached)
+            # docs/87 — the user is opening/switching a chip. Never swap what
+            # they are about to look at; surface it and let them choose.
+            _reconcile_cached_quam_ctx(key, cached, auto_adopt=False)
         # Publish under the cache lock, RE-VALIDATING the entry: the stat /
         # reconcile above ran outside the lock, during which the key may
         # have been LRU-evicted and rebuilt by a sibling thread — two
@@ -919,17 +952,8 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         if cached is not None:
             ctx = cached
         else:
-            wc, store, index, live_diverged, auto_synced, working_dirty, pulled_count = \
+            wc, store, index, live_diverged, working_dirty, drift_count = \
                 _build_quam_context(folder)
-            if auto_synced:
-                # The live chip was replaced and we adopted it — record a
-                # Param History snapshot like the explicit /state/sync does.
-                try:
-                    _history().check_and_snapshot(str(folder), "auto",
-                                                project=_scope_for(folder))
-                except Exception:
-                    logger.warning("History snapshot after auto-sync failed",
-                                   exc_info=True)
             ctx = {
                 "type": "quam",
                 "path": str(folder),        # the LIVE folder (resolved) — context identity
@@ -941,7 +965,8 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
                 # (see _build_quam_context). False on a fresh seed / clean copy.
                 "working_dirty": working_dirty,
                 "pending_reapply": None,    # user edits stashed for re-apply after a pull
-                "live_diverged": live_diverged,  # live replaced under a dirty working copy
+                "live_diverged": live_diverged,  # live replaced out-of-band — ask, never adopt
+                "live_drift_count": drift_count,  # how many values differ (docs/87; may be None)
                 "store": store,             # store reads/saves the working copy
                 "engine": QueryEngine(store),
                 "index": index,
@@ -949,11 +974,10 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
                 "saver": Saver(store),
                 "wiring_json": json.dumps(store.wiring),  # cached — immutable after load
             }
-            if auto_synced:
-                # One-shot: the next /state/drift poll surfaces this then pops it, so
-                # the silent clean auto-pull becomes a visible "Live chip updated —
-                # N params pulled" notice (feedback #5 — the root of "pulse edits not synced").
-                ctx["_auto_pulled"] = {"count": pulled_count or 0}
+            # (docs/87) The "✓ Live chip updated — N params pulled" one-shot that
+            # used to be stashed here is gone with the silent pull it announced.
+            # A toast that reports a fait accompli is strictly worse than the
+            # banner that now asks first — and the banner carries the same count.
         # Project lens (docs/63): fresh builds (first load, LRU-eviction
         # rehydrates, restarts) derive their scope here — BEFORE publication
         # (a concurrent /datasets render must never observe an active scoped
@@ -1295,6 +1319,9 @@ def _active_chip_identity() -> dict | None:
         "change_count": len(store.change_log) if store else 0,
         "working_dirty": bool(ctx.get("working_dirty")),
         "live_diverged": bool(ctx.get("live_diverged")),
+        # docs/87 — how many values differ, computed for free by the reconcile
+        # that raised the flag. None when it could not be determined.
+        "live_drift_count": ctx.get("live_drift_count"),
     }
 
 
@@ -2623,6 +2650,7 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # None ⇒ every consumer renders exactly the pre-lens behavior.
         "project_scope": (_active_ctx() or {}).get("qualibrate_project"),
         "live_diverged": bool(_ctx_obj("live_diverged")),
+        "live_drift_count": (_active_ctx() or {}).get("live_drift_count"),
         # docs/20 v2: first-open "name this chip?" banner payload (None when
         # named / declined / archive / no chip) + declared-but-unreachable
         # extras.data_folder values (muted note, never an error).
@@ -4228,6 +4256,7 @@ def _diverged_oob() -> str:
         + render_template(
             "_live_diverged_banner.html",
             live_diverged=bool(ident and ident["live_diverged"]),
+            live_drift_count=(ident or {}).get("live_drift_count"),
             active_name=ident["name"] if ident else None,
         )
         + "</div>"
@@ -6144,8 +6173,15 @@ def field_edit_batch():
                     # this key (qualibrate added new structure on the live chip).
                     # Create it (mirrors _replay_updates' create branch) so the ✓
                     # "pull just this field" works in exactly its most-useful case.
+                    #
+                    # docs/88: create at the RESOLVED target, not the posted path.
+                    # A grid cell for a field this entity has not got yet posts an
+                    # ALIAS whose parent is a pointer (qubits.q.resonator.opx_input
+                    # → ports.mw_inputs.con1.2.1), so creating at dot_path could
+                    # only ever fail — which is why "lo_mode" was uneditable.
                     try:
-                        entry = modifier.create_subtree(dot_path, parsed, group_id=_batch_gid)
+                        entry = modifier.create_subtree(target_path, parsed,
+                                                        group_id=_batch_gid)
                     except KeyError as ce:
                         # The PARENT is also absent — a wholly-new subtree, not a
                         # new leaf. Guide to a full Pull rather than half-build it.
@@ -9655,14 +9691,12 @@ def state_drift():
         return jsonify(ok=True, tracked=True, count=0)
     if info is None:
         return jsonify(ok=True, tracked=False, count=0)
-    payload = {"ok": True, "tracked": True, "count": info["count"],
-               "baseline_utc": info["baseline_utc"]}
-    # One-shot: surface a clean auto-pull that just happened on load/select (feedback
-    # #5 — the pull used to be silent), then pop it so it shows exactly once.
-    pulled = ctx.pop("_auto_pulled", None)
-    if pulled is not None:
-        payload["auto_pulled"] = pulled
-    return jsonify(payload)
+    # (docs/87) ``auto_pulled`` used to ride along here as a one-shot so the
+    # silent clean auto-pull became a visible toast. The user-facing path no
+    # longer pulls without asking, so there is nothing to announce after the
+    # fact — the banner asks BEFORE, and names the same count.
+    return jsonify({"ok": True, "tracked": True, "count": info["count"],
+                    "baseline_utc": info["baseline_utc"]})
 
 
 @bp.route("/state/drift/view")
@@ -18058,7 +18092,11 @@ def _scheduler_refresh_hook(app, instance_path, folder, item_id, status) -> None
                         return working_copy.content_hash(store.state, store.wiring)
                 before = _hash()
                 try:
-                    _reconcile_cached_quam_ctx(ctx["path"], ctx)
+                    # docs/87 — MACHINE caller: the scheduler worker just ran a
+                    # node that wrote live. It adopts (auto_adopt default) so the
+                    # engine's own view stays correct; the ASK path is the user
+                    # opening/switching a chip.
+                    _reconcile_cached_quam_ctx(ctx["path"], ctx, auto_adopt=True)
                 except (OSError, ValueError):
                     logger.warning("post-node reconcile failed", exc_info=True)
                 after = _hash()
@@ -18502,7 +18540,10 @@ def _autofit_start_real(inst, p, data, auditor):
         # reconcile while the writer still holds this store/wc (audit E5)
         with app.app_context():
             try:
-                _reconcile_cached_quam_ctx(ctx["path"], ctx)
+                # docs/87 — MACHINE caller: autofit's gates judge each fit against
+                # the pre-update anchor (docs/47), so a stale store makes the
+                # VERDICT wrong. A robot mid-loop does not stop to ask.
+                _reconcile_cached_quam_ctx(ctx["path"], ctx, auto_adopt=True)
             except Exception:  # noqa: BLE001
                 logger.exception("autofit reconcile failed for %s", live_path)
 

@@ -2548,17 +2548,10 @@ window.applyEditsToLive = function () {
         fetch("/state/drift", { cache: "no-store" })
             .then(function (r) { return r.ok ? r.json() : null; })
             .then(function (d) {
-                // Surface the clean auto-pull that just happened on load/select — the
-                // pull used to be SILENT, so a user's IDE pulse edit was adopted with
-                // no signal and read as "not synced" (feedback #5). One-shot from the server.
-                if (d && d.auto_pulled && window.showToast) {
-                    var n = d.auto_pulled.count || 0;
-                    window.showToast(
-                        n > 0 ? ("✓ Live chip updated — " + n + " param" + (n === 1 ? "" : "s")
-                                 + " pulled into the working state")
-                              : "✓ Live chip state pulled into the working state",
-                        "success");
-                }
+                // (docs/87) The "✓ Live chip updated — N params pulled" toast lived
+                // here. It announced a silent auto-pull after the fact; the user-facing
+                // path now ASKS first through the live-diverged banner, which carries
+                // the same count and both directions, so there is nothing to report.
                 var count = (d && d.ok && d.tracked) ? (d.count || 0) : 0;
                 // Count changed → refresh any embedded panel / open overlay so
                 // the State History page + a viewing user see it accumulate.

@@ -803,7 +803,15 @@
             var k = _dedupKey(c);
             if (seen[k] || (seenGlobal && seenGlobal[k])) return;
             seen[k] = true; batchKeys.push(k);
-            updates.push({ dot_path: c.getAttribute('data-dot-path'), value: c.value });
+            // docs/88: the server rendered this cell "not set" — the column
+            // exists because a SIBLING entity carries that leaf, so filling it
+            // in has to CREATE the key. Declaring it here (rather than letting
+            // the server infer it) keeps the standing rule that a generic
+            // bulk/plot edit can never silently create a mistyped path: only a
+            // cell the server itself marked missing may ask for creation.
+            var up = { dot_path: c.getAttribute('data-dot-path'), value: c.value };
+            if (c.getAttribute('data-missing') === '1') up.create = true;
+            updates.push(up);
         });
         if (!updates.length) return Promise.resolve({ ok: true, tray_html: null });
         var _postBatch = function (ups, fspAck, typeFix) {
