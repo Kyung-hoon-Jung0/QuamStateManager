@@ -11,16 +11,8 @@
 {% set cmap_label = '— flux lines + neighbour links highlighted' %}
 {% include '_component_map.html' %}
 
-<nav class="chain-tabs">
-    <ul>
-        <li><a href="/flux?per_page={{ per_page }}" hx-get="/flux?per_page={{ per_page }}" hx-target="#table-pane"
-               class="{% if not active_chain %}active{% endif %}">All</a></li>
-        {% for ch in chains %}
-        <li><a href="/flux?chain={{ ch }}&per_page={{ per_page }}" hx-get="/flux?chain={{ ch }}&per_page={{ per_page }}" hx-target="#table-pane"
-               class="{% if active_chain == ch %}active{% endif %}">Chain {{ ch }}</a></li>
-        {% endfor %}
-    </ul>
-</nav>
+{# chain tabs deliberately absent: chain slicing has no flux workflow
+   (docs/93 item 5); Qubits/Resonators keep theirs. #}
 
 <table id="flux-table" class="data-table" role="grid">
     <thead>

@@ -3760,10 +3760,12 @@ def qubits():
     per_page = _int_arg("per_page", _DEFAULT_PER_PAGE, minimum=1)
 
     all_qubits = engine.list_qubits()
+    # chains from the UNFILTERED list — computing it after the filter left only
+    # the selected chain's button rendered (docs/93 §1.1; /table at ~7022 has
+    # always used this order).
+    chains = sorted({q["id"][1] for q in all_qubits if len(q.get("id", "")) >= 2 and q["id"][0] == "q" and q["id"][1].isalpha()})
     if chain_filter:
         all_qubits = [q for q in all_qubits if q.get("id", "").startswith(f"q{chain_filter}")]
-
-    chains = sorted({q["id"][1] for q in all_qubits if len(q.get("id", "")) >= 2 and q["id"][0] == "q" and q["id"][1].isalpha()})
 
     page_qubits, total, page, total_pages = _paginate(all_qubits, page, per_page)
 
@@ -3807,10 +3809,11 @@ def _channel_scoped_qubits_page(*, has_key: str, page_name: str,
     per_page = _int_arg("per_page", _DEFAULT_PER_PAGE, minimum=1)
 
     all_qubits = engine.list_qubits()
+    # chains BEFORE the filter — same docs/93 §1.1 fix as qubits() (this helper
+    # serves /resonators; /flux no longer renders the tabs but keeps the param).
+    chains = sorted({q["id"][1] for q in all_qubits if len(q.get("id", "")) >= 2 and q["id"][0] == "q" and q["id"][1].isalpha()})
     if chain_filter:
         all_qubits = [q for q in all_qubits if q.get("id", "").startswith(f"q{chain_filter}")]
-
-    chains = sorted({q["id"][1] for q in all_qubits if len(q.get("id", "")) >= 2 and q["id"][0] == "q" and q["id"][1].isalpha()})
 
     scoped_qubits = [q for q in all_qubits if q.get(has_key)]
     page_qubits, total, page, total_pages = _paginate(scoped_qubits, page, per_page)
