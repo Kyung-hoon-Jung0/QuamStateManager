@@ -5,6 +5,18 @@ before it merges to `main`, written to be read with **no prior conversation
 context**. Everything here was taken from git and from test runs, not from
 memory; where a claim rests on something weaker than a passing test, it says so.*
 
+> **Scope.** This covers **the 22-commit chain that reaches `main` through
+> `feat/sidebar-tools`** — no more, no less. Two caveats an auditor should hold:
+>
+> - It **includes** `feat/multi-instance-safety` (docs/78–82), which was **not**
+>   produced in the authoring session's visible context. It is in the chain, so
+>   it is in scope, but it is graded *"not re-verified in this pass"* in §4.
+> - It **excludes** another session's runner/AI-agent line
+>   (`origin/feat/runner-p2-families`, `origin/feat/runner-p3-judge`, 10 commits
+>   off the same base, `docs/78_runner_agent.md`). That work is unrelated to this
+>   chain and is being audited separately. See §6.6 for the docs/78 collision the
+>   two lines create.
+
 ---
 
 ## 0. The one-paragraph version
@@ -349,9 +361,17 @@ Nothing here blocks a merge; all were raised and left deliberately.
    non-numbers still costing a scan; diff source dropdowns offering only the
    loaded chip; the Changes tab being loaded-chip only) were reported at the
    time and left as-is.
-6. **docs numbering.** This chain used 78–89 and there was a known collision
-   risk with another session's docs/78; the cleanup was deferred. Worth a check
-   that `docs/78_type_alert_popup.md` is the intended occupant.
+6. **docs/78 is a CONFIRMED collision, not a risk.** Two independent lines
+   branch off the same base `8e5fa99` and both add a docs/78:
+   - this chain → `docs/78_type_alert_popup.md`
+   - another session's runner line → `docs/78_runner_agent.md`
+     (`origin/feat/runner-p2-families`, `origin/feat/runner-p3-judge`;
+     10 commits, tip `ba33f07`, 2026-08-07)
+
+   Different filenames, so git will **not** conflict — they will simply both
+   land and the docs index will have two number 78s. Renumbering one is a
+   docs-only change but touches every cross-reference in it, so it is worth
+   deciding **before** both merge. Not this chain's call to make alone.
 
 ---
 
