@@ -10111,6 +10111,69 @@ def state_apply_to_live():
     return resp
 
 
+@bp.route("/state/overwrite-live/preflight")
+def state_overwrite_live_preflight():
+    """Everything the "keep mine, overwrite live" confirm needs, in one call.
+
+    The third option (docs/86). Pull and push are NOT symmetric: a pull discards
+    the working copy while the live files stay on disk, but a push discards live
+    content that may be a real calibration another program just wrote. So the
+    confirm has to name what disappears — and there is no honest way to know that
+    without reading the live files, which is why this is a separate endpoint
+    fired ON CLICK rather than a count baked into a banner that renders on every
+    page (docs/28: live content is read only for an explicit user action).
+
+    Returns ``{ok, live_changes, unsaved, reversible, run_active, run_label}``.
+    A failed live read is NOT an error here — the user can still choose to
+    overwrite; the confirm just says the count is unknown.
+    """
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam":
+        return jsonify({"ok": False, "message": "No state loaded"}), 400
+    if (ctx.get("origin") or "live") != "live":
+        return jsonify({"ok": False,
+                        "message": "This chip was opened from a dataset run "
+                                   "archive (read-only)."}), 409
+
+    store = ctx["store"]
+    live_changes = None
+    try:
+        live_state, live_wiring = working_copy.read_live(ctx["working_copy"])
+        live_changes = len(Differ().diff(store, (live_state, live_wiring)))
+    except (FileNotFoundError, OSError, ValueError):
+        logger.info("overwrite-live preflight could not read the live files",
+                    exc_info=True)
+
+    # A run writing this chip right now would simply re-write whatever we push
+    # the moment its node finishes — worth saying, never worth blocking (the
+    # user may be overwriting precisely because a run went wrong).
+    run_active, run_label = False, None
+    try:
+        inst = _sched_inst()
+        run_active = scheduler.is_active(inst)
+        if run_active:
+            owner = scheduler.foreign_owner(
+                {"run": (scheduler.load_queue(inst).get("run") or {})})
+            if owner is not None:
+                run_label = scheduler.owner_label(*owner)
+    except Exception:       # noqa: BLE001 — an advisory must never break the gate
+        logger.debug("overwrite-live preflight run probe failed", exc_info=True)
+
+    with store._lock:
+        unsaved = len(store.change_log)
+    return jsonify({
+        "ok": True,
+        "live_changes": live_changes,
+        "unsaved": unsaved,
+        # The push snapshots the pre-apply live first, which is what powers the
+        # tray's "Revert last apply" — so this is a reversible action and the
+        # confirm should say so.
+        "reversible": True,
+        "run_active": bool(run_active),
+        "run_label": run_label,
+    })
+
+
 # ======================================================================
 # Export
 # ======================================================================

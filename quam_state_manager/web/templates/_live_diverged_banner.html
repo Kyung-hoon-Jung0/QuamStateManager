@@ -16,7 +16,23 @@
     <button type="button" class="btn-sm outline"
             onclick="if (confirm('Replace the working state with the live files?\n\nAny unapplied edits in the working state will be discarded.')) doStateSync('discard')"
             title="Replace the working state with the live files (any unapplied edits in the working state are discarded)">
-        Pull live state</button>
+        &#8595; Pull live state</button>
+    {# docs/86 — the other direction. This banner used to offer only "look at it"
+       and "take theirs", which is not a choice; the common case behind the
+       reports is a test run that wrote parameters by mistake, where the state SM
+       is holding is the one worth keeping. Last and un-primary: a pull discards
+       the working copy while the live files stay on disk, this discards live
+       content. The confirm (built by overwriteLiveWithWorking from a preflight
+       read) names how many live values disappear, warns if a run is writing this
+       chip right now, and says the push is snapshotted and therefore reversible
+       — none of which can be computed here, because the banner renders on every
+       page and reading live content on render is exactly what docs/28 forbids. #}
+    {% if (chip_origin | default('live')) != 'dataset_archive' %}
+    <button type="button" class="btn-sm outline live-diverged-overwrite"
+            onclick="overwriteLiveWithWorking()"
+            title="Keep the working state and write it over the live chip. The live state is snapshotted first — the tray's “Revert last apply” undoes it.">
+        &#8593; Keep mine &mdash; overwrite live</button>
+    {% endif %}
     <button type="button" class="topo-change-banner-dismiss" aria-label="Dismiss"
             onclick="document.querySelectorAll('.live-diverged-banner').forEach(function(b){b.hidden=true})">&#10005;</button>
 </div>

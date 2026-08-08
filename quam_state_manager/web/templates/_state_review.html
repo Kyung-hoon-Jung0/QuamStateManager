@@ -63,6 +63,21 @@
                 title="Sync — pull the live chip state into the working state.">
           Sync</button>
       </span>
+      {# docs/86 — the third choice, between Sync and Close. It sits OUTSIDE the
+         three branch spans on purpose: "keep mine and overwrite live" is
+         meaningful in all of them, and the branch that most needed it was the
+         CLEAN one (no edits of my own; an experiment wrote the live chip and I
+         want my state back), which offered only Sync. Deliberately last and
+         un-primary — a pull discards the working copy while the live files stay
+         on disk, but this discards live content that may be a real calibration.
+         The count + the run warning + the reversibility live in the confirm,
+         because naming them needs a live read that must not happen on render. #}
+      {% if not _archive %}
+      <button class="btn-sync outline state-review-overwrite-btn" type="button"
+              onclick="overwriteLiveWithWorking()"
+              title="Keep the working state and write it over the live chip's state.json / wiring.json. The live state is snapshotted first — the tray's “Revert last apply” undoes it.">
+        <span aria-hidden="true">&#8593;</span> Keep mine &mdash; overwrite live</button>
+      {% endif %}
       {% endif %}
       <button class="btn-sync outline state-review-close-btn" type="button"
               onclick="closeReview()" aria-label="Close" title="Close">Close</button>
