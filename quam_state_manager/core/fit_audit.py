@@ -25,27 +25,74 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Family registry (Phase-1: the two §6-③ pilots)
+# Family registry — the 9 x180-chain families (docs/78 P0c; was the two docs/50
+# Phase-1 pilots). Utils are the SOURCE-OF-TRUTH tree's module names (docs/78
+# D-13: the vs_power util lost its historical ``_iq`` suffix there; the vs_power
+# node family is served by ``qubit_spectroscopy_vs_amplitude``; the coupler
+# qubit-spec util is ``qubit_spectroscopy_vs_coupler`` without ``_flux``).
 # ---------------------------------------------------------------------------
-# normalized family -> util module, the FitParameters value field, drift tolerance.
+# normalized family -> util module, FitParameters value field, drift tolerance,
+# display unit ("" = dimensionless; omitted = infer from the field name).
+# value_field choices follow what the node's own update_state writes (docs/78
+# D-14): spectroscopy families write a frequency; the flux families' primary
+# calibration output is the idle flux offset (their frequency write is an
+# INCREMENT, not a comparable absolute); power_rabi writes opt_amp; the coupler
+# qubit-spec node writes no scalar at all — num_crossings is the only stable
+# scalar its fit emits (avoided-crossing count).
 FAMILIES: dict[str, dict] = {
+    "resonator_spectroscopy": {
+        "util": "resonator_spectroscopy", "value_field": "frequency",
+        "value_tol": 1e6, "label": "Resonator spectroscopy (f_01)",
+    },
+    "resonator_spectroscopy_vs_power": {
+        "util": "resonator_spectroscopy_vs_power", "value_field": "resonator_frequency",
+        "value_tol": 1e6, "label": "Resonator spectroscopy vs power",
+    },
+    "resonator_spectroscopy_vs_flux": {
+        "util": "resonator_spectroscopy_vs_flux", "value_field": "idle_offset",
+        "value_tol": 5e-3, "unit": "V",
+        "label": "Resonator spectroscopy vs flux (idle offset)",
+    },
+    "resonator_spectroscopy_vs_coupler_flux": {
+        "util": "resonator_spectroscopy_vs_coupler_flux", "value_field": "idle_offset",
+        "value_tol": 5e-3, "unit": "V",
+        "label": "Resonator spectroscopy vs coupler flux",
+    },
     "qubit_spectroscopy": {
         "util": "qubit_spectroscopy", "value_field": "frequency",
         "value_tol": 1e6, "label": "Qubit spectroscopy (f_01)",
     },
-    "resonator_spectroscopy_vs_power": {
-        "util": "resonator_spectroscopy_vs_power_iq", "value_field": "resonator_frequency",
-        "value_tol": 1e6, "label": "Resonator spectroscopy vs power",
+    "qubit_spectroscopy_vs_power": {
+        "util": "qubit_spectroscopy_vs_amplitude", "value_field": "frequency",
+        "value_tol": 1e6, "label": "Qubit spectroscopy vs power",
+    },
+    "qubit_spectroscopy_vs_flux": {
+        "util": "qubit_spectroscopy_vs_flux", "value_field": "qubit_frequency",
+        "value_tol": 1e6, "label": "Qubit spectroscopy vs flux (sweet spot)",
+    },
+    "qubit_spectroscopy_vs_coupler_flux": {
+        "util": "qubit_spectroscopy_vs_coupler", "value_field": "num_crossings",
+        "value_tol": 0.5, "unit": "",
+        "label": "Qubit spectroscopy vs coupler flux",
+    },
+    "power_rabi": {
+        "util": "power_rabi", "value_field": "opt_amp",
+        "value_tol": 5e-3, "unit": "",
+        "label": "Power Rabi (x180 amplitude)",
     },
 }
-# calibration-file variants that share a util / family. The node names the real
-# graphs ship carry suffixes the FAMILIES keys don't: qubit-spec's improved-v2 is
-# ``*_qubit_spectroscopy_new`` and the resonator node is ``*_resonator_spectroscopy
-# _vs_power_iq`` (util IS the _iq form). Without these, family_for() returns None and
-# every such run silently drops from the backlog.
+# calibration-file variants that share a util / family. Real node names carry
+# suffixes the FAMILIES keys don't (qubit-spec's improved-v2 is ``*_new``, older
+# resonator vs_power nodes were ``*_iq``, node 03 is ``*_single`` with archived
+# ``_v2``/``_v3`` revisions). Without these, family_for() returns None and every
+# such run silently drops from the backlog.
 _ALIASES = {
     "qubit_spectroscopy_new": "qubit_spectroscopy",
     "resonator_spectroscopy_vs_power_iq": "resonator_spectroscopy_vs_power",
+    "resonator_spectroscopy_single": "resonator_spectroscopy",
+    "resonator_spectroscopy_single_new": "resonator_spectroscopy",
+    "resonator_spectroscopy_single_v2": "resonator_spectroscopy",
+    "resonator_spectroscopy_single_v3": "resonator_spectroscopy",
 }
 
 
@@ -179,8 +226,13 @@ def stored_claim(folder: Path, value_field: str) -> dict:
 VERDICTS = ("agrees", "reject", "recover", "drift", "unverifiable")
 
 
-def _codify(stored_succ, stored_val, fresh, value_field, tol):
-    """One (verdict, detail) for a qubit from its stored claim + fresh replay dict."""
+def _codify(stored_succ, stored_val, fresh, value_field, tol, unit=None):
+    """One (verdict, detail) for a qubit from its stored claim + fresh replay dict.
+
+    ``unit`` is the family's declared display unit; ``None`` infers from the
+    field name. The old bare ``or "Hz"`` fallback mislabeled dimensionless /
+    volt fields (a 12 mV flux drift would have read "12.00 mHz").
+    """
     if fresh is None:
         return "unverifiable", "no fresh result for this qubit"
     if not fresh.get("deterministic", True):
@@ -194,15 +246,31 @@ def _codify(stored_succ, stored_val, fresh, value_field, tol):
     if (not stored_succ) and fresh_succ:
         return "recover", "the current gate accepts a fit the original node discarded"
     if stored_succ and fresh_succ:
-        if isinstance(stored_val, (int, float)) and isinstance(fresh_val, (int, float)):
+        s_num = isinstance(stored_val, (int, float)) and not isinstance(stored_val, bool)
+        f_num = isinstance(fresh_val, (int, float)) and not isinstance(fresh_val, bool)
+        if s_num and f_num:
             d = fresh_val - stored_val
             if abs(d) > tol:
                 from quam_state_manager.core import units
-                base = units.stored_unit_label(value_field) or "Hz"
+                base = unit if unit is not None \
+                    else (units.stored_unit_label(value_field) or "Hz")
                 sign = "+" if d > 0 else ""   # format_metric drops the sign; direction matters
                 return "drift", (f"value differs by {sign}{units.format_metric(d, base)} "
                                  f"(tolerance {units.format_metric(tol, base)})")
-        return "agrees", ""
+            return "agrees", ""
+        # Both sides claim success but there is NO comparable number — the
+        # field is absent (a cross-generation rename: the archive stored
+        # `sweet_spot_frequency`, today's fitter reports `resonator_frequency`)
+        # or non-finite. "agrees" here would be the strongest possible verdict
+        # on evidence we do not have, and it would silence exactly the drift
+        # the auditor exists to find.
+        missing = []
+        if not s_num:
+            missing.append("stored")
+        if not f_num:
+            missing.append("fresh")
+        return "unverifiable", (f"no comparable {value_field!r} value "
+                                f"({' and '.join(missing)} side missing or non-numeric)")
     return "agrees", "both reject"
 
 
@@ -311,7 +379,8 @@ def audit_run(node_name, folder, env, source_root, *, timeout=180) -> dict:
         elif errors and not fresh_q:
             verdict, detail = "unverifiable", f"replay error: {errors[0].get('stage')}"
         else:
-            verdict, detail = _codify(ssucc, sval, fresh, spec["value_field"], spec["value_tol"])
+            verdict, detail = _codify(ssucc, sval, fresh, spec["value_field"],
+                                      spec["value_tol"], spec.get("unit"))
         rows.append({
             "qubit": q,
             "stored_success": ssucc,

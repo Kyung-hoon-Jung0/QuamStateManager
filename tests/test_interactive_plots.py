@@ -745,16 +745,21 @@ def test_vs_flux_two_value_click(store, prefix, freq_path):
     # CONTRACT-FAITHFUL targets (upgraded): flux is flux_point-routed with a
     # CONCRETE qubit path; node 06 assigns the ABSOLUTE swept offset (offset=0)
     # while node 09's delta axis carries the baked PRE-update offset (float).
+    # AXES (docs/78 P1): these figures draw FLUX on x and frequency on y — the
+    # lab's own convention for every flux sweep — so the flux target reads x and
+    # the frequency legs read y. This pin used to assert the inverse; when the
+    # figures were transposed it had to move with them, or the repo would hold
+    # two mutually exclusive contracts and a revert would look "confirmed".
     flux_ts = [t for t in clk["targets"] if t["path"].endswith("_offset")]
-    assert flux_ts and flux_ts[0]["axis"] == "y"
+    assert flux_ts and flux_ts[0]["axis"] == "x"
     assert isinstance(flux_ts[0].get("offset", 0), (int, float))
     freq_leaf = freq_path.rsplit(".", 1)[-1]           # f_01
     f01_ts = [t for t in clk["targets"]
               if t["path"].endswith(f".{freq_leaf}") or t["path"] == freq_path]
     rf_ts = [t for t in clk["targets"] if t["path"].endswith("RF_frequency")]
-    assert rf_ts and rf_ts[0]["axis"] == "x" and rf_ts[0]["scale"] == 1e9
+    assert rf_ts and rf_ts[0]["axis"] == "y" and rf_ts[0]["scale"] == 1e9
     for ft in f01_ts:
-        assert ft["axis"] == "x" and ft["scale"] == 1e9
+        assert ft["axis"] == "y" and ft["scale"] == 1e9
         # 06: increment → float offset baked; 09: absolute assign → offset 0/absent
         assert isinstance(ft.get("offset", 0.0), (int, float))
 

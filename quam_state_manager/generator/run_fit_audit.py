@@ -59,6 +59,18 @@ def _derive_util(node_name: str) -> str:
     return s.strip()
 
 
+def _name_from_folder(basename: str) -> str:
+    """Run-FOLDER basename -> node name (docs/78 §4.4): the fallback when
+    node.json carries no ``metadata.name``. A folder is ``#<id>_<name>_<HHMMSS>``
+    — without stripping the ``#<id>_`` prefix the derived util is a
+    non-identifier (``#1212_09_...``) and the import gate refuses a perfectly
+    replayable run."""
+    s = basename or ""
+    s = re.sub(r"^#\d+_", "", s)
+    s = re.sub(r"_\d{6}$", "", s)
+    return s
+
+
 # A calibration_utils submodule is a single python identifier — never a dotted path.
 _VALID_UTIL = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 
@@ -70,6 +82,24 @@ def _read_node(run: str) -> dict:
             return json.load(fh)
     except (OSError, ValueError):
         return {}
+
+
+def run_params(node: dict) -> dict:
+    """The run's OWN parameter values from a node.json.
+
+    node.json nests them as ``data.parameters.{model, schema}`` — without the
+    unwrap the caller gets ``{"model": {...}, "schema": {...}}`` and every
+    ``getattr(params, knob)`` misses, silently defeating the "run's own values
+    first" contract (the fitter then replays under TODAY's defaults, and figure
+    regeneration loses the run's real knobs, e.g. the flux-line impedance that
+    decides whether an ampere axis is drawn). Flat pre-schema layouts pass
+    through unchanged. THE single unwrap — every consumer calls this.
+    """
+    params = _deep_find(node, "parameters") or {}
+    if not isinstance(params, dict):
+        return {}
+    model = params.get("model")
+    return model if isinstance(model, dict) else params
 
 
 def _deep_find(o, key):
@@ -160,12 +190,110 @@ class _Params:
         raise AttributeError(name)
 
 
-class _Node:
-    """Minimal QualibrationNode shim: what fit_raw_data / process_raw_dataset read."""
+class _Pairs:
+    """The one method pair-based analyses call on ``namespace['qubit_pairs']``:
+    ``get_names()`` — unique pair labels, in pair order (docs/78 §4.6)."""
 
-    def __init__(self, qubits, params):
+    def __init__(self, names):
+        self._names = list(names)
+
+    def get_names(self):
+        return list(self._names)
+
+
+class _Node:
+    """Minimal QualibrationNode shim: what fit_raw_data / process_raw_dataset read.
+
+    ``pair_names`` (when derivable) rides along as ``namespace['qubit_pairs']`` —
+    the coupler-flux analyses key their dataset by PAIR names and read both keys;
+    single-qubit analyses simply never look at it.
+    """
+
+    def __init__(self, qubits, params, pair_names=None):
         self.namespace = {"qubits": qubits}
+        if pair_names:
+            self.namespace["qubit_pairs"] = _Pairs(pair_names)
         self.parameters = params
+
+
+def _derive_pairs(machine, cube_q, params, want):
+    """Pair identity from the RUN's own record (docs/78 §4.6) — NEVER inferred
+    from the machine alone: a qubit belongs to several pairs (q0 ∈ q0-1 AND
+    q0-3), so machine-side guessing mis-sizes the cube (the measured xarray
+    ``AlignmentError: conflicting dimension sizes {1, 2}``).
+
+    Two recorded shapes exist:
+      * cube coord = PAIR names (new-generation coupler nodes rename
+        qubit_pair→qubit) → the cube itself is authoritative;
+      * cube coord = measured-QUBIT names (older generations) → the pair list
+        comes from ``parameters.model['qubit_pairs']``, aligned 1:1 with the
+        cube order.
+
+    Returns ``(pair_names, measured_qubits, cube_sel)`` or ``(None, None, None)``
+    when the run is not pair-shaped. Raises ValueError with an honest message on
+    an unalignable record.
+    """
+    pairs_avail = dict(getattr(machine, "qubit_pairs", None) or {})
+    if not pairs_avail or not cube_q:
+        return None, None, None
+
+    def _measured_of(pair_name):
+        pair = pairs_avail[pair_name]
+        pref = params.get("measure_qubit")
+        cands = []
+        for attr in ("qubit_control", "qubit_target"):
+            q = getattr(pair, attr, None)
+            if q is not None:
+                cands.append((attr, q))
+        if isinstance(pref, str):
+            for attr, q in cands:
+                if pref in (attr, attr.replace("qubit_", "")) \
+                        or pref == getattr(q, "name", None):
+                    return q
+        return cands[0][1] if cands else None
+
+    if all(n in pairs_avail for n in cube_q) \
+            and not any(n in machine.qubits for n in cube_q):
+        # new shape: the cube is keyed by pair names — authoritative order
+        sel = [n for n in cube_q if (not want or n in want)]
+        measured = [_measured_of(p) for p in sel]
+        if any(m is None for m in measured):
+            raise ValueError(f"pair cube {sel} has a member-less pair in the machine")
+        return sel, measured, sel
+
+    # old shape: cube = measured-qubit names; pairs come from the run's params
+    rec = params.get("qubit_pairs") or params.get("qubit_pair_names") or []
+    rec = [p for p in rec if isinstance(p, str) and p in pairs_avail]
+    if not rec:
+        return None, None, None
+    cube_sel = [n for n in cube_q if n in machine.qubits
+                and (not want or n in want)]
+    if want:
+        rec = [p for p in rec
+               if getattr(_measured_of(p), "name", None) in cube_sel] or rec
+    if len(rec) != len(cube_sel):
+        raise ValueError(
+            f"pair-shaped run: {len(rec)} recorded pairs {rec} cannot align "
+            f"with {len(cube_sel)} cube qubits {cube_sel}")
+    measured = [machine.qubits[n] for n in cube_sel]
+    return rec, measured, cube_sel
+
+
+def _open_ds(xr, path):
+    """Open a run dataset; NetCDF-classic under the .h5 name → h5netcdf can
+    never read it, so sniff the magic to pick the working fallback engine.
+    (Shared with run_figure_gen.py — keep the sniff here, in one place.)"""
+    try:
+        return xr.open_dataset(path)
+    except Exception:  # noqa: BLE001 — engine fallback, not error handling
+        eng = "h5netcdf"
+        try:
+            with open(path, "rb") as fh:
+                if fh.read(3) == b"CDF":
+                    eng = "scipy"
+        except OSError:
+            pass
+        return xr.open_dataset(path, engine=eng)
 
 
 def _fit_once(fit_fn, process_fn, ds_raw, node, result):
@@ -219,11 +347,10 @@ def main() -> int:
         sys.path.insert(0, args.source_root)
 
     node = _read_node(args.run)
-    node_name = (node.get("metadata") or {}).get("name") or os.path.basename(args.run)
+    node_name = (node.get("metadata") or {}).get("name") \
+        or _name_from_folder(os.path.basename(args.run))
     util = args.util or _derive_util(node_name)
-    params = _deep_find(node, "parameters") or {}
-    if not isinstance(params, dict):
-        params = {}
+    params = run_params(node)
 
     result = {
         "schema": "fitaudit/v1", "util": util, "node_name": node_name,
@@ -262,49 +389,49 @@ def main() -> int:
         result["errors"].append({"stage": "datasets", "trace": "no ds_raw.h5"})
         return _emit(result, args.out)
     try:
-        try:
-            ds_raw = xr.open_dataset(p)
-        except Exception:
-            # NetCDF-classic under the .h5 name → h5netcdf can never read it;
-            # sniff the magic to pick the working fallback engine.
-            eng = "h5netcdf"
-            try:
-                with open(p, "rb") as _fh:
-                    if _fh.read(3) == b"CDF":
-                        eng = "scipy"
-            except OSError:
-                pass
-            ds_raw = xr.open_dataset(p, engine=eng)
+        ds_raw = _open_ds(xr, p)
     except Exception:
         result["errors"].append({"stage": "datasets", "trace": traceback.format_exc()})
         return _emit(result, args.out)
 
+    pair_names = None
     try:
         machine = Quam.load(os.path.join(args.run, "quam_state"))
         # The fit runs over EXACTLY the cube's qubits, in the cube's order —
         # process_raw_dataset assigns a (qubit, detuning) coord that must align
         # with ds_raw's qubit dim (passing all machine qubits mis-sizes it).
-        cube_q = [str(x.decode() if isinstance(x, bytes) else x)
-                  for x in ds_raw["qubit"].values] if "qubit" in ds_raw.coords or "qubit" in ds_raw.dims else []
+        cube_raw = list(ds_raw["qubit"].values) \
+            if ("qubit" in ds_raw.coords or "qubit" in ds_raw.dims) else []
+        cube_q = [str(x.decode() if isinstance(x, bytes) else x) for x in cube_raw]
+        # NetCDF-classic archives carry BYTE coord labels; selecting with the
+        # decoded str then raises. Map decoded name -> the coord's own label so
+        # every .sel below indexes with what the dataset actually holds.
+        label_of = dict(zip(cube_q, cube_raw))
         want = [q for q in args.qubits.split(",") if q]
-        if want:
-            cube_q = [q for q in cube_q if q in want]
-        if not cube_q:
-            cube_q = list(machine.qubits.keys())
-        sel = [n for n in cube_q if n in machine.qubits]
-        qubits = [machine.qubits[n] for n in sel]
+        pair_names, measured, sel = _derive_pairs(machine, cube_q, params, want)
+        if pair_names is not None:
+            # pair-shaped run (coupler-flux families): namespace['qubits'] is
+            # the MEASURED qubit per pair, aligned 1:1 with the cube's order.
+            qubits = measured
+        else:
+            if want:
+                cube_q = [q for q in cube_q if q in want]
+            if not cube_q:
+                cube_q = list(machine.qubits.keys())
+            sel = [n for n in cube_q if n in machine.qubits]
+            qubits = [machine.qubits[n] for n in sel]
         if not qubits:
             raise ValueError(f"no cube qubits {cube_q} found in machine")
         # Keep ds_raw's qubit axis EXACTLY aligned with `qubits` (membership + order)
         # so a --qubits subset can't mis-size process_raw_dataset's (qubit, detuning)
         # coord assign. No-op when auditing the whole cube.
         if "qubit" in ds_raw.dims or "qubit" in ds_raw.coords:
-            ds_raw = ds_raw.sel(qubit=sel)
+            ds_raw = ds_raw.sel(qubit=[label_of.get(n, n) for n in sel])
     except Exception:
         result["errors"].append({"stage": "qubits", "trace": traceback.format_exc()})
         return _emit(result, args.out)
 
-    node_shim = _Node(qubits, _Params(params, _param_defaults(util)))
+    node_shim = _Node(qubits, _Params(params, _param_defaults(util)), pair_names)
 
     try:
         first = _fit_once(fit_fn, process_fn, ds_raw, node_shim, result)
