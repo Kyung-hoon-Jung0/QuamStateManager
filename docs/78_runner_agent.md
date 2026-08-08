@@ -2964,3 +2964,22 @@ clamp — the node wrote *higher* than the fit; cause unknown, n=5).
 * **One live write risk** — the flux-offset sign/step disagreement above.
 * **22% escalation** means roughly one target in five needs the judge, which
   makes P3c's calibration load-bearing rather than optional.
+
+### 28.5 The pack has to reach the machine that runs it
+
+A pre-merge check of the branch against `main` found the judge pack shipped in
+the wheel (`MANIFEST.in` + `package-data`) and **not** in the PyInstaller
+bundle, whose `datas` collected only `web/templates`, `web/static` and
+`generator/`.
+
+The failure mode is the one this programme keeps legislating against.
+`load_pack()` answers `{}` for a missing directory instead of raising — correct
+at runtime, since a lab that deletes a pack should lose exemplars rather than
+lose the app. Frozen, the same politeness means the `.exe` runs a judge that
+was taught nothing and says so to no one: every `signature` ask still returns a
+verdict, drawn from no family knowledge at all. A silent degradation of the
+thing that terminates the loop.
+
+Both distributions are now pinned by `TestThePackReachesEveryDistribution`
+(`tests/test_runner_p3.py`), including a guard that the source tree has packs
+to ship — otherwise the class would pass vacuously on the day the packs move.

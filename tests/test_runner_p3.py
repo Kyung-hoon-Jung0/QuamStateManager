@@ -9,10 +9,13 @@ the safe defaults when the judge is unavailable.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
 from quam_state_manager.core.autofit import auditor, families, judge_pack
+
+_ROOT = Path(__file__).resolve().parent.parent
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +132,38 @@ class TestPackContents:
         # the sine bullets must be scoped, or a judge shown the map looks for
         # the wrong thing entirely
         assert "1-d sweep layout only" in text
+
+
+class TestThePackReachesEveryDistribution:
+    """The pack is read off disk by ``judge_pack._PACK_ROOT``, and
+    ``load_pack()`` answers ``{}`` for a missing directory rather than raising.
+
+    That is the right runtime behaviour and the wrong packaging behaviour: a
+    build that forgets the JSON does not fail, it ships a judge with no
+    exemplars and no complaint. Both distributions are therefore pinned here —
+    the wheel (MANIFEST.in + package-data) and the frozen bundle (the
+    PyInstaller spec's ``datas``), which is where it was in fact forgotten.
+    """
+
+    REL = "quam_state_manager/core/autofit/judge_packs"
+
+    def test_the_source_tree_actually_has_packs_to_ship(self):
+        assert list((_ROOT / self.REL).glob("*/*.json")), \
+            "nothing to ship — the rest of this class would pass vacuously"
+
+    def test_the_wheel_ships_them(self):
+        manifest = (_ROOT / "MANIFEST.in").read_text(encoding="utf-8")
+        assert self.REL in manifest, "MANIFEST.in does not include the packs"
+        pyproject = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        assert "judge_packs" in pyproject, \
+            "package-data does not include the packs — recursive-include alone " \
+            "does not put them in a wheel"
+
+    def test_the_frozen_bundle_ships_them(self):
+        spec = (_ROOT / "build" / "quam-manager.spec").read_text(encoding="utf-8")
+        assert "judge_packs" in spec, \
+            "the PyInstaller spec's datas does not collect the packs — the .exe " \
+            "would run a judge that was taught nothing"
 
     def test_a_hand_edited_violation_is_dropped_not_taught(self, tmp_path,
                                                            monkeypatch):
