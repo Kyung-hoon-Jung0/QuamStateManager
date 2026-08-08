@@ -2791,3 +2791,88 @@ It also cost two wrong turns worth recording: an aggregated key listing
 mis-read as evidence a field was present (§25.2), and a ridge estimator that
 accused the instrument before the figure exonerated it. Both were caught by
 looking at the thing itself.
+
+---
+
+## 27. The qubit chain: 08 → 08b → 09, and one constant serving two shapes (2026-08-09)
+
+Sixteen real 08 → 08b → 09 chains exist in the archives. The replay used the
+best: three runs on one chip on one day, **all three carrying the operator's
+own patches** (the resonator chain of §25 had none on its last step), five
+shared qubits.
+
+### 27.1 First pass: two steps perfect, four reverts on the third
+
+| step | node | our gates | state vs the operator |
+|---|---|---|---|
+| 1 · qubit spectroscopy | 5/5 successful | 5 pass | **identical** |
+| 2 · vs power | 5/5 successful | 5 pass | **identical** |
+| 3 · vs flux | 5/5 successful | **4 fail**, 1 pass | diverged: 12 fields |
+
+Four reverts against the operator on one step is either a real catch or four
+false rejects, and that difference matters more than the chain result. Every
+one came from the same gate: G3's spectral presence check, `peak/median` of
+6–13 against a floor of **50**. The one that passed scored 253.
+
+### 27.2 The figure said false reject, and the corpus said why
+
+`qD3`'s panel carries an **unmistakable bright parabolic arc** that the node's
+own fit follows through its apex. It scored 13. That is not a marginal call.
+
+The cause is structural rather than a mis-tuned number. Span mode reduces a
+cube to its most-structured **row**; a 1-D oscillation concentrates all its
+power there, while a 2-D flux arc spreads it across every row. Measured over
+every span-mode family:
+
+| family | shape | accepted min | accepted p50 | rejected by the floor of 50 |
+|---|---|---:|---:|---:|
+| T1 | 1-D | 45 (n=36) | 3,472 | 1/36 |
+| echo | 1-D | 79 (n=14) | 282 | 0/14 |
+| ramsey | 1-D | 18 (n=262) | 795 | 9/262 |
+| **qubit spec vs flux** | **2-D** | **4 (n=185)** | 25 | **122/185** |
+| **resonator spec vs flux** | **2-D** | **6 (n=160)** | 445 | 17/160 |
+
+The 1-D families sit comfortably above the floor; the 2-D ones sit an order of
+magnitude below it. **One constant cannot serve both shapes** — it was
+discarding two thirds of the good work on one family.
+
+`FeatureCheck.spectral_min` is now per-family: 3.0 for qubit-vs-flux (below the
+accepted minimum of 4, still catching 4 of 74 rejects) and 4.5 for
+resonator-vs-flux. The 1-D families keep the default, because re-deriving them
+needs the population split §22.4 still calls for and their false-reject rates
+are 0–3%.
+
+**Replayed after the change: 45 of 45 watched fields identical to the
+operator's, across all three steps.** The chain ends exactly where the
+physicist left it.
+
+### 27.3 What it costs, stated in the ledger
+
+Lowering a floor to stop false rejects buys a blind spot, and the accuracy
+ledger records it rather than quietly dropping the assertion. Two cells moved
+to `pass_allowed`:
+
+* **06** — its ridge metrics (`ridge_amp_snr`, `coverage`, `r2`) are the real
+  presence check for that family, plus the swept-window gate from §26. Losing
+  the spectral catch there costs little.
+* **09** — costly, and worth saying plainly: **this family declares no metric
+  gates at all**, so the spectral check was its only deterministic presence
+  guard and no longer is. What remains is the plausibility band, G5 history and
+  the vision round — which makes the judge load-bearing for this family in a
+  way it is not for 06. Closing it properly needs a presence discriminator the
+  family's fit output does not currently report. That is a §22.4 item, not a
+  number to pick.
+
+The trade was not close: 122 false rejects against a manufactured empty window
+that the vision round is there to catch.
+
+### 27.4 Two chains, one pattern
+
+Both chains reproduced the operator exactly for the first two steps and both
+diverged on the flux step — for opposite reasons. The resonator chain diverged
+because we **wrote where the operator declined** (§25), and the qubit chain
+because we **refused what the operator accepted**. Both were invisible to
+per-run replay: §23 checked 252 targets and found every write matching.
+
+The flux step is where this loop is weakest, and it took walking the sequence to
+see it twice.

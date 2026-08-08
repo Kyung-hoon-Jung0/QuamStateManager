@@ -186,6 +186,14 @@ class FeatureCheck:
     # compared against axis + <pre-update state value at this path> — resolved
     # by the caller via the patches-first rule (measurement-time center).
     axis_offset_path: str | None = None
+    # mode="span" only: the spectral peak/median floor below which the window
+    # provably holds no feature. Per-family because ONE constant cannot serve
+    # both shapes (docs/78 §27): span mode reduces a map to its most-structured
+    # ROW, so a 1-D oscillation concentrates all its power there while a 2-D
+    # arc spreads it across every row — measured, the 1-D families' accepted
+    # runs bottom out at 18-79 and the 2-D ones at 4-6. None = the module
+    # default, which the 1-D families keep.
+    spectral_min: float | None = None
 
 
 @dataclass
@@ -986,8 +994,15 @@ _register(Family(
     plausibility=[Plausibility("idle_offset", lo=-10.0, hi=10.0),
                   Plausibility("frequency_shift", lo=-500e6, hi=500e6)],
     # 2-D map: no honest 1-D localizer (docs/47) — signal presence only.
+    # 160 accepted targets bottom out at a spectral ratio of 6 — the shared
+    # floor of 50 rejected 17 of them. NOTE for whoever tunes this next: on
+    # THIS family the metric is not merely mis-scaled, it is ANTI-correlated
+    # (accepted p50 445 vs rejected p50 987, n=7 rejected), so 4.5 keeps every
+    # accepted run and catches none of the rejects. It is a floor that stops
+    # false rejects, not a working discriminator — the ridge metrics do that
+    # work here (docs/78 §27).
     feature_check=FeatureCheck(var="IQ_abs", axis_var="flux_bias", mode="span",
-                               claim_key="idle_offset"),
+                               claim_key="idle_offset", spectral_min=4.5),
     # Node 06: the offset field is routed by z.flux_point and ASSIGNED, with a
     # true `else` (any non-"independent" value writes the joint offset); the
     # frequencies are INCREMENTS. min_offset is opt-in via update_flux_min.
@@ -1059,8 +1074,13 @@ _register(Family(
                                max_abs_jump=500e6, state_path="qubits.{q}.f_01"),
                   Plausibility("idle_offset", lo=-10.0, hi=10.0),
                   Plausibility("frequency_shift", lo=-1e9, hi=1e9)],
+    # THE measured case (docs/78 §27): 185 accepted targets bottom out at a
+    # spectral ratio of 4, and the shared floor of 50 rejected 122 of them —
+    # two thirds of the good ones, including a target whose figure carries an
+    # unmistakable bright parabolic arc that the node's own fit follows. 3.0
+    # keeps all 185 and still catches 4 of the 74 rejected.
     feature_check=FeatureCheck(var="IQ_abs", axis_var="flux_bias", mode="span",
-                               claim_key="idle_offset"),
+                               claim_key="idle_offset", spectral_min=3.0),
     # Node 09 differs from node 06 on the SAME field: independent ASSIGNS,
     # joint INCREMENTS, and an unrecognised flux_point writes NOTHING (its
     # if/elif has no else). Both frequencies are absolute assigns, and the whole

@@ -68,7 +68,15 @@ LEDGER = {
     },
     "06_resonator_spectroscopy_vs_flux": {
         "wrong_peak": "pass_allowed",   # a vertex read off a noise ridge stays
-        "no_signal": "fail",            # inside every band — no 1-D localizer
+        # DELIBERATE WIDENING (docs/78 §27, never silent). This cell was
+        # `fail` under the SHARED spectral floor of 50 — which the corpus
+        # proved rejects 17 of 160 accepted targets in this family, because
+        # span mode reduces a 2-D map to one row and an arc's power is spread
+        # across all of them (accepted runs bottom out at a ratio of 6). The
+        # floor is now 4.5 and no longer catches a manufactured empty window.
+        # What still does: ridge_amp_snr / coverage / r2, which ARE this
+        # family's presence check, plus the swept-window claim gate (§26).
+        "no_signal": "pass_allowed",
         "noisy": "not_pass",            # ridge_amp_snr / coverage / r2 collapse
         "out_of_band": "fail",
         "drift": "pass_allowed",        # needs G5 history (pinned separately)
@@ -100,8 +108,24 @@ LEDGER = {
     },
     "09_qubit_spectroscopy_vs_flux": {
         "wrong_peak": "pass_allowed",   # corpus: 0/17 node-rejects were caught
-        "no_signal": "fail",            # by any numeric field — only finiteness
-        "noisy": "not_pass",            # and the swept-range guard separate
+        # DELIBERATE WIDENING (docs/78 §27, never silent) and the most costly
+        # one in this ledger. The shared spectral floor of 50 rejected 122 of
+        # 185 accepted targets here — two thirds of the good work, including a
+        # panel carrying an unmistakable bright parabolic arc that the node's
+        # own fit follows (ratio 13). Accepted runs bottom out at 4, so the
+        # floor is 3.0 and a manufactured empty window now passes.
+        #
+        # BE CLEAR ABOUT WHAT THIS COSTS: this family declares NO metric gates,
+        # so the spectral check was its only deterministic presence guard and
+        # it no longer is. What remains is the plausibility band, G5 history,
+        # and the vision round — which makes the judge load-bearing here in a
+        # way it is not for 06 (whose ridge metrics do the job). Closing it
+        # properly needs a presence discriminator this family's fit output does
+        # not currently report; that is a docs/78 §22.4 item, not a number.
+        "no_signal": "pass_allowed",
+        # the same widening reaches `noisy`: G3 was the only gate refusing it
+        # (G1/G2/G4 all read ok), so a lower floor lets it through too
+        "noisy": "pass_allowed",
         "out_of_band": "fail",
         "drift": "not_pass",            # 600 MHz > the 500 MHz jump limit
     },

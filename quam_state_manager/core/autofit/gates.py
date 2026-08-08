@@ -47,6 +47,20 @@ _ERROR_RATIO_MAX = 0.25     # <key>_error / |<key>| above this ⇒ noisy
 _HISTORY_Z_MAX = 6.0        # robust z vs param-history trend ⇒ drifted
 
 
+def _spectral_floor(fc) -> float:
+    """The presence floor for THIS family (docs/78 §27).
+
+    One constant cannot serve both shapes. Span mode reduces a cube to its
+    most-structured ROW: a 1-D oscillation puts all its power there, a 2-D arc
+    spreads it over every row. Measured across the corpus, accepted runs bottom
+    out at 18-79 for the 1-D families and at 4-6 for the 2-D ones, so the
+    shared 50 rejected 122 of 185 accepted qubit-flux targets — two thirds of
+    the good ones. Families that declare nothing keep the default.
+    """
+    v = getattr(fc, "spectral_min", None)
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool)         else _SPECTRAL_RATIO_MIN
+
+
 @dataclass
 class GateVerdict:
     target: str
@@ -173,9 +187,10 @@ def _feature_check(raw_path: Path, fc: FeatureCheck, target: str, kind: str,
         psd = np.abs(np.fft.rfft(y0)) ** 2 / y0.size
         psd = psd[1:]                       # DC guard
         ratio = float(np.max(psd)) / (float(np.median(psd)) + 1e-30)
-        if ratio < _SPECTRAL_RATIO_MIN:
+        floor = _spectral_floor(fc)
+        if ratio < floor:
             return "no_signal", (f"trace carries no coherent structure (spectral "
-                                 f"peak/median {ratio:.0f} < {_SPECTRAL_RATIO_MIN:.0f})")
+                                 f"peak/median {ratio:.0f} < {floor:.0f})")
         return "ok", f"signal present (spectral peak/median {ratio:.0f})"
 
     claim = fit_entry.get(fc.claim_key)
@@ -267,7 +282,7 @@ def _presence_probe(raw_path: Path, fc: FeatureCheck, target: str, kind: str,
         psd = np.abs(np.fft.rfft(y0)) ** 2 / y0.size
         psd = psd[1:]
         ratio = float(np.max(psd)) / (float(np.median(psd)) + 1e-30)
-        if ratio >= _SPECTRAL_RATIO_MIN:
+        if ratio >= _spectral_floor(fc):
             return True, (f"coherent structure present despite the failed fit "
                           f"(spectral peak/median {ratio:.0f})"), None
         return False, (f"no coherent structure (spectral peak/median "
