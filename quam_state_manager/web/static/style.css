@@ -3434,6 +3434,13 @@ td.col-delta .val-delta { margin-left: 0; }
 .cm-hl-couplers .cm-edge-hascoupler .cm-edge-line { stroke: var(--pico-primary); stroke-width: 3; opacity: 1; }
 .cm-hl-couplers .cm-coupler { stroke: var(--pico-primary); fill: var(--pico-primary); opacity: 1; }
 
+/* chain emphasis (docs/93 F3) — the page's active chain filter lights its
+   qubits; the rest (incl. their satellite marks) drop to context. Sits BEFORE
+   the hover rules so a hovered entity still tops everything. */
+.cm-node.cm-chain-dim { opacity: .35; }
+.cm-node.cm-chain-emph .cm-stone { stroke: var(--pico-primary); stroke-width: 2.4; opacity: 1; }
+.cm-node.cm-chain-emph .cm-id { opacity: 1; }
+
 /* entity hover (map↔table, both directions) — AFTER the mode rules so the
    accent overrides any dim at equal specificity */
 .cm-svg .cm-hot .cm-stone { stroke: var(--pico-primary); stroke-width: 3; opacity: 1; }

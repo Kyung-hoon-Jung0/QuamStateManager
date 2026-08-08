@@ -41,9 +41,9 @@ function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } }
 
 const TOPO = {
   nodes: [
-    { id: 'qA1', grid_location: '0,0', rr_port: 'con1/fem1/p1', z_port: 'con1/fem5/p1' },
-    { id: 'qA2', grid_location: '1,0', rr_port: 'con1/fem1/p1', z_port: 'con1/fem5/p2' },
-    { id: 'qA3', grid_location: '0,1', rr_port: 'con1/fem2/p1', z_port: null },
+    { id: 'qA1', grid_location: '0,0', chain: 'A', rr_port: 'con1/fem1/p1', z_port: 'con1/fem5/p1' },
+    { id: 'qA2', grid_location: '1,0', chain: 'A', rr_port: 'con1/fem1/p1', z_port: 'con1/fem5/p2' },
+    { id: 'qA3', grid_location: '0,1', chain: 'B', rr_port: 'con1/fem2/p1', z_port: null },
   ],
   edges: [
     { pair_id: 'qA2-qA1', source: 'qA2', target: 'qA1', directed: false, has_coupler: true, active: null },
@@ -116,6 +116,21 @@ function checkRenderLayout() {
   ok(mBig.querySelector('.cm-stone').getAttribute('r') === '36', 'cell:120 -> 36px stones (0.30 ratio kept)');
   ok(mBig.querySelector('.cm-id').getAttribute('font-size') === '19.7',
      'cell:120 -> 19.7px id font (anchored to 10.5@64)');
+
+  // F3 (docs/93): chain emphasis — matching stones read selected, the rest
+  // (with their satellite marks) drop to context; absent by default.
+  ok(!m.querySelector('.cm-chain-emph, .cm-chain-dim'),
+     'no emphasisChain -> no chain classes anywhere');
+  const mCh = win.document.createElement('div');
+  win.document.body.appendChild(mCh);
+  win.TopoGraph.renderLayout(mCh, { nodes: TOPO.nodes, edges: TOPO.edges,
+                                    highlight: 'qubits', emphasisChain: 'A' });
+  ok(mCh.querySelectorAll('.cm-node.cm-chain-emph').length === 2,
+     'emphasisChain A lights the two chain-A stones');
+  ok(mCh.querySelectorAll('.cm-node.cm-chain-dim').length === 1,
+     'the chain-B stone drops to context');
+  ok(mCh.querySelector('[data-cm="q:qA3"]').getAttribute('data-cm-chain') === 'B',
+     'stones carry their chain');
 
   // entity hover hook
   api.highlightEntity('pair', 'qA2-qA1', true);
@@ -217,6 +232,14 @@ async function checkComponentMap() {
   const bigStone = win3.document.querySelector('.cmap-body .cm-stone');
   ok(bigStone && bigStone.getAttribute('r') === '36',
      'data-cell="120" flows through ComponentMap.mount (36px stones)');
+
+  // F3: the mount's data-chain reaches renderLayout through ComponentMap
+  const win4 = makeWorld(PANE_HTML.replace('data-highlight="pairs"', 'data-highlight="qubits" data-chain="A"'));
+  win4.ComponentMap.mount(win4.document.getElementById('component-map'));
+  await tick(); await tick();
+  ok(win4.document.querySelectorAll('.cmap-body .cm-node.cm-chain-emph').length === 2 &&
+     win4.document.querySelectorAll('.cmap-body .cm-node.cm-chain-dim').length === 1,
+     'data-chain="A" flows through ComponentMap.mount (2 emph / 1 dim)');
 }
 
 (async function main() {

@@ -135,6 +135,8 @@ window.ComponentMap = (function () {
             // so the drawing AND its text scale together (renderLayout derives
             // the id font from the cell).
             cell: parseInt(root.getAttribute("data-cell"), 10) || undefined,
+            // docs/93 F3: the page's active chain filter lights its qubits
+            emphasisChain: root.getAttribute("data-chain") || "",
           });
           _bindMapEvents(body);
         })

@@ -524,12 +524,20 @@ window.TopoGraph = (function () {
     // labels inside 1.9x stones. Anchored to the original 10.5px at the
     // original 64px cell, so a default-cell render keeps its exact font.
     var idFont = Math.round((CELL * 10.5 / 64) * 10) / 10;
+    // Chain emphasis (docs/93 F3): with opts.emphasisChain set (the page's
+    // active chain filter), matching stones read as selected and the rest
+    // drop to context — composes with the page highlight, purely additive.
+    var emphChain = opts.emphasisChain == null ? "" : String(opts.emphasisChain);
     for (var ni = 0; ni < nodes.length; ni++) {
       var n = nodes[ni];
       var pt = px(n.id);
       if (!pt) continue;
       var ra = resAnchor(pt);
-      svg += '<g class="cm-node" data-cm="q:' + esc(n.id) + '">' +
+      var nChain = n.chain == null ? "" : String(n.chain);
+      var chainCls = !emphChain ? ""
+        : (nChain === emphChain ? " cm-chain-emph" : " cm-chain-dim");
+      svg += '<g class="cm-node' + chainCls + '" data-cm="q:' + esc(n.id) +
+             '" data-cm-chain="' + esc(nChain) + '">' +
              '<circle class="cm-stone" cx="' + pt.x + '" cy="' + pt.y + '" r="' + R + '"' +
              (pt.shared ? ' stroke-dasharray="3 2"' : "") + "/>" +
              '<text class="cm-id" font-size="' + idFont + '" x="' + pt.x + '" y="' + pt.y +

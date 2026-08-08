@@ -72,6 +72,16 @@ def test_flux_chain_param_stays_harmless(tmp_path):
     assert 'data-qubit-id="qA1"' in body and 'data-qubit-id="qB1"' not in body
 
 
+def test_component_map_mount_carries_the_active_chain(tmp_path):
+    """docs/93 F3: the map mount declares the page's active chain so the
+    drawing can light that chain's qubits (empty when unfiltered)."""
+    client = _client(tmp_path)
+    filtered = client.get("/qubits?chain=A").get_data(as_text=True)
+    assert 'data-chain="A"' in filtered
+    unfiltered = client.get("/qubits").get_data(as_text=True)
+    assert 'data-chain=""' in unfiltered
+
+
 def test_pulses_channel_badges_untouched(tmp_path):
     # _pulses.html's .chain-tabs is the pulse CHANNEL badge strip (CSS reuse,
     # not qubit chains) — pinned present so the F1 removal can't overreach.
