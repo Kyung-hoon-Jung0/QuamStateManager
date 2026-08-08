@@ -25,6 +25,11 @@ dependencies = [
     # transitively guaranteed via h5py/scipy before.
     "numpy>=1.24",
     "pywebview>=5.0",
+    # Production WSGI server for `qsm serve`/`browser` (non-debug mode) — swaps
+    # out Werkzeug's dev server so it stops nagging about production use.
+    # Pure-Python, cross-platform (Windows/Linux/macOS) — chosen over gunicorn,
+    # which is Unix-only (fork-based) and won't install on Windows.
+    "waitress>=2.1",
     # Pulses-page waveform synthesis: scipy's gaussian/blackman windows and
     # gaussian_filter1d are the exact functions quam/qualang_tools call, so
     # the in-process preview matches the QM stack bit-for-bit.

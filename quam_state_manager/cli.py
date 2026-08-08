@@ -139,6 +139,26 @@ def _format_cell(value, field: str | None = None) -> str:
     return str(value)
 
 
+def _run_app(flask_app, *, host: str, port: int, debug: bool) -> None:
+    """Serve ``flask_app``.
+
+    Debug mode needs Werkzeug's reloader/debugger, so it keeps using Flask's
+    built-in dev server (and its "development server" warning — expected
+    there). Otherwise this runs under waitress, a production WSGI server, so
+    that warning doesn't show for normal ``qsm serve``/``qsm browser`` use.
+    """
+    if debug:
+        flask_app.run(host=host, port=port, debug=True)
+        return
+    try:
+        from waitress import serve as waitress_serve
+    except ImportError:
+        typer.echo("(waitress not installed — falling back to Flask's dev server)")
+        flask_app.run(host=host, port=port, debug=False)
+        return
+    waitress_serve(flask_app, host=host, port=port)
+
+
 # ------------------------------------------------------------------
 # serve — run the web UI in a browser
 # ------------------------------------------------------------------
@@ -161,7 +181,7 @@ def serve(
     # Windows default) can't encode an em-dash — typer.echo then raised
     # UnicodeEncodeError and  DIED before binding the port.
     typer.echo(f"QUAM State Manager - open  http://{host}:{port}   (Ctrl+C to quit)")
-    create_app().run(host=host, port=port, debug=debug)
+    _run_app(create_app(), host=host, port=port, debug=debug)
 
 
 # ------------------------------------------------------------------
@@ -195,7 +215,7 @@ def browser(
         # Open after a short delay so the server is accepting connections.
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
 
-    create_app().run(host=host, port=port, debug=debug)
+    _run_app(create_app(), host=host, port=port, debug=debug)
 
 
 # ------------------------------------------------------------------
