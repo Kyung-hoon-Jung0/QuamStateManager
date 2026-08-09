@@ -543,28 +543,54 @@
             var idHit = ids.some(function (id) { return id.indexOf(tok) >= 0; });
             return { tok: tok, isCol: colHit, isId: idHit, isVal: !colHit && !idHit };
         });
+        // Shared grammar: space = AND across groups, standalone | = OR within
+        // one (SearchQuery, tight-binding — `q1 | q2` is one group). The
+        // classification above stays per token; the boolean structure is the
+        // part every surface now shares. No pipe → singleton groups → the
+        // loops below are byte-for-byte the old every-token AND.
+        var tokGroups = window.SearchQuery
+            ? SearchQuery.groupBy(tokInfo, function (ti) { return ti.tok; })
+            : tokInfo.map(function (ti) { return [ti]; });
 
-        // column passes if it satisfies every column-restricting token (label) and
-        // every value token (a cell of this column contains it).
+        // A token that doesn't restrict an axis is neutral (true) there —
+        // exactly as in the old AND loops, where it was skipped. Inside an OR
+        // group a neutral member makes the group pass for that axis, so
+        // `q1 | q2` restricts rows and leaves every column visible.
         function colVisible(key, colCells) {
-            for (var i = 0; i < tokInfo.length; i++) {
-                var ti = tokInfo[i];
-                if (ti.isCol && !ti.isId) {
-                    var c = COLS.filter(function (x) { return x.key === key; })[0];
-                    if (!c || _colHay(c).indexOf(ti.tok) < 0) return false;
-                } else if (ti.isVal) {
-                    if (!colCells.some(function (h) { return h.indexOf(ti.tok) >= 0; })) return false;
+            var c = COLS.filter(function (x) { return x.key === key; })[0];
+            for (var g = 0; g < tokGroups.length; g++) {
+                var any = false;
+                for (var i = 0; i < tokGroups[g].length && !any; i++) {
+                    var ti = tokGroups[g][i];
+                    if (ti.isCol && !ti.isId) {
+                        any = !!c && _colHay(c).indexOf(ti.tok) >= 0;
+                    } else if (ti.isVal) {
+                        any = colCells.some(function (h) { return h.indexOf(ti.tok) >= 0; });
+                    } else {
+                        any = true;                       // id token — neutral here
+                    }
                 }
+                if (!any) return false;
             }
             return true;
         }
-        // row passes if it satisfies every id token (id matches) and every value
-        // token (some cell contains it). Column-only tokens don't restrict rows.
+        // row passes if every group has a member that matches: id tokens match
+        // the row id, value tokens match some cell. Column-only tokens don't
+        // restrict rows (neutral), exactly as before.
         function rowVisible(id, rowHaystacks) {
-            for (var i = 0; i < tokInfo.length; i++) {
-                var ti = tokInfo[i];
-                if (ti.isId && !ti.isCol) { if (id.indexOf(ti.tok) < 0) return false; }
-                else if (ti.isVal) { if (!rowHaystacks.some(function (h) { return h.indexOf(ti.tok) >= 0; })) return false; }
+            for (var g = 0; g < tokGroups.length; g++) {
+                var any = false;
+                for (var i = 0; i < tokGroups[g].length && !any; i++) {
+                    var ti = tokGroups[g][i];
+                    if (ti.isId && !ti.isCol) {
+                        any = id.indexOf(ti.tok) >= 0;
+                    } else if (ti.isVal) {
+                        any = rowHaystacks.some(function (h) { return h.indexOf(ti.tok) >= 0; });
+                    } else {
+                        any = true;                       // column token — neutral here
+                    }
+                }
+                if (!any) return false;
             }
             return true;
         }
@@ -639,9 +665,13 @@
             _colHintKeys = [];
             _pairHintKeys = [];
             if (q.length >= 2) {
+                var _hintGroups = window.SearchQuery ? SearchQuery.groups(q)
+                    : tokens.map(function (t) { return [t]; });
                 var _match = function (c) {
                     var hay = (c.label + ' ' + c.key + ' ' + (c.section || '')).toLowerCase();
-                    return tokens.every(function (tok) { return hay.indexOf(tok) >= 0; });
+                    return window.SearchQuery
+                        ? SearchQuery.matchesHay(hay, _hintGroups)
+                        : tokens.every(function (tok) { return hay.indexOf(tok) >= 0; });
                 };
                 COLS.forEach(function (c) {
                     if (hide.has(c.key) && _match(c)) _colHintKeys.push(c.key);
