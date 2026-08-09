@@ -55,6 +55,18 @@ _RUN_FOLDER_RE = re.compile(r"^#(\d+)_(.+?)_(\d{6})$")
 # Date folder pattern
 _DATE_FOLDER_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
+# Fingerprint sentinel for a run folder that was mid-write at parse time
+# (docs/80). ``_stat_fp`` returns a 2-tuple of ints or ``(None, None)``, so a
+# 1-tuple of this string can never compare equal to a real fingerprint --
+# which is precisely the point: the next scan must re-parse the folder.
+_INCOMPLETE_FP = ("incomplete",)
+
+# How many times a run folder may parse as unreadable WITHOUT changing before
+# we stop treating it as "still being written". A real writer moves the
+# fingerprint on every write, so this never cuts short a genuine mid-write
+# run; it only stops a permanently broken file from taxing every future scan.
+_INCOMPLETE_MAX_TRIES = 3
+
 # Reserved tag that backs the one-click ⭐ "favorite" (bookmarks are now just
 # this tag, so the star and the tag system share one store). A run is
 # "bookmarked" iff it carries this tag. The star glyph + special chip styling
@@ -136,6 +148,16 @@ class RunInfo:
     # Wall-clock time the scanner most recently parsed this folder.
     # Used by ``DatasetStore.changes_since`` for delta polling.
     last_parsed: float = 0.0
+
+    # True when a file in the folder was PRESENT but not readable as JSON at
+    # parse time -- i.e. another writer (a qualibrate node, or a second State
+    # Manager window) is still creating this run. The row is still published
+    # (id / name / date / time come from the folder name and are already
+    # correct); what it suppresses is the fingerprint cache entry, so the next
+    # scan re-parses this folder even though nothing about it changed on disk.
+    # Without that, a run caught mid-write could freeze with partial metadata
+    # until its files happened to be touched again (docs/80).
+    incomplete: bool = False
 
 
 def _parse_time(hhmmss: str) -> str:
@@ -330,6 +352,14 @@ class DatasetStore:
         # re-parse only folders whose fingerprints changed; identical folders
         # are skipped, vanished folders drop their run_id from runs.
         self._folder_fp: dict[Path, tuple[tuple, tuple, tuple, int]] = {}
+        # Run folders another writer was still filling in at their last parse
+        # (docs/80). They carry a sentinel fingerprint so the run-level cache
+        # always re-parses them, and membership here defeats the B27 date-dir
+        # short-circuit that would otherwise never walk far enough to notice.
+        self._incomplete_paths: set[Path] = set()
+        # path -> (real fingerprint, consecutive identical failures); bounds
+        # the "it must still be mid-write" bet — see _retry_incomplete.
+        self._incomplete_tries: dict[Path, tuple[tuple, int]] = {}
         # Per-date-dir fingerprint cache (B27). date_path → (date_mtime, run_paths).
         # A run folder can only be added to / removed from a date dir by moving
         # the date dir's own mtime, so a date dir whose mtime is unchanged since
@@ -376,11 +406,11 @@ class DatasetStore:
         if run is None:
             return {}
         data_path = run.folder_path / "data.json"
-        if not data_path.exists():
-            return {}
-        try:
-            data = safe_io.read_json(data_path)
-        except (OSError, ValueError):
+        # scan_json, not read_json: this caller already degrades to {} on any
+        # failure, so the 0.9s live-file retry ladder would buy nothing but
+        # latency on a run another writer is still filling in (docs/80).
+        data = safe_io.scan_json(data_path)
+        if data is None:
             return {}
         self._cache_data_json(run_id, data)
         return data
@@ -395,6 +425,41 @@ class DatasetStore:
             return path.stat().st_mtime
         except OSError:
             return 0.0
+
+    def _retry_incomplete(self, run_entry: Path, real_fp: tuple) -> bool:
+        """Should this un-parseable folder keep being re-parsed? (docs/80)
+
+        "Incomplete" is a bet that the writer has not finished yet, and for a
+        run being created that bet pays off within a poll or two. But some
+        files never become valid — a hand-edited ``node.json`` holding a JSON
+        list, a permission error, genuine corruption — and an unbounded bet on
+        those is expensive in a way that is easy to miss: the folder re-parses
+        on every scan AND its membership in ``_incomplete_paths`` defeats the
+        B27 date-dir short-circuit, so every *sibling* run in that date is
+        re-walked and re-parsed too, forever. On a workspace with thousands of
+        runs that quietly undoes the optimisation that keeps a steady-state
+        poll at O(date dirs).
+
+        So the bet is bounded: while the folder keeps CHANGING we keep trying
+        (a real writer moves the fingerprint every time it writes), but once it
+        has looked identical and unreadable this many times we accept it as
+        broken rather than unfinished. If it is ever fixed its fingerprint
+        moves and the normal cache path re-parses it.
+        """
+        prev = self._incomplete_tries.get(run_entry)
+        if prev is not None and prev[0] == real_fp:
+            tries = prev[1] + 1
+        else:
+            tries = 1
+        if tries >= _INCOMPLETE_MAX_TRIES:
+            self._incomplete_tries.pop(run_entry, None)
+            logger.info(
+                "dataset scan: %s still unreadable after %d identical attempts — "
+                "treating it as broken rather than unfinished", run_entry,
+                _INCOMPLETE_MAX_TRIES)
+            return False
+        self._incomplete_tries[run_entry] = (real_fp, tries)
+        return True
 
     @staticmethod
     def _stat_fp(path: Path) -> tuple:
@@ -418,28 +483,44 @@ class DatasetStore:
     ) -> RunInfo | None:
         """Parse a single run folder (node.json + data.json) into a RunInfo.
 
-        Reads route through :mod:`safe_io` so a still-active experiment
-        writing into this folder (fit-result writeback, etc.) is never
-        blocked by our read on Windows (red-team Phase 2 finding §3.4).
+        Reads route through :func:`safe_io.scan_json` -- share-delete (so a
+        still-active experiment writing into this folder is never blocked by
+        our read on Windows, red-team Phase 2 finding §3.4) but with NO retry
+        ladder: during a scan, "this run is not written yet" is the normal
+        state of the newest folder, not an error worth sleeping 0.9s over
+        (docs/80).
+
+        A file that is present but unreadable/half-written marks the run
+        ``incomplete`` -- the caller then withholds its fingerprint so the next
+        scan re-parses it even if nothing about it changed on disk. That is
+        what guarantees a run another process is mid-write is eventually
+        picked up in full rather than frozen with the metadata we happened to
+        catch.
         """
+        incomplete = False
+
         # Read node.json
         node_path = run_entry / "node.json"
         node_data: dict = {}
         if node_path.exists():
-            try:
-                node_data = safe_io.read_json(node_path)
-            except (OSError, ValueError) as e:
-                logger.warning("Failed to read %s: %s", node_path, e)
+            parsed_node = safe_io.scan_json(node_path)
+            if parsed_node is None:
+                incomplete = True
+                logger.debug("node.json not readable yet: %s", node_path)
+            else:
+                node_data = parsed_node
 
         # Read data.json
         data_path = run_entry / "data.json"
         data_json: dict = {}
         if data_path.exists():
-            try:
-                data_json = safe_io.read_json(data_path)
+            parsed_data = safe_io.scan_json(data_path)
+            if parsed_data is None:
+                incomplete = True
+                logger.debug("data.json not readable yet: %s", data_path)
+            else:
+                data_json = parsed_data
                 self._cache_data_json(run_id, data_json)
-            except (OSError, ValueError) as e:
-                logger.warning("Failed to read %s: %s", data_path, e)
 
         # Extract metadata from node.json
         metadata = node_data.get("metadata", {})
@@ -502,6 +583,7 @@ class DatasetStore:
         info.key_metric = self._extract_key_metric(info)
         info.sort_scalars = self._extract_sort_scalars(info)
         info.filter_params = self._extract_filter_params(info)
+        info.incomplete = incomplete
         return info
 
     def _scan(self):
@@ -531,6 +613,8 @@ class DatasetStore:
             self.runs.clear()
             self._data_json_cache.clear()
             self._folder_fp.clear()
+            self._incomplete_paths.clear()
+            self._incomplete_tries.clear()
             self._date_fp.clear()
             self.dates = []
             self.experiment_types = []
@@ -577,7 +661,8 @@ class DatasetStore:
                 all_live = True
                 for run_entry in cached_paths:
                     fp = self._folder_fp.get(run_entry)
-                    if fp is None or fp[3] not in self.runs:
+                    if (fp is None or fp[3] not in self.runs
+                            or run_entry in self._incomplete_paths):
                         all_live = False
                         break
                 if all_live:
@@ -659,7 +744,22 @@ class DatasetStore:
                     continue
                 run_info.last_parsed = now
                 self.runs[run_id] = run_info
-                self._folder_fp[run_entry] = (folder_fp, node_fp, data_fp, run_id)
+                real_fp = (folder_fp, node_fp, data_fp)
+                if run_info.incomplete and self._retry_incomplete(run_entry, real_fp):
+                    # Mid-write folder: record a SENTINEL fingerprint that
+                    # ``_stat_fp`` can never return, so the run-level cache
+                    # check always re-parses, and remember the path so the B27
+                    # date-dir short-circuit can't skip the walk that would
+                    # reach it (writing a file inside a run folder moves that
+                    # folder's mtime, NOT its date dir's). The path stays in
+                    # _folder_fp so vanish-detection still covers it (docs/80).
+                    self._incomplete_paths.add(run_entry)
+                    self._folder_fp[run_entry] = (
+                        _INCOMPLETE_FP, _INCOMPLETE_FP, _INCOMPLETE_FP, run_id)
+                else:
+                    self._incomplete_paths.discard(run_entry)
+                    self._incomplete_tries.pop(run_entry, None)
+                    self._folder_fp[run_entry] = (folder_fp, node_fp, data_fp, run_id)
                 parsed += 1
 
         # Drop runs whose folders vanished
@@ -667,6 +767,8 @@ class DatasetStore:
         vanished = [p for p in self._folder_fp.keys() if p not in seen_paths]
         for p in vanished:
             _, _, _, vanished_id = self._folder_fp.pop(p)
+            self._incomplete_paths.discard(p)
+            self._incomplete_tries.pop(p, None)
             # Only drop the run if the one currently indexed under this id actually
             # came from the folder that vanished. run_ids are unique only per
             # qualibrate storage root, so merged/copied archives (or a reset id
@@ -1704,8 +1806,8 @@ class DatasetStore:
             if rid in self.runs:
                 self.runs[rid].note = note
 
-    def _save_tags(self):
-        """Atomically save quashboard_tags.json.
+    def _save_tags(self, touched: int | None = None):
+        """Atomically save quashboard_tags.json, merging over what is on disk.
 
         Uses :func:`safe_io.atomic_write_json` so the write goes through the
         shared atomic-write code path (``ReplaceFileW`` on Windows, retried
@@ -1713,8 +1815,75 @@ class DatasetStore:
         :class:`OSError` on hard write failure — callers hold the
         ``_tags_lock``, so an exception unwinds the in-memory mutation
         cleanly via a try/except in the mutator.
+
+        **Cross-process merge (docs/80).** This file is the ONE thing the
+        State Manager writes *inside* a data folder, and sharing a data folder
+        between two windows is a legitimate workflow — the same chip, two
+        experiment lines. ``_tags_lock`` is in-process only, so dumping the
+        whole in-memory dict made the second window's save silently delete the
+        first window's tags and notes. Instead we re-read the file and apply
+        only the entry that actually changed, which drops the conflict unit
+        from *the whole file* to *one run* — concurrent tagging from two
+        windows now converges instead of clobbering.
+
+        ``touched=None`` keeps the whole-file write, which is what the
+        legacy-bookmark migration needs (it rewrites every key by design).
         """
-        safe_io.atomic_write_json(self._tags_path, self._tags_data)
+        if touched is None:
+            safe_io.atomic_write_json(self._tags_path, self._tags_data)
+            return
+
+        rid_str = str(touched)
+        # scan_json: our own sidecar, normally absent on a fresh folder — the
+        # live-file retry ladder would charge 0.9s for that normality.
+        on_disk = safe_io.scan_json(self._tags_path) if self._tags_path.exists() else None
+        if not isinstance(on_disk, dict):
+            safe_io.atomic_write_json(self._tags_path, self._tags_data)
+            return
+
+        merged = dict(on_disk)
+        for section in ("tags", "notes"):
+            disk_section = dict(merged.get(section) or {})
+            mine = (self._tags_data.get(section) or {}).get(rid_str)
+            if mine in (None, [], ""):
+                disk_section.pop(rid_str, None)
+            else:
+                disk_section[rid_str] = mine
+            merged[section] = disk_section
+        # Our migration clears `bookmarks`; never resurrect it from a stale read.
+        merged["bookmarks"] = self._tags_data.get("bookmarks") or []
+        safe_io.atomic_write_json(self._tags_path, merged)
+        # Adopt the union so entries another window added are visible here too,
+        # without waiting for the next rescan to reload the file.
+        self._tags_data = merged
+        self._apply_tags_to_runs()
+
+    def _apply_tags_to_runs(self):
+        """Re-project ``self._tags_data`` onto the loaded RunInfo objects.
+
+        Split out of :meth:`_load_tags` so a merge-write can refresh the rows
+        for entries another process contributed. Per-key tolerant for the same
+        reason the loader is: one hand-edited key must never raise.
+        """
+        tags_map = self._tags_data.get("tags", {}) or {}
+        notes_map = self._tags_data.get("notes", {}) or {}
+        for rid_str, tags in tags_map.items():
+            try:
+                rid = int(rid_str)
+            except (ValueError, TypeError):
+                continue
+            run = self.runs.get(rid)
+            if run is not None:
+                run.tags = list(tags or [])
+                run.bookmarked = FAVORITE_TAG in run.tags
+        for rid_str, note in notes_map.items():
+            try:
+                rid = int(rid_str)
+            except (ValueError, TypeError):
+                continue
+            run = self.runs.get(rid)
+            if run is not None:
+                run.note = note
 
     def toggle_bookmark(self, run_id: int) -> bool:
         """Toggle the run's "favorite" state. Returns the new state.
@@ -1742,7 +1911,7 @@ class DatasetStore:
                 self.runs[run_id].tags = list(tags_dict.get(rid_str, []))
                 self.runs[run_id].bookmarked = new_state
             try:
-                self._save_tags()
+                self._save_tags(run_id)
             except (OSError, ValueError, TypeError):
                 # Roll back to the prior state so the user sees the failure
                 # rather than a half-applied toggle. Catch any write failure
@@ -1775,7 +1944,7 @@ class DatasetStore:
                 self.runs[run_id].tags = list(tags_dict[rid_str])
                 self.runs[run_id].bookmarked = FAVORITE_TAG in tags_dict[rid_str]
             try:
-                self._save_tags()
+                self._save_tags(run_id)
             except (OSError, ValueError, TypeError):
                 # Any write failure rolls back the in-memory mutation (C34).
                 if not already_present:
@@ -1801,7 +1970,7 @@ class DatasetStore:
                 self.runs[run_id].tags = list(tags_dict.get(rid_str, []))
                 self.runs[run_id].bookmarked = FAVORITE_TAG in self.runs[run_id].tags
             try:
-                self._save_tags()
+                self._save_tags(run_id)
             except (OSError, ValueError, TypeError):
                 # Any write failure rolls back the in-memory mutation (C34).
                 if removed:
@@ -1825,7 +1994,7 @@ class DatasetStore:
             if run_id in self.runs:
                 self.runs[run_id].note = note
             try:
-                self._save_tags()
+                self._save_tags(run_id)
             except (OSError, ValueError, TypeError):
                 # Any write failure rolls back the in-memory mutation (C34).
                 if previous is None:

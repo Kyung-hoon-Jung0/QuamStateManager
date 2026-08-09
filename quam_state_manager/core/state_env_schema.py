@@ -233,6 +233,20 @@ def probe_state_schema(python_path: str, class_paths: list[str], instance_path=N
             while len(cache) > _MAX_CACHED_ENVS:        # LRU prune (insertion order)
                 cache.pop(next(iter(cache)))
             _save_cache(instance_path, cache)
+        # docs/79: the cache above is keyed by INTERPRETER and overwrites on a
+        # version change, so the previous env's schema would be lost. Record a
+        # retained baseline keyed by ENV IDENTITY as well, so an upgrade can be
+        # diffed against what was there before. Outside _cache_lock (the
+        # baseline store owns its own), and never fatal — a probe must succeed
+        # even if the history write does not.
+        try:
+            from quam_state_manager.core import state_env_baseline
+            state_env_baseline.record_baseline(
+                instance_path,
+                {"classes": classes, "versions": result["versions"]},
+                python_path=str(python_path or ""))
+        except Exception:  # noqa: BLE001
+            logger.warning("recording the schema baseline failed", exc_info=True)
     return result
 
 

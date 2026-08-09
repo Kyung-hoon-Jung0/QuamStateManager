@@ -101,6 +101,12 @@ def summarize(findings: list[Finding]) -> dict:
         elif f.severity in out:
             out[f.severity] += 1
     out["total"] = len(findings)
+    # ``issues`` excludes optional recommendations. The badges lead with a
+    # single number, and folding advisories into it made an optional nudge
+    # read as something to fix — a lab retuned an LO over a band-edge
+    # recommendation that no QM document asks for (docs/81). ``total`` keeps
+    # its meaning for callers that genuinely want every finding.
+    out["issues"] = out["error"] + out["warning"] + out["info"]
     return out
 
 
@@ -413,9 +419,20 @@ def _coupling_findings(root: dict) -> list[Finding]:
 
 
 # How close (Hz) an MW-FEM LO may sit to its band edge before we suggest a more
-# central overlapping band. Advisory only — bands genuinely overlap, so an edge
-# LO still works; this is a signal-quality nudge, not a compile constraint.
-BAND_EDGE_MARGIN_HZ = 50e6
+# central overlapping band.
+#
+# SM's OWN guideline — QM documents no such thing. The official rule is binary:
+# a frequency inside the band's range meets the performance specification, one
+# outside it does not ("Values outside the band's specified range will not meet
+# the performance specification", Guides/opx1000_fems.md). Nothing in the QM
+# docs mentions band-edge headroom at all.
+#
+# So this stays ADVISORY and deliberately narrow. It was 50 MHz, which fired on
+# LOs that are comfortably in spec and — because the badge counted it — read as
+# something to fix; a lab retuned real hardware over it (docs/81). 5 MHz keeps
+# the nudge for an LO practically sitting on the boundary and stays quiet
+# otherwise.
+BAND_EDGE_MARGIN_HZ = 5e6
 
 
 def _coupled_mate_label(side: str, port: str) -> str | None:
@@ -524,28 +541,24 @@ def _band_edge_findings(root: dict) -> list[Finding]:
                 # a move the coupled mate can't follow.
                 mate = _coupled_mate_label("out", port)
                 coupling_note = ""
-                subject = "this LO"
                 if mate is not None:
-                    mate_freq, mate_band = _mate_lo_band(root, ctrl, fem, mate)
+                    mate_freq, _mate_band = _mate_lo_band(root, ctrl, fem, mate)
                     if mate_freq is None or not (a_lo <= mate_freq <= a_hi):
                         continue
-                    subject = f"the coupled pair (this port + {mate})"
                     coupling_note = (
-                        f" Note: {mate} is coupled to this port"
-                        + (f" (currently band {mate_band})" if mate_band else "")
-                        + f"; the OPX1000 requires coupled ports to share a band, so "
-                        f"both retune to band {best_alt} together.")
+                        f" Moving means retuning {mate} too (coupled ports "
+                        f"share a band).")
 
+                # Short on purpose. The old wording spent four clauses hedging
+                # and the reader had to reach the end to learn it was optional;
+                # the numbers that matter are the two margins, and they are in
+                # ``detail`` as well.
                 msg = (
-                    f"LO (upconverter_frequency) {f / 1e9:.6g} GHz sits only "
-                    f"{margin / 1e6:.3g} MHz from the band {band} edge "
-                    f"[{lo / 1e9:.4g}, {hi / 1e9:.4g}] GHz; band {best_alt} "
-                    f"([{a_lo / 1e9:.4g}, {a_hi / 1e9:.4g}] GHz) would place it "
-                    f"{best_margin / 1e6:.3g} MHz from its nearest edge. The bands "
-                    f"partially overlap, so this LO works in band {band}; placing "
-                    f"{subject} in band {best_alt} would leave more headroom from the "
-                    f"band edge (a more comfortable LO range margin — this does not "
-                    f"guarantee better signal quality). Optional, not required."
+                    f"LO {f / 1e9:.6g} GHz is {margin / 1e6:.3g} MHz inside the "
+                    f"band {band} edge ({lo / 1e9:.4g}–{hi / 1e9:.4g} GHz); "
+                    f"band {best_alt} ({a_lo / 1e9:.4g}–{a_hi / 1e9:.4g}) would "
+                    f"leave {best_margin / 1e6:.3g} MHz. Optional — the bands "
+                    f"overlap and band {band} is in spec."
                     + coupling_note)
                 findings.append(Finding(
                     "warning", "connectivity_band_edge", _port_label(parsed), msg,
@@ -790,12 +803,24 @@ def numeric_string_leaves(root: dict) -> list[str]:
     number — the '"0.13" stored as text' anomaly (r14 ⑨/⑩). External state
     regeneration is the usual culprit; the legacy coercer then preserves the
     wrong type on every SM edit, so these must be surfaced actively. Skips
-    ``extras`` (user-declared free-form), pointers, and non-state sections."""
+    ``extras`` (user-declared free-form), pointers, and non-state sections.
+
+    ``extras`` is skipped at ANY depth, which is where it actually lives on
+    real chips — ``qubit_pairs.<pair>.extras.<key>``, not just the root. Only
+    the root was skipped before, so a lab's own label
+    (``extras.cz_branch = "02"``) was reported as a mistyped number; on the
+    reporting chip those labels were 100% of the alarm. See
+    :func:`edit_policy.is_free_form_path`, the single definition shared with
+    the edit-path offer so the warning and the repair cannot disagree."""
+    from quam_state_manager.core.edit_policy import is_free_form_path
+
     out: list[str] = []
 
     def _scan(node: Any, path: str) -> None:
         if isinstance(node, dict):
             for k, v in node.items():
+                if k == "extras":
+                    continue
                 _scan(v, f"{path}.{k}" if path else str(k))
         elif isinstance(node, list):
             for i, v in enumerate(node):
@@ -804,6 +829,8 @@ def numeric_string_leaves(root: dict) -> list[str]:
             try:
                 float(node)
             except ValueError:
+                return
+            if is_free_form_path(path):
                 return
             out.append(path)
 

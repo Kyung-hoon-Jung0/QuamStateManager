@@ -526,6 +526,24 @@ window.ChipStatus.mount = function (opts) {
     // Section 2: HTML/SVG Topology with always-visible property cards
     // ══════════════════════════════════════════════════════════════════
 
+    // ONE source for how an edge's CZ state colours a topology line — read by
+    // BOTH the card diagram and the hero map so they can never disagree.
+    function _edgePaint(e) {
+        var color = tCfg.edgeFidelityNone, width = 2;
+        if (e.has_cz && e.cz_fidelity != null) {
+            color = e.cz_fidelity >= 0.95 ? tCfg.edgeFidelityGood
+                  : (e.cz_fidelity >= 0.85 ? tCfg.edgeFidelityWarn : tCfg.edgeFidelityBad);
+            width = 3;
+        }
+        return { color: color, width: width };
+    }
+
+    // Shared qubit-popup bridge: buildTopology owns the ONE popup
+    // implementation (property rows, sparklines, pinning, document-level
+    // teardown); the hero map opens the same popup through this handle —
+    // never a second implementation.
+    var _sharedQubitPopup = null;
+
     var idToIdx = {};
 
     (function buildTopology() {
@@ -591,12 +609,9 @@ window.ChipStatus.mount = function (opts) {
             var x2 = positions[ti].x + CARD_W / 2;
             var y2 = positions[ti].y + cardH / 2;
 
-            var color = tCfg.edgeFidelityNone;
-            var width = 2;
-            if (e.has_cz && e.cz_fidelity != null) {
-                color = e.cz_fidelity >= 0.95 ? tCfg.edgeFidelityGood : (e.cz_fidelity >= 0.85 ? tCfg.edgeFidelityWarn : tCfg.edgeFidelityBad);
-                width = 3;
-            }
+            var _ep = _edgePaint(e);
+            var color = _ep.color;
+            var width = _ep.width;
             var opacity = (e.active === false) ? 0.35 : 1;
             if (e.directed) {
                 var dx = x2 - x1, dy = y2 - y1;
@@ -632,10 +647,7 @@ window.ChipStatus.mount = function (opts) {
                 my += (ddx / dlen) * 14;
             }
 
-            var color = tCfg.edgeFidelityNone;
-            if (e.has_cz && e.cz_fidelity != null) {
-                color = e.cz_fidelity >= 0.95 ? tCfg.edgeFidelityGood : (e.cz_fidelity >= 0.85 ? tCfg.edgeFidelityWarn : tCfg.edgeFidelityBad);
-            }
+            var color = _edgePaint(e).color;
             // Any pair with a resolved control/target orientation gets a
             // pointed label (clip-path reshapes the target-facing EDGE of the
             // box into a point — see style.css .topo-edge-label-arrow-*)
@@ -844,6 +856,14 @@ window.ChipStatus.mount = function (opts) {
             });
         });
 
+        // Hand the ONE popup implementation to the hero map (see the bridge
+        // declaration above buildTopology) — same singleton, same teardown.
+        _sharedQubitPopup = {
+            open: openQubitMore,
+            scheduleClose: _scheduleMoreClose,
+            cancelClose: function() { clearTimeout(_moreHoverTimer); clearTimeout(_moreLeaveTimer); },
+        };
+
         // ── Click + hover handlers ───────────────────────────────────
         var _coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
         topo.nodes.forEach(function(n) {
@@ -1029,6 +1049,267 @@ window.ChipStatus.mount = function (opts) {
                 positionPopup(popup, lbl);
             });
         });
+    })();
+
+    // ══════════════════════════════════════════════════════════════════
+    // Section 2-hero: the chip map (docs/92 P1). Geometry + honesty mode come
+    // from TopoGraph.layoutFor (docs/91 §2.1): 'physical' only when the chip
+    // declares every position; 'logical' from pair connectivity, labelled ON
+    // the map (LOGICAL_LAYOUT_NOTE); 'none' -> one honest line, no map. Node
+    // fill = the selected metric through the SAME physical gate + palette as
+    // the heatmaps (_mv / propBgColor / nullCellColor), edges through the same
+    // _edgePaint as the card diagram — the map can never disagree with the
+    // cards below it. Numbers stay ON the map (docs/91 §2.4: THIS surface
+    // integrates values; the component-page maps deliberately carry none).
+    // ══════════════════════════════════════════════════════════════════
+    var _rebuildHeroMap = null;   // set by buildHeroMap; palette switch re-renders
+    (function buildHeroMap() {
+        var host = document.getElementById('topo-hero');
+        if (!host || !window.TopoGraph) return;
+        var TG = window.TopoGraph;
+        var lay = TG.layoutFor(topo.nodes, topo.edges);
+        if (lay.mode === 'none') {
+            host.innerHTML = '<p class="muted topo-hero-none">No chip map — this chip declares no positions and no pairs.</p>';
+            return;
+        }
+
+        var HERO_KEY = 'quam_topo_hero_metric';
+        var METRICS = [
+            { key: 'T1',                  fmtFn: function(v) { return fmt(v, 'us'); } },
+            { key: 'T2echo',              fmtFn: function(v) { return fmt(v, 'us'); } },
+            { key: 'gate_fidelity_avg',   fmtFn: function(v) { return fmtPct(v, 2) + '%'; } },
+            { key: 'assignment_fidelity', fmtFn: function(v) { return fmtPct(v, 2) + '%'; } },
+        ].filter(function(m) {
+            return topo.nodes.some(function(n) { return _mv(n, m.key) != null; });
+        });
+        if (topo.nodes.some(function(n) { return n.last_calibrated != null; })) {
+            METRICS.push({ key: 'last_calibrated', mode: 'age', label: 'Last calibrated' });
+        }
+        METRICS.push({ key: 'diag', mode: 'diag', label: 'Diagnostics' });
+
+        var current = null;
+        try { current = localStorage.getItem(HERO_KEY); } catch (e) {}
+        if (!METRICS.some(function(m) { return m.key === current; })) current = METRICS[0].key;
+
+        // Per-qubit open findings, attributed by jump_path (same address
+        // grammar as liveDiff's _entityOf). Pair findings are out of scope
+        // here — node fill only.
+        var diagBy = {};
+        (diagFindings || []).forEach(function(f) {
+            var p = String(f.jump_path || '').split('.');
+            var id = null;
+            if (p[0] === 'qubits' && p[1]) id = p[1];
+            else if (p[0] === 'wiring' && p[1] === 'qubits' && p[2]) id = p[2];
+            if (!id) return;
+            var b = diagBy[id] = diagBy[id] || { error: 0, warning: 0, total: 0 };
+            if (f.severity === 'error') b.error++;
+            else if (f.severity === 'warning') b.warning++;
+            b.total++;
+        });
+
+        function _metric(key) {
+            for (var i = 0; i < METRICS.length; i++) if (METRICS[i].key === key) return METRICS[i];
+            return METRICS[0];
+        }
+
+        // -> {fill?, fg?, cls?, text, title} for one node under one metric.
+        // Continuous metrics ride propBgColor (chip-relative normalize, the
+        // active palette, nullCellColor for missing); age + diagnostics ride
+        // the app's pass/warn/fail classes. A bad fit is shown distinctly.
+        function nodePaint(n, key) {
+            var m = _metric(key);
+            if (m.mode === 'diag') {
+                var c = diagBy[n.id];
+                if (!c || !c.total) return { cls: 'hs-pass', text: '✓', title: 'no open findings' };
+                return { cls: c.error ? 'hs-fail' : (c.warning ? 'hs-warn' : 'hs-pass'),
+                         text: String(c.total), title: c.total + ' open finding(s) — see Diagnostics' };
+            }
+            if (m.mode === 'age') {
+                var ms = n.last_calibrated;
+                if (ms == null) return { fill: dCfg.nullCellColor, fg: '#666', text: '—',
+                                         title: 'no calibration timestamps' };
+                var ac = _ageClass(ms);
+                if (!ac) return { fill: dCfg.nullCellColor, fg: '#666', text: '—', title: '' };
+                return { cls: 'hs-' + ac, text: _ageLabel(ms), title: 'last calibrated ' + _ageLabel(ms) };
+            }
+            if (_badFit(n, m.key)) {
+                return { fill: dCfg.nullCellColor, fg: '#666', cls: 'hs-badfit',
+                         text: m.fmtFn(n.metrics[m.key].raw),
+                         title: 'unphysical (likely a failed fit) — excluded from stats & colour' };
+            }
+            var v = _mv(n, m.key);
+            var c2 = propBgColor({ key: m.key }, v);
+            return { fill: c2.bg, fg: c2.fg, text: v == null ? '—' : m.fmtFn(v),
+                     title: v == null ? 'no data' : '' };
+        }
+
+        var CELL = 96, R = 27;
+        var W = Math.max(CELL, Math.round(lay.cols * CELL));
+        var H = Math.max(CELL, Math.round(lay.rows * CELL));
+        function cx(p) { return (p.col + 0.5) * CELL; }
+        function cy(p) { return (p.row + 0.5) * CELL; }
+
+        // Coincident DECLARED cells happen on real chips (a 10Q chip declares
+        // q2 and q10 both at "4,0"): fan the stones around the shared centre so
+        // BOTH stay visible — TopoGraph.spreadCoincident is the ONE fan-out
+        // (the component maps use the same). Dashed ring marks shared members.
+        var offsets = {};
+        (function() {
+            var offC = TG.spreadCoincident(lay.positions, 0.22);
+            Object.keys(offC).forEach(function(id) {
+                offsets[id] = { dx: offC[id].dx * CELL, dy: offC[id].dy * CELL, shared: true };
+            });
+        })();
+
+        function legendHtml(key) {
+            var m = _metric(key);
+            var out = '<div class="topo-hero-legend">';
+            if (m.mode === 'diag' || m.mode === 'age') {
+                out += '<span class="topo-hero-lg-item"><span class="topo-hero-lg-swatch hs-pass"></span>ok</span>'
+                     + '<span class="topo-hero-lg-item"><span class="topo-hero-lg-swatch hs-warn"></span>'
+                     + (m.mode === 'age' ? '&gt;14 days' : 'warning') + '</span>'
+                     + '<span class="topo-hero-lg-item"><span class="topo-hero-lg-swatch hs-fail"></span>'
+                     + (m.mode === 'age' ? '&gt;30 days' : 'error') + '</span>';
+                if (m.mode === 'age') {
+                    out += '<span class="topo-hero-lg-item"><span class="topo-hero-lg-swatch" style="background:'
+                         + dCfg.nullCellColor + '"></span>no data</span>';
+                }
+            } else {
+                var agg = propAggs[m.key] || {};
+                var stops = dCfg.colorScale;
+                out += '<span class="topo-hero-lg-item">' + (agg.min != null ? m.fmtFn(agg.min) : '')
+                     + '<span class="topo-hero-lg-grad" style="background:linear-gradient(90deg,' + stops.join(',') + ')"></span>'
+                     + (agg.max != null ? m.fmtFn(agg.max) : '') + '</span>'
+                     + '<span class="topo-hero-lg-item"><span class="topo-hero-lg-swatch" style="background:'
+                     + dCfg.nullCellColor + '"></span>no data</span>'
+                     + '<span class="topo-hero-lg-item"><span class="topo-hero-lg-swatch hs-badfit-swatch"></span>bad fit</span>';
+            }
+            return out + '</div>';
+        }
+
+        function render() {
+            var bar = '<div class="topo-hero-bar" role="tablist" aria-label="Chip map metric">';
+            METRICS.forEach(function(m) {
+                bar += '<button type="button" role="tab" aria-selected="' + (m.key === current) + '"'
+                     + ' class="topo-hero-mbtn' + (m.key === current ? ' active' : '') + '"'
+                     + ' data-hero-metric="' + _esc(m.key) + '">'
+                     + (m.label ? _esc(m.label) : labelHtml(m.key, true)) + '</button>';
+            });
+            bar += '</div>';
+
+            var svg = '';
+            topo.edges.forEach(function(e) {
+                var a = lay.positions[e.source], b = lay.positions[e.target];
+                if (!a || !b) return;
+                var oA = offsets[e.source] || { dx: 0, dy: 0 }, oB = offsets[e.target] || { dx: 0, dy: 0 };
+                var x1 = cx(a) + oA.dx, y1 = cy(a) + oA.dy, x2 = cx(b) + oB.dx, y2 = cy(b) + oB.dy;
+                if (e.directed) {
+                    // anti-parallel offset so BOTH directions of a CR pair show
+                    var dx = x2 - x1, dy = y2 - y1, L = Math.sqrt(dx * dx + dy * dy) || 1;
+                    var off = 5;
+                    x1 += -dy / L * off; y1 += dx / L * off;
+                    x2 += -dy / L * off; y2 += dx / L * off;
+                }
+                var ep = _edgePaint(e);
+                var tt = e.pair_id + (e.cz_fidelity != null ? ' — ' + (e.cz_fidelity * 100).toFixed(1) + '%' : '')
+                       + (e.active === false ? ' · off' : '');
+                var coords = ' x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"';
+                svg += '<g class="topo-hero-edge" data-hero-pair="' + _esc(e.pair_id) + '"'
+                     + (e.active === false ? ' opacity="0.35"' : '') + '>'
+                     + '<line' + coords + ' stroke="' + ep.color + '" stroke-width="' + (ep.width + 0.5)
+                     + '" stroke-linecap="round"/>'
+                     + '<line class="topo-hero-edge-hit"' + coords + ' stroke="transparent" stroke-width="11">'
+                     + '</line><title>' + _esc(tt) + '</title></g>';
+            });
+            topo.nodes.forEach(function(n) {
+                var p = lay.positions[n.id];
+                if (!p) return;
+                var o = offsets[n.id] || { dx: 0, dy: 0 };
+                var pt = nodePaint(n, current);
+                svg += '<g class="topo-hero-node' + (pt.cls ? ' ' + pt.cls : '') + '" data-hero-qubit="' + _esc(n.id)
+                     + '" transform="translate(' + (cx(p) + o.dx) + ',' + (cy(p) + o.dy) + ')" tabindex="0">'
+                     + '<circle class="topo-hero-stone" r="' + R + '"'
+                     + (pt.fill ? ' style="fill:' + pt.fill + '"' : '')
+                     + (o.shared ? ' stroke-dasharray="3 2"' : '') + '></circle>'
+                     + '<text class="topo-hero-id" y="-5"' + (pt.fg ? ' style="fill:' + pt.fg + '"' : '') + '>'
+                     + _esc(n.id) + '</text>'
+                     + '<text class="topo-hero-val" y="11"' + (pt.fg ? ' style="fill:' + pt.fg + '"' : '') + '>'
+                     + _esc(pt.text) + '</text>'
+                     + (pt.title ? '<title>' + _esc(pt.title) + '</title>' : '')
+                     + '</g>';
+            });
+
+            var note = lay.mode === 'logical'
+                ? '<div class="topo-hero-note">' + _esc(TG.LOGICAL_LAYOUT_NOTE) + '</div>' : '';
+            host.innerHTML = bar
+                + '<div class="topo-hero-map">' + note
+                + '<div class="topo-hero-scroll"><svg class="topo-hero-svg" width="' + W + '" height="' + H
+                + '" viewBox="0 0 ' + W + ' ' + H + '">' + svg + '</svg></div></div>'
+                + legendHtml(current);
+            bindHover();
+        }
+
+        // Delegated clicks (bound ONCE on the host — innerHTML re-renders keep
+        // working): metric switch / qubit single-click inspect + double-click
+        // JSON / edge click -> pair inspector.
+        var _heroClickTime = 0, _heroClickId = null;
+        if (!host._heroBound) {
+            host._heroBound = true;
+            host.addEventListener('click', function(ev) {
+                var mb = ev.target.closest && ev.target.closest('[data-hero-metric]');
+                if (mb) {
+                    current = mb.getAttribute('data-hero-metric');
+                    try { localStorage.setItem(HERO_KEY, current); } catch (e) {}
+                    render();
+                    return;
+                }
+                var qg = ev.target.closest && ev.target.closest('[data-hero-qubit]');
+                if (qg) {
+                    var qid = qg.getAttribute('data-hero-qubit');
+                    var now = Date.now();
+                    if (now - _heroClickTime < 400 && _heroClickId === qid) {
+                        _heroClickTime = 0; _heroClickId = null;
+                        showQubitJsonPanel(qid, rawWiring);
+                    } else {
+                        _heroClickTime = now; _heroClickId = qid;
+                        setTimeout(function() {
+                            if (_heroClickTime !== 0 && _heroClickId === qid) window._inspectQubit(qid);
+                        }, 420);
+                    }
+                    return;
+                }
+                var eg = ev.target.closest && ev.target.closest('[data-hero-pair]');
+                if (eg) window._inspectPair(eg.getAttribute('data-hero-pair'));
+            });
+        }
+
+        // Hover -> the SHARED qubit popup (property rows + sparklines) through
+        // the bridge; intent delay + grace like the cards. Skipped on touch.
+        var _coarseHero = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+        var _heroHoverTimer = null;
+        function bindHover() {
+            if (_coarseHero) return;
+            var nodesById = {};
+            topo.nodes.forEach(function(n) { nodesById[n.id] = n; });
+            host.querySelectorAll('[data-hero-qubit]').forEach(function(g) {
+                g.addEventListener('mouseenter', function() {
+                    if (!_sharedQubitPopup) return;
+                    _sharedQubitPopup.cancelClose();
+                    clearTimeout(_heroHoverTimer);
+                    _heroHoverTimer = setTimeout(function() {
+                        var n = nodesById[g.getAttribute('data-hero-qubit')];
+                        if (n) _sharedQubitPopup.open(n, g, false);
+                    }, 260);
+                });
+                g.addEventListener('mouseleave', function() {
+                    clearTimeout(_heroHoverTimer);
+                    if (_sharedQubitPopup) _sharedQubitPopup.scheduleClose();
+                });
+            });
+        }
+
+        _rebuildHeroMap = render;
+        render();
     })();
 
     // ── Build HTML legend ────────────────────────────────────────────
@@ -1720,6 +2001,7 @@ window.ChipStatus.mount = function (opts) {
                 els[i].style.color = textColorForBg(bg);
             }
         }
+        if (_rebuildHeroMap) _rebuildHeroMap();   // hero map repaints on the new palette
         updateLegendSwatches();
     };
 

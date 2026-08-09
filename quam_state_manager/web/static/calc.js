@@ -214,17 +214,31 @@
 
     // ── open / close / pin ──────────────────────────────────────────────────────
     var _calcWired = false, _calcInit = false;
-    window.toggleCalc = function () {
+    window.toggleCalc = function (trigger) {
         var pop = document.getElementById('calc-popover');
-        var btn = document.getElementById('calc-btn');
+        // docs/89: two possible triggers (sidebar row / collapsed-sidebar topbar
+        // fallback) — act on the one that is actually rendered.
+        var btn = (window._toolTrigger
+            ? window._toolTrigger('.calc-btn', trigger)
+            : document.getElementById('calc-btn'));
         if (!pop || !btn) return;
         var willOpen = pop.classList.contains('calc-hidden');
         // singleton: never overlap the settings dropdown
         var sd = document.getElementById('settings-dropdown');
         if (sd) sd.classList.add('settings-hidden');
         pop.classList.toggle('calc-hidden', !willOpen);
-        btn.classList.toggle('calc-open', willOpen);
-        btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+        document.querySelectorAll('.calc-btn').forEach(function (b) {
+            b.classList.toggle('calc-open', willOpen);
+            b.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+        });
+        if (willOpen) {
+            // A popover the user DRAGGED keeps where they put it; otherwise
+            // re-anchor to the trigger (which side it opens from can change
+            // when the sidebar collapses).
+            if (!pop.classList.contains('calc-floating') && window._anchorPopover) {
+                window._anchorPopover(pop, btn);
+            }
+        }
         if (willOpen) {
             if (!_calcInit) { recomputeAll(); _calcInit = true; }
             var first = document.getElementById('calc-s1-dp');
@@ -235,6 +249,20 @@
             btn.focus();
         }
     };
+    // docs/89: the calculator had no shortcut at all (Escape only closed it),
+    // which is part of why it went unused. Alt+C avoids Ctrl+K (palette) and
+    // every browser Ctrl+<letter>; it is ignored while typing in a field so it
+    // can never eat an Alt-combination inside an input.
+    document.addEventListener('keydown', function (e) {
+        if (!e.altKey || e.ctrlKey || e.metaKey) return;
+        if ((e.key || '').toLowerCase() !== 'c') return;
+        var t = e.target;
+        var tag = t && t.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+            || (t && t.isContentEditable)) return;
+        e.preventDefault();
+        window.toggleCalc();
+    });
     function _calcOutside(e) {
         var pop = document.getElementById('calc-popover');
         if (!pop || pop.classList.contains('calc-hidden')) return;

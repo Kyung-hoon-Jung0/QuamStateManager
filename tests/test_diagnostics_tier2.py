@@ -256,12 +256,27 @@ def _band_edge(state):
 
 class TestBandEdge:
     def test_near_band2_edge_overlaps_band3_warns(self):
-        f = _band_edge(_be_state(2, 7.46e9))   # 40 MHz from band-2's 7.5 GHz edge
+        f = _band_edge(_be_state(2, 7.498e9))   # 2 MHz from band-2's 7.5 GHz edge
         assert len(f) == 1 and f[0].severity == "warning"
         assert f[0].advisory is True           # optional recommendation, not a defect
         assert f[0].jump_path == "ports.mw_outputs.con1.1.9.upconverter_frequency"
         assert "band 3" in f[0].message        # the more-central overlapping band
         assert "coupled" not in f[0].message   # uncoupled port → no mate note
+
+    def test_a_comfortably_in_spec_lo_is_silent(self):
+        """docs/81 — the reported case. 7.48 GHz is 20 MHz inside band 2 and
+        meets QM's performance specification (the spec is binary: in range or
+        out of it; no QM document mentions band-edge headroom at all). The
+        50 MHz guideline fired here and a lab retuned real hardware over it."""
+        assert _band_edge(_be_state(2, 7.48e9)) == []
+
+    def test_the_message_stays_short(self):
+        """It leads a diagnostics row; four hedging clauses meant the reader
+        reached the word "optional" last, if at all."""
+        f = _band_edge(_be_state(2, 7.498e9))
+        assert len(f) == 1
+        assert len(f[0].message) < 260, f[0].message
+        assert "Optional" in f[0].message
 
     def test_central_lo_silent(self):
         assert _band_edge(_be_state(2, 6.0e9)) == []   # 1.5 GHz from both edges
@@ -279,9 +294,9 @@ class TestBandEdge:
 
     # --- coupled-mate feasibility gate ------------------------------------
     def test_coupled_pair_feasible_warns_and_notes_mate(self):
-        # out8 (band 2, 7.46 GHz) couples to in2; the mate LO 7.46 GHz also fits
+        # out8 (band 2, 7.498 GHz) couples to in2; the mate LO also fits
         # band 3 → the pair can move together → recommend + note the mate.
-        f = _band_edge(_be_coupled_state(8, 7.46e9, 2, 7.46e9))
+        f = _band_edge(_be_coupled_state(8, 7.498e9, 2, 7.498e9))
         assert len(f) == 1 and f[0].advisory is True
         assert "band 3" in f[0].message
         assert "coupled" in f[0].message and "in2" in f[0].message
@@ -289,17 +304,17 @@ class TestBandEdge:
     def test_coupled_pair_infeasible_alt_suppressed(self):
         # mate in2's LO 5.0 GHz does NOT fit band 3 → the pair can't follow the
         # move → recommendation dropped entirely (no self-contradicting advice).
-        assert _band_edge(_be_coupled_state(8, 7.46e9, 2, 5.0e9)) == []
+        assert _band_edge(_be_coupled_state(8, 7.498e9, 2, 5.0e9)) == []
 
     def test_coupled_pair_unresolvable_mate_suppressed(self):
         # coupled port but the mate isn't present in state → conservatively skip.
-        assert _band_edge(_be_state(2, 7.46e9, port="8")) == []
+        assert _band_edge(_be_state(2, 7.498e9, port="8")) == []
 
     def test_labalike_pointer_linked_mate_feasible(self):
         # real LabA shape: in1's downconverter is a POINTER to out1's upconverter
-        # (shared LO). It resolves to 7.46 GHz, which fits band 3 → kept.
+        # (shared LO). It resolves to 7.498 GHz, which fits band 3 → kept.
         state = _be_coupled_state(
-            1, 7.46e9, 1,
+            1, 7.498e9, 1,
             "#/ports/mw_outputs/con1/1/1/upconverter_frequency")
         f = _band_edge(state)
         assert len(f) == 1 and f[0].advisory is True

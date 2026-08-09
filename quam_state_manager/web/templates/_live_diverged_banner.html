@@ -5,9 +5,14 @@
    Clean working copies never get here — they are auto-synced on load. #}
 {% if live_diverged %}
 <div class="topo-change-banner live-diverged-banner" id="live-diverged-banner" role="alert">
+    {# docs/87: the count is FREE — the reconcile that raised this banner had to
+       read both sides to reach its verdict, so it hands the diff back. It is
+       "as of that check"; Review is the authority. None ⇒ say nothing rather
+       than invent a number. #}
     <span class="topo-change-banner-text">
         &#9888;&#65039; The live state files for <b>{{ active_name or "this chip" }}</b> changed on disk
-        &mdash; you are viewing the working state, which may show an <b>older chip</b>.
+        {%- if live_drift_count %} &mdash; <b>{{ live_drift_count }}</b> value{{ 's' if live_drift_count != 1 }} differ{{ '' if live_drift_count != 1 else 's' }}
+        {%- endif %} &mdash; you are viewing the working state, which may show an <b>older chip</b>.
     </span>
     {# This banner only renders when the working copy MAY hold unapplied
        edits (clean copies are auto-synced silently) — so the discard path
@@ -16,7 +21,23 @@
     <button type="button" class="btn-sm outline"
             onclick="if (confirm('Replace the working state with the live files?\n\nAny unapplied edits in the working state will be discarded.')) doStateSync('discard')"
             title="Replace the working state with the live files (any unapplied edits in the working state are discarded)">
-        Pull live state</button>
+        &#8595; Pull live state</button>
+    {# docs/86 — the other direction. This banner used to offer only "look at it"
+       and "take theirs", which is not a choice; the common case behind the
+       reports is a test run that wrote parameters by mistake, where the state SM
+       is holding is the one worth keeping. Last and un-primary: a pull discards
+       the working copy while the live files stay on disk, this discards live
+       content. The confirm (built by overwriteLiveWithWorking from a preflight
+       read) names how many live values disappear, warns if a run is writing this
+       chip right now, and says the push is snapshotted and therefore reversible
+       — none of which can be computed here, because the banner renders on every
+       page and reading live content on render is exactly what docs/28 forbids. #}
+    {% if (chip_origin | default('live')) != 'dataset_archive' %}
+    <button type="button" class="btn-sm outline live-diverged-overwrite"
+            onclick="overwriteLiveWithWorking()"
+            title="Keep the working state and write it over the live chip. The live state is snapshotted first — the tray's “Revert last apply” undoes it.">
+        &#8593; Keep mine &mdash; overwrite live</button>
+    {% endif %}
     <button type="button" class="topo-change-banner-dismiss" aria-label="Dismiss"
             onclick="document.querySelectorAll('.live-diverged-banner').forEach(function(b){b.hidden=true})">&#10005;</button>
 </div>

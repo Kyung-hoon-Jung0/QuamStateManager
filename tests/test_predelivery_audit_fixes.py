@@ -649,6 +649,18 @@ class TestConcurrencyAndSafeIO:
         assert ws.tree is not snap2 and k1 in snap2 and k1 not in ws.tree
 
 
+def _sched_scope(app):
+    """Where the ROUTES keep runner settings for this app.
+
+    Runner state became per-open-chip in docs/80, so a test that seeds (or
+    reads back) the bare instance dir addresses a legacy file no route touches
+    — the seed is invisible to the route and the read-back never sees what the
+    route wrote. With no chip open that scope is the shared ``_nochip`` one.
+    """
+    from quam_state_manager.core import scheduler
+    return str(scheduler.scope_dir(app.instance_path))
+
+
 class TestSchedulerHardwareSafety:
     """Scheduler guards that keep an experiment from running on the OPX when the
     user didn't ask for it (or keep editing locked while one still is)."""
@@ -677,7 +689,7 @@ class TestSchedulerHardwareSafety:
 
     def test_settings_locked_for_critical_keys_while_active(self, app, monkeypatch):
         from quam_state_manager.core import scheduler
-        inst = app.instance_path
+        inst = _sched_scope(app)
         scheduler.save_settings(inst, {"global_simulate": True,
                                        "quam_state_path": "/chip/A"})
         client = app.test_client()
@@ -695,7 +707,7 @@ class TestSchedulerHardwareSafety:
 
     def test_start_persists_posted_settings_before_run(self, app, monkeypatch):
         from quam_state_manager.core import scheduler
-        inst = app.instance_path
+        inst = _sched_scope(app)
         scheduler.save_settings(inst, {"quam_state_path": "/chip/OLD"})
         started = {}
         monkeypatch.setattr(scheduler, "start", lambda p: started.setdefault("p", p) or {"status": "running"})
@@ -712,7 +724,7 @@ class TestSchedulerHardwareSafety:
         # settings to disk — the worker re-reads per item, so that would flip the
         # rest of the queue to a new chip / LIVE mode, bypassing the mid-run lock.
         from quam_state_manager.core import scheduler
-        inst = app.instance_path
+        inst = _sched_scope(app)
         scheduler.save_settings(inst, {"quam_state_path": "/chip/OLD",
                                        "global_simulate": True})
         monkeypatch.setattr(scheduler, "is_active", lambda _p: True)
@@ -812,3 +824,33 @@ class TestActiveTokenLoadedContract:
         assert j["loaded"] is True
         assert j["path"] == str(live)
         assert j["token"]     # fingerprint still exposed for the 409 pre-check
+
+
+class TestEveryRenderIsCheap:
+    """_ctx() runs on EVERY page render, so anything it touches must be cheap.
+
+    Found by profiling a /diff render (docs/84): 906 ms of the 937 ms was
+    time.sleep, from safe_io.read_json retrying a chip-prompt memo file that
+    does not exist. The retry ladder is right for a live state.json being
+    replaced under us and pure latency for an optional sidecar — and until a
+    user declines a prompt, that sidecar never exists, so a fresh install paid
+    it on every single page.
+    """
+
+    def test_a_missing_prompt_memo_does_not_sleep(self, app, monkeypatch):
+        from quam_state_manager.core import safe_io
+        from quam_state_manager.web import routes as R
+        slept = []
+        monkeypatch.setattr(safe_io.time, "sleep", lambda s: slept.append(s))
+        with app.test_request_context("/"):
+            assert R._load_chip_prompt_memo() == {}
+        assert slept == [], f"read of a missing optional sidecar slept {slept}"
+
+    def test_an_existing_prompt_memo_is_still_read(self, app, tmp_path):
+        import json
+        from quam_state_manager.web import routes as R
+        with app.test_request_context("/"):
+            p = R._chip_prompt_memo_file()
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps({"tok::identity": "declined"}), encoding="utf-8")
+            assert R._load_chip_prompt_memo() == {"tok::identity": "declined"}

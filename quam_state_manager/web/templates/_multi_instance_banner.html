@@ -1,0 +1,27 @@
+{# Another State Manager window holds THIS chip (docs/80 Part 3).
+
+   Reported, never blocked. A cross-process lock would trap a user behind a
+   crashed window, which is a worse failure than the one it prevents — so the
+   honest move is to say what is true and let them decide.
+
+   Only the SAME STATE PATH gets a banner. A shared data folder is a real
+   workflow (one chip, two experiment lines) and the loss it used to cause was
+   fixed at the source, so warning about it would only teach users to ignore
+   this strip. #}
+{% if instance_peers %}
+<div class="topo-change-banner multi-instance-banner" id="multi-instance-banner" role="alert">
+    <span class="topo-change-banner-text">
+        &#9888;&#65039; <b>{{ active_name or "This chip" }}</b> is also open in
+        {% if instance_peers|length == 1 %}another State Manager window
+            ({{ instance_peers[0].label }}){% else %}{{ instance_peers|length }}
+            other State Manager windows ({{ instance_peers|map(attribute='label')|join(', ') }}){% endif %}
+        &mdash; edits made there and here <b>overwrite each other</b>, because
+        both windows share one working copy of these files.
+    </span>
+    <button type="button" class="topo-change-banner-dismiss" aria-label="Dismiss"
+            onclick="document.querySelectorAll('.multi-instance-banner').forEach(function(b){b.hidden=true})">&#10005;</button>
+</div>
+{# Dismissal is deliberately for THIS view only — no memo file. Which windows
+   are open is a live fact that changes whenever one is closed, so a persisted
+   "don't show again" would end up asserting something no longer true. #}
+{% endif %}

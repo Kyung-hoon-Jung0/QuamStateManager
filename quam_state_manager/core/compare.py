@@ -1716,8 +1716,11 @@ def _extract_summary(snaps: list[ComparisonSnapshot], stores: list[QuamStore],
             cols, pm = [], {}
         cols_by_src.append(cols)
         path_maps.append(pm)
+    # ``headline_on``, NOT ``default_on``: since r17 the pair GRID shows every
+    # column by default, but "which rows does a comparison summarise" is a
+    # different question — this keeps the old curated row set.
     keep_cols = [c for c in cols_by_src[ref]
-                 if c["default_on"] or c["section"] in (
+                 if c.get("headline_on", c["default_on"]) or c["section"] in (
                      "Cross Resonance", "Coupler", "ZZ Drive", "XY Detuned")]
 
     for p in canon_pairs:

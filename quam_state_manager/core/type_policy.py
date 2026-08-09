@@ -151,7 +151,7 @@ def format_type(ts: dict | None) -> str:
 @dataclass(frozen=True)
 class Expected:
     spec: dict                       # TypeSpec
-    source: str                      # "env" | "user" | "inferred"
+    source: str                      # "env" | "user" | "verdict" | "inferred"
     override_env: bool = False
     class_path: str | None = None    # env source: owning class (display)
     field: str | None = None
@@ -159,7 +159,7 @@ class Expected:
 
     @property
     def enforced(self) -> bool:
-        return self.source in ("env", "user")
+        return self.source in ("env", "user", "verdict")
 
     def as_json(self) -> dict:
         return {
@@ -201,9 +201,17 @@ class TypePolicy:
     """The per-store type policy: manifest (may be None) + user assignments."""
 
     def __init__(self, manifest: dict | None, assignments: dict[str, dict] | None,
-                 *, sidecar_path: Path | None = None) -> None:
+                 *, sidecar_path: Path | None = None,
+                 verdicts: dict | None = None,
+                 env_manifest: dict | None = None) -> None:
+        # ``manifest`` is what everything resolves against — the env schema with
+        # the user's verdicts overlaid (docs/79). ``env_manifest`` keeps the
+        # PRISTINE env truth, so the UI can show both sides of a disagreement
+        # and a re-attach can never overlay an already-overlaid manifest.
         self.manifest = manifest
+        self.env_manifest = env_manifest if env_manifest is not None else manifest
         self.assignments = dict(assignments or {})
+        self.verdicts = dict(verdicts or {})
         self.sidecar_path = sidecar_path
 
     # -- resolution ------------------------------------------------------
@@ -226,15 +234,43 @@ class TypePolicy:
         return Expected(spec=ts, source="env", class_path=cls, field=fld,
                         detail=str(ts.get("raw") or ""))
 
+    def _verdict_expected(self, merged: dict, dot_path: str) -> Expected | None:
+        """The user's env-scoped correction of SM's belief, if it covers this
+        key. Dormant — and provably free — when no verdict is stored."""
+        if not self.verdicts:
+            return None
+        from quam_state_manager.core.state_env_validate import field_ref_for
+        ref = field_ref_for(dot_path, merged, self.manifest)
+        if ref is None or not ref.exact:
+            # v1: a verdict states the FIELD's type; elements below it keep
+            # resolving through the env.
+            return None
+        v = self.verdicts.get(f"{ref.canonical}.{ref.field}")
+        if not v or not v.get("enforced") or not v.get("spec"):
+            return None
+        return Expected(spec=v["spec"], source="verdict",
+                        class_path=ref.canonical, field=ref.field,
+                        detail=f"you taught SM ({v.get('from_label') or ''})".strip())
+
     def expected_for(self, merged: dict, dot_path: str,
                      current_value: Any = None,
                      *, infer: bool = True) -> Expected | None:
-        """user-override → env → user → inferred. None = fully unknown."""
+        """user-override → VERDICT → env → user → inferred. None = fully unknown.
+
+        The verdict layer is the user's env-scoped correction ("in THIS env,
+        CZGate.duration_qubit is real now"). It outranks the env schema because
+        it is a statement ABOUT that schema; it loses to a 409-confirmed
+        per-key ``override_env`` assignment, which is strictly more specific
+        (one exact path on one chip).
+        """
         a = self.assignments.get(dot_path)
         if a and a.get("override_env"):
             exp = self._user_expected(a)
             if exp:
                 return exp
+        verdict = self._verdict_expected(merged, dot_path)
+        if verdict:
+            return verdict
         env = self._env_expected(merged, dot_path)
         if env:
             return env
@@ -257,15 +293,25 @@ class TypePolicy:
         ok, code, msg = judge(new_value, expected.spec)
         if not ok and code in EDIT_BLOCKING:
             prov = ""
+            advice = ("If this change is intentional, assign a new type to this "
+                      "key first.")
             if expected.source == "env" and expected.class_path:
                 cls = expected.class_path.rsplit(".", 1)[-1]
                 prov = f" (quam schema: {cls}.{expected.field})"
             elif expected.source == "user":
                 prov = " (user-assigned type)"
+            elif expected.source == "verdict":
+                # The user TAUGHT SM this type for the whole class in this
+                # environment (docs/79) — telling them to "assign a type" would
+                # send them to the wrong place, so name what is really in force.
+                cls = (expected.class_path or "").rsplit(".", 1)[-1]
+                prov = (f" (you taught SM: {cls}.{expected.field}"
+                        f"{', ' + expected.detail if expected.detail else ''})")
+                advice = ("If that is no longer right, revoke or change it under "
+                          "Diagnostics -> Types & values -> Manage taught types.")
             raise TypeMismatchError(
                 f"Type mismatch at {path}: expected {format_type(expected.spec)}"
-                f"{prov} — {msg}. If this change is intentional, assign a new "
-                f"type to this key first.",
+                f"{prov} — {msg}. {advice}",
                 path=path, expected=expected, got=type(new_value).__name__)
         return _reconcile_numeric(old_value, new_value)
 
@@ -493,12 +539,33 @@ def _load_assignments_file(path: Path) -> dict:
     return a if isinstance(a, dict) else {}
 
 
-def load_policy(instance_path, live_folder, manifest: dict | None) -> TypePolicy:
-    """Never raises; a corrupt/missing sidecar yields an empty assignment set."""
+def load_policy(instance_path, live_folder, manifest: dict | None,
+                *, verdicts: dict | None = None) -> TypePolicy:
+    """Never raises; a corrupt/missing sidecar yields an empty assignment set.
+
+    THE single place the env-scoped verdict overlay is applied (docs/79), so
+    every construction site gets a verdict-aware policy without knowing about
+    verdicts. With no verdict file the manifest is passed through unchanged —
+    ``policy.manifest is policy.env_manifest`` — and the whole mechanism is
+    provably dormant.
+    """
     path = assignments_path(instance_path, live_folder)
     with _assign_lock:
         assignments = _load_assignments_file(path)
-    return TypePolicy(manifest, assignments, sidecar_path=path)
+    resolved: dict = {}
+    overlaid = manifest
+    if manifest:
+        try:
+            from quam_state_manager.core import type_verdicts
+            resolved = (verdicts if verdicts is not None
+                        else type_verdicts.resolve_for_manifest(instance_path, manifest))
+            if resolved:
+                overlaid = type_verdicts.overlay_manifest(manifest, resolved)
+        except Exception:  # noqa: BLE001 — a verdict bug must never brick activation
+            logger.warning("type-verdict overlay failed", exc_info=True)
+            resolved, overlaid = {}, manifest
+    return TypePolicy(overlaid, assignments, sidecar_path=path,
+                      verdicts=resolved, env_manifest=manifest)
 
 
 def save_assignment(instance_path, live_folder, dot_path: str, spec: dict) -> dict:

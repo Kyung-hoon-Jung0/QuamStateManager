@@ -7,6 +7,10 @@
     </div>
 </div>
 
+{% set cmap_highlight = 'resonators' %}
+{% set cmap_label = '— resonators + shared readout feedlines highlighted' %}
+{% include '_component_map.html' %}
+
 <nav class="chain-tabs">
     <ul>
         <li><a href="/resonators?per_page={{ per_page }}" hx-get="/resonators?per_page={{ per_page }}" hx-target="#table-pane"

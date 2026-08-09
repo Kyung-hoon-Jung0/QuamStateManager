@@ -1003,11 +1003,64 @@ window.freqSyncFlag = function () {
  * Toggle the settings dropdown in the topbar.  Clicking outside the
  * dropdown will close it (handled by a one-time document click listener).
  */
-window.toggleSettings = function() {
+/* Anchor a body-level popover under the trigger that opened it (docs/89).
+ *
+ * Both tool popovers used `position:absolute; right:0; top:100%` inside their
+ * topbar <li>. From the sidebar that cannot work twice over: the sidebar is
+ * `overflow-y:auto`, which CLIPS an absolutely-positioned child, and it
+ * collapses to width 0. So they live at body level and get placed here, in
+ * viewport coordinates, from the trigger's own rect.
+ *
+ * Placement is below-and-left-aligned, flipping to right-aligned or above when
+ * that would leave the viewport — the calculator is ~348×560, which does not
+ * fit under a trigger near the bottom of a short window. */
+window._anchorPopover = function (pop, btn) {
+    if (!pop || !btn || !btn.getBoundingClientRect) return;
+    pop.classList.add("pop-anchored");
+    // measure with the popover laid out but before we commit a position
+    pop.style.left = "0px";
+    pop.style.top = "0px";
+    var r = btn.getBoundingClientRect();
+    var w = pop.offsetWidth || 280;
+    var h = pop.offsetHeight || 200;
+    var pad = 6;
+    var left = r.left;
+    if (left + w > window.innerWidth - pad) left = window.innerWidth - w - pad;
+    if (left < pad) left = pad;
+    var top = r.bottom + 4;
+    if (top + h > window.innerHeight - pad) {
+        var above = r.top - h - 4;
+        top = above >= pad ? above : Math.max(pad, window.innerHeight - h - pad);
+    }
+    pop.style.left = Math.round(left) + "px";
+    pop.style.top = Math.round(top) + "px";
+};
+
+/* The VISIBLE trigger for a tool: the sidebar row normally, the topbar
+ * fallback while the sidebar is collapsed. Decided from the collapsed class
+ * rather than from layout (`offsetParent`/rects) — that is the actual
+ * condition, it needs no layout pass, and it stays checkable. A trigger the
+ * user really clicked always wins. */
+window._toolTrigger = function (selector, preferred) {
+    if (preferred && preferred.isConnected) return preferred;
+    var all = Array.prototype.slice.call(document.querySelectorAll(selector));
+    if (!all.length) return null;
+    var collapsed = !!document.querySelector(".app-layout.sidebar-collapsed");
+    var wanted = all.filter(function (b) {
+        return b.classList.contains("topbar-tool") === collapsed;
+    });
+    return wanted[0] || all[0];
+};
+
+window.toggleSettings = function(trigger) {
     var dd = document.getElementById("settings-dropdown");
     if (!dd) return;
     var opening = dd.classList.toggle("settings-hidden");
     if (!opening) {
+        // singleton: never overlap the calculator (mirrors toggleCalc)
+        var cp = document.getElementById("calc-popover");
+        if (cp) cp.classList.add("calc-hidden");
+        window._anchorPopover(dd, window._toolTrigger(".settings-btn", trigger));
         setTimeout(function() {
             document.addEventListener("click", function closer(e) {
                 if (!dd.contains(e.target) && !e.target.closest(".settings-btn")) {
@@ -2389,6 +2442,75 @@ window.doStateSync = function(mode, forced) {
         .finally(function() { window._applyInFlight = false; });
 };
 
+/* The THIRD choice when the live chip drifted (docs/86): keep the working state
+ * and overwrite the live chip with it.
+ *
+ * Until now the drift banner and the review modal offered only pull-or-close,
+ * which is one direction, not a choice — and the case that needs the other
+ * direction is common: a test run wrote parameters by mistake and the state SM
+ * is holding is the good one. The capability already existed (State History →
+ * restore-live; the conflict tray's force-overwrite); what was missing was
+ * reaching it at the moment the user learns about the drift.
+ *
+ * Pull and push are NOT symmetric, so this is never the primary action and
+ * never silent: the preflight names how many live values disappear, whether a
+ * run is writing this chip right now, and that the push snapshots the live
+ * state first so the tray's "Revert last apply" undoes it. ONE confirm — the
+ * push is forced, because the user has just been told exactly what it forces
+ * past (an unforced push would land on the staleness conflict screen and ask a
+ * second time). */
+window.overwriteLiveWithWorking = function () {
+    if (window._applyInFlight) return;   // shared guard with doStateSync
+    fetch("/state/overwrite-live/preflight", { headers: { "HX-Request": "true" } })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (!d || !d.ok) {
+                window.showToast((d && d.message) || "Cannot overwrite the live chip.", "error");
+                return;
+            }
+            var n = d.live_changes;
+            var lines = ["Overwrite the live chip with the working state?", ""];
+            if (n === null || n === undefined) {
+                lines.push("The live files could not be read, so what they hold right now is unknown.");
+            } else if (n === 0) {
+                lines.push("The live chip already matches the working state — nothing would change.");
+            } else {
+                lines.push(n + " value" + (n === 1 ? "" : "s") + " that differ on the live chip "
+                    + "will be REPLACED by the working state's. Whatever wrote them "
+                    + "(an experiment program, another window) loses those changes.");
+            }
+            if (d.unsaved) {
+                lines.push("Your " + d.unsaved + " unsaved edit" + (d.unsaved === 1 ? "" : "s")
+                    + " are saved and pushed along with it.");
+            }
+            if (d.run_active) {
+                lines.push("", "⚠ A run is in progress"
+                    + (d.run_label ? " (" + d.run_label + ")" : "")
+                    + " — it may write these values again when its next node finishes.");
+            }
+            if (d.reversible) {
+                lines.push("", "The current live state is snapshotted first, so the tray's "
+                    + "“Revert last apply” undoes this.");
+            }
+            if (!window.confirm(lines.join("\n"))) {
+                if (window.showToast) window.showToast("Cancelled — nothing was changed.", "info");
+                return;
+            }
+            window.closeReview();
+            if (!window.htmx) {
+                window.showToast("Open the top-bar tray and use “Apply to live chip”.", "info");
+                return;
+            }
+            window._applyInFlight = true;
+            htmx.ajax("POST", "/state/apply-to-live?force=1",
+                      { target: "#pending-tray", swap: "outerHTML" })
+                .finally(function () { window._applyInFlight = false; });
+        })
+        .catch(function () {
+            window.showToast("Could not check the live chip (network error).", "error");
+        });
+};
+
 /* The grid ⚡ "Apply to live now" buttons push the user's edits all the way to the
  * live chip in ONE click (the grids call this after applyAll commits the edits).
  * Routing is working-copy-state aware so it can never silently drop a saved edit AND
@@ -2479,17 +2601,10 @@ window.applyEditsToLive = function () {
         fetch("/state/drift", { cache: "no-store" })
             .then(function (r) { return r.ok ? r.json() : null; })
             .then(function (d) {
-                // Surface the clean auto-pull that just happened on load/select — the
-                // pull used to be SILENT, so a user's IDE pulse edit was adopted with
-                // no signal and read as "not synced" (feedback #5). One-shot from the server.
-                if (d && d.auto_pulled && window.showToast) {
-                    var n = d.auto_pulled.count || 0;
-                    window.showToast(
-                        n > 0 ? ("✓ Live chip updated — " + n + " param" + (n === 1 ? "" : "s")
-                                 + " pulled into the working state")
-                              : "✓ Live chip state pulled into the working state",
-                        "success");
-                }
+                // (docs/87) The "✓ Live chip updated — N params pulled" toast lived
+                // here. It announced a silent auto-pull after the fact; the user-facing
+                // path now ASKS first through the live-diverged banner, which carries
+                // the same count and both directions, so there is nothing to report.
                 var count = (d && d.ok && d.tracked) ? (d.count || 0) : 0;
                 // Count changed → refresh any embedded panel / open overlay so
                 // the State History page + a viewing user see it accumulate.
@@ -2715,12 +2830,20 @@ window.selectHistoryEntry = function(checkbox) {
 window.compareSelectedSnapshots = function() {
     var checked = document.querySelectorAll(".history-compare-cb:checked");
     if (checked.length !== 2) return;
-    var ts_a = checked[0].value, ts_b = checked[1].value;
-    if (window.htmx) {
-        htmx.ajax("GET", "/api/history/compare?ts_a=" + ts_a + "&ts_b=" + ts_b,
-                   {target: "#history-detail-area", swap: "innerHTML"});
-    }
+    // docs/84: "Compare selected" used to land on three different surfaces
+    // depending on which page you started from. It now always opens the diff
+    // workbench, which resolves the chip dir server-side.
+    _openDiffForSnapshots(checked[0].value, checked[1].value);
 };
+
+/* Two snapshot timestamps -> the diff workbench. HX-Redirect when htmx is
+   present (the response navigates), a plain location change otherwise. */
+function _openDiffForSnapshots(tsA, tsB) {
+    var url = "/diff/snapshots?ts_a=" + encodeURIComponent(tsA)
+            + "&ts_b=" + encodeURIComponent(tsB);
+    if (window.htmx) { htmx.ajax("GET", url, {target: "body", swap: "none"}); }
+    else { window.location.href = url; }
+}
 
 /* State History page: pick exactly two snapshots and diff them. Reuses the
    existing /api/history/compare endpoint; renders into the State History
@@ -2742,16 +2865,9 @@ window.StateHistory = (function () {
     }
     function compareSelected() {
         var sel = selected();
-        if (sel.length !== 2 || !window.htmx) return;
-        var p = htmx.ajax('GET', '/api/history/compare?ts_a=' + encodeURIComponent(sel[0].value)
-                  + '&ts_b=' + encodeURIComponent(sel[1].value),
-                  { target: '#state-history-detail', swap: 'innerHTML' });
-        // Belt-and-suspenders to the delegated afterSwap reveal: the result lands below
-        // the timeline (off-screen), so scroll it into view (audit P0-2, the canary).
-        if (p && p.then) p.then(function () {
-            var d = document.getElementById('state-history-detail');
-            if (d && d.innerHTML.trim() !== '') d.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        });
+        if (sel.length !== 2) return;
+        // docs/84: same destination as every other "Compare selected".
+        _openDiffForSnapshots(sel[0].value, sel[1].value);
     }
     function init() {
         var btn = document.getElementById('sh-compare-btn');
@@ -2825,13 +2941,17 @@ document.addEventListener("cellsReverted", function(evt) {
 
     /* Fetch the plan and show it. The plan is built server-side and carries
        its own signature, so what the user confirms is what the server
-       re-validates before writing. */
-    window.openTypeFixPlan = function () {
+       re-validates before writing.
+
+       The optional url lets the self-raising alert (docs/78) render the SAME
+       dialog from /type-alert — one dialog, one apply path, so "auto-correct"
+       stays one click without ever writing something the user did not see. */
+    window.openTypeFixPlan = function (url) {
         var o = ensure();
         var host = o.querySelector(".tfx-host");
         host.innerHTML = '<div class="tfx-card"><p class="tfx-lead">Checking the chip…</p></div>';
         o.style.display = "flex";
-        fetch("/type-fix/plan", { headers: { "HX-Request": "true" } })
+        fetch(url || "/type-fix/plan", { headers: { "HX-Request": "true" } })
             .then(function (r) { return r.text(); })
             .then(function (html) {
                 host.innerHTML = html;
@@ -2847,14 +2967,38 @@ document.addEventListener("cellsReverted", function(evt) {
             });
     };
 
+    /* Scope every selection query to the ONE open dialog — the alert and the
+       manual entry point render the same card, and a document-wide query
+       would miscount the moment anything else on the page grew a .tfx-pick. */
+    function _picks(node) {
+        var card = (node && node.closest && node.closest(".tfx-card"))
+            || (overlay && overlay.querySelector(".tfx-card"));
+        return (card || document).querySelectorAll(".tfx-pick");
+    }
+
+    /* Mount an ALREADY-FETCHED plan card (the self-raising alert has the HTML
+       in hand — re-fetching would race the one-shot server flag). */
+    window.openTypeFixPlanHtml = function (html) {
+        var o = ensure();
+        var host = o.querySelector(".tfx-host");
+        host.innerHTML = html;
+        o.style.display = "flex";
+        window.typeFixCount();
+        o._releaseTrap = window.trapFocus
+            ? window.trapFocus(o, window.closeTypeFixPlan) : null;
+        var btn = host.querySelector("#tfx-apply");
+        if (btn) { try { btn.focus(); } catch (e) {} }
+        return o;
+    };
+
     window.typeFixToggleAll = function (box) {
-        var picks = document.querySelectorAll(".tfx-pick");
+        var picks = _picks(box);
         Array.prototype.forEach.call(picks, function (p) { p.checked = box.checked; });
         window.typeFixCount();
     };
 
     window.typeFixCount = function () {
-        var picks = document.querySelectorAll(".tfx-pick");
+        var picks = _picks(null);
         var n = 0;
         Array.prototype.forEach.call(picks, function (p) { if (p.checked) n++; });
         var out = document.getElementById("tfx-count");
@@ -2893,7 +3037,7 @@ document.addEventListener("cellsReverted", function(evt) {
                 }
                 return;
             }
-            if (d.tray_html) window._swapPendingTray(d.tray_html);
+            if (d.tray_html && window._swapPendingTray) window._swapPendingTray(d.tray_html);
             window.closeTypeFixPlan();
             if (window.showToast) {
                 window.showToast(d.count + " value" + (d.count === 1 ? "" : "s")
@@ -2909,6 +3053,238 @@ document.addEventListener("cellsReverted", function(evt) {
         });
     };
 })();
+
+/* The type-anomaly alert that raises ITSELF (docs/78).
+
+   Detection was already automatic, but the repair sat behind a button the
+   user had to go and find. Now, whenever NEW CONTENT enters the working copy
+   — a chip is opened, the live state is pulled, a snapshot is staged, a run's
+   state is loaded, or SM adopts an experiment's write — the server arms a
+   one-shot flag and this asks for it. /type-alert answers 204 unless the
+   anomaly set is genuinely new, so ordinary editing never prompts.
+
+   The dialog it opens is the docs/77 repair dialog: the proposal is on screen,
+   so auto-correct is one click AND nothing is written unseen. */
+window.TypeAlert = (function () {
+    var inflight = false, retryTimer = null;
+
+    /* Never interrupt: not while typing, not mid-drag, not over another
+       modal, not in a background tab. The server flag is only consumed by a
+       200, so deferring costs nothing — the alert waits for a calm moment. */
+    function _busy() {
+        if (document.hidden) return true;
+        var a = document.activeElement;
+        if (a && a.matches && a.matches('input, textarea, select, [contenteditable=""], [contenteditable="true"]')) {
+            return true;
+        }
+        if (document.body && document.body.classList.contains("dragging")) return true;
+        if (document.querySelector(".drag-ghost")) return true;
+        var modals = document.querySelectorAll(".ch-overlay, #plot-apply-popup, #new-run-popup");
+        for (var i = 0; i < modals.length; i++) {
+            if (modals[i].style.display && modals[i].style.display !== "none") return true;
+        }
+        return false;
+    }
+
+    function check() {
+        if (inflight) return;
+        if (_busy()) {
+            if (retryTimer) return;
+            retryTimer = setTimeout(function () { retryTimer = null; check(); }, 3000);
+            return;
+        }
+        inflight = true;
+        fetch("/type-alert", { headers: { "HX-Request": "true" } })
+            .then(function (r) { return r.status === 200 ? r.text() : null; })
+            .then(function (html) {
+                inflight = false;
+                if (!html) return;                 // 204: nothing new to say
+                window.openTypeFixPlanHtml(html);
+            })
+            .catch(function () { inflight = false; });
+    }
+
+    function _card() { return document.querySelector(".tfx-overlay .tfx-card"); }
+
+    return {
+        check: check,
+        /* "I'll fix them myself" — close and land on the first offending field. */
+        manual: function (path) {
+            window.closeTypeFixPlan();
+            if (path && window._navigateToExplorerPath) window._navigateToExplorerPath(path);
+        },
+        diagnostics: function () {
+            window.closeTypeFixPlan();
+            try {
+                window.htmx.ajax("GET", "/diagnostics",
+                                 { target: "#table-pane", swap: "innerHTML" });
+                history.pushState({}, "", "/diagnostics");
+            } catch (e) {}
+        },
+        /* Explicit "don't show this again" — Esc / backdrop / Cancel do NOT
+           memo, so closing the dialog never silently loses the finding. */
+        dismiss: function (btn) {
+            var card = (btn && btn.closest && btn.closest(".tfx-card")) || _card();
+            if (!card) { window.closeTypeFixPlan(); return; }
+            var body = new URLSearchParams({
+                sig: card.getAttribute("data-alert-sig") || "",
+                env_sig: card.getAttribute("data-alert-env-sig") || "",
+                token: card.getAttribute("data-alert-token") || ""
+            });
+            fetch("/type-alarm/dismiss", {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: body.toString()
+            }).catch(function () {});
+            window.closeTypeFixPlan();
+            try { window.htmx && window.htmx.trigger(document.body, "diagnostics-changed"); } catch (e) {}
+        }
+    };
+})();
+
+/* Environment schema changes + the verdicts the user records about them
+   (docs/79). Reuses the same ch-overlay shell as the repair dialog: this is
+   the other half of the same question ("is this value wrong, or did the
+   library move?"), so it should not look like a different app. */
+(function () {
+    var overlay = null;
+
+    function ensure() {
+        if (overlay) return overlay;
+        overlay = document.createElement("div");
+        overlay.className = "ch-overlay tfx-overlay envchg-overlay";
+        overlay.style.display = "none";
+        var backdrop = document.createElement("div");
+        backdrop.className = "ch-backdrop";
+        backdrop.addEventListener("click", window.closeEnvSchemaChanges);
+        var card = document.createElement("div");
+        card.className = "ch-card tfx-host";
+        overlay.appendChild(backdrop);
+        overlay.appendChild(card);
+        document.body.appendChild(overlay);
+        return overlay;
+    }
+
+    window.closeEnvSchemaChanges = function () {
+        if (!overlay) return;
+        if (overlay._releaseTrap) {
+            try { overlay._releaseTrap(); } catch (e) {}
+            overlay._releaseTrap = null;
+        }
+        overlay.style.display = "none";
+        overlay.querySelector(".tfx-host").innerHTML = "";
+    };
+
+    function open(url) {
+        var o = ensure();
+        var host = o.querySelector(".tfx-host");
+        host.innerHTML = '<div class="tfx-card"><p class="tfx-lead">Comparing environments…</p></div>';
+        o.style.display = "flex";
+        fetch(url, { headers: { "HX-Request": "true" } })
+            .then(function (r) { return r.text(); })
+            .then(function (html) {
+                host.innerHTML = html;
+                o._releaseTrap = window.trapFocus
+                    ? window.trapFocus(o, window.closeEnvSchemaChanges) : null;
+            })
+            .catch(function (e) {
+                host.innerHTML = '<div class="tfx-card"><p class="tfx-lead">'
+                    + "Could not compare the environments: " + String(e) + "</p></div>";
+            });
+    }
+
+    window.openEnvSchemaChanges = function () { open("/env-schema/changes"); };
+    window.openEnvSchemaVerdicts = function () { open("/env-schema/verdicts"); };
+
+    function _err(btn, msg) {
+        var card = btn.closest(".tfx-card");
+        var box = card && card.querySelector(".tfx-error");
+        if (box) { box.hidden = false; box.textContent = msg; }
+    }
+
+    /* Record what the user knows: either "the environment is right" or "keep
+       treating this as the previous environment did". Both are explicit
+       clicks — SM never decides this on its own. */
+    window.envVerdict = function (btn, decision, use) {
+        var body = new URLSearchParams({
+            class_path: btn.getAttribute("data-class") || "",
+            field: btn.getAttribute("data-field") || "",
+            decision: decision, use: use
+        });
+        if (btn.getAttribute("data-baseline")) {
+            body.set("baseline_key", btn.getAttribute("data-baseline"));
+        }
+        btn.disabled = true;
+        fetch("/env-schema/verdict", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: body.toString()
+        }).then(function (r) {
+            return r.json().then(function (d) { return { status: r.status, body: d }; });
+        }).then(function (res) {
+            if (!res.body || !res.body.ok) {
+                btn.disabled = false;
+                _err(btn, (res.body && res.body.error) || "Could not record that.");
+                return;
+            }
+            var row = btn.closest("tr");
+            if (row) {
+                row.classList.add("envchg-answered");
+                var cell = btn.closest("td");
+                if (cell) cell.textContent = "recorded";
+            }
+            if (window.showToast) {
+                window.showToast(res.body.warning
+                    || "Recorded — SM will use that in this environment.",
+                    res.body.warning ? "warning" : "success");
+            }
+            try { window.htmx && window.htmx.trigger(document.body, "diagnostics-changed"); } catch (e) {}
+        }).catch(function (e) { btn.disabled = false; _err(btn, String(e)); });
+    };
+
+    window.envVerdictRevoke = function (btn) {
+        var body = new URLSearchParams({
+            env_key: btn.getAttribute("data-env-key") || "",
+            class_path: btn.getAttribute("data-class") || "",
+            field: btn.getAttribute("data-field") || ""
+        });
+        btn.disabled = true;
+        fetch("/env-schema/verdict/revoke", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: body.toString()
+        }).then(function () {
+            var row = btn.closest("tr");
+            if (row && row.parentNode) row.parentNode.removeChild(row);
+            try { window.htmx && window.htmx.trigger(document.body, "diagnostics-changed"); } catch (e) {}
+        }).catch(function () { btn.disabled = false; });
+    };
+
+    window.envSchemaDismiss = function (btn) {
+        var card = btn.closest(".tfx-card");
+        if (card) {
+            fetch("/env-schema/dismiss", {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: new URLSearchParams({
+                    from_key: card.getAttribute("data-from") || "",
+                    to_key: card.getAttribute("data-to") || "",
+                    sig: card.getAttribute("data-sig") || ""
+                }).toString()
+            }).catch(function () {});
+        }
+        window.closeEnvSchemaChanges();
+    };
+})();
+
+/* Content-entry events the app already fires (they bubble to document) — no
+   new poller, no route changes, no live-file reads. */
+document.addEventListener("DOMContentLoaded", function () {
+    window.TypeAlert.check();
+    ["diagnostics-changed", "stateRestored", "liveDriftChanged"].forEach(function (ev) {
+        document.addEventListener(ev, function () { window.TypeAlert.check(); });
+    });
+});
 
 /* ------------------------------------------------------------------ */
 /* Value delta (Δ) — the JS mirror of core/value_delta.py               */
@@ -4269,9 +4645,42 @@ window.clearDetailPanelSearch = function(btnEl) {
      * children are only materialised on first expand, keeping the initial
      * render O(visible-nodes) instead of O(total-keys).
      */
-    function _buildNode(key, value, path, depth, refValue, hasDiff, valueClick) {
+    /* A key the primary side does not have. Distinct from `undefined`, which a
+       document can legitimately contain as a missing optional. */
+    var _ABSENT = {absent: true};
+
+    /* Union of both sides' keys, primary order first (docs/84). Used only in
+       union mode so the live-diff overlay keeps iterating one document. */
+    function _unionKeys(value, refValue, union, hasDiff) {
+        var keys = (value && typeof value === "object" && !Array.isArray(value))
+            ? Object.keys(value) : [];
+        if (!union || !hasDiff || !refValue || typeof refValue !== "object"
+            || Array.isArray(refValue)) return keys;
+        var seen = {};
+        for (var i = 0; i < keys.length; i++) seen[keys[i]] = 1;
+        var extra = Object.keys(refValue);
+        for (var j = 0; j < extra.length; j++) {
+            if (!seen[extra[j]]) keys.push(extra[j]);
+        }
+        return keys;
+    }
+
+    function _buildNode(key, value, path, depth, refValue, hasDiff, valueClick, union) {
         valueClick = valueClick || "edit";
-        var type = _typeOf(value);
+        // UNION mode (docs/84): the two sides are compared as a SET of keys, so
+        // a key only one side has still gets a row — "added" / "removed" are
+        // differences an IDE shows and this tree used to render as nothing at
+        // all (it iterated the primary document's keys only). Off by default:
+        // the live-diff overlay is a before→after of one document and must
+        // keep its exact behaviour.
+        // The primary document is the BEFORE side and refData is the AFTER
+        // side, so every row reads "A value → B value" like every other
+        // before→after surface in the app.
+        var onlyRef = (value === _ABSENT);          // appeared on the after side
+        var isAbsent = onlyRef;                     // (kept: read as "not here")
+        var shown = onlyRef ? refValue : value;
+        var onlyPrimary = !!(union && hasDiff && !onlyRef && refValue === undefined);
+        var type = _typeOf(shown);
         var isContainer = (type === "object" || type === "array");
         var node = document.createElement("div");
         node.className = "tree-node";
@@ -4280,12 +4689,14 @@ window.clearDetailPanelSearch = function(btnEl) {
         // Stashed so a whole-container JSON edit can rebuild this node in place
         // (see _makeContainerEditable / _rebuildNode) without re-fetching the tree.
         node._meta = {key: key, path: path, depth: depth, refValue: refValue,
-                      hasDiff: hasDiff, valueClick: valueClick};
+                      hasDiff: hasDiff, valueClick: valueClick, union: union};
         node._value = value;   // current value (kept fresh by _rebuildNode) — for key-copy
 
-        if (hasDiff && refValue !== undefined && !_deepEqual(value, refValue)) {
+        if (hasDiff && refValue !== undefined && !isAbsent && !_deepEqual(value, refValue)) {
             node.classList.add("tree-diff");
         }
+        if (onlyRef) node.classList.add("tree-diff", "tree-added");
+        if (onlyPrimary) node.classList.add("tree-diff", "tree-removed");
 
         var row = document.createElement("div");
         row.className = "tree-row";
@@ -4339,17 +4750,17 @@ window.clearDetailPanelSearch = function(btnEl) {
             var summary = document.createElement("span");
             summary.className = "tree-summary";
             if (type === "object") {
-                var n = Object.keys(value).length;
+                var n = Object.keys(shown).length;
                 summary.textContent = "{" + n + " key" + (n !== 1 ? "s" : "") + "}";
             } else {
-                summary.textContent = "[" + value.length + " item" + (value.length !== 1 ? "s" : "") + "]";
+                summary.textContent = "[" + shown.length + " item" + (shown.length !== 1 ? "s" : "") + "]";
             }
             row.appendChild(summary);
 
             // Edit the WHOLE list/dict as JSON — the only way to enter a list value
             // (the scalar leaf editor can't). Read-only trees (copy / livediff) get
             // no edit affordance. Click is stopped so it never toggles expand.
-            if (valueClick === "edit") {
+            if (valueClick === "edit" && !isAbsent) {
                 var jsonBtn = document.createElement("button");
                 jsonBtn.type = "button";
                 jsonBtn.className = "tree-json-edit-btn";
@@ -4367,18 +4778,20 @@ window.clearDetailPanelSearch = function(btnEl) {
             children.style.display = "none";
 
             // Store data for deferred rendering (closure captures value/refValue)
-            node._lazyData = { value: value, type: type, path: path, depth: depth, refValue: refValue, hasDiff: hasDiff, valueClick: valueClick };
+            node._lazyData = { value: isAbsent ? _ABSENT : value, type: type, path: path,
+                               depth: depth, refValue: refValue, hasDiff: hasDiff,
+                               valueClick: valueClick, union: union };
 
             node.appendChild(row);
             node.appendChild(children);
         } else {
             var valEl = document.createElement("span");
             var valClass = "tree-val tree-val-" + type;
-            if (_isPointer(value)) valClass = "tree-val tree-val-pointer";
+            if (_isPointer(shown)) valClass = "tree-val tree-val-pointer";
             valEl.className = valClass;
-            valEl.textContent = _formatValue(value);
+            valEl.textContent = _formatValue(shown);
             // raw value for the edit input (strings without display-quotes) / copy
-            valEl.dataset.editVal = (typeof value === "string") ? value : _formatValue(value);
+            valEl.dataset.editVal = (typeof shown === "string") ? shown : _formatValue(shown);
             if (valueClick === "copy") {
                 // Read-only tree (e.g. a dataset's frozen parameters): click copies
                 // the value. Editing here would wrongly POST against the live store.
@@ -4391,8 +4804,22 @@ window.clearDetailPanelSearch = function(btnEl) {
                         window.copyWithFeedback(raw, el);
                     };
                 })(valEl);
+            } else if (valueClick === "diff" || isAbsent) {
+                // Read-only comparison view (docs/84): the two sides come from
+                // arbitrary sources \u2014 one of them is usually not even editable \u2014
+                // so a click must never open an editor against the LOADED chip.
+                // Copying the value is the useful action here.
+                valEl.title = "Click to copy value";
+                valEl.style.cursor = "copy";
+                (function(el) {
+                    el.onclick = function(e) {
+                        e.stopPropagation();
+                        var raw = el.dataset.editVal != null ? el.dataset.editVal : el.textContent;
+                        window.copyWithFeedback(raw, el);
+                    };
+                })(valEl);
             } else {
-                valEl.title = _isPointer(value) ? "Pointer \u2014 click to edit" : "Click to edit";
+                valEl.title = _isPointer(shown) ? "Pointer \u2014 click to edit" : "Click to edit";
                 valEl.style.cursor = "pointer";
                 (function(el, p) {
                     el.onclick = function(e) { e.stopPropagation(); _makeValueEditable(el, p); };
@@ -4404,7 +4831,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             // offer the SAME multi-line JSON editor as containers so a list / matrix /
             // object can be entered comfortably, not just squeezed into the one-line
             // box. (The one-line editor still works for a scalar.)
-            if (value === null && valueClick === "edit") {
+            if (shown === null && valueClick === "edit" && !isAbsent) {
                 var nullJsonBtn = document.createElement("button");
                 nullJsonBtn.type = "button";
                 nullJsonBtn.className = "tree-json-edit-btn";
@@ -4416,11 +4843,21 @@ window.clearDetailPanelSearch = function(btnEl) {
                 row.appendChild(nullJsonBtn);
             }
 
-            if (hasDiff && refValue !== undefined && !_deepEqual(value, refValue)) {
+            if (onlyRef || onlyPrimary) {
+                // A key only ONE side has. The tree used to render nothing for
+                // these — it iterated the primary document's keys only — which
+                // is precisely what an IDE diff must show.
+                var tag = document.createElement("span");
+                tag.className = "tree-sidetag " +
+                    (onlyRef ? "tree-tag-added" : "tree-tag-removed");
+                tag.textContent = onlyRef ? "added" : "removed";
+                row.appendChild(tag);
+            } else if (hasDiff && refValue !== undefined && !_deepEqual(value, refValue)) {
                 // "livediff" is the workbench's before→after mode: value = the SM
                 // working copy (before), refValue = Qualibrate's live value (after).
                 var liveDiff = (valueClick === "livediff");
-                if (liveDiff) {
+                var cmpDiff = (valueClick === "diff");
+                if (liveDiff || cmpDiff) {
                     row.classList.add("tree-row-incoming");
                     var arrow = document.createElement("span");
                     arrow.className = "tree-incoming-arrow";
@@ -4430,20 +4867,24 @@ window.clearDetailPanelSearch = function(btnEl) {
                     inEl.className = "tree-incoming-val tree-val-" + _typeOf(refValue) +
                         (_isPointer(refValue) ? " tree-val-pointer" : "");
                     inEl.textContent = _formatValue(refValue);
-                    inEl.title = "Qualibrate's live value";
+                    inEl.title = cmpDiff ? "the other side's value"
+                                         : "Qualibrate's live value";
                     row.appendChild(inEl);
                 }
-                if (typeof value === "number" && typeof refValue === "number") {
-                    // livediff reads "after - before" (Qualibrate's change); the
-                    // N-way compare keeps its original "primary - ref" orientation.
-                    var delta = liveDiff ? (refValue - value) : (value - refValue);
-                    var deltaEl = document.createElement("span");
-                    var cls = delta > 0 ? "delta-pos" : (delta < 0 ? "delta-neg" : "delta-zero");
-                    deltaEl.className = "tree-delta " + cls;
-                    var a2 = Math.abs(delta);
-                    var fmt = (a2 >= 1e6 || (a2 > 0 && a2 < 1e-3)) ? delta.toExponential(3) : delta.toFixed(6);
-                    deltaEl.textContent = " (" + (delta > 0 ? "+" : "") + fmt + ")";
-                    row.appendChild(deltaEl);
+                // ONE delta implementation (docs/76). This tree printed its own
+                // toFixed(6)/toExponential(3), so the same change read
+                // "(+0.000123)" here and "+100,000,000 (+1.96%)" in the Review
+                // tray. ValueDelta is the JS mirror of the server filter, so
+                // every surface now agrees character for character.
+                // Both modes read the same way now: the primary document is
+                // the BEFORE side, the ref document the AFTER side.
+                var oldV = value, newV = refValue;
+                var chipHtml = window.ValueDelta
+                    ? window.ValueDelta.chipHtml(oldV, newV, "tree-delta") : "";
+                if (chipHtml) {
+                    var holder = document.createElement("span");
+                    holder.innerHTML = chipHtml;
+                    while (holder.firstChild) row.appendChild(holder.firstChild);
                 }
                 if (liveDiff) {
                     var acc = document.createElement("button");
@@ -4484,21 +4925,30 @@ window.clearDetailPanelSearch = function(btnEl) {
         var children = nodeEl.querySelector(":scope > .tree-children");
         if (!children) return;
 
+        // An absent container renders from the OTHER side, so a whole removed
+        // subtree can still be expanded and read.
+        var src = (d.value === _ABSENT) ? d.refValue : d.value;
         if (d.type === "object") {
-            var keys = Object.keys(d.value);
+            var keys = _unionKeys(src, (d.value === _ABSENT) ? undefined : d.refValue,
+                                  d.union, d.hasDiff);
             for (var i = 0; i < keys.length; i++) {
                 var childPath = d.path ? d.path + "." + keys[i] : keys[i];
                 var childRef = (d.hasDiff && d.refValue && typeof d.refValue === "object" && !Array.isArray(d.refValue))
                     ? d.refValue[keys[i]] : undefined;
-                children.appendChild(_buildNode(keys[i], d.value[keys[i]], childPath, d.depth + 1, childRef, d.hasDiff, d.valueClick));
+                var childVal = (d.value === _ABSENT) ? _ABSENT
+                    : (Object.prototype.hasOwnProperty.call(src, keys[i]) ? src[keys[i]] : _ABSENT);
+                children.appendChild(_buildNode(keys[i], childVal, childPath, d.depth + 1,
+                                                childRef, d.hasDiff, d.valueClick, d.union));
             }
         } else {
-            for (var j = 0; j < d.value.length; j++) {
+            for (var j = 0; j < src.length; j++) {
                 // Canonical dot-form numeric segment (a.b.3) — matches the server
                 // path grammar so element edits POST directly to /field/edit.
                 var itemPath = d.path + "." + j;
                 var itemRef = (d.hasDiff && Array.isArray(d.refValue)) ? d.refValue[j] : undefined;
-                children.appendChild(_buildNode(String(j), d.value[j], itemPath, d.depth + 1, itemRef, d.hasDiff, d.valueClick));
+                var itemVal = (d.value === _ABSENT) ? _ABSENT : src[j];
+                children.appendChild(_buildNode(String(j), itemVal, itemPath, d.depth + 1,
+                                                itemRef, d.hasDiff, d.valueClick, d.union));
             }
         }
 
@@ -5551,18 +6001,25 @@ window.clearDetailPanelSearch = function(btnEl) {
         var refData = options.refData || null;
         var defaultDepth = options.defaultDepth !== undefined ? options.defaultDepth : 1;
         var hasDiff = !!refData;
+        // Compare BOTH sides' key sets, so keys only one side has still render
+        // (docs/84). Opt-in: the live-diff overlay is a before→after of one
+        // document and keeps its exact behaviour.
+        var union = !!options.union;
         // "edit" (default) keeps the existing live-state behavior; "copy" makes
         // scalar values click-to-copy for read-only trees (dataset params/results).
         var valueClick = options.valueClick || "edit";
 
         if (typeof data === "object" && data !== null && !Array.isArray(data)) {
-            var keys = Object.keys(data);
+            var keys = _unionKeys(data, refData, union, hasDiff);
             for (var i = 0; i < keys.length; i++) {
                 var refVal = (hasDiff && refData && typeof refData === "object") ? refData[keys[i]] : undefined;
-                container.appendChild(_buildNode(keys[i], data[keys[i]], keys[i], 0, refVal, hasDiff, valueClick));
+                var own = Object.prototype.hasOwnProperty.call(data, keys[i]);
+                container.appendChild(_buildNode(
+                    keys[i], own ? data[keys[i]] : _ABSENT, keys[i], 0, refVal,
+                    hasDiff, valueClick, union));
             }
         } else {
-            container.appendChild(_buildNode(null, data, "", 0, refData, hasDiff, valueClick));
+            container.appendChild(_buildNode(null, data, "", 0, refData, hasDiff, valueClick, union));
         }
 
         // Stash the source object so search runs against data (not the DOM).
@@ -9202,6 +9659,9 @@ window.updateCompareButton = function() {
     bar.setAttribute('data-state', newState);
     var btn = document.getElementById('ds-compare-btn');
     if (btn) btn.disabled = (newState !== 'ready');
+    // Diff is a TWO-run question (docs/84); the N-run compare covers 3+.
+    var dbtn = document.getElementById('ds-diff-btn');
+    if (dbtn) dbtn.disabled = (count !== 2);
     var counter = document.getElementById('ds-compare-count');
     if (counter) counter.textContent = String(count);
 };
@@ -9229,6 +9689,20 @@ window.compareSelectedDatasets = function() {
     }
     htmx.ajax('GET', '/datasets/compare?ids=' + ids.join(','),
               {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'});
+};
+
+/* docs/84: exactly two runs is the case an IDE-style diff answers best —
+   what was ASKED differently (node.json), what the chip looked like, what
+   data came out. The N-run comparison above stays for 3+. */
+window.diffSelectedDatasets = function() {
+    var uids = _selectedRunIds();   // the virtual table's selection IS uids
+    if (uids.length !== 2) {
+        if (window.showToast) window.showToast('Pick exactly two runs to diff.', 'info');
+        return;
+    }
+    var url = '/diff/runs?uids=' + uids.map(encodeURIComponent).join(',');
+    if (window.htmx) { htmx.ajax('GET', url, {target: 'body', swap: 'none'}); }
+    else { window.location.href = url; }
 };
 
 /**

@@ -34,7 +34,7 @@ from collections import Counter, OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from flask import (
     Blueprint,
@@ -58,6 +58,7 @@ from quam_state_manager.core import (
     cr_semantics,
     diagnostics,
     gen_presets,
+    json_diff,
     node_scan,
     path_match,
     qualibrate_config,
@@ -620,60 +621,86 @@ def _build_quam_context(folder: Path):
     Rehydrating an existing working copy runs
     :func:`working_copy.reconcile_with_live` first, so a live folder whose
     files were *replaced* out-of-band (e.g. a different chip's state.json
-    dropped in) is detected by content hash: a clean working copy is
-    auto-refreshed from live; one holding (possible) edits is served as-is
-    with ``live_diverged=True`` so the UI can prompt for a sync instead of
-    silently showing the old chip (the pre-fix behavior — the working copy
-    was rehydrated on nothing but file existence, surviving even restarts).
+    dropped in) is detected by content hash — instead of silently showing the
+    old chip (the pre-fix behaviour: the working copy was rehydrated on nothing
+    but file existence, surviving even restarts).
+
+    docs/87: this USER-FACING path never auto-adopts (``sync_if_clean=False``).
+    A clean working copy used to be pulled over silently, which meant the one
+    person most likely to be hurt by a mis-run — someone who had edited nothing
+    in SM, so SM held the good state — had it replaced without being asked. The
+    stale-chip bug was the SILENCE, not the absence of automation, so a banner
+    that offers the pull (and the other direction) closes it just as well. The
+    machine callers of :func:`_reconcile_cached_quam_ctx` still adopt; see
+    there.
     """
     instance = current_app.instance_path
     live_diverged = False
-    auto_synced = False
-    pulled_count = None
-    pre = None
+    drift_count = None
     wc = working_copy.load(instance, folder)
     if wc is None:
         wc = working_copy.create(instance, folder)
     else:
-        # Snapshot the pre-pull working content so a clean auto-pull can report HOW
-        # MANY params it pulled — the pull used to be SILENT (feedback #5: a user's
-        # IDE pulse edit was adopted on reload with zero UI signal, so they thought
-        # it was "not synced"). Best-effort; the diff is skipped if this read fails.
-        try:
-            pre = safe_io.read_state_wiring(wc.working_folder)
-        except Exception:  # noqa: BLE001
-            pre = None
-        result = working_copy.reconcile_with_live(wc, sync_if_clean=True)
+        seen: dict = {}
+        result = working_copy.reconcile_with_live(
+            wc, sync_if_clean=False, out=seen)
         live_diverged = result == working_copy.RECONCILE_STALE
-        auto_synced = result == working_copy.RECONCILE_SYNCED
+        drift_count = _drift_count(seen)
     store = QuamStore(wc.working_folder)
     index = SearchIndex.build(store.merged, wiring_keys=set(store.wiring.keys()))
     store.search_index = index
-    if auto_synced and pre is not None:
-        try:
-            pulled_count = len(Differ().diff(pre, (store.state, store.wiring)))
-        except Exception:  # noqa: BLE001
-            pulled_count = None
     # Recover the "working copy holds edits not yet on live" state across a
     # restart / LRU re-load: the change-log + in-memory working_dirty flag
     # are process-local, but the working FILES persist. If they no longer
     # match the recorded sync point, the copy carries saved-but-unapplied
     # edits — surface that instead of silently hiding them (a clean apply
-    # leaves working == synced, so this never false-positives). Skipped when
-    # the reconcile already adopted/pulled (working == live by then).
+    # leaves working == synced, so this never false-positives). docs/87: this
+    # path no longer adopts, so the old "skip when auto-synced" guard is gone
+    # with it (working == live is then simply not dirty).
     working_dirty = False
-    if not auto_synced and wc.synced_live_hash is not None:
+    if wc.synced_live_hash is not None:
         try:
             working_dirty = (
                 working_copy.content_hash(store.state, store.wiring)
                 != wc.synced_live_hash)
         except Exception:
             working_dirty = False
-    return wc, store, index, live_diverged, auto_synced, working_dirty, pulled_count
+    return wc, store, index, live_diverged, working_dirty, drift_count
 
 
-def _reconcile_cached_quam_ctx(key: str, ctx: dict) -> None:
+def _drift_count(seen: dict) -> int | None:
+    """How many values differ, from the contents the reconcile already read.
+
+    ``None`` when it could not be computed — the banner then says that the
+    live chip changed without inventing a number. Free by construction: the
+    reconcile had to read both sides to reach its verdict, so this never adds
+    a live-file read to a surface that renders on every page (docs/28).
+    """
+    live, work = seen.get("live"), seen.get("working")
+    if not live or not work:
+        return None
+    try:
+        return len(Differ().diff(work, live))
+    except Exception:       # noqa: BLE001 — a count is never worth an error page
+        logger.debug("drift count failed", exc_info=True)
+        return None
+
+
+def _reconcile_cached_quam_ctx(key: str, ctx: dict, *,
+                               auto_adopt: bool = True) -> None:
     """Refresh an in-memory cached QUAM context whose live mtimes moved.
+
+    *auto_adopt* is the docs/87 split, and it is a split between ACTORS, not
+    two UX behaviours:
+
+    - ``False`` — the user just opened or switched to this chip. Never swap
+      what they are looking at underneath them: keep the working copy, set
+      ``live_diverged``, and let the banner offer pull / overwrite / review.
+    - ``True`` — a machine mid-loop called us: the scheduler worker's
+      post-node hook, or the autofit engine's reconcile. Those must stay in
+      sync to keep WORKING: autofit's gates judge a fit against the
+      **pre-update anchor** (docs/47), so a stale store makes the verdict
+      itself wrong. A robot mid-loop does not stop to ask.
 
     Unlike the slow path, the cached context may hold state that exists
     NOWHERE on disk — unsaved change-log edits, the ``working_dirty`` flag,
@@ -695,10 +722,11 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict) -> None:
                             or bool(ctx.get("pending_reapply")))
             # Snapshot the pre-pull content (clean ctx only) so a clean auto-pull can
             # report HOW MANY params it pulled (feedback #5 — surface the silent pull).
-            pre_pull = (None if in_mem_dirty
+            pre_pull = (None if (in_mem_dirty or not auto_adopt)
                         else (copy.deepcopy(store.state), copy.deepcopy(store.wiring)))
+        seen: dict = {}
         result = working_copy.reconcile_with_live(
-            wc, sync_if_clean=not in_mem_dirty)
+            wc, sync_if_clean=auto_adopt and not in_mem_dirty, out=seen)
         if result == working_copy.RECONCILE_SYNCED:
             # Mirror the rebuild steps of /state/sync: the working folder
             # now holds the new live content; refresh every derived object.
@@ -758,6 +786,21 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict) -> None:
             pidx = ctx.get("pulse_index")
             if pidx is not None:
                 pidx.invalidate()
+            # docs/78: SM just adopted content an experiment / qualibrate wrote.
+            # That is exactly the moment a string-ified or schema-drifted value
+            # arrives, so let the next render raise the type popup once.
+            _arm_type_alarm(ctx, "node-finished")
+            # docs/94: adopted content can also carry NEW __class__ values (an
+            # out-of-band class migration) — re-attach the policy and re-probe
+            # so validation never judges new content by the old manifest.
+            try:
+                _inst = current_app.instance_path
+                _attach_type_policy(ctx, _inst)
+                _warm_state_schema_async(store, _inst,
+                                         live_folder=ctx.get("path"))
+            except Exception:  # noqa: BLE001 — healing must never break adopt
+                logger.warning("post-adopt schema re-attach failed",
+                               exc_info=True)
             # The live chip visibly changed and we adopted it — record a
             # Param History snapshot like the explicit /state/sync does.
             try:
@@ -776,6 +819,10 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict) -> None:
             # in_sync / stale are definitive verdicts; a transiently
             # unreadable live folder keeps whatever we knew before.
             ctx["live_diverged"] = result == working_copy.RECONCILE_STALE
+            if result == working_copy.RECONCILE_STALE:
+                ctx["live_drift_count"] = _drift_count(seen)
+            else:
+                ctx.pop("live_drift_count", None)
 
 
 def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
@@ -860,7 +907,9 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         except OSError:
             mtime_stale = False   # unreadable live is never treated as replaced
         if mtime_stale:
-            _reconcile_cached_quam_ctx(key, cached)
+            # docs/87 — the user is opening/switching a chip. Never swap what
+            # they are about to look at; surface it and let them choose.
+            _reconcile_cached_quam_ctx(key, cached, auto_adopt=False)
         # Publish under the cache lock, RE-VALIDATING the entry: the stat /
         # reconcile above ran outside the lock, during which the key may
         # have been LRU-evicted and rebuilt by a sibling thread — two
@@ -896,6 +945,8 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         _maybe_chip_name_prompt(current)
         _adopt_extras_data_folders(current)
         _maybe_data_folder_suggest(current)
+        _arm_type_alarm(current, "chip-open")   # docs/78
+        _publish_instance_chip(current)         # docs/80
         with _quam_cache_lock:
             current_app.config["contexts"][ctx_name] = current
             current_app.config["active_context"] = ctx_name
@@ -913,17 +964,8 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         if cached is not None:
             ctx = cached
         else:
-            wc, store, index, live_diverged, auto_synced, working_dirty, pulled_count = \
+            wc, store, index, live_diverged, working_dirty, drift_count = \
                 _build_quam_context(folder)
-            if auto_synced:
-                # The live chip was replaced and we adopted it — record a
-                # Param History snapshot like the explicit /state/sync does.
-                try:
-                    _history().check_and_snapshot(str(folder), "auto",
-                                                project=_scope_for(folder))
-                except Exception:
-                    logger.warning("History snapshot after auto-sync failed",
-                                   exc_info=True)
             ctx = {
                 "type": "quam",
                 "path": str(folder),        # the LIVE folder (resolved) — context identity
@@ -935,7 +977,8 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
                 # (see _build_quam_context). False on a fresh seed / clean copy.
                 "working_dirty": working_dirty,
                 "pending_reapply": None,    # user edits stashed for re-apply after a pull
-                "live_diverged": live_diverged,  # live replaced under a dirty working copy
+                "live_diverged": live_diverged,  # live replaced out-of-band — ask, never adopt
+                "live_drift_count": drift_count,  # how many values differ (docs/87; may be None)
                 "store": store,             # store reads/saves the working copy
                 "engine": QueryEngine(store),
                 "index": index,
@@ -943,11 +986,10 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
                 "saver": Saver(store),
                 "wiring_json": json.dumps(store.wiring),  # cached — immutable after load
             }
-            if auto_synced:
-                # One-shot: the next /state/drift poll surfaces this then pops it, so
-                # the silent clean auto-pull becomes a visible "Live chip updated —
-                # N params pulled" notice (feedback #5 — the root of "pulse edits not synced").
-                ctx["_auto_pulled"] = {"count": pulled_count or 0}
+            # (docs/87) The "✓ Live chip updated — N params pulled" one-shot that
+            # used to be stashed here is gone with the silent pull it announced.
+            # A toast that reports a fait accompli is strictly worse than the
+            # banner that now asks first — and the banner carries the same count.
         # Project lens (docs/63): fresh builds (first load, LRU-eviction
         # rehydrates, restarts) derive their scope here — BEFORE publication
         # (a concurrent /datasets render must never observe an active scoped
@@ -958,6 +1000,8 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         _maybe_chip_name_prompt(ctx)
         _adopt_extras_data_folders(ctx)
         _maybe_data_folder_suggest(ctx)
+        _arm_type_alarm(ctx, "chip-open")   # docs/78
+        _publish_instance_chip(ctx)         # docs/80
         with _quam_cache_lock:
             if key not in _quam_cache:
                 # Evict the oldest CLEAN in-memory entry if the cache is full.
@@ -1013,7 +1057,31 @@ def _attach_type_policy(ctx, inst=None) -> None:
             prev = getattr(store, "type_policy", None)
             if (prev is not None and prev.manifest is not None
                     and getattr(store, "_type_manifest_env", None) == python_path):
-                manifest = prev.manifest
+                # Carry the PRISTINE env manifest, never the verdict-overlaid
+                # one — re-attaching would otherwise overlay an overlay and
+                # bake a revoked verdict in (docs/79).
+                carried = getattr(prev, "env_manifest", None) or prev.manifest
+                # docs/94 carry GATE: carry only while the previous manifest
+                # still COVERS the chip's current class inventory. An
+                # out-of-band class migration (a lab script swapping pulse
+                # classes mid-session) grows the inventory; carrying then
+                # guarantees "harvest drift" errors against a manifest KNOWN
+                # to be stale — the false positive a user reported as 10×
+                # error on a perfectly healthy chip. Not covered → abstain
+                # (diagnostics show "Probe now") and kick the warm re-probe,
+                # which heals in seconds.
+                try:
+                    with store._lock:
+                        inv = set(state_env_schema.harvest_classes(store.state))
+                except Exception:  # noqa: BLE001
+                    inv = None
+                if inv is not None and inv <= set(carried.get("classes") or {}):
+                    manifest = carried
+                else:
+                    try:
+                        _warm_state_schema_async(store, inst, live_folder=live)
+                    except Exception:  # noqa: BLE001
+                        pass
         store.type_policy = type_policy.load_policy(inst, live, manifest)
         store._type_manifest_env = python_path if manifest is not None else None
         if manifest is not None and manifest.get("pulse_roster"):
@@ -1140,6 +1208,20 @@ def _rebuild_after_working_copy_replaced(ctx: dict) -> None:
     # consumed it; a fresh stage re-sets the flag right after this call).
     ctx["staged_base"] = False
     _reseed_drift_baseline_if_chip_changed(ctx)
+    # docs/78: content the user did not type just landed — let the next render
+    # raise the type-anomaly popup once (pull / stage / restore / run load).
+    _arm_type_alarm(ctx, ctx.pop("_alarm_reason", None) or "live-pull")
+    # docs/94: the same content-entry moment must also re-attach the type
+    # policy and re-probe the env schema — a migration script can have CHANGED
+    # the chip's class inventory out-of-band, and the store's old policy would
+    # otherwise keep validating the new content against the old manifest
+    # ("harvest drift" errors on a healthy chip) until the next activation.
+    try:
+        inst = current_app.instance_path
+        _attach_type_policy(ctx, inst)
+        _warm_state_schema_async(store, inst, live_folder=ctx.get("path"))
+    except Exception:  # noqa: BLE001 — healing must never break the rebuild
+        logger.warning("post-rebuild schema re-attach failed", exc_info=True)
 
 
 def _reseed_drift_baseline_if_chip_changed(ctx: dict) -> None:
@@ -1281,6 +1363,9 @@ def _active_chip_identity() -> dict | None:
         "change_count": len(store.change_log) if store else 0,
         "working_dirty": bool(ctx.get("working_dirty")),
         "live_diverged": bool(ctx.get("live_diverged")),
+        # docs/87 — how many values differ, computed for free by the reconcile
+        # that raised the flag. None when it could not be determined.
+        "live_drift_count": ctx.get("live_drift_count"),
     }
 
 
@@ -1803,8 +1888,17 @@ def _chip_prompt_memo_file() -> Path:
 
 
 def _load_chip_prompt_memo() -> dict:
+    # ONE attempt, and only when the file is there. This is read from _ctx()
+    # — i.e. on EVERY page render — and until a user has declined a prompt the
+    # file does not exist. safe_io.read_json's 4-attempt/0.9 s retry ladder is
+    # right for a live state.json being replaced under us and pure latency
+    # here: measured 906 ms of time.sleep on every single render of a fresh
+    # instance.
+    path = _chip_prompt_memo_file()
     try:
-        data = safe_io.read_json(_chip_prompt_memo_file())
+        if not path.exists():
+            return {}
+        data = safe_io.read_json(path, attempts=1)
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
@@ -2014,58 +2108,260 @@ def chip_name_decline():
     return ""
 
 
+def _type_alarm_memo(ctx: dict) -> dict:
+    """The per-store anomaly scan, memoized on ``mutation_seq``.
+
+    ONE whole-state walk per content change, shared by the banner, the
+    self-appearing alert and the diagnostics types card. Holds both classes:
+    ``paths`` (stored-as-text — SM can repair these) and ``env`` (the chip
+    disagrees with the selected environment's schema — the user decides).
+    """
+    store = ctx["store"]
+    seq = getattr(store, "mutation_seq", None)
+    memo = ctx.get("_type_alarm_memo")
+    if isinstance(memo, dict) and memo.get("seq") == seq:
+        return memo
+    from quam_state_manager.core import diagnostics as _diag
+    from quam_state_manager.core import type_fix as _tf
+    with store._lock:
+        state = store.state
+    paths = _diag.numeric_string_leaves(state)
+    env_findings: list = []
+    try:
+        from quam_state_manager.core import state_env_validate as _sev
+        # The WARM manifest already attached to the store (cached_only at
+        # activation) — the request path never spawns a probe. Cold env → [].
+        policy = getattr(store, "type_policy", None)
+        manifest = policy.manifest if policy is not None else None
+        if manifest:
+            env_findings = list(
+                _sev.analysis_for_store(store, manifest).get("findings") or [])
+    except Exception:  # noqa: BLE001 — a cold/broken env must not break the scan
+        logger.debug("env-schema scan for the type alarm failed", exc_info=True)
+    memo = {"seq": seq, "paths": paths, "sig": _tf.strnum_signature(paths),
+            "env_findings": env_findings,
+            "env_sig": _tf.env_signature(env_findings)}
+    ctx["_type_alarm_memo"] = memo
+    return memo
+
+
+def _alarm_plan(ctx: dict, memo: dict) -> dict | None:
+    """The repair plan for the memoized anomaly set, cached alongside it.
+
+    ``_type_alarm_payload`` runs in every ``_ctx()``, i.e. on every render, so
+    the plan must be built once per content change — not once per page.
+    """
+    if not memo["paths"]:
+        return None
+    if "plan" not in memo:
+        from quam_state_manager.core import type_fix as _tf
+        memo["plan"] = _tf.build_plan(ctx["store"], paths=memo["paths"])
+    return memo["plan"]
+
+
 def _type_alarm_payload(ctx: dict | None) -> dict | None:
-    """r14 ⑨: the ACTIVE stored-as-text alarm payload, else None.
+    """The ACTIVE type-anomaly payload (both classes), else None.
 
     Numeric-looking string leaves ("0.13") usually mean an external state
-    regeneration string-ified values wholesale; SM used to detect this only as
-    a passive Explorer row mark the user had to find. Memoized on the store's
-    ``mutation_seq`` (one whole-state walk per content change — external pulls
-    and syncs rebuild the store, so they re-scan automatically) and
-    delta-gated against the per-chip dismissed signature (dismiss silences
-    THIS set; any new anomaly re-raises the banner)."""
+    regeneration string-ified values wholesale; env-schema mismatches usually
+    mean the environment's quam moved under the chip. SM used to surface the
+    first as a passive Explorer mark (r14) and the second only as a row in the
+    diagnostics list. Both are delta-gated against the per-chip dismissed
+    signatures — dismissing silences THOSE sets, and any new anomaly re-raises.
+
+    ``editable`` is False on an archive: a read-only context is told what is
+    wrong but never offered the repair.
+    """
     if not ctx:
         return None
     store = ctx.get("store")
     if store is None:
         return None
     try:
-        seq = getattr(store, "mutation_seq", None)
-        memo = ctx.get("_type_alarm_memo")
-        if not isinstance(memo, dict) or memo.get("seq") != seq:
-            from quam_state_manager.core import diagnostics as _diag
-            with store._lock:
-                state = store.state
-            paths = _diag.numeric_string_leaves(state)
-            sig = (hashlib.sha1("\n".join(sorted(paths)).encode("utf-8"))
-                   .hexdigest()[:16] if paths else "")
-            memo = {"seq": seq, "paths": paths, "sig": sig}
-            ctx["_type_alarm_memo"] = memo
-        if not memo["paths"]:
+        from quam_state_manager.core import type_fix as _tf
+        memo = _type_alarm_memo(ctx)
+        if not memo["paths"] and not memo["env_findings"]:
             return None
         token = _active_chip_token() or ("path:" + str(ctx.get("path") or ""))
         dismissed = _load_chip_prompt_memo().get(f"{token}::typealarm") or {}
-        if dismissed.get("sig") == memo["sig"]:
+        # Each class is gated on its OWN signature: dismissing the text
+        # anomalies must never also silence an env mismatch (and a legacy
+        # record, which carries no env_sig, reads as "env not yet dismissed").
+        strnum_live = bool(memo["paths"]) and dismissed.get("sig") != memo["sig"]
+        env_live = (bool(memo["env_findings"])
+                    and (dismissed.get("env_sig") or "") != memo["env_sig"])
+        if not strnum_live and not env_live:
             return None
-        return {"count": len(memo["paths"]), "first": memo["paths"][0],
-                "paths": memo["paths"][:6], "sig": memo["sig"],
-                "token": token}
+        editable = (ctx.get("origin") or "live") == "live"
+        summary = _tf.alert_summary(_alarm_plan(ctx, memo) if editable else None,
+                                    memo["env_findings"], memo["paths"])
+        summary.update({
+            "token": token,
+            "editable": editable,
+            "sig": memo["sig"],
+            "env_sig": memo["env_sig"],
+            "strnum_live": strnum_live,
+            "env_live": env_live,
+            # legacy top-level keys — the r14 banner reads these
+            "count": len(memo["paths"]),
+            "first": memo["paths"][0] if memo["paths"] else "",
+            "paths": memo["paths"][:6],
+        })
+        return summary
     except Exception:  # noqa: BLE001 — an alarm bug must never break rendering
         logger.debug("type-alarm computation failed", exc_info=True)
         return None
 
 
+_ALARM_REASONS = {
+    "chip-open": "this chip was opened",
+    "live-pull": "the live state was pulled in",
+    "snapshot-stage": "a snapshot was staged into the working copy",
+    "restore-live": "a snapshot was restored to the live chip",
+    "run-state-load": "a run's state was loaded",
+    "node-finished": "SM picked up an external write to the live chip",
+}
+
+
+def _publish_instance_chip(ctx: dict | None) -> None:
+    """Tell the instance registry which chip this window now holds (docs/80).
+
+    Called from the same two activation branches the type alarm arms from —
+    every path that opens or switches a chip converges there, so the registry
+    cannot drift out of date without the chip itself having changed.
+
+    Registry writes are best-effort inside ``core.instances``; the extra guard
+    here is for the identity lookup, which touches the store.
+    """
+    if not ctx or ctx.get("type") != "quam":
+        return
+    try:
+        identity = _active_chip_identity() or {}
+    except Exception:       # noqa: BLE001 — a name lookup must not fail a load
+        identity = {}
+    try:
+        from quam_state_manager.core import instances
+        instances.update(
+            current_app.instance_path,
+            chip_path=str(ctx.get("path") or ""),
+            chip_name=str(identity.get("name") or ""),
+            project=str(ctx.get("qualibrate_project") or ""),
+        )
+    except Exception:       # noqa: BLE001
+        logger.debug("instance registry: chip publish failed", exc_info=True)
+
+
+def _arm_type_alarm(ctx: dict | None, reason: str) -> None:
+    """Mark that NEW CONTENT entered this chip's working copy.
+
+    The popup is never fired from here — this only makes the next render
+    ELIGIBLE to raise it once (``GET /type-alert`` consumes the flag). That
+    separation is what keeps ordinary editing, rendering and polling silent:
+    they never arm, so they can never prompt.
+    """
+    if not ctx or ctx.get("type") != "quam":
+        return
+    if (ctx.get("origin") or "live") != "live":
+        return          # archive: reported on Diagnostics, never prompted
+    ctx["type_alarm_armed"] = {
+        "reason": reason if reason in _ALARM_REASONS else "chip-open",
+        "at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+@bp.route("/type-alert")
+def type_alert():
+    """The self-appearing type-anomaly popup — ONE-SHOT per content-entry event.
+
+    204 unless new content just entered the working copy AND the anomaly set is
+    one the user has not already answered. Reads in-memory state only (never a
+    live file), so it costs a dict lookup once the mutation_seq memo is warm.
+    """
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam" or ctx.get("store") is None:
+        return "", 204
+    if (ctx.get("origin") or "live") != "live":
+        return "", 204
+    armed = ctx.get("type_alarm_armed")
+    if not armed:
+        return "", 204                     # an ordinary edit/render never arms
+    payload = _type_alarm_payload(ctx)
+    if not payload:
+        ctx.pop("type_alarm_armed", None)
+        return "", 204
+    seen = ctx.get("_type_alarm_shown")
+    shown_key = (payload["sig"], payload["env_sig"])
+    if seen == shown_key:
+        ctx.pop("type_alarm_armed", None)  # same set, same session — no re-nag
+        return "", 204
+    ctx.pop("type_alarm_armed", None)
+    ctx["_type_alarm_shown"] = shown_key
+    from quam_state_manager.core import type_fix as _tf
+    memo = _type_alarm_memo(ctx)
+    plan = _alarm_plan(ctx, memo) or _tf.build_plan(ctx["store"], paths=[])
+    payload = dict(payload)
+    payload["reason"] = armed.get("reason") or "chip-open"
+    payload["reason_label"] = _ALARM_REASONS.get(payload["reason"], "")
+    return render_template("_type_fix_plan.html", plan=plan, alert=payload)
+
+
+def _instance_peers_for_active() -> list:
+    """Live sibling windows holding the SAME chip as this one (docs/80).
+
+    Returns the peers themselves so the template can name each by port. Empty
+    whenever nothing is loaded, nothing else is running, or the other windows
+    hold different chips — which is the normal multi-project case and gets no
+    banner at all.
+    """
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam":
+        return []
+    try:
+        from quam_state_manager.core import instances
+        return instances.conflicts(current_app.instance_path,
+                                   chip_path=ctx.get("path"))["same_chip"]
+    except Exception:       # noqa: BLE001 — a warning must not break a render
+        logger.debug("instance conflict probe failed", exc_info=True)
+        return []
+
+
+@bp.route("/instances/banner")
+def instances_banner():
+    """Re-render the sibling-window slot.
+
+    Refreshed from events the app already fires — no new poller — so the strip
+    disappears on its own once the other window closes and something on this
+    one moves.
+    """
+    return render_template("_multi_instance_banner.html",
+                           instance_peers=_instance_peers_for_active(),
+                           active_name=(_active_chip_identity() or {}).get("name"))
+
+
+@bp.route("/type-alarm/banner")
+def type_alarm_banner():
+    """Re-render the alarm slot so its count can never outlive the anomaly set
+    it describes (a repair used to leave the old number on screen until the
+    next full page load)."""
+    return render_template("_type_alarm_banner.html",
+                           type_alarm=_type_alarm_payload(_active_ctx()))
+
+
 @bp.route("/type-alarm/dismiss", methods=["POST"])
 def type_alarm_dismiss():
-    """Memo the CURRENT anomaly signature as seen (per chip token) — the
-    banner stays gone for this exact set and re-raises on any new anomaly."""
+    """Memo the CURRENT anomaly signatures as answered (per chip token) — the
+    banner and the popup stay gone for these exact sets and re-raise on any new
+    anomaly. The two classes are memoed independently."""
     sig = (request.form.get("sig") or "").strip()
+    env_sig = (request.form.get("env_sig") or "").strip()
     token = (request.form.get("token") or "").strip()
-    if sig and token:
+    if token and (sig or env_sig):
         with _chip_prompt_memo_lock:
             data = _load_chip_prompt_memo()
+            prev = data.get(f"{token}::typealarm") or {}
             data[f"{token}::typealarm"] = {
-                "sig": sig,
+                "sig": sig or prev.get("sig") or "",
+                "env_sig": env_sig or prev.get("env_sig") or "",
                 "dismissed_at": datetime.now().isoformat(timespec="seconds"),
             }
             try:
@@ -2090,6 +2386,9 @@ def type_fix_plan():
     if store is None:
         return render_template("_status.html", message="No state loaded",
                                level="warning")
+    blocked = _archive_write_blocked(ctx)
+    if blocked is not None:
+        return blocked      # a read-only archive is told, never offered a repair
     from quam_state_manager.core import type_fix as _tf
     plan = _tf.build_plan(store)
     return render_template("_type_fix_plan.html", plan=plan)
@@ -2110,6 +2409,14 @@ def type_fix_apply():
     modifier = (ctx or {}).get("modifier")
     if store is None or modifier is None:
         return jsonify(ok=False, error="No state loaded"), 400
+    if (ctx.get("origin") or "live") != "live":
+        # A dataset run archive is a frozen record: staging edits into its
+        # working copy would only fail later at apply, after the user thought
+        # the repair landed.
+        return jsonify(
+            ok=False, error_kind="archive_read_only",
+            error=("This chip was opened from a dataset run archive "
+                   "(read-only). Load it from its live folder to repair.")), 409
 
     payload = request.get_json(silent=True) or {}
     want = [str(p) for p in (payload.get("paths") or [])]
@@ -2387,6 +2694,7 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # None ⇒ every consumer renders exactly the pre-lens behavior.
         "project_scope": (_active_ctx() or {}).get("qualibrate_project"),
         "live_diverged": bool(_ctx_obj("live_diverged")),
+        "live_drift_count": (_active_ctx() or {}).get("live_drift_count"),
         # docs/20 v2: first-open "name this chip?" banner payload (None when
         # named / declined / archive / no chip) + declared-but-unreachable
         # extras.data_folder values (muted note, never an error).
@@ -3495,10 +3803,12 @@ def qubits():
     per_page = _int_arg("per_page", _DEFAULT_PER_PAGE, minimum=1)
 
     all_qubits = engine.list_qubits()
+    # chains from the UNFILTERED list — computing it after the filter left only
+    # the selected chain's button rendered (docs/93 §1.1; /table at ~7022 has
+    # always used this order).
+    chains = sorted({q["id"][1] for q in all_qubits if len(q.get("id", "")) >= 2 and q["id"][0] == "q" and q["id"][1].isalpha()})
     if chain_filter:
         all_qubits = [q for q in all_qubits if q.get("id", "").startswith(f"q{chain_filter}")]
-
-    chains = sorted({q["id"][1] for q in all_qubits if len(q.get("id", "")) >= 2 and q["id"][0] == "q" and q["id"][1].isalpha()})
 
     page_qubits, total, page, total_pages = _paginate(all_qubits, page, per_page)
 
@@ -3542,10 +3852,11 @@ def _channel_scoped_qubits_page(*, has_key: str, page_name: str,
     per_page = _int_arg("per_page", _DEFAULT_PER_PAGE, minimum=1)
 
     all_qubits = engine.list_qubits()
+    # chains BEFORE the filter — same docs/93 §1.1 fix as qubits() (this helper
+    # serves /resonators; /flux no longer renders the tabs but keeps the param).
+    chains = sorted({q["id"][1] for q in all_qubits if len(q.get("id", "")) >= 2 and q["id"][0] == "q" and q["id"][1].isalpha()})
     if chain_filter:
         all_qubits = [q for q in all_qubits if q.get("id", "").startswith(f"q{chain_filter}")]
-
-    chains = sorted({q["id"][1] for q in all_qubits if len(q.get("id", "")) >= 2 and q["id"][0] == "q" and q["id"][1].isalpha()})
 
     scoped_qubits = [q for q in all_qubits if q.get(has_key)]
     page_qubits, total, page, total_pages = _paginate(scoped_qubits, page, per_page)
@@ -4028,6 +4339,7 @@ def _diverged_oob() -> str:
         + render_template(
             "_live_diverged_banner.html",
             live_diverged=bool(ident and ident["live_diverged"]),
+            live_drift_count=(ident or {}).get("live_drift_count"),
             active_name=ident["name"] if ident else None,
         )
         + "</div>"
@@ -4491,13 +4803,27 @@ def _kind_of(v: Any) -> str:
 def _type_fix_offer(store, target_path: str, raw_value: str) -> dict | None:
     """The r14 stored-as-text repair offer, else None (edit proceeds normally).
 
-    Fires only when EVERY leg holds: the current value is a string that reads
-    like a number; the typed input is an UNQUOTED number (explicit quotes mean
-    "I want text" — no gate); and no enforced expectation covers the path (an
-    env schema / user assignment already repairs the type on plain edits).
+    Fires only when EVERY leg holds: the target is NOT inside an ``extras``
+    block; the current value is a string that reads like a number; the typed
+    input is an UNQUOTED number (explicit quotes mean "I want text" — no
+    gate); and no enforced expectation covers the path (an env schema / user
+    assignment already repairs the type on plain edits).
+
+    The ``extras`` leg is what keeps this offer from blocking ordinary
+    editing. ``extras`` is user-declared free form with no schema, so a
+    numeric-looking string there is a LABEL, not a number that got
+    string-ified — and a lab that stores ``extras.cz_branch = "02"`` could not
+    change it to ``"03"`` at all without knowing the undocumented quoting
+    escape hatch, because every attempt came back as a 409 offering to convert
+    the label into a number. Shares one definition with the detector so the
+    warning and the repair cannot disagree about what counts as text.
+
     Read-only; never raises."""
     try:
         from quam_state_manager.core import type_policy as _tp
+        from quam_state_manager.core.edit_policy import is_free_form_path
+        if is_free_form_path(target_path):
+            return None
         raw = (raw_value or "").strip()
         if raw.startswith('"') or raw.startswith("'"):
             return None
@@ -4525,8 +4851,26 @@ def _type_fix_offer(store, target_path: str, raw_value: str) -> dict | None:
 
 def _parse_for_target(store, target_path: str, raw_value: str):
     """Parse typed text against the resolved target's ENFORCED expectation;
-    without one this is ``type_policy.parse_value`` byte-identical."""
+    without one this is ``type_policy.parse_value`` byte-identical.
+
+    One carve-out: a TEXT leaf inside ``extras`` keeps what the user typed,
+    verbatim. Everywhere else the legacy pipeline parses ``"03"`` to the
+    number 3 and the coercer casts it back to the field's original type,
+    which for a string field silently stores ``"3"`` — the leading zero gone.
+    For a schema-backed field that round trip is the point; for a lab's own
+    label (``extras.cz_branch``) it is data loss on an ordinary edit, and
+    leading zeros are exactly how labels are written. Free-form means the text
+    is the value.
+    """
     from quam_state_manager.core import type_policy as _tp
+    from quam_state_manager.core.edit_policy import is_free_form_path
+    if is_free_form_path(target_path):
+        try:
+            current = store.get_value(target_path)
+        except Exception:  # noqa: BLE001 — fall through to the normal path
+            current = None
+        if isinstance(current, str) and not is_pointer(current):
+            return raw_value
     policy = getattr(store, "type_policy", None)
     expected = None
     if policy is not None:
@@ -5334,6 +5678,204 @@ def field_type_assign():
     return jsonify(ok=True, assigned=record, expected=effective, warning=warning)
 
 
+def _env_manifest_and_versions(store) -> tuple[dict | None, dict]:
+    """The PRISTINE env manifest (never the verdict overlay) + its versions."""
+    policy = getattr(store, "type_policy", None)
+    manifest = getattr(policy, "env_manifest", None) or getattr(policy, "manifest", None)
+    return manifest, ((manifest or {}).get("versions") or {})
+
+
+@bp.route("/env-schema/changes")
+def env_schema_changes():
+    """What the ENVIRONMENT's schema changed since the last one SM recorded.
+
+    This is the half of the type story SM could not tell before: a type
+    mismatch may be the chip's fault OR the library's, and only a retained
+    baseline can distinguish them. With no prior baseline the answer is honest
+    ("this run recorded the first one"), never an invented diff.
+    """
+    from quam_state_manager.core import state_env_baseline as _seb
+    from quam_state_manager.core import type_verdicts as _tv
+    ctx = _active_ctx()
+    store = (ctx or {}).get("store")
+    if store is None:
+        return render_template("_status.html", message="No state loaded",
+                               level="warning")
+    manifest, _versions = _env_manifest_and_versions(store)
+    transition = _seb.env_transition(current_app.instance_path, manifest)
+    resolved = {}
+    if manifest:
+        resolved = _tv.resolve_for_manifest(current_app.instance_path, manifest)
+    return render_template("_env_schema_changes.html", transition=transition,
+                           verdicts=resolved,
+                           rows=_env_change_rows(transition, resolved))
+
+
+def _env_change_rows(transition: dict | None, resolved: dict) -> list[dict]:
+    """Diff rows joined with any verdict already recorded for that field, so a
+    question the user has answered renders as answered."""
+    rows = []
+    for r in ((transition or {}).get("diff") or {}).get("rows") or []:
+        cls, field = r.get("class") or "", r.get("field") or ""
+        v = resolved.get(f"{cls}.{field}") if field else None
+        rows.append({
+            **r,
+            "leaf": cls.rsplit(".", 1)[-1],
+            "verdict": v,
+            "answered": bool(v and v.get("status") in ("exact", "carried")),
+            "needs_reaffirm": bool(v and v.get("status") == "needs_reaffirm"),
+        })
+    return rows
+
+
+@bp.route("/env-schema/verdicts")
+def env_schema_verdicts():
+    """List / manage what the user has taught SM about this environment."""
+    from quam_state_manager.core import type_verdicts as _tv
+    ctx = _active_ctx()
+    store = (ctx or {}).get("store")
+    manifest, versions = _env_manifest_and_versions(store) if store else (None, {})
+    resolved = (_tv.resolve_for_manifest(current_app.instance_path, manifest)
+                if manifest else {})
+    items = []
+    for key, v in sorted(resolved.items()):
+        conflicts = []
+        if store is not None and v.get("spec"):
+            with store._lock:
+                conflicts = _tv.conflicting_leaves(
+                    store.state, manifest, v["class_path"], v["field"], v["spec"])
+        items.append({**v, "key": key, "conflicts": len(conflicts),
+                      "leaf": (v.get("class_path") or "").rsplit(".", 1)[-1]})
+    if request.args.get("format") == "json":
+        return jsonify(ok=True, count=len(items),
+                       env=_seb_label(versions), verdicts=items)
+    return render_template("_env_schema_verdicts.html", items=items,
+                           env_label=_seb_label(versions))
+
+
+def _seb_label(versions: dict) -> str:
+    from quam_state_manager.core import state_env_baseline as _seb
+    return _seb.env_label(versions)
+
+
+@bp.route("/env-schema/verdict", methods=["POST"])
+def env_schema_verdict():
+    """Record what the user knows that SM does not: in THIS environment, that
+    class·field's type is X.
+
+    Scope is env + class·field on purpose — "the library changed in this
+    version" is a fact about the library, not about one chip, so it must not
+    have to be re-taught per chip. The blast radius is disclosed (how many
+    values on the CURRENT chip the type would reject) but never blocks: the
+    verdict may itself be the repair path, exactly like a per-key assignment.
+    """
+    from quam_state_manager.core import type_policy as _tp
+    from quam_state_manager.core import type_verdicts as _tv
+    ctx = _active_ctx()
+    store = (ctx or {}).get("store")
+    if store is None:
+        return jsonify(ok=False, error="No state loaded"), 400
+    manifest, versions = _env_manifest_and_versions(store)
+    if not manifest:
+        return jsonify(ok=False, error_kind="cold_env",
+                       error=("the environment's schema has not been probed yet "
+                              "— probe it on Diagnostics first")), 409
+
+    class_path = (request.form.get("class_path") or "").strip()
+    field = (request.form.get("field") or "").strip()
+    decision = (request.form.get("decision") or "").strip()
+    use = (request.form.get("use") or "env").strip()
+    if not class_path or not field or decision not in ("accept", "override"):
+        return jsonify(ok=False, error="class_path, field and decision required"), 400
+
+    env_spec, reason = _tv.env_field_spec(manifest, class_path, field)
+    if reason == "unknown_field":
+        return jsonify(
+            ok=False, error_kind="unknown_field",
+            error=(f"this environment's {class_path.rsplit('.', 1)[-1]} has no "
+                   f"field '{field}' at all. That breaks Quam.load() outright — "
+                   "it is not a disagreement about types, so teaching SM cannot "
+                   "fix it. Select the environment this chip was written by, or "
+                   "migrate the state.")), 409
+    if reason:
+        return jsonify(ok=False, error_kind=reason,
+                       error=("SM cannot introspect that class in this "
+                              "environment, so there is nothing to teach")), 409
+
+    spec = None
+    type_expr = None
+    spec_source = use
+    if decision == "override":
+        if use == "grammar":
+            type_expr = (request.form.get("type") or "").strip()
+            try:
+                spec = _tp.parse_type(type_expr)
+            except ValueError as exc:
+                return jsonify(ok=False, error=str(exc)), 400
+        elif use == "baseline":
+            from quam_state_manager.core import state_env_baseline as _seb
+            key = (request.form.get("baseline_key") or "").strip()
+            body = _seb.load_baseline(current_app.instance_path, key)
+            entry = ((body or {}).get("classes") or {}).get(class_path) or {}
+            f = ((entry.get("fields") or {}) or {}).get(field) or {}
+            spec = f.get("t")
+            if not spec:
+                return jsonify(ok=False, error_kind="no_baseline_spec",
+                               error=("that recorded environment has no type for "
+                                      "this field")), 409
+        else:
+            spec = env_spec
+        if not spec:
+            return jsonify(ok=False, error="no type to record"), 400
+
+    record = _tv.save_verdict(
+        current_app.instance_path, versions, class_path, field,
+        decision=decision, spec=spec, type_expr=type_expr,
+        spec_source=spec_source, env_spec=env_spec,
+        note=request.form.get("note", ""))
+    _attach_type_policy(ctx)                 # the overlay takes effect now
+    ctx.pop("_type_alarm_memo", None)        # findings change with the overlay
+
+    conflicts = []
+    if spec:
+        with store._lock:
+            conflicts = _tv.conflicting_leaves(store.state, manifest,
+                                               class_path, field, spec)
+    return jsonify(ok=True, verdict=record, conflicts=conflicts,
+                   affected=len(conflicts),
+                   warning=((f"{len(conflicts)} value(s) on THIS chip do not "
+                             "match that type — they are now flagged until you "
+                             "edit them") if conflicts else None))
+
+
+@bp.route("/env-schema/verdict/revoke", methods=["POST"])
+def env_schema_verdict_revoke():
+    """Take back something the user taught SM (never destructive to data)."""
+    from quam_state_manager.core import type_verdicts as _tv
+    ctx = _active_ctx()
+    key = (request.form.get("env_key") or "").strip()
+    class_path = (request.form.get("class_path") or "").strip()
+    field = (request.form.get("field") or "").strip()
+    removed = _tv.revoke_verdict(current_app.instance_path, key, class_path, field)
+    if ctx is not None:
+        _attach_type_policy(ctx)
+        ctx.pop("_type_alarm_memo", None)
+    return jsonify(ok=True, removed=removed)
+
+
+@bp.route("/env-schema/dismiss", methods=["POST"])
+def env_schema_dismiss():
+    """Memo THIS env transition as seen. Env-scope fact, so it lives with the
+    baselines rather than in the chip-keyed prompt memo — and it is delta-gated:
+    a further schema change raises it again."""
+    from quam_state_manager.core import state_env_baseline as _seb
+    _seb.dismiss_transition(current_app.instance_path,
+                            (request.form.get("from_key") or "").strip(),
+                            (request.form.get("to_key") or "").strip(),
+                            (request.form.get("sig") or "").strip())
+    return ""
+
+
 @bp.route("/field/type-unassign", methods=["POST"])
 def field_type_unassign():
     """Remove a user type assignment; returns the now-effective expectation
@@ -5538,7 +6080,11 @@ def schema_missing_keys():
     anchored = _anchor(manifest, node)
     if anchored is _NO_ANCHOR or anchored is None:
         return jsonify(ok=True, warm=True, scope=scope, missing=[])
-    fields = anchored[1]
+    # ("fields", (class, canonical class, fields)) — the payload gained the
+    # class identity in docs/79 so a caller can name the class·field a verdict
+    # is scoped to; the fields map moved to [2] and this datalist 500'd on the
+    # tuple it kept reading as a dict.
+    fields = anchored[1][2]
     missing = []
     for fname, f in sorted(fields.items()):
         if fname in node:
@@ -5710,8 +6256,15 @@ def field_edit_batch():
                     # this key (qualibrate added new structure on the live chip).
                     # Create it (mirrors _replay_updates' create branch) so the ✓
                     # "pull just this field" works in exactly its most-useful case.
+                    #
+                    # docs/88: create at the RESOLVED target, not the posted path.
+                    # A grid cell for a field this entity has not got yet posts an
+                    # ALIAS whose parent is a pointer (qubits.q.resonator.opx_input
+                    # → ports.mw_inputs.con1.2.1), so creating at dot_path could
+                    # only ever fail — which is why "lo_mode" was uneditable.
                     try:
-                        entry = modifier.create_subtree(dot_path, parsed, group_id=_batch_gid)
+                        entry = modifier.create_subtree(target_path, parsed,
+                                                        group_id=_batch_gid)
                     except KeyError as ce:
                         # The PARENT is also absent — a wholly-new subtree, not a
                         # new leaf. Guide to a full Pull rather than half-build it.
@@ -6867,6 +7420,7 @@ def state_history_stage(timestamp: str):
     try:
         with _active_wc_lock(ctx):
             safe_io.write_state_wiring(wc.working_folder, state, wiring)
+            ctx["_alarm_reason"] = "snapshot-stage"
             _rebuild_after_working_copy_replaced(ctx)
             ctx["working_dirty"] = True   # working now differs from live
             # audit-r10: mark the STAGED BASE — content not representable as
@@ -7019,6 +7573,7 @@ def state_history_restore_live(timestamp: str):
 
             safe_io.write_state_wiring(wc.working_folder, state, wiring)
             working_copy.apply_to_live(wc, force=True)
+            ctx["_alarm_reason"] = "restore-live"
             _rebuild_after_working_copy_replaced(ctx)
     except (OSError, ValueError, safe_io.LiveFileError) as exc:
         return render_template("_status.html",
@@ -9219,14 +9774,12 @@ def state_drift():
         return jsonify(ok=True, tracked=True, count=0)
     if info is None:
         return jsonify(ok=True, tracked=False, count=0)
-    payload = {"ok": True, "tracked": True, "count": info["count"],
-               "baseline_utc": info["baseline_utc"]}
-    # One-shot: surface a clean auto-pull that just happened on load/select (feedback
-    # #5 — the pull used to be silent), then pop it so it shows exactly once.
-    pulled = ctx.pop("_auto_pulled", None)
-    if pulled is not None:
-        payload["auto_pulled"] = pulled
-    return jsonify(payload)
+    # (docs/87) ``auto_pulled`` used to ride along here as a one-shot so the
+    # silent clean auto-pull became a visible toast. The user-facing path no
+    # longer pulls without asking, so there is nothing to announce after the
+    # fact — the banner asks BEFORE, and names the same count.
+    return jsonify({"ok": True, "tracked": True, "count": info["count"],
+                    "baseline_utc": info["baseline_utc"]})
 
 
 @bp.route("/state/drift/view")
@@ -9389,6 +9942,7 @@ def state_sync():
             pulled_other_changes = (_pre_sync_hash is not None
                                     and wc.synced_live_hash != _pre_sync_hash)
             # Rebuild the store + derived objects from the freshly-synced copy.
+            ctx["_alarm_reason"] = "live-pull"
             _rebuild_after_working_copy_replaced(ctx)   # the pull consumed the change
             if mode in ("reapply", "apply") and pending:
                 replay = _replay_updates(ctx["modifier"], pending)
@@ -9667,6 +10221,69 @@ def state_apply_to_live():
     return resp
 
 
+@bp.route("/state/overwrite-live/preflight")
+def state_overwrite_live_preflight():
+    """Everything the "keep mine, overwrite live" confirm needs, in one call.
+
+    The third option (docs/86). Pull and push are NOT symmetric: a pull discards
+    the working copy while the live files stay on disk, but a push discards live
+    content that may be a real calibration another program just wrote. So the
+    confirm has to name what disappears — and there is no honest way to know that
+    without reading the live files, which is why this is a separate endpoint
+    fired ON CLICK rather than a count baked into a banner that renders on every
+    page (docs/28: live content is read only for an explicit user action).
+
+    Returns ``{ok, live_changes, unsaved, reversible, run_active, run_label}``.
+    A failed live read is NOT an error here — the user can still choose to
+    overwrite; the confirm just says the count is unknown.
+    """
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam":
+        return jsonify({"ok": False, "message": "No state loaded"}), 400
+    if (ctx.get("origin") or "live") != "live":
+        return jsonify({"ok": False,
+                        "message": "This chip was opened from a dataset run "
+                                   "archive (read-only)."}), 409
+
+    store = ctx["store"]
+    live_changes = None
+    try:
+        live_state, live_wiring = working_copy.read_live(ctx["working_copy"])
+        live_changes = len(Differ().diff(store, (live_state, live_wiring)))
+    except (FileNotFoundError, OSError, ValueError):
+        logger.info("overwrite-live preflight could not read the live files",
+                    exc_info=True)
+
+    # A run writing this chip right now would simply re-write whatever we push
+    # the moment its node finishes — worth saying, never worth blocking (the
+    # user may be overwriting precisely because a run went wrong).
+    run_active, run_label = False, None
+    try:
+        inst = _sched_inst()
+        run_active = scheduler.is_active(inst)
+        if run_active:
+            owner = scheduler.foreign_owner(
+                {"run": (scheduler.load_queue(inst).get("run") or {})})
+            if owner is not None:
+                run_label = scheduler.owner_label(*owner)
+    except Exception:       # noqa: BLE001 — an advisory must never break the gate
+        logger.debug("overwrite-live preflight run probe failed", exc_info=True)
+
+    with store._lock:
+        unsaved = len(store.change_log)
+    return jsonify({
+        "ok": True,
+        "live_changes": live_changes,
+        "unsaved": unsaved,
+        # The push snapshots the pre-apply live first, which is what powers the
+        # tray's "Revert last apply" — so this is a reversible action and the
+        # confirm should say so.
+        "reversible": True,
+        "run_active": bool(run_active),
+        "run_label": run_label,
+    })
+
+
 # ======================================================================
 # Export
 # ======================================================================
@@ -9828,29 +10445,282 @@ def _legacy_src_token(path: str) -> str:
     return f"ws:{path}"
 
 
+_DIFF_TABS = ("state", "wiring", "node", "data")
+_DIFF_LIST_PAGE = 300      # ranked rows per list page
+# One diff is one flatten of two documents (20-45 ms measured on real chips).
+# The tab strip and the tree/list toggle re-ask for the same pair, so a small
+# content-hash-keyed memo makes those switches free.
+_DIFF_MEMO: "OrderedDict[tuple, dict]" = OrderedDict()
+_DIFF_MEMO_MAX = 6
+_diff_memo_lock = threading.Lock()
+
+
+def _diff_side_doc(src, tab: str) -> tuple[Any, str]:
+    """``(document, unavailable_reason)`` for one side of one tab."""
+    if tab in ("state", "wiring"):
+        entry = compare_sources.DEFAULT_POOL.get(src.content_hash)
+        if entry is None:
+            entry = compare_sources.resolve_source(
+                src.ref, history_root=_hub_history_root(),
+                working_lookup=_hub_working_lookup)
+            entry = compare_sources.DEFAULT_POOL.get(src.content_hash)
+        if entry is None:
+            return None, "content unavailable"
+        return (entry.state if tab == "state" else entry.wiring), ""
+    if tab == "node":
+        # A run's node.json sits BESIDE its quam_state folder. Snapshots and
+        # the working copy have no run behind them — say so rather than
+        # pretending the tab is empty.
+        node = Path(src.path).parent / "node.json"
+        if src.origin in ("history", "working") or not node.exists():
+            return None, "no node.json — this side is not an experiment run"
+        try:
+            return safe_io.read_json(node), ""
+        except (OSError, ValueError) as exc:
+            return None, f"node.json unreadable ({type(exc).__name__})"
+    if tab == "data":
+        folder = Path(src.path).parent
+        if src.origin in ("history", "working"):
+            return None, "no data files — this side is not an experiment run"
+        try:
+            from quam_state_manager.core import ndview
+            files = ndview.list_h5_files(folder)
+        except Exception:      # noqa: BLE001
+            files = []
+        if not files:
+            return None, "no .h5 data files in this run"
+        inv: dict[str, Any] = {}
+        for name in files:
+            probe = ndview.probe_file(folder / name)
+            if not probe.get("ok"):
+                inv[name] = {"error": probe.get("error") or "unreadable"}
+                continue
+            inv[name] = {v["name"]: {"shape": v.get("shape"),
+                                     "dims": v.get("dims")}
+                         for v in probe.get("vars", [])}
+        return inv, ""
+    return None, "unknown tab"
+
+
+def _diff_payload(src_a, src_b, tab: str, *, with_rows: bool) -> dict:
+    key = (src_a.content_hash, src_b.content_hash, src_a.ref, src_b.ref, tab)
+    with _diff_memo_lock:
+        hit = _DIFF_MEMO.get(key)
+        if hit is not None:
+            _DIFF_MEMO.move_to_end(key)
+            return hit
+    doc_a, why_a = _diff_side_doc(src_a, tab)
+    doc_b, why_b = _diff_side_doc(src_b, tab)
+    if doc_a is None or doc_b is None:
+        return {"ok": False, "unavailable": why_a or why_b,
+                "counts": {}, "rows": [], "tree_a": {}, "tree_b": {}}
+    res = json_diff.build(doc_a, doc_b)
+    res["ok"] = True
+    res["unavailable"] = ""
+    with _diff_memo_lock:
+        _DIFF_MEMO[key] = res
+        _DIFF_MEMO.move_to_end(key)
+        while len(_DIFF_MEMO) > _DIFF_MEMO_MAX:
+            _DIFF_MEMO.popitem(last=False)
+    return res if with_rows else {**res, "rows": []}
+
+
+def _diff_default_refs() -> tuple[str, str]:
+    """The pair a bare /diff opens on: the newest snapshot vs what is loaded.
+
+    That is the question a user has when they arrive without having picked
+    anything — *what have I changed?* — and it needs no picking at all.
+    """
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam":
+        return "", ""
+    path = ctx.get("path") or ""
+    b = f"working:{path}"
+    try:
+        hm = _history()
+        chip_dir = hm.resolve_chip_dir(Path(path))[0]
+        snaps = hm.list_snapshots(path)
+        if snaps:
+            return f"hist:{Path(chip_dir).name}/{snaps[0].timestamp}", b
+    except Exception:      # noqa: BLE001 — a bare /diff must still open
+        logger.debug("diff default refs failed", exc_info=True)
+    return "", b
+
+
+def _diff_source_options() -> list[dict]:
+    """What the two pickers offer: the loaded chip, then its snapshots."""
+    out: list[dict] = []
+    ctx = _active_ctx()
+    if ctx and ctx.get("type") == "quam" and ctx.get("path"):
+        out.append({"ref": f"working:{ctx['path']}",
+                    "label": "Loaded chip (with unsaved edits)"})
+    try:
+        hm = _history()
+        path = ctx.get("path") if ctx else None
+        if path:
+            chip = Path(hm.resolve_chip_dir(Path(path))[0]).name
+            for m in hm.list_snapshots(path)[:60]:
+                ts = m.timestamp
+                when = (f"{ts[0:4]}-{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}"
+                        if len(ts) >= 13 else ts)
+                what = m.experiment_name or (m.trigger or "snapshot")
+                out.append({"ref": f"hist:{chip}/{ts}",
+                            "label": f"{when} · {what}"})
+    except Exception:      # noqa: BLE001
+        logger.debug("diff source options failed", exc_info=True)
+    return out
+
+
 @bp.route("/diff", methods=["GET", "POST"])
 def diff_view():
-    """Legacy 2-folder diff → Compare hub (docs/49 P4).
+    """The diff workbench (docs/84) — two sources, four tabs, differences only.
 
-    POST translates ``path_a``/``path_b`` into hub ``src`` tokens
-    (hint=1 — the hub verifies the fingerprints and may offer the ①
-    one-Enter CTA). Templates/fragments stay on disk until the redirect
-    soaks; the hub's bucket ① owns 2-way diffing now.
+    Replaces the legacy 2-folder form as the front door. The Compare hub still
+    owns the hard cases (mapping entities across different devices); this owns
+    the common one, which is the one users actually have.
+
+    Legacy callers are still honoured: a POST, or a GET carrying the hub's own
+    query grammar, redirects into the hub exactly as before.
     """
-    params: list[tuple[str, str]] = []
-    if request.method == "POST":
-        for key in ("path_a", "path_b"):
-            path = (request.form.get(key) or "").strip()
-            if path:
-                params.append(("src", _legacy_src_token(path)))
-        # NO hint=1: legacy forms are MANUAL baskets — U1b reserves the
-        # focused primary CTA for State/Param-History deep links, and the
-        # full fingerprint token provably collides across different
-        # physical devices (LabA/deviceB measured), so an autofocused
-        # "Compare as ①" for a manual pair invites a wrong-bucket Enter.
-    if not params:
-        params.append(("from", "diff"))
-    return _hub_redirect(f"/compare-hub?{urlencode(params)}")
+    legacy = request.method == "POST" or any(
+        request.args.get(k) for k in ("src", "bucket", "preset", "map"))
+    if legacy:
+        params: list[tuple[str, str]] = []
+        if request.method == "POST":
+            for key in ("path_a", "path_b"):
+                path = (request.form.get(key) or "").strip()
+                if path:
+                    params.append(("src", _legacy_src_token(path)))
+        else:
+            params = list(request.args.items(multi=True))
+        if not params:
+            params.append(("from", "diff"))
+        return _hub_redirect(f"/compare-hub?{urlencode(params)}")
+
+    a_ref = (request.args.get("a") or "").strip()
+    b_ref = (request.args.get("b") or "").strip()
+    tab = (request.args.get("tab") or "state").strip()
+    if tab not in _DIFF_TABS:
+        tab = "state"
+    view = "list" if (request.args.get("view") or "").strip() == "list" else "tree"
+    # The list is server-rendered, so it pages: 2,257 ranked rows of a real
+    # cross-generation diff serialise to 1.2 MB, and the rows a user reads are
+    # the first screenful.
+    limit = _int_arg("rows", _DIFF_LIST_PAGE, minimum=1)
+    limit = min(limit, json_diff.ROW_CAP)
+    if not a_ref and not b_ref:
+        a_ref, b_ref = _diff_default_refs()
+
+    error = ""
+    src_a = src_b = None
+    for ref, slot in ((a_ref, "a"), (b_ref, "b")):
+        if not ref:
+            continue
+        try:
+            resolved = _hub_resolve_one(ref)
+        except compare_sources.SourceError as exc:
+            error = str(exc)
+            continue
+        if slot == "a":
+            src_a = resolved
+        else:
+            src_b = resolved
+
+    payload = None
+    rows = []
+    more = 0
+    if src_a is not None and src_b is not None and not error:
+        try:
+            payload = _diff_payload(src_a, src_b, tab, with_rows=(view == "list"))
+            if view == "list":
+                all_rows = payload.get("rows") or []
+                rows = all_rows[:limit]
+                more = max(0, len(all_rows) - len(rows))
+        except Exception as exc:      # noqa: BLE001 — never 500 the menu
+            logger.warning("diff build failed: %s", exc, exc_info=True)
+            error = "Could not build this diff."
+
+    template = "_diff_workbench.html" if _is_htmx() else "diff_workbench.html"
+    return render_template(
+        template,
+        **_ctx(page="diff", a_ref=a_ref, b_ref=b_ref, tab=tab, view=view,
+               src_a=src_a, src_b=src_b, payload=payload, error=error,
+               rows=rows, more=more, next_rows=limit + _DIFF_LIST_PAGE,
+               tabs=_DIFF_TABS, options=_diff_source_options()))
+
+
+@bp.route("/diff/snapshots")
+def diff_snapshots():
+    """Two snapshot timestamps → the diff workbench.
+
+    The entry point for BOTH "Compare selected" buttons in the history pages.
+    They used to land on two different surfaces; the chip dir is resolved here
+    so neither page has to carry it in the DOM.
+    """
+    ts_a = (request.args.get("ts_a") or "").strip()
+    ts_b = (request.args.get("ts_b") or "").strip()
+    if not ts_a or not ts_b:
+        return _hub_redirect("/diff")
+    chip = (request.args.get("chip_key") or "").strip()
+    if not chip:
+        try:
+            chip = Path(_history().resolve_chip_dir(Path(_active_path()))[0]).name
+        except Exception:      # noqa: BLE001
+            return _hub_redirect("/diff")
+    # Oldest on the left, so the diff reads forward in time like every other
+    # before→after surface.
+    a, b = sorted((ts_a, ts_b))
+    return _hub_redirect(
+        f"/diff?a=hist:{quote(chip)}/{quote(a)}&b=hist:{quote(chip)}/{quote(b)}")
+
+
+@bp.route("/diff/runs")
+def diff_runs():
+    """Two run uids → the diff workbench, opened on the node.json tab.
+
+    Two runs differ in what was ASKED (node parameters) more often than in the
+    chip state, so that is the tab this lands on.
+    """
+    uids = [u for u in (request.args.get("uids") or "").split(",") if u.strip()]
+    refs: list[str] = []
+    for uid in uids[:2]:
+        resolved = _resolve_run(uid.strip())
+        if not resolved:
+            continue
+        store, run_id, _label = resolved
+        run = store.get_run(run_id) or {}
+        folder = run.get("folder_path")
+        if folder:
+            refs.append(f"run:{Path(folder) / 'quam_state'}")
+    if len(refs) != 2:
+        return _hub_redirect("/diff")
+    return _hub_redirect(
+        f"/diff?a={quote(refs[0])}&b={quote(refs[1])}&tab=node")
+
+
+@bp.route("/diff/data")
+def diff_data():
+    """The pruned trees for the tree view — JSON, rendered by the JSON tree."""
+    a_ref = (request.args.get("a") or "").strip()
+    b_ref = (request.args.get("b") or "").strip()
+    tab = (request.args.get("tab") or "state").strip()
+    if tab not in _DIFF_TABS:
+        tab = "state"
+    try:
+        src_a = _hub_resolve_one(a_ref)
+        src_b = _hub_resolve_one(b_ref)
+    except compare_sources.SourceError as exc:
+        return jsonify(ok=False, error=str(exc)), 200
+    try:
+        res = _diff_payload(src_a, src_b, tab, with_rows=False)
+    except Exception as exc:      # noqa: BLE001
+        logger.warning("diff data failed: %s", exc, exc_info=True)
+        return jsonify(ok=False, error="Could not build this diff."), 200
+    return jsonify(ok=res.get("ok", False), unavailable=res.get("unavailable", ""),
+                   counts=res.get("counts", {}), tree_a=res.get("tree_a", {}),
+                   tree_b=res.get("tree_b", {}),
+                   truncated=res.get("truncated", False),
+                   label_a=src_a.label, label_b=src_b.label)
 
 
 # ======================================================================
@@ -12526,6 +13396,76 @@ def param_history():
     )
 
 
+_CHANGES_SNAPS = 20        # snapshots per page — the feed's unit is the EVENT
+_CHANGES_ROWS = 25         # rows shown per snapshot before "and N more"
+_CHANGES_ROWS_AT = 2000    # one snapshot opened in full
+
+
+@bp.route("/param-history/changes")
+def param_history_changes():
+    """"What changed" — every numeric parameter's change points, newest first.
+
+    The curated dashboard answers "how has T1 drifted"; this answers the
+    question a user actually arrives with — "what did that run change?" — over
+    ALL ~8,000 numeric parameters, which only became affordable once they were
+    stored as change points (docs/83).
+
+    Paged by SNAPSHOT, not by row: a regenerate rewrites thousands of
+    parameters at once (2,716 measured on a real chip) and a row-paged feed
+    would spend the whole page on it and hide every other event.
+    """
+    store = _store()
+    if not store:
+        return render_template("_empty_state.html", page="parameter history")
+    hm = _history()
+    path = Path(_active_path())
+    prefix = (request.args.get("prefix") or "").strip()
+    before = (request.args.get("before") or "").strip() or None
+    at = (request.args.get("at") or "").strip() or None
+    try:
+        groups = hm.leaf_change_groups(
+            path, limit_snaps=1 if at else _CHANGES_SNAPS + 1,
+            rows_per_snap=_CHANGES_ROWS_AT if at else _CHANGES_ROWS,
+            prefix=prefix or None, before_ts=before, at_ts=at)
+    except Exception as exc:      # noqa: BLE001 — never 500 the menu
+        logger.warning("param-history changes failed: %s", exc, exc_info=True)
+        groups = []
+    has_more = (not at) and len(groups) > _CHANGES_SNAPS
+    groups = groups[:1 if at else _CHANGES_SNAPS]
+
+    roots = _uid_roots()
+    for g in groups:
+        ts = g.get("timestamp") or ""
+        g["when"] = (f"{ts[0:4]}-{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}"
+                     if len(ts) >= 13 else ts)
+        g["uid"] = _uid_for_run_ref(g.get("experiment_folder_path"),
+                                    g.get("run_id"), roots)
+
+    stats = hm.leaf_stats(path)
+    oldest = groups[-1]["timestamp"] if groups else None
+    template = ("_param_history_changes.html" if _is_htmx()
+                else "param_history_changes.html")
+    return render_template(
+        template, **_ctx(page="param_history", groups=groups, stats=stats,
+                         prefix=prefix, has_more=has_more, oldest_ts=oldest,
+                         at_ts=at))
+
+
+@bp.route("/param-history/param-search")
+def param_history_param_search():
+    """Typeahead over every indexed parameter path (docs/83). 8,000 paths is
+    not a dropdown — this is how a user finds the one they mean."""
+    if not _store():
+        return jsonify(ok=False, results=[]), 400
+    q = (request.args.get("q") or "").strip()
+    try:
+        hits = _history().leaf_search(Path(_active_path()), q, limit=30)
+    except Exception:      # noqa: BLE001
+        logger.debug("param search failed", exc_info=True)
+        hits = []
+    return jsonify(ok=True, results=hits)
+
+
 def _pending_decisions_for(loaded_path: Path) -> list[dict[str, Any]]:
     """Return the list of pending chip-decision prompts from the last backfill."""
     key = str(Path(loaded_path).resolve())
@@ -13551,6 +14491,23 @@ def _split_dataset_uid(uid: str) -> tuple[str, int] | None:
 # fast poll STILL surfaces a brand-new chip dir once the sidebar scan picks it up,
 # without paying the token walk each poll. The stat-heavy rebuild only runs on a
 # miss; we never hold the lock across the rebuild.
+# Wall-clock budget for ONE /datasets/changes-since poll (docs/80). A rescan
+# runs while other writers land runs, so its cost is not ours to bound; what we
+# CAN bound is how long the monitoring request may take before answering. Past
+# the budget the remaining folders are left un-scanned with their cursors held,
+# so nothing is skipped — it is re-offered on the next poll (the client comes
+# back in ~1.2s on `partial`). The budget therefore trades chattiness, never
+# correctness, which is why it can afford to be generous.
+#
+# INVARIANT: this must stay well below the client's abort
+# (POLL_TIMEOUT_MS in dataset-virtual.js, currently 20s). The two have
+# different jobs — the budget means "answer by now", the abort means
+# "something is wrong" — and an aborted request delivers NEITHER a cursor nor
+# the partial flag, i.e. exactly the silent-stall this whole mechanism exists
+# to prevent. Keeping the abort at >2x the budget means it only ever fires on
+# a genuinely hung request, never on a merely slow scan.
+_POLL_BUDGET_S = 8.0
+
 _dataset_candidates_lock = threading.Lock()
 _dataset_candidates_cache: dict[Any, tuple[Any, int, list[Path]]] = {}
 
@@ -13964,13 +14921,22 @@ def datasets_changes_since():
     # Aggregate the per-folder deltas: tag each updated row with its folder_key
     # and namespace the vanished list by uid (so a #250-vanishes-in-A +
     # #250-appears-in-B never reads as a single run resurrecting).
-    active = _active_dataset_stores(fast=True)   # 60s poll — skip the token stat-walk
-    if not active:
-        return jsonify({"updated": [], "vanished": [], "now": 0})
     try:
         ts = float(request.args.get("ts", 0))
     except (TypeError, ValueError):
         ts = 0.0
+    try:
+        active = _active_dataset_stores(fast=True)  # 60s poll — skip the token stat-walk
+    except Exception:
+        # Never 500 the monitoring poll: hold the cursor and try again next
+        # tick. A 500 here is invisible to the user (the client catches it)
+        # but stops the table updating for good (docs/80).
+        logger.exception("changes-since: could not resolve active data folders")
+        return jsonify({"updated": [], "vanished": [], "now": ts,
+                        "partial": True, "skipped": 0})
+    if not active:
+        return jsonify({"updated": [], "vanished": [], "now": 0,
+                        "partial": False, "skipped": 0})
     date = request.args.get("date") or None
     updated: list[dict] = []
     vanished: list[str] = []
@@ -13983,17 +14949,42 @@ def datasets_changes_since():
     # only re-emits a few rows (client merges by id — harmless). A folder
     # whose rescan failed returns now == ts (D8) and correctly holds the
     # cursor back until it heals.
+    #
+    # docs/80 — this loop must survive a folder another process is writing.
+    # Two failure modes it now closes:
+    #   * an exception escaping ONE folder used to 500 the whole poll. The
+    #     client swallows the error, never advances its cursor, and the table
+    #     silently stops updating — the worst possible shape for a monitoring
+    #     surface. A failed folder now contributes nothing and reports
+    #     ``now == ts``, i.e. it holds its own cursor exactly like the D8
+    #     rescan-failure path already does, while healthy folders keep flowing.
+    #   * an unbounded walk. With a writer actively landing runs, a rescan can
+    #     take arbitrarily long; past the budget we stop scanning further
+    #     folders and hold THEIR cursors, so the response stays prompt and the
+    #     un-scanned window is re-offered next poll rather than skipped.
     now: float | None = None
+    deadline = time.monotonic() + _POLL_BUDGET_S
+    skipped = 0
     for fol in active:
-        delta = fol["store"].changes_since(ts, date=date)
-        for row in delta.get("updated", []):
-            row["f"] = fol["key"]
-            updated.append(row)
-        for rid in delta.get("vanished", []):
-            vanished.append(_dataset_uid(fol["key"], rid))
-        sample = delta.get("now", 0.0)
+        if time.monotonic() >= deadline:
+            skipped += 1
+            now = ts if now is None else min(now, ts)
+            continue
+        try:
+            delta = fol["store"].changes_since(ts, date=date)
+            for row in delta.get("updated", []):
+                row["f"] = fol["key"]
+                updated.append(row)
+            for rid in delta.get("vanished", []):
+                vanished.append(_dataset_uid(fol["key"], rid))
+            sample = delta.get("now", 0.0)
+        except Exception:
+            logger.exception("changes-since failed for %s", fol.get("path"))
+            skipped += 1
+            sample = ts
         now = sample if now is None else min(now, sample)
-    return jsonify({"updated": updated, "vanished": vanished, "now": now or 0.0})
+    return jsonify({"updated": updated, "vanished": vanished, "now": now or 0.0,
+                    "partial": bool(skipped), "skipped": skipped})
 
 
 @bp.route("/datasets/rescan", methods=["POST"])
@@ -14597,6 +15588,7 @@ def dataset_load_state(uid):
     try:
         with _active_wc_lock(ctx):
             safe_io.write_state_wiring(wc.working_folder, state, wiring)
+            ctx["_alarm_reason"] = "run-state-load"
             _rebuild_after_working_copy_replaced(ctx)
             ctx["working_dirty"] = True   # working now differs from live
             ctx["staged_base"] = True     # audit-r10 (see state_history_stage)
@@ -15924,7 +16916,20 @@ def _env_schema_findings(store: QuamStore) -> list:
         versions = manifest.get("versions") or {}
         label = " ".join(f"{k} {v}" for k, v in sorted(versions.items())
                          if k in ("quam", "quam_builder") and v)
-        return state_env_validate.to_diag_findings(analysis, env_label=label)
+        # docs/94 fix 3: while a schema probe for the selected env is in
+        # flight, an unknown class is a not-yet-known — downgrade to warning
+        # ("probing the environment…") for the seconds the probe needs.
+        probing = False
+        try:
+            _pp = config_generator.get_selected_env(current_app.instance_path)
+            if _pp:
+                with _schema_warm_lock:
+                    probing = any(k.startswith(_pp + "|")
+                                  for k in _schema_warm_inflight)
+        except Exception:  # noqa: BLE001
+            probing = False
+        return state_env_validate.to_diag_findings(analysis, env_label=label,
+                                                   probing=probing)
     except Exception:  # noqa: BLE001 — env findings must never break /diagnostics
         logger.warning("env-schema findings failed", exc_info=True)
         return []
@@ -15966,6 +16971,73 @@ def _env_card_state(store: QuamStore) -> dict:
     }
 
 
+def _types_card_state(ctx: dict | None) -> dict | None:
+    """Context for the /diagnostics "Types & values" card (docs/78).
+
+    Reads the SAME mutation_seq-memoized scan the alert and the banner use, so
+    the page costs nothing extra. Unlike the alert this is NOT delta-gated: a
+    dismissed anomaly is silenced as a prompt, never hidden from the report.
+    """
+    if not ctx or ctx.get("store") is None:
+        return None
+    try:
+        from quam_state_manager.core import type_fix as _tf
+        store = ctx["store"]
+        memo = _type_alarm_memo(ctx)
+        editable = (ctx.get("origin") or "live") == "live"
+        card = _tf.alert_summary(_alarm_plan(ctx, memo),
+                                 memo["env_findings"], memo["paths"])
+        card["editable"] = editable
+        card["strnum"]["first"] = memo["paths"][0] if memo["paths"] else ""
+        policy = getattr(store, "type_policy", None)
+        card["env"]["warm"] = bool(policy is not None and policy.manifest)
+        # docs/79: the library's own movements + what the user has taught SM.
+        card["env_change"], card["taught"] = _env_change_summary(store)
+        return card
+    except Exception:  # noqa: BLE001 — the card must never break /diagnostics
+        logger.warning("types-card state failed", exc_info=True)
+        return None
+
+
+def _env_change_summary(store) -> tuple[dict | None, int]:
+    """(env transition summary, taught-type count) — both cheap reads."""
+    try:
+        from quam_state_manager.core import state_env_baseline as _seb
+        from quam_state_manager.core import type_verdicts as _tv
+        manifest, _versions = _env_manifest_and_versions(store)
+        if not manifest:
+            return None, 0
+        inst = current_app.instance_path
+        transition = _seb.env_transition(inst, manifest)
+        summary = None
+        if transition:
+            diff = transition.get("diff") or {}
+            summary = {
+                "first": transition.get("first"),
+                "changed": transition.get("changed"),
+                "count": diff.get("total") or 0,
+                "from_label": transition.get("from_label") or "",
+                "to_label": transition.get("to_label") or "",
+                "dismissed": bool(transition.get("dismissed")),
+            }
+        taught = len(_tv.resolve_for_manifest(inst, manifest))
+        return summary, taught
+    except Exception:  # noqa: BLE001 — baseline history must never break the card
+        logger.warning("env-change summary failed", exc_info=True)
+        return None, 0
+
+
+@bp.route("/diagnostics/types-card")
+def diagnostics_types_card():
+    """Re-render just the types card (after a repair, the counts must drop
+    immediately — same self-refresh contract as the env card)."""
+    ctx = _active_ctx()
+    if not ctx or ctx.get("store") is None:
+        return "", 204
+    return render_template("_diagnostics_types.html",
+                           types_card=_types_card_state(ctx))
+
+
 @bp.route("/diagnostics")
 def diagnostics_view():
     """Full diagnostics report for the active chip."""
@@ -15984,6 +17056,7 @@ def diagnostics_view():
             allow_jump=True,
             has_config=bool(store.generated_config),
             env_card=_env_card_state(store),
+            types_card=_types_card_state(_active_ctx()),
             # The config-reference findings were linted against the cached
             # generated config, which may predate the latest edits — surface
             # that so a stale config doesn't pass off old findings as current
@@ -16643,7 +17716,7 @@ def _scheduler_lock_guard():
     if request.method != "GET" and request.endpoint in (
             _SCHEDULER_MUTATOR_ENDPOINTS | _AUTOFIT_BLOCKED_SCHEDULER_ENDPOINTS):
         from quam_state_manager.core.autofit import engine as autofit_engine
-        if autofit_engine.locks_chip(current_app.instance_path):
+        if autofit_engine.locks_chip(_sched_inst()):
             resp = make_response(jsonify({
                 "error": "autofit_running",
                 "message": "An Auto Calibrate plan is running — this action is "
@@ -16654,7 +17727,7 @@ def _scheduler_lock_guard():
             resp.headers["HX-Trigger"] = "autofitLocked"
             return resp
     if request.endpoint in _SCHEDULER_MUTATOR_ENDPOINTS \
-            and scheduler.is_active(current_app.instance_path):
+            and scheduler.is_active(_sched_inst()):
         resp = make_response(jsonify({
             "error": "scheduler_running",
             "message": "The Experiment Runner is running — editing is locked "
@@ -16669,7 +17742,7 @@ def _scheduler_lock_guard():
 @bp.route("/scheduler", methods=["GET"])
 def scheduler_page():
     """Top-level Scheduler page — setup, pre-flight, queue + runner."""
-    settings = scheduler.load_settings(current_app.instance_path)
+    settings = scheduler.load_settings(_sched_inst())
     open_folder = _active_path() if _context_type() == "quam" else None
     # Prefill the quam_state target from the open chip when unset (Strict policy
     # wants them equal anyway).
@@ -16713,7 +17786,7 @@ def _sched_settings_patch(data: dict) -> dict[str, Any]:
 @bp.route("/scheduler/settings", methods=["GET", "POST"])
 def scheduler_settings():
     """Read (GET) or persist (POST) Scheduler settings."""
-    inst = current_app.instance_path
+    inst = _sched_inst()
     if request.method == "GET":
         return jsonify(scheduler.load_settings(inst))
 
@@ -16740,7 +17813,7 @@ def scheduler_settings():
 @bp.route("/scheduler/effective-config", methods=["GET"])
 def scheduler_effective_config():
     """Read the chosen env's effective qualibrate config (subprocess)."""
-    inst = current_app.instance_path
+    inst = _sched_inst()
     python_path = (request.args.get("python") or "").strip()
     if not python_path:
         python_path = scheduler.load_settings(inst).get("env_python") or ""
@@ -16799,7 +17872,7 @@ def _gather_preflight(inst: str, data: dict) -> dict:
 @bp.route("/scheduler/preflight", methods=["POST"])
 def scheduler_preflight():
     """Run the identity/safety checks that gate a future run (Strict policy)."""
-    inst = current_app.instance_path
+    inst = _sched_inst()
     data = request.get_json(silent=True) or {}
     return jsonify(_gather_preflight(inst, data))
 
@@ -16824,7 +17897,28 @@ def scheduler_register_storage():
 # --- Scheduler queue (Phase 1) ----------------------------------------
 
 def _sched_inst() -> str:
-    return current_app.instance_path
+    """Where the Experiment Runner's state lives FOR THE OPEN CHIP (docs/80).
+
+    This one function is what makes two windows able to drive two different
+    chips. Runner state used to sit directly in the instance dir — one
+    settings file, one queue, machine-wide — so window 2 choosing its chip
+    rewrote the ``quam_state_path`` window 1's worker re-reads per item, and
+    both windows stared at the same queue. Nothing about PIDs or ``qm``
+    prevented two chips; the storage layout did.
+
+    Scoping by the OPEN chip is the only non-circular choice available: the
+    runner's own ``quam_state_path`` lives *inside* the scoped file, so it
+    cannot also select it. It is also the honest mental model — a window has a
+    chip open, and its runner belongs to that chip. Machine-level settings
+    (env, calibrations folder) stay shared one level up, so per-chip isolation
+    never becomes per-chip re-configuration.
+
+    Callers that want the INSTANCE dir — the node-library scan caches, which
+    are chip-independent — must ask for it explicitly.
+    """
+    ctx = _active_ctx()
+    chip = ctx.get("path") if ctx and ctx.get("type") == "quam" else None
+    return str(scheduler.scope_dir(current_app.instance_path, chip))
 
 
 def _sched_state() -> dict:
@@ -16832,6 +17926,17 @@ def _sched_state() -> dict:
     compact autofit summary so the existing badge poll powers the Autofit
     badge for free (docs/56 §7b-F)."""
     out = scheduler.runner_status(_sched_inst())
+    # docs/80 — name the window that owns a run we are only watching, so the
+    # Experiment Runner page can say "another window is running this" instead
+    # of showing controls that would 409.
+    try:
+        owner = scheduler.foreign_owner({"run": out.get("run") or {}})
+        if owner is not None:
+            out["foreign_owner"] = {
+                "pid": owner[0], "port": owner[1],
+                "label": scheduler.owner_label(*owner)}
+    except Exception:       # noqa: BLE001 — a badge detail must not break the poll
+        logger.debug("foreign-owner probe failed", exc_info=True)
     try:
         from quam_state_manager.core.autofit import engine as autofit_engine
         eng = autofit_engine.get_engine(_sched_inst())
@@ -16862,7 +17967,7 @@ def scheduler_scan():
     folder = (request.args.get("folder") or "").strip()
     if not folder:
         folder = scheduler.load_settings(_sched_inst()).get("calibrations_folder") or ""
-    items = [n.to_dict() for n in node_scan.scan_folder(folder, instance_path=_sched_inst())] if folder else []
+    items = [n.to_dict() for n in node_scan.scan_folder(folder, instance_path=current_app.instance_path)] if folder else []
     store = _store() if _context_type() == "quam" else None
     return jsonify({
         "folder": folder,
@@ -16888,7 +17993,10 @@ def scheduler_scan_params():
         return jsonify({"ok": False, "error": "No calibrations folder set."}), 400
     if not env:
         return jsonify({"ok": False, "error": "No env selected."}), 400
-    return jsonify(scheduler.scan_params(env, folder, instance_path=inst))
+    # The parameter-scan cache keys on (env, folder) and knows nothing about
+    # chips, so it stays instance-level rather than being rebuilt per scope.
+    return jsonify(scheduler.scan_params(
+        env, folder, instance_path=current_app.instance_path))
 
 
 @bp.route("/scheduler/queue/add", methods=["POST"])
@@ -17080,7 +18188,11 @@ def _scheduler_refresh_hook(app, instance_path, folder, item_id, status) -> None
                         return working_copy.content_hash(store.state, store.wiring)
                 before = _hash()
                 try:
-                    _reconcile_cached_quam_ctx(ctx["path"], ctx)
+                    # docs/87 — MACHINE caller: the scheduler worker just ran a
+                    # node that wrote live. It adopts (auto_adopt default) so the
+                    # engine's own view stays correct; the ASK path is the user
+                    # opening/switching a chip.
+                    _reconcile_cached_quam_ctx(ctx["path"], ctx, auto_adopt=True)
                 except (OSError, ValueError):
                     logger.warning("post-node reconcile failed", exc_info=True)
                 after = _hash()
@@ -17175,7 +18287,17 @@ def scheduler_start():
     scheduler.set_refresh_hook(
         lambda folder, item_id, status: _scheduler_refresh_hook(
             app, inst, folder, item_id, status))
-    scheduler.start(inst)
+    try:
+        scheduler.start(inst)
+    except scheduler.ForeignRunnerError as exc:
+        # docs/80 — the one refusal, because it is the one case a warning
+        # cannot make safe: a second worker over the same queue means two
+        # processes driving one OPX.
+        return jsonify({"ok": False, "reason": "foreign_runner",
+                        "error": "scheduler_foreign_owner",
+                        "owner": {"pid": exc.pid, "port": exc.port,
+                                  "label": scheduler.owner_label(exc.pid, exc.port)},
+                        "message": str(exc)}), 409
     return jsonify({"ok": True, "state": _sched_state()})
 
 
@@ -17253,7 +18375,12 @@ def _autofit_readiness() -> dict:
     chip_ok = bool(ctx and ctx.get("type") == "quam")
     env = settings.get("env_python") or ""
     folder = settings.get("calibrations_folder") or ""
-    ai = af_auditor.load_settings(inst)
+    # Instance-level, NOT the per-chip scope (docs/80 Part 4 audit): the LLM
+    # provider, model and API KEY are a user credential, not a fact about a
+    # device. Reading them from a scope would both hide the file the user
+    # already wrote at instance/autofit_ai.json — silently turning the audit
+    # off — and ask for the key again per chip.
+    ai = af_auditor.load_settings(current_app.instance_path)
     store = _store() if chip_ok else None
     return {
         "chip": {"ok": chip_ok,
@@ -17315,7 +18442,7 @@ def autofit_resolve():
         return jsonify({"ok": False, "error": "no calibrations folder set — "
                         "configure it on the Experiment Runner page"}), 400
     items = [n.to_dict() for n in
-             node_scan.scan_folder(folder, instance_path=_sched_inst())]
+             node_scan.scan_folder(folder, instance_path=current_app.instance_path)]
     files = [{"name": i.get("name"), "path": i.get("file") or i.get("path")}
              for i in items if i.get("kind") == "node"]
     res = af_plan.resolve_steps(p, files)
@@ -17371,7 +18498,8 @@ def autofit_start():
             return jsonify({"ok": False, "error": str(exc)}), 400
         backend_kind = (data.get("backend") or "sim").strip()
 
-        auditor = Auditor(af_auditor.load_settings(inst))
+        # instance-level: see the note in _autofit_readiness
+        auditor = Auditor(af_auditor.load_settings(current_app.instance_path))
 
         if backend_kind == "sim":
             eng = _autofit_start_sim(inst, p, auditor)
@@ -17403,7 +18531,12 @@ def _autofit_start_sim(inst, p, auditor):
     from quam_state_manager.core.modifier import Modifier
     from quam_state_manager.core.saver import Saver
 
-    sim_root = Path(inst) / "autofit" / "sim"
+    # Instance-level, NOT per-chip (docs/80 Part 4): the sim world is a
+    # throwaway synthetic chip that exists to demo the loop hardware-free. It
+    # has nothing to do with whichever real chip is open, so scoping it would
+    # scatter identical copies of the same fake device. The plan LEDGER, by
+    # contrast, is about a specific chip and does live in the scope.
+    sim_root = Path(current_app.instance_path) / "autofit" / "sim"
     shutil.rmtree(sim_root, ignore_errors=True)
     live = sim_root / "live_chip"
     live.mkdir(parents=True)
@@ -17471,7 +18604,7 @@ def _autofit_start_real(inst, p, data, auditor):
     # step → file resolution must be complete
     folder = scheduler.load_settings(inst).get("calibrations_folder") or ""
     items = [n.to_dict() for n in
-             node_scan.scan_folder(folder, instance_path=inst)] if folder else []
+             node_scan.scan_folder(folder, instance_path=current_app.instance_path)] if folder else []
     files = [{"name": i.get("name"), "path": i.get("file") or i.get("path")}
              for i in items if i.get("kind") == "node"]
     res = af_plan.resolve_steps(p, files)
@@ -17503,7 +18636,10 @@ def _autofit_start_real(inst, p, data, auditor):
         # reconcile while the writer still holds this store/wc (audit E5)
         with app.app_context():
             try:
-                _reconcile_cached_quam_ctx(ctx["path"], ctx)
+                # docs/87 — MACHINE caller: autofit's gates judge each fit against
+                # the pre-update anchor (docs/47), so a stale store makes the
+                # VERDICT wrong. A robot mid-loop does not stop to ask.
+                _reconcile_cached_quam_ctx(ctx["path"], ctx, auto_adopt=True)
             except Exception:  # noqa: BLE001
                 logger.exception("autofit reconcile failed for %s", live_path)
 

@@ -17,7 +17,14 @@
 (function () {
     'use strict';
 
-    var HIDE_KEY = 'quam_bulk_hidden_cols';
+    // r17 one-time reset. The server defaults flipped from "31 curated columns
+    // hidden" (T1/T2/χ/f₁₂/ports) to "show everything", but a PERSISTED hidden
+    // set outranks the server default (_hiddenSet), so anyone who had ever
+    // touched the Properties menu would never have seen the change. A new key
+    // makes the flip actually arrive; the legacy value is DROPPED rather than
+    // migrated, because it encodes an opt-IN world that no longer exists.
+    var HIDE_KEY = 'quam_bulk_hidden_cols_v2';
+    try { localStorage.removeItem('quam_bulk_hidden_cols'); } catch (e) {}
     var SEARCH_KEY = 'quam_bulk_search';   // persist the search/filter box across visits
     var FREQSYNC_KEY = 'quam_bulk_freqsync';   // 🔗 mirror f_01↔RF on edit (default on)
     // r7: dynamic columns default to ALL VISIBLE (the r6 opt-in model buried
@@ -33,6 +40,8 @@
     var DYN = [];                  // FULL dynamic model: {key,label,section,unit,kind}
     var QMETA = { chip: '', qubits: [] };   // ⚏ Qubits payload: {id, grid:"c,r"|null} per qubit
     var _dynHintKeys = [];         // dyn keys matching the current search but hidden
+    var _colHintKeys = [];         // RENDERED columns matching the search but checkbox-hidden
+    var _pairHintKeys = [];        // the pair grid's hidden matches (via BulkPairEdit)
     var _reopenColvis = false;     // r7: keep the Properties menu open across a dyn-toggle reload
     // ── search-typing performance (audit: "typing in Live Edit is slow") ─────
     // A real chip renders ~150 columns × ~30 rows ≈ 2000 cells; re-scanning all
@@ -611,28 +620,49 @@
         });
         var cnt = document.getElementById('bulk-search-count');
         if (cnt) cnt.textContent = q ? (shown + ' of ' + rows.length) : '';
-        // r6 item 4 / r7: the search also scans dynamic columns the user has
-        // explicitly HIDDEN (label/key/section, AND over tokens) — now a rare
-        // case since everything is visible by default, but still actionable:
-        // "1 hidden column matches — Show".
+        // The search ALWAYS scans every column the chip has, including the ones
+        // this user hid — a property you can't find is a property that doesn't
+        // exist as far as the user is concerned (the r6-item-4 complaint). Two
+        // disjoint populations of hidden column:
+        //   (a) _colHintKeys — rendered into the DOM but checkbox-hidden; a
+        //       pure CSS reveal, no server round-trip.
+        //   (b) _dynHintKeys — derived columns the server never rendered
+        //       (?dynhide=), so revealing them needs a /bulk reload.
+        // Both surface through the one chip: "N hidden columns match — Show".
+        // Deliberately a HINT, not an auto-reveal: silently re-showing a column
+        // the user deliberately hid would fight them. Values in hidden columns
+        // stay out of the row/column haystacks for the same reason — a row must
+        // never match on evidence that isn't on screen.
         var hint = document.getElementById('bulk-dyncol-hint');
         if (hint) {
             _dynHintKeys = [];
-            if (q.length >= 2 && DYN.length) {
+            _colHintKeys = [];
+            _pairHintKeys = [];
+            if (q.length >= 2) {
+                var _match = function (c) {
+                    var hay = (c.label + ' ' + c.key + ' ' + (c.section || '')).toLowerCase();
+                    return tokens.every(function (tok) { return hay.indexOf(tok) >= 0; });
+                };
+                COLS.forEach(function (c) {
+                    if (hide.has(c.key) && _match(c)) _colHintKeys.push(c.key);
+                });
                 var hiddenKeys = {};
                 _dynHidden().forEach(function (k) { hiddenKeys[k] = true; });
                 DYN.forEach(function (c) {
                     if (c.kind === 'note' || !hiddenKeys[c.key]) return;
-                    var hay = (c.label + ' ' + c.key + ' ' + c.section).toLowerCase();
-                    if (tokens.every(function (tok) { return hay.indexOf(tok) >= 0; })) {
-                        _dynHintKeys.push(c.key);
-                    }
+                    if (_match(c)) _dynHintKeys.push(c.key);
                 });
+                // (c) the PAIR grid's hidden columns — one search box, one chip.
+                try {
+                    _pairHintKeys = (window.BulkPairEdit && BulkPairEdit.hiddenMatching)
+                        ? (BulkPairEdit.hiddenMatching(tokens) || []) : [];
+                } catch (e) { _pairHintKeys = []; }
             }
-            hint.hidden = !_dynHintKeys.length;
-            if (_dynHintKeys.length) {
-                hint.textContent = _dynHintKeys.length + ' hidden column' +
-                    (_dynHintKeys.length === 1 ? '' : 's') + ' match — Show';
+            var nHint = _colHintKeys.length + _dynHintKeys.length + _pairHintKeys.length;
+            hint.hidden = !nHint;
+            if (nHint) {
+                hint.textContent = nHint + ' hidden column' +
+                    (nHint === 1 ? '' : 's') + ' match — Show';
             }
         }
         _updateGroupHeader();   // re-span the group band over what's now visible
@@ -780,7 +810,15 @@
             var k = _dedupKey(c);
             if (seen[k] || (seenGlobal && seenGlobal[k])) return;
             seen[k] = true; batchKeys.push(k);
-            updates.push({ dot_path: c.getAttribute('data-dot-path'), value: c.value });
+            // docs/88: the server rendered this cell "not set" — the column
+            // exists because a SIBLING entity carries that leaf, so filling it
+            // in has to CREATE the key. Declaring it here (rather than letting
+            // the server infer it) keeps the standing rule that a generic
+            // bulk/plot edit can never silently create a mistyped path: only a
+            // cell the server itself marked missing may ask for creation.
+            var up = { dot_path: c.getAttribute('data-dot-path'), value: c.value };
+            if (c.getAttribute('data-missing') === '1') up.create = true;
+            updates.push(up);
         });
         if (!updates.length) return Promise.resolve({ ok: true, tray_html: null });
         var _postBatch = function (ups, fspAck, typeFix) {
@@ -1471,9 +1509,29 @@
             _refreshGlobal();
         },
 
-        // r6 item 4 / r7: un-hide every dynamic column the current search
-        // matched (the "N hidden columns match — Show" chip) and re-render.
+        // Un-hide every column the current search matched — the "N hidden
+        // columns match — Show" chip. Curated/rendered columns reveal by CSS
+        // (no round-trip); dyn columns the server never rendered need the pane
+        // reload, so that branch runs LAST and returns.
         showMatchedDynCols: function () {
+            var revealed = false;
+            if (_pairHintKeys.length && window.BulkPairEdit && BulkPairEdit.showColumns) {
+                BulkPairEdit.showColumns(_pairHintKeys);
+                _pairHintKeys = [];
+                revealed = true;
+            }
+            if (_colHintKeys.length) {
+                var hs = _hiddenSet();
+                _colHintKeys.forEach(function (k) { hs.delete(k); });
+                _saveHidden(hs);
+                _colHintKeys = [];
+                _applyColumnVisibility();   // re-runs applySearch → refreshes the chip
+                _buildColMenu();            // the checkboxes must agree with the grid
+                _recomputeStats();
+                revealed = true;
+            } else if (revealed) {
+                applySearch();              // pair-only reveal — still retire the chip
+            }
             if (!_dynHintKeys.length) return;
             var arr = _dynHidden().filter(function (k) { return _dynHintKeys.indexOf(k) < 0; });
             _saveDynHidden(arr);

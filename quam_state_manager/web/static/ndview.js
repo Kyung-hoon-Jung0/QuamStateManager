@@ -165,6 +165,19 @@
                         '" data-comp="' + p[0] + '">' + p[1] + '</button>';
                 }).join('') + '</div>';
         }
+        // Repetition axes were averaged server-side (see ndview._default_view).
+        // Say so: the plot is a mean over N identical shots, not one of them.
+        var red = (cube.default_view || {}).reduced || [];
+        if (red.length) {
+            html += '<span class="ndv-note muted">averaged over ' +
+                red.map(function (r) {
+                    // Never crash the panel over a count: name it, and say how
+                    // many only when we actually have a number.
+                    var n = (typeof r.size === 'number' && isFinite(r.size))
+                        ? ' (' + r.size.toLocaleString() + ' shots)' : '';
+                    return esc(r.name) + n;
+                }).join(', ') + '</span>';
+        }
         var dec = cube.dims.some(function (d) { return d.decimated; });
         if (dec) html += '<span class="ndv-note muted">decimated view — peaks preserved</span>';
         c.innerHTML = html;

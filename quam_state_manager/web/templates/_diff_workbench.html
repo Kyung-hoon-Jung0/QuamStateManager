@@ -1,0 +1,161 @@
+{# The diff workbench (docs/84) — two sources, four tabs, differences only.
+
+   The Compare hub works and nobody uses it: it asks for a comparison context,
+   a tolerance preset and possibly an entity mapping before it shows anything.
+   This shows the differences and how big they are, the way an IDE does, and
+   reuses the JSON tree the Explorer already has (search, depth, lazy expand).
+
+   Tree view = the pruned documents rendered by renderJsonTree in union mode.
+   List view = the same rows, ranked by how much they moved. #}
+{% from '_delta_macros.html' import delta_chip %}
+
+<div id="diff-root" class="diff-wb"
+     data-a="{{ a_ref }}" data-b="{{ b_ref }}" data-tab="{{ tab }}"
+     data-view="{{ view }}">
+
+  <div class="diff-wb-head">
+    <h2 style="margin:0">Diff</h2>
+    <p class="muted" style="margin:0">
+      What is different between two versions of this chip — and by how much.
+    </p>
+  </div>
+
+  <form class="diff-wb-pickers" hx-get="/diff" hx-target="#diff-root"
+        hx-swap="outerHTML" hx-push-url="true" hx-trigger="change">
+    <input type="hidden" name="tab" value="{{ tab }}">
+    <input type="hidden" name="view" value="{{ view }}">
+    <label class="diff-side">
+      <span class="diff-side-tag">A</span>
+      <select name="a">
+        <option value="">— pick a source —</option>
+        {% for o in options %}
+        <option value="{{ o.ref }}" {% if o.ref == a_ref %}selected{% endif %}>{{ o.label }}</option>
+        {% endfor %}
+        {% if a_ref and a_ref not in options | map(attribute='ref') | list %}
+        <option value="{{ a_ref }}" selected>{{ src_a.label if src_a else a_ref }}</option>
+        {% endif %}
+      </select>
+    </label>
+    <span class="diff-vs">vs</span>
+    <label class="diff-side">
+      <span class="diff-side-tag">B</span>
+      <select name="b">
+        <option value="">— pick a source —</option>
+        {% for o in options %}
+        <option value="{{ o.ref }}" {% if o.ref == b_ref %}selected{% endif %}>{{ o.label }}</option>
+        {% endfor %}
+        {% if b_ref and b_ref not in options | map(attribute='ref') | list %}
+        <option value="{{ b_ref }}" selected>{{ src_b.label if src_b else b_ref }}</option>
+        {% endif %}
+      </select>
+    </label>
+    <a class="btn-sm outline" href="/compare-hub?src={{ a_ref | urlencode }}&amp;src={{ b_ref | urlencode }}"
+       title="The full comparison hub — entity mapping across different devices, tolerance presets, N-way baskets">Advanced…</a>
+  </form>
+
+  <div class="ph-tabs diff-wb-tabs">
+    {% for t in tabs %}
+    <button type="button" class="ph-tab{% if t == tab %} active{% endif %}"
+            hx-get="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;tab={{ t }}&amp;view={{ view }}"
+            hx-target="#diff-root" hx-swap="outerHTML" hx-push-url="true">
+      {{ {'state': 'state.json', 'wiring': 'wiring.json',
+          'node': 'node.json', 'data': 'data'}[t] }}</button>
+    {% endfor %}
+    <span class="diff-view-toggle">
+      {% for v, label in (('tree', 'Tree'), ('list', 'List')) %}
+      <button type="button" class="btn-xs{% if v != view %} outline{% endif %}"
+              hx-get="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;tab={{ tab }}&amp;view={{ v }}"
+              hx-target="#diff-root" hx-swap="outerHTML" hx-push-url="true"
+              title="{{ 'Nested, with context' if v == 'tree' else 'Flat, biggest change first' }}">{{ label }}</button>
+      {% endfor %}
+    </span>
+  </div>
+
+  {% if error %}
+    <p class="diff-wb-msg warn">{{ error }}</p>
+  {% elif not (src_a and src_b) %}
+    <p class="diff-wb-msg muted">Pick two sources to compare.</p>
+  {% elif payload and not payload.ok %}
+    <p class="diff-wb-msg muted">{{ payload.unavailable }}</p>
+  {% elif payload %}
+    {% set c = payload.counts %}
+    <div class="diff-wb-counts">
+      <span class="diff-count diff-count-changed">{{ '{:,}'.format(c.changed) }} changed</span>
+      <span class="diff-count diff-count-added">+{{ '{:,}'.format(c.added) }} added</span>
+      <span class="diff-count diff-count-removed">&minus;{{ '{:,}'.format(c.removed) }} removed</span>
+      <span class="muted">{{ '{:,}'.format(c.same) }} identical</span>
+      {% if payload.truncated %}<span class="warn">· capped</span>{% endif %}
+      <span class="diff-wb-labels muted">
+        <b>A</b> {{ src_a.label }} &nbsp; <b>B</b> {{ src_b.label }}
+      </span>
+    </div>
+
+    {% if c.total == 0 %}
+      <p class="diff-wb-msg muted">These two are identical
+        ({{ '{:,}'.format(c.same) }} values compared).</p>
+    {% elif view == 'list' %}
+      <table class="diff-wb-list">
+        <thead><tr><th>Parameter</th><th>A</th><th></th><th>B</th><th>Δ</th></tr></thead>
+        <tbody>
+        {% for r in rows %}
+          <tr class="diff-row-{{ r.kind }}">
+            <td class="diff-list-path"><code>{{ r.path }}</code></td>
+            <td class="diff-list-a">{% if r.kind == 'added' %}<span class="muted">—</span>{% else %}<code>{{ r.a | groupdigits }}</code>{% endif %}</td>
+            <td class="diff-list-arrow">&rarr;</td>
+            <td class="diff-list-b">{% if r.kind == 'removed' %}<span class="muted">—</span>{% else %}<code>{{ r.b | groupdigits }}</code>{% endif %}</td>
+            <td class="diff-list-delta">
+              {%- if r.kind == 'changed' %}{{ delta_chip(r.a, r.b) }}
+              {%- else %}<span class="tree-sidetag tree-tag-{{ r.kind }}">{{ r.kind }}</span>{% endif -%}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% if more %}
+      <div class="ph-changes-more">
+        <button type="button" class="btn-sm outline"
+                hx-get="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;tab={{ tab }}&amp;view=list&amp;rows={{ next_rows }}"
+                hx-target="#diff-root" hx-swap="outerHTML">
+          Show {{ '{:,}'.format(more) }} more</button>
+      </div>
+      {% endif %}
+    {% else %}
+      <div class="tree-toolbar diff-tree-toolbar">
+        <span class="tree-search-icon">&#128269;</span>
+        <input type="text" class="tree-search" id="diff-tree-search"
+               placeholder="Search the differences…" autocomplete="off"
+               oninput="jsonTreeSearch('diff-tree', this.value)">
+        <div class="tree-depth-group">
+          <span class="tree-depth-label">Depth:</span>
+          <button type="button" class="btn-sm outline" onclick="jsonTreeCollapseAll('diff-tree')">0</button>
+          <button type="button" class="btn-sm outline" onclick="jsonTreeExpandToDepth('diff-tree', 2)">2</button>
+          <button type="button" class="btn-sm outline" onclick="jsonTreeExpandToDepth('diff-tree', 3)">3</button>
+          <button type="button" class="btn-sm outline" onclick="jsonTreeExpandAll('diff-tree')">All</button>
+        </div>
+        <span class="muted diff-tree-legend">
+          A <span class="tree-val">value</span> &rarr;
+          <span class="tree-incoming-val">B value</span>
+          <span class="val-delta delta-up">Δ</span>
+        </span>
+      </div>
+      <div id="diff-tree" class="json-tree"></div>
+      <script id="diff-tree-payload" type="application/json">{{ {'a': payload.tree_a, 'b': payload.tree_b} | tojson }}</script>
+    {% endif %}
+  {% endif %}
+</div>
+
+<script>
+(function () {
+    var el = document.getElementById('diff-tree');
+    var data = document.getElementById('diff-tree-payload');
+    if (!el || !data || !window.renderJsonTree) return;
+    var payload;
+    try { payload = JSON.parse(data.textContent); } catch (e) { return; }
+    // A is the primary (before) side and B the reference (after), so every row
+    // reads "A value → B value" like every other before→after surface.
+    // union:true is what makes a key only ONE side has render at all.
+    window.renderJsonTree('diff-tree', payload.a, {
+        refData: payload.b, union: true, valueClick: 'diff', defaultDepth: 99,
+    });
+})();
+</script>

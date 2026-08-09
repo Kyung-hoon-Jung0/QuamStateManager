@@ -72,10 +72,14 @@ function mkResp(payload, status) {
         text: function () { return Promise.resolve(''); },
     });
 }
-const syncCalls = [], editCalls = [];
-let syncQueue = [], editQueue = [];
+const syncCalls = [], editCalls = [], preflightCalls = [];
+let syncQueue = [], editQueue = [], preflightQueue = [];
 window.fetch = global.fetch = function (url, opts) {
     const u = String(url);
+    if (u.indexOf('/state/overwrite-live/preflight') === 0) {
+        preflightCalls.push(u);
+        return mkResp(preflightQueue.length ? preflightQueue.shift() : { ok: true });
+    }
     if (u.indexOf('/state/sync') === 0) {
         syncCalls.push({ url: u, body: (opts && opts.body) || '' });
         return mkResp(syncQueue.length ? syncQueue.shift() : { status: 'ok' });
@@ -89,8 +93,8 @@ window.fetch = global.fetch = function (url, opts) {
     return mkResp({});
 };
 
-let confirmAnswer = false;
-window.confirm = function () { return confirmAnswer; };
+let confirmAnswer = false, lastConfirm = '';
+window.confirm = function (msg) { lastConfirm = String(msg == null ? '' : msg); return confirmAnswer; };
 
 window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
 
@@ -113,6 +117,58 @@ window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
     ok(syncCalls.length === 2, 'needs_confirm + accept: forced re-post happens');
     ok(/force=1/.test(syncCalls[1] ? syncCalls[1].body : ''),
        'the retry carries force=1 (got: ' + (syncCalls[1] && syncCalls[1].body) + ')');
+
+    /* ── 1b. "Keep mine — overwrite live" (docs/86) ────────────────────
+       The third choice. It must be ONE confirm that actually names what it
+       destroys, and it must force — an unforced push would land on the
+       staleness conflict screen and ask a second time. */
+    ajaxCalls.length = 0; preflightCalls.length = 0; lastConfirm = '';
+    preflightQueue = [{ ok: true, live_changes: 7, unsaved: 0, reversible: true,
+                        run_active: false, run_label: null }];
+    confirmAnswer = false;
+    window.overwriteLiveWithWorking();
+    await flush(30);
+    ok(preflightCalls.length === 1, 'overwrite: preflights once before asking');
+    ok(/7 values/.test(lastConfirm),
+       'the confirm NAMES how many live values disappear (got: ' + lastConfirm + ')');
+    ok(/Revert last apply/.test(lastConfirm),
+       'the confirm says the push is reversible');
+    ok(ajaxCalls.length === 0, 'declining posts nothing');
+
+    ajaxCalls.length = 0; lastConfirm = '';
+    preflightQueue = [{ ok: true, live_changes: 2, unsaved: 3, reversible: true,
+                        run_active: true, run_label: 'window on port 5051' }];
+    confirmAnswer = true;
+    window.overwriteLiveWithWorking();
+    await flush(30);
+    ok(/run is in progress/.test(lastConfirm) && /5051/.test(lastConfirm),
+       'a live run is named in the confirm, not hidden (got: ' + lastConfirm + ')');
+    ok(/3 unsaved edits/.test(lastConfirm), 'unsaved edits are declared as riding along');
+    const push = ajaxCalls.filter(function (c) {
+        return c.method === 'POST' && c.url.indexOf('/state/apply-to-live') === 0; })[0];
+    ok(!!push, 'accepting pushes the working state to live');
+    ok(push && /force=1/.test(push.url),
+       'the push FORCES — one confirm, not two (got: ' + (push && push.url) + ')');
+    ok(push && push.opts && push.opts.target === '#pending-tray',
+       'the response swaps the tray, which is where Revert last apply lives');
+
+    /* a refusal (archive / no chip) never opens a confirm */
+    ajaxCalls.length = 0; lastConfirm = '';
+    preflightQueue = [{ ok: false, message: 'read-only archive' }];
+    confirmAnswer = true;
+    window.overwriteLiveWithWorking();
+    await flush(30);
+    ok(lastConfirm === '', 'a refused preflight never asks');
+    ok(ajaxCalls.length === 0, 'and never pushes');
+
+    /* an unreadable live folder still lets the user decide, honestly */
+    lastConfirm = ''; confirmAnswer = false;
+    preflightQueue = [{ ok: true, live_changes: null, unsaved: 0, reversible: true,
+                        run_active: false }];
+    window.overwriteLiveWithWorking();
+    await flush(30);
+    ok(/could not be read/.test(lastConfirm),
+       'an unknown live count is stated, not faked (got: ' + lastConfirm + ')');
 
     /* ── 2. stateRestored bridge ──────────────────────────────────────── */
     ajaxCalls.length = 0;

@@ -158,9 +158,11 @@ class TestChipCompareRedirect:
         assert resp.headers["Location"].count("src=") == 1
 
     def test_sidebar_has_no_chip_compare_entry(self, client):
+        """The legacy chip-compare entry stays gone. Since docs/84 the sidebar's
+        Compare opens the diff workbench; the hub is reachable from there."""
         html = client.get("/compare-hub").data.decode()
         assert 'href="/chip-compare"' not in html
-        assert 'href="/compare-hub"' in html
+        assert 'href="/diff"' in html
 
 
 

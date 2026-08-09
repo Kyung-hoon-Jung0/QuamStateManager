@@ -112,6 +112,96 @@ def plan_signature(rows: list[dict], skipped: list[dict]) -> str:
     return hashlib.sha1("\n".join(sorted(parts)).encode()).hexdigest()[:16]
 
 
+def strnum_signature(paths: list[str]) -> str:
+    """Fingerprint of the stored-as-text anomaly SET (paths only).
+
+    Deliberately NOT :func:`plan_signature`: this one gates whether the user
+    is told again, and the user's judgement is about *which fields are text*.
+    Folding the stored values in would re-raise the alarm every time an
+    already-flagged field's text changed ("0.13" → "0.14"), which is nagging
+    about a set the user already dismissed. Keeping the formula byte-identical
+    to r14's also keeps every dismissal already on disk valid.
+    """
+    if not paths:
+        return ""
+    return hashlib.sha1("\n".join(sorted(paths)).encode("utf-8")).hexdigest()[:16]
+
+
+def env_signature(findings: list[dict]) -> str:
+    """Fingerprint of the env-schema mismatch SET.
+
+    Keyed on the aggregated identity ``(kind, class, field, code)`` and NOT on
+    the instance counts: one defect on a 21st qubit is the same defect the user
+    already judged, so it must not re-raise.
+    """
+    keys = sorted(
+        "\x00".join(str(f.get(k) or "") for k in ("kind", "class", "field", "code"))
+        for f in (findings or [])
+    )
+    if not keys:
+        return ""
+    return hashlib.sha1("\n".join(keys).encode("utf-8")).hexdigest()[:16]
+
+
+def env_items(findings: list[dict], *, cap: int = 5) -> list[dict]:
+    """Display records for the env-schema mismatches (same location grammar as
+    ``state_env_validate.to_diag_findings``, so the popup, the card and the
+    diagnostics list all name a defect identically)."""
+    out: list[dict] = []
+    for rec in (findings or [])[:cap]:
+        cls = (rec.get("class") or "").rsplit(".", 1)[-1]
+        fld = rec.get("field") or ""
+        loc = f"{cls}.{fld}" if cls and fld else (cls or fld or "state")
+        examples = rec.get("example_paths") or []
+        out.append({
+            "location": loc,
+            "kind": rec.get("kind") or "",
+            "code": rec.get("code") or "",
+            "severity": rec.get("severity") or "warning",
+            "message": rec.get("detail") or rec.get("kind") or "env mismatch",
+            "fix_hint": rec.get("fix_hint") or "",
+            "example_path": examples[0] if examples else "",
+            "count": rec.get("count") or 0,
+        })
+    return out
+
+
+def alert_summary(plan: dict | None, env_findings: list[dict] | None,
+                  paths: list[str] | None) -> dict:
+    """The two anomaly classes in one payload, for the alert popup + the card.
+
+    They are deliberately kept apart: stored-as-text is repairable by SM (the
+    plan says exactly how), while an env-schema mismatch is a DISAGREEMENT
+    between the chip and the selected environment — SM reports it and the user
+    decides, because the library may simply have changed.
+    """
+    plan = plan or {}
+    rows = plan.get("rows") or []
+    env_findings = list(env_findings or [])
+    strnum_count = len(paths or [])
+    examples = [{"path": r["path"], "current": r["current_display"],
+                 "proposed": r["proposed_display"], "type": r["proposed_type"]}
+                for r in rows[:3]]
+    env_errors = sum(1 for f in env_findings if f.get("severity") == "error")
+    return {
+        "strnum": {
+            "count": strnum_count,
+            "fixable": plan.get("total", len(rows)),
+            "skipped": len(plan.get("skipped") or []),
+            "examples": examples,
+        },
+        "env": {
+            "count": len(env_findings),
+            "errors": env_errors,
+            "warnings": len(env_findings) - env_errors,
+            # NOT "items": Jinja resolves ``env.items`` to the dict method, so a
+            # template would silently iterate the wrong thing.
+            "entries": env_items(env_findings),
+        },
+        "total": strnum_count + len(env_findings),
+    }
+
+
 def build_plan(store: Any, *, policy: Any = None, paths: list[str] | None = None,
                editability: Any = None) -> dict:
     """Describe the stored-as-text repair for the loaded chip.

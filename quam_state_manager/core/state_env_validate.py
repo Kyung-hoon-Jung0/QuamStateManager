@@ -36,6 +36,7 @@ from __future__ import annotations
 import logging
 import math
 import weakref
+from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -102,16 +103,28 @@ def _fields_for(manifest: dict, class_str: str) -> dict | None:
 # THE resolver — walk-down with actual-class re-anchoring
 # ---------------------------------------------------------------------------
 
-# context = ("fields", <fields dict>) | ("spec", <TypeSpec>) | None
+# context = ("fields", (class_path, canonical, fields dict))
+#         | ("spec", <TypeSpec>) | None
+
+def _canonical_for(manifest: dict, class_str: str) -> str:
+    entry = _class_entry(manifest, class_str) or {}
+    return entry.get("canonical") or class_str
+
 
 def _anchor(manifest: dict, node: Any):
-    """Class context from an actual ``__class__``-bearing dict, if any."""
+    """Class context from an actual ``__class__``-bearing dict, if any.
+
+    The payload carries the class identity alongside its fields so a caller can
+    ask "which class·field is this path?" — the question an env-scoped type
+    verdict has to answer (docs/79). ``_owner_of`` cannot serve it: for
+    ``confusion_matrix.0.1`` it would report the field as ``"1"``.
+    """
     if isinstance(node, dict):
         c = node.get("__class__")
         if isinstance(c, str) and c:
             fields = _fields_for(manifest, c)
             if fields is not None:
-                return ("fields", fields)
+                return ("fields", (c, _canonical_for(manifest, c), fields))
             return None                      # unimportable/unknown class → abstain
     return _NO_ANCHOR
 
@@ -131,7 +144,7 @@ def _spec_context(manifest: dict, ts: dict | None):
         if cls:
             fields = _fields_for(manifest, cls)
             if fields is not None:
-                return ("fields", fields)
+                return ("fields", (cls, _canonical_for(manifest, cls), fields))
     return None
 
 
@@ -141,7 +154,7 @@ def _step(manifest: dict, ctx, seg: str, child_node: Any):
     if ctx is not None:
         kind, payload = ctx
         if kind == "fields":
-            f = payload.get(seg)
+            f = payload[2].get(seg)
             if isinstance(f, dict):
                 ts = f.get("type")
         else:  # ("spec", TypeSpec)
@@ -161,28 +174,61 @@ def _step(manifest: dict, ctx, seg: str, child_node: Any):
     return ts, child_ctx
 
 
-def expected_type_for(path: str, state: dict, manifest: dict | None) -> dict | None:
-    """THE path→TypeSpec resolver (see module doc). None = env layer abstains."""
+@dataclass(frozen=True)
+class FieldRef:
+    """Which class·field a dot-path resolved through.
+
+    ``exact`` means the path ENDS at the field itself; anything below it (a
+    list element, a nested dict key) is not the field, and an env-scoped
+    verdict about the field must not claim it.
+    """
+    class_path: str
+    canonical: str
+    field: str
+    exact: bool
+
+
+def resolve_path(path: str, state: dict,
+                 manifest: dict | None) -> tuple[dict | None, FieldRef | None]:
+    """THE walk-down, returning both the TypeSpec and the class·field it came
+    from. :func:`expected_type_for` is the spec-only view of this."""
     if not manifest or not isinstance(state, dict) or not path:
-        return None
+        return None, None
     segs = path.split(".")
     node: Any = state
     ctx = _anchor(manifest, state)
     if ctx is _NO_ANCHOR:
         ctx = None
     ts: dict | None = None
-    for seg in segs:
+    ref: FieldRef | None = None
+    last = len(segs) - 1
+    for i, seg in enumerate(segs):
         child = None
         if isinstance(node, dict):
             child = node.get(seg)
         elif isinstance(node, list) and seg.isdigit():
-            i = int(seg)
-            child = node[i] if i < len(node) else None
+            i_ = int(seg)
+            child = node[i_] if i_ < len(node) else None
+        if ctx is not None and ctx[0] == "fields" and isinstance(
+                ctx[1][2].get(seg), dict):
+            ref = FieldRef(class_path=ctx[1][0], canonical=ctx[1][1],
+                           field=seg, exact=(i == last))
         ts, ctx = _step(manifest, ctx, seg, child)
         node = child
     if not isinstance(ts, dict) or ts.get("base") == "any":
-        return None
-    return ts
+        return None, ref
+    return ts, ref
+
+
+def expected_type_for(path: str, state: dict, manifest: dict | None) -> dict | None:
+    """THE path→TypeSpec resolver (see module doc). None = env layer abstains."""
+    return resolve_path(path, state, manifest)[0]
+
+
+def field_ref_for(path: str, state: dict,
+                  manifest: dict | None) -> FieldRef | None:
+    """Which class·field a dot-path addresses (docs/79 verdict lookup)."""
+    return resolve_path(path, state, manifest)[1]
 
 
 # ---------------------------------------------------------------------------
@@ -451,7 +497,16 @@ def _manifest_key(manifest: dict | None) -> tuple:
     if not manifest:
         return ()
     v = manifest.get("versions") or {}
-    return tuple(sorted((str(k), str(x)) for k, x in v.items()))
+    # The verdict overlay is part of the manifest's identity (docs/79): without
+    # it, saving a verdict would keep serving the findings it just answered.
+    # The CLASS SET is too (docs/94): a re-probe after an out-of-band class
+    # migration returns the same env versions with MORE classes — keying on
+    # versions alone kept serving the pre-probe findings, which is why the
+    # Probe button visibly "did nothing" (the 10× harvest-drift errors
+    # survived a successful probe until an unrelated edit bumped the seq).
+    return (tuple(sorted((str(k), str(x)) for k, x in v.items()))
+            + (str(manifest.get("verdict_sig") or ""),)
+            + (tuple(sorted(manifest.get("classes") or ())),))
 
 
 def analysis_for_store(store, manifest: dict | None) -> dict:
@@ -472,11 +527,19 @@ def analysis_for_store(store, manifest: dict | None) -> dict:
     return res
 
 
-def to_diag_findings(analysis: dict, env_label: str = "") -> list:
+def to_diag_findings(analysis: dict, env_label: str = "", *,
+                     probing: bool = False) -> list:
     """Bridge the analyzer's aggregated findings into diagnostics ``Finding``
     objects (category ``env_*`` → the "Environment match" domain) so the
     existing badge / banner / list / Explorer-marks machinery renders them
-    with zero new plumbing."""
+    with zero new plumbing.
+
+    ``probing`` — a schema probe for the selected env is in flight (docs/94
+    fix 3): an ``unknown_class`` is then a not-yet-known, not a verdict — the
+    class that just appeared is being probed right now — so it downgrades to
+    a warning that says so instead of screaming error for the few seconds the
+    probe needs.
+    """
     from quam_state_manager.core.diagnostics import Finding
     out: list = []
     for rec in analysis.get("findings") or []:
@@ -491,11 +554,17 @@ def to_diag_findings(analysis: dict, env_label: str = "") -> list:
             detail = f"{detail} — {rec['fix_hint']}"
         if env_label:
             detail = f"{detail} [env: {env_label}]"
+        sev = "error" if rec.get("severity") == "error" else "warning"
+        msg = rec.get("detail") or rec.get("kind") or "env mismatch"
+        if probing and rec.get("kind") == "unknown_class":
+            sev = "warning"
+            msg = f"{msg} — probing the environment…"
+            detail = f"{detail} — a schema probe is in flight; this resolves when it lands"
         out.append(Finding(
-            severity="error" if rec.get("severity") == "error" else "warning",
+            severity=sev,
             category=f"env_{rec.get('kind') or 'finding'}",
             location=loc + suffix,
-            message=rec.get("detail") or rec.get("kind") or "env mismatch",
+            message=msg,
             detail=detail,
             jump_path=examples[0] if examples else "",
         ))

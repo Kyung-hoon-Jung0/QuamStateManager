@@ -1,3 +1,4 @@
+{% from '_icons.html' import icon_gear, icon_calculator %}
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
@@ -61,6 +62,7 @@
     <script src="{{ asset_url('generate.js') }}"></script>
     <script src="{{ asset_url('generate_preview.js') }}"></script>
     <script src="{{ asset_url('topo-graph.js') }}"></script>
+    <script src="{{ asset_url('component-map.js') }}"></script>
     <script src="{{ asset_url('wiring-grid.js') }}"></script>
     <script src="{{ asset_url('chip-status.js') }}"></script>
     <script src="{{ asset_url('bulk-edit.js') }}"></script>
@@ -167,103 +169,20 @@
                 {# Converter & calculator (feedback #2) — chip-independent client-side
                    tool: power-dB↔amplitude, MW-FEM amp↔dBm (full_scale_power_dbm),
                    dBm↔Volt @R, and a safe free expression box. #}
-                <li class="calc-wrap">
-                    <button class="calc-btn" id="calc-btn" type="button" onclick="toggleCalc()"
+                
+                <li class="topbar-tools-fallback">
+                    {# docs/89 — Settings and Calculator live in the SIDEBAR now. The
+                       sidebar collapses to width 0 (not an icon rail), so they would
+                       become unreachable; this compact pair appears ONLY while it is
+                       collapsed. Same reasoning as .topbar-reveal, which exists because
+                       "Hide top bar" lives inside the top bar. Not a duplicate: exactly
+                       one of the two rows is ever visible. #}
+                    <button class="settings-btn topbar-tool" type="button" onclick="toggleSettings(this)"
+                            title="Settings" aria-label="Settings">{{ icon_gear(17) }}</button>
+                    <button class="calc-btn topbar-tool" type="button" onclick="toggleCalc(this)"
                             title="Calculator (dBm · volt · amplitude · expression)"
-                            aria-haspopup="dialog" aria-expanded="false" aria-controls="calc-popover">&#8757;<span class="visually-hidden">Open calculator</span></button>
-                    <div id="calc-popover" class="calc-popover calc-hidden" role="dialog" aria-modal="false" aria-label="Calculator">
-                        <div class="calc-header" id="calc-header">
-                            <strong class="calc-title">Calculator</strong>
-                            <span class="calc-header-tools">
-                                <button type="button" class="calc-pin" id="calc-pin" onclick="calcTogglePin()" aria-pressed="false" title="Pin open (ignore outside clicks)">&#128204;</button>
-                                <button type="button" class="calc-close" onclick="toggleCalc()" title="Close" aria-label="Close">&times;</button>
-                            </span>
-                        </div>
-                        <div class="calc-body">
-                            <details class="calc-sec" open>
-                                <summary class="calc-sec-label">Power change → amplitude</summary>
-                                <div class="calc-row"><label class="calc-field">Power change Δ<input type="text" id="calc-s1-dp" class="calc-in" value="-25" inputmode="decimal"><span class="calc-unit">dB</span></label></div>
-                                <div class="calc-row"><label class="calc-field">Current amplitude<input type="text" id="calc-s1-amp" class="calc-in" value="0.5" inputmode="decimal"></label></div>
-                                <div class="calc-row calc-or">or <input type="text" id="calc-s1-from" class="calc-in calc-in-sm" value="10"> dBm → <input type="text" id="calc-s1-to" class="calc-in calc-in-sm" value="-15"> dBm</div>
-                                <div class="calc-result"><span class="calc-rlabel">Factor 10^(Δ/20)</span><span class="calc-rval" id="calc-s1-k">—</span></div>
-                                <div class="calc-result"><span class="calc-rlabel">New amplitude</span><span class="calc-rval" id="calc-s1-anew" data-raw="">—</span><button class="calc-copy" type="button" data-copy="calc-s1-anew" title="Copy">&#128203;</button><a href="#" class="calc-chain" id="calc-s1-use" title="Use as amplitude in the dBm bridge below">↳ use</a></div>
-                                <p class="calc-help">Power ∝ amp². Δ dB uses 20·log₁₀ (voltage), not 10·log₁₀.</p>
-                            </details>
-                            <details class="calc-sec">
-                                <summary class="calc-sec-label">MW-FEM amplitude ↔ dBm</summary>
-                                <div class="calc-row"><label class="calc-field">full_scale_power_dbm<input type="text" id="calc-s2-fsp" class="calc-in" value="-11"><span class="calc-unit">dBm</span></label></div>
-                                <div class="calc-row"><label class="calc-field">amplitude a<input type="text" id="calc-s2-amp" class="calc-in" value="1.0"></label></div>
-                                <div class="calc-result"><span class="calc-rlabel">Power = FSP + 20·log₁₀|a|</span><span class="calc-rval" id="calc-s2-dbm" data-raw="">—</span><button class="calc-copy" type="button" data-copy="calc-s2-dbm" title="Copy">&#128203;</button></div>
-                                <div class="calc-row"><label class="calc-field">target power<input type="text" id="calc-s2-target" class="calc-in" value="-15"><span class="calc-unit">dBm</span></label></div>
-                                <div class="calc-result"><span class="calc-rlabel">amplitude = 10^((tgt−FSP)/20)</span><span class="calc-rval" id="calc-s2-anew" data-raw="">—</span><button class="calc-copy" type="button" data-copy="calc-s2-anew" title="Copy">&#128203;</button></div>
-                            </details>
-                            <details class="calc-sec">
-                                <summary class="calc-sec-label">dBm ↔ Volt (50 Ω RF)</summary>
-                                <div class="calc-row"><label class="calc-field">Power<input type="text" id="calc-s3-dbm" class="calc-in" value="0"><span class="calc-unit">dBm</span></label><label class="calc-field calc-field-sm">R<input type="text" id="calc-s3-r" class="calc-in calc-in-sm" value="50"><span class="calc-unit">Ω</span></label></div>
-                                <div class="calc-result"><span class="calc-rlabel">P</span><span class="calc-rval" id="calc-s3-pmw">—</span><span class="calc-unit">mW</span></div>
-                                <div class="calc-row"><label class="calc-field">V_rms<input type="text" id="calc-s3-vrms" class="calc-in" inputmode="decimal"><span class="calc-unit">V</span></label><button class="calc-copy" type="button" data-copy="calc-s3-vrms" title="Copy">&#128203;</button></div>
-                                <div class="calc-row"><label class="calc-field">V_peak<input type="text" id="calc-s3-vpk" class="calc-in" inputmode="decimal"><span class="calc-unit">V</span></label><button class="calc-copy" type="button" data-copy="calc-s3-vpk" title="Copy">&#128203;</button></div>
-                                <div class="calc-row"><label class="calc-field">V_pp<input type="text" id="calc-s3-vpp" class="calc-in" inputmode="decimal"><span class="calc-unit">V</span></label><button class="calc-copy" type="button" data-copy="calc-s3-vpp" title="Copy">&#128203;</button></div>
-                                <p class="calc-help">V_peak is the amplitude-relevant one. Edit any V to back-convert to dBm.</p>
-                            </details>
-                            <details class="calc-sec">
-                                <summary class="calc-sec-label">Quick reference</summary>
-                                <p class="calc-help">0 dBm → 0.2236 V_rms / 0.3162 V_pk / 0.6325 V_pp (50 Ω)<br>−6 dB ≈ ×0.501 amp · −20 dB = ×0.1 amp<br>×0.5 amp = −6.02 dB power<br>−25 dB power = ÷17.78 in amplitude (10^(25/20)), not ÷316</p>
-                            </details>
-                        </div>
-                        <div class="calc-foot">
-                            <div class="calc-expr-row">
-                                <input type="text" id="calc-expr" class="calc-expr" value="0.5*10^(-25/20)" spellcheck="false" autocomplete="off" placeholder="= e.g. 0.5*10^(-25/20)">
-                                <span class="calc-expr-eq">=</span><span class="calc-rval" id="calc-expr-res" data-raw="">—</span><button class="calc-copy" type="button" data-copy="calc-expr-res" title="Copy (or Enter)">&#128203;</button>
-                            </div>
-                            <p class="calc-help">^ power · log10 log ln sqrt exp abs sin cos tan · pi e</p>
-                        </div>
-                    </div>
-                </li>
-                <li class="settings-wrap">
-                    <button class="settings-btn" onclick="toggleSettings()" title="Settings">&#9881;</button>
-                    <div id="settings-dropdown" class="settings-dropdown settings-hidden">
-                        <div class="settings-group">
-                            <small class="settings-label">Font size</small>
-                            <div class="settings-options">
-                                {# r15 CG4 (docs/70): presets bumped one notch (S=old M, M=old L,
-                                   L bigger). The old labels were STALE (said 13/14/16 while the
-                                   CSS was 13/15/17) — these now mirror the CSS values. #}
-                                <button onclick="setFontSize('small')"  class="settings-opt" data-size="small">S <span class="muted">15px</span></button>
-                                <button onclick="setFontSize('')"       class="settings-opt" data-size="">M <span class="muted">17px</span></button>
-                                <button onclick="setFontSize('large')"  class="settings-opt" data-size="large">L <span class="muted">19px</span></button>
-                            </div>
-                        </div>
-                        {# Global UI scale — zooms the WHOLE app (all text incl.
-                           px-sized labels, buttons, plots). Persisted; applied
-                           pre-paint by the inline head script. #}
-                        <div class="settings-group">
-                            <small class="settings-label">UI scale <span class="muted">(whole app)</span></small>
-                            <div class="settings-options">
-                                <button onclick="setUiScale(-1)" class="settings-opt" title="Smaller (min 80%)">A&minus;</button>
-                                <button onclick="setUiScale(0)"  class="settings-opt" id="ui-scale-value" title="Reset to 100%">100%</button>
-                                <button onclick="setUiScale(1)"  class="settings-opt" title="Larger (max 150%)">A+</button>
-                            </div>
-                        </div>
-                        <div class="settings-group">
-                            <small class="settings-label">Theme</small>
-                            <div class="settings-options">
-                                <button onclick="toggleTheme()" class="settings-opt" id="theme-toggle">Dark mode</button>
-                            </div>
-                        </div>
-                        <div class="settings-group">
-                            <small class="settings-label">Accessibility</small>
-                            <div class="settings-options">
-                                <button onclick="toggleColorblindMode()" class="settings-opt" id="colorblind-toggle">Colorblind mode</button>
-                            </div>
-                        </div>
-                        <div class="settings-group">
-                            <small class="settings-label">Layout</small>
-                            <div class="settings-options">
-                                <button onclick="toggleTopbar()" class="settings-opt" id="topbar-toggle">Hide top bar</button>
-                            </div>
-                        </div>
-                    </div>
+                            aria-haspopup="dialog" aria-expanded="false"
+                            aria-label="Calculator">{{ icon_calculator(17) }}</button>
                 </li>
             </ul>
         </nav>
@@ -279,9 +198,24 @@
        hx-swap-oob copy of this slot, so loading a chip via HTMX updates the
        banner here instead of rendering a duplicate inside the pane. #}
     <div id="live-diverged-slot">{% include '_live_diverged_banner.html' %}</div>
+    {# docs/80 — another window on this machine holds the same chip. Lazily
+       fetched (the check probes sibling PIDs, so it does not belong in every
+       template's context) and refreshed only from events the app already
+       fires: no new poller, and the strip clears itself once the other window
+       is gone and anything here moves. #}
+    <div id="multi-instance-slot"
+         hx-get="/instances/banner"
+         hx-trigger="load, stateRestored from:body, liveDriftChanged from:body"
+         hx-swap="innerHTML"></div>
     {# r14 ⑨ — active stored-as-text alarm (base-level slot: survives pane
        navigation, same reasoning as the diverged banner above). #}
-    <div id="type-alarm-slot">{% include '_type_alarm_banner.html' %}</div>
+    {# The count must never outlive the anomaly set it describes: a repair or a
+       content load re-renders this slot. First paint stays server-side (no
+       flash, no extra request on load). #}
+    <div id="type-alarm-slot"
+         hx-get="/type-alarm/banner"
+         hx-trigger="diagnostics-changed from:body delay:400ms, stateRestored from:body, liveDriftChanged from:body"
+         hx-swap="innerHTML">{% include '_type_alarm_banner.html' %}</div>
     {# The accumulating live-drift ALARM banner used to live here — removed
        (docs/58): users rarely acted on it. The same data now lives in the
        "Live changes since baseline" panels on Param History + State History;
@@ -296,6 +230,25 @@
          hx-swap="innerHTML"></div>
     <div class="app-layout">
         <aside id="sidebar">
+            {# docs/89 — the two app-wide TOOLS, first thing in the sidebar.
+               They were in the far top-right, which on a wide window is the
+               corner furthest from where the eye lives; the reports were that
+               nobody could find them. Icon + LABEL (the sidebar has the width,
+               and a label is what actually makes them findable), and a divider
+               so they read as tools rather than as two more destinations.
+               Settings first, per the user's call. #}
+            <div class="sidebar-tools" role="group" aria-label="Tools">
+                <button type="button" class="sidebar-tool settings-btn"
+                        onclick="toggleSettings(this)"
+                        title="Settings — font size, UI scale, theme, layout">
+                    {{ icon_gear() }}<span class="sidebar-tool-label">Settings</span></button>
+                <button type="button" class="sidebar-tool calc-btn" id="calc-btn"
+                        onclick="toggleCalc(this)" aria-haspopup="dialog"
+                        aria-expanded="false" aria-controls="calc-popover"
+                        title="Calculator — dBm · volt · amplitude · expression (Alt+C)">
+                    {{ icon_calculator() }}<span class="sidebar-tool-label">Calculator</span></button>
+            </div>
+            <hr class="sidebar-section-divider sidebar-tools-divider">
             <nav class="sidebar-nav">
                 <ul>
                     {# QUAlibrate Projects — THE primary entry point (docs/63):
@@ -436,10 +389,15 @@
                                    onclick="return chipNavView('calibration', event)">Calibration</a></li>
                         </ul>
                     </li>
-                    {# Compare hub — replaced /diff + /compare + /chip-compare
-                       (docs/49 P4: sidebar 3→1; the legacy URLs redirect here). #}
-                    <li><a href="/compare-hub" hx-get="/compare-hub" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           {% if page == 'compare_hub' %}class="active"{% endif %}>Compare</a></li>
+                    {# Compare — docs/84 made the DIFF the front door: the hub
+                       works but asks for a context, a preset and sometimes an
+                       entity mapping before it shows anything, and users stopped
+                       using it. The hub keeps the hard cases (mapping across
+                       different devices, N-way baskets) one click deeper, from
+                       the diff's "Advanced…". #}
+                    <li><a href="/diff" hx-get="/diff" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           title="Show only what differs between two versions of this chip"
+                           {% if page in ('diff', 'compare_hub') %}class="active"{% endif %}>Compare</a></li>
                     <li class="nav-with-sub">
                         <div class="nav-sub-row">
                             <a href="/bulk" hx-get="/bulk" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
@@ -694,6 +652,101 @@
                 <div class="sidebar-scroll-spacer" aria-hidden="true"></div>
             </div>
         </aside>
+        {# docs/89 — the popovers are body-level and position:fixed, anchored to
+           whichever trigger opened them. They cannot live inside #sidebar: it is
+           overflow-y:auto, which CLIPS an absolutely-positioned child, and it
+           collapses to width 0 with pointer-events:none. #}
+        <div id="settings-dropdown" class="settings-dropdown settings-hidden">
+        <div class="settings-group">
+        <small class="settings-label">Font size</small>
+        <div class="settings-options">
+        {# r15 CG4 (docs/70): presets bumped one notch (S=old M, M=old L,
+        L bigger). The old labels were STALE (said 13/14/16 while the
+        CSS was 13/15/17) — these now mirror the CSS values. #}
+        <button onclick="setFontSize('small')"  class="settings-opt" data-size="small">S <span class="muted">15px</span></button>
+        <button onclick="setFontSize('')"       class="settings-opt" data-size="">M <span class="muted">17px</span></button>
+        <button onclick="setFontSize('large')"  class="settings-opt" data-size="large">L <span class="muted">19px</span></button>
+        </div>
+        </div>
+        {# Global UI scale — zooms the WHOLE app (all text incl.
+        px-sized labels, buttons, plots). Persisted; applied
+        pre-paint by the inline head script. #}
+        <div class="settings-group">
+        <small class="settings-label">UI scale <span class="muted">(whole app)</span></small>
+        <div class="settings-options">
+        <button onclick="setUiScale(-1)" class="settings-opt" title="Smaller (min 80%)">A&minus;</button>
+        <button onclick="setUiScale(0)"  class="settings-opt" id="ui-scale-value" title="Reset to 100%">100%</button>
+        <button onclick="setUiScale(1)"  class="settings-opt" title="Larger (max 150%)">A+</button>
+        </div>
+        </div>
+        <div class="settings-group">
+        <small class="settings-label">Theme</small>
+        <div class="settings-options">
+        <button onclick="toggleTheme()" class="settings-opt" id="theme-toggle">Dark mode</button>
+        </div>
+        </div>
+        <div class="settings-group">
+        <small class="settings-label">Accessibility</small>
+        <div class="settings-options">
+        <button onclick="toggleColorblindMode()" class="settings-opt" id="colorblind-toggle">Colorblind mode</button>
+        </div>
+        </div>
+        <div class="settings-group">
+        <small class="settings-label">Layout</small>
+        <div class="settings-options">
+        <button onclick="toggleTopbar()" class="settings-opt" id="topbar-toggle">Hide top bar</button>
+        </div>
+        </div>
+        </div>
+        <div id="calc-popover" class="calc-popover calc-hidden" role="dialog" aria-modal="false" aria-label="Calculator">
+        <div class="calc-header" id="calc-header">
+        <strong class="calc-title">Calculator</strong>
+        <span class="calc-header-tools">
+        <button type="button" class="calc-pin" id="calc-pin" onclick="calcTogglePin()" aria-pressed="false" title="Pin open (ignore outside clicks)">&#128204;</button>
+        <button type="button" class="calc-close" onclick="toggleCalc()" title="Close" aria-label="Close">&times;</button>
+        </span>
+        </div>
+        <div class="calc-body">
+        <details class="calc-sec" open>
+        <summary class="calc-sec-label">Power change → amplitude</summary>
+        <div class="calc-row"><label class="calc-field">Power change Δ<input type="text" id="calc-s1-dp" class="calc-in" value="-25" inputmode="decimal"><span class="calc-unit">dB</span></label></div>
+        <div class="calc-row"><label class="calc-field">Current amplitude<input type="text" id="calc-s1-amp" class="calc-in" value="0.5" inputmode="decimal"></label></div>
+        <div class="calc-row calc-or">or <input type="text" id="calc-s1-from" class="calc-in calc-in-sm" value="10"> dBm → <input type="text" id="calc-s1-to" class="calc-in calc-in-sm" value="-15"> dBm</div>
+        <div class="calc-result"><span class="calc-rlabel">Factor 10^(Δ/20)</span><span class="calc-rval" id="calc-s1-k">—</span></div>
+        <div class="calc-result"><span class="calc-rlabel">New amplitude</span><span class="calc-rval" id="calc-s1-anew" data-raw="">—</span><button class="calc-copy" type="button" data-copy="calc-s1-anew" title="Copy">&#128203;</button><a href="#" class="calc-chain" id="calc-s1-use" title="Use as amplitude in the dBm bridge below">↳ use</a></div>
+        <p class="calc-help">Power ∝ amp². Δ dB uses 20·log₁₀ (voltage), not 10·log₁₀.</p>
+        </details>
+        <details class="calc-sec">
+        <summary class="calc-sec-label">MW-FEM amplitude ↔ dBm</summary>
+        <div class="calc-row"><label class="calc-field">full_scale_power_dbm<input type="text" id="calc-s2-fsp" class="calc-in" value="-11"><span class="calc-unit">dBm</span></label></div>
+        <div class="calc-row"><label class="calc-field">amplitude a<input type="text" id="calc-s2-amp" class="calc-in" value="1.0"></label></div>
+        <div class="calc-result"><span class="calc-rlabel">Power = FSP + 20·log₁₀|a|</span><span class="calc-rval" id="calc-s2-dbm" data-raw="">—</span><button class="calc-copy" type="button" data-copy="calc-s2-dbm" title="Copy">&#128203;</button></div>
+        <div class="calc-row"><label class="calc-field">target power<input type="text" id="calc-s2-target" class="calc-in" value="-15"><span class="calc-unit">dBm</span></label></div>
+        <div class="calc-result"><span class="calc-rlabel">amplitude = 10^((tgt−FSP)/20)</span><span class="calc-rval" id="calc-s2-anew" data-raw="">—</span><button class="calc-copy" type="button" data-copy="calc-s2-anew" title="Copy">&#128203;</button></div>
+        </details>
+        <details class="calc-sec">
+        <summary class="calc-sec-label">dBm ↔ Volt (50 Ω RF)</summary>
+        <div class="calc-row"><label class="calc-field">Power<input type="text" id="calc-s3-dbm" class="calc-in" value="0"><span class="calc-unit">dBm</span></label><label class="calc-field calc-field-sm">R<input type="text" id="calc-s3-r" class="calc-in calc-in-sm" value="50"><span class="calc-unit">Ω</span></label></div>
+        <div class="calc-result"><span class="calc-rlabel">P</span><span class="calc-rval" id="calc-s3-pmw">—</span><span class="calc-unit">mW</span></div>
+        <div class="calc-row"><label class="calc-field">V_rms<input type="text" id="calc-s3-vrms" class="calc-in" inputmode="decimal"><span class="calc-unit">V</span></label><button class="calc-copy" type="button" data-copy="calc-s3-vrms" title="Copy">&#128203;</button></div>
+        <div class="calc-row"><label class="calc-field">V_peak<input type="text" id="calc-s3-vpk" class="calc-in" inputmode="decimal"><span class="calc-unit">V</span></label><button class="calc-copy" type="button" data-copy="calc-s3-vpk" title="Copy">&#128203;</button></div>
+        <div class="calc-row"><label class="calc-field">V_pp<input type="text" id="calc-s3-vpp" class="calc-in" inputmode="decimal"><span class="calc-unit">V</span></label><button class="calc-copy" type="button" data-copy="calc-s3-vpp" title="Copy">&#128203;</button></div>
+        <p class="calc-help">V_peak is the amplitude-relevant one. Edit any V to back-convert to dBm.</p>
+        </details>
+        <details class="calc-sec">
+        <summary class="calc-sec-label">Quick reference</summary>
+        <p class="calc-help">0 dBm → 0.2236 V_rms / 0.3162 V_pk / 0.6325 V_pp (50 Ω)<br>−6 dB ≈ ×0.501 amp · −20 dB = ×0.1 amp<br>×0.5 amp = −6.02 dB power<br>−25 dB power = ÷17.78 in amplitude (10^(25/20)), not ÷316</p>
+        </details>
+        </div>
+        <div class="calc-foot">
+        <div class="calc-expr-row">
+        <input type="text" id="calc-expr" class="calc-expr" value="0.5*10^(-25/20)" spellcheck="false" autocomplete="off" placeholder="= e.g. 0.5*10^(-25/20)">
+        <span class="calc-expr-eq">=</span><span class="calc-rval" id="calc-expr-res" data-raw="">—</span><button class="calc-copy" type="button" data-copy="calc-expr-res" title="Copy (or Enter)">&#128203;</button>
+        </div>
+        <p class="calc-help">^ power · log10 log ln sqrt exp abs sin cos tan · pi e</p>
+        </div>
+        </div>
+
 
         {# Drag handle to resize the sidebar (item 9) — long experiment names
            need more room on demand. Sets --sidebar-width on :root + persists to
@@ -803,7 +856,7 @@
                 {"label": "Couplers",          "url": "/couplers"},
                 {"label": "Diagnostics",       "url": "/diagnostics"},
                 {"label": "Chip Status",       "url": "/topology"},
-                {"label": "Compare",           "url": "/compare-hub"},
+                {"label": "Compare",           "url": "/diff"},
                 {"label": "Live State Edit",   "url": "/bulk"},
                 {"label": "Json Tree View",    "url": "/explorer"},
                 {"label": "Pulses",            "url": "/pulses"},
