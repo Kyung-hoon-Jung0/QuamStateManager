@@ -91,9 +91,14 @@
          re-apply the pending edits on top, and write them straight to the live chip —
          no review-modal round-trip. Safe: it MERGES (qualibrate's other changes
          survive). The review-before-apply path stays available via the status badge. #}
+      {# docs/104 #1: this is a LIVE-file write reachable in two clicks by a
+         first-time user (the chip-name banner stages edit #1), and it was the
+         ONLY apply path with no confirm — its working_dirty sibling below has
+         always had one. One confirm naming the act; the review modal's own
+         Pull & apply stays unconfirmed there because the diff is on screen. #}
       <button type="button" class="btn-sm btn-apply-live"
-              onclick="doStateSync('apply')"
-              title="One click — apply your edits to the live chip now. Pulls the live chip, re-applies your edits on top, and writes them straight to state.json / wiring.json (no review step). To review every field before applying, click the status badge above.">
+              onclick="if (window.confirm('Apply your edit(s) to the LIVE chip now?\n\nThis writes state.json / wiring.json (merged with the live chip). The tray&#39;s Revert last apply undoes it.')) doStateSync('apply')"
+              title="One click — apply your edits to the live chip now. Pulls the live chip, re-applies your edits on top, and writes them straight to state.json / wiring.json. To review every field before applying, click the status badge above.">
         <span aria-hidden="true">&#9889;</span> Apply to live now</button>
       {% else %}
       {# Saved-but-unapplied edits exist (working_dirty) — a pull-based one-click merge
