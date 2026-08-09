@@ -245,3 +245,11 @@ Nine days of customer feedback batches r12–r16, the runner/agent programme, an
 - ASCII-only CLI banners — a cp949 console (the Windows default in Korean and Japanese locales) cannot encode an em-dash, so `qsm serve` raised and died before binding the port. The pin that catches this has now caught it twice
 - The frozen bundle ships the vision judge's data packs; without them the loader answered with an empty pack rather than raising, which would have silently stripped every exemplar the judge reasons from
 - No customer or device identifiers remain in any tracked file
+
+## Unreleased
+
+### One query grammar: space = AND, `|` = OR (docs/96)
+
+- Users kept asking why two words work in Live State Edit and find nothing in the Json Tree View: the app had grown five mutually incompatible search semantics behind 24 controls. The boolean structure now lives in ONE module (`web/static/search-query.js` + its Python twin `core/search_query.py`, pinned to each other structure-for-structure), adopted in one change by both tree search paths, the Live State Edit qubit and pair grids, the Datasets table and the sidebar workspace filter
+- `q1 | q2` finds both; OR binds tighter than AND (`x180 amplitude | length` = x180 AND (amplitude OR length)); every other pipe stays a literal character — measured, not stylistic: ket notation (`|e>`) lives in 25.7% of real node.json descriptions and must stay searchable. A query of plain words behaves exactly as before, pinned by a 2,000-case fuzz and per-surface checks
+- Found by the same audit and fixed: the global search's category tabs re-issued the query unencoded, so a search containing `&`, `+` or `#` silently broke

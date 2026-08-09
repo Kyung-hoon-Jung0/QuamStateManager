@@ -5121,12 +5121,23 @@ window.clearDetailPanelSearch = function(btnEl) {
         }
         var flat = container._flatIndex.flat;
 
+        // Space = AND, standalone | = OR (SearchQuery — the shared grammar).
+        // The tree used to test the WHOLE trimmed query as one substring, so
+        // two words found nothing while the same two words worked in Live
+        // State Edit — the single most-asked search question. A term matches
+        // in the node's key+value haystack OR its dot-path; joining the two
+        // with a space is exact because tokens cannot contain one. Strictly
+        // additive: a phrase match implies every token matches.
+        var grps = window.SearchQuery ? SearchQuery.groups(q) : [[q]];
+
         // O(N) scan over pre-lowercased fields. keepPaths = matches + ancestors.
         var matchPaths = new Set();
         var keepPaths = new Set();
         for (var j = 0; j < flat.length; j++) {
             var e = flat[j];
-            if (e.hayLower.indexOf(q) >= 0 || e.pathLower.indexOf(q) >= 0) {
+            if (window.SearchQuery
+                    ? SearchQuery.matchesHay(e.hayLower + ' ' + e.pathLower, grps)
+                    : (e.hayLower.indexOf(q) >= 0 || e.pathLower.indexOf(q) >= 0)) {
                 matchPaths.add(e.path);
                 var p = e.path;
                 while (!keepPaths.has(p)) {       // stop once an ancestor chain is known
@@ -5214,6 +5225,10 @@ window.clearDetailPanelSearch = function(btnEl) {
             if (changed) nodes = container.querySelectorAll(".tree-node");
         }
 
+        // Same grammar as _searchTreeData — this DOM path serves the unified
+        // compare tree, which must not answer differently from the data path.
+        var grpsD = window.SearchQuery ? SearchQuery.groups(q) : [[q]];
+
         var matches = [];
         for (var j = 0; j < nodes.length; j++) {
             var nd = nodes[j];
@@ -5224,7 +5239,9 @@ window.clearDetailPanelSearch = function(btnEl) {
                 nd._searchText = hay;
             }
             var pathAttr = (nd.getAttribute("data-path") || "").toLowerCase();
-            if (hay.indexOf(q) >= 0 || pathAttr.indexOf(q) >= 0) {
+            if (window.SearchQuery
+                    ? SearchQuery.matchesHay(hay + ' ' + pathAttr, grpsD)
+                    : (hay.indexOf(q) >= 0 || pathAttr.indexOf(q) >= 0)) {
                 nd.classList.add("tree-highlight");
                 matches.push(nd);
             }

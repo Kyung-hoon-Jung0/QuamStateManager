@@ -136,24 +136,46 @@
             var idHit = ids.some(function (id) { return id.indexOf(tok) >= 0; });
             return { tok: tok, isCol: colHit, isId: idHit, isVal: !colHit && !idHit };
         });
+        // Shared grammar (kept in sync with bulk-edit.js): space = AND across
+        // groups, standalone | = OR within one; no pipe → singleton groups →
+        // the old every-token AND, unchanged. Neutral tokens pass their
+        // off-axis group exactly as they used to be skipped.
+        var tokGroups = window.SearchQuery
+            ? SearchQuery.groupBy(tokInfo, function (ti) { return ti.tok; })
+            : tokInfo.map(function (ti) { return [ti]; });
 
         function colVisible(key, colCells) {
-            for (var i = 0; i < tokInfo.length; i++) {
-                var ti = tokInfo[i];
-                if (ti.isCol && !ti.isId) {
-                    var c = COLS.filter(function (x) { return x.key === key; })[0];
-                    if (!c || (c.label + ' ' + c.key + ' ' + c.section).toLowerCase().indexOf(ti.tok) < 0) return false;
-                } else if (ti.isVal) {
-                    if (!colCells.some(function (h) { return h.indexOf(ti.tok) >= 0; })) return false;
+            var c = COLS.filter(function (x) { return x.key === key; })[0];
+            for (var g = 0; g < tokGroups.length; g++) {
+                var any = false;
+                for (var i = 0; i < tokGroups[g].length && !any; i++) {
+                    var ti = tokGroups[g][i];
+                    if (ti.isCol && !ti.isId) {
+                        any = !!c && (c.label + ' ' + c.key + ' ' + c.section).toLowerCase().indexOf(ti.tok) >= 0;
+                    } else if (ti.isVal) {
+                        any = colCells.some(function (h) { return h.indexOf(ti.tok) >= 0; });
+                    } else {
+                        any = true;
+                    }
                 }
+                if (!any) return false;
             }
             return true;
         }
         function rowVisible(id, rowHaystacks) {
-            for (var i = 0; i < tokInfo.length; i++) {
-                var ti = tokInfo[i];
-                if (ti.isId && !ti.isCol) { if (id.indexOf(ti.tok) < 0) return false; }
-                else if (ti.isVal) { if (!rowHaystacks.some(function (h) { return h.indexOf(ti.tok) >= 0; })) return false; }
+            for (var g = 0; g < tokGroups.length; g++) {
+                var any = false;
+                for (var i = 0; i < tokGroups[g].length && !any; i++) {
+                    var ti = tokGroups[g][i];
+                    if (ti.isId && !ti.isCol) {
+                        any = id.indexOf(ti.tok) >= 0;
+                    } else if (ti.isVal) {
+                        any = rowHaystacks.some(function (h) { return h.indexOf(ti.tok) >= 0; });
+                    } else {
+                        any = true;
+                    }
+                }
+                if (!any) return false;
             }
             return true;
         }
@@ -715,10 +737,16 @@
         hiddenMatching: function (tokens) {
             if (!tokens || !tokens.length) return [];
             var hide = _hiddenSet(), out = [];
+            // Same grammar as the search itself — the hint must not claim a
+            // hidden column matches under different rules than showing would.
+            var grps = window.SearchQuery ? SearchQuery.groupBy(tokens)
+                : tokens.map(function (t) { return [t]; });
             COLS.forEach(function (c) {
                 if (!hide.has(c.key)) return;
                 var hay = (c.label + ' ' + c.key + ' ' + (c.section || '')).toLowerCase();
-                if (tokens.every(function (tok) { return hay.indexOf(tok) >= 0; })) out.push(c.key);
+                var ok = window.SearchQuery ? SearchQuery.matchesHay(hay, grps)
+                    : tokens.every(function (tok) { return hay.indexOf(tok) >= 0; });
+                if (ok) out.push(c.key);
             });
             return out;
         },

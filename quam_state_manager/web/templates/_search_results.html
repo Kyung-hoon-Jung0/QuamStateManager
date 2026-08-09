@@ -9,7 +9,11 @@
             {% set cats = ["all", "qubit", "pair", "port", "wiring", "config"] %}
             {% for cat in cats %}
             <li>
-                <a hx-get="/search?q={{ query }}&category={% if cat != 'all' %}{{ cat }}{% endif %}"
+                {# urlencode: the query is user text going into a URL — without
+                   it a search containing & / + / # silently truncated or
+                   mutated when a category tab re-issued it (live bug found by
+                   the search-grammar audit, independent of the grammar). #}
+                <a hx-get="/search?q={{ query | urlencode }}&category={% if cat != 'all' %}{{ cat }}{% endif %}"
                    hx-target="#inspector-pane"
                    class="{% if (active_category == cat) or (cat == 'all' and not active_category) %}active{% endif %}">
                     {{ cat | capitalize }}

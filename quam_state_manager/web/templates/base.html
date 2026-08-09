@@ -57,6 +57,9 @@
        on demand via window.requirePlotly() (see app.js), never eagerly. #}
     <script src="{{ url_for('static', filename='htmx.min.js') }}"></script>
     <script src="{{ url_for('static', filename='split.min.js') }}"></script>
+    {# The one query grammar (space=AND, standalone |=OR) — must precede every
+       matcher that consumes it: app.js (trees), bulk/pair-edit, dataset-virtual. #}
+    <script src="{{ asset_url('search-query.js') }}"></script>
     <script src="{{ asset_url('app.js') }}"></script>
     <script src="{{ asset_url('dataset-virtual.js') }}"></script>
     <script src="{{ asset_url('generate.js') }}"></script>
@@ -540,6 +543,8 @@
                                     <td>Prefix <code>-</code> to exclude a scope</td></tr>
                                 <tr><td><button class="ds-help-example search-help-example" data-search-help-input="sidebar-filter-input" data-example='name:"power rabi"'>name:"power rabi"</button></td>
                                     <td>Quote values with spaces</td></tr>
+                                <tr><td><button class="ds-help-example search-help-example" data-search-help-input="sidebar-filter-input" data-example="rabi | ramsey">rabi | ramsey</button></td>
+                                    <td><code>|</code> between terms = either matches (OR); space = AND</td></tr>
                             </tbody>
                         </table>
                     </div>

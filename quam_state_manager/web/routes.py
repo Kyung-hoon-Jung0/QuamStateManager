@@ -10788,15 +10788,34 @@ def _parse_tree_query(text: str) -> list[dict]:
     return conds
 
 
+def _group_tree_conds(conds: list[dict]) -> list[list[dict]]:
+    """AND-of-OR groups over the parsed conditions (the shared ``|`` grammar).
+
+    ``core.search_query.group_by`` is the same structure every client-side
+    search box uses (its JS twin) — a standalone free-text ``|`` with a
+    non-negated term on both sides ORs its neighbours; every other pipe stays
+    a literal token. No pipe → singleton groups → the historic flat AND.
+    """
+    from quam_state_manager.core.search_query import group_by
+
+    return group_by(
+        conds,
+        get_raw=lambda c: c["value"] if c["field"] is None else "",
+        joinable=lambda c: not c["negate"],
+    )
+
+
 def _entry_matches(entry, conds: list[dict]) -> bool:
-    """True iff *entry* satisfies every parsed condition (AND, with negation)."""
+    """True iff *entry* satisfies the parsed query — AND across groups, OR
+    within one (``q1 | q2``), negation as before (always a singleton group)."""
     name = (entry.experiment_name or "").lower()
     date = (entry.date_str or "").lower()
     status = (entry.status or "").lower()
     rid = "" if entry.run_id is None else str(entry.run_id)
     qubits = [str(q).lower() for q in (getattr(entry, "qubits", None) or [])]
     pairs = [str(p).lower() for p in (getattr(entry, "qubit_pairs", None) or [])]
-    for c in conds:
+
+    def _hit(c: dict) -> bool:
         field, value = c["field"], c["value"]
         if field is None:
             # Free-text: name/date/status substring, EXACT qubit (q1 ≠ q10), or
@@ -10809,31 +10828,39 @@ def _entry_matches(entry, conds: list[dict]) -> bool:
             # (any digit matched everything); digits-only is unambiguous.
             if not hit and value.isdigit() and rid:
                 hit = rid == value or rid.startswith(value)
-        elif field == "name":
-            hit = value in name
-        elif field == "date":
-            hit = value in date
-        elif field == "status":
-            hit = value in status
-        elif field == "id":
-            hit = value in rid
-        elif field == "qubit":
-            hit = value in qubits                       # exact
-        elif field == "pair":
-            hit = any(value in p for p in pairs)         # substring
-        else:
-            hit = False
-        if hit == c["negate"]:  # non-negated miss, or negated hit → reject
+            return hit
+        if field == "name":
+            return value in name
+        if field == "date":
+            return value in date
+        if field == "status":
+            return value in status
+        if field == "id":
+            return value in rid
+        if field == "qubit":
+            return value in qubits                       # exact
+        if field == "pair":
+            return any(value in p for p in pairs)        # substring
+        return False
+
+    for group in _group_tree_conds(conds):
+        if len(group) == 1 and group[0]["negate"]:
+            if _hit(group[0]):                # negated hit → reject
+                return False
+            continue
+        if not any(_hit(c) for c in group):   # no member matched → reject
             return False
     return True
 
 
 def _filter_tree(tree: dict, text: str) -> dict:
-    """Filter workspace tree entries by a scoped query (all conditions AND).
+    """Filter workspace tree entries by a scoped query.
 
     Supports free-text tokens plus ``key:value`` scopes (name/exp/e, date/d,
     status/st, id/run) with ``-`` negation and "quoted values", mirroring the
-    Datasets-page search.
+    Datasets-page search. Boolean structure is the shared grammar
+    (``core.search_query``): space = AND, a standalone ``|`` = OR between its
+    neighbours (``rabi | ramsey``).
     """
     from quam_state_manager.core.scanner import DateGroup
 

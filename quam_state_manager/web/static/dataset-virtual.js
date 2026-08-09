@@ -93,6 +93,7 @@
         paramFilter: _persistedParamFilter,        // Map<paramKey, Set<valueStr>>: OR within key, AND across keys
         paramRangeFilter: _persistedParamRangeFilter,  // Map<paramKey, {min,max}>: numeric range, AND across keys
         searchTokens: [],         // Free-text tokens (lowercased)
+        searchGroups: [],         // AND-of-OR groups over ORDERED parsed tokens (SearchQuery)
         scopedFilters: [],        // [{key, value, negate}, ...] parsed scoped filters
         unknownScopes: [],        // Surfaced in the filter-count strip as "unknown scope: foo:"
         selectedExps: null,       // Set of experiment names; null = no exp filter
@@ -146,6 +147,7 @@
         var freeText = [];
         var scoped = [];
         var unknown = [];
+        var items = [];          // ORDERED tokens — the `|` grammar binds on adjacency
         var tokens = tokenize(raw);
         for (var i = 0; i < tokens.length; i++) {
             var tok = tokens[i];
@@ -165,6 +167,7 @@
             var m = body.match(/^([a-zA-Z]+):(.*)$/);
             if (!m) {
                 freeText.push(tok.toLowerCase());
+                items.push({kind: 'free', value: tok.toLowerCase(), negate: false});
                 continue;
             }
             var key = m[1].toLowerCase();
@@ -172,6 +175,7 @@
             key = SCOPE_ALIASES[key] || key;
             if (!KNOWN_SCOPES.has(key)) {
                 freeText.push(tok.toLowerCase());
+                items.push({kind: 'free', value: tok.toLowerCase(), negate: false});
                 unknown.push(m[1]);
                 continue;
             }
@@ -179,13 +183,27 @@
                 // Predicate scope — value is a literal token, never blank.
                 if (!value) continue;
                 scoped.push({key: key, value: value, negate: negate});
+                items.push({kind: 'scope', key: key, value: value, negate: negate});
             } else {
                 // Substring scope — empty value would match every row; drop it.
                 if (!value) continue;
                 scoped.push({key: key, value: value, negate: negate});
+                items.push({kind: 'scope', key: key, value: value, negate: negate});
             }
         }
-        return {freeText: freeText, scoped: scoped, unknown: unknown};
+        // Shared grammar: a standalone `|` free token with a joinable term on
+        // both sides ORs its neighbours (SearchQuery.groupBy — the same
+        // structure the tree and both grids use). `items` keeps the ORIGINAL
+        // token order, which the split freeText/scoped arrays lost — adjacency
+        // is what `|` binds on, so `tag:a | tag:b` works. Negated terms are
+        // never OR operands (their pipe stays literal). No pipe → singleton
+        // groups → exactly the old AND evaluation.
+        var groups = (window.SearchQuery
+            ? SearchQuery.groupBy(items,
+                function (it) { return it.kind === 'free' ? it.value : ''; },
+                function (it) { return !it.negate; })
+            : items.map(function (it) { return [it]; }));
+        return {freeText: freeText, scoped: scoped, unknown: unknown, groups: groups};
     }
 
     function matchScope(row, key, value) {
@@ -623,6 +641,7 @@
         state.selectedTags = getSelectedTags();
         var tokens = state.searchTokens;
         var scoped = state.scopedFilters;
+        var groups = state.searchGroups || [];
         var visible = [];
         for (var i = 0; i < state.rows.length; i++) {
             var row = state.rows[i];
@@ -640,34 +659,38 @@
             if (state.paramFilter.size > 0 && !_rowMatchesParams(row)) continue;
             // Numeric param ranges — AND across keys.
             if (state.paramRangeFilter.size > 0 && !_rowMatchesParamRanges(row)) continue;
-            if (tokens.length > 0) {
-                // Each comma/space keyword is ANDed. A keyword that exactly names a
-                // known qubit means "run contains that qubit" (so `q8` → every run on
-                // qubit q8); anything else is a substring match over the row haystack
-                // (so `time` → time_of_flight, etc.).
+            if (groups.length > 0) {
+                // One pass over the shared-grammar groups: AND across groups,
+                // OR within one (`q8 | q9` = runs on either). Each member
+                // keeps its historic semantics — a free keyword that exactly
+                // names a known qubit means "run contains that qubit", any
+                // other free keyword is a substring over the row haystack, a
+                // scoped member goes through matchScope. Negated members are
+                // always singleton groups (never OR operands), so negation
+                // stays exactly the old XOR. No pipe in the query → singleton
+                // groups → byte-for-byte the old two AND loops.
                 var text = null;
                 var ok = true;
-                for (var t = 0; t < tokens.length; t++) {
-                    var tok = tokens[t];
-                    if (state.knownQubits.has(tok)) {
-                        if (!_rowHasQubit(row, tok)) { ok = false; break; }
-                    } else if (state.knownPairs.has(tok)) {
-                        if (!_rowHasPair(row, tok)) { ok = false; break; }
-                    } else {
+                var member = function (it) {
+                    if (it.kind === 'free') {
+                        if (state.knownQubits.has(it.value)) return _rowHasQubit(row, it.value);
+                        if (state.knownPairs.has(it.value)) return _rowHasPair(row, it.value);
                         if (text === null) text = buildSearchText(row);
-                        if (text.indexOf(tok) === -1) { ok = false; break; }
+                        return text.indexOf(it.value) !== -1;
                     }
+                    return matchScope(row, it.key, it.value);
+                };
+                for (var g = 0; g < groups.length; g++) {
+                    var grp = groups[g];
+                    if (grp.length === 1 && grp[0].negate) {
+                        if (member(grp[0])) { ok = false; break; }
+                        continue;
+                    }
+                    var anyM = false;
+                    for (var m = 0; m < grp.length && !anyM; m++) anyM = member(grp[m]);
+                    if (!anyM) { ok = false; break; }
                 }
                 if (!ok) continue;
-            }
-            if (scoped.length > 0) {
-                var okS = true;
-                for (var s = 0; s < scoped.length; s++) {
-                    var f = scoped[s];
-                    var hit = matchScope(row, f.key, f.value);
-                    if (hit === f.negate) { okS = false; break; }
-                }
-                if (!okS) continue;
             }
             visible.push(i);
         }
@@ -999,8 +1022,9 @@
             state.searchTokens = parsed.freeText;
             state.scopedFilters = parsed.scoped;
             state.unknownScopes = parsed.unknown;
+            state.searchGroups = parsed.groups;
         } else {
-            state.searchTokens = [];
+            state.searchTokens = []; state.searchGroups = [];
             state.scopedFilters = [];
             state.unknownScopes = [];
         }
@@ -1713,7 +1737,7 @@
     window.clearDatasetFilters = function () {
         var inp = document.getElementById('dataset-search');
         if (inp) inp.value = '';
-        state.searchTokens = []; state.scopedFilters = []; state.unknownScopes = [];
+        state.searchTokens = []; state.searchGroups = []; state.scopedFilters = []; state.unknownScopes = [];
         if (state.qubitFilter) state.qubitFilter.clear();
         if (state.pairFilter) state.pairFilter.clear();
         if (state.paramFilter) state.paramFilter.clear();
@@ -1903,8 +1927,9 @@
             state.searchTokens = parsed.freeText;
             state.scopedFilters = parsed.scoped;
             state.unknownScopes = parsed.unknown;
+            state.searchGroups = parsed.groups;
         } else {
-            state.searchTokens = [];
+            state.searchTokens = []; state.searchGroups = [];
             state.scopedFilters = [];
             state.unknownScopes = [];
         }
