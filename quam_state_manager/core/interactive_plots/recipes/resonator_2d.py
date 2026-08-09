@@ -53,7 +53,9 @@ def menu(bundle):
     qubits = qubits_of(bundle) or ["q"]
     multi = len(qubits) > 1
     have = "IQ_abs" in bundle.raw_vars
-    title = "Resonator vs power" if _is_power(bundle) else "Resonator vs flux"
+    title = ("Resonator vs power" if _is_power(bundle)
+             else "Resonator vs coupler flux" if _is_coupler(bundle)
+             else "Resonator vs flux")
     return [FigureSpec(figure_key("amplitude", q), title + (f" — {q}" if multi else ""),
                        "2d", available=have, reason="" if have else "no IQ_abs")
             for q in qubits]
