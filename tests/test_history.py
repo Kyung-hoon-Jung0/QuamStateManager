@@ -2705,3 +2705,45 @@ class TestIndexFollowsRoutedDir:
         assert mb.timestamp not in self._index_timestamps(base), \
             "base chip's index must never carry the alt chip's rows"
         assert ma.timestamp in self._index_timestamps(base)
+
+
+# ---------------------------------------------------------------------------
+# history_disk_stats — the honest footprint line (defect #10)
+# ---------------------------------------------------------------------------
+
+
+def test_disk_stats_counts_snapshots_and_bytes(hm: HistoryManager, quam_path: Path):
+    hm.check_and_snapshot(quam_path, "manual", force=True)
+    st = hm.history_disk_stats(quam_path)
+    assert st["snapshots"] == 1
+    assert st["bytes"] > 0                    # snapshot copies + index files
+
+
+def test_disk_stats_cached_until_the_dir_changes(hm: HistoryManager, quam_path: Path):
+    """The whole-dir walk is O(files); it must run at most once per
+    (count, newest ts) — i.e. per capture/prune, never per render."""
+    hm.check_and_snapshot(quam_path, "manual", force=True)
+    st1 = hm.history_disk_stats(quam_path)
+    assert hm.history_disk_stats(quam_path) is st1        # cache hit: no walk
+    time.sleep(0.02)
+    state = _base_state()
+    state["qubits"]["qA1"]["T1"] = 9000
+    _write_quam_state(quam_path, state, _base_wiring())
+    hm.check_and_snapshot(quam_path, "manual", force=True)
+    st2 = hm.history_disk_stats(quam_path)
+    assert st2["snapshots"] == 2
+    assert st2["bytes"] > st1["bytes"]                    # recomputed honestly
+
+
+def test_disk_stats_tell_the_truth_about_retention(
+        hm: HistoryManager, quam_path: Path, tmp_path: Path):
+    # This fixture configures a REAL budget (50) → retention is real.
+    hm.check_and_snapshot(quam_path, "manual", force=True)
+    st = hm.history_disk_stats(quam_path)
+    assert st["prune_active"] is True and st["max_snapshots"] == 50
+    # Under the default budget _prune never fires on any real chip — the UI
+    # must not be told retention exists.
+    hm2 = HistoryManager(tmp_path / "instance2")
+    hm2.check_and_snapshot(quam_path, "manual", force=True)
+    st2 = hm2.history_disk_stats(quam_path)
+    assert st2["prune_active"] is False

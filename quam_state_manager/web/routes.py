@@ -7245,6 +7245,12 @@ def wiring_view():
 # ======================================================================
 
 
+# History-panel default page size. At 500 snapshots the old show-all default
+# rendered every row on each panel open; 0 stays the EXPLICIT "All" choice
+# (user doctrine: every pager offers a user-selectable size including All).
+_HISTORY_PANEL_PER_PAGE = 50
+
+
 @bp.route("/api/history")
 def history_list():
     """Return the history panel content with paginated snapshot list."""
@@ -7256,7 +7262,7 @@ def history_list():
     snapshots = hm.list_snapshots(_active_path())
 
     page = _int_arg("page", 1, minimum=1)
-    per_page = _int_arg("per_page", 0, minimum=0)  # 0 = show all by default
+    per_page = _int_arg("per_page", _HISTORY_PANEL_PER_PAGE, minimum=0)  # 0 = All (explicit)
     page_items, total, current_page, total_pages = _paginate(snapshots, page, per_page)
 
     # hist_chip_key + active_path power the additive "⇄ Compare…" deep link
@@ -7373,6 +7379,12 @@ def state_history():
         hist_chip_key = _history()._key_for(Path(_active_path()))
     except Exception:
         hist_chip_key = ""
+    # Honest footprint line for the header ("N snapshots · X on disk") —
+    # cached per (count, newest ts), so steady-state renders pay no walk.
+    try:
+        disk_stats = hm.history_disk_stats(_active_path())
+    except Exception:   # noqa: BLE001 — a stats failure must never kill the page
+        disk_stats = None
     ctx = _ctx(
         page="state_history",
         snapshots=page_items,
@@ -7382,6 +7394,7 @@ def state_history():
         per_page=per_page,
         chip_origin=_active_origin(),
         hist_chip_key=hist_chip_key,
+        disk_stats=disk_stats,
     )
     # body=1 → just the timeline inner (toolbar + entries + pagination), for the
     # stateRestored auto-refresh that re-fetches it into #state-history-body
@@ -13332,6 +13345,15 @@ def param_history():
         if index_error is None:
             index_error = "The trend index is busy (a save or import may be running). Reload in a moment."
 
+    # Honest footprint line for the header ("N snapshots · X on disk") —
+    # cached per (count, newest ts), so steady-state renders pay no walk.
+    disk_stats = None
+    if target_path:
+        try:
+            disk_stats = hm.history_disk_stats(target_path)
+        except Exception:   # noqa: BLE001 — a stats failure must never kill the page
+            disk_stats = None
+
     # Qubit list: when viewing a different chip, derive qubits from the
     # SQLite index (since store.qubit_names is the loaded chip's). When
     # viewing the loaded chip, use the store directly so the list is
@@ -13464,6 +13486,7 @@ def param_history():
             cells=by_cell,
             current_values=current_values,
             summary=summary,
+            disk_stats=disk_stats,
             index_error=index_error,
             since=since_raw,
             triggers_filter=triggers or [],

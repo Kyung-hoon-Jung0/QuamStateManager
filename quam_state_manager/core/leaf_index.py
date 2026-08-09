@@ -530,6 +530,30 @@ def snapshot_count(conn: sqlite3.Connection) -> int:
         return 0
 
 
+def snapshot_timestamps(conn: sqlite3.Connection) -> set[str]:
+    """Every timestamp this index holds a row for — ingested or carried.
+
+    ~500 short strings on a big chip; the freshness gate reads it only when
+    the count check says the index is behind, never in the steady state.
+    """
+    try:
+        return {r[0] for r in conn.execute("SELECT ts FROM leaf_snaps")}
+    except sqlite3.Error:
+        return set()
+
+
+def get_meta(conn: sqlite3.Connection, key: str) -> str | None:
+    """Public read of a ``leaf_meta`` key. The freshness gate's retrigger
+    memo lives here so deleting the index file clears it with the index."""
+    return _meta_get(conn, key)
+
+
+def set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
+    """Public write of a ``leaf_meta`` key (autocommit-safe — the manager
+    opens its connections with ``isolation_level=None``)."""
+    _meta_set(conn, key, value)
+
+
 def stats(conn: sqlite3.Connection) -> dict:
     try:
         return {

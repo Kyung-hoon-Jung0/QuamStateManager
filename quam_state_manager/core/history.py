@@ -40,6 +40,22 @@ _differ = Differ()
 DEFAULT_MAX_SNAPSHOTS = 100_000
 DEFAULT_CACHE_SIZE = 200
 
+# ``leaf_meta`` memo keys for the leaf-index freshness gate
+# (``_ensure_leaf_index_fresh``): "under exactly this snapshot DIR SET a
+# rebuild already ran and could not absorb what was missing — do not run
+# another until the set changes". Any capture, prune or repaired dir changes
+# the set, so the memo clears itself naturally; deleting the index file drops
+# it with the index.
+_LEAF_INGEST_FAILED_KEY = "ingest_failed_dirset"
+# Diagnostic sibling: WHICH timestamps were left un-absorbed (capped).
+_LEAF_INGEST_FAILED_TS_KEY = "ingest_failed_ts"
+
+
+def _leaf_dirset_sig(snapshots: list["SnapshotMeta"]) -> str:
+    """Order-independent signature of the on-disk snapshot dir set."""
+    joined = "\n".join(sorted(m.timestamp for m in snapshots))
+    return hashlib.sha1(joined.encode("utf-8")).hexdigest()
+
 # Label + pin marker applied to the State History snapshot that matches the
 # current live-tracking baseline, so it shows as a pinned "baseline" row in the
 # timeline (prune-exempt). Purely cosmetic — the authoritative baseline is the
@@ -837,6 +853,9 @@ class HistoryManager:
         # index, so the ``_ensure_index_fresh`` self-heal can skip the
         # COUNT query when nothing has changed.
         self._last_index_check: dict[str, int] = {}
+        # ``history_disk_stats`` cache: chip dir → ((count, newest_ts), stats).
+        # Self-invalidating — capture and prune both change the key.
+        self._disk_stats_cache: dict[str, tuple[tuple[int, str], dict[str, Any]]] = {}
         # Tracks chip dirs whose schema + WAL have already been initialised
         # this process, so ``_open_index`` can skip the redundant
         # ``CREATE TABLE/INDEX IF NOT EXISTS`` calls.
@@ -2835,7 +2854,28 @@ class HistoryManager:
 
     def _ensure_leaf_index_fresh(self, quam_state_path: Path) -> None:
         """Rebuild when dirty or behind. Cheap in the steady state: two small
-        reads against a table that is ~10k rows on a real chip."""
+        reads against a table that is ~10k rows on a real chip.
+
+        "Behind" is judged against exactly the set a rebuild CAN ingest —
+        snapshot dirs that still carry a ``state.json``. ``list_snapshots``
+        counts every dir with a ``meta.json``, and ``rebuild_leaf_index``
+        ingests only ``state.json``-bearing dirs, so a meta-only dir (a
+        partial prune ``rmtree``, a transient share error during capture)
+        used to make the two counts permanently unequal — EVERY
+        field-history click and All-Parameters load then paid the full
+        0.9-2.7 s rebuild under BEGIN IMMEDIATE, blocking a second window's
+        readers, forever. Only the MISSING timestamps are statted (typically
+        one dir), never all N, and only on the behind path.
+
+        Timestamps a rebuild was attempted for and could not absorb are
+        memoized in ``leaf_meta`` keyed by a signature of the whole snapshot
+        DIR SET: the next attempt happens when the dir set changes (a
+        capture, a prune, a repaired dir), so a permanent per-dir failure
+        can never re-trigger per query while a real repair re-ingests
+        naturally. Ingest/rebuild semantics (docs/83: ordering is rebuilt,
+        not repaired; a rebuild MERGES) are untouched — this gate only
+        decides WHETHER to call the rebuild.
+        """
         try:
             snapshots = self.list_snapshots(quam_state_path)
             if not snapshots:
@@ -2843,14 +2883,47 @@ class HistoryManager:
             idx = self._index_path(quam_state_path)
             if not idx.exists():
                 return                       # nothing captured yet — no repair
+            ingestible: list[str] | None = None
+            dirset_sig = ""
             conn = self._open_index(quam_state_path)
             try:
                 dirty = leaf_index.is_dirty(conn)
                 have = leaf_index.snapshot_count(conn)
+                if not dirty:
+                    if have >= len(snapshots):
+                        return               # steady state: two small reads
+                    # Behind by count. Find WHAT is missing and whether a
+                    # rebuild could actually ingest it.
+                    known = leaf_index.snapshot_timestamps(conn)
+                    hist_dir = self._history_dir(quam_state_path)
+                    ingestible = sorted(
+                        m.timestamp for m in snapshots
+                        if m.timestamp not in known
+                        and (hist_dir / m.timestamp / "state.json").exists())
+                    if not ingestible:
+                        return               # meta-only dirs: a rebuild cannot help
+                    dirset_sig = _leaf_dirset_sig(snapshots)
+                    if leaf_index.get_meta(
+                            conn, _LEAF_INGEST_FAILED_KEY) == dirset_sig:
+                        return               # this dir set already failed — wait
+                                             # for it to change before retrying
             finally:
                 conn.close()
-            if dirty or have < len(snapshots):
-                self.rebuild_leaf_index(quam_state_path)
+            self.rebuild_leaf_index(quam_state_path)
+            if ingestible is None:
+                return                       # dirty-triggered — count untouched
+            # Did the rebuild actually absorb what was missing? Memoize what
+            # it could not, so a permanent failure never re-triggers per query.
+            conn = self._open_index(quam_state_path)
+            try:
+                known = leaf_index.snapshot_timestamps(conn)
+                still = sorted(ts for ts in ingestible if ts not in known)
+                leaf_index.set_meta(conn, _LEAF_INGEST_FAILED_KEY,
+                                    dirset_sig if still else "")
+                leaf_index.set_meta(conn, _LEAF_INGEST_FAILED_TS_KEY,
+                                    ",".join(still[:50]))
+            finally:
+                conn.close()
         except sqlite3.Error:
             logger.warning("Leaf index freshness check failed", exc_info=True)
 
@@ -3385,6 +3458,53 @@ class HistoryManager:
         result = {"total": total, "by_trigger": by_trigger, "latest": latest}
         with self._lock:
             self._index_summary_cache[chip_key] = (ver, result)
+        return result
+
+    def history_disk_stats(self, quam_state_path: str | Path) -> dict[str, Any]:
+        """Snapshot count + total on-disk bytes of a chip's history dir.
+
+        The honest number is the WHOLE dir walk: the snapshot copies dominate
+        the footprint (every snapshot is a full ``state.json`` +
+        ``wiring.json``), so reporting only the two index-file stats would
+        understate by an order of magnitude on a real chip. A walk is
+        O(files), and the header line that shows this renders on every
+        Param/State History open — so the walk runs at most once per
+        ``(snapshot count, newest timestamp)`` per chip: both change on every
+        capture and every prune, which are exactly the events that change the
+        footprint. (A label/pin edit rewrites one ~300 B ``meta.json``
+        in place — the cached figure lags by bytes, never megabytes.)
+
+        ``prune_active`` is True only when this manager was configured with a
+        retention budget below the effectively-unbounded default
+        (``DEFAULT_MAX_SNAPSHOTS`` = 100,000 — ``_prune`` never fires under
+        it on any real chip), so the UI can avoid implying automatic pruning
+        that would never happen.
+        """
+        path = Path(quam_state_path)
+        snapshots = self.list_snapshots(path)
+        hist_dir = self._history_dir(path)
+        key = str(hist_dir)
+        ver = (len(snapshots), snapshots[0].timestamp if snapshots else "")
+        with self._lock:
+            cached = self._disk_stats_cache.get(key)
+            if cached is not None and cached[0] == ver:
+                return cached[1]
+        total_bytes = 0
+        if hist_dir.is_dir():
+            for p in hist_dir.rglob("*"):
+                try:
+                    if p.is_file():
+                        total_bytes += p.stat().st_size
+                except OSError:
+                    continue                 # a mid-prune file is not an error
+        result = {
+            "snapshots": len(snapshots),
+            "bytes": total_bytes,
+            "max_snapshots": self.max_snapshots,
+            "prune_active": self.max_snapshots < DEFAULT_MAX_SNAPSHOTS,
+        }
+        with self._lock:
+            self._disk_stats_cache[key] = (ver, result)
         return result
 
     # ------------------------------------------------------------------

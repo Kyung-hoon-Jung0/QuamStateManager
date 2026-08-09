@@ -7,6 +7,22 @@
             hx-post="/api/history/snapshot"
             hx-target="#history-content"
             hx-swap="innerHTML">Take Snapshot</button>
+    {# Page size — defaults to a PAGE (50) instead of the old show-all, with
+       All (=0) kept as the explicit user choice (pagination doctrine). The
+       select is its own trigger: htmx includes the named value, landing on
+       page 1. Bespoke rather than _pagination.html because setPageSize
+       hardcodes #table-pane and this panel swaps #history-content. #}
+    <label class="muted history-page-size" style="margin-left:auto">Show
+        <select name="per_page"
+                hx-get="/api/history?page=1"
+                hx-target="#history-content" hx-swap="innerHTML"
+                title="Snapshots per page (All shows every snapshot)">
+            {% for opt in [25, 50, 100] %}
+            <option value="{{ opt }}" {% if per_page == opt %}selected{% endif %}>{{ opt }}</option>
+            {% endfor %}
+            <option value="0" {% if per_page == 0 %}selected{% endif %}>All</option>
+        </select>
+    </label>
     {% if total > snapshots | length %}
     <small class="muted">Showing {{ snapshots | length }} of {{ total }}</small>
     {% endif %}

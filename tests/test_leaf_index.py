@@ -376,6 +376,121 @@ class TestThroughTheHistoryManager:
         assert hm.leaf_field_series(live, "ports.a.delay")
 
 
+class TestFreshnessGate:
+    """Freshness compares against what a rebuild CAN ingest, and a failed
+    attempt is memoized per dir set (docs/83 amendment, defect #7).
+
+    ``list_snapshots`` counts every dir with a ``meta.json``;
+    ``rebuild_leaf_index`` ingests only ``state.json``-bearing dirs. A
+    meta-only dir (partial prune ``rmtree``, transient share error) used to
+    keep the two counts permanently unequal, so EVERY field-history click and
+    All-Parameters load paid the full 0.9-2.7 s rebuild under BEGIN
+    IMMEDIATE — blocking a second window's readers, forever.
+    """
+
+    _META = {"trigger": "manual",
+             "diff_summary": {"added": 0, "removed": 0, "modified": 0, "total": 0},
+             "new_experiments": [], "source_path": "x"}
+
+    @pytest.fixture
+    def hm(self, tmp_path):
+        return HistoryManager(tmp_path / "inst", max_snapshots=50, cache_size=3)
+
+    def _write(self, folder: Path, state: dict):
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        (folder / "wiring.json").write_text(json.dumps(
+            {"network": {"host": "1.1.1.1"}, "ports": {"a": {"delay": 4}}}),
+            encoding="utf-8")
+
+    def _capture(self, hm, live, t1):
+        self._write(live, _chip(t1=t1))
+        hm.check_and_snapshot(str(live), "manual", force=True)
+
+    def _orphan(self, hm, live, ts, *, state=None):
+        """Fabricate a snapshot dir. ``state=None`` → meta-only (the defect)."""
+        d = hm._history_dir(Path(live)) / ts
+        d.mkdir(parents=True)
+        (d / "meta.json").write_text(
+            json.dumps({"timestamp": ts, **self._META}), encoding="utf-8")
+        if state is not None:
+            (d / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        hm._snapshot_list_cache.clear()   # what a real prune/capture does
+        return d
+
+    def _count_rebuilds(self, hm, monkeypatch, *, passthrough=True):
+        calls = {"n": 0}
+        real = hm.rebuild_leaf_index
+
+        def counting(path):
+            calls["n"] += 1
+            if passthrough:
+                return real(path)
+            return {"snapshots": 0, "rows": 0, "kept": 0}   # a rebuild that
+                                                            # absorbed nothing
+        monkeypatch.setattr(hm, "rebuild_leaf_index", counting)
+        return calls
+
+    def test_meta_only_dir_never_triggers_a_rebuild(self, hm, tmp_path, monkeypatch):
+        live = tmp_path / "chip"
+        self._capture(hm, live, 1e-5)
+        self._capture(hm, live, 2e-5)
+        self._orphan(hm, live, "20990101_000000")   # meta.json survived rmtree
+        calls = self._count_rebuilds(hm, monkeypatch)
+        assert hm.leaf_changes(live)                          # first read answers
+        assert hm.leaf_field_series(live, "qubits.qA1.T1")    # second read too
+        assert calls["n"] == 0, "a dir a rebuild cannot ingest must not trigger one"
+
+    def test_failing_ingest_stops_retriggering_until_the_dir_set_changes(
+            self, hm, tmp_path, monkeypatch):
+        live = tmp_path / "chip"
+        self._capture(hm, live, 1e-5)
+        # state.json IS present → the gate is entitled to try ONE rebuild...
+        self._orphan(hm, live, "20990101_000000", state=_chip(t1=9e-5))
+        # ...but this rebuild cannot absorb it (locked file, torn dir, ...).
+        calls = self._count_rebuilds(hm, monkeypatch, passthrough=False)
+        hm.leaf_changes(live)
+        assert calls["n"] == 1
+        hm.leaf_changes(live)
+        hm.leaf_field_series(live, "qubits.qA1.T1")
+        assert calls["n"] == 1, "a failed ingest must be memoized, never per-query"
+        # The dir set changes (an ordinary capture) → ONE new attempt.
+        self._capture(hm, live, 2e-5)
+        hm.leaf_changes(live)
+        assert calls["n"] == 2
+
+    def test_a_repaired_dir_reingests(self, hm, tmp_path):
+        live = tmp_path / "chip"
+        self._capture(hm, live, 1e-5)
+        d = self._orphan(hm, live, "20990101_000000")   # meta-only: skipped
+        hm.leaf_changes(live)
+        assert hm.leaf_stats(live)["snapshots"] == 1     # honest: not ingested
+        # Repair: the state.json arrives (restored backup / retried copy).
+        (d / "state.json").write_text(json.dumps(_chip(t1=7e-5)), encoding="utf-8")
+        hm._snapshot_list_cache.clear()
+        hm.leaf_changes(live)                # freshness sees an ingestible dir
+        assert hm.leaf_stats(live)["snapshots"] == 2
+        rows = hm.leaf_field_series(live, "qubits.qA1.T1")
+        assert rows and rows[-1][1] == 7e-5              # the repaired value
+
+    def test_healthy_chip_behaviour_is_untouched(self, hm, tmp_path, monkeypatch):
+        """The docs/83 pins: a wiped index still heals lazily on read (rebuild,
+        not repair), and a steady-state read still rebuilds nothing."""
+        live = tmp_path / "chip"
+        self._capture(hm, live, 1e-5)
+        self._capture(hm, live, 2e-5)
+        calls = self._count_rebuilds(hm, monkeypatch)
+        assert hm.leaf_changes(live)
+        assert calls["n"] == 0                           # steady state
+        conn = hm._open_index(live)
+        conn.execute("DELETE FROM leaf_cp")
+        conn.execute("DELETE FROM leaf_snaps")
+        conn.close()
+        assert hm.leaf_field_series(live, "qubits.qA1.T1")
+        assert calls["n"] == 1                           # healed in ONE rebuild
+        assert hm.leaf_stats(live)["snapshots"] == 2
+
+
 @pytest.mark.skipif(not _ARCHIVE.is_dir(), reason="real history archive absent")
 class TestRealArchive:
     """The synthetic cases above are shapes; these are the actual chips."""

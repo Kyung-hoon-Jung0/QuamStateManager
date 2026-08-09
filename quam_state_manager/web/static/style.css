@@ -2940,6 +2940,13 @@ input.edit-input {
     padding: 0.3rem 0.8rem;
     border-bottom: 1px solid var(--pico-muted-border-color);
 }
+/* Page-size select in the history panel toolbar (same compact look as
+   .pagination .page-size-picker, which is scoped to the #table-pane pagers). */
+.history-page-size { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85em; margin: 0; }
+.history-page-size select {
+    padding: 0.15rem 0.3rem; margin: 0; height: auto;
+    font-size: 0.85em; width: auto; min-width: 4rem;
+}
 .history-timeline {
     padding: 0.25rem 0.4rem;
 }
