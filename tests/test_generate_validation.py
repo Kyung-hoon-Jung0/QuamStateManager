@@ -33,7 +33,7 @@ _GEN_JS = _ROOT / "quam_state_manager" / "web" / "static" / "generate.js"
 def test_generate_validation_selfcheck_passes():
     r = subprocess.run(
         ["node", str(_SELFCHECK)],
-        capture_output=True, text=True, cwd=str(_ROOT),
+        capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT),
     )
     if r.returncode == 2:
         pytest.skip("jsdom not installed (run `npm install jsdom`)")

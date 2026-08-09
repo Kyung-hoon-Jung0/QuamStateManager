@@ -15,6 +15,16 @@
 
   function $(id) { return document.getElementById(id); }
 
+  // docs/101 P13: basename that respects the path DIALECT — a POSIX file
+  // name may legally contain a backslash, so split on it only for
+  // Windows-style paths (same rule app.js uses).
+  function pathBase(p) {
+    p = String(p || "");
+    var win = /^[A-Za-z]:[\\/]|^\\\\/.test(p)
+      || (p.indexOf("\\") >= 0 && p.indexOf("/") < 0);
+    return p.split(win ? /[\\/]/ : "/").pop();
+  }
+
   function fetchJSON(url, opts) {
     return fetch(url, opts).then(function (r) {
       return r.json().then(function (body) {
@@ -90,10 +100,10 @@
             e.candidates.map(function (c) {
               return '<option value="' + esc(c) + '"' +
                 (c === e.path ? " selected" : "") + ">" +
-                esc(c.split(/[\\/]/).pop()) + "</option>";
+                esc(pathBase(c)) + "</option>";
             }).join("") + "</select>";
         } else {
-          cell = "<code>" + esc((e.path || "").split(/[\\/]/).pop()) + "</code>";
+          cell = "<code>" + esc(pathBase(e.path)) + "</code>";
         }
         return "<tr><td>" + esc(s.label || s.id) + "</td><td>" + cell +
           '</td><td class="autofit-' + cls + '">' + esc(e.status || "?") +

@@ -37,7 +37,7 @@ _PREVIEW_QCLASSES = {
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")
 def test_generate_preview_selfcheck_passes():
-    r = subprocess.run(["node", str(_SELFCHECK)], capture_output=True, text=True, cwd=str(_ROOT))
+    r = subprocess.run(["node", str(_SELFCHECK)], capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
     if r.returncode == 2:
         pytest.skip("jsdom not installed (run `npm install jsdom`)")
     assert r.returncode == 0, (r.stdout + r.stderr)

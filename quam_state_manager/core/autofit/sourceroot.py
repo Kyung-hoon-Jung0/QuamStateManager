@@ -18,7 +18,10 @@ inside the source tree.
 from __future__ import annotations
 
 import logging
+import os
+import shutil
 import subprocess
+import tarfile
 import zipfile
 from pathlib import Path
 
@@ -29,11 +32,18 @@ _GIT_TIMEOUT = 180
 
 
 def _git(root, *args, timeout: int = _GIT_TIMEOUT):
-    """Run a read-only git command in ``root``; return stdout or None."""
+    """Run a read-only git command in ``root``; return stdout or None.
+
+    The environment is scrubbed of ``GIT_*`` overrides (docs/101 P3): an
+    exported ``GIT_DIR``/``GIT_WORK_TREE`` (git hooks, pre-commit) silently
+    retargets ``-C <root>`` — ``git archive`` would then materialize the
+    WRONG tree and stamp it with a valid-looking revision.
+    """
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     try:
         proc = subprocess.run(["git", "-C", str(root), *args],
                               capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=timeout)
+                              errors="replace", timeout=timeout, env=env)
     except (OSError, subprocess.TimeoutExpired):
         return None
     return proc.stdout.strip() if proc.returncode == 0 else None
@@ -81,23 +91,48 @@ def materialize(root, rev: str, cache_dir) -> str | None:
         return str(dest)
 
     cache_dir.mkdir(parents=True, exist_ok=True)
-    zip_path = cache_dir / f".{sha}.zip"
+    # docs/101 P2: zip stores a symlink as a regular file holding the target
+    # STRING and drops the POSIX exec bit — a Linux/macOS lab tree with a
+    # symlinked package dir would materialize broken. Use tar on POSIX
+    # (symlinks + modes preserved); zip stays on Windows, where those
+    # concepts don't round-trip anyway.
+    use_tar = os.name != "nt"
+    fmt = "tar" if use_tar else "zip"
+    zip_path = cache_dir / f".{sha}.{fmt}"
     staging = cache_dir / f".{sha}.staging"
     # git archive READS the object store and writes only to -o (outside the
     # source tree). No checkout, no worktree registration, no index write.
-    if _git(root, "archive", "--format=zip", "-o", str(zip_path), sha) is None:
+    if _git(root, "archive", f"--format={fmt}", "-o", str(zip_path),
+            sha) is None:
         logger.warning("git archive failed for %s@%s", root, sha[:12])
         return None
     try:
         staging.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(zip_path) as zf:
-            zf.extractall(staging)
+        if use_tar:
+            with tarfile.open(zip_path) as tf:
+                # 'tar' filter: keep symlinks/modes, still refuse absolute
+                # paths and parent-dir escapes (the archive is the lab's own
+                # tree, but never extract unguarded).
+                tf.extractall(staging, filter="tar")
+        else:
+            with zipfile.ZipFile(zip_path) as zf:
+                zf.extractall(staging)
         (staging / ".sm_pinned_ok").write_text(sha, encoding="utf-8")
         if dest.exists():           # a concurrent materialize won the race
+            shutil.rmtree(staging, ignore_errors=True)
             return str(dest)
-        staging.rename(dest)
-    except (OSError, zipfile.BadZipFile):
+        try:
+            staging.rename(dest)
+        except FileExistsError:
+            # docs/101 P1: two SM windows raced the TOCTOU between the
+            # exists() check and the rename — on Windows rename-onto-existing
+            # raises where POSIX may succeed. The winner's tree is identical
+            # (same immutable SHA): use it, drop our staging.
+            shutil.rmtree(staging, ignore_errors=True)
+            return str(dest)
+    except (OSError, zipfile.BadZipFile, tarfile.TarError):
         logger.exception("could not materialize %s@%s", root, sha[:12])
+        shutil.rmtree(staging, ignore_errors=True)
         return None
     finally:
         try:

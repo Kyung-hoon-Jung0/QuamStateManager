@@ -120,7 +120,32 @@ def generate(run_folder, *, family: str, env: str | None = None,
                          probes=probes)
 
     if out_dir is None:
-        out_dir = tempfile.mkdtemp(prefix="sm_figgen_")
+        # docs/101 C2: a POSIX tempdir (/tmp/…) handed to a WINDOWS .exe
+        # interpreter through the supported WSL bridge is invisible to the
+        # child — it recreates the literal path under its own drive and the
+        # parent 404s every figure. When the chosen env is a Windows
+        # interpreter and we are not on Windows, allocate the workdir
+        # somewhere both dialects can reach (under the instance dir when
+        # known, else the run folder's parent is NOT ours to write — fall
+        # back to the source of the bridge, /mnt-visible TMP).
+        _tmp_root = None
+        if os.name != "nt" and str(env).lower().endswith(".exe"):
+            if instance_path:
+                _tmp_root = str(Path(instance_path) / "figgen_tmp")
+                Path(_tmp_root).mkdir(parents=True, exist_ok=True)
+                # docs/101 C3: these dirs outlive the call (the caller reads
+                # the PNGs from the returned paths), so sweep day-old
+                # siblings instead of leaking one per judge call forever.
+                import shutil as _sh
+                import time as _t
+                _cut = _t.time() - 86400
+                for _d in Path(_tmp_root).glob("sm_figgen_*"):
+                    try:
+                        if _d.stat().st_mtime < _cut:
+                            _sh.rmtree(_d, ignore_errors=True)
+                    except OSError:
+                        pass
+        out_dir = tempfile.mkdtemp(prefix="sm_figgen_", dir=_tmp_root)
     else:
         # the override-fit temp file is written HERE; the env-side script's own
         # makedirs runs too late for it

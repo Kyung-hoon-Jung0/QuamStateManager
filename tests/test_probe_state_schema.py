@@ -70,7 +70,7 @@ def _run_probe(tmp_path: Path, classes: list[str]) -> dict:
     r = subprocess.run(
         [sys.executable, str(_SCRIPT),
          "--classes", str(tmp_path / "cls.json"), "--out", str(out)],
-        capture_output=True, text=True, timeout=120,
+        capture_output=True, text=True, encoding="utf-8", timeout=120,
         env={**__import__("os").environ, "PYTHONPATH": env_path},
     )
     assert r.returncode == 0, r.stdout + r.stderr
@@ -170,7 +170,7 @@ class TestEnvelope:
         bad = tmp_path / "nope.json"
         r = subprocess.run(
             [sys.executable, str(_SCRIPT), "--classes", str(bad), "--out", str(out)],
-            capture_output=True, text=True, timeout=60)
+            capture_output=True, text=True, encoding="utf-8", timeout=60)
         assert r.returncode == 1
         d = json.loads(out.read_text(encoding="utf-8"))
         assert d["status"] == "error" and d["error"]

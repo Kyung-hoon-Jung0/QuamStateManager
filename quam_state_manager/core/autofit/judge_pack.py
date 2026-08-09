@@ -73,8 +73,12 @@ _WINDOW_FRACTION_RE = re.compile(
     r"\b(?:fraction|percent|proportion)\s+of\s+the\s+" + _WINDOW + r"\b"
     r"|\b(?:narrow|wide|broad|small|large|big|short|tall)(?:er)?\s+"
     r"(?:than|compared\s+(?:with|to))\s+the\s+" + _WINDOW + r"\b", re.I)
-# mechanically checkable leakage: paths and archive run ids
-_PATH_RE = re.compile(r"[A-Za-z]:[\\/]|/mnt/|\\\\|(?<!\w)#\d{1,5}_")
+# mechanically checkable leakage: paths and archive run ids. docs/101 P7:
+# native POSIX homes too — a pack authored on Linux/macOS must not ship
+# /home/labuser/... past the very rule that exists to stop it.
+_PATH_RE = re.compile(
+    r"[A-Za-z]:[\\/]|/mnt/|\\\\|(?<!\w)#\d{1,5}_"
+    r"|(?:^|[\s\"'(])~?/(?:home|Users|opt|srv|media|data)/")
 
 # PROSE Clause-B violations. The rules above catch units and explicit
 # window-fractions; an adversarial re-read of the shipped v1 pack found the

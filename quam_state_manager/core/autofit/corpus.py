@@ -148,6 +148,12 @@ def build_index(roots, *, with_generation: bool = True,
     the full index keeps everything so coverage gaps stay visible.
     """
     runs: list[dict] = []
+    # docs/101 P6: two case-variant or symlinked spellings of one archive
+    # root (roots come straight from user-typed workspace entries) would
+    # double-count every run — dedup run folders by the repo's own
+    # folder-identity rule, never by raw string.
+    from quam_state_manager.core import path_match
+    seen_runs: set[str] = set()
     for root in roots:
         root = Path(root)
         if not root.is_dir():
@@ -163,9 +169,13 @@ def build_index(roots, *, with_generation: bool = True,
                 continue
             for d in children:
                 if RUN_DIR_RE.match(d.name):
+                    fsk = path_match.fs_key(d)
+                    if fsk in seen_runs:
+                        continue
                     rec = index_run(d, with_generation=with_generation)
                     if rec is None:
                         continue
+                    seen_runs.add(fsk)
                     found_here += 1
                     if families_only and rec["family"] is None:
                         continue

@@ -27,6 +27,7 @@ import math
 import os
 import re
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -3584,11 +3585,16 @@ def qualibrate_locate_candidates():
     """Scan the well-known locations for config trees (user-clicked — may
     stat WSL/drvfs shares). Candidates: this user's home, every WSL distro's
     /home/<user> (from Windows), every C:\\Users profile (from WSL)."""
+    from quam_state_manager.core import path_match
+
     cands: list[dict] = []
     seen: set[str] = set()
 
     def add(p: Path) -> None:
-        k = str(p).lower()
+        # docs/101 P11: dedup by the repo's own folder-identity rule —
+        # unconditional lower() is the documented Linux data-loss class
+        # (two case-different homes are two different folders there).
+        k = path_match.fs_key(p)
         if k in seen:
             return
         seen.add(k)
@@ -3610,11 +3616,15 @@ def qualibrate_locate_candidates():
         except OSError:
             pass
     else:
-        try:
-            for u in Path("/mnt/c/Users").iterdir():
-                add(u / ".qualibrate")
-        except OSError:
-            pass
+        # docs/101 P12: /mnt/c/Users is a WSL-ism — native Linux homes live
+        # under /home and macOS under /Users; scan whichever exists so the
+        # docstring's "every user profile" promise holds off-WSL too.
+        for root in (Path("/mnt/c/Users"), Path("/home"), Path("/Users")):
+            try:
+                for u in root.iterdir():
+                    add(u / ".qualibrate")
+            except OSError:
+                continue
     return render_template(
         "_qualibrate_locate_result.html", result=None, suggestions=cands,
         message=None if cands else ("No config.toml found in the common "
@@ -11149,6 +11159,11 @@ def _is_system_path(p: Path, for_mkdir: bool = False) -> bool:
         if for_mkdir and parts == ("/",):
             return True
         blocked = [("/", "proc"), ("/", "sys"), ("/", "dev"), ("/", "etc")]
+        if sys.platform == "darwin":
+            # docs/101 P10: macOS is case-insensitive AND has its own
+            # system roots — compare casefolded and cover them.
+            parts = tuple(p.casefold() for p in parts)
+            blocked += [("/", "system"), ("/", "library"), ("/", "private")]
     return any(parts[:len(b)] == b for b in blocked)
 
 

@@ -131,7 +131,10 @@ def _gate_hash(util_module):
             with open(os.path.join(pkgdir, f), "rb") as fh:
                 h.update(f.encode("utf-8"))
                 h.update(b"\0")
-                h.update(fh.read())
+                # EOL-normalized so a Windows checkout and a Linux checkout
+                # of the SAME lab tree hash identically (docs/101 P4) —
+                # comparable() must never split one analysis by OS.
+                h.update(fh.read().replace(b"\r\n", b"\n"))
                 h.update(b"\0")
         except OSError:
             continue

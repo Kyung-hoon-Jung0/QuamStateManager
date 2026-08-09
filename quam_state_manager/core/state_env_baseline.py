@@ -34,6 +34,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -320,7 +321,11 @@ def record_baseline(instance_path: Any, manifest: dict, *,
 
 
 def load_baseline(instance_path: Any, key: str) -> dict | None:
-    if not key:
+    # docs/101 C4: the key reaches a Path join from a request parameter, and
+    # a drive-absolute segment REPLACES the base on Windows (`../` escapes on
+    # every OS). env_key() only ever emits this alphabet, so nothing
+    # legitimate is rejected.
+    if not key or not re.fullmatch(r"[A-Za-z0-9._-]{1,120}", key):
         return None
     path = baseline_dir(instance_path) / f"{key}.json"
     try:

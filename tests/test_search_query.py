@@ -160,7 +160,7 @@ class TestJsParity:
         cases.write_text(json.dumps(self.QUERIES), encoding="utf-8")
         r = subprocess.run(
             ["node", str(_ROOT / "tests" / "search_query_parity.cjs"), str(cases)],
-            capture_output=True, text=True, cwd=str(_ROOT), timeout=60)
+            capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=60)
         assert r.returncode == 0, r.stdout + r.stderr
         js = json.loads(r.stdout)
         py = [groups(q) for q in self.QUERIES]

@@ -53,7 +53,7 @@ def test_field_edit_works_with_typer_blocked(tmp_path):
         print("EDIT-OK")
     """)
     out = subprocess.run([sys.executable, "-c", code], capture_output=True,
-                         text=True, timeout=300)
+                         text=True, encoding="utf-8", timeout=300)
     assert out.returncode == 0, (out.stderr or "") + (out.stdout or "")
     assert "EDIT-OK" in out.stdout
 

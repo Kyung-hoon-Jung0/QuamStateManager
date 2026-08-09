@@ -42,7 +42,7 @@ def test_cellbtn_docking_selfcheck():
         pytest.skip("jsdom not installed for node")
     res = subprocess.run(
         [_node(), str(_ROOT / "tests" / "cellbtn_selfcheck.cjs")],
-        capture_output=True, text=True, timeout=120)
+        capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert res.returncode == 0, f"cellbtn selfcheck failed:\n{res.stdout}\n{res.stderr}"
     assert res.stdout.count("ok - ") >= 14, res.stdout
 
@@ -55,7 +55,7 @@ def test_tab_focus_selfcheck():
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         pytest.skip("jsdom not installed for node")
     res = subprocess.run([_node(), str(_SELFCHECK)],
-                         capture_output=True, text=True, timeout=120)
+                         capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert res.returncode == 0, f"tab/focus selfcheck failed:\n{res.stdout}\n{res.stderr}"
     assert res.stdout.count("ok - ") >= 25, res.stdout
 

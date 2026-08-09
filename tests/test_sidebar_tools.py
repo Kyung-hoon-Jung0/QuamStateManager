@@ -119,7 +119,7 @@ def test_sidebar_tools_selfcheck():
     except Exception:
         pytest.skip("jsdom not installed")
     r = subprocess.run([_node(), str(_SELFCHECK)], capture_output=True,
-                       text=True, timeout=180, cwd=str(_ROOT))
+                       text=True, encoding="utf-8", timeout=180, cwd=str(_ROOT))
     if r.returncode == 2:
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
