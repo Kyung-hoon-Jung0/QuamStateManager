@@ -465,3 +465,42 @@ def test_cli_output_strings_are_ascii():
         if any(ord(c) > 127 for c in lit):
             offenders.append(lit)
     assert not offenders, offenders
+
+
+class TestVersionStringsAgree:
+    """`pyproject.toml` and `__init__.py` must declare the SAME version.
+
+    They are two hand-edited strings, and nothing tied them together: a stale
+    v1.0.0 tag once pointed at a commit whose `pyproject.toml` said 0.9.0, and
+    the disagreement survived because no test looked. The CLI deliberately
+    prefers the INSTALLED distribution metadata (see `_resolve_version` — a
+    broken editable install makes the package attribute unreadable), which
+    means a drift between these two is invisible until someone builds a wheel.
+    """
+
+    @staticmethod
+    def _root():
+        from pathlib import Path
+        return Path(__file__).resolve().parent.parent
+
+    def _pyproject_version(self) -> str:
+        import re
+        text = (self._root() / "pyproject.toml").read_text(encoding="utf-8")
+        # the [project] table's own version, not a dependency pin
+        m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.M)
+        assert m, "no version in pyproject.toml"
+        return m.group(1)
+
+    def test_pyproject_and_package_agree(self):
+        from quam_state_manager import __version__
+        assert __version__ == self._pyproject_version(), (
+            "pyproject.toml says %s but quam_state_manager.__version__ says %s"
+            % (self._pyproject_version(), __version__))
+
+    def test_the_changelog_has_an_entry_for_it(self):
+        """A released version a reader cannot look up is a packaging defect of
+        its own — the CHANGELOG had stopped two minor versions back once."""
+        v = self._pyproject_version()
+        text = (self._root() / "CHANGELOG.md").read_text(encoding="utf-8")
+        assert ("## v%s " % v) in text or ("## v%s\n" % v) in text, (
+            "CHANGELOG.md has no '## v%s' heading" % v)
