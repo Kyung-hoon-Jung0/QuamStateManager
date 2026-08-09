@@ -132,3 +132,109 @@ Generate-Config wizard: customer feedback batch r3 (`docs/53_generate_feedback_r
 - The default qubit-card metric chips still repainted every thresholded value (T1, T2, fidelities) with a discrete green/amber/red spec verdict ("Spec colours" mode, on by default) while the "... more" hover panel kept the continuous palette — users called the clashing RAG mix dated. The spec-verdict repaint and its Health-bar checkbox are gone: colour now ALWAYS means relative magnitude on the shared palette (Blues by default), identical across the default cards, the hover panel and every heatmap cell. Pass/warn/fail verdicts still live on their dedicated surfaces (Health tiles, verdict banner, worst-qubit list, report card) — they just no longer paint the numbers
 - The pair-edge fidelity tiers (SVG lines + edge labels) moved from green/orange/red to the same single-hue blue ramp — deep blue = good, washed-out toward the page = bad — with a luminance-flipped ramp on the dark theme (brightest = best against a dark background). A single-hue luminance ramp is inherently colorblind-safe, so the colorblind toggle's special-cased edge-colour overrides are gone too (the toggle itself stays for its other effects)
 - Fixed (pre-commit review): `cardColor()` was only half-migrated to its new flat `[hi, lo]` range and still indexed the old nested triplet shape — every Overview tile accent rendered the darkest palette stop regardless of the value
+
+## v0.8.0 – v0.8.4 (2026-07-28 → 2026-07-29)
+
+The project becomes the primary frame, plus the four point releases that followed it over the next two days.
+
+### Project-centric shell (docs/63_project_centric_reorg.md)
+
+- A QUAlibrate **project** is now the organizing frame of the app — a LENS over the same stores, never a data wall. No storage migration; loading a standalone folder keeps working and is displayed as-is
+- `GET /` is a project-first landing (lazy project cards + Resume + recents); startup NEVER auto-activates the last chip any more — the landing offers Resume instead, and the remembered project is only a highlight
+- The active project is DERIVED on every activation from a stat-cached reverse index over each project's `state_path` (QUAlibrate's own active project wins → a unique match wins → otherwise none; it never guesses), and PINNED by an explicit "Open in SM". The context field is a memo: eviction or a restart re-derives it
+- Lenses over the existing stores: history snapshots carry the project they came from (display-only — the raw `chip_key` contracts are untouched), Param/State History headers and rows show it, and Datasets/Trends seed their folder selection from the roots recorded when a project was opened ("All" always escapes; an unscoped session is byte-identical to before)
+- The topbar badge shows SM's own scope plus, muted, QUAlibrate's active project when the two differ — a scope that merely differs never re-colours the badge
+
+### Config location picker + WSL bridge (docs/63 §B)
+
+- The QUAlibrate config location can be chosen in the UI and is persisted, sitting below the environment variables in precedence: Windows and Linux homes differ, and a WSL-hosted QUAlibrate install is invisible to a native-Windows default
+- Config values are foreign-dialect paths, so path mapping now runs BOTH directions (Windows and WSL) plus the WSL distro-share bridge for POSIX values outside the mounted drives — without it every existence badge on the page lied
+
+### Feedback batches r8–r11
+
+- **SUPER-CRITICAL**: field edits returned 500 in any environment without `typer` installed — the web app imports a CLI helper whose module imports typer at top level. Fixed, plus a one-click "Update f_01" fix on the diagnostic that surfaced it
+- The Interactive tab died completely on `ds_*.h5` files that a newer runner environment had written as NetCDF-classic through xarray's scipy engine — the whole tab, not just the one figure. A magic-byte fallback restores it
+- Datasets "Load State" stages INTO the open chip's working copy instead of hijacking the context to the run's archived copy
+- Projects subnav cap, compact rows, and a config popup on the landing; the real culprit behind the loose landing grid turned out to be Pico's `[type=submit] margin-bottom`
+
+### Pre-release adversarial audit (docs/63 §A)
+
+- Context pin cross-wiring, memo-first stamps, an atomic tray-status cache, and NUL/type hardening — found by an adversarial pass rather than by use
+
+## v0.9.0 (2026-07-31)
+
+Every number on the screen gets a history, and one Ctrl+Z that means what it says.
+
+### Every value's history, in place (docs/20 amendments)
+
+- Every editable value — inspector rows on hover, focused grid cells — carries a clock icon that opens a change-point timeline for that exact dot-path: tracked properties via the SQLite index, any other leaf via a capped direct scan of the snapshot copies, pointers resolved per snapshot
+- The timeline is MERGED with a runs tier that reads the workspace runs' own `quam_state` copies directly (newest 60, gated by name and fingerprint), so today's runs appear with working Data links whether or not they have been ingested yet
+- Each row names the experiment that introduced the value, with a trigger-coloured mini trend chart, **Use** (fills the edit input — committing stays explicit) and **Data** (opens that run's detail in the inspector)
+
+### Column History + one Ctrl+Z (docs/20 v2b)
+
+- Every bulk-grid column header carries a clock opening a two-tab panel in ONE response: **Changes** (per-row change points over the merged snapshot+runs series, with manual applied edits appearing as their own chips) and **By run** (rows against the last six matching runs, with per-run "Use all")
+- **Ctrl+Z is tiered**: wizard undo → an in-memory stack for un-staged grid typing → the server's change-group undo, one Review-tray group per press, with the tray swapping atomically with the response. The tray's undo button runs the same chain and its tooltip names what is next
+- Both apply paths snapshot the PRE-apply live state first, which is what powers an explicit "Revert last apply" — Ctrl+Z itself never crosses the apply boundary
+
+### Chip identity is a ladder (docs/20 v2)
+
+- Identity resolves `extras.chip_name` (user-declared, and it travels into every run's state copy) **>** hardware fingerprint **>** the legacy path-derived name — through ONE choke point used for both reads and writes. The chip key stays the canonical on-disk directory name; pretty names live in an alias file so renaming keeps history continuity
+- First open of an unnamed live chip asks for a name and stages it through the working copy only; declining is remembered per fingerprint. An optional data folder can be declared alongside it and auto-registers as a dataset root
+- A flag-gated migration repairs the pre-ladder contamination where index rows stayed pinned to the path-derived directory while the snapshots had already forked by fingerprint
+
+### State roundtrip, Tab, and the r10 audit (docs/64, docs/65, docs/66)
+
+- Content loaded WHOLESALE into the working copy (a dataset Load State, a State-History stage, a Revert-last-apply) has no change-log entries, so sync must never pull-first over it — it now delegates straight to save-and-push, and the destructive modes ask once before proceeding
+- Tab is first-class navigation again: a leaked capture-phase focus trap (reachable by double-opening Ctrl+K) had been swallowing every Tab app-wide. Traps are now leak-proof at the source, both Live-Edit grids hop between edit cells, and the topbar calculator hops its visible inputs
+- The r10 adversarial audit closed 19 findings, two of them reproduced first — including a cached run verdict that leaked one chip's values into another after a chip switch
+
+## Unreleased (on main since the v0.9.0 bump)
+
+Nine days of customer feedback batches r12–r16, the runner/agent programme, and a multi-instance and packaging pass. Everything below is on `main`.
+
+### Runner + AI calibration agent (docs/78_runner_agent.md)
+
+- The programme that turns Autofit into a one-button bring-up loop: press → experiments run → fits gated → state updated → **done when the gates pass AND a vision judge accepts the signature**. Scope is the nine families of the x180 chain
+- Doctrine amendment: not "the AI may not emit numbers" but *a number the AI emitted never reaches state.json before passing a tier-A (the node's own analysis, replayed) or tier-B (grid-exact) verifier*
+- A verification context is the triple **(environment × analysis-tree revision × run generation)**; a pinned revision is materialized read-only via `git archive`, never a checkout, because no single environment can replay the whole corpus and the lab's own tree keeps moving. Verdicts carry the context they are only valid inside, and values obtained under different contexts are NOT compared — the refusal is recorded instead
+- **Every band is corpus-derived, never invented**: replay real runs, split by the node's OWN accept/reject verdict, keep a floor only where it sits below the accepted minimum and still separates. The ledger is 0 false rejects over 276 accepted and 115 rejected targets, and the method overturned 16 already-shipped gates that were rejecting good fits
+- The vision judge's family knowledge is versioned DATA, not prose in a prompt, and the rule that forbids sizing a feature against the swept window is enforced at LOAD — a bad exemplar is dropped and logged rather than taught to the next chip
+- Also shipped: a bounded action space (bounds derived from the data, out-of-bound proposals rejected rather than clamped), three tiers of stop-loss including the plan step cap and wall clock, a cross-run consistency review, notifications, and offline replay scoring whose metric is *fewer runs to the same conclusion* — never agreement with the operator
+
+### Feedback batches r12–r16
+
+- **r12 — nothing changes powers quietly.** Editing a port's full-scale power keeps pulse powers constant only if the amplitudes rescale, so the edit now returns a 409 carrying a compensation plan listing every old and new value, and only an explicit choice commits (compensating puts the port and the amplitudes in ONE change group, so it is one tray bundle and one Ctrl+Z). The conservative chip-identity confirm shares the same never-automatic doctrine
+- **r13 — datasets.** A nested sidebar tree over the real folder levels with newest-first ordering (the 50-row cap used to keep the OLDEST 50, which was the entire "the sidebar sometimes doesn't refresh" report on days with more than 50 runs); NetCDF-classic support in the Raw Data tab behind one reader adapter; figures-first detail view; dangling-pair handling in re-generate
+- **r14 — a number stored as text is now visible.** Values like `"0.13"` were byte-identical to the real thing in every input. They are surfaced actively (diagnostics, a delta-gated banner, Explorer marks), displayed honestly everywhere (quotes and an amber tint), and floats are labelled **real** rather than "number"
+- **r15 — information architecture.** The sidebar is ordered structure to health, a Chip Components group lists ALL entities with active marks (marks, never filters), the execution trio is renamed to Experiment Runner / Fit Replay / Auto Calibrate, pulse creation became environment-aware, uv and `.venv` layouts are discovered, and pair creation leads with the gate
+- **r16 — re-generate becomes adaptive.** A slot whose only channel had been user-trimmed no longer vanishes from the wizard (the declared port inventory is unioned in, rather than derived from live channels alone); the user's in-wizard Populate edits are protected from being reverted by the value-carrying merge; band is a user-settable column where Nyquist bands overlap; script export defaults on with its path following the chosen output folder. Alongside it: the Pairs page can no longer 500 on a lab's own pair-naming, undo navigates to what it reverted while preserving typing in progress, apply-to-live verifies by reading the file back, and a run-parameter compare table joins the dataset comparison
+
+### One implementation for every before and after (docs/76, docs/77)
+
+- Old, new AND the difference now render through ONE implementation on every surface that shows a change — server-side and client-side, pinned character-for-character against each other because the same screen renders both. The subtraction is exact decimal (in float, 5.2 minus 5.1 prints as 0.10000000000000053) and a difference renders only when it means something: booleans, nulls, pointers and created or deleted subtrees show nothing rather than a fabricated zero
+- One-click repair for numbers stored as text: a proposal listing each field with what it is now and what it becomes, plus the refusals with their reasons (identity keys, schema-declared strings, leading zeros, thousands separators). The number itself never changes — only its type — and the whole confirmed set converts in one change group
+
+### Multi-instance, sync and history (docs/79 – docs/89)
+
+- Two windows can drive two chips: sibling windows are visible to each other, runner state is per-chip, and a second runner can no longer drive the same instrument
+- Sync gained a third choice — keep mine and overwrite live — and stopped swapping out the panel the user is currently looking at
+- Param History indexes EVERY numeric parameter as change points, with a "what changed" feed over all of them; a diff workbench compares two sources across four tabs showing differences only
+- Live State Edit shows every property by default and lets search find the rest; Settings and Calculator became sidebar tools
+
+### The chip as a picture (docs/92, docs/93)
+
+- One shared chip layout renders above the component tables, with an honest layout selector, a hero map on Chip Status, per-feedline colours and a legend, the active chain lighting its qubits, and frequency-inequality chevrons on the pair edges
+
+### Derived grid columns address the row's real key (docs/62 amendment)
+
+- A user could not find `exponential_filter` in Live State Edit while Json Tree View found it at once. Three defects stacked: the per-neighbour suffix fold minted column names that exist on NO qubit, cells addressed by formatting that name, and the column cap then cut the real column away with its truncation note filtered out of the response
+- The template is now column IDENTITY and the row supplies the ADDRESS — the same split the pair grid has used since it shipped. Measured across 40 real chips: dead columns 1,671 down to 344 (the remainder are runtime self-references and genuinely dangling pointers), live cells 55,906 up to 60,713, and not one cell that resolved before addresses anything different now
+- Mode is per row too, and it follows the pointer chain: a cross-reference landing on an inferred value renders read-only instead of offering a text box whose commit would replace the pointer with a literal
+
+### Packaging and CLI
+
+- `pip install .` is a supported path: a per-user instance directory when not running from a checkout, the previously-transitive dependencies declared, and a user-first README with the developer material moved below
+- ASCII-only CLI banners — a cp949 console (the Windows default in Korean and Japanese locales) cannot encode an em-dash, so `qsm serve` raised and died before binding the port. The pin that catches this has now caught it twice
+- The frozen bundle ships the vision judge's data packs; without them the loader answered with an empty pack rather than raising, which would have silently stripped every exemplar the judge reasons from
+- No customer or device identifiers remain in any tracked file
