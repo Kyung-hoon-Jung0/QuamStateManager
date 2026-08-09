@@ -246,7 +246,13 @@ Nine days of customer feedback batches r12–r16, the runner/agent programme, an
 - The frozen bundle ships the vision judge's data packs; without them the loader answered with an empty pack rather than raising, which would have silently stripped every exemplar the judge reasons from
 - No customer or device identifiers remain in any tracked file
 
-## Unreleased
+## v0.9.6 (2026-08-09)
+
+One thing, done everywhere: the app now speaks a single search grammar. Users kept asking why typing two words filters the Live State Edit grid and finds nothing in the Json Tree View — the measured answer was 24 search controls behind 13 matcher implementations with five mutually incompatible semantics. This release replaces all of them with one rule set, verified surface by surface in a real browser on real chips.
+
+**The grammar, everywhere:** `space` = AND (narrows, exactly as the tokenizing surfaces always did — a plain-word query is byte-for-byte unchanged, fuzz-pinned); a standalone `|` = OR (`q1 | q2` finds both; binds tighter than AND, so `x180 amplitude | length` means x180 AND (amplitude OR length)); every other pipe stays a literal character, because ket notation (`|e>`) lives in 25.7% of real run descriptions and must remain searchable.
+
+**Where it landed:** both Json-tree search paths (Explorer, dataset-detail state tree, diff workbench, both compare trees), the Live State Edit qubit and pair grids, the Datasets table (composing with its scopes and negation), the sidebar workspace filter, the global search, `/pulses`, the param-history typeahead (whose whole-query SQL `LIKE` had made a multi-word query structurally unable to hit), the scheduler library filter, and the dataset sort-key filters.
 
 ### One query grammar: space = AND, `|` = OR (docs/96)
 
