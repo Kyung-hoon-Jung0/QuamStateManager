@@ -807,15 +807,31 @@ def chip_qclass(merged: Any, spec: PulseSpec) -> tuple[str, str]:
         # class — QM stacks scatter classes across modules (quam_builder's
         # architecture package has SNZPulse but no GaussianPulse), and a
         # guessed path that no stack defines makes Quam.load fail on the
-        # whole file. "Known" = the catalog's registered homes OR a home the
-        # active env overlay verifies for this class (the selected env's own
-        # introspection is as strong as our transcription). No known home ⇒
-        # the catalog path (always importable somewhere) + the editable
-        # create-form field for the rest.
-        if (ranked[0][1] * 2 > len(prefixes)
-                and (candidate in _BY_QCLASS
-                     or _env_home_verified(_ENV_OVERLAY, spec.key,
-                                           ranked[0][0][:-1]))):
+        # whole file. What counts as "known" depends on whether an env
+        # roster is active:
+        #   * roster active AND it knows this class → the env's OWN home
+        #     list is the only acceptable verification. The static catalog
+        #     transcribes ONE stack generation, so `candidate in _BY_QCLASS`
+        #     can bless a home the SELECTED env cannot import (found live:
+        #     a fresh quam-0.6.0 chip's majority prefix is
+        #     `quam.components.pulses.`, which _BY_QCLASS still lists for
+        #     GaussianFilteredSquarePulse — writing it made the whole state
+        #     unloadable in that env; docs/98). Rejecting here falls through
+        #     to the env-canonical branch below, never to a guess.
+        #   * no roster (or the roster doesn't know the class) → the
+        #     catalog's registered homes stay authoritative — byte-identical
+        #     legacy behavior (pinned by the no-overlay golden).
+        _roster = _ENV_OVERLAY
+        _env_knows = (isinstance(_roster, dict)
+                      and isinstance(_roster.get(spec.key), dict))
+        if _env_knows:
+            _home_ok = _env_home_verified(_roster, spec.key,
+                                          ranked[0][0][:-1])
+        else:
+            _home_ok = (candidate in _BY_QCLASS
+                        or _env_home_verified(_roster, spec.key,
+                                              ranked[0][0][:-1]))
+        if ranked[0][1] * 2 > len(prefixes) and _home_ok:
             return candidate, "prefix"
 
     # r15 (docs/71 §2): no chip evidence — the selected env's roster canonical
@@ -872,6 +888,35 @@ def build_template(spec: PulseSpec, fields: dict[str, Any], *,
     if spec.length_mode == "inferred":
         template["length"] = spec.length_pointer
     return template
+
+
+def env_field_filter(template: dict[str, Any], leaf: str, *,
+                     roster: dict | None = None) -> list[str]:
+    """Drop template fields the SELECTED env's class model does not know.
+
+    The static catalog transcribes one stack generation's field set; QM
+    renames fields between generations (``post_zero_padding_length`` →
+    ``padding_length``, docs/53), and quam's loader treats an unknown
+    attribute as a hard ``Quam.load()`` failure — the docs/56 doctrine
+    ("an invented key is a load crash") applied to pulse creation. With an
+    env roster active and the class's field dump available, anything the
+    env cannot model is removed BEFORE the write and returned so the caller
+    can say so (never silent, docs/98).
+
+    No roster / class unknown to it / fields unprobed (``None``) ⇒ no-op —
+    we never guess, and the static-catalog behavior stays byte-identical.
+    Mutates *template* in place; returns the dropped field names sorted.
+    """
+    r = _ENV_OVERLAY if roster is None else roster
+    rec = r.get(leaf) if isinstance(r, dict) else None
+    fields = rec.get("fields") if isinstance(rec, dict) else None
+    if not isinstance(fields, dict) or not fields:
+        return []
+    dropped = sorted(k for k in template if k != "__class__"
+                     and k not in fields)
+    for k in dropped:
+        template.pop(k)
+    return dropped
 
 
 # ---------------------------------------------------------------------------

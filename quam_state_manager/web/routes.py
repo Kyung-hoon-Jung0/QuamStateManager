@@ -8719,20 +8719,31 @@ def api_pulse_create():
     # a concurrent mutator must not occupy the slot/name between the
     # existence check and the write. Modifier methods re-enter the RLock;
     # the (synth-heavy) detail render happens after release.
+    env_dropped: list[str] = []
     with store._lock:
         outcome = _pulse_create_locked(store, modifier, spec, fields,
-                                       target_kind, qclass=qclass or None)
+                                       target_kind, qclass=qclass or None,
+                                       env_dropped_out=env_dropped)
     if not isinstance(outcome, str):
         return outcome  # an error response (html, code)
     dot_path = outcome
     _invalidate_engine_cache()
-    logger.info("pulse create %s (%s)", dot_path, pulse_type)
+    logger.info("pulse create %s (%s)%s", dot_path, pulse_type,
+                f" env-dropped={env_dropped}" if env_dropped else "")
+    msg = f"Created {dot_path.rsplit('.', 1)[-1]}"
+    if env_dropped:
+        # docs/98: fields the selected env's class model doesn't know were
+        # removed before the write (they would make Quam.load fail there).
+        msg += (" — omitted " + ", ".join(env_dropped)
+                + " (not in the selected environment's "
+                + f"{spec.key} model)")
     return _pulse_mutation_response(_render_pulse_detail(
-        dot_path, status_msg=f"Created {dot_path.rsplit('.', 1)[-1]}"))
+        dot_path, status_msg=msg))
 
 
 def _pulse_create_locked(store, modifier, spec, fields, target_kind,
-                         qclass: str | None = None):
+                         qclass: str | None = None,
+                         env_dropped_out: list | None = None):
     """Validate the target and insert the pulse. Caller holds store._lock.
 
     Returns the created dot_path on success, or an (html, status) error
@@ -8894,6 +8905,14 @@ def _pulse_create_locked(store, modifier, spec, fields, target_kind,
     if not qclass:
         qclass, _how = chip_qclass(store.merged, spec)
     template = build_template(spec, fields, qclass=qclass)
+    # docs/98: never write a field the SELECTED env's class model doesn't
+    # know — quam treats an unknown attribute as a hard Quam.load failure
+    # (field renames between stack generations, e.g. post_zero_padding_length
+    # → padding_length). No roster / unprobed fields ⇒ no-op.
+    from quam_state_manager.core.pulse_catalog import env_field_filter
+    _dropped = env_field_filter(template, spec.key)
+    if env_dropped_out is not None:
+        env_dropped_out.extend(_dropped)
     try:
         if new_gate_template is not None:
             # r15 (docs/71 §3): the new gate macro + its configured slot
@@ -8905,6 +8924,15 @@ def _pulse_create_locked(store, modifier, spec, fields, target_kind,
                         f"{request.form.get('slot', '').strip() or 'flux_pulse_qubit'}")
         elif replace_none_slot:
             modifier.set_value(dot_path, template, coerce=False)
+            # docs/98: set_value indexes only the slot path itself — a dict
+            # replacing an explicit-null slot leaves its LEAVES unsearchable
+            # (and later edits warn "not found in index"). Mirror
+            # create_subtree's per-leaf indexing for the new subtree.
+            _si = getattr(store, "search_index", None)
+            if _si is not None:
+                for _k, _v in template.items():
+                    if not isinstance(_v, (dict, list)):
+                        _si.add_entry(f"{dot_path}.{_k}", _v)
         else:
             modifier.create_subtree(dot_path, template)
     except (KeyError, ValueError, TypeError, IndexError) as exc:
