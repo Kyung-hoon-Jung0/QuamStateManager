@@ -66,7 +66,7 @@ function bigWorld(nCols, nRows) {
     '<span class="bulk-search-wrap"><input type="search" id="bulk-search">' +
     '<span id="bulk-search-count"></span><span id="bulk-search-hint"></span>' +
     '</span></div>' +
-    '<div class="bulk-scroll"><table id="bulk-table"><thead><tr>' +
+    '<div class="bulk-table-wrap"><table id="bulk-table"><thead><tr>' +
     '<th class="bulk-corner" data-col-key="__id__"></th>' + head +
     '</tr></thead><tbody>' + body + '</tbody></table></div></div>';
   const dom = new JSDOM('<!DOCTYPE html><html><body>' + DOM + '</body></html>',
@@ -78,7 +78,7 @@ function bigWorld(nCols, nRows) {
     Object.defineProperty(h, 'offsetLeft', { value: 60 + i * COL_W });
     Object.defineProperty(h, 'offsetWidth', { value: COL_W });
   });
-  const wrap = win.document.querySelector('.bulk-scroll');
+  const wrap = win.document.querySelector('.bulk-table-wrap');
   Object.defineProperty(wrap, 'clientWidth', { value: WRAP_W });
   wrap.scrollLeft = 0;
   win.htmx = { ajax: function () {} };

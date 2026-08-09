@@ -1207,7 +1207,7 @@
         var t = table(); if (!t) return;
         var tds = t.querySelectorAll('tbody td[data-col-key]');
         if (tds.length < _VIRT_MIN_CELLS) return;
-        var wrap = t.closest('.bulk-scroll') || t.parentElement;
+        var wrap = t.closest('.bulk-table-wrap') || t.parentElement;
         var edge = ((wrap && wrap.clientWidth) || window.innerWidth || 1200) * (1 + _VIRT_BUFFER);
         var cold = new Set(), widths = [];
         t.querySelectorAll('th.bulk-col-head[data-col-key]').forEach(function (h) {
