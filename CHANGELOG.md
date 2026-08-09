@@ -232,6 +232,13 @@ Nine days of customer feedback batches r12–r16, the runner/agent programme, an
 - The template is now column IDENTITY and the row supplies the ADDRESS — the same split the pair grid has used since it shipped. Measured across 40 real chips: dead columns 1,671 down to 344 (the remainder are runtime self-references and genuinely dangling pointers), live cells 55,906 up to 60,713, and not one cell that resolved before addresses anything different now
 - Mode is per row too, and it follows the pointer chain: a cross-reference landing on an inferred value renders read-only instead of offering a text box whose commit would replace the pointer with a literal
 
+### Arrow keys move through the grid again
+
+- Live State Edit hides rows two INDEPENDENT ways, both `display: none` — the search box and the qubit picker — but the movement helpers only ever filtered the first. Pick a subset of qubits and the up/down arrows aimed at a row that was still in the DOM and not on the screen, so `.focus()` became a silent no-op and the keys appeared dead. Left/right kept working, which is what made it look arbitrary
+- Vertical movement now also WALKS instead of giving up on the immediate neighbour: that row's cell in this column can be read-only (a per-neighbour operation the qubit does not carry renders as a blank), and stopping there stranded the caret
+- The pair grid got the same two fixes, and both grids now skip read-only cells rather than parking on them — those inputs already declared themselves out of the tab order with `tabindex="-1"`, and the handlers had been overriding that
+- There was NO arrow-key coverage in the suite before this, which is why it went unnoticed; four pins now cover the plain move, both hide mechanisms, and the read-only skip
+
 ### Packaging and CLI
 
 - `pip install .` is a supported path: a per-user instance directory when not running from a checkout, the previously-transitive dependencies declared, and a user-first README with the developer material moved below

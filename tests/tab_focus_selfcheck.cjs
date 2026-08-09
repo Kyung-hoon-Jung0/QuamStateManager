@@ -263,6 +263,49 @@ bw.document.querySelectorAll('td[data-col-key="T1"] .bulk-cell').forEach(functio
     el.removeAttribute('readonly');
     el.removeAttribute('tabindex');
 });
+
+// ── arrow navigation ─────────────────────────────────────────────────────────
+// The grid hides rows TWO independent ways and both are display:none: the
+// search box (.bulk-row-hidden) and the qubit picker (.bulk-qubit-off). The
+// movement helpers only ever filtered the first, so once a subset of qubits
+// was picked, every up/down press aimed at a row still in the DOM but not on
+// the screen and .focus() became a silent no-op. There was no arrow coverage
+// at all before this, which is why it went unnoticed.
+function pressKeyOn(el, key) {
+    const ev = new bw.KeyboardEvent('keydown', { key: key, bubbles: true, cancelable: true });
+    el.dispatchEvent(ev);
+    return ev;
+}
+
+c = bcell('q1', 'f_01');
+c.focus();
+pressKeyOn(c, 'ArrowDown');
+ok(bw.document.activeElement === bcell('q2', 'f_01'),
+   'grid: ArrowDown moves to the next row');
+
+bw.document.querySelector('tr[data-qubit="q2"]').classList.add('bulk-qubit-off');
+c = bcell('q1', 'f_01');
+c.focus();
+pressKeyOn(c, 'ArrowDown');
+ok(bw.document.activeElement === bcell('q3', 'f_01'),
+   'grid: ArrowDown skips a row the QUBIT PICKER hid (not just the search)');
+c = bcell('q3', 'f_01');
+c.focus();
+pressKeyOn(c, 'ArrowUp');
+ok(bw.document.activeElement === bcell('q1', 'f_01'),
+   'grid: ArrowUp skips it in the other direction too');
+bw.document.querySelector('tr[data-qubit="q2"]').classList.remove('bulk-qubit-off');
+
+// a read-only cell mid-column must not swallow the vertical move either
+bcell('q2', 'T1').classList.add('bulk-cell-ro');
+bcell('q2', 'T1').setAttribute('readonly', 'readonly');
+c = bcell('q1', 'T1');
+c.focus();
+pressKeyOn(c, 'ArrowDown');
+ok(bw.document.activeElement === bcell('q3', 'T1'),
+   'grid: ArrowDown walks past a read-only cell instead of stranding the caret');
+bcell('q2', 'T1').classList.remove('bulk-cell-ro');
+bcell('q2', 'T1').removeAttribute('readonly');
 bw.document.querySelector('tr[data-qubit="q2"]').classList.remove('bulk-row-hidden');
 
 // grid edge: native Tab may leave (not prevented)
