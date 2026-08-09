@@ -7962,14 +7962,19 @@ def pulses_page():
     # pages were unfindable). AND-tokens over owner / op name / class / channel
     # / alias target / summary — purely metadata, no waveform synthesis.
     if query:
-        terms = query.lower().split()
+        # Shared grammar (docs/96): space = AND, standalone | = OR. A plain
+        # query parses to singleton groups == the old every-term all(). The
+        # haystack is built once per row now — it used to be re-joined once
+        # per TERM (harmless at 0.4-1 ms over real chips, just wasteful).
+        from quam_state_manager.core.search_query import groups as _sq_groups
+        from quam_state_manager.core.search_query import matches_hay as _sq_match
+        grps = _sq_groups(query)
         def _hay(r):
             return " ".join(str(x) for x in (
                 r.get("owner"), r.get("op_name"), r.get("class_short"),
                 r.get("channel"), r.get("alias_target"), r.get("summary"),
             ) if x).lower()
-        all_rows = [r for r in all_rows
-                    if all(t in _hay(r) for t in terms)]
+        all_rows = [r for r in all_rows if _sq_match(_hay(r), grps)]
 
     page_rows, total, page, total_pages = _paginate(all_rows, page, per_page)
 
@@ -10737,10 +10742,15 @@ _SIDEBAR_KNOWN_SCOPES = {"name", "date", "status", "id", "qubit", "pair"}
 
 
 def _tokenize_query(text: str) -> list[str]:
-    """Whitespace split that keeps "double-quoted" runs as one token.
+    """Whitespace-or-comma split that keeps "double-quoted" runs as one token.
 
     Quotes are stripped (the matched value is the inner text), mirroring
     dataset-virtual.js ``tokenize`` so ``name:"power rabi"`` stays one token.
+    The comma is the drift the search-grammar audit caught: the JS side has
+    always split on commas (``q2, q5`` = two AND keywords) while this twin
+    split on whitespace only, so the same query filtered differently on the
+    two surfaces that claim to mirror each other. Additive: a comma-carrying
+    token matched nothing here before (no tree field contains a comma).
     """
     out: list[str] = []
     cur: list[str] = []
@@ -10749,7 +10759,7 @@ def _tokenize_query(text: str) -> list[str]:
         if ch == '"':
             in_q = not in_q
             continue
-        if not in_q and ch.isspace():
+        if not in_q and (ch.isspace() or ch == ","):
             if cur:
                 out.append("".join(cur))
                 cur = []
@@ -10772,7 +10782,13 @@ def _parse_tree_query(text: str) -> list[dict]:
     for tok in _tokenize_query(text):
         negate = False
         body = tok
-        if len(body) > 1 and body[0] == "-" and ":" in body[1:]:
+        # Guard shape kept identical to dataset-virtual.js:154 (the other
+        # drift the audit caught — the JS side also accepts `=` because the
+        # Datasets table has `key=value` param facets). The sidebar has no
+        # params, so a negated `-x=y` falls through to the SAME place an
+        # unknown scope does on both surfaces: the original token, literal.
+        # The divergence that remains is capability, not grammar.
+        if len(body) > 1 and body[0] == "-" and (":" in body[1:] or "=" in body[1:]):
             negate = True
             body = body[1:]
         if ":" in body:
@@ -10782,8 +10798,9 @@ def _parse_tree_query(text: str) -> list[dict]:
             if key in _SIDEBAR_KNOWN_SCOPES and value:
                 conds.append({"field": key, "value": value, "negate": negate})
                 continue
-        # Bare / unknown token → free-text (negation needs a scope, so a bare
-        # leading '-' is treated literally).
+        # Bare / unknown token → free-text with the ORIGINAL token (negation
+        # needs a consumable scope, so a bare leading '-' stays literal —
+        # exactly the JS side's unknown-scope fallthrough).
         conds.append({"field": None, "value": tok.lower(), "negate": False})
     return conds
 

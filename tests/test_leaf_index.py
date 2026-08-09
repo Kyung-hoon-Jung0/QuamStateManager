@@ -417,3 +417,34 @@ class TestRealArchive:
             checked += 1
             conn.close()
         assert checked >= 1, "archive present but no chip had enough snapshots"
+
+
+class TestSearchGrammar:
+    """docs/96 second pass: the typeahead had the tree's exact defect on the
+    server — the WHOLE query went into one SQL LIKE, so a multi-word query was
+    structurally unable to hit (no indexed path contains a space)."""
+
+    def test_two_words_and(self, conn):
+        _ingest(conn, "20260101_000000", _chip())
+        assert li.search_paths(conn, "qA1 T1")          # was [] forever
+        assert not li.search_paths(conn, "qA1 zznope")
+
+    def test_pipe_or(self, conn):
+        for i, t1 in enumerate((1e-5, 2e-5)):
+            _ingest(conn, f"2026010{i}_000000", _chip(t1=t1))
+        t1 = {h["path"] for h in li.search_paths(conn, "T1")}
+        both = {h["path"] for h in li.search_paths(conn, "T1 | amplitude")}
+        assert t1 and both > t1
+
+    def test_or_binds_tighter_than_and(self, conn):
+        _ingest(conn, "20260101_000000", _chip())
+        hits = {h["path"] for h in li.search_paths(conn, "qA1 T1 | amplitude")}
+        assert hits and all("qA1" in p for p in hits)
+        assert any(p.endswith(".T1") for p in hits)
+
+    def test_single_word_unchanged_and_escaping_survives(self, conn):
+        _ingest(conn, "20260101_000000", _chip())
+        assert li.search_paths(conn, "T1")
+        # LIKE metacharacters still escaped per TERM, not per query
+        assert li.search_paths(conn, "%") == li.search_paths(conn, "%")  # no crash
+        assert not li.search_paths(conn, "zz%zz")

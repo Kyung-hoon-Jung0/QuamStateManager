@@ -274,6 +274,50 @@ async function datasetChecks() {
        'datasets: tight binding — (rabi|ramsey) AND q1');
 }
 
+/* ── 7. scheduler library filter + dataset sort-key filters ────────────── */
+async function schedulerChecks() {
+    // SchedulerUI is IIFE-internal and self-inits on DOMContentLoaded; the
+    // /scheduler/scan fetch is the seam that feeds renderLibrary, so a stub
+    // response IS the honest way to seed the library through the real code.
+    const items = [
+        { kind: 'node', name: '04_power_rabi.py', description: 'Rabi amplitude cal' },
+        { kind: 'node', name: '06_ramsey.py', description: 'Ramsey detuning' },
+        { kind: 'node', name: '08_readout.py', description: 'Readout optimisation' },
+    ];
+    const dom = new JSDOM('<!doctype html><html><body>' +
+        '<div id="sched-root"></div><input id="sched-lib-filter">' +
+        '<input id="sched-cal-folder" value="C:/nodes"><span id="sched-scan-info"></span>' +
+        '<button id="sched-scan-btn"></button><div id="sched-library"></div>' +
+        '</body></html>', { runScripts: 'outside-only', url: 'http://localhost/' });
+    const w = dom.window;
+    global.window = w; global.document = w.document;
+    // the scan is manual: the button click below is what feeds renderLibrary
+    w.fetch = (url) => Promise.resolve({ ok: true, status: 200,
+        json: () => Promise.resolve(
+            String(url).indexOf('/scheduler/scan') >= 0
+                ? { items: items, qubits: [], pairs: [] } : {}) });
+    w.eval(fs.readFileSync(path.join(STATIC, 'search-query.js'), 'utf8'));
+    w.eval(fs.readFileSync(path.join(STATIC, 'scheduler.js'), 'utf8'));
+    w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+    w.document.getElementById('sched-scan-btn').click();
+    await wait(80);                       // let the stubbed scan land
+    async function shownNames(q) {
+        const inp = w.document.getElementById('sched-lib-filter');
+        inp.value = q;
+        inp.dispatchEvent(new w.Event('input', { bubbles: true }));
+        await wait(30);
+        return w.document.getElementById('sched-library').textContent;
+    }
+    let text = await shownNames('rabi | ramsey');
+    ok(text.includes('power_rabi') && text.includes('ramsey') && !text.includes('readout'),
+       'scheduler: "rabi | ramsey" shows both nodes, not readout');
+    text = await shownNames('power rabi');
+    ok(text.includes('power_rabi') && !text.includes('ramsey'),
+       'scheduler: two words AND (was whole-substring, found nothing)');
+    text = await shownNames('');
+    ok(text.includes('readout'), 'scheduler: empty query shows everything');
+}
+
 (async function main() {
     say('-- tree');
     await treeChecks();
@@ -283,6 +327,8 @@ async function datasetChecks() {
     await pairChecks();
     say('-- datasets');
     await datasetChecks();
+    say('-- scheduler');
+    await schedulerChecks();
     if (fails) { say(fails + ' check(s) failed'); process.exit(1); }
     say('all checks passed');
     process.exit(0);

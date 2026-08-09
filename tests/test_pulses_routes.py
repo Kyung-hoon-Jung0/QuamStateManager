@@ -873,6 +873,21 @@ class TestPulsesServerSearch:
     def test_search_empty_returns_all(self, loaded_client):
         r = loaded_client.get("/pulses?rows=1&q=")
         assert r.status_code == 200
+
+    def test_search_pipe_or(self, loaded_client):
+        # docs/96: space = AND, standalone | = OR — one query, both families
+        r = loaded_client.get("/pulses?rows=50&q=x180 | readout")
+        html = r.data.decode()
+        assert "x180_DragCosine" in html and "readout" in html
+        assert "saturation" not in html
+
+    def test_search_or_binds_tighter_than_and(self, loaded_client):
+        # qA1 AND (x180 | readout): still scoped to qA1's rows
+        r = loaded_client.get("/pulses?rows=50&q=qA1 x180 | readout")
+        assert r.status_code == 200
+        html = r.data.decode()
+        assert "x180_DragCosine" in html and "readout" in html
+        assert "saturation" not in html
         assert "x180_DragCosine" in r.data.decode()
 
     def test_search_no_match(self, loaded_client):

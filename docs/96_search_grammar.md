@@ -101,3 +101,51 @@ Pins: `tests/test_search_query.py` (grammar table, fuzz, JS↔PY parity,
 sidebar OR/negation/tight-binding/run-id) and
 `tests/search_grammar_selfcheck.cjs` + `tests/test_search_grammar.py`
 (37 checks over the real shipped JS on all five client surfaces).
+
+---
+
+# Second pass (same day) — full adoption + the two drifts
+
+The "not adopted" list above lasted three hours: the maintainer asked for all
+of it, with a strict real-browser audit.
+
+## Adopted
+
+| surface | change | verified |
+|---|---|---|
+| global search (`SearchIndex.search`) | grouping runs BEFORE the `MIN_PREFIX` drop; per group, term matches UNION; groups intersect. A no-pipe query takes the identical per-term AND path, dead-term early-exit included. An empty GROUP still kills the query; a dead ARM no longer does | unit pins incl. a permutation sweep against a faithful copy of the old loop; real Chrome: `t1 \| anharmonicity` lists both, `q1 t1` stays scoped |
+| `/pulses` | the row filter goes through `matches_hay`; the haystack is built once per row (it used to be re-joined per TERM) | route pins; server-truth on the reporting chip: `x180 \| readout` = 58 rows, 0 stray |
+| param-history typeahead (`leaf_index.search_paths`) | the WHOLE-query single `LIKE` becomes (AND over groups) of (OR over per-term `LIKE`s), escaping per term — a multi-word query was structurally unable to hit (0 of 2,158 indexed paths contain a space) | unit pins on a real ingest; real Chrome: `q1 joint` → 2 exact suggestions, `joint_offset \| anharmonicity` → 30 mixing both arms |
+| scheduler library filter | whole-substring → `SearchQuery.matchesHay` | selfcheck drives the real scan seam; real Chrome: `rabi \| ramsey` shows both nodes |
+| dataset sort-key + parameter-key filters | whole-substring → shared `_keyNameMatch` | selfcheck |
+
+## The two drifts, resolved
+
+The two parsers that claim to mirror each other (`dataset-virtual.js` /
+`routes._parse_tree_query`):
+
+* **Comma split** — the JS side has always split `q2, q5` into two AND
+  keywords; the Python twin split on whitespace only, so the same query
+  filtered differently on the two surfaces. The sidebar tokenizer now splits
+  on commas outside quotes. Additive: no tree field contains a comma, so a
+  comma-carrying token matched nothing before. Real-browser measured:
+  `qA1,qA2` = `qA1 qA2` = 153 runs (was 0 vs 153).
+* **`-x=y` negation guard** — fires on the JS side (Datasets has `key=value`
+  param facets) and did not on the Python side. The guard SHAPE is now
+  identical; the sidebar has no param facets, so a negated `-x=y` falls
+  through to the same place an unknown scope does on BOTH surfaces — the
+  original literal token. What remains is capability, not grammar, and the
+  comments now say so instead of claiming a mirror that had already broken.
+
+## The audit's own honest notes
+
+* The first browser pass flagged `/pulses` as leaking a `saturation` row —
+  false: the harness had scoped its row count to the wrong `<table>`. The
+  server answer for the same query is 58 rows, 0 containing it. Kept here
+  because an audit that silently drops its own false alarms teaches the next
+  reader to trust green checkmarks too much.
+* `settle_time` produced 0 OR hits in the typeahead on the reporting chip —
+  correct, not a defect: its values are null there, and the leaf index
+  indexes numeric change points only.
+* Real-browser OR arithmetic on the sidebar: `rabi`=49, `ramsey`=153,
+  `rabi \| ramsey`=202 — an exact disjoint union.

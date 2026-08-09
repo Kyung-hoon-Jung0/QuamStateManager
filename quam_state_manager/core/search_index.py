@@ -160,28 +160,38 @@ class SearchIndex:
         if not query:
             return []
 
-        terms = query.split()
-        terms = [t for t in terms if len(t) >= MIN_PREFIX]
-        if not terms:
+        # The shared grammar (core.search_query / docs 96): space = AND across
+        # groups, a standalone `|` = OR within one. Grouping runs BEFORE the
+        # MIN_PREFIX drop so the pipe can bind its neighbours; the sub-length
+        # drop then applies per term exactly as it always did (a lone literal
+        # pipe is itself sub-length, so an inert pipe vanishes silently — the
+        # very thing that happened to it before the grammar existed). A query
+        # with no operator parses to singleton groups, and the loop below is
+        # then today's per-term AND, dead-term early-exit included.
+        from quam_state_manager.core.search_query import group_by
+
+        groups = group_by(query.split())
+        groups = [[t for t in g if len(t) >= MIN_PREFIX] for g in groups]
+        groups = [g for g in groups if g]
+        if not groups:
             return []
 
         self._ensure_trigram()       # lazily build the fuzzy index on first use
 
-        term_match_sets: list[set[int]] = []
-        for term in terms:
-            matches = self._find_term(term)
-            if not matches:
+        terms: list[str] = []        # every surviving term, original order —
+        candidate_indices: set[int] | None = None
+        for g in groups:
+            g_matches: set[int] = set()
+            for term in g:
+                g_matches |= self._find_term(term)
+            terms.extend(g)
+            if not g_matches:        # an empty GROUP kills the query (AND)
                 return []
-            term_match_sets.append(matches)
-
-        if len(term_match_sets) == 1:
-            candidate_indices = term_match_sets[0]
-        else:
-            candidate_indices = term_match_sets[0]
-            for s in term_match_sets[1:]:
-                candidate_indices = candidate_indices & s
-                if not candidate_indices:
-                    return []
+            candidate_indices = (g_matches if candidate_indices is None
+                                 else candidate_indices & g_matches)
+            if not candidate_indices:
+                return []
+        assert candidate_indices is not None
 
         if category:
             cat_set = set(self.category_index.get(category, []))

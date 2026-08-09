@@ -465,3 +465,66 @@ class TestLargeRealData:
         idx = SearchIndex.build(store.merged)
         results = idx.search("variantb")
         assert len(results) >= 1
+
+
+class TestSharedGrammarOr:
+    """docs/96 second pass: the server index speaks the app grammar too."""
+
+    def _idx(self):
+        return SearchIndex.build(SAMPLE_MERGED)
+
+    def test_pipe_unions_two_terms(self):
+        idx = self._idx()
+        both = {r.dot_path for r in idx.search("t1 | t2ramsey", limit=50)}
+        t1 = {r.dot_path for r in idx.search("t1", limit=50)}
+        t2 = {r.dot_path for r in idx.search("t2ramsey", limit=50)}
+        assert both == (t1 | t2) and t1 and t2
+
+    def test_or_binds_tighter_than_and(self):
+        idx = self._idx()
+        # qA1 AND (t1 | anharmonicity) — every hit still belongs to qA1
+        hits = idx.search("qa1 t1 | anharmonicity", limit=50)
+        assert hits and all("qA1" in r.dot_path for r in hits)
+        assert any(r.dot_path.endswith(".T1") for r in hits)
+        assert any(r.dot_path.endswith(".anharmonicity") for r in hits)
+
+    def test_dead_arm_does_not_kill_the_group(self):
+        idx = self._idx()
+        assert ({r.dot_path for r in idx.search("zzznothing | t1", limit=50)}
+                == {r.dot_path for r in idx.search("t1", limit=50)} != set())
+
+    def test_dead_group_still_kills_the_query(self):
+        idx = self._idx()
+        assert idx.search("t1 zzznothing", limit=50) == []
+
+    def test_plain_queries_byte_identical_to_the_old_path(self):
+        # a no-pipe query parses to singleton groups, which IS the historic
+        # per-term AND — compare against a faithful copy of the old loop.
+        idx = self._idx()
+        vocab = ["t1", "qa1", "amplitude", "anharmonicity", "xy", "zz", "x1"]
+        import itertools
+        for n in (1, 2):
+            for combo in itertools.permutations(vocab, n):
+                q = " ".join(combo)
+                terms = [t for t in q.split() if len(t) >= 2]
+                if not terms:
+                    continue
+                old: set | None = None
+                dead = False
+                for t in terms:
+                    m = idx._find_term(t)
+                    if not m:
+                        dead = True
+                        break
+                    old = m if old is None else old & m
+                expect = set() if (dead or not old) else old
+                got = {r.dot_path for r in idx.search(q, limit=10_000)}
+                want = {idx.entries[i].dot_path for i in expect}
+                assert got == want, q
+
+    def test_lone_pipe_is_inert(self):
+        # '|' is sub-MIN_PREFIX: silently dropped, exactly as it always was
+        idx = self._idx()
+        assert idx.search("|", limit=10) == []
+        assert ({r.dot_path for r in idx.search("t1 |", limit=50)}
+                == {r.dot_path for r in idx.search("t1", limit=50)})
