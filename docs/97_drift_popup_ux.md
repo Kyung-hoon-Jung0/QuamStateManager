@@ -1,4 +1,4 @@
-# 96 — Drift/conflict popup: one directional trio + a diff you can actually see
+# 97 — Drift/conflict popup: one directional trio + a diff you can actually see
 
 *2026-08-09. A UI/UX pass on the state drift/conflict surfaces, prompted by two user
 reports. No backend, route, or handler change — every action already existed. Labels are

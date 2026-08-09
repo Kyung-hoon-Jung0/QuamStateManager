@@ -5946,7 +5946,7 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
 }
 .state-review .review-arrow { color: color-mix(in srgb, var(--pico-color) 70%, transparent); font-size: 15px; font-weight: 600; }
 
-/* docs/96 — the Δ is the POINT of the review popup, not a footnote. Here it
+/* docs/97 — the Δ is the POINT of the review popup, not a footnote. Here it
    becomes a real chip: larger, bolder, tinted background, so old → new → Δ reads
    at a glance. Scoped to .state-review so the pending tray / history / diff /
    compare Δ (dense surfaces, docs/76) stay byte-identical. */
@@ -5969,7 +5969,7 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
 }
 .state-review .review-delta .val-delta-pct { opacity: 0.9; }
 
-/* docs/96 — muted qualifier inside a sync/conflict choice button ("— discard my
+/* docs/97 — muted qualifier inside a sync/conflict choice button ("— discard my
    edits", "(merge)"). A NEW class, never a change to the global .btn-sync/.btn-sm
    base (those are shared with the Generate wizard + Config Viewer). */
 .sync-btn-sub { opacity: 0.72; font-weight: 400; }
