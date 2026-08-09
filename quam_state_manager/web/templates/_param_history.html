@@ -251,10 +251,19 @@
   {% endif %}
 
   {# Form fires on any input change (radio, checkbox, select, etc).
-     hx-trigger="change" catches all bubbling change events from any descendant. #}
+     hx-trigger="change" catches all bubbling change events from any descendant.
+     delay:500ms DEBOUNCES: /param-history is the app's slowest route (it's in
+     app.js SLOW_PREFIXES — every render redraws every sparkline), so a burst of
+     chip flips must collapse into ONE request carrying the FINAL form state
+     (htmx serializes at send time, after the delay). hx-sync="this:replace"
+     aborts an in-flight render if the user keeps clicking, so the last state
+     always wins. NOT `changed`: htmx 2 keys it on event.target.value, which for
+     a checkbox is the static value attr — a re-toggle would never fire again.
+     The chips' lit state is echoed instantly by an app.js change listener
+     (inputs are display:none; without the echo a click shows nothing for 500ms). #}
   <form id="param-history-filters" class="param-history-filters"
         hx-get="/param-history" hx-target="#param-history-root" hx-swap="outerHTML"
-        hx-push-url="true" hx-trigger="change">
+        hx-push-url="true" hx-trigger="change delay:500ms" hx-sync="this:replace">
 
     <div class="phf-row">
       <label class="phf-label">Date</label>
@@ -284,8 +293,19 @@
       </div>
     </div>
 
+    {# All/None: flip every checkbox in the row, then ONE dispatched change
+       event → one debounced submit (paramHistoryFilterSetRow in app.js).
+       Server contract unchanged: an empty selection still means the default
+       view, so None is a starting point for picking a few chips within the
+       debounce window, not a persistent "hide everything". #}
     <div class="phf-row">
       <label class="phf-label">Properties</label>
+      <span class="phf-allnone">
+        <button type="button" class="btn-xs outline"
+                onclick="paramHistoryFilterSetRow(this, true)">All</button>
+        <button type="button" class="btn-xs outline"
+                onclick="paramHistoryFilterSetRow(this, false)">None</button>
+      </span>
       <div class="phf-chips phf-chip-grid">
         {% for p in all_properties %}
           {% set is_active = (p in properties) or (properties == all_properties) %}
@@ -299,6 +319,12 @@
 
     <div class="phf-row">
       <label class="phf-label">Qubits</label>
+      <span class="phf-allnone">
+        <button type="button" class="btn-xs outline"
+                onclick="paramHistoryFilterSetRow(this, true)">All</button>
+        <button type="button" class="btn-xs outline"
+                onclick="paramHistoryFilterSetRow(this, false)">None</button>
+      </span>
       <div class="phf-chips phf-chip-grid">
         {% for q in all_qubits %}
           {% set is_active = (q in qubits_selected) or (not qubits_selected) %}

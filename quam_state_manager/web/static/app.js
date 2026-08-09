@@ -10821,6 +10821,50 @@ function paramHistoryCloseDrawer() {
     drawer.innerHTML = '';
 }
 
+// ---- filter form UX (debounced submit) --------------------------------
+// The filter chips hide their <input> (CSS display:none) — the lit state is
+// the label's .active class, which the SERVER renders. The form's submit is
+// debounced (hx-trigger="change delay:500ms" in _param_history.html), so
+// without an immediate echo a chip click would show nothing until the swap
+// lands. This listener mirrors checked → .active instantly; the server
+// render then confirms it. Delegated on document so it survives the
+// outerHTML swaps of #param-history-root.
+document.addEventListener('change', function(e) {
+    var input = e.target;
+    if (!input || !input.closest || !input.closest('#param-history-filters')) return;
+    var chip = input.closest('.phf-chip');
+    if (!chip) return;
+    if (input.type === 'radio') {
+        // Radio groups (the Date row): the browser unchecks the sibling
+        // silently — resync the whole group, not just the clicked chip.
+        var form = input.closest('form');
+        form.querySelectorAll('input[type="radio"][name="' + input.name + '"]')
+            .forEach(function(r) {
+                var c = r.closest('.phf-chip');
+                if (c) c.classList.toggle('active', r.checked);
+            });
+    } else if (input.type === 'checkbox') {
+        chip.classList.toggle('active', input.checked);
+    }
+});
+
+// All/None row togglers (_param_history.html). Programmatic .checked writes
+// emit no events, so flip every box in the row first, then dispatch exactly
+// ONE bubbling change event — the form's debounced hx-trigger fires once for
+// the whole flip instead of once per checkbox.
+function paramHistoryFilterSetRow(btn, on) {
+    var row = btn.closest('.phf-row');
+    if (!row) return;
+    var boxes = row.querySelectorAll('.phf-chips input[type="checkbox"]');
+    if (!boxes.length) return;
+    boxes.forEach(function(box) {
+        box.checked = on;
+        var c = box.closest('.phf-chip');
+        if (c) c.classList.toggle('active', on);
+    });
+    boxes[boxes.length - 1].dispatchEvent(new Event('change', { bubbles: true }));
+}
+
 // ---- trend statistics (moving average + ±σ band) ---------------------
 // Customer request: history/trend charts should read like a statistics
 // figure — a rolling-mean line with a shaded standard-deviation band.

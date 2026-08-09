@@ -6109,6 +6109,7 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
     color: var(--pico-muted-color); font-size: 0.9em; margin: 0;
 }
 .phf-chips { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+.phf-allnone { display: inline-flex; gap: 0.25rem; }
 .phf-chip {
     display: inline-flex; align-items: center; gap: 0.3rem;
     padding: 0.2rem 0.6rem; border-radius: 999px;
