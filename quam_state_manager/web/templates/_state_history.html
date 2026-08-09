@@ -12,6 +12,17 @@
             title="Capture the current state now">Take snapshot</button>
 </div>
 
+{# Honest footprint (cached per capture/prune — no walk on steady-state
+   renders). Retention is mentioned ONLY when a real budget is configured:
+   under the default (100k) _prune never fires, and implying retention that
+   doesn't exist would be a lie. #}
+{% if disk_stats and disk_stats.snapshots %}
+<p class="muted history-disk-line" style="margin:0 0 0.4rem;font-size:0.85em">
+  {{ disk_stats.snapshots }} snapshot{{ 's' if disk_stats.snapshots != 1 }} ·
+  {{ disk_stats.bytes | filesizeformat }} on disk{% if disk_stats.prune_active %} · retention: newest {{ disk_stats.max_snapshots }} kept, oldest auto-pruned{% endif %}
+</p>
+{% endif %}
+
 {% if chip_origin != 'live' %}
 <p class="config-stale-note">&#9888; This chip was opened from a dataset run
    archive (read-only) — you can review and diff history, but restoring to live

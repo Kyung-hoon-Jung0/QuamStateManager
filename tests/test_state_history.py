@@ -391,3 +391,69 @@ class TestActivateQuamIdentity:
         with app.test_request_context():
             ctx = app.config["contexts"].get(live.parent.name)
         assert ctx is not None and ctx["path"] == str(live.resolve())
+
+
+class TestHistoryScaleSurfaces:
+    """Defect #10: at 500 snapshots the wiring-page history panel used to
+    render EVERY row on each open (per_page default 0 = show all). It now
+    defaults to a page of 50 while keeping the explicit "All" option (the
+    pagination doctrine), and both history headers state the honest on-disk
+    footprint."""
+
+    _META = {"trigger": "manual",
+             "diff_summary": {"added": 0, "removed": 0, "modified": 0, "total": 0},
+             "new_experiments": [], "source_path": "x"}
+
+    def _fabricate_snapshots(self, app, live, n):
+        """Meta-only snapshot dirs are enough for the LIST (and deliberately
+        exercise the defect-#7 shape on a listing surface: /api/history must
+        render them without touching any index)."""
+        import json as _json
+        hm = app.config["history_manager"]
+        hist = hm._history_dir(live)
+        for i in range(n):
+            ts = f"20250101_{i // 60:02d}{i % 60:02d}00"
+            d = hist / ts
+            d.mkdir(parents=True)
+            (d / "meta.json").write_text(
+                _json.dumps({"timestamp": ts, **self._META}), encoding="utf-8")
+        hm._snapshot_list_cache.clear()
+
+    def test_panel_defaults_to_a_page_of_50_with_all_offered(self, app, client, live):
+        _take_snapshot(client)
+        self._fabricate_snapshots(app, live, 60)          # 61 total
+        html = client.get("/api/history").data.decode()
+        assert html.count('data-ts="') == 50              # a PAGE, not everything
+        assert "Page 1 / 2" in html
+        assert 'value="50" selected' in html              # the default, visible
+        assert 'value="0"' in html and ">All</option>" in html   # All stays a choice
+
+    def test_panel_all_option_still_shows_everything(self, app, client, live):
+        _take_snapshot(client)
+        self._fabricate_snapshots(app, live, 60)
+        html = client.get("/api/history?per_page=0").data.decode()
+        assert html.count('data-ts="') == 61
+        assert "Page 1 /" not in html                     # no pager when showing all
+        assert 'value="0" selected' in html
+
+    def test_panel_page_2_reachable(self, app, client, live):
+        _take_snapshot(client)
+        self._fabricate_snapshots(app, live, 60)
+        html = client.get("/api/history?page=2&per_page=50").data.decode()
+        assert html.count('data-ts="') == 11
+        assert "Page 2 / 2" in html
+
+    def test_state_history_header_states_the_footprint(self, client):
+        _take_snapshot(client)
+        html = client.get("/state-history").data.decode()
+        assert "on disk" in html
+        assert "snapshot" in html
+        # Default retention budget (100k) can never fire — the header must
+        # not imply retention exists (the truth rule).
+        assert "retention" not in html
+
+    def test_param_history_header_states_the_footprint(self, client):
+        _take_snapshot(client)
+        html = client.get("/param-history").data.decode()
+        assert "on disk" in html
+        assert "retention" not in html

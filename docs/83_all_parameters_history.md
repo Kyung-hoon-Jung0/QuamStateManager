@@ -148,3 +148,39 @@ Real snapshot stores, not fixtures:
 * A pointer that resolves to nothing numeric still costs a 150-snapshot scan.
 * The feed's per-row "previous value" is one small indexed query per row (N+1);
   at 25 rows × 20 groups that is a few ms, but it is not free.
+
+## Amendment (2026-08-10, `fix/history-scale`): freshness compares against what a rebuild CAN ingest
+
+`_ensure_leaf_index_fresh` used to rebuild whenever `leaf_snaps` held fewer
+rows than `list_snapshots` returned. Those two count DIFFERENT disk rules:
+`list_snapshots` counts every dir with a `meta.json`, while
+`rebuild_leaf_index` ingests only dirs that still carry a `state.json`. Any
+meta-only dir — a partial prune `rmtree`, a transient share error during
+capture — made the counts permanently unequal, so EVERY field-history click
+and All-Parameters load paid the full 0.9-2.7 s rebuild under BEGIN IMMEDIATE
+(blocking a second window's readers), forever.
+
+The gate now, in order (the steady state stays the same two small reads):
+
+1. dirty → rebuild (unchanged — an out-of-order arrival must repair).
+2. `have >= len(list_snapshots)` → fresh (unchanged fast path).
+3. Behind by count → read the index's own timestamps (one small SELECT) and
+   stat ONLY the missing dirs — typically one — never all N. Missing dirs
+   without a `state.json` are uningestible: no rebuild (it cannot help),
+   no error.
+4. Missing dirs WITH a `state.json` → one rebuild — unless the retrigger memo
+   says a rebuild already ran under exactly this snapshot DIR SET and could
+   not absorb them. The memo lives in `leaf_meta`
+   (`ingest_failed_dirset` = sha1 of the sorted dir-timestamp set, plus a
+   capped `ingest_failed_ts` diagnostic list), written after a rebuild that
+   leaves ingestible timestamps un-absorbed and cleared after one that
+   absorbs everything. Keying on the DIR SET is what makes a repair clear it
+   naturally: any capture, prune, or repaired dir changes the set — and it is
+   also why a genuinely stuck dir costs at most one rebuild per change of the
+   set instead of one per query.
+
+Ingest/rebuild semantics are untouched — "ordering is rebuilt, not repaired"
+and "a rebuild MERGES" hold verbatim; the gate only decides WHETHER to call
+the rebuild. Pinned by `tests/test_leaf_index.py::TestFreshnessGate`
+(meta-only dir → zero rebuilds; failing ingest → one attempt per dir set;
+repaired dir → re-ingests; wiped index still heals in one rebuild).

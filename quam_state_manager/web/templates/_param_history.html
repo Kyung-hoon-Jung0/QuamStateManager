@@ -25,6 +25,16 @@
       How each tracked field in <code>state.json</code> drifts across every modification —
       saves, manual edits, and experiment runs.
     </p>
+    {# Honest footprint (cached per capture/prune — no walk on steady-state
+       renders). Retention is mentioned ONLY when a real budget is configured:
+       under the default (100k) _prune never fires, and implying retention
+       that doesn't exist would be a lie. #}
+    {% if disk_stats and disk_stats.snapshots %}
+    <p class="muted history-disk-line" style="margin:0;font-size:0.85em">
+      {{ disk_stats.snapshots }} snapshot{{ 's' if disk_stats.snapshots != 1 }} ·
+      {{ disk_stats.bytes | filesizeformat }} on disk{% if disk_stats.prune_active %} · retention: newest {{ disk_stats.max_snapshots }} kept, oldest auto-pruned{% endif %}
+    </p>
+    {% endif %}
   </div>
 
   {# docs/83: the curated grid answers "how has T1 drifted"; Changes answers
