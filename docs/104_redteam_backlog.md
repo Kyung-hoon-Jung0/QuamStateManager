@@ -44,7 +44,7 @@ deferral is explicit, nothing is silently dropped.*
    `instances.peers()` exists precisely for this).
 6. Leaf-index freshness compares two different disk rules → any meta-only
    snapshot dir causes a full rebuild on EVERY query (S1 · M · #11).
-   → **fixed** on `fix/history-scale` (docs/105; docs/83 amendment).
+   → **fixed** on `fix/history-scale` (docs/106; docs/83 amendment).
 7. ~11k `os.stat` per idle poll tick across 3 roots (5× per-folder date-dir
    stats; `/datasets/poll` doubles it) (S2 · M · #4/#6); sidebar spine probe
    up to 9k stats/60s (S2 · M · #9); `_workspace_token` still `max(mtime)`
@@ -52,9 +52,9 @@ deferral is explicit, nothing is silently dropped.*
 8. Discovery-walk 50k-dir cap is silent in the UI (S1-honesty · S · #10);
    `/datasets` embeds all ~10k rows ungzipped (S2 · M/L · #17); History
    panel defaults to no pagination (S2 · S · #12 → **fixed** on
-   `fix/history-scale`, docs/105: default 50, All kept); `_prune` effectively
+   `fix/history-scale`, docs/106: default 50, All kept); `_prune` effectively
    disabled at `DEFAULT_MAX_SNAPSHOTS=100_000` with no size surface (S3 ·
-   S · #13 → **size surfaced** on `fix/history-scale`, docs/105 — honest
+   S · #13 → **size surfaced** on `fix/history-scale`, docs/106 — honest
    header line; the default budget itself deliberately unchanged);
    200 MB pragma + count-budgeted extract cache can pin ~1 GB per
    window (S3 · M · #14); scanner LRU 10 thrashes at 4 chips × surfaces
