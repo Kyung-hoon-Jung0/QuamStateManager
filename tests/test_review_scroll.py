@@ -44,9 +44,9 @@ class TestReviewScroll:
         # id reviewAccept()'s reveal logic still targets.
         assert 'class="state-review-head-actions" id="state-review-actions"' in _TPL
         # Close button is up top; the long footer "pull the live state…" label is
-        # gone in favour of a compact "Sync".
+        # gone — each branch's pull is a compact directional "Take live" button (docs/96).
         assert ">Close</button>" in _TPL
-        assert ">\n          Sync</button>" in _TPL or ">Sync</button>" in _TPL
+        assert "Take live" in _TPL
         # Reveal hooks preserved.
         assert 'class="review-sync-clean"' in _TPL
         assert 'class="review-sync-edits"' in _TPL
