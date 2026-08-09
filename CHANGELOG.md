@@ -189,9 +189,9 @@ Every number on the screen gets a history, and one Ctrl+Z that means what it say
 - Tab is first-class navigation again: a leaked capture-phase focus trap (reachable by double-opening Ctrl+K) had been swallowing every Tab app-wide. Traps are now leak-proof at the source, both Live-Edit grids hop between edit cells, and the topbar calculator hops its visible inputs
 - The r10 adversarial audit closed 19 findings, two of them reproduced first — including a cached run verdict that leaked one chip's values into another after a chip switch
 
-## Unreleased (on main since the v0.9.0 bump)
+## v0.9.5 (2026-08-09)
 
-Nine days of customer feedback batches r12–r16, the runner/agent programme, and a multi-instance and packaging pass. Everything below is on `main`.
+Nine days of customer feedback batches r12–r16, the runner/agent programme, and a multi-instance and packaging pass. A point release rather than 1.0: it is substantial but not finished — the runner's signature calibration still needs a provider key, and its loop has not yet been run against hardware.
 
 ### Runner + AI calibration agent (docs/78_runner_agent.md)
 
