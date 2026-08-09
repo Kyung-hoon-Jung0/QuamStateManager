@@ -739,6 +739,14 @@
         <p class="calc-help">V_peak is the amplitude-relevant one. Edit any V to back-convert to dBm.</p>
         </details>
         <details class="calc-sec">
+        <summary class="calc-sec-label">RF = LO + IF</summary>
+        <div class="calc-row"><label class="calc-field">RF<input type="text" id="calc-s4-rf" class="calc-in" inputmode="decimal"><span class="calc-unit">GHz</span></label></div>
+        <div class="calc-row"><label class="calc-field">LO<input type="text" id="calc-s4-lo" class="calc-in" inputmode="decimal"><span class="calc-unit">GHz</span></label></div>
+        <div class="calc-row"><label class="calc-field">IF<input type="text" id="calc-s4-if" class="calc-in" inputmode="decimal"><span class="calc-unit">MHz</span></label><button class="calc-copy" type="button" data-copy="calc-s4-if" title="Copy">&#128203;</button></div>
+        <div class="calc-result"><span class="calc-rlabel">IF window</span><span class="calc-rval" id="calc-s4-note">—</span></div>
+        <p class="calc-help">Type any two — the third fills in. MW-FEM IF window is ±400 MHz.</p>
+        </details>
+        <details class="calc-sec">
         <summary class="calc-sec-label">Quick reference</summary>
         <p class="calc-help">0 dBm → 0.2236 V_rms / 0.3162 V_pk / 0.6325 V_pp (50 Ω)<br>−6 dB ≈ ×0.501 amp · −20 dB = ×0.1 amp<br>×0.5 amp = −6.02 dB power<br>−25 dB power = ÷17.78 in amplitude (10^(25/20)), not ÷316</p>
         </details>

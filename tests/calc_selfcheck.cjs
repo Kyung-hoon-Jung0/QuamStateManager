@@ -59,5 +59,23 @@ bad("log10(-1)=NaN", 'log10(-1)');
 bad("empty", '');
 bad("trailing garbage", '2+');
 
+// ── RF = LO + IF pure solver (1.0-prep, docs/100) ──
+const S = global.window.calcSolveRfLoIf;
+ok(typeof S === 'function', 'calcSolveRfLoIf not exposed');
+if (typeof S === 'function') {
+    let s = S('rf', 5.2, 5.0, NaN);            // edit RF with LO known → IF
+    ok(Math.abs(s.if_ - 200) < 1e-9, 'RF 5.2 / LO 5.0 → IF 200 MHz, got ' + s.if_);
+    s = S('lo', 5.2, 4.9, NaN);                // edit LO with RF known → IF
+    ok(Math.abs(s.if_ - 300) < 1e-9, 'RF 5.2 / LO 4.9 → IF 300 MHz, got ' + s.if_);
+    s = S('if', NaN, 6.0, -350);               // edit IF with LO known → RF
+    ok(Math.abs(s.rf - 5.65) < 1e-12, 'LO 6.0 / IF −350 → RF 5.65 GHz, got ' + s.rf);
+    s = S('rf', 4.8, NaN, 250);                // edit RF with only IF known → LO
+    ok(Math.abs(s.lo - 4.55) < 1e-12, 'RF 4.8 / IF 250 → LO 4.55 GHz, got ' + s.lo);
+    s = S('if', 7.1, NaN, 100);                // edit IF with only RF known → LO
+    ok(Math.abs(s.lo - 7.0) < 1e-12, 'RF 7.1 / IF 100 → LO 7.0 GHz, got ' + s.lo);
+    s = S('rf', 5.2, NaN, NaN);                // one known field → nothing derived
+    ok(!isFinite(s.lo) && !isFinite(s.if_), 'single field must not invent values');
+}
+
 if (fails) { console.error('\n' + fails + ' self-check failure(s)'); process.exit(1); }
 console.log('calc.js self-check: all assertions passed');
