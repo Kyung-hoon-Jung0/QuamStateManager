@@ -1711,17 +1711,38 @@
         return c && !c.classList.contains('bulk-cell-ro') ? c : null;
     }
 
+    // A row you can navigate INTO. The grid hides rows two INDEPENDENT ways —
+    // the search box (.bulk-row-hidden) and the qubit picker (.bulk-qubit-off)
+    // — and both are display:none, but the movement helpers only ever filtered
+    // the first. Stepping onto a display:none row makes .focus() a silent
+    // no-op, which is exactly why the up/down arrows stopped working once a
+    // subset of qubits was picked: the grid looked short, and every vertical
+    // press aimed at a row that was still in the DOM but not on the screen.
+    function _navRows() {
+        return _rows().filter(function (r) {
+            return !r.classList.contains('bulk-row-hidden')
+                && !r.classList.contains('bulk-qubit-off');
+        });
+    }
+
     function _gridMove(cell, dr, dc) {
         var td = cell.closest('td');
         var tr = cell.closest('tr');
-        var rows = _rows().filter(function (r) { return !r.classList.contains('bulk-row-hidden'); });
+        var rows = _navRows();
         var ri = rows.indexOf(tr);
         if (dr) {
-            var nr = rows[ri + dr];
-            if (!nr) return null;
             var key = td.getAttribute('data-col-key');
-            var ntd0 = nr.querySelector('[data-col-key="' + (window.CSS && CSS.escape ? CSS.escape(key) : key) + '"]');
-            return _editableIn(ntd0);
+            var ksel = '[data-col-key="'
+                + (window.CSS && CSS.escape ? CSS.escape(key) : key) + '"]';
+            // Keep walking rather than giving up on the immediate neighbour:
+            // that row's cell in this column may be read-only (a per-neighbour
+            // operation the qubit does not carry renders as a blank), and
+            // stopping there would strand the caret with nothing happening.
+            for (var nri = ri + dr; nri >= 0 && nri < rows.length; nri += dr) {
+                var ncv = _editableIn(rows[nri].querySelector(ksel));
+                if (ncv) return ncv;
+            }
+            return null;
         }
         if (dc) {
             var tds = Array.prototype.slice.call(tr.querySelectorAll('.bulk-td:not(.bulk-col-hidden):not(.bulk-search-hidden)'));
@@ -1746,7 +1767,7 @@
             var c = _editableIn(tds[i]);
             if (c) return c;
         }
-        var rows = _rows().filter(function (r) { return !r.classList.contains('bulk-row-hidden'); });
+        var rows = _navRows();
         for (var ri = rows.indexOf(tr) + dc; ri >= 0 && ri < rows.length; ri += dc) {
             var ntds = Array.prototype.slice.call(rows[ri].querySelectorAll(sel));
             for (var j = dc > 0 ? 0 : ntds.length - 1; j >= 0 && j < ntds.length; j += dc) {

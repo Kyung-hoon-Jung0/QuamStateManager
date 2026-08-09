@@ -758,22 +758,44 @@
         }
     };
 
+    // Kept in sync with bulk-edit.js: navigation lands on cells you can TYPE
+    // in. A read-only cell already declares itself out of the tab order with
+    // tabindex="-1"; these handlers preventDefault() and focus by hand, which
+    // overrode that. The pair grid has always rendered blanks for a column a
+    // given pair does not carry, so a single-step move could strand the caret.
+    function _editableIn(td) {
+        var c = td && td.querySelector('.bulk-cell');
+        return c && !c.classList.contains('bulk-cell-ro') ? c : null;
+    }
+
+    function _navRows() {
+        return _rows().filter(function (r) {
+            return !r.classList.contains('bulk-row-hidden');
+        });
+    }
+
     function _gridMove(cell, dr, dc) {
         var td = cell.closest('td');
         var tr = cell.closest('tr');
-        var rows = _rows().filter(function (r) { return !r.classList.contains('bulk-row-hidden'); });
+        var rows = _navRows();
         var ri = rows.indexOf(tr);
         if (dr) {
-            var nr = rows[ri + dr];
-            if (!nr) return null;
             var key = td.getAttribute('data-col-key');
-            return nr.querySelector('[data-col-key="' + (window.CSS && CSS.escape ? CSS.escape(key) : key) + '"] .bulk-cell');
+            var ksel = '[data-col-key="'
+                + (window.CSS && CSS.escape ? CSS.escape(key) : key) + '"]';
+            for (var nri = ri + dr; nri >= 0 && nri < rows.length; nri += dr) {
+                var ncv = _editableIn(rows[nri].querySelector(ksel));
+                if (ncv) return ncv;
+            }
+            return null;
         }
         if (dc) {
             var tds = Array.prototype.slice.call(tr.querySelectorAll('.bulk-td:not(.bulk-col-hidden):not(.bulk-search-hidden)'));
-            var ci = tds.indexOf(td);
-            var ntd = tds[ci + dc];
-            return ntd ? ntd.querySelector('.bulk-cell') : null;
+            for (var ci = tds.indexOf(td) + dc; ci >= 0 && ci < tds.length; ci += dc) {
+                var nch = _editableIn(tds[ci]);
+                if (nch) return nch;
+            }
+            return null;
         }
         return null;
     }
@@ -787,14 +809,14 @@
         var sel = '.bulk-td:not(.bulk-col-hidden):not(.bulk-search-hidden)';
         var tds = Array.prototype.slice.call(tr.querySelectorAll(sel));
         for (var i = tds.indexOf(td) + dc; i >= 0 && i < tds.length; i += dc) {
-            var c = tds[i].querySelector('.bulk-cell');
+            var c = _editableIn(tds[i]);
             if (c) return c;
         }
-        var rows = _rows().filter(function (r) { return !r.classList.contains('bulk-row-hidden'); });
+        var rows = _navRows();
         for (var ri = rows.indexOf(tr) + dc; ri >= 0 && ri < rows.length; ri += dc) {
             var ntds = Array.prototype.slice.call(rows[ri].querySelectorAll(sel));
             for (var j = dc > 0 ? 0 : ntds.length - 1; j >= 0 && j < ntds.length; j += dc) {
-                var nc = ntds[j].querySelector('.bulk-cell');
+                var nc = _editableIn(ntds[j]);
                 if (nc) return nc;
             }
         }
