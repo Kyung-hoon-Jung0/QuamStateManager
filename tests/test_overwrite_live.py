@@ -158,7 +158,7 @@ class TestSurfaces:
             from flask import render_template
             html = render_template("_live_diverged_banner.html",
                                    live_diverged=True, active_name="chip")
-        assert "Pull live state" in html
+        assert "Take live" in html
         assert "overwriteLiveWithWorking()" in html
         assert "Keep mine" in html
 
@@ -168,7 +168,7 @@ class TestSurfaces:
             html = render_template("_live_diverged_banner.html",
                                    live_diverged=True, active_name="chip",
                                    chip_origin="dataset_archive")
-        assert "Pull live state" in html
+        assert "Take live" in html
         assert "overwriteLiveWithWorking()" not in html
 
 

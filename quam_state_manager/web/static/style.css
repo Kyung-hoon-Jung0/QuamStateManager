@@ -5872,7 +5872,7 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
        so the card list itself just flows — no competing inner scroll container. */
     margin-top: 0.4rem;
     display: flex; flex-direction: column; gap: 0;
-    font-size: 13px; line-height: 1.45;
+    font-size: 14px; line-height: 1.5;
 }
 /* Kill the inherited diff-*-bg row tints — the cue is the accent edge + letter. */
 .state-review .review-row.diff-row-added,
@@ -5934,17 +5934,49 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
 
 /* VALUE line — old(dim) → arrow → live input → ✓, uniform 22px control height. */
 .state-review .review-row-vals {
-    --review-ctl-h: 22px;
+    --review-ctl-h: 24px;
     display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-    font-family: var(--font-mono); font-size: 12.5px;
+    font-family: var(--font-mono); font-size: 14px;
 }
 .state-review .review-old {
     display: inline-flex; align-items: center; justify-content: flex-end;
     min-width: 0; height: var(--review-ctl-h); box-sizing: border-box;
     padding: 0 2px; border: 0; border-radius: 0; background: none;
-    color: var(--pico-muted-color); font-variant-numeric: tabular-nums;
+    color: color-mix(in srgb, var(--pico-color) 82%, transparent); font-variant-numeric: tabular-nums;
 }
-.state-review .review-arrow { color: var(--pico-muted-color); font-size: 12px; }
+.state-review .review-arrow { color: color-mix(in srgb, var(--pico-color) 70%, transparent); font-size: 15px; font-weight: 600; }
+
+/* docs/97 — the Δ is the POINT of the review popup, not a footnote. Here it
+   becomes a real chip: larger, bolder, tinted background, so old → new → Δ reads
+   at a glance. Scoped to .state-review so the pending tray / history / diff /
+   compare Δ (dense surfaces, docs/76) stay byte-identical. */
+.state-review .review-delta.val-delta {
+    font-size: 14px; font-weight: 700;
+    margin-left: 2px; padding: 1px 7px;
+    border-radius: 7px; border: 1px solid transparent;
+}
+.state-review .review-delta.delta-up {
+    background: color-mix(in srgb, var(--diff-delta-pos-color) 12%, transparent);
+    border-color: color-mix(in srgb, var(--diff-delta-pos-color) 35%, transparent);
+}
+.state-review .review-delta.delta-down {
+    background: color-mix(in srgb, var(--diff-delta-neg-color) 12%, transparent);
+    border-color: color-mix(in srgb, var(--diff-delta-neg-color) 35%, transparent);
+}
+.state-review .review-delta.delta-same {
+    background: color-mix(in srgb, var(--pico-muted-color) 12%, transparent);
+    border-color: color-mix(in srgb, var(--pico-muted-color) 28%, transparent);
+}
+.state-review .review-delta .val-delta-pct { opacity: 0.9; }
+
+/* docs/97 — muted qualifier inside a sync/conflict choice button ("— discard my
+   edits", "(merge)"). A NEW class, never a change to the global .btn-sync/.btn-sm
+   base (those are shared with the Generate wizard + Config Viewer). */
+.sync-btn-sub { opacity: 0.72; font-weight: 400; }
+/* .btn-sync (the review modal) is inline-flex, which drops the whitespace text
+   node before the qualifier — restore the gap there. The .btn-sm tray/banner
+   buttons are not flex and keep their natural space. */
+.btn-sync .sync-btn-sub { margin-left: 0.35em; }
 
 /* Editable live value — borderless until focus (VSCode setting-input feel). */
 .state-review .review-live-edit { display: inline-flex; align-items: center; gap: 4px; }
@@ -5952,7 +5984,7 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
     width: auto !important; min-width: 6ch; max-width: 22ch; margin: 0;
     padding: 0 4px; box-sizing: border-box; height: var(--review-ctl-h); min-height: 0;
     font-family: var(--font-mono); font-variant-numeric: tabular-nums;
-    font-size: 12.5px; font-weight: 500; line-height: 1.2; letter-spacing: 0;
+    font-size: 14px; font-weight: 500; line-height: 1.2; letter-spacing: 0;
     color: var(--pico-color);
     border: 1px solid transparent; border-radius: 4px; background: transparent;
     --pico-form-element-spacing-vertical: 0;

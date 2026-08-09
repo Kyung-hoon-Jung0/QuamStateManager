@@ -23,10 +23,10 @@
             hx-target="#pending-tray"
             hx-swap="outerHTML"
             hx-confirm="Overwrite the live chip with your working state? Changes written by an experiment program will be lost.">
-      &#8593; Apply my working state (overwrite live)</button>
+      &#8593; Keep mine <span class="sync-btn-sub">&mdash; overwrite live</span></button>
     <button class="btn-sm outline" onclick="doStateSync('discard')"
-            title="Pull the latest live state into the working state — discards the loaded/saved content (asks first).">
-      &#8595; Pull latest &amp; discard mine</button>
+            title="Replace the working state with the live chip — your loaded/saved content is dropped (asks first).">
+      &#8595; Take live <span class="sync-btn-sub">&mdash; discard mine</span></button>
   </div>
   {% else %}
   <p class="tray-conflict-note">
@@ -35,20 +35,20 @@
   </p>
   <div class="tray-actions tray-conflict-choices">
     <button class="btn-sm primary" onclick="doStateSync('apply')"
-            title="Pull the latest live state, re-apply your edits on top, and write the merged result straight to the live chip — all in one step.">
-      &#8595; Pull &amp; apply my edits</button>
+            title="Merge — pull the latest live state, re-apply your edits on top, and write the merged result straight to the live chip in one step.">
+      &#8644; Pull &amp; apply <span class="sync-btn-sub">(merge)</span></button>
     <button class="btn-sm" onclick="doStateSync('reapply')"
             title="Pull the latest live state, then re-apply your edits on top as pending changes so you can review them before pushing to the live chip.">
-      &#8595; Pull &amp; re-apply, review first</button>
+      Re-apply <span class="sync-btn-sub">(review first)</span></button>
     <button class="btn-sm outline" onclick="doStateSync('discard')"
-            title="Pull the latest live state and drop your edits.">
-      &#8595; Pull &amp; discard</button>
+            title="Replace the working state with the live chip — your edits are dropped.">
+      &#8595; Take live <span class="sync-btn-sub">&mdash; discard my edits</span></button>
     <button class="btn-sm outline tray-force-btn"
             hx-post="/state/apply-to-live?force=1"
             hx-target="#pending-tray"
             hx-swap="outerHTML"
             hx-confirm="Overwrite the live chip with your version? Changes written by an experiment program will be lost.">
-      Overwrite live (force)</button>
+      &#8593; Keep mine <span class="sync-btn-sub">&mdash; overwrite live</span></button>
   </div>
   {% endif %}
 </div>

@@ -22,15 +22,15 @@
       <span class="review-sync-edits"{% if unsaved == 0 %} hidden{% endif %}>
         {% if not _archive %}
         <button class="btn-sync primary" onclick="doStateSync('apply')"
-                title="Pull the live state, re-apply your edits on top, and write the merged result straight to the live chip — all in one step.">
-          Pull &amp; apply</button>
+                title="Merge — pull the live state, re-apply your edits on top, and write the merged result straight to the live chip in one step.">
+          &#8644; Pull &amp; apply <span class="sync-btn-sub">(merge)</span></button>
         {% endif %}
         <button class="btn-sync" onclick="doStateSync('reapply')"
                 title="Pull the live state, then re-apply your edits on top as pending changes so you can review them before pushing to the live chip.">
-          Re-apply</button>
+          Re-apply <span class="sync-btn-sub">(review first)</span></button>
         <button class="btn-sync outline" onclick="doStateSync('discard')"
-                title="Pull the live state and drop your edits.">
-          Discard</button>
+                title="Replace the working state with the live chip — your unsaved edits are dropped.">
+          &#8595; Take live <span class="sync-btn-sub">&mdash; discard my edits</span></button>
       </span>
       {# Saved-but-unapplied edits (working_dirty, change log empty): a pull would
          OVERWRITE them, and there's nothing in the change log to re-apply — so the
@@ -46,22 +46,22 @@
                 hx-confirm="Apply the working state to the live chip's state.json / wiring.json now?"
                 hx-on::after-request="closeReview(); if(window.LiveEditUndo)LiveEditUndo.clear()"
                 title="Push the working state (your saved, not-yet-applied edits) straight to the live chip.">
-          <span aria-hidden="true">&#8593;</span> Apply to live chip</button>
+          &#8593; Apply to live chip</button>
         {% endif %}
         {# forced=true: this button already confirms here — without it the server's
            working_dirty needs_confirm gate (docs/65) would double-prompt. #}
         <button class="btn-sync outline" type="button"
                 onclick="if (window.confirm('Discard your saved edits and replace the working state with the live chip? This cannot be undone.')) doStateSync('discard', true)"
-                title="Discard your saved edits and pull the live chip into the working state.">
-          Discard &amp; pull live</button>
+                title="Replace the working state with the live chip — your saved edits are dropped.">
+          &#8595; Take live <span class="sync-btn-sub">&mdash; discard my edits</span></button>
       </span>
       {# Plain pull — shown only when there's genuinely nothing to preserve (no pending
          edits AND no saved-but-unapplied edits; e.g. the live chip drifted while the
          snapshot stayed clean). #}
       <span class="review-sync-clean"{% if unsaved > 0 or working_dirty %} hidden{% endif %}>
         <button class="btn-sync primary" onclick="doStateSync('discard')"
-                title="Sync — pull the live chip state into the working state.">
-          Sync</button>
+                title="Replace the working state with the live chip.">
+          &#8595; Take live <span class="sync-btn-sub">&mdash; use the live chip</span></button>
       </span>
       {# docs/86 — the third choice, between Sync and Close. It sits OUTSIDE the
          three branch spans on purpose: "keep mine and overwrite live" is
@@ -76,7 +76,7 @@
       <button class="btn-sync outline state-review-overwrite-btn" type="button"
               onclick="overwriteLiveWithWorking()"
               title="Keep the working state and write it over the live chip's state.json / wiring.json. The live state is snapshotted first — the tray's “Revert last apply” undoes it.">
-        <span aria-hidden="true">&#8593;</span> Keep mine &mdash; overwrite live</button>
+        &#8593; Keep mine <span class="sync-btn-sub">&mdash; overwrite live</span></button>
       {% endif %}
       {% endif %}
       <button class="btn-sync outline state-review-close-btn" type="button"
@@ -99,9 +99,10 @@
   </div>
   {% if unsaved > 0 %}
   <p class="state-review-note muted">
-    Includes {{ unsaved }} of your own unsaved edit{{ 's' if unsaved != 1 }} &mdash; when you
-    pull, choose whether to apply them to the live chip, re-apply them as pending changes to
-    review first, or discard them.
+    Includes {{ unsaved }} of your own unsaved edit{{ 's' if unsaved != 1 }}. Choose a direction:
+    <b>&#8644; Pull &amp; apply</b> merges (live&nbsp;+&nbsp;your edits, pushed) &middot;
+    <b>&#8595; Take live</b> replaces the working state with the live chip and drops your edits &middot;
+    <b>&#8593; Keep mine</b> overwrites the live chip with your working state.
   </p>
   {% elif working_dirty %}
   <p class="state-review-note muted">
@@ -119,7 +120,7 @@
      survives a close-and-reopen of the review (the JS reveal is in-session only). #}
   <p class="state-review-note muted review-accept-note"{% if unsaved == 0 %} hidden{% endif %}>
     &#9888; You accepted edited value(s) into the working state. Use
-    <b>Pull &amp; apply</b> to keep them — <b>Discard</b> would drop them.
+    <b>&#8644; Pull &amp; apply</b> to keep them — <b>&#8595; Take live</b> would drop them.
   </p>
   {# Borderless hairline list (VSCode Source-Control style): a long dot-path never
      fits a column, so each change is a row with the PATH on its own full-width line

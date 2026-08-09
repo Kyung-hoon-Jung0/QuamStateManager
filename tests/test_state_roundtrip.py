@@ -245,8 +245,8 @@ class TestStagedStalenessConflict:
         body = r.get_json()
         assert body["status"] == "conflict", body
         tray = body["tray_html"]
-        assert "Apply my working state" in tray
-        assert "Pull &amp; apply my edits" not in tray
+        assert "Keep mine" in tray
+        assert "Pull &amp; apply" not in tray
         # resolution A: force-overwrite live with the staged content
         # resolution B: pull latest (confirm-gated because staged)
         r2 = c.post("/state/sync", data={"mode": "discard"})
@@ -283,8 +283,8 @@ class TestStagedStalenessConflict:
         r = c.post("/state/sync", data={"mode": "apply"})
         body = r.get_json()
         assert body["status"] == "conflict", body
-        assert "Apply my working state" in body["tray_html"]
-        assert "Pull &amp; apply my edits" not in body["tray_html"]
+        assert "Keep mine" in body["tray_html"]
+        assert "Pull &amp; apply" not in body["tray_html"]
         r2 = c.post("/state/sync", data={"mode": "discard"})
         assert r2.get_json()["status"] == "needs_confirm"
 
