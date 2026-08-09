@@ -586,17 +586,35 @@ class DatasetStore:
         info.incomplete = incomplete
         return info
 
-    def _scan(self):
-        """Walk date/run folders incrementally.
+    def _scan(self, deadline: float | None = None,
+              pre_walk: tuple[float, int] | None = None) -> bool:
+        """Walk date/run folders incrementally. Returns True when TRUNCATED.
 
         First call: parses every run folder.  Subsequent calls: re-parses
         only folders whose mtime changed since the last scan, drops folders
         that vanished, and adds new ones. Lets ``rescan_if_stale`` finish
         in tens of milliseconds even with thousands of unchanged runs.
+
+        ``deadline`` (``time.monotonic()`` value, docs/105 #4): the poll
+        budget used to be checked only BETWEEN folders, so one huge/slow
+        folder blew past the client's abort with neither a cursor hold nor a
+        ``partial`` flag — the exact silent stall docs/80 exists to prevent.
+        With a deadline the date-dir walk stops early and the scan reports
+        truncated; truncation semantics are chosen so the NEXT tick simply
+        continues the work:
+          * the vanish pass is SKIPPED (an un-walked dir's runs are absent
+            from ``seen_paths`` for the wrong reason — dropping them would
+            broadcast false 'vanished' rows to every polling client);
+          * ``_last_mtime`` is NOT advanced (the staleness gate stays open);
+          * date-dir fingerprints MERGE instead of replacing (walked dirs
+            short-circuit next time, un-walked dirs get walked);
+          * ``dates``/``experiment_types`` union with the previous scan
+            (a partial walk must not shrink the UI's date filter).
         """
         dates_set: set[str] = set()
         experiments_set: set[str] = set()
         seen_paths: set[Path] = set()
+        truncated = False
         parsed = 0
         reused = 0
         # Scan-cursor: sample the mtime BEFORE the walk. A run landing mid-scan
@@ -605,7 +623,8 @@ class DatasetStore:
         # Stamping _last_mtime with a POST-walk sample instead would swallow that
         # bump as "already seen" and the run would stay invisible until an unrelated
         # change moved an mtime again.
-        pre_walk_mtime = self._current_mtime()
+        pre_walk_mtime = pre_walk if pre_walk is not None \
+            else self._current_mtime()
 
         root = self.folder_path
         if not root.is_dir():
@@ -619,7 +638,7 @@ class DatasetStore:
             self.dates = []
             self.experiment_types = []
             self._last_mtime = (0.0, -1)
-            return
+            return False
 
         # Discovery pass — walks the date/run hierarchy, classifies each
         # run folder as either "reuse from fingerprint cache" or "needs
@@ -638,6 +657,9 @@ class DatasetStore:
         to_parse: list[tuple[Path, str, int, str, str, tuple, tuple, tuple]] = []
         fresh_date_fp: dict[Path, tuple[float, frozenset[Path]]] = {}
         for date_entry in sorted(root.iterdir()):
+            if deadline is not None and _time.monotonic() >= deadline:
+                truncated = True
+                break
             if not date_entry.is_dir():
                 continue
             if not _DATE_FOLDER_RE.match(date_entry.name):
@@ -742,7 +764,20 @@ class DatasetStore:
                  folder_fp, node_fp, data_fp), (_rid, run_info) in zip(to_parse, results):
                 if run_info is None:
                     continue
-                run_info.last_parsed = now
+                # docs/105 #3: a re-parse that produced the SAME row must not
+                # re-stamp last_parsed — after a force_rescan the old behavior
+                # stamped all 10k runs at once and the next delta poll shipped
+                # the entire workspace (5-15 MB) as "updated". Content-equal
+                # re-parses keep their old cursor position; only genuinely
+                # changed rows flow to polling clients.
+                _old = self.runs.get(run_id)
+                if (_old is not None
+                        and getattr(_old, "folder_path", None)
+                        == run_info.folder_path
+                        and _compact_row(_old) == _compact_row(run_info)):
+                    run_info.last_parsed = _old.last_parsed
+                else:
+                    run_info.last_parsed = now
                 self.runs[run_id] = run_info
                 real_fp = (folder_fp, node_fp, data_fp)
                 if run_info.incomplete and self._retry_incomplete(run_entry, real_fp):
@@ -762,9 +797,12 @@ class DatasetStore:
                     self._folder_fp[run_entry] = (folder_fp, node_fp, data_fp, run_id)
                 parsed += 1
 
-        # Drop runs whose folders vanished
+        # Drop runs whose folders vanished. SKIPPED on a truncated walk — an
+        # un-walked dir's runs are missing from seen_paths for the wrong
+        # reason, and dropping them would broadcast false 'vanished' rows.
         now_ts = _time.time()
-        vanished = [p for p in self._folder_fp.keys() if p not in seen_paths]
+        vanished = [] if truncated else \
+            [p for p in self._folder_fp.keys() if p not in seen_paths]
         for p in vanished:
             _, _, _, vanished_id = self._folder_fp.pop(p)
             self._incomplete_paths.discard(p)
@@ -790,23 +828,37 @@ class DatasetStore:
         # drops entries for date dirs that vanished this scan. Dirs that were
         # walked this round are now fully reflected in self.runs / _folder_fp,
         # so the next scan can legitimately short-circuit any whose mtime holds.
-        self._date_fp = fresh_date_fp
-
-        self.dates = sorted(dates_set, reverse=True)
-        self.experiment_types = sorted(experiments_set)
+        # Truncated walk: MERGE instead — walked dirs update their fp, the
+        # un-walked keep theirs (their runs were untouched), and the open
+        # staleness gate below re-drives the continuation.
+        if truncated:
+            merged_fp = dict(self._date_fp)
+            merged_fp.update(fresh_date_fp)
+            self._date_fp = merged_fp
+            self.dates = sorted(set(self.dates) | dates_set, reverse=True)
+            self.experiment_types = sorted(
+                set(self.experiment_types) | experiments_set)
+        else:
+            self._date_fp = fresh_date_fp
+            self.dates = sorted(dates_set, reverse=True)
+            self.experiment_types = sorted(experiments_set)
         # Sorted run-id index for O(log n) previous/next-run lookups (the
         # prev-state diff). Rebuilt here whenever self.runs changes.
         self._run_ids_sorted = sorted(self.runs.keys())
-        self._last_mtime = pre_walk_mtime
-        if parsed or vanished:
+        if not truncated:
+            self._last_mtime = pre_walk_mtime
+        if parsed or vanished or truncated:
             logger.info(
-                "DatasetStore scan: %d parsed, %d reused, %d removed (total %d runs, %d dates)",
+                "DatasetStore scan: %d parsed, %d reused, %d removed%s "
+                "(total %d runs, %d dates)",
                 parsed,
                 reused,
                 len(vanished),
+                " [TRUNCATED at deadline]" if truncated else "",
                 len(self.runs),
                 len(self.dates),
             )
+        return truncated
 
     def _current_mtime(self) -> tuple[float, int]:
         """Staleness fingerprint of the root: (newest root/date-dir mtime,
@@ -818,6 +870,14 @@ class DatasetStore:
         date dir still changes the COUNT, so the gate re-opens; changes inside
         existing date dirs move that dir's mtime which moves the max whenever
         it isn't pinned (and the pinned dir itself moving also changes it).
+
+        docs/105 #8: NOT time-memoized — a TTL memo was tried and reverted
+        because it broke the pinned write-then-poll contract (a run written
+        milliseconds before a poll must be seen by THAT poll). The stat
+        saving comes from sample REUSE within one operation instead:
+        ``rescan_if_stale`` hands its inside-lock sample to ``_scan`` as the
+        scan cursor, cutting one full sweep per scan with identical
+        semantics (both are pre-walk samples taken under the lock).
         """
         try:
             best = self.folder_path.stat().st_mtime
@@ -836,27 +896,37 @@ class DatasetStore:
                     pass
         return (best, n_dates)
 
-    def rescan_if_stale(self) -> bool:
+    def rescan_if_stale(self, deadline: float | None = None) -> bool:
         """Re-scan if folder mtimes changed.  Returns True if new runs found.
 
         Serialised on ``_scan_lock`` so the Scheduler worker's post-node rescan
         and the live Datasets delta-poll can't both mutate ``self.runs`` at once.
         The mtime is re-checked inside the lock so a thread that blocked behind
-        another's just-finished rescan does no redundant work.
+        another's just-finished rescan does no redundant work. The outer gate
+        may use the memoized fingerprint (docs/105 #8 — pure stat saving); the
+        inside-lock re-check stays fresh for correctness. ``deadline`` bounds
+        the walk (docs/105 #4); a truncated scan leaves the gate open so the
+        next call continues.
         """
         if self._current_mtime() == self._last_mtime:
             return False
         with self._scan_lock:
-            if self._current_mtime() == self._last_mtime:
+            inner = self._current_mtime()
+            if inner == self._last_mtime:
                 return False
             old_max = max(self.runs.keys()) if self.runs else -1
-            self._scan()
+            # docs/105 #8: hand the inside-lock sample to _scan as its scan
+            # cursor — both are pre-walk samples under the lock, so this cuts
+            # one full stat sweep per scan with identical semantics.
+            self._last_scan_truncated = self._scan(deadline=deadline,
+                                                   pre_walk=inner)
             self._load_tags()
             new_max = max(self.runs.keys()) if self.runs else -1
             return new_max > old_max
 
-    def force_rescan(self) -> None:
+    def force_rescan(self, deadline: float | None = None) -> bool:
         """Unconditional rescan for the user's explicit Rescan button.
+        Returns True when the walk was TRUNCATED at ``deadline``.
 
         Bypasses the mtime gate (rescan_if_stale short-circuits when no
         date-dir mtime moved), the B27 date-dir fingerprint short-circuit, AND
@@ -864,7 +934,14 @@ class DatasetStore:
         node.json/data.json rewrite — a fit-result writeback that never bumped
         a date-dir mtime, or a same-tick same-size rewrite the fingerprint
         can't see on a coarse-clock FAT/SMB mount — is actually picked up.
-        The button means "check now"; a full re-parse is the acceptable price.
+        The button means "check now"; a full re-parse is the acceptable price
+        — but a BOUNDED one (docs/105 #5): unbudgeted, a 10k-run root held
+        the scan lock for the whole re-parse, wedging every concurrent poll
+        in both windows. On truncation the un-walked dirs keep their poisoned
+        fingerprints and the open staleness gate, so the ordinary poll simply
+        continues the re-check incrementally; re-parses that produce the same
+        row keep their old ``last_parsed``, so the continuation never floods
+        polling clients (#3).
         """
         with self._scan_lock:
             self._date_fp = {}   # drop the B27 date-dir skip → re-walk every date
@@ -876,8 +953,9 @@ class DatasetStore:
             self._folder_fp = {
                 p: (None, None, None, fp[3]) for p, fp in self._folder_fp.items()
             }
-            self._scan()
+            truncated = self._scan(deadline=deadline)
             self._load_tags()
+            return truncated
 
     def runs_snapshot(self) -> list:
         """A point-in-time list of the RunInfo values, taken under the scan lock.
@@ -894,7 +972,8 @@ class DatasetStore:
     # Querying
     # ------------------------------------------------------------------
 
-    def changes_since(self, ts: float, date: str | None = None) -> dict:
+    def changes_since(self, ts: float, date: str | None = None,
+                      deadline: float | None = None) -> dict:
         """Return rows added/updated since ``ts`` plus run_ids that vanished.
 
         Used by the JS auto-poll to merge deltas into the in-memory row store
@@ -902,13 +981,20 @@ class DatasetStore:
 
         Triggers an incremental rescan first so newly-arrived folders show up.
         Caller passes the previous response's ``now`` field as ``ts``.
+        ``deadline`` bounds the rescan walk (docs/105 #4); a truncated scan
+        reports ``partial`` and the open gate continues next tick. The delta
+        also carries ``scan_ms`` (docs/105 #11) so slowness is diagnosable
+        instead of presenting as "the table stopped updating".
         """
         scan_ok = True
+        _t0 = _time.perf_counter()
+        self._last_scan_truncated = False
         try:
-            self.rescan_if_stale()
+            self.rescan_if_stale(deadline=deadline)
         except Exception:
             scan_ok = False
             logger.exception("changes_since: incremental rescan failed")
+        scan_ms = (_time.perf_counter() - _t0) * 1000.0
         updated = []
         # Snapshot under the scan lock so a concurrent worker rescan can't
         # mutate self.runs mid-iteration ("dictionary changed size").
@@ -921,6 +1007,10 @@ class DatasetStore:
                 continue
             updated.append(_compact_row(run))
         vanished = [run_id for run_id, vts in self._vanished if vts > ts]
+        if scan_ms > 1000.0:
+            logger.info("changes_since: slow rescan %.0f ms on %s "
+                        "(truncated=%s)", scan_ms, self.folder_path,
+                        getattr(self, "_last_scan_truncated", False))
         return {
             "updated": updated,
             "vanished": vanished,
@@ -928,8 +1018,13 @@ class DatasetStore:
             # old fresh-now response moved the client past a window that was
             # never scanned, permanently skipping any run that landed in it.
             # Standing still just re-emits already-sent rows next poll (the
-            # client merges by id — harmless).
+            # client merges by id — harmless). A TRUNCATED scan is different:
+            # it may advance — un-walked dirs' future parses stamp a LATER
+            # last_parsed, so nothing is skipped (docs/105 #4).
             "now": _time.time() if scan_ok else ts,
+            "partial": bool(getattr(self, "_last_scan_truncated", False)
+                            or not scan_ok),
+            "scan_ms": round(scan_ms, 1),
         }
 
     def list_runs_compact(self, date: str | None = None) -> list[dict]:

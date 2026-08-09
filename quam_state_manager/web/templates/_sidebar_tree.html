@@ -16,6 +16,13 @@
        pins it to the summary row. #}
     <button type="button" hx-post="/workspace/remove" hx-target="#sidebar-tree"
             hx-vals='{"folder": {{ root_path | string | tojson }}}' class="btn-remove" title="Remove">&times;</button>
+    {# docs/105 #9: the discovery walk's 50k-dir bound used to be a log line
+       only — runs silently missing from this tree with no UI trace. #}
+    {% if (tree_truncated or {}).get(root_path) %}
+    <p class="muted tree-truncated-note"><small>&#9888; scan stopped at the
+      50,000-directory bound &mdash; some runs may be missing (a symlink may
+      point at a very large tree)</small></p>
+    {% endif %}
     {% for node in (nested or {}).get(root_path, []) %}
     {{ dir_node(root_path, node, name_filter or "") }}
     {% endfor %}

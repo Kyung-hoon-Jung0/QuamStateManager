@@ -27,6 +27,17 @@ from quam_state_manager.core.loader import QuamStore
 # Workers cap is generous: file I/O scales with parallelism even past
 # CPU count.
 _SCAN_DIR_CAP = 50_000   # discovery walk bound: cycles are inode-guarded, scope is not
+
+# docs/105 #9: roots whose LAST discovery walk hit _SCAN_DIR_CAP. The cap
+# used to be a log line only — runs silently absent from the sidebar with no
+# UI trace (the docs/94 rule: a silent cap must surface an honest line).
+# Keyed by str(resolved root); read by the sidebar tree render.
+_TRUNCATED_ROOTS: set = set()
+
+
+def root_scan_truncated(root) -> bool:
+    """True when *root*'s last discovery walk stopped at _SCAN_DIR_CAP."""
+    return str(root) in _TRUNCATED_ROOTS
 _SCAN_PARSE_WORKERS = min(32, (os.cpu_count() or 4) * 4)
 
 logger = logging.getLogger(__name__)
@@ -701,6 +712,7 @@ def _scan_root(root: Path) -> list[ExperimentEntry]:
         return [_make_standalone_entry(root)]
 
     # Discovery pass.
+    _TRUNCATED_ROOTS.discard(str(root))     # re-decided by THIS walk (docs/105 #9)
     candidates: list[Path] = []
     visited: set[tuple[int, int]] = set()
     for dirpath, dirnames, _filenames in os.walk(root, followlinks=True):
@@ -711,6 +723,7 @@ def _scan_root(root: Path) -> list[ExperimentEntry]:
                 "workspace scan of %s stopped at %d directories — a symlink may "
                 "point at a very large tree; %d quam_state folders found so far",
                 root, _SCAN_DIR_CAP, len(candidates))
+            _TRUNCATED_ROOTS.add(str(root))       # docs/105 #9 — surfaced in the tree
             break
         dp = Path(dirpath)
         try:
