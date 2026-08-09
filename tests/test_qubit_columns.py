@@ -248,3 +248,148 @@ class TestCache:
         cols2, _ = derive_qubit_columns(store)
         assert "group_start" not in cols2[0]
         assert cols2[0]["label"] != "clobbered"
+
+
+def _col(cols, tmpl):
+    for c in cols:
+        if c["tmpl"] == tmpl:
+            return c
+    raise AssertionError("no column with tmpl %r in %s" % (tmpl, sorted(_tmpls(cols))))
+
+
+class TestPerRowAddressing:
+    """A folded column is column IDENTITY; ``paths[qid]`` is ADDRESSING.
+
+    The fold strips the neighbour out of a per-neighbour operation id, so the
+    template names a key that exists on NO qubit. Formatting it (what the route
+    did until this landed) made the whole column resolve nowhere: 252 of the
+    reporting chip's 256 "Z+" columns, 1,671 of 5,624 across the real corpus.
+    These pins are written against the SAME fixture whose folded templates were
+    previously asserted as correct while being dead in that very fixture.
+    """
+
+    def test_folded_flux_column_addresses_each_qubit_own_operation(self):
+        cols, _ = _derive(_state())
+        col = _col(cols, "qubits.{name}.z.operations.cz_flattop_pulse.amplitude")
+        # qA1's real key is suffixed with its neighbour qA2, and vice versa
+        assert col["paths"]["qA1"] == \
+            "qubits.qA1.z.operations.cz_flattop_pulse_qA2.amplitude"
+        assert col["paths"]["qA2"] == \
+            "qubits.qA2.z.operations.cz_flattop_pulse_qA1.amplitude"
+
+    def test_folded_cr_column_addresses_the_pair_suffixed_key(self):
+        cols, _ = _derive(_state())
+        col = _col(cols, "qubits.{name}.xy.operations.cr_cosine.amplitude")
+        assert col["paths"]["qA1"] == \
+            "qubits.qA1.xy.operations.cr_cosine_qA1-qA2.amplitude"
+
+    def test_the_template_itself_resolves_to_nothing(self):
+        """The regression this fixes: the formatted template is not a real key."""
+        state = _state()
+        cols, _ = _derive(state)
+        col = _col(cols, "qubits.{name}.z.operations.cz_flattop_pulse.amplitude")
+        ops = state["qubits"]["qA1"]["z"]["operations"]
+        assert "cz_flattop_pulse" not in ops, "the folded name is a fiction"
+        assert col["paths"]["qA1"] != col["tmpl"].format(name="qA1")
+
+    def test_unfolded_columns_address_exactly_the_formatted_template(self):
+        """Additivity: where no fold happened, addressing is byte-identical."""
+        cols, _ = _derive(_state())
+        for c in cols:
+            if c["kind"] == "note" or ".operations." in c["tmpl"]:
+                continue
+            for qid, path in c["paths"].items():
+                assert path == c["tmpl"].format(name=qid), c["tmpl"]
+
+    def test_a_qubit_without_the_leaf_has_no_entry(self):
+        """Structurally absent must be distinguishable from declared-but-null:
+        the route renders a blank cell for the former, a fillable box for the
+        latter. A missing ``paths`` entry is how it tells them apart."""
+        state = _state()
+        del state["qubits"]["qA2"]["extras"]["custom_gain"]
+        state["qubits"]["qA2"]["extras"]["only_on_qA2"] = 7
+        cols, _ = _derive(state)
+        gain = _col(cols, "qubits.{name}.extras.custom_gain")
+        assert "qA1" in gain["paths"] and "qA2" not in gain["paths"]
+
+    def test_port_leaves_address_through_the_alias_path(self):
+        """A port leaf's real path IS the alias — it must ride the same
+        state -> wiring -> ports.* chain the curated port columns do."""
+        cols, _ = _derive(_state())
+        col = _col(cols, "qubits.{name}.z.opx_output.exponential_filter")
+        assert col["kind"] == "listedit"
+        assert col["paths"]["qA1"] == "qubits.qA1.z.opx_output.exponential_filter"
+
+
+class TestPerRowKind:
+    """Mode is per row too, and it follows the pointer CHAIN.
+
+    ``_kind_of`` judged the local value only, which is harmless while the
+    column is dead and dangerous the moment it resolves: a cross-ref landing on
+    an ``#./inferred_*`` would render an editable box over a value the chip
+    computes, and committing it writes a literal that kills inference. Measured
+    at 94 such cells across the real corpus before this pin existed.
+    """
+
+    def _chained(self) -> dict:
+        state = _state()
+        state["qubit_pairs"]["qA1-qA2"]["macros"] = {
+            "cz": {"flux_pulse": {"length": "#./inferred_length"}}}
+        for qid in ("qA1", "qA2"):
+            state["qubits"][qid]["z"]["operations"]["cz_flattop_pulse_%s" % (
+                "qA2" if qid == "qA1" else "qA1")]["length"] = \
+                "#/qubit_pairs/qA1-qA2/macros/cz/flux_pulse/length"
+        return state
+
+    def test_a_chain_ending_at_an_inferred_value_is_runtime(self):
+        cols, _ = _derive(self._chained())
+        col = _col(cols, "qubits.{name}.z.operations.cz_flattop_pulse.length")
+        assert col["modes"]["qA1"] == "runtime", \
+            "a cross-ref that lands on #./inferred_* is not editable"
+
+    def test_a_plain_scalar_stays_editable(self):
+        cols, _ = _derive(self._chained())
+        col = _col(cols, "qubits.{name}.z.operations.cz_flattop_pulse.amplitude")
+        assert col["modes"]["qA1"] == "edit"
+
+
+class TestFoldMultiplicity:
+    """A qubit in two pairs owns two operations under one folded name. The cell
+    shows the first; the column has to SAY that rather than let one value read
+    as the only one. Unfolding instead was measured and rejected — it takes a
+    21-qubit CR chip from 115 columns to 925."""
+
+    def test_multi_is_zero_when_every_row_owns_one(self):
+        cols, _ = _derive(_state())
+        assert _col(cols, "qubits.{name}.z.operations.cz_flattop_pulse.amplitude"
+                    )["multi"] == 0
+
+    def test_multi_counts_and_addressing_stays_deterministic(self):
+        state = _state()
+        # qA1 now drives CR to a second neighbour: two ops, one folded name
+        state["qubits"]["qA1"]["xy"]["operations"]["cr_cosine_qA1-qA3"] = \
+            {"amplitude": 0.9}
+        state["qubit_pairs"]["qA1-qA3"] = {"id": "qA1-qA3"}
+        cols, _ = _derive(state)
+        col = _col(cols, "qubits.{name}.xy.operations.cr_cosine.amplitude")
+        assert col["multi"] == 2
+        assert col["paths"]["qA1"] == \
+            "qubits.qA1.xy.operations.cr_cosine_qA1-qA2.amplitude", \
+            "first in walk order wins, and it must not drift between derivations"
+
+
+class TestFoldedNameStaysSearchable:
+    """The header shows a name the chip does not use — so the real operation
+    ids ride along in ``search``. A user who greps their own state.json for
+    ``cz_flattop_pulse_qA2`` and then types it into the grid must find the
+    column; finding nothing is the complaint this whole change came from."""
+
+    def test_the_real_operation_id_is_in_the_search_terms(self):
+        cols, _ = _derive(_state())
+        col = _col(cols, "qubits.{name}.z.operations.cz_flattop_pulse.amplitude")
+        assert "cz_flattop_pulse_qA2" in col["search"]
+        assert "cz_flattop_pulse_qA1" in col["search"]
+
+    def test_an_unfolded_column_carries_no_terms(self):
+        cols, _ = _derive(_state())
+        assert _col(cols, "qubits.{name}.custom_scalar")["search"] == ""

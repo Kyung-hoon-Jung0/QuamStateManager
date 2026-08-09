@@ -517,13 +517,20 @@
         var inp = document.getElementById('bulk-search');
         var q = inp ? inp.value.trim().toLowerCase() : '';
         var hide = _hiddenSet();
+        // A folded column's header shows a name the chip does not use: the
+        // strip rewrote `cz_flattop_pulse_q1_q2` into `cz_flattop_pulse_q1`.
+        // `search` carries the real operation ids so looking for the name you
+        // actually have in state.json finds its column.
+        function _colHay(c) {
+            return (c.label + ' ' + c.key + ' ' + (c.search || '')).toLowerCase();
+        }
         var visCols = COLS.filter(function (c) { return !hide.has(c.key); });
         var tokens = q ? q.split(/\s+/) : [];
 
         // classify each token: matches a column label? a qubit id?
         var ids = _rows().map(function (r) { return (r.getAttribute('data-qubit') || '').toLowerCase(); });
         var tokInfo = tokens.map(function (tok) {
-            var colHit = visCols.some(function (c) { return (c.label + ' ' + c.key).toLowerCase().indexOf(tok) >= 0; });
+            var colHit = visCols.some(function (c) { return _colHay(c).indexOf(tok) >= 0; });
             var idHit = ids.some(function (id) { return id.indexOf(tok) >= 0; });
             return { tok: tok, isCol: colHit, isId: idHit, isVal: !colHit && !idHit };
         });
@@ -535,7 +542,7 @@
                 var ti = tokInfo[i];
                 if (ti.isCol && !ti.isId) {
                     var c = COLS.filter(function (x) { return x.key === key; })[0];
-                    if (!c || (c.label + ' ' + c.key).toLowerCase().indexOf(ti.tok) < 0) return false;
+                    if (!c || _colHay(c).indexOf(ti.tok) < 0) return false;
                 } else if (ti.isVal) {
                     if (!colCells.some(function (h) { return h.indexOf(ti.tok) >= 0; })) return false;
                 }
@@ -1635,6 +1642,17 @@
         }
     };
 
+    // Keyboard navigation lands on cells you can TYPE in. A read-only cell
+    // already declares itself out of the tab order with tabindex="-1"; the
+    // handlers below preventDefault() and focus by hand, which overrode that
+    // declaration — harmless while ~2% of cells were read-only, unusable once
+    // a per-neighbour column renders a blank for every qubit that is not in
+    // that pair (a real chip went from 2 to 48 consecutive dead stops).
+    function _editableIn(td) {
+        var c = td && td.querySelector('.bulk-cell');
+        return c && !c.classList.contains('bulk-cell-ro') ? c : null;
+    }
+
     function _gridMove(cell, dr, dc) {
         var td = cell.closest('td');
         var tr = cell.closest('tr');
@@ -1644,14 +1662,16 @@
             var nr = rows[ri + dr];
             if (!nr) return null;
             var key = td.getAttribute('data-col-key');
-            var ncell = nr.querySelector('[data-col-key="' + (window.CSS && CSS.escape ? CSS.escape(key) : key) + '"] .bulk-cell');
-            return ncell;
+            var ntd0 = nr.querySelector('[data-col-key="' + (window.CSS && CSS.escape ? CSS.escape(key) : key) + '"]');
+            return _editableIn(ntd0);
         }
         if (dc) {
             var tds = Array.prototype.slice.call(tr.querySelectorAll('.bulk-td:not(.bulk-col-hidden):not(.bulk-search-hidden)'));
-            var ci = tds.indexOf(td);
-            var ntd = tds[ci + dc];
-            return ntd ? ntd.querySelector('.bulk-cell') : null;
+            for (var ci = tds.indexOf(td) + dc; ci >= 0 && ci < tds.length; ci += dc) {
+                var nc0 = _editableIn(tds[ci]);
+                if (nc0) return nc0;
+            }
+            return null;
         }
         return null;
     }
@@ -1665,14 +1685,14 @@
         var sel = '.bulk-td:not(.bulk-col-hidden):not(.bulk-search-hidden)';
         var tds = Array.prototype.slice.call(tr.querySelectorAll(sel));
         for (var i = tds.indexOf(td) + dc; i >= 0 && i < tds.length; i += dc) {
-            var c = tds[i].querySelector('.bulk-cell');
+            var c = _editableIn(tds[i]);
             if (c) return c;
         }
         var rows = _rows().filter(function (r) { return !r.classList.contains('bulk-row-hidden'); });
         for (var ri = rows.indexOf(tr) + dc; ri >= 0 && ri < rows.length; ri += dc) {
             var ntds = Array.prototype.slice.call(rows[ri].querySelectorAll(sel));
             for (var j = dc > 0 ? 0 : ntds.length - 1; j >= 0 && j < ntds.length; j += dc) {
-                var nc = ntds[j].querySelector('.bulk-cell');
+                var nc = _editableIn(ntds[j]);
                 if (nc) return nc;
             }
         }

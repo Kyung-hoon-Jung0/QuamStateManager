@@ -113,7 +113,7 @@
                     <th scope="col" class="bulk-col-head{% if not c.default_on %} bulk-col-hidden{% endif %}{% if c.group_start %} bulk-col-group-start{% endif %}"
                         data-col-key="{{ c.key }}" data-section="{{ c.section }}"
                         title="{{ c.section }} · click to sort · drag the right edge to resize">
-                        <span class="bulk-col-label">{{ c.label }}</span>{% if c.unit %} <span class="bulk-col-unit unit">({{ c.unit }})</span>{% endif %}<span class="bulk-sort-caret" aria-hidden="true"></span>
+                        <span class="bulk-col-label">{{ c.label }}</span>{% if c.unit %} <span class="bulk-col-unit unit">({{ c.unit }})</span>{% endif %}{% if c.multi %}<span class="bulk-col-multi" title="Some qubits carry up to {{ c.multi }} operations under this name — one per neighbour. Each cell shows and edits that qubit's first; hover a cell to see which one.">&#8314;</span>{% endif %}<span class="bulk-sort-caret" aria-hidden="true"></span>
                         <span class="bulk-col-stats muted" data-col-stats="{{ c.key }}"></span>
                         <button type="button" class="bulk-col-hist" data-grid="qubit"
                                 data-label="{{ c.label }}" data-unit="{{ c.unit or '' }}"
@@ -130,7 +130,7 @@
                     <th class="bulk-rowhead" scope="row" data-col-key="__id__">{{ row.id }}</th>
                     {% for cell in row.cells %}
                     {% set col = columns[loop.index0] %}
-                    <td class="bulk-td{% if not col.default_on %} bulk-col-hidden{% endif %}{% if col.group_start %} bulk-col-group-start{% endif %}{% if cell.is_pointer %} bulk-td-pointer{% endif %}{% if cell.lo and cell.lo.peer_qubit %} bulk-td-lo{% endif %}{% if cell.kind in ('listedit', 'runtime') %} bulk-td-ro{% endif %}"
+                    <td class="bulk-td{% if not col.default_on %} bulk-col-hidden{% endif %}{% if col.group_start %} bulk-col-group-start{% endif %}{% if cell.is_pointer %} bulk-td-pointer{% endif %}{% if cell.lo and cell.lo.peer_qubit %} bulk-td-lo{% endif %}{% if cell.kind in ('listedit', 'runtime', 'missing') %} bulk-td-ro{% endif %}"
                         data-col-key="{{ col.key }}">
                         {% if cell.kind == 'listedit' %}
                         {# r6 item 4: a real LIST value — compact JSON preview + the ✎
@@ -142,11 +142,16 @@
                         <button type="button" class="bulk-list-edit"
                                 title="Edit as JSON (Ctrl+Enter saves, Esc cancels)"
                                 onclick="BulkEdit.openJsonCell('{{ cell.dot_path }}', this)">&#9998;</button>
-                        {% elif cell.kind == 'runtime' %}
-                        <input type="text" class="bulk-cell bulk-cell-ro bulk-cell-runtime"
+                        {% elif cell.kind in ('runtime', 'missing') %}
+                        {# 'missing' = this qubit does not carry the leaf at all (a
+                           per-neighbour operation belonging to a pair it is not in).
+                           Deliberately NOT the same as declared-but-null, which stays
+                           a fillable box — mirrors the pair grid's own two renderings. #}
+                        <input type="text" class="bulk-cell bulk-cell-ro{% if cell.kind == 'runtime' %} bulk-cell-runtime{% endif %}"
                                value="{{ cell.display }}" size="{{ col.maxlen }}" readonly tabindex="-1"
                                data-dot-path="{{ cell.dot_path }}" data-resolved="{{ cell.resolved_path }}" data-orig="{{ cell.display }}"
-                               title="{{ cell.dot_path }} — computed at runtime (read-only)">
+                               {% if cell.kind == 'missing' %}placeholder="—"{% endif %}
+                               title="{{ cell.dot_path }}{% if cell.kind == 'runtime' %} — computed at runtime (read-only){% else %}this qubit does not carry this parameter{% endif %}">
                         {% else %}
                         {# r14 honesty: a string that reads like a number renders WITH
                            its quotes (outside the input, so editing stays clean) —

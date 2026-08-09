@@ -3609,7 +3609,12 @@ def bulk_edit():
     specs: list[dict[str, Any]] = list(_BULK_COLUMNS_SPEC) + [
         {"section": c["section"], "key": c["key"], "label": c["label"],
          "tmpl": c["tmpl"], "unit": c["unit"], "default_on": True,
-         "kind": c["kind"], "dyn": True}
+         "kind": c["kind"], "dyn": True,
+         # per-ROW addressing + per-row mode (the pair grid's path_map). The
+         # template stays for column identity, grouping and the dead-channel
+         # prune below; it is no longer what a dyn cell resolves through.
+         "paths": c.get("paths") or {}, "modes": c.get("modes") or {},
+         "multi": c.get("multi", 0), "search": c.get("search", "")}
         for c in dyn_model
         if c.get("kind") != "note" and c["key"] not in _dyn_hidden
     ]
@@ -3617,7 +3622,9 @@ def bulk_edit():
     columns = [
         {"key": c["key"], "label": c["label"], "section": c["section"],
          "unit": c.get("unit", ""), "default_on": c.get("default_on", True),
-         "dyn": bool(c.get("dyn"))}
+         "dyn": bool(c.get("dyn")), "multi": c.get("multi", 0),
+         # the operation ids the fold hid from the header — search only
+         "search": c.get("search", "")}
         for c in specs
     ]
     modified = _modified_map()
@@ -3637,13 +3644,36 @@ def bulk_edit():
         for qid in qids:
             cells: list[dict[str, Any]] = []
             for spec in specs:
-                path = spec["tmpl"].format(name=qid)
-                kind = spec.get("kind", "edit")
+                if spec.get("dyn"):
+                    # Derived columns address per ROW: a folded per-neighbour
+                    # operation is named `cz_flattop_pulse_q1` but LIVES at
+                    # `cz_flattop_pulse_q1_q2`, so formatting the template hits
+                    # a key no qubit owns. A qid with no entry does not carry
+                    # the leaf at all — blank, not a fillable box (which is
+                    # what "declared but null" keeps meaning).
+                    path = (spec.get("paths") or {}).get(qid)
+                    if path is None:
+                        cells.append(_empty_pair_cell())
+                        continue
+                    kind = (spec.get("modes") or {}).get(
+                        qid, spec.get("kind", "edit"))
+                else:
+                    path = spec["tmpl"].format(name=qid)
+                    kind = spec.get("kind", "edit")
                 if kind == "runtime":
                     cells.append(_runtime_pair_cell(merged, path))
                     continue
                 cell = _build_bulk_cell(merged, path, modified, port_info, qid)
-                if kind == "listedit" or cell.get("is_list"):
+                # The row mode is a FLOOR on the column kind, never a
+                # replacement: a null row inside a list-valued column (a qubit
+                # whose exponential_filter is not set yet) must still get the ✎
+                # JSON editor. Letting the row mode win rendered it as a plain
+                # scalar box that happily stored a bare float where every
+                # sibling holds [[amp, tau], ...] — 192 such cells on 13 real
+                # chips, on exactly the filter/discrimination fields this
+                # change exists to make reachable.
+                if kind == "listedit" or spec.get("kind") == "listedit" \
+                        or cell.get("is_list"):
                     cells.append(_list_json_cell(merged, path, modified))
                 else:
                     cells.append(cell)
