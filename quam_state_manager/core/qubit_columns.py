@@ -91,16 +91,52 @@ def _col_key(tmpl_segs: list[str]) -> str:
     return "dyn__" + re.sub(r"[^A-Za-z0-9_]+", "_", ".".join(tmpl_segs))
 
 
-def _kind_of(value: Any) -> str:
+def _chain_ends_at_self_ref(merged: dict, path: str, depth: int = 8) -> bool:
+    """Does this leaf's pointer chain terminate at a ``#./`` self-ref?
+
+    ``_kind_of`` used to judge the LOCAL value only, which is safe while the
+    column is dead but not once it resolves: a cross-ref like
+    ``…cz_bipolar_gf_pulse_q1_q2.length →
+    #/qubit_pairs/coupler_q1_q2/macros/cz_bipolar_gf/flux_pulse_qubit/length →
+    "#./inferred_length"`` is every bit as uneditable as a local self-ref, and
+    typing into it writes a literal that kills length inference. Measured: 94
+    such cells across the real-chip corpus (18 on the reporting 10Q chip, 33 on
+    a 21Q CR chip) — all of them invisible today because the column is dead.
+    """
+    from quam_state_manager.core.pointer_path import (
+        _walk as _walk_abs, resolve_field_target)
+    cur = path
+    for _ in range(depth):
+        found, v = _walk_abs(merged, cur.split("."))
+        if not found or not is_pointer(v):
+            return False
+        if is_self_ref(v):
+            return True
+        try:
+            nxt = (resolve_field_target(merged, cur) or {}).get("resolved_path")
+        except Exception:          # noqa: BLE001 — a broken chain is not runtime
+            return False
+        if not nxt or nxt == cur:
+            return False
+        cur = nxt
+    return False
+
+
+def _kind_of(value: Any, merged: dict | None = None,
+             real_path: str | None = None) -> str:
     if isinstance(value, list):
         return "listedit"          # editable whole-value via the ✎ JSON popup
     if is_self_ref(value):
         return "runtime"           # #./ alias/inferred — editing breaks the link
+    if merged is not None and real_path and is_pointer(value) \
+            and _chain_ends_at_self_ref(merged, real_path):
+        return "runtime"           # the chain ends at an inferred value
     return "edit"                  # scalar, None, or cross-ref pointer (write-through)
 
 
 def _make_leaf(qid: str, real_segs: list[str], tmpl_segs: list[str], value: Any,
-               *, port: bool, chan_order: dict[str, int]) -> dict:
+               *, port: bool, chan_order: dict[str, int],
+               merged: dict | None = None, probe_path: str | None = None) -> dict:
     head = tmpl_segs[0]
     if port:
         chan_order.setdefault(head, len(chan_order))
@@ -117,12 +153,30 @@ def _make_leaf(qid: str, real_segs: list[str], tmpl_segs: list[str], value: Any,
         chan_order.setdefault(head, len(chan_order))
         sec_key, sec_label = "chan:" + head, _humanize(head) + "+"
         label = " · ".join(_SEG_SHORT.get(s, s) for s in tmpl_segs[1:])
+    real_path = "qubits." + qid + "." + ".".join(real_segs)
     return {
         "tmpl_segs": tmpl_segs,
         "tmpl": "qubits.{name}." + ".".join(tmpl_segs),
+        # The REAL leaf this cell addresses on THIS row. The template is column
+        # identity; only this is addressing (the pair grid has drawn that line
+        # since it shipped — see pair_columns' path_map). Keeping them apart is
+        # what lets a folded column render each qubit's own per-neighbour
+        # operation instead of a name that exists on no qubit at all.
+        "real_path": real_path,
+        "real_segs": real_segs, "port": port,
+        # The segments the fold rewrote — i.e. the operation ids the header no
+        # longer shows. They feed the column SEARCH haystack, because a user
+        # who knows the chip searches for `cz_flattop_pulse_q1_q2` and the
+        # header only says `cz_flattop_pulse_q1`. Finding nothing is precisely
+        # the complaint that started all of this.
+        "alias_terms": [r for r, t in zip(real_segs, tmpl_segs) if r != t],
         "section_key": sec_key, "section": sec_label,
         "label": label, "unit": _unit_of(str(real_segs[-1])),
-        "kind": _kind_of(value), "value": value,
+        # A port leaf's real_path is the ALIAS (qubits.q1.z.opx_output.<leaf>),
+        # which `_walk` cannot traverse — it stops at the opx_output pointer —
+        # so the chain probe would be silently inert for the whole port class.
+        # `probe_path` is the already-resolved ports.* path for those.
+        "kind": _kind_of(value, merged, probe_path or real_path), "value": value,
     }
 
 
@@ -145,7 +199,9 @@ def _port_leaves(qid: str, real_segs: list[str], tmpl_segs: list[str],
         if k in _SKIP_KEYS or isinstance(v, dict):
             continue          # nested dicts (multi-DUC upconverters) never become columns
         leaves.append(_make_leaf(qid, real_segs + [k], tmpl_segs + [k], v,
-                                 port=True, chan_order=chan_order))
+                                 port=True, chan_order=chan_order,
+                                 merged=merged,
+                                 probe_path=(ft.get("resolved_path") or "") + "." + k))
 
 
 def _walk_qubit(qid: str, node: Any, real_segs: list[str], tmpl_segs: list[str],
@@ -171,7 +227,8 @@ def _walk_qubit(qid: str, node: Any, real_segs: list[str], tmpl_segs: list[str],
             if v:
                 _walk_qubit(qid, v, r2, t2, entities, merged, leaves, chan_order)
             continue          # empty dict → no leaf
-        leaves.append(_make_leaf(qid, r2, t2, v, port=False, chan_order=chan_order))
+        leaves.append(_make_leaf(qid, r2, t2, v, port=False,
+                                 chan_order=chan_order, merged=merged))
 
 
 def _order_key(col: dict, chan_order: dict[str, int]) -> tuple:
@@ -202,8 +259,30 @@ def _derive(store) -> tuple[list[dict], set[str]]:
                         merged, leaves, chan_order)
             per_qubit[qid] = leaves
 
+    # A qubit that takes part in two pairs owns BOTH ``cr_square_qA2-qA1`` and
+    # ``cr_square_qA2-qA3``, and the entity-suffix fold puts them under one
+    # template — so that row has two candidate leaves. The first in walk order
+    # is the one the cell addresses (the pair grid has resolved this the same
+    # way since it shipped), and the count is carried so the column can SAY so
+    # rather than quietly implying its value is the only one. Unfolding those
+    # templates instead was measured and rejected: it is honest but it takes a
+    # 21-qubit CR chip from 115 columns to 925.
+    multi: dict[str, int] = {}
+    for qid in qids:
+        seen_here: dict[str, int] = {}
+        for lf in per_qubit[qid]:
+            seen_here[lf["tmpl"]] = seen_here.get(lf["tmpl"], 0) + 1
+        for t, n in seen_here.items():
+            if n > 1:
+                multi[t] = max(multi.get(t, 0), n)
+
     cols: dict[str, dict] = {}
     order: list[str] = []
+    # {col_key: {qid: real_dot_path}} and {col_key: {qid: mode}} — the qubit
+    # grid's answer to pair_columns' path_map, kept ON the column so the
+    # (columns, curated_tmpls) return shape every caller unpacks is unchanged.
+    paths: dict[str, dict[str, str]] = {}
+    modes: dict[str, dict[str, str]] = {}
     for qid in qids:
         for lf in per_qubit[qid]:
             if lf["tmpl"] in _CURATED_TMPLS:
@@ -218,12 +297,22 @@ def _derive(store) -> tuple[list[dict], set[str]]:
             if col is None:
                 col = {"key": ck, "label": lf["label"], "section": lf["section"],
                        "section_key": lf["section_key"], "unit": lf["unit"],
-                       "tmpl": lf["tmpl"], "kinds": set(), "nonnull": 0}
+                       "tmpl": lf["tmpl"], "kinds": set(), "nonnull": 0,
+                       "terms": []}
                 cols[ck] = col
                 order.append(ck)
+                paths[ck] = {}
+                modes[ck] = {}
+            for term in lf["alias_terms"]:
+                if term not in col["terms"] and len(col["terms"]) < 16:
+                    col["terms"].append(term)
             col["kinds"].add(lf["kind"])
             if lf["value"] is not None:
                 col["nonnull"] += 1
+            # First leaf wins per (column, row); after the unfold above there is
+            # only ever one, so this is a defensive tie-break, not a policy.
+            paths[ck].setdefault(qid, lf["real_path"])
+            modes[ck].setdefault(qid, lf["kind"])
 
     # Drop columns that are null on every qubit (pair-grid precedent), then order.
     kept = [cols[k] for k in order if cols[k]["nonnull"] > 0]
@@ -240,7 +329,14 @@ def _derive(store) -> tuple[list[dict], set[str]]:
             kind = "edit"
         out.append({"key": c["key"], "label": c["label"], "section": c["section"],
                     "unit": c["unit"], "tmpl": c["tmpl"], "kind": kind,
-                    "default_on": False})
+                    "default_on": False,
+                    "paths": paths.get(c["key"], {}),
+                    "modes": modes.get(c["key"], {}),
+                    # >0 when some qubit owns several operations under this
+                    # folded name — the header says so instead of implying the
+                    # value it shows is the only one.
+                    "multi": multi.get(c["tmpl"], 0),
+                    "search": " ".join(c["terms"])})
 
     if len(out) > MAX_DYNAMIC_COLUMNS:
         dropped = len(out) - MAX_DYNAMIC_COLUMNS
@@ -249,19 +345,45 @@ def _derive(store) -> tuple[list[dict], set[str]]:
                     "label": f"… {dropped} more not shown "
                              f"({MAX_DYNAMIC_COLUMNS}-column cap)",
                     "section": "Extras", "unit": "", "tmpl": "",
-                    "kind": "note", "default_on": False})
+                    "kind": "note", "default_on": False,
+                    "paths": {}, "modes": {}})
     return out, set(_CURATED_TMPLS)
+
+
+def _copy_col(c: dict) -> dict:
+    """Isolate a cached column for the caller.
+
+    ``dict(c)`` was full isolation while every value was an immutable scalar —
+    the promise the cache docstring makes. ``paths``/``modes`` are the first
+    mutable values in that dict, so they need copying too or the cache master
+    is one ``.pop()`` away from being edited by a caller.
+    """
+    out = dict(c)
+    for k in ("paths", "modes"):
+        if k in out:
+            out[k] = dict(out[k])
+    return out
 
 
 def derive_qubit_columns(store) -> tuple[list[dict], set[str]]:
     """Return ``(columns, curated_tmpls)`` for the loaded chip's qubits.
 
     ``columns`` — ordered list of ``{key, label, section, unit, tmpl, kind,
-    default_on}`` (channel groups first, each followed by its Port+ group,
-    then Qubit+ direct scalars, Extras last). ``default_on`` here is a stub
-    (always ``False``) — the ``/bulk`` route ignores it and decides
+    default_on, paths, modes}`` (channel groups first, each followed by its
+    Port+ group, then Qubit+ direct scalars, Extras last). ``default_on`` here
+    is a stub (always ``False``) — the ``/bulk`` route ignores it and decides
     visibility itself (r7: every column renders unless the client's
     persisted hidden set says otherwise via ``?dynhide=``).
+
+    ``paths`` — ``{qid: real_dot_path}``, ``modes`` — ``{qid: mode}`` where mode
+    is ``"edit"`` | ``"runtime"`` | ``"listedit"``. This is the qubit grid's
+    ``path_map``: ``tmpl`` is column IDENTITY, ``paths[qid]`` is ADDRESSING. A
+    qid absent from ``paths`` does not carry that leaf at all (→ blank cell,
+    which is NOT the same as a declared-but-null one). Formatting ``tmpl``
+    instead is what made a folded per-neighbour operation address a name no
+    qubit owns, killing 1,671 of 5,624 derived columns across the real-chip
+    corpus (252 of 452 on the chip that reported it).
+
     ``curated_tmpls`` — the curated templates the derivation deduped against.
 
     Callers get fresh dict copies (the route stamps ``group_start`` etc. onto
@@ -274,11 +396,11 @@ def derive_qubit_columns(store) -> tuple[list[dict], set[str]]:
         cached = None
     if cached is not None and cached[0] == key:
         cols, curated = cached[1]
-        return [dict(c) for c in cols], set(curated)
+        return [_copy_col(c) for c in cols], set(curated)
     result = _derive(store)
     try:
         _CACHE[store] = (key, result)
     except TypeError:
         pass
     cols, curated = result
-    return [dict(c) for c in cols], set(curated)
+    return [_copy_col(c) for c in cols], set(curated)

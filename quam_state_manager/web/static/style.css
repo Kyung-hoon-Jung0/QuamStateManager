@@ -8111,6 +8111,10 @@ button.diag-badge { cursor: pointer; }
 #pulses-table th { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bulk-col-head:hover { background: var(--pico-card-sectioning-background-color); }
 .bulk-col-unit { font-weight: 400; font-size: 0.85em; color: var(--pico-muted-color); }
+/* A folded per-neighbour column where some qubit owns more than one operation
+   under the same name: the cell shows that qubit's first. Say so in the header
+   rather than let the single value read as the only one. */
+.bulk-col-multi { margin-left: 0.15rem; font-size: 0.8em; color: var(--warn-fg, var(--pico-muted-color)); cursor: help; }
 .bulk-sort-caret { color: var(--pico-primary, #0172ad); font-size: 0.85em; }
 .bulk-col-stats { display: block; font-weight: 400; font-size: 0.72em; white-space: nowrap; }
 /* before / after hover panel on a modified cell */

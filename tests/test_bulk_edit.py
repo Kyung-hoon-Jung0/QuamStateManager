@@ -613,3 +613,155 @@ class TestDynColumnCapHonesty:
         assert "more not shown" in body, "a tripped cap must be visible in the grid"
         assert "bulk-dyn-truncated" in body
         qubit_columns._CACHE.clear()
+
+
+class TestPerNeighbourCellsAddressTheRealKey:
+    """The route must render each dyn cell at the row's REAL leaf.
+
+    Formatting the folded template instead produced a path no qubit owns, so
+    every per-neighbour column rendered as a full column of dashes — and on the
+    chip that reported this, 252 such ghosts sorted ahead of the z Port+ group
+    and pushed a real column past the cap. Json Tree View was unaffected
+    because it walks the raw tree, which is exactly how the defect stayed
+    invisible for two releases.
+    """
+
+    def _chip(self):
+        """A 3-qubit chain shaped like the chip that reported this.
+
+        The two-qubit pulse is named after the PAIR, spelled with underscores
+        (`cz_flattop_pulse_q1_q2`), while the declared pair id is
+        `coupler_q1_q2` — not a suffix of it. So the anchored single strip
+        removes only the trailing member and leaves `cz_flattop_pulse_q1`.
+        The pulse lives on BOTH members, and the middle qubit is in two pairs,
+        so the grid also has to render cells for a qubit that simply does not
+        carry the other pair's pulse.
+        """
+        def _q(qid, ops):
+            return {
+                "id": qid, "f_01": 6.25e9,
+                "xy": {"RF_frequency": 6.25e9,
+                       "operations": {"x180_DragCosine": {"amplitude": 0.11}}},
+                "resonator": {"f_01": 7.6e9,
+                              "operations": {"readout": {"amplitude": 0.04}}},
+                "z": {"joint_offset": 0.05,
+                      "opx_output": "#/wiring/qubits/%s/z/opx_output" % qid,
+                      "operations": {o: {"amplitude": 0.1, "length": 48}
+                                     for o in ops}},
+            }
+        a, b = "cz_flattop_pulse_q1_q2", "cz_flattop_pulse_q2_q3"
+        state = {
+            "qubits": {"q1": _q("q1", [a]), "q2": _q("q2", [a, b]),
+                       "q3": _q("q3", [b])},
+            "qubit_pairs": {"coupler_q1_q2": {"id": "coupler_q1_q2"},
+                            "coupler_q2_q3": {"id": "coupler_q2_q3"}},
+            "ports": {"analog_outputs": {"con1": {"2": {"1": {
+                "offset": 0.0, "exponential_filter": [[0.8, 120.0]]}}}}},
+        }
+        wiring = {"wiring": {"qubits": {
+            q: {"z": {"opx_output": "#/ports/analog_outputs/con1/2/1"}}
+            for q in ("q1", "q2", "q3")}}, "network": {"host": "10.1.1.1"}}
+        return state, wiring
+
+    def _body(self, tmp_path: Path) -> str:
+        state, wiring = self._chip()
+        (tmp_path / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        (tmp_path / "wiring.json").write_text(json.dumps(wiring), encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(tmp_path)})
+        return c.get("/bulk").get_data(as_text=True)
+
+    def test_the_cell_posts_the_real_key_not_the_folded_name(self, tmp_path: Path):
+        body = self._body(tmp_path)
+        assert 'data-dot-path="qubits.q1.z.operations.cz_flattop_pulse_q1_q2.amplitude"' \
+            in body, "the cell must address the operation the qubit actually owns"
+
+    def test_the_folded_name_is_never_posted(self, tmp_path: Path):
+        body = self._body(tmp_path)
+        assert 'data-dot-path="qubits.q1.z.operations.cz_flattop_pulse.amplitude"' \
+            not in body, "that key exists on no qubit — posting it edits nothing"
+        assert 'data-dot-path="qubits.q1.z.operations.cz_flattop_pulse_q1.amplitude"' \
+            not in body, "nor does the half-stripped one"
+
+    def test_the_column_resolves_rather_than_rendering_all_dashes(self, tmp_path: Path):
+        from quam_state_manager.core.loader import QuamStore
+        from quam_state_manager.core.qubit_columns import derive_qubit_columns
+        from quam_state_manager.core.pointer_path import resolve_field_target
+        state, wiring = self._chip()
+        store = QuamStore.from_dicts(state, wiring)
+        cols, _ = derive_qubit_columns(store)
+        dead = []
+        for col in cols:
+            if col.get("kind") == "note":
+                continue
+            if not any(resolve_field_target(store.merged, p).get("resolvable")
+                       for p in (col.get("paths") or {}).values()):
+                dead.append(col["tmpl"])
+        assert not dead, "no derived column may resolve on zero rows: %s" % dead
+
+    def test_a_qubit_without_the_leaf_gets_a_read_only_blank(self, tmp_path: Path):
+        """Structurally absent must not render a writable box.
+
+        The template's cell branch is `listedit` / `runtime` / else-editable, so
+        a `missing` cell fell into the editable else and rendered an <input>
+        with an EMPTY data-dot-path — 2,731 of them on the reporting chip.
+        The pair grid already renders `missing` read-only; the qubit grid now
+        does too. A fillable box still means "declared but null".
+        """
+        import re
+        body = self._body(tmp_path)
+        empties = re.findall(r'<input[^>]*data-dot-path=""[^>]*>', body)
+        assert empties, "this fixture must produce at least one absent cell"
+        writable = [e for e in empties if "readonly" not in e]
+        assert not writable, \
+            "a cell with no address must never be editable: %s" % writable[:1]
+
+
+class TestListColumnKeepsItsJsonEditorOnNullRows:
+    """The per-row mode is a FLOOR on the column kind, never a replacement.
+
+    A qubit whose `exponential_filter` is not set yet is `null` inside a
+    list-valued column. Letting its row mode ("edit") win rendered a plain
+    scalar box that stored a bare float where every sibling holds
+    `[[amp, tau], ...]` — 192 such cells on 13 real chips, on the OPX filter
+    taps and the readout discrimination data. The ✎ whole-value JSON editor is
+    what tells the user JSON is expected, so a null row keeps it.
+    """
+
+    def _chip(self):
+        def _q(qid, expo):
+            return {"id": qid, "f_01": 6.25e9,
+                    "xy": {"RF_frequency": 6.25e9,
+                           "operations": {"x180_DragCosine": {"amplitude": 0.11}}},
+                    "resonator": {"f_01": 7.6e9, "gef_centers": expo,
+                                  "operations": {"readout": {"amplitude": 0.04}}},
+                    "z": {"joint_offset": 0.05,
+                          "opx_output": "#/wiring/qubits/%s/z/opx_output" % qid}}
+        state = {
+            # qA1 carries the list; qA2 has not been calibrated yet
+            "qubits": {"qA1": _q("qA1", [[1.0, 2.0], [3.0, 4.0]]),
+                       "qA2": _q("qA2", None)},
+            "qubit_pairs": {},
+            "ports": {"analog_outputs": {"con1": {"2": {"1": {"offset": 0.0}}}}},
+        }
+        wiring = {"wiring": {"qubits": {
+            q: {"z": {"opx_output": "#/ports/analog_outputs/con1/2/1"}}
+            for q in ("qA1", "qA2")}}, "network": {"host": "10.1.1.1"}}
+        return state, wiring
+
+    def test_the_null_row_gets_the_json_editor_not_a_scalar_box(self, tmp_path: Path):
+        state, wiring = self._chip()
+        (tmp_path / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        (tmp_path / "wiring.json").write_text(json.dumps(wiring), encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        cl = app.test_client()
+        cl.post("/load", data={"folder": str(tmp_path)})
+        body = cl.get("/bulk").get_data(as_text=True)
+        path = "qubits.qA2.resonator.gef_centers"
+        assert 'openJsonCell(\'%s\'' % path in body, \
+            "a null row of a list column must keep the whole-value JSON editor"
+        writable = re.findall(
+            r'<input[^>]*data-dot-path="%s"[^>]*>' % re.escape(path), body)
+        assert not [w for w in writable if "readonly" not in w], \
+            "it must never be a writable scalar input: %s" % writable[:1]

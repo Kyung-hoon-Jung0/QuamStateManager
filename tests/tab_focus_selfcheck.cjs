@@ -240,6 +240,31 @@ ok(bw.document.activeElement === bcell('q3', 'f_01'),
    'grid: row-edge wrap skips a hidden row');
 bw.document.querySelector('tr[data-qubit="q2"]').classList.remove('bulk-row-hidden');
 
+// READ-ONLY cells are skipped. They already declare themselves out of the tab
+// order with tabindex="-1", but the handler preventDefault()s and focuses by
+// hand, which overrode that. Harmless while a couple of cells per row were
+// read-only; unusable once a per-neighbour column renders a blank for every
+// qubit not in that pair (a real chip measured 48 consecutive dead stops).
+bw.document.querySelectorAll('td[data-col-key="T1"] .bulk-cell').forEach(function (el) {
+    el.classList.add('bulk-cell-ro');
+    el.setAttribute('readonly', 'readonly');
+    el.setAttribute('tabindex', '-1');
+});
+c = bcell('q1', 'f_01');
+c.focus();
+pressTabOn(c);
+ok(bw.document.activeElement === bcell('q1', 'T2'),
+   'grid: Tab skips a read-only cell instead of parking in it');
+pressTabOn(bw.document.activeElement, true);
+ok(bw.document.activeElement === bcell('q1', 'f_01'),
+   'grid: Shift+Tab skips it in the other direction too');
+bw.document.querySelectorAll('td[data-col-key="T1"] .bulk-cell').forEach(function (el) {
+    el.classList.remove('bulk-cell-ro');
+    el.removeAttribute('readonly');
+    el.removeAttribute('tabindex');
+});
+bw.document.querySelector('tr[data-qubit="q2"]').classList.remove('bulk-row-hidden');
+
 // grid edge: native Tab may leave (not prevented)
 c = bcell('q3', 'T2');
 c.focus();
