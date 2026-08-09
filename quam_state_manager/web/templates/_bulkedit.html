@@ -88,6 +88,11 @@
                    oninput="BulkEdit.setLetterSpacing(this.value)" aria-label="Cell letter spacing" title="Letter spacing (digit gap)">
         </span>
     </div>
+    {# docs/94: the derived-column cap must never be silent — when it trips,
+       say so where the missing columns would have been. #}
+    {% if dyn_truncated %}
+    <p class="muted bulk-dyn-truncated" style="margin:.15rem 0 .3rem;font-size:.78em">&#9888; {{ dyn_truncated }}</p>
+    {% endif %}
     <div class="bulk-scroll-top" id="bulk-scroll-top" aria-hidden="true"><div id="bulk-scroll-top-inner"></div></div>
     <div class="bulk-table-wrap">
         <table class="bulk-table" id="bulk-table">

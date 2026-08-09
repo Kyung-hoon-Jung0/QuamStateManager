@@ -3713,12 +3713,18 @@ def bulk_edit():
          "unit": c.get("unit", ""), "kind": c.get("kind", "edit")}
         for c in dyn_model
     ]
+    # The cap's truncation note used to be filtered out with the other
+    # kind="note" entries — a SILENT cap (docs/94: a real 452-column chip lost
+    # its z-port filter columns with no trace). Surface it as an honest line.
+    dyn_truncated = next(
+        (c["label"] for c in dyn_model if c.get("kind") == "note"), None)
     template = "_bulkedit.html" if _is_htmx() else "bulkedit.html"
     return render_template(template, **_ctx(page="bulk", columns=columns, rows=rows,
                                             column_groups=column_groups, band_meta=band_meta,
                                             dyn_cols=dyn_cols, qubit_meta=qubit_meta,
                                             pair_columns=pair_columns, pair_groups=pair_groups,
-                                            pair_rows=pair_rows))
+                                            pair_rows=pair_rows,
+                                            dyn_truncated=dyn_truncated))
 
 
 @bp.route("/bulk/all-values")

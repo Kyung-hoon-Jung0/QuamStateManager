@@ -546,3 +546,70 @@ class TestBulkApply:
         # the valid edit must NOT persist (atomic rollback)
         peek = client.get("/field/peek?dot_path=qubits.qA1.f_01").get_json()
         assert peek["values"]["qubits.qA1.f_01"] == 6.25e9
+
+
+class TestDynColumnCapHonesty:
+    """docs/94: a real 10Q chip derived 452 columns; the old 400 cap silently
+    cut the tail — including the z-port ``exponential_filter`` the user was
+    looking for — and the truncation note itself was filtered out of the
+    render. The cap must be far above real chips, and when it DOES trip it
+    must say so in the grid."""
+
+    def _asish_state(self) -> dict:
+        # AS-shaped: z.opx_output chains state → wiring → ports.*, and the
+        # port dict carries a LIST-valued exponential_filter.
+        return {
+            "qubits": {
+                "q1": {"id": "q1", "f_01": 5.0e9,
+                       "z": {"joint_offset": 0.05,
+                             "opx_output": "#/wiring/qubits/q1/z/opx_output"}},
+            },
+            "qubit_pairs": {},
+        }
+
+    def _asish_wiring(self) -> dict:
+        return {
+            "wiring": {"qubits": {"q1": {"z": {
+                "opx_output": "#/ports/analog_outputs/con1/2/5"}}}},
+            "ports": {"analog_outputs": {"con1": {"2": {"5": {
+                "__class__": "quam.components.ports.analog_outputs.LFFEMAnalogOutputPort",
+                "controller_id": "con1", "fem_id": 2, "port_id": 5,
+                "offset": 0.0, "output_mode": "amplified",
+                "exponential_filter": [[0.04, 8.3e12], [-0.09, 2.6e5]],
+                "exponential_dc_gain": None,
+            }}}}},
+            "network": {"host": "10.1.1.1"},
+        }
+
+    def test_port_list_leaf_becomes_a_listedit_column(self, tmp_path: Path):
+        from quam_state_manager.core.loader import QuamStore
+        from quam_state_manager.core.qubit_columns import derive_qubit_columns
+        store = QuamStore.from_dicts(self._asish_state(), self._asish_wiring())
+        cols, _ = derive_qubit_columns(store)
+        expo = [c for c in cols if "exponential_filter" in c["tmpl"]]
+        assert expo, "the z-port exponential_filter must derive a column"
+        assert expo[0]["kind"] == "listedit"
+
+    def test_cap_covers_the_largest_real_chip(self):
+        # 452 measured on the real 10Q tunable-coupler chip (docs/94) — the
+        # armor cap must never cut a real model again.
+        from quam_state_manager.core.qubit_columns import MAX_DYNAMIC_COLUMNS
+        assert MAX_DYNAMIC_COLUMNS >= 1000
+
+    def test_tripped_cap_renders_the_truncation_note(self, tmp_path: Path, monkeypatch):
+        from quam_state_manager.core import qubit_columns
+        monkeypatch.setattr(qubit_columns, "MAX_DYNAMIC_COLUMNS", 5)
+        qubit_columns._CACHE.clear()
+        state = {"qubits": {"q1": {
+            "id": "q1", "f_01": 5.0e9,
+            "extras": {f"k{i:02d}": float(i) for i in range(20)},
+        }}, "qubit_pairs": {}}
+        (tmp_path / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        (tmp_path / "wiring.json").write_text(json.dumps(_wiring()), encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(tmp_path)})
+        body = c.get("/bulk").get_data(as_text=True)
+        assert "more not shown" in body, "a tripped cap must be visible in the grid"
+        assert "bulk-dyn-truncated" in body
+        qubit_columns._CACHE.clear()
