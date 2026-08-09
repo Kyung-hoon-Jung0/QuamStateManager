@@ -4060,12 +4060,28 @@ def bulk_edit():
     dyn_truncated = next(
         (c["label"] for c in dyn_model if c.get("kind") == "note"), None)
     template = "_bulkedit.html" if _is_htmx() else "bulkedit.html"
-    return render_template(template, **_ctx(page="bulk", columns=columns, rows=rows,
+    html = render_template(template, **_ctx(page="bulk", columns=columns, rows=rows,
                                             column_groups=column_groups, band_meta=band_meta,
                                             dyn_cols=dyn_cols, qubit_meta=qubit_meta,
                                             pair_columns=pair_columns, pair_groups=pair_groups,
                                             pair_rows=pair_rows,
                                             dyn_truncated=dyn_truncated))
+    # docs/103: this is the app's largest response by an order of magnitude
+    # (measured 10.0 MB / 6.5 MB HTML on real 21Q/10Q chips — docs/85 ships
+    # every cell deliberately). Repetitive table markup gzips ~25x, so
+    # compress when the client advertises it — same stdlib pattern as
+    # /bulk/all-values, Content-Length pinned to the actual bytes.
+    body = html.encode("utf-8")
+    accepts_gzip = "gzip" in request.headers.get("Accept-Encoding", "")
+    if accepts_gzip:
+        body = gzip.compress(body, compresslevel=5)
+    resp = current_app.response_class(body)
+    resp.headers["Content-Type"] = "text/html; charset=utf-8"
+    resp.headers["Content-Length"] = str(len(body))
+    if accepts_gzip:
+        resp.headers["Content-Encoding"] = "gzip"
+    resp.headers["Vary"] = "Accept-Encoding"
+    return resp
 
 
 @bp.route("/bulk/all-values")

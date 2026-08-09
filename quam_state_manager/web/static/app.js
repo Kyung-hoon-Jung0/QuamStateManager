@@ -11287,7 +11287,10 @@ if (document.readyState === 'loading') {
  * other routes warrant the same treatment.
  * ────────────────────────────────────────────────────────────────── */
 (function setupSlowRouteLoader() {
-    var SLOW_PREFIXES = ['/param-history', '/datasets'];
+    var SLOW_PREFIXES = ['/param-history', '/datasets',
+        // docs/103: measured slow-on-big-chips surfaces — /bulk is the
+        // app's largest render (10 MB HTML on 21Q) and had NO indicator.
+        '/bulk', '/diff', '/topology', '/autofit', '/compare-hub'];
     var SHOW_AFTER_MS = 200;
 
     function getLoader() { return document.getElementById('quam-loader'); }
