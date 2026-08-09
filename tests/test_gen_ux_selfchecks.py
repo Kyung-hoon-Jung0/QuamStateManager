@@ -42,7 +42,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 def _run(name: str) -> None:
     r = subprocess.run(
         ["node", str(_ROOT / "tests" / name)],
-        capture_output=True, text=True, cwd=str(_ROOT), timeout=120,
+        capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=120,
     )
     if r.returncode == 2:
         pytest.skip("jsdom not installed (run `npm install jsdom`)")

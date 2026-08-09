@@ -740,7 +740,7 @@ class TestScriptSmoke:
     def test_help_runs_standalone(self, script):
         proc = subprocess.run(
             [sys.executable, str(script), "--help"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", timeout=30,
         )
         assert proc.returncode == 0, proc.stderr
 
@@ -751,7 +751,7 @@ class TestScriptSmoke:
         env = {**os.environ, "PYTHONSAFEPATH": "1"}
         proc = subprocess.run(
             [sys.executable, str(script), "--help"],
-            capture_output=True, text=True, timeout=30, env=env,
+            capture_output=True, text=True, encoding="utf-8", timeout=30, env=env,
         )
         assert proc.returncode == 0, proc.stderr
 

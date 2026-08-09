@@ -29,7 +29,7 @@ def _python_quam_pair_id():
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")
 def test_topo_graph_selfcheck_and_pair_id_parity():
-    r = subprocess.run(["node", str(_SELFCHECK)], capture_output=True, text=True, cwd=str(_ROOT))
+    r = subprocess.run(["node", str(_SELFCHECK)], capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
     assert r.returncode == 0, (r.stdout + r.stderr)
     assert "all checks passed" in r.stdout, (r.stdout + r.stderr)
 

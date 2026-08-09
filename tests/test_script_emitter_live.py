@@ -88,7 +88,7 @@ def test_emitted_bundle_rebuilds_identical_state(tmp_path):
     for script in ("01_make_wiring.py", "02_build_machine.py"):
         r = subprocess.run(
             [python, str(sdir / script), str(out_b)],
-            capture_output=True, text=True, cwd=str(sdir), timeout=600,
+            capture_output=True, text=True, encoding="utf-8", cwd=str(sdir), timeout=600,
         )
         assert r.returncode == 0, f"{script}: {r.stdout}\n{r.stderr}"
 
@@ -101,7 +101,7 @@ def test_emitted_bundle_rebuilds_identical_state(tmp_path):
     # 4. 03 sanity-runs generate_config on the rebuilt chip.
     r = subprocess.run(
         [python, str(sdir / "03_generate_config.py"), str(out_b)],
-        capture_output=True, text=True, cwd=str(sdir), timeout=600,
+        capture_output=True, text=True, encoding="utf-8", cwd=str(sdir), timeout=600,
     )
     assert r.returncode == 0, r.stdout + r.stderr
     assert "generate_config() OK" in r.stdout

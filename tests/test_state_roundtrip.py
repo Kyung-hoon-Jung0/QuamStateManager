@@ -377,6 +377,6 @@ def test_state_sync_client_wiring():
         pytest.skip("jsdom not installed for node")
     res = subprocess.run(
         [node, str(Path(__file__).resolve().parent / "state_sync_selfcheck.cjs")],
-        capture_output=True, text=True, timeout=120)
+        capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert res.returncode == 0, f"selfcheck failed:\n{res.stdout}\n{res.stderr}"
     assert res.stdout.count("ok - ") >= 33, res.stdout

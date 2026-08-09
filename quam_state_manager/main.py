@@ -24,7 +24,12 @@ import time
 from typing import TYPE_CHECKING
 from urllib.request import urlopen
 
-import webview
+# pywebview is imported lazily inside main() (docs/101 P9): on a headless
+# server without it, `python -m quam_state_manager` should say "use qsm
+# serve", not die at import time before any friendly handling exists. The
+# module-level name stays as a PATCHABLE sentinel (tests replace it; main()
+# imports only while it is still None).
+webview = None
 
 if TYPE_CHECKING:
     from flask import Flask
@@ -154,6 +159,19 @@ def main() -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
+    # docs/101 P9: import here so a pywebview-less install (headless Linux,
+    # a server box) gets a one-line hint instead of an ImportError traceback.
+    global webview
+    if webview is None:
+        try:
+            import webview as _webview
+        except ImportError:
+            print("pywebview is not installed - the desktop window needs "
+                  "it.\nRun the browser UI instead:  qsm serve   (or: pip "
+                  "install pywebview)", file=sys.stderr)
+            sys.exit(1)
+        webview = _webview
+
     # Guard the whole startup: with console=False the exe swallows stderr, so an
     # unhandled exception here (e.g. a non-writable instance dir in Program Files,
     # a migration failure) means the user double-clicks and nothing happens —
@@ -213,7 +231,16 @@ def main() -> None:
 
     window.events.closing += _on_closing
 
-    webview.start()
+    # docs/101 P8: the GUI backend can be missing/broken (no GTK/Qt on a
+    # Linux box, no pyobjc on a mac) and webview.start() is where it raises —
+    # OUTSIDE the startup guard above, so with console=False nothing at all
+    # happened. Same funnel: write startup-error.log + show the dialog/hint.
+    try:
+        webview.start()
+    except Exception as exc:  # noqa: BLE001
+        _fatal_startup_error(exc)
+        _kill_scheduler(app.instance_path)
+        sys.exit(1)
     logger.info("Window closed. Exiting.")
     # Kill any in-flight Scheduler experiment BEFORE os._exit — otherwise it keeps
     # driving the OPX headless (os._exit bypasses the atexit backstop above).

@@ -33,7 +33,7 @@ def _require_jsdom():
 def test_ctrlz_client_wiring():
     _require_jsdom()
     res = subprocess.run([_node(), str(_SELFCHECK)],
-                         capture_output=True, text=True, timeout=120)
+                         capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert res.returncode == 0, f"ctrlz selfcheck failed:\n{res.stdout}\n{res.stderr}"
     # Every probe reported ok (belt-and-braces vs a silent early exit).
     assert res.stdout.count("ok - ") >= 10, res.stdout
@@ -47,6 +47,6 @@ def test_generate_wizard_ctrlz():
     behind the user), and falls through to /undo when not mounted."""
     _require_jsdom()
     res = subprocess.run([_node(), str(_WIZ_SELFCHECK)],
-                         capture_output=True, text=True, timeout=120)
+                         capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert res.returncode == 0, f"wizard undo selfcheck failed:\n{res.stdout}\n{res.stderr}"
     assert res.stdout.count("ok - ") >= 8, res.stdout

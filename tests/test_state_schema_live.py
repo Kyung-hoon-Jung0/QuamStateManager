@@ -63,7 +63,7 @@ def _probe(python_exe: Path, tmp_path: Path, classes: list[str]) -> dict:
     r = subprocess.run(
         [str(python_exe), _native(_SCRIPT),
          "--classes", _native(tmp_path / "cls.json"), "--out", _native(out)],
-        capture_output=True, text=True, timeout=300)
+        capture_output=True, text=True, encoding="utf-8", timeout=300)
     assert r.returncode == 0, r.stdout + r.stderr
     return json.loads(out.read_text(encoding="utf-8"))
 

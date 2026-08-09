@@ -218,7 +218,13 @@ def sm_analysis_rev() -> str | None:
             for name in _SM_ANALYSIS_SOURCES:
                 h.update(name.encode("utf-8"))
                 h.update(b"\0")
-                h.update((here / name).read_bytes())
+                # EOL-normalized: with core.autocrlf the SAME commit checks
+                # out CRLF on Windows and LF on POSIX, so a raw-bytes hash
+                # split one analysis into two "revisions" per OS and
+                # comparable() refused to reconcile identical gates
+                # (docs/101 C1). Content identity must not depend on the
+                # checkout's line-ending policy.
+                h.update((here / name).read_bytes().replace(b"\r\n", b"\n"))
         except OSError:
             logger.warning("could not hash the SM gate analysis", exc_info=True)
             _SM_REV = ""

@@ -40,6 +40,6 @@ def test_diff_tree_client_pipeline():
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         pytest.skip("jsdom not installed for node")
     res = subprocess.run([_node(), str(_SELFCHECK)], capture_output=True,
-                         text=True, timeout=120, env=env)
+                         text=True, encoding="utf-8", timeout=120, env=env)
     assert res.returncode == 0, f"diff-tree selfcheck failed:\n{res.stdout}\n{res.stderr}"
     assert res.stdout.count("ok - ") >= 20, res.stdout

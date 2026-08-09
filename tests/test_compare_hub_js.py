@@ -18,7 +18,7 @@ _SELFCHECK = Path(__file__).parent / "compare_hub_selfcheck.cjs"
 def test_compare_hub_selfcheck():
     proc = subprocess.run(
         ["node", str(_SELFCHECK)],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
     )
     assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
     assert "all checks passed" in proc.stdout

@@ -173,11 +173,11 @@ def test_live_regeneration_matches_committed(tmp_path):
 
     def _win(path: Path) -> str:
         return subprocess.run(["wslpath", "-w", str(path)], capture_output=True,
-                              text=True, check=True).stdout.strip()
+                              text=True, encoding="utf-8", check=True).stdout.strip()
 
     proc = subprocess.run(
         [str(LabC_PYTHON), _win(script), "--out", _win(tmp_path)],
-        capture_output=True, text=True, timeout=300)
+        capture_output=True, text=True, encoding="utf-8", timeout=300)
     assert proc.returncode == 0, proc.stderr
 
     fresh = json.loads((tmp_path / "waveform_golden.json").read_text(encoding="utf-8"))

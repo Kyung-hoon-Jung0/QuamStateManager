@@ -21,7 +21,7 @@ def test_figure_lightbox_selfcheck():
     # measured ~58 s cold — a 60 s ceiling flaked on exactly that.
     proc = subprocess.run(
         ["node", str(_SELFCHECK)],
-        capture_output=True, text=True, timeout=180,
+        capture_output=True, text=True, encoding="utf-8", timeout=180,
     )
     assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
     assert "ALL OK" in proc.stdout

@@ -116,7 +116,7 @@ def test_component_page_mounts_map_above_table(tmp_path, url, highlight, row_mar
 def test_component_map_selfcheck_passes():
     r = subprocess.run(
         ["node", str(_SELFCHECK)],
-        capture_output=True, text=True, cwd=str(_ROOT), timeout=120,
+        capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=120,
     )
     if r.returncode == 2:
         pytest.skip("jsdom not installed (run `npm install jsdom`)")
