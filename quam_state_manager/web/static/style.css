@@ -706,6 +706,9 @@ html[data-font-size="large"] { --font-size-base: 19px; }
 .htmx-request .htmx-indicator,
 .htmx-request.htmx-indicator { display: inline-block; }
 #inspector-pane.htmx-request { opacity: 0.5; transition: opacity 0.15s; }
+/* docs/103: the MAIN pane had no in-flight cue at all — a slow /bulk
+   left the old page fully interactive-looking, so users double-clicked. */
+#table-pane.htmx-request { opacity: 0.6; transition: opacity 0.15s; }
 .clickable-row.htmx-request { opacity: 0.6; pointer-events: none; }
 .spinner::after { content: " ..."; animation: dots 1s steps(3, end) infinite; }
 @keyframes dots { 0% { content: "."; } 33% { content: ".."; } 66% { content: "..."; } }
