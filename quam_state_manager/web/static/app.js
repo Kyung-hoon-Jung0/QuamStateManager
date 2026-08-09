@@ -181,6 +181,13 @@ var UI_CONFIG = {
      * Recommended range: 10 – 300 seconds.                            */
     autoRefreshInterval: 60,   /* seconds between automatic workspace tree polls */
 
+    /* The open Datasets table's delta poll (/datasets/changes-since) defaults
+     * to 15 s instead, so a run that just finished appears promptly (docs/104
+     * #3; a tick is ~3.5 ms server-side per docs/103). Add a
+     * `datasetPollInterval` key here (seconds) to pin that poll explicitly;
+     * without one, an `autoRefreshInterval` tuned away from its shipped 60
+     * is honored for the dataset poll too (dataset-virtual.js).           */
+
     /* ── TOPOLOGY LIVE UPDATE ─────────────────────────────────────────
      * How often (in seconds) the topology page polls the server to
      * check if state.json / wiring.json have been modified on disk.
