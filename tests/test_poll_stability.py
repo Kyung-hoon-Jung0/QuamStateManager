@@ -515,10 +515,10 @@ class TestPollIsolationAndBudget:
 
         real = DatasetStore.changes_since
 
-        def flaky(self, ts, date=None):
+        def flaky(self, ts, date=None, **kw):
             if self.folder_path.name == "bad":
                 raise RuntimeError("simulated folder failure")
-            return real(self, ts, date=date)
+            return real(self, ts, date=date, **kw)
 
         monkeypatch.setattr(DatasetStore, "changes_since", flaky)
 

@@ -10953,13 +10953,17 @@ def _filter_tree(tree: dict, text: str) -> dict:
 def _tree_render_ctx(tree: dict) -> dict:
     """Template context for _sidebar_tree.html: the flat tree (root iteration,
     empty checks) + the per-root NESTED render model (r13 hierarchy — real
-    folder levels between root and runs, newest-first)."""
-    from quam_state_manager.core.scanner import build_nested_tree
+    folder levels between root and runs, newest-first) + the per-root
+    discovery-cap flag (docs/105 #9 — a truncated walk must say so)."""
+    from quam_state_manager.core.scanner import (build_nested_tree,
+                                                 root_scan_truncated)
     nested = {}
+    truncated = {}
     for root_path, groups in (tree or {}).items():
         entries = [e for g in groups for e in g.entries]
         nested[root_path] = build_nested_tree(Path(root_path), entries)
-    return {"tree": tree or {}, "nested": nested}
+        truncated[root_path] = root_scan_truncated(root_path)
+    return {"tree": tree or {}, "nested": nested, "tree_truncated": truncated}
 
 
 @bp.route("/workspace/add", methods=["POST"])
@@ -14611,6 +14615,12 @@ def _split_dataset_uid(uid: str) -> tuple[str, int] | None:
 # a genuinely hung request, never on a merely slow scan.
 _POLL_BUDGET_S = 8.0
 
+# docs/105 #5: the explicit Rescan button gets a larger — but still bounded —
+# budget: it is a user-initiated "check now", so it may work harder than a
+# poll tick, but it must never hold the scan lock for an entire 10k-run
+# re-parse. A truncated re-check continues through the ordinary poll.
+_RESCAN_BUDGET_S = 20.0
+
 _dataset_candidates_lock = threading.Lock()
 _dataset_candidates_cache: dict[Any, tuple[Any, int, list[Path]]] = {}
 
@@ -15068,26 +15078,41 @@ def datasets_changes_since():
     now: float | None = None
     deadline = time.monotonic() + _POLL_BUDGET_S
     skipped = 0
+    partial_scans = 0
+    scan_ms_total = 0.0
     for fol in active:
         if time.monotonic() >= deadline:
             skipped += 1
             now = ts if now is None else min(now, ts)
             continue
         try:
-            delta = fol["store"].changes_since(ts, date=date)
+            # docs/105 #4: the budget now reaches INSIDE the folder — the
+            # date-dir walk itself stops at the deadline and reports partial,
+            # instead of one huge folder blowing past the client's abort.
+            delta = fol["store"].changes_since(ts, date=date,
+                                               deadline=deadline)
             for row in delta.get("updated", []):
                 row["f"] = fol["key"]
                 updated.append(row)
             for rid in delta.get("vanished", []):
                 vanished.append(_dataset_uid(fol["key"], rid))
             sample = delta.get("now", 0.0)
+            if delta.get("partial"):
+                partial_scans += 1
+            scan_ms_total += float(delta.get("scan_ms") or 0.0)
         except Exception:
             logger.exception("changes-since failed for %s", fol.get("path"))
             skipped += 1
             sample = ts
         now = sample if now is None else min(now, sample)
     return jsonify({"updated": updated, "vanished": vanished, "now": now or 0.0,
-                    "partial": bool(skipped), "skipped": skipped})
+                    "partial": bool(skipped or partial_scans),
+                    "skipped": skipped,
+                    # docs/105 #11: minimum viable observability — every
+                    # symptom on this path used to present identically as
+                    # "the table stopped updating".
+                    "scan_ms": round(scan_ms_total, 1),
+                    "folders": len(active)})
 
 
 @bp.route("/datasets/rescan", methods=["POST"])
@@ -15097,15 +15122,29 @@ def datasets_rescan():
     if not active:
         return render_template("_status.html",
                                message="No data folders in workspace", level="warning")
+    # docs/105 #5: the user's recovery button used to hold the scan lock for
+    # an UNBUDGETED full re-parse of every root — on a 10k-run share that
+    # wedged every concurrent poll in both windows for minutes. The budget
+    # bounds the lock hold; a truncated re-check CONTINUES via the ordinary
+    # poll (force_rescan leaves the un-walked dirs poisoned + the gate open),
+    # and content-equal re-parses keep their cursor so the continuation
+    # never floods polling clients.
+    _deadline = time.monotonic() + _RESCAN_BUDGET_S
+    _truncated = 0
     for fol in active:
         try:
             # force_rescan (not rescan_if_stale): the explicit button must bypass
             # the mtime gate + B27 date-dir skip so an in-place node.json/data.json
             # rewrite (fit-result writeback) is actually re-read — otherwise the
             # user's recovery button was a silent no-op on the run they care about.
-            fol["store"].force_rescan()
+            if fol["store"].force_rescan(deadline=_deadline):
+                _truncated += 1
         except Exception:
             logger.exception("Manual rescan failed for %s", fol["path"])
+    if _truncated:
+        logger.info("Manual rescan hit the %.0fs budget on %d folder(s) — "
+                    "the poll continues the re-check incrementally.",
+                    _RESCAN_BUDGET_S, _truncated)
     if _is_htmx():
         resp = make_response()
         resp.headers["HX-Redirect"] = "/datasets"
