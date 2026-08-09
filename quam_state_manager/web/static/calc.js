@@ -194,6 +194,47 @@
             setInput('calc-s3-vpp', 2 * Math.SQRT2 * Vrms, 'calc-s3-' + role);
         }
     }
+    // ── RF = LO + IF (1.0-prep, docs/100) ───────────────────────────────────────
+    // Pure 3-way solver so the node self-check can pin the math without a DOM.
+    // Units are the daily convention: RF/LO in GHz, IF in MHz. `role` names the
+    // field the user just edited; the OTHER known field decides which of the
+    // remaining two is derived (edit RF with LO known → IF; with only IF known
+    // → LO; etc.). Returns {rf, lo, if_} in those units (NaN = unknown).
+    function calcSolveRfLoIf(role, rf, lo, if_) {
+        var haveRf = isFinite(rf), haveLo = isFinite(lo), haveIf = isFinite(if_);
+        if (role === 'rf' && haveRf) {
+            if (haveLo) if_ = (rf - lo) * 1000;
+            else if (haveIf) lo = rf - if_ / 1000;
+        } else if (role === 'lo' && haveLo) {
+            if (haveRf) if_ = (rf - lo) * 1000;
+            else if (haveIf) rf = lo + if_ / 1000;
+        } else if (role === 'if' && haveIf) {
+            if (haveLo) rf = lo + if_ / 1000;
+            else if (haveRf) lo = rf - if_ / 1000;
+        }
+        return { rf: rf, lo: lo, if_: if_ };
+    }
+    window.calcSolveRfLoIf = calcSolveRfLoIf;   // exposed for the node self-check
+
+    function recompute4(role) {
+        var s = calcSolveRfLoIf(role, num('calc-s4-rf'), num('calc-s4-lo'),
+                                num('calc-s4-if'));
+        var except = role ? 'calc-s4-' + role : null;
+        setInput('calc-s4-rf', s.rf, except);
+        setInput('calc-s4-lo', s.lo, except);
+        setInput('calc-s4-if', s.if_, except);
+        var note = document.getElementById('calc-s4-note');
+        if (note) {
+            if (!isFinite(s.if_)) { note.textContent = '—'; note.classList.remove('calc-err'); }
+            else {
+                var out = Math.abs(s.if_) > 400;
+                note.textContent = fmt(s.if_) + ' MHz ' + (out
+                    ? '⚠ outside the ±400 MHz window' : '· within ±400 MHz');
+                note.classList.toggle('calc-err', out);
+            }
+        }
+    }
+
     function recomputeExpr() {
         var box = document.getElementById('calc-expr');
         var out = document.getElementById('calc-expr-res');
@@ -202,7 +243,7 @@
         if (r.ok) { out.textContent = fmt(r.value); out.dataset.raw = String(r.value); out.classList.remove('calc-err'); }
         else { out.textContent = box.value.trim() === '' ? '—' : ('⚠ ' + (r.err || '—')); out.dataset.raw = ''; out.classList.toggle('calc-err', !!r.err && r.err !== '—'); }
     }
-    function recomputeAll() { recompute1(false); recompute2(); recompute3(null); recomputeExpr(); }
+    function recomputeAll() { recompute1(false); recompute2(); recompute3(null); recompute4(null); recomputeExpr(); }
 
     // ── copy ────────────────────────────────────────────────────────────────────
     function copyFrom(target, btn) {
@@ -294,6 +335,9 @@
             else if (id === 'calc-s3-vpk') recompute3('vpk');
             else if (id === 'calc-s3-vpp') recompute3('vpp');
             else if (id.indexOf('calc-s3-') === 0) recompute3('dbm');
+            else if (id === 'calc-s4-rf') recompute4('rf');
+            else if (id === 'calc-s4-lo') recompute4('lo');
+            else if (id === 'calc-s4-if') recompute4('if');
             else if (id === 'calc-expr') recomputeExpr();
         });
         pop.addEventListener('click', function (e) {
