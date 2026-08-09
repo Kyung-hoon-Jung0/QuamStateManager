@@ -153,7 +153,10 @@ def _run_app(flask_app, *, host: str, port: int, debug: bool) -> None:
     try:
         from waitress import serve as waitress_serve
     except ImportError:
-        typer.echo("(waitress not installed — falling back to Flask's dev server)")
+        # ASCII only, for the reason spelled out at the `serve` banner below —
+        # and this line in particular prints on the machines least able to
+        # encode an em-dash: the ones that have not finished installing.
+        typer.echo("(waitress not installed - falling back to Flask's dev server)")
         flask_app.run(host=host, port=port, debug=False)
         return
     waitress_serve(flask_app, host=host, port=port)
