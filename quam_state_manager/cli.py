@@ -176,8 +176,10 @@ def serve(
     """Run the web UI in your browser at http://HOST:PORT.
 
     The desktop app (its own window) is ``python -m quam_state_manager``; this is
-    the browser alternative — handy when the pywebview/WebView2 window won't open.
+    the browser alternative - handy when the pywebview/WebView2 window won't open.
     """
+    # (ASCII-only docstring: typer renders it as --help text, and a cp949
+    # console crashed on the em-dash BEFORE any command ran — docs/102.)
     from quam_state_manager.web.app import create_app
 
     # ASCII-only banner: a cp949/legacy-codepage console (Korean/Japanese
@@ -203,9 +205,10 @@ def browser(
 ) -> None:
     """Launch the web UI and open it in your default browser (``qsm browser``).
 
-    Same server as ``serve``, but it also pops your browser open at the URL —
+    Same server as ``serve``, but it also pops your browser open at the URL -
     the simplest way to run the app in a browser.
     """
+    # (ASCII-only docstring — --help text must survive cp949; docs/102.)
     import threading
     import webbrowser
 
