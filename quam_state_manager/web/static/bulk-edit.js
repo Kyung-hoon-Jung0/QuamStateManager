@@ -621,6 +621,20 @@
                     hs.push(h);
                     if (colHay[k]) colHay[k].push(h);
                 });
+                // docs/105 #1: cold (unhydrated) cells contribute their STORED
+                // values - the search must stay whole-chip (docs/85) even for
+                // columns whose inputs are not mounted yet.
+                if (_virt) {
+                    r.querySelectorAll('td.bulk-td-cold').forEach(function (td) {
+                        var ck = td.getAttribute('data-col-key');
+                        if (hide.has(ck)) return;
+                        var cd = _virt.vals.get(td) || '';
+                        if (!cd) return;
+                        var chh = cd + ' ' + cd.replace(/,/g, '');
+                        hs.push(chh);
+                        if (colHay[ck]) colHay[ck].push(chh);
+                    });
+                }
                 _hayCache.rowMap.set(r, hs);
             });
             _hayCache.colHay = colHay;
@@ -1152,6 +1166,7 @@
         var byResolved = {};
         (results || []).forEach(function (res) { if (res.resolved_path) byResolved[res.resolved_path] = res; });
         if (!Object.keys(byResolved).length) return;
+        _virtHydrateAll();           // docs/105 #1 - path-addressed repaint must see every input
         _cells(t).forEach(function (c) {
             if (c.getAttribute('data-linkable') !== '1') return;   // only linked siblings cross-sync
             var res = byResolved[c.getAttribute('data-resolved')];
@@ -1164,6 +1179,101 @@
             c.classList.add('bulk-cell-modified');
             var td = c.closest('.bulk-td'); var old = td && td.querySelector('.bulk-ba-old');
             if (old) old.textContent = c.getAttribute('data-baseline');
+        });
+    }
+
+    // -- cold-column hydration (docs/105 #1) --------------------------------
+    // The server render is UNCHANGED (every pin on /bulk HTML holds); over
+    // _VIRT_MIN_CELLS the mount detaches the CONTENTS of every td in columns
+    // beyond the initial horizontal window, keeping each cell's display value
+    // in a map so the search stays whole-chip (docs/85: a value must stay
+    // findable even when its column is off-screen). Hydration is ONE-WAY and
+    // on-demand: horizontal scroll, keyboard nav entering the column, or any
+    // painter that addresses cells by path. Below the threshold nothing
+    // changes - small chips are byte-identical, which is also the safety
+    // gate every existing test chip rides.
+    var _VIRT_MIN_CELLS = 4000;
+    var _VIRT_BUFFER = 1.5;          // hydrate up to 1.5 viewports ahead
+    var _virt = null;                // { html:Map, vals:Map, cold:Set, wrap }
+    function _virtStyleEl() {
+        var el = document.getElementById('bulk-virt-width-style');
+        if (!el) { el = document.createElement('style'); el.id = 'bulk-virt-width-style'; document.head.appendChild(el); }
+        return el;
+    }
+    function _cssEsc(k) { return (window.CSS && CSS.escape) ? CSS.escape(k) : String(k).replace(/"/g, '\\"'); }
+    function _virtInit() {
+        _virt = null;
+        _virtStyleEl().textContent = '';
+        var t = table(); if (!t) return;
+        var tds = t.querySelectorAll('tbody td[data-col-key]');
+        if (tds.length < _VIRT_MIN_CELLS) return;
+        var wrap = t.closest('.bulk-scroll') || t.parentElement;
+        var edge = ((wrap && wrap.clientWidth) || window.innerWidth || 1200) * (1 + _VIRT_BUFFER);
+        var cold = new Set(), widths = [];
+        t.querySelectorAll('th.bulk-col-head[data-col-key]').forEach(function (h) {
+            if (h.offsetLeft > edge) {
+                var k = h.getAttribute('data-col-key');
+                cold.add(k);
+                // freeze the value-fit width so pruning can't shift the layout
+                widths.push('#bulk-table th[data-col-key="' + _cssEsc(k) + '"]{min-width:' + h.offsetWidth + 'px}');
+            }
+        });
+        if (!cold.size) return;
+        _virt = { html: new Map(), vals: new Map(), cold: cold, wrap: wrap };
+        _virtStyleEl().textContent = widths.join('\n');
+        Array.prototype.forEach.call(tds, function (td) {
+            if (!_virt.cold.has(td.getAttribute('data-col-key'))) return;
+            var inp = td.querySelector('.bulk-cell');
+            var v = inp ? String(inp.value) : (td.textContent || '');
+            _virt.vals.set(td, v.toLowerCase());
+            _virt.html.set(td, td.innerHTML);
+            td.innerHTML = '';
+            td.classList.add('bulk-td-cold');
+        });
+        if (wrap && !wrap._virtScrollBound) {
+            wrap._virtScrollBound = true;
+            wrap.addEventListener('scroll', _virtOnScroll, { passive: true });
+        }
+    }
+    function _virtHydrateCol(key) {
+        if (!_virt || !_virt.cold.has(key)) return;
+        _virt.cold.delete(key);
+        var t = table(); if (!t) { _virt = null; return; }
+        t.querySelectorAll('td[data-col-key="' + _cssEsc(key) + '"]').forEach(function (td) {
+            var h = _virt.html.get(td);
+            if (h != null) { td.innerHTML = h; _virt.html.delete(td); _virt.vals.delete(td); }
+            td.classList.remove('bulk-td-cold');
+        });
+        if (!_virt.cold.size) { _virt = null; _virtStyleEl().textContent = ''; }
+        _hayCache = null;            // hydrated inputs join the DOM haystacks
+    }
+    function _virtEnsureTd(td) {
+        if (_virt && td) {
+            var k = td.getAttribute('data-col-key');
+            if (k && _virt.cold.has(k)) _virtHydrateCol(k);
+        }
+    }
+    function _virtHydrateAll() {
+        if (!_virt) return;
+        Array.from(_virt.cold).forEach(_virtHydrateCol);
+    }
+    var _virtScrollPending = false;
+    function _virtOnScroll() {
+        if (!_virt || _virtScrollPending) return;
+        _virtScrollPending = true;
+        window.requestAnimationFrame(function () {
+            _virtScrollPending = false;
+            if (!_virt) return;
+            var t = table(); if (!t) return;
+            var wrap = _virt.wrap;
+            var edge = (wrap ? wrap.scrollLeft + wrap.clientWidth : 0)
+                + ((wrap && wrap.clientWidth) || 1200) * _VIRT_BUFFER;
+            var due = [];
+            t.querySelectorAll('th.bulk-col-head[data-col-key]').forEach(function (h) {
+                var k = h.getAttribute('data-col-key');
+                if (_virt && _virt.cold.has(k) && h.offsetLeft < edge) due.push(k);
+            });
+            due.forEach(_virtHydrateCol);
         });
     }
 
@@ -1260,6 +1370,7 @@
             _applyColumnVisibility();
             _applyQubitVisCore();   // restore the persisted ⚏ Qubits selection
             _recomputeStats();
+            _virtInit();            // docs/105 #1 - after layout is final
             _setupTopScroll();
             _applyFont();
             _updateTopScroll();
@@ -1737,6 +1848,7 @@
     // a per-neighbour column renders a blank for every qubit that is not in
     // that pair (a real chip went from 2 to 48 consecutive dead stops).
     function _editableIn(td) {
+        _virtEnsureTd(td);           // docs/105 #1 - nav into a cold column hydrates it
         var c = td && td.querySelector('.bulk-cell');
         return c && !c.classList.contains('bulk-cell-ro') ? c : null;
     }
