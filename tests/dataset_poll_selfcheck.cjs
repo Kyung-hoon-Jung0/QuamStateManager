@@ -17,7 +17,16 @@
  *     cursor past a window nobody scanned)
  *   * a successful poll clears the backoff
  *   * `partial: true` schedules a prompt catch-up rather than waiting out the
- *     full 60s interval
+ *     full poll interval
+ *
+ * Arrival visibility (docs/104 #3):
+ *   * the DEFAULT poll interval is 15s (a run must not take a minute to
+ *     appear); `datasetPollInterval` pins it, and a legacy
+ *     `autoRefreshInterval` tuned away from its shipped 60 still wins
+ *   * a delta HELD while the user is active raises the "N new runs ↑" pill
+ *     (the hold itself is unchanged — that part was always correct)
+ *   * clicking the pill applies the held delta immediately and the count clears
+ *   * rows the delta inserts render with the ds-row-new flash class
  *
  * Exit codes: 0 ok, 1 assertion failed, 2 jsdom unavailable (driver skips).
  */
@@ -36,6 +45,10 @@ try {
 
 const SRC = path.join(__dirname, '..', 'quam_state_manager', 'web', 'static',
                       'dataset-virtual.js');
+
+// The true Node setInterval, captured ONCE — each boot() installs a recording
+// pass-through over it (never over a previous boot's recorder).
+const NODE_SET_INTERVAL = global.setInterval;
 
 let failures = 0;
 let checks = 0;
@@ -82,7 +95,7 @@ function makeDom() {
  * ``window`` through Node's global scope, so a module that assigns
  * ``window.X = ...`` at top level needs it bound before the eval.
  */
-function boot(fetchImpl) {
+function boot(fetchImpl, uiConfig) {
     const dom = makeDom();
     const w = dom.window;
     global.window = w;
@@ -95,6 +108,15 @@ function boot(fetchImpl) {
     global.requestAnimationFrame = w.requestAnimationFrame;
     global.cancelAnimationFrame = w.cancelAnimationFrame;
     global.localStorage = w.localStorage;
+    if (uiConfig !== undefined) w.UI_CONFIG = uiConfig;   // before eval — init reads it
+    // Record every setInterval delay so the poll-interval default is pinnable.
+    // The module's bare `setInterval` resolves through NODE's global scope
+    // (same reason the other globals above are re-pointed), so the recorder
+    // must sit on `global` — always wrapping the true Node original.
+    const intervals = [];
+    const recInterval = function (fn, ms) { intervals.push(ms); return NODE_SET_INTERVAL(fn, ms); };
+    w.setInterval = recInterval;
+    global.setInterval = recInterval;
     const calls = [];
     const stub = function (url, opts) {
         calls.push({ url: String(url), opts: opts || {} });
@@ -105,7 +127,7 @@ function boot(fetchImpl) {
     const code = fs.readFileSync(SRC, 'utf8');
     w.eval(code);
     w.DatasetVirtual.init();
-    return { dom, w, calls };
+    return { dom, w, calls, intervals };
 }
 
 /** Force one poll the way the browser does when the tab comes forward. */
@@ -329,6 +351,90 @@ function jsonResponse(body, status) {
         // rowsById is keyed by the folder-aware uid, which is what getRow takes.
         ok(w.DatasetVirtual.getRow('fold1:2') != null,
            'a new run from the delta lands in the store');
+    }
+
+    // ------------------------------------------------------------------
+    // 10. Poll-interval default + config precedence (docs/104 #3).
+    //     Default 15s; `datasetPollInterval` pins it; a legacy
+    //     `autoRefreshInterval` tuned away from its shipped 60 still wins;
+    //     the shipped 60 itself is NOT a choice and no longer pins the
+    //     table to a minute.
+    // ------------------------------------------------------------------
+    {
+        const a = boot(() => jsonResponse({ updated: [], vanished: [], now: 2000 }));
+        ok(a.intervals.indexOf(15000) !== -1,
+           `default dataset poll interval is 15s (got ${a.intervals})`);
+        const b = boot(() => jsonResponse({ updated: [], vanished: [], now: 2000 }),
+                       { autoRefreshInterval: 120 });
+        ok(b.intervals.indexOf(120000) !== -1,
+           'a lab-tuned autoRefreshInterval still wins over the 15s default');
+        const c = boot(() => jsonResponse({ updated: [], vanished: [], now: 2000 }),
+                       { autoRefreshInterval: 60 });
+        ok(c.intervals.indexOf(15000) !== -1,
+           'the shipped autoRefreshInterval=60 is not a choice — default 15s applies');
+        const d = boot(() => jsonResponse({ updated: [], vanished: [], now: 2000 }),
+                       { datasetPollInterval: 45, autoRefreshInterval: 120 });
+        ok(d.intervals.indexOf(45000) !== -1,
+           'datasetPollInterval outranks autoRefreshInterval for this poll');
+    }
+
+    // ------------------------------------------------------------------
+    // 11. A delta HELD while the user is active raises the pill (the hold
+    //     itself is the pinned docs/80 behaviour and stays); clicking the
+    //     pill applies the held delta NOW and clears the count. The
+    //     inserted row then renders with the flash class.
+    // ------------------------------------------------------------------
+    {
+        const NEW_ROW = { id: 7, exp: 'fresh_run', date: '2026-08-10', time: '03:00:00',
+                          q: ['q3'], p: [], oc: {}, metric: '', bm: false, tags: [],
+                          status: 'successful', dur: 1, note: '', parent: null,
+                          hs: false, sm: {}, pm: {}, f: 'fold1' };
+        const { w } = boot(() => jsonResponse({ updated: [NEW_ROW], vanished: [], now: 8000 }));
+        // Make the user "active" the way the app does: a scroll on the list.
+        w.document.getElementById('datasets-scroll').dispatchEvent(new w.Event('scroll'));
+        pump(w);
+        await wait(40);
+        ok(w.DatasetVirtual.getRow('fold1:7') == null,
+           'the delta is HELD while the user is active (pinned hold unchanged)');
+        const pill = w.document.getElementById('ds-new-pill');
+        ok(pill != null, 'the arrival pill exists');
+        ok(pill && pill.hidden === false, 'the pill is visible while a delta is held');
+        ok(pill && /1 new run/.test(pill.textContent),
+           `the pill counts the held new run (got "${pill && pill.textContent}")`);
+        pill.click();
+        ok(w.DatasetVirtual.getRow('fold1:7') != null,
+           'clicking the pill applies the held delta immediately');
+        ok(pill.hidden === true, 'clicking the pill clears + hides it');
+        await wait(120);   // let the rAF render land
+        const tbody = w.document.getElementById('datasets-tbody');
+        const tr = tbody.querySelector('tr[data-id="fold1:7"]');
+        ok(tr != null, 'the new run is rendered');
+        ok(tr != null && tr.classList.contains('ds-row-new'),
+           'a just-inserted row carries the ds-row-new flash class');
+        const old = tbody.querySelector('tr[data-id="fold1:1"]');
+        ok(old != null && !old.classList.contains('ds-row-new'),
+           'pre-existing rows do not flash');
+    }
+
+    // ------------------------------------------------------------------
+    // 12. An idle apply (no hold) still announces: pill shows, and the
+    //     user reaching the top of the list acknowledges it (the pill's
+    //     own click performs that same scroll-to-top).
+    // ------------------------------------------------------------------
+    {
+        const NEW_ROW = { id: 9, exp: 'idle_run', date: '2026-08-10', time: '04:00:00',
+                          q: ['q1'], p: [], oc: {}, metric: '', bm: false, tags: [],
+                          status: 'successful', dur: 1, note: '', parent: null,
+                          hs: false, sm: {}, pm: {}, f: 'fold1' };
+        const { w } = boot(() => jsonResponse({ updated: [NEW_ROW], vanished: [], now: 9000 }));
+        pump(w);
+        await wait(40);
+        ok(w.DatasetVirtual.getRow('fold1:9') != null, 'idle poll applies directly');
+        const pill = w.document.getElementById('ds-new-pill');
+        ok(pill && pill.hidden === false, 'an applied arrival still shows the pill');
+        // The user scrolls (jsdom scrollTop stays 0 = at the top) → acknowledged.
+        w.document.getElementById('datasets-scroll').dispatchEvent(new w.Event('scroll'));
+        ok(pill.hidden === true, 'reaching the top of the list acknowledges applied arrivals');
     }
 
     if (failures) {

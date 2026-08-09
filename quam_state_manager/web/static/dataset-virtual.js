@@ -23,6 +23,10 @@
     var ROW_HEIGHT = 32;          // Must match CSS in style.css (.datasets-scroll tbody tr)
     var OVERSCAN = 10;            // Buffer rows above and below the viewport.
     var IDLE_DEFER_MS = 5000;     // Defer delta-poll merges if user interacted within this window.
+    // How long a just-inserted row stays flash-eligible. Slightly longer than
+    // the 2s CSS animation (ds-row-arrived) so a virtual-scroll rebuild
+    // mid-flash restarts it visibly instead of cutting it dead (docs/104 #3).
+    var ARRIVAL_FLASH_MS = 2600;
     // Reserved tag backing the ⭐ favorite (shown as the star, not a tag badge).
     // Keep in sync with FAVORITE_TAG in core/dataset.py + app.js.
     var FAVORITE_TAG = 'favorite';
@@ -107,9 +111,15 @@
         pollTs: 0,
         pollTimer: null,
         pollInFlight: false,
-        pollIntervalMs: 60000,
+        pollIntervalMs: 15000,
         lastInteractionTs: 0,
         pendingDelta: null,        // Buffered server response held while user is busy
+        // Arrival visibility (docs/104 #3): uids of new runs not yet
+        // acknowledged (held in pendingDelta OR already spliced in) — the
+        // "N new runs ↑" pill's count — and uids whose row should flash
+        // briefly (uid → expiry ms) when the virtual scroller renders it.
+        arrivalUids: new Set(),
+        flashUids: new Map(),
         // Liveness bookkeeping for the poll (docs/80): when the current request
         // started (watchdog), how many consecutive failures (backoff), until
         // when to skip polling, and whether the server asked us back early
@@ -495,7 +505,11 @@
 
     function renderRowHtml(row, cols) {
         cols = cols || visibleColumns();
-        var html = '<tr class="clickable-row" data-id="' + row.uid + '" data-folder-key="' + (row.f || '') + '" data-exp="' + escapeHtml(row.exp || '') + '">';
+        // Just-arrived rows flash (docs/104 #3) — the class re-applies on any
+        // rebuild inside the flash window (innerHTML makes a fresh <tr>, so
+        // the CSS animation restarts); _flashActive expires it after that.
+        var cls = 'clickable-row' + (_flashActive(row.uid) ? ' ds-row-new' : '');
+        var html = '<tr class="' + cls + '" data-id="' + row.uid + '" data-folder-key="' + (row.f || '') + '" data-exp="' + escapeHtml(row.exp || '') + '">';
         for (var i = 0; i < cols.length; i++) {
             var c = cols[i];
             html += '<td class="' + (c.cls || '') + '" data-col-key="' + c.key + '">' + c.render(row) + '</td>';
@@ -846,11 +860,20 @@
         // (pointerdown, no click) keeps pressActive=true and freezes the virtual window
         // until the 1500ms safety timeout, so the user scrolls into blank spacer rows.
         clearPress();
+        // Reaching the top of the list acknowledges APPLIED arrivals — the
+        // pill's own click performs exactly this scroll, so a user who gets
+        // there themselves has seen the same thing (docs/104 #3). Held runs
+        // are NOT acknowledged: they are not in the table yet.
+        if (state.arrivalUids && state.arrivalUids.size && !state.pendingDelta &&
+            state.scrollEl && state.scrollEl.scrollTop <= ROW_HEIGHT) {
+            state.arrivalUids.clear();
+            _updateNewPill();
+        }
         scheduleRender(false);   // window-dedup: skip the rebuild if first/last unchanged
     }
 
     function onTbodyClick(e) {
-        // A row click IS an interaction — defer the 60s delta-poll merge so it can't
+        // A row click IS an interaction — defer the delta-poll merge so it can't
         // rebuild the rows mid-click (the press→click race). The press has resolved, so
         // renders may resume.
         markInteraction();
@@ -916,7 +939,7 @@
     // out from under the click. Only for the row-detail path — the star/tag/checkbox
     // affordances handle themselves in onTbodyClick.
     function onTbodyPointerDown(e) {
-        // Mark the press as a real interaction so a 60s delta-poll merge (common while a
+        // Mark the press as a real interaction so a delta-poll merge (common while a
         // live experiment writes runs) is DEFERRED — without this an idle clicker's poll
         // merge re-sorts + rebuilds tbody.innerHTML between press and click, detaching the
         // pressed row so the click misses (the intermittent dead click). pressActive
@@ -1160,8 +1183,13 @@
                 }
                 if (activeRecently()) {
                     // Hold the delta until the user is idle to avoid jumping
-                    // their search/scroll out from under them.
+                    // their search/scroll out from under them — but SAY SO
+                    // (docs/104 #3): count the genuinely-new runs in the held
+                    // delta so the pill announces them. Overwriting a prior
+                    // pendingDelta stays correct (pollTs never advanced, so
+                    // the newer delta is a superset) and the uid Set dedups.
                     state.pendingDelta = data;
+                    _noteHeldArrivals(data);
                     return;
                 }
                 applyDelta(data);
@@ -1187,6 +1215,7 @@
 
     function applyDelta(data) {
         var changed = false;
+        var newUids = [];          // genuinely-new runs (insert, not in-place update)
         var updated = data.updated || [];
         for (var i = 0; i < updated.length; i++) {
             var row = updated[i];
@@ -1196,6 +1225,7 @@
             if (idx == null) {
                 state.rows.push(row);
                 state.rowsById.set(row.uid, state.rows.length - 1);
+                newUids.push(row.uid);
             } else {
                 state.rows[idx] = row;
             }
@@ -1204,6 +1234,10 @@
         var vanished = data.vanished || [];
         for (var v = 0; v < vanished.length; v++) {
             var vid = vanished[v];
+            // A vanished run must not stay counted/flashing — including one
+            // that was only ever counted while HELD (never inserted).
+            state.arrivalUids.delete(vid);
+            state.flashUids.delete(vid);
             var vidx = state.rowsById.get(vid);
             if (vidx == null) continue;
             // Tombstone — splice would re-index every entry in rowsById.
@@ -1226,6 +1260,18 @@
             state.rows = compact;
         }
         state.pollTs = Math.max(state.pollTs, data.now);   // monotonic — out-of-order responses can't rewind
+        // Arrival visibility (docs/104 #3): inserted rows flash on their next
+        // render, and stay counted in the pill until acknowledged (pill click
+        // or the user reaching the top of the list themselves). Set BEFORE
+        // applyFilters below so the re-render already carries the class.
+        if (newUids.length) {
+            var flashUntil = Date.now() + ARRIVAL_FLASH_MS;
+            for (var n = 0; n < newUids.length; n++) {
+                state.flashUids.set(newUids[n], flashUntil);
+                state.arrivalUids.add(newUids[n]);
+            }
+        }
+        _updateNewPill();
         if (changed) {
             _rebuildFitKeys();     // a delta may introduce a brand-new fit key / qubit
             _rebuildParamFacets(); // …or a brand-new param key/value facet
@@ -1239,9 +1285,83 @@
     function flushPendingIfIdle() {
         if (!state.pendingDelta) return;
         if (activeRecently()) return;
+        flushPendingNow();
+    }
+
+    // The one flush body — flushPendingIfIdle is this behind the idle gate;
+    // the "N new runs ↑" pill calls it directly because its click is an
+    // EXPLICIT request to see the held runs (the idle gate protects against
+    // surprise, and the click is the opposite of surprise).
+    function flushPendingNow() {
         var d = state.pendingDelta;
+        if (!d) return;
         state.pendingDelta = null;
         applyDelta(d);
+    }
+
+    // ── Arrival visibility (docs/104 #3) ─────────────────────────────────
+    // A run that just finished used to splice in silently (or sit invisibly
+    // in pendingDelta while the user scrolled). Three announcements, none of
+    // which touch the poll/cursor/hold semantics (docs/80): the held state
+    // gets a pill, the applied rows get a flash, and the pill's click is the
+    // escape hatch that applies + scrolls to where new runs sort.
+
+    function _noteHeldArrivals(data) {
+        var updated = (data && data.updated) || [];
+        for (var i = 0; i < updated.length; i++) {
+            var uid = (updated[i].f || '') + ':' + updated[i].id;
+            if (!state.rowsById || !state.rowsById.has(uid)) state.arrivalUids.add(uid);
+        }
+        _updateNewPill();
+    }
+
+    // Whether a row should carry the flash class on THIS render; expired
+    // entries are dropped lazily so a later re-render can't re-flash.
+    function _flashActive(uid) {
+        if (!state.flashUids || !state.flashUids.size) return false;
+        var until = state.flashUids.get(uid);
+        if (until == null) return false;
+        if (Date.now() > until) { state.flashUids.delete(uid); return false; }
+        return true;
+    }
+
+    // The pill lives in the digest band when the page has one, else beside
+    // the page title — both stay on screen while the table scrolls
+    // internally, so the announcement is visible from anywhere in the list.
+    // Created lazily per init (every HTMX swap of #table-pane destroys it).
+    function _ensureNewPill() {
+        var el = document.getElementById('ds-new-pill');
+        if (el) return el;
+        if (!state.scrollEl || !state.scrollEl.parentNode) return null;
+        el = document.createElement('button');
+        el.type = 'button';
+        el.id = 'ds-new-pill';
+        el.className = 'ds-new-pill';
+        el.hidden = true;
+        el.title = 'Show the new runs — applies the held update and scrolls to the top';
+        el.addEventListener('click', _onNewPillClick);
+        var page = state.scrollEl.closest ? state.scrollEl.closest('.datasets-page') : null;
+        var host = page && (page.querySelector('.ds-digest-band') ||
+                            page.querySelector('.table-header-row h2'));
+        if (host) host.appendChild(el);
+        else state.scrollEl.parentNode.insertBefore(el, state.scrollEl);
+        return el;
+    }
+
+    function _updateNewPill() {
+        var el = _ensureNewPill();
+        if (!el) return;
+        var n = state.arrivalUids ? state.arrivalUids.size : 0;
+        if (!n) { el.hidden = true; return; }
+        el.textContent = n + ' new run' + (n === 1 ? '' : 's') + ' ↑';
+        el.hidden = false;
+    }
+
+    function _onNewPillClick() {
+        flushPendingNow();                 // held runs land NOW (explicit request)
+        if (state.arrivalUids) state.arrivalUids.clear();
+        _updateNewPill();
+        if (state.scrollEl) state.scrollEl.scrollTop = 0;   // where new runs sort (newest-first default)
     }
 
     function startPolling() {
@@ -1879,8 +1999,21 @@
         state.lastLast = -1;
         state.pollTs = initialTs;
         state.pendingDelta = null;
-        // Honor the configurable interval used by the rest of the app.
-        var cfgSecs = (window.UI_CONFIG && window.UI_CONFIG.autoRefreshInterval) || 60;
+        // Fresh full payload — new runs are simply IN it, so arrival
+        // bookkeeping resets (the old pill node died with the swapped pane).
+        state.arrivalUids = new Set();
+        state.flashUids = new Map();
+        // Poll interval (docs/104 #3): a run that just finished must not take
+        // a minute to appear, so the DEFAULT is 15s — a tick is ~3.5ms
+        // server-side (docs/103) and docs/80's budgets/backoff bound the bad
+        // cases. A user-configured value still wins: `datasetPollInterval`
+        // pins this poll explicitly, and the legacy shared
+        // `autoRefreshInterval` is honored when a lab tuned it away from its
+        // shipped 60 (the shipped 60 was a global default, never a
+        // per-surface choice — it must not pin this table to a minute).
+        var uiCfg = window.UI_CONFIG || {};
+        var cfgSecs = uiCfg.datasetPollInterval ||
+                      (uiCfg.autoRefreshInterval !== 60 ? uiCfg.autoRefreshInterval : 0) || 15;
         state.pollIntervalMs = Math.max(5, cfgSecs) * 1000;
 
         // HTMX innerHTML swaps replace the entire tree under #table-pane, so
@@ -1947,6 +2080,7 @@
         }
         applyFilters();
 
+        _updateNewPill();   // mount the (hidden) arrival pill in its host early
         startPolling();
     }
 

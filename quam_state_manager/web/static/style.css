@@ -5300,6 +5300,38 @@ table.h5-vars-table tr.h5-var-selected .btn-sm { background: var(--pico-primary)
 .ds-digest-band .ds-digest-bad { border-color: var(--pico-del-color); color: var(--pico-del-color); font-weight: 600; }
 .ds-digest-band .ds-help-example:hover { background: rgba(128,128,128,0.12); }
 
+/* docs/104 #3 — arrival visibility. The "N new runs ↑" pill counts held
+   (pending-delta) + just-arrived runs; dataset-virtual.js creates it in the
+   digest band (fallback: beside the page title) and clicking it applies the
+   held delta and scrolls to the top. Tinted from the theme's own primary so
+   it reads in both themes. */
+.ds-new-pill {
+    background: color-mix(in srgb, var(--pico-primary) 14%, transparent);
+    color: var(--pico-primary);
+    border: 1px solid var(--pico-primary); border-radius: 999px;
+    padding: 0 0.55rem; font-size: 0.75rem; font-weight: 600; line-height: 1.6;
+    cursor: pointer; width: auto; margin: 0; white-space: nowrap;
+    vertical-align: middle;
+}
+.ds-new-pill:hover { background: color-mix(in srgb, var(--pico-primary) 26%, transparent); }
+.ds-new-pill[hidden] { display: none; }
+
+/* Rows the delta poll just inserted flash briefly (both themes — the tint is
+   mixed from the theme-adjusted primary). The virtual scroller re-creates the
+   <tr> on every rebuild, so the animation restarts while dataset-virtual.js
+   keeps the row flash-eligible (ARRIVAL_FLASH_MS), then drops the class. */
+@keyframes ds-row-arrived {
+    0% { background: color-mix(in srgb, var(--pico-primary) 24%, transparent); }
+    100% { background: transparent; }
+}
+.datasets-table-virtual tbody tr.ds-row-new { animation: ds-row-arrived 2s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+    /* per-animation reduced-motion discipline: keep a static tint so an
+       arrival still reads; the next natural rebuild clears it. */
+    .datasets-table-virtual tbody tr.ds-row-new { animation: none;
+        background: color-mix(in srgb, var(--pico-primary) 12%, transparent); }
+}
+
 /* Ctrl+Z in the Generate wizard flashes the field the undo restored. */
 .wiz-undo-flash {
     outline: 2px solid var(--pico-primary) !important;
