@@ -29,7 +29,7 @@ from pathlib import Path
 
 import pytest
 
-from quam_state_manager.core import instances, scheduler
+from quam_state_manager.core import instances, scheduler, working_copy
 from quam_state_manager.web.app import create_app
 
 
@@ -467,3 +467,119 @@ class TestSameChipBanner:
         html = c.get("/qubits").get_data(as_text=True)
         assert 'id="multi-instance-slot"' in html
         assert "/instances/banner" in html
+
+
+# ======================================================================
+# Working-copy GC × the registry (red-team S1, data loss)
+# ======================================================================
+
+class TestGcPeerProtection:
+    """GC must consult the instance registry before deleting.
+
+    Window 1 holding a chip with IN-MEMORY-only edits scans provably clean
+    ON DISK (working content == synced_live_hash; memory is invisible to
+    the scan), so window 2's GC used to rmtree the very folder window 1
+    was about to save into. Liveness ALONE is the protection criterion —
+    the peer's apparent dirty state proves nothing about its memory.
+    """
+
+    def _gc_app(self, tmp_path):
+        inst = tmp_path / "_inst"
+        app = create_app(testing=True, instance_path=str(inst))
+        return app, app.test_client(), Path(app.instance_path)
+
+    def _clean_copy(self, inst: Path, live: Path):
+        """A working copy that scans provably clean — GC bait."""
+        live.mkdir(parents=True, exist_ok=True)
+        (live / "state.json").write_text(
+            json.dumps({"qubits": {"qA1": {"id": "qA1"}}}), encoding="utf-8")
+        (live / "wiring.json").write_text(
+            json.dumps({"wiring": {}, "network": {}}), encoding="utf-8")
+        return working_copy.create(inst, live)
+
+    def _peer_record(self, inst: Path, pid: int, chip_path, port=5175):
+        d = inst / "instances"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{pid}.json").write_text(json.dumps({
+            "pid": pid, "port": port, "chip_path": chip_path,
+            "chip_fs_key": "", "chip_name": "Peer", "roots": [],
+            "updated_utc": "2026-08-09T00:00:00+00:00"}), encoding="utf-8")
+
+    def test_a_live_peers_chip_survives_gc(self, tmp_path, foreign_pid):
+        """THE fix: a registered live peer's chip is kept — and the
+        protection is targeted, so a genuinely orphaned clean copy still
+        goes in the same GC pass."""
+        _app, c, inst = self._gc_app(tmp_path)
+        peer_live = tmp_path / "peerchip" / "quam_state"
+        held = self._clean_copy(inst, peer_live)
+        orphan = self._clean_copy(inst, tmp_path / "orphan" / "quam_state")
+        self._peer_record(inst, foreign_pid, str(peer_live))
+        r = c.post("/api/working-copies/gc")
+        assert r.status_code == 200
+        assert held.working_folder.exists(), \
+            "GC deleted the folder a live window may be about to save into"
+        assert held.meta_path().exists()
+        assert not orphan.working_folder.exists(), "protection must be targeted"
+        assert r.get_json()["deleted"] == 1
+
+    def test_the_peers_key_is_in_the_in_use_set(self, tmp_path, foreign_pid):
+        """The key folded in is THE scanner's own derivation (key_for),
+        never a hand-rolled twin."""
+        from quam_state_manager.web import routes
+        app, _c, inst = self._gc_app(tmp_path)
+        peer_live = tmp_path / "peerchip" / "quam_state"
+        self._clean_copy(inst, peer_live)
+        self._peer_record(inst, foreign_pid, str(peer_live))
+        with app.app_context():
+            assert working_copy.key_for(peer_live) in routes._wc_keys_in_use()
+
+    def test_a_dead_peer_does_not_protect(self, tmp_path, dead_pid):
+        _app, c, inst = self._gc_app(tmp_path)
+        bait = self._clean_copy(inst, tmp_path / "peerchip" / "quam_state")
+        self._peer_record(inst, dead_pid, str(tmp_path / "peerchip" / "quam_state"))
+        r = c.post("/api/working-copies/gc")
+        assert r.status_code == 200
+        assert r.get_json()["deleted"] == 1
+        assert not bait.working_folder.exists(), \
+            "a stale registry entry must not immortalize working copies"
+
+    def test_a_corrupt_registry_entry_neither_crashes_nor_protects(
+            self, tmp_path, foreign_pid):
+        _app, c, inst = self._gc_app(tmp_path)
+        bait = self._clean_copy(inst, tmp_path / "bait" / "quam_state")
+        d = inst / "instances"
+        d.mkdir(parents=True, exist_ok=True)
+        bad = d / "434343.json"
+        bad.write_text("{ not json", encoding="utf-8")
+        os.utime(bad, (time.time() - 60, time.time() - 60))
+        # A LIVE peer whose chip_path is not even a string.
+        self._peer_record(inst, foreign_pid, {"weird": 1})
+        r = c.post("/api/working-copies/gc")
+        assert r.status_code == 200
+        assert r.get_json()["deleted"] == 1
+        assert not bait.working_folder.exists()
+
+    def test_registry_read_failure_does_not_block_gc(self, tmp_path, monkeypatch):
+        """A raising peers() must degrade to no-peer-keys, never to keep_fn
+        raising — that would make gc skip-to-be-safe EVERY copy forever."""
+        _app, c, inst = self._gc_app(tmp_path)
+        bait = self._clean_copy(inst, tmp_path / "bait" / "quam_state")
+
+        def boom(*_a, **_k):
+            raise RuntimeError("registry unreadable")
+
+        monkeypatch.setattr(instances, "peers", boom)
+        r = c.post("/api/working-copies/gc")
+        assert r.status_code == 200
+        assert r.get_json()["deleted"] == 1
+        assert not bait.working_folder.exists()
+
+    def test_no_peers_means_byte_identical_single_window_gc(self, tmp_path):
+        """SM-additive: with no registry entries beyond our own, GC behaves
+        exactly as before the fix."""
+        _app, c, inst = self._gc_app(tmp_path)
+        bait = self._clean_copy(inst, tmp_path / "solo" / "quam_state")
+        r = c.post("/api/working-copies/gc")
+        assert r.status_code == 200
+        assert r.get_json()["deleted"] == 1
+        assert not bait.working_folder.exists()

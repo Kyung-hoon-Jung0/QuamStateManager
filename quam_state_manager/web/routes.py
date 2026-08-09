@@ -13840,8 +13840,9 @@ def api_topology_mtime():
 
 
 def _wc_keys_in_use() -> set[str]:
-    """Working-copy keys the running app may still mutate — the active
-    context plus everything in the in-memory QUAM cache. GC must never
+    """Working-copy keys a running State Manager may still mutate — this
+    process's active context plus everything in its in-memory QUAM cache,
+    UNION every live peer window's open chip (docs/80). GC must never
     delete these even when they scan as clean (an unsaved in-memory edit
     is invisible on disk)."""
     keys: set[str] = set()
@@ -13854,6 +13855,30 @@ def _wc_keys_in_use() -> set[str]:
         wc = c.get("working_copy") if isinstance(c, dict) else None
         if wc is not None:
             keys.add(wc.key)
+    # docs/80: other live windows share this instance dir, so THEIR open
+    # chip's working copy can scan provably clean on disk while the peer
+    # holds in-memory-only edits it is about to save — memory is invisible
+    # to the scan, which is exactly why liveness ALONE protects, never the
+    # peer's apparent dirty state. peers() PID-probes each entry itself, so
+    # a dead window's chip is not protected. Best-effort union: a peer
+    # record with a missing/invalid chip_path contributes nothing, and a
+    # registry read failure must never block GC of genuinely-orphaned
+    # copies (raising here would make keep_fn skip-to-be-safe EVERY copy).
+    try:
+        from quam_state_manager.core import instances
+        for peer in instances.peers(current_app.instance_path):
+            chip_path = peer.chip_path
+            if not chip_path or not isinstance(chip_path, str):
+                continue
+            try:
+                # THE key derivation the GC scanner names folders by —
+                # never a hand-rolled twin.
+                keys.add(working_copy.key_for(chip_path))
+            except Exception:   # noqa: BLE001 — malformed path ⇒ protects nothing
+                continue
+    except Exception:           # noqa: BLE001 — registry trouble ⇒ no peer keys
+        logger.debug("GC peer protection: instance registry unreadable",
+                     exc_info=True)
     return keys
 
 
