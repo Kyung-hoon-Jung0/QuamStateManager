@@ -9700,8 +9700,10 @@ window.clearDatasetCheckboxes = function() {
  */
 window.compareSelectedDatasets = function() {
     var ids = _selectedRunIds();
-    if (ids.length < 2 || ids.length > 8) {
-        alert('Select 2-8 runs to compare.');
+    // docs/104 #13: the toolbar disables Compare above 5, so this alert
+    // promised a limit (8) no click could reach — one number everywhere.
+    if (ids.length < 2 || ids.length > 5) {
+        alert('Select 2-5 runs to compare.');
         return;
     }
     htmx.ajax('GET', '/datasets/compare?ids=' + ids.join(','),

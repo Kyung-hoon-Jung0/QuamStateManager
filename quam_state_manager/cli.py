@@ -159,7 +159,20 @@ def _run_app(flask_app, *, host: str, port: int, debug: bool) -> None:
         typer.echo("(waitress not installed - falling back to Flask's dev server)")
         flask_app.run(host=host, port=port, debug=False)
         return
-    waitress_serve(flask_app, host=host, port=port)
+    try:
+        waitress_serve(flask_app, host=host, port=port)
+    except OSError as exc:
+        # docs/104 #17: the friendly banner prints BEFORE the bind, so a
+        # second `qsm serve` on the same port used to say "open http://..."
+        # and then die with a raw WinError 10048 traceback. ASCII only.
+        if getattr(exc, "errno", None) in (98, 10013, 10048) \
+                or "in use" in str(exc).lower():
+            typer.echo(f"ERROR: port {port} is already in use - another "
+                       "State Manager (or app) is serving there.\n"
+                       f"Pick another port:  qsm serve --port {port + 1}",
+                       err=True)
+            raise typer.Exit(code=1)
+        raise
 
 
 # ------------------------------------------------------------------

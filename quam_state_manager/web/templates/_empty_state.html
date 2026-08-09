@@ -6,7 +6,9 @@
     <h3 class="pane-empty-title">{{ title or "No chip loaded" }}</h3>
     <p class="pane-empty-hint">
         {% if page %}Load a chip to view {{ page }}.{% else %}Load a chip to get started.{% endif %}
-        <br>Pick a state folder from the <strong>Workspace</strong> panel on the left,
+        {# docs/104 #6: said "Workspace panel" long after that panel was renamed —
+           the one instruction every pre-load click renders. #}
+        <br>Pick a state folder with <strong>State Load</strong> in the left sidebar,
         or use <strong>Generate Config</strong> to build a new one.
     </p>
 </div>
