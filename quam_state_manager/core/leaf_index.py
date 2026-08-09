@@ -653,15 +653,33 @@ def recent_changes(conn: sqlite3.Connection, *, limit: int = 200,
 def search_paths(conn: sqlite3.Connection, query: str, *,
                  limit: int = 50) -> list[dict]:
     """Substring match over indexed paths, with each path's change count —
-    the typeahead behind "which parameter do you mean?"."""
-    q = (query or "").strip()
-    if not q:
+    the typeahead behind "which parameter do you mean?".
+
+    Shared grammar (docs/96): space = AND, a standalone ``|`` = OR — the WHERE
+    clause is (AND over groups) of (OR over ``LIKE`` terms). The old code put
+    the WHOLE trimmed query into one ``LIKE``, which made a multi-word query
+    structurally unable to hit: 0 of 2,158 indexed paths on a real chip
+    contain a space. A single-word query builds the identical single-LIKE
+    clause it always did.
+    """
+    from quam_state_manager.core.search_query import groups as _sq_groups
+
+    grps = _sq_groups(query or "")
+    if not grps:
         return []
-    like = "%" + q.replace("%", r"\%").replace("_", r"\_") + "%"
+
+    def _like(term: str) -> str:
+        return "%" + term.replace("%", r"\%").replace("_", r"\_") + "%"
+
+    clauses: list[str] = []
+    params: list[str] = []
+    for g in grps:
+        clauses.append("(" + " OR ".join([r"p.path LIKE ? ESCAPE '\'"] * len(g)) + ")")
+        params.extend(_like(t) for t in g)
     rows = conn.execute(
         "SELECT p.path, COUNT(l.snap_id) AS n "
         "  FROM leaf_paths p LEFT JOIN leaf_cp l ON l.path_id = p.id "
-        " WHERE p.path LIKE ? ESCAPE '\\' "
+        " WHERE " + " AND ".join(clauses) +
         " GROUP BY p.id ORDER BY n DESC, p.path ASC LIMIT ?",
-        (like, int(limit))).fetchall()
+        (*params, int(limit))).fetchall()
     return [{"path": r[0], "changes": r[1]} for r in rows]

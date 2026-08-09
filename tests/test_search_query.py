@@ -210,3 +210,44 @@ class TestSidebarFilterOr:
 
     def test_run_id_or(self):
         assert self._m("780 | 999")
+
+
+class TestSidebarDriftFixes:
+    """The two divergences the audit caught between the 'mirrored' parsers."""
+
+    class _E:
+        experiment_name = "power_rabi"
+        date_str = "2026-08-09"
+        status = "finished"
+        run_id = 780
+        qubits = ["q2", "q5"]
+        qubit_pairs = []
+
+    def _m(self, q):
+        from quam_state_manager.web.routes import _entry_matches, _parse_tree_query
+        return _entry_matches(self._E(), _parse_tree_query(q))
+
+    def test_commas_split_like_the_datasets_table(self):
+        from quam_state_manager.web.routes import _tokenize_query
+        # the JS twin has always split `q2, q5` into two AND keywords; the
+        # Python side treated it as ONE token that matched nothing
+        assert _tokenize_query("q2, q5") == ["q2", "q5"]
+        assert _tokenize_query("q2,q5") == ["q2", "q5"]
+        assert self._m("q2,q5")             # both qubits on the entry
+        assert not self._m("q2,q9")
+
+    def test_quoted_commas_stay_one_token(self):
+        from quam_state_manager.web.routes import _tokenize_query
+        assert _tokenize_query('name:"a, b"') == ["name:a, b"]
+
+    def test_eq_guard_matches_the_js_shape(self):
+        from quam_state_manager.web.routes import _parse_tree_query
+        # `-x=y`: the guard fires (JS parity) but the sidebar has no param
+        # facets, so it falls through to the ORIGINAL literal token — exactly
+        # the unknown-scope fallthrough on both surfaces.
+        conds = _parse_tree_query("-reset=active")
+        assert conds == [{"field": None, "value": "-reset=active", "negate": False}]
+
+    def test_scoped_negation_still_negates(self):
+        assert not self._m("-status:finished")
+        assert self._m("-status:error")

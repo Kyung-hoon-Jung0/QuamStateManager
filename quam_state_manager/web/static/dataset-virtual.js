@@ -140,6 +140,18 @@
         return out;
     }
 
+    // Key-name filters (Sort banner fit keys + Parameters facets) share the
+    // app grammar too: space = AND, standalone | = OR (docs/96). They used to
+    // take the whole box as one substring.
+    function _keyNameMatch(key, filt) {
+        if (!filt) return true;
+        var hay = key.toLowerCase();
+        if (window.SearchQuery) {
+            return window.SearchQuery.matchesHay(hay, window.SearchQuery.groups(filt));
+        }
+        return hay.indexOf(filt) !== -1;
+    }
+
     function parseQuery(raw) {
         // Splits a search-box value into free-text tokens + scoped filters.
         // Unknown scopes (e.g. typos like `foo:bar`) fall through to free-text
@@ -1397,7 +1409,7 @@
             if (state.paramKeyNumeric[k]) return true;
             return n <= PARAM_FACET_CARD_CAP;
         });
-        if (filt) keys = keys.filter(function (k) { return k.toLowerCase().indexOf(filt) !== -1; });
+        if (filt) keys = keys.filter(function (k) { return _keyNameMatch(k, filt); });
         keys.sort(function (a, b) {
             var na = state.paramKeyCount[a] || 0, nb = state.paramKeyCount[b] || 0;
             if (na !== nb) return nb - na;                // key coverage desc
@@ -1501,7 +1513,7 @@
             var fInp = document.getElementById('sort-key-filter');
             var filt = (fInp && fInp.value || '').trim().toLowerCase();
             var keys = _orderedFitKeys();
-            if (filt) keys = keys.filter(function (k) { return k.toLowerCase().indexOf(filt) !== -1; });
+            if (filt) keys = keys.filter(function (k) { return _keyNameMatch(k, filt); });
             var capped = (!_sortFitExpanded && !filt && keys.length > SORT_FIT_CAP);
             var shown = capped ? keys.slice(0, SORT_FIT_CAP) : keys;
             // Always keep the ACTIVE fit badge visible (even if beyond the cap or

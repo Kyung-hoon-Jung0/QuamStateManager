@@ -173,10 +173,14 @@
     var box = el("sched-library");
     if (!box) return;
     var q = ((el("sched-lib-filter") || {}).value || "").toLowerCase().trim();
+    // Shared grammar (docs/96): space = AND, standalone | = OR. This box used
+    // to take the whole query as one substring, so "rabi power" found nothing.
+    var grps = (q && window.SearchQuery) ? window.SearchQuery.groups(q) : null;
     var shown = items.filter(function (it) {
       if (it.kind === "other") return false;
       if (!q) return true;
-      return (it.name + " " + (it.description || "")).toLowerCase().indexOf(q) >= 0;
+      var hay = (it.name + " " + (it.description || "")).toLowerCase();
+      return grps ? window.SearchQuery.matchesHay(hay, grps) : hay.indexOf(q) >= 0;
     });
     if (!shown.length) {
       box.innerHTML = '<p class="muted">' + (items.length ? "No matching .py files." : "No .py files found.") + "</p>";
