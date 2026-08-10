@@ -3413,6 +3413,29 @@ window.PhysAmp = (function () {
              fmt: fmt, vrms: vrms };
 })();
 
+/* docs/115 (#14): the tray's teaching line — shown until dismissed ONCE.
+   A new user forms the working-copy model in their first minutes; hiding
+   the explanation until they already understand it is backwards. */
+(function () {
+    var KEY = 'quam_tray_teach_done';
+    function done() {
+        try { return localStorage.getItem(KEY) === '1'; } catch (e) { return false; }
+    }
+    window.dismissTrayTeach = function () {
+        try { localStorage.setItem(KEY, '1'); } catch (e) {}
+        var el = document.getElementById('tray-teach');
+        if (el) el.hidden = true;
+    };
+    function sync() {
+        var el = document.getElementById('tray-teach');
+        if (el) el.hidden = done();
+    }
+    document.addEventListener('DOMContentLoaded', sync);
+    document.addEventListener('htmx:afterSwap', sync);
+    document.addEventListener('htmx:oobAfterSwap', sync);
+    if (document.readyState !== 'loading') sync();
+})();
+
 /* ------------------------------------------------------------------ */
 /* Value delta (Δ) — the JS mirror of core/value_delta.py               */
 /* ------------------------------------------------------------------ */

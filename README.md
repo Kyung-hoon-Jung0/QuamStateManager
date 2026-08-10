@@ -4,6 +4,37 @@ Desktop + web tool for inspecting and editing quantum machine (QUAM) state files
 
 Built for researchers running superconducting qubit experiments who need to browse, compare, and tune parameters across hundreds of qubits.
 
+## How it works — the one thing to know first
+
+SM never edits your instrument's files behind your back. Three objects, one rule:
+
+| | What it is |
+|---|---|
+| **Live chip** | the `state.json` / `wiring.json` your instrument and QUAlibrate actually read |
+| **Working state** | your private editable copy — every edit lands here first |
+| **Snapshot** | an immutable timestamped archive (State History) you can roll back to |
+
+**The rule:** the live chip is written **only** when you press **Apply to live** —
+one explicit press, never a dialog-chain, never automatically. And that press is
+reversible: SM snapshots the pre-apply live first, so **↺ Revert last apply** is
+always there. Everything else (typing, filling, pasting, undo, redo, staging a
+snapshot, loading a run's state) stages into the working state, listed in the
+Review tray at the bottom of the window.
+
+Consequences worth knowing:
+
+- `Ctrl+Z` / `Ctrl+Shift+Z` work **across saves** — undo past a save stages the
+  inverse into the tray rather than touching the chip.
+- An experiment writing the live files while you look at them never surprises
+  you: SM tells you the chip drifted and offers *take live* / *keep mine* /
+  *merge*, and it never swaps what you are looking at without asking.
+- A run's frozen state can go to the chip in one click (**Apply to chip** on a
+  run's State tab) precisely because that press is the explicit Apply, and it is
+  revertible.
+
+New here? The in-app **Help** page (sidebar, or `/help`) has the same model plus
+a feature tour and every keyboard shortcut.
+
 ## Install & Run (users)
 
 ```bash
@@ -53,6 +84,23 @@ Run as `qsm <command>` (or `quam-manager <command>`). Add `--help` to any comman
 | `export` | Export a qubit summary as CSV or Markdown |
 | `scan` | Scan folder trees for `quam_state` directories + experiments |
 | `trend` | Show how properties change across experiment snapshots |
+
+## A typical session
+
+1. **Open** a chip — *State Load* in the sidebar (or open a QUAlibrate project
+   from the landing page, which brings its chip and data folders with it).
+2. **Look** — *Chip Components* for the entity tables and the chip map,
+   *Chip Status* for the heatmap dashboard, *Json Tree View* for anything else.
+   Amplitudes carry their true output (dBm or volts) next to the raw number.
+3. **Tune** — *Live State Edit* is the grid: type, `Ctrl+D` to fill a column
+   selection, paste a column from a spreadsheet, `Ctrl+Z` to undo. Nothing has
+   reached the chip yet.
+4. **Review** — the tray at the bottom lists every pending change with its
+   before → after and the difference; `✕` drops one (recoverable),
+   *Discard all* drops them all (also recoverable).
+5. **Apply to live** — one press. Reversible via *↺ Revert last apply*.
+6. **Trace** — *State History* / *Param History* show what changed, when, and
+   which experiment produced it; *Datasets* holds the runs themselves.
 
 ## Features
 

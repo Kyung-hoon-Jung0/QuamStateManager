@@ -3226,6 +3226,21 @@ def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore)
 # ======================================================================
 
 
+@bp.route("/help")
+def help_page():
+    """docs/115 (#14): the manual has a PERMANENT address.
+
+    The working-copy mental model (live chip / working state / snapshot)
+    and the feature tour lived only on the landing — one swap away and
+    gone the moment a user navigated, exactly when they were forming that
+    model. ``/help`` renders the SAME shared fragment
+    (``_landing_getting_started.html`` — one source, no drift) plus the
+    shortcut reference, reachable from the sidebar on every page.
+    """
+    template = "_help.html" if _is_htmx() else "help.html"
+    return render_template(template, **_ctx(page="help"))
+
+
 @bp.route("/")
 def home():
     """Project-first landing (docs/63): with a qualibrate config the home

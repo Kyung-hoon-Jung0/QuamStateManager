@@ -35,6 +35,15 @@
     </div>
     {% endif %}
 
+    {# docs/115 (#14): the standalone path was a muted sentence at the bottom
+       — the most common first action had no button. It is one now, next to
+       the manual. #}
+    <div class="landing-cta">
+        <button class="btn-sm landing-cta-open" onclick="document.getElementById('folder-input') &amp;&amp; document.getElementById('folder-input').focus(); window.openFolderBrowser &amp;&amp; window.openFolderBrowser();"
+                title="Open a chip's quam_state folder (state.json + wiring.json)">&#128193; Open a state folder&hellip;</button>
+        <a class="btn-sm outline" href="/help" hx-get="/help" hx-target="#table-pane"
+           hx-push-url="true">&#63; How SM works &mdash; 2 min</a>
+    </div>
     <div class="landing-standalone muted">
         Working without qualibrate? Use <b>State Load</b> / <b>Dataset Load</b>
         in the sidebar to open independent folders — they render exactly as before.
