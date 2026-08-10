@@ -561,9 +561,22 @@
 
         // classify each token: matches a column label? a qubit id?
         var ids = _rows().map(function (r) { return (r.getAttribute('data-qubit') || '').toLowerCase(); });
+        // The two axes each treat a both-hit token as NEUTRAL, so a token that
+        // hit a column AND a row id used to filter NOTHING AT ALL. That is not
+        // hypothetical: a real chip's pair-gate columns carry the partner
+        // qubit's name in `search` (`cz_SNZ_flux_pulse_qA1`), which made every
+        // qubit-id search on that chip a silent no-op. Classification is now
+        // EXCLUSIVE by precedence, and a token that NAMES a row (a prefix of
+        // some qubit id) wins: the grid is one row per qubit, so "qA1" means
+        // "show me that qubit" — reading it as a column filter would show three
+        // pair columns across all 21 rows instead. A token that merely occurs
+        // INSIDE an id ("a1") keeps the column reading, so ordinary column
+        // searching is untouched.
         var tokInfo = tokens.map(function (tok) {
-            var colHit = visCols.some(function (c) { return _colHay(c).indexOf(tok) >= 0; });
-            var idHit = ids.some(function (id) { return id.indexOf(tok) >= 0; });
+            var named = ids.some(function (id) { return id.indexOf(tok) === 0; });
+            var colHit = !named
+                && visCols.some(function (c) { return _colHay(c).indexOf(tok) >= 0; });
+            var idHit = !colHit && ids.some(function (id) { return id.indexOf(tok) >= 0; });
             return { tok: tok, isCol: colHit, isId: idHit, isVal: !colHit && !idHit };
         });
         // Shared grammar: space = AND across groups, standalone | = OR within

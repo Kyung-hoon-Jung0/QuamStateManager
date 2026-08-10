@@ -207,3 +207,73 @@ re-render; and fill/paste skipping the f_01<->RF coupling the manual edit
 path applies. One regression this batch introduced — an indentation slip
 that dropped the pair CR/ZZ builder's rows out of their loop — was caught by
 `test_web`'s `cz_unipolar` pin before it left the branch.
+
+---
+
+## Post-integration live search test (2026-08-11)
+
+Asked for directly: *"json tree view랑 live edit view에서 search box 동작 모두 잘
+되는지, 속도는 어떤지"* — run on the real 21-qubit chip and on the customer 10Q /
+9-tunable-coupler chip, in a real browser.
+
+### The defect the test existed to find
+
+**Typing a qubit id in Live State Edit filtered NOTHING.** All 21 rows stayed,
+the count read `21 of 21`, no class changed. Not a rendering bug and not
+case: the classifier gives each token `isCol` / `isId` / `isVal`, and each axis
+treats a token that hit BOTH as *neutral* (`isId && !isCol` for rows,
+`isCol && !isId` for columns). A token that names a qubit AND occurs in some
+column's text is therefore neutral **on both axes at once** — it matches
+everything.
+
+It is not a corner case: a chip's pair-gate columns carry the partner qubit's
+name in their `search` text (`cz_SNZ_flux_pulse_qA1`, folded headers, docs/85),
+so on that chip **every qubit id was dead as a search term** — including the
+placeholder's own promise, "Search columns, qubits, numbers…".
+
+Fixed by making classification EXCLUSIVE by precedence, with the row reading
+winning when the token NAMES a row (a prefix of some id): the grid is one row
+per qubit, so `qA1` means "show me that qubit" — reading it as a column filter
+would show three pair columns across all 21 rows instead. A token that merely
+occurs *inside* an id (`a1`) keeps the column reading, so ordinary column
+search is untouched. The pair grid carried the same classifier and the same
+fix. Pinned in `bulk_search_selfcheck.cjs` (E1–E3) with a fixture column whose
+`search` names a qubit — the shape that made the bug real.
+
+### Second finding: the teaching line deformed every header
+
+docs/115's working-copy teaching sentence sat in the topbar's flex row inside a
+`34ch` box, so it wrapped to **four lines** on a 1680px window — every page
+rendered with a header ~250px tall. Same promise in fewer words, and a width
+that belongs to the window (`min(92ch, 46vw)`): two lines, topbar 157px.
+
+### Measured (real browser, background-tab throttling neutralized)
+
+| surface | scale | search |
+|---|---|---|
+| Live Edit (21Q) | 4,851 cells / 231 cols | id 11 ms · `T1` 42–60 ms · AND 8 ms · clear 239–424 ms |
+| Live Edit (10Q/9TC) | 5,100 cells / 510 cols | id 17–21 ms · `T1` 42 ms · `amplitude` 24 ms · OR 64 ms · clear 100 ms |
+| Json Tree View (21Q) | 18,310 nodes expanded | 72–193 ms · clear 231 ms |
+| Json Tree View (10Q/9TC) | 5,745 nodes | 15–33 ms |
+
+Debounce 120 ms (grid) / 200 ms (tree). Every early ~1,000 ms reading was
+Chrome throttling a background tab's timers, not the filter — measured through
+a MessageChannel-routed timer to get honest numbers.
+
+### Customer chip compatibility: 10 qubits / 9 tunable couplers
+
+Loaded a customer 10Q chip (quam 0.6.0 / quam_builder 0.4.0, pair ids of the
+`coupler_q1_q2` form, `extras.chip_name` set). Every route 200, no traceback,
+no console error: the five component pages (10/9/10/10/9 rows), Live Edit
+(510 columns — under the docs/94 cap of 1200, so no truncation), the pair grid
+(9 rows, 98 columns), Explorer, Diagnostics, Chip Status, Pulses, both history
+surfaces, Compare/Diff, Datasets, Config/Re-generate, the runner trio,
+Projects, Help. The docs/109 physical-units column renders on this chip
+(`-38.0 dBm`), value search works in both grouped and plain digit forms, and a
+pair-id token narrows the pair grid to its row while the qubit grid honestly
+empties. The dangling data-folder banner is correct behaviour, not a defect —
+this chip declares a folder that does not exist on this machine.
+
+**#10 verified on the customer chip end-to-end**: search `amplitude` in Json
+Tree View (1,010 nodes), navigate to Qubits, come back — query and filtered
+view both intact.

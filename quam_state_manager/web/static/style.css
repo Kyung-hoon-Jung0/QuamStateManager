@@ -8451,7 +8451,10 @@ a.sidebar-tool-btn { text-decoration: none; color: inherit; }
    inline-flex tray cluster and pushed the Apply bar down on every page.
    It is an inline chip that wraps only if it must, capped so a long
    sentence can never dominate the bar. */
-.tray-teach { display: inline-block; max-width: 34ch; margin-left: .5rem; font-size: .78em; opacity: .8; line-height: 1.25; vertical-align: middle; }
+/* The topbar strip is a flex ROW: a paragraph here sets the height of the
+   header on EVERY page. 34ch wrapped the sentence to four lines on a real
+   1680px window — the width is now the window's to give. */
+.tray-teach { display: inline-block; max-width: min(92ch, 46vw); margin-left: .5rem; font-size: .78em; opacity: .8; line-height: 1.25; vertical-align: middle; }
 .tray-teach[hidden] { display: none; }
 .tray-teach-x { border: 0; background: none; cursor: pointer; opacity: .6; margin-left: .4rem; padding: 0 .2rem; }
 .tray-teach-x:hover { opacity: 1; }
