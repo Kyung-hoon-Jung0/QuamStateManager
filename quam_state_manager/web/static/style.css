@@ -8434,6 +8434,15 @@ button.diag-badge { cursor: pointer; }
    still occupy a phantom line: under every cell input (taller rows) and beside every
    Apply button (pushing it off-center). Collapse them properly when hidden. */
 .bulk-band-msg[hidden], .bulk-row-error[hidden] { display: none; }
+/* docs/111 (#11): selection · fill-down · pinning */
+.bulk-td.bulk-sel { outline: 2px solid var(--pico-primary); outline-offset: -2px; background: color-mix(in srgb, var(--pico-primary) 12%, transparent); }
+.bulk-pin { border: 0; background: none; padding: 0 2px; margin-left: 2px; font-size: 0.72em; cursor: pointer; opacity: 0; transition: opacity .12s; filter: grayscale(1); }
+th:hover > .bulk-pin, .bulk-pin.bulk-pin-on { opacity: 0.85; }
+.bulk-pin.bulk-pin-on { filter: none; }
+tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb, var(--pico-primary) 7%, var(--pico-card-background-color)); }
+.bulk-table .bulk-col-pinned { z-index: 3; background: var(--pico-card-background-color); }
+.bulk-table thead th.bulk-col-pinned { z-index: 4; }
+
 /* column header: unit + sort caret + min/max */
 .bulk-col-head { cursor: pointer; user-select: none; }
 /* Drag-to-resize grip on each column header's right edge (dbl-click = auto-fit).

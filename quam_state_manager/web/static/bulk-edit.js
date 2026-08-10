@@ -174,6 +174,10 @@
         return s;
     }
     function _applyFont() {
+        // audit F11 (docs/111): font/letter-spacing/bold rescale every cell —
+        // the pinned columns' px insets must follow (deferred so the new
+        // metrics are laid out before they are measured).
+        if (window.__bulkRepin) setTimeout(window.__bulkRepin, 0);
         var s = _applyGlobalScale();
         var panel = document.getElementById('bulk-panel'); if (!panel) return;
         panel.style.setProperty('--bulk-fs', s.fs);
@@ -317,6 +321,9 @@
                 // wholesale, which would otherwise reset this <details> to closed
                 // (review-r7: "checking a box collapses the menu").
                 _reopenColvis = true;
+                // docs/111 (#11): a dyn toggle used to DESTROY unsaved edits
+                // (the reload swaps the pane wholesale) — carry them across.
+                _captureEditCarry();
                 _reloadPane();
             });
         });
@@ -1340,6 +1347,358 @@
         _applyColWidthStyle();
     }
 
+
+    // ── docs/111 (#11): selection · fill-down · paste-a-column · pinning ──
+    // The 21-qubit-retune toolkit. Entirely client-side: /bulk HTML is
+    // byte-identical (every server pin holds); pin glyphs are JS-injected.
+    var _selAnchor = null;            // anchor td of the current selection
+    function _selCells() {
+        var t = table(); if (!t) return [];
+        return Array.prototype.slice.call(t.querySelectorAll('td.bulk-sel'));
+    }
+    function _clearSel() {
+        _selCells().forEach(function (td) { td.classList.remove('bulk-sel'); });
+        _selAnchor = null;
+    }
+    function _colCellTds(colKey) {
+        // visible rows only, document order
+        return _navRows().map(function (tr) {
+            return tr.querySelector('td[data-col-key="' + _cssEsc(colKey) + '"]');
+        }).filter(Boolean);
+    }
+    function _selectRange(fromTd, toTd) {
+        var key = fromTd.getAttribute('data-col-key');
+        if (!key || key !== toTd.getAttribute('data-col-key')) return false;
+        var tds = _colCellTds(key);
+        var a = tds.indexOf(fromTd), b = tds.indexOf(toTd);
+        if (a < 0 || b < 0) return false;
+        _clearSel();
+        _selAnchor = fromTd;
+        for (var i = Math.min(a, b); i <= Math.max(a, b); i++) {
+            if (_editableIn(tds[i])) tds[i].classList.add('bulk-sel');
+        }
+        return true;
+    }
+    function _fillSelection() {
+        var sel = _selCells();
+        if (!sel.length || !_selAnchor) return 0;
+        var src = _editableIn(_selAnchor) || _selAnchor.querySelector('.bulk-cell');
+        if (!src) return 0;
+        var v = src.value;
+        var undo = [], n = 0;
+        sel.forEach(function (td) {
+            var c = _editableIn(td);
+            if (!c || c === src || c.value === v) return;
+            undo.push({ dp: c.getAttribute('data-dot-path'), prev: c.value, next: v });
+            c.value = v;
+            c.dispatchEvent(new Event('input', { bubbles: true }));
+            n++;
+        });
+        if (n && window.LiveEditUndo) {
+            window.LiveEditUndo.record('fill-down (' + n + ' cells)', undo);
+        }
+        if (n && window.showToast) window.showToast('Filled ' + n + ' cell' + (n === 1 ? '' : 's') + ' — review, then Apply');
+        return n;
+    }
+    function _pasteColumn(cell, text) {
+        var lines = String(text).replace(/\r/g, '').split('\n')
+            .map(function (l) { return l.split('\t')[0].trim(); })
+            .filter(function (l, i, arr) { return !(l === '' && i === arr.length - 1); });
+        if (lines.length < 2) return false;   // single value → native paste
+        var td = cell.closest('td');
+        var key = td && td.getAttribute('data-col-key');
+        if (!key) return false;
+        var tds = _colCellTds(key);
+        var start = tds.indexOf(td);
+        if (start < 0) return false;
+        // audit F13: snapshot every prev BEFORE writing anything — a linked
+        // (shared-port) column mirrors each write across its group, so a
+        // read-as-you-go prev captured the PREVIOUS pasted value and Ctrl+Z
+        // converged on an intermediate instead of the original.
+        var plan = [];
+        for (var i = 0; i < lines.length && start + i < tds.length; i++) {
+            var c = _editableIn(tds[start + i]);
+            plan.push({ cell: c, value: lines[i], prev: c ? c.value : null });
+        }
+        var undo = [], applied = 0, blocked = 0;
+        plan.forEach(function (it) {
+            if (!it.cell) { blocked++; return; }   // read-only row INSIDE the range
+            applied++;
+            if (it.prev === it.value) return;
+            undo.push({ dp: it.cell.getAttribute('data-dot-path'),
+                        prev: it.prev, next: it.value });
+            it.cell.value = it.value;
+            it.cell.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        // audit F14: the START cell may hold text the user typed since focus —
+        // re-sync LiveEditUndo's focus snapshot so its change-listener does not
+        // record a SECOND entry for the same cell on blur.
+        if (plan.length && plan[0].cell && window.LiveEditUndo
+            && window.LiveEditUndo.resync) {
+            window.LiveEditUndo.resync(plan[0].cell);
+        }
+        var overflow = lines.length - plan.length;
+        if (undo.length && window.LiveEditUndo) {
+            window.LiveEditUndo.record('pasted column (' + undo.length + ' cells)', undo);
+        }
+        if (window.showToast) {
+            // audit F7: a mid-column read-only skip is NOT overflow — say which
+            var why = [];
+            if (overflow > 0) why.push(overflow + ' beyond the last row');
+            if (blocked > 0) why.push(blocked + ' onto read-only cells');
+            window.showToast('Pasted ' + applied + ' value' + (applied === 1 ? '' : 's')
+                + (why.length ? ' (' + why.join(', ') + ' ignored)' : '')
+                + ' — review, then Apply');
+        }
+        return true;
+    }
+
+    // -- pinning ---------------------------------------------------------
+    var PIN_COLS_KEY = 'quam_bulk_pinned_cols';
+    function _pinRowsKey() {
+        return 'quam_bulk_pinned_rows::' + String(window.__chipToken || 'chip');
+    }
+    function _pinnedCols() {
+        try { return JSON.parse(localStorage.getItem(PIN_COLS_KEY) || '[]'); }
+        catch (e) { return []; }
+    }
+    function _pinnedRows() {
+        try { return JSON.parse(localStorage.getItem(_pinRowsKey()) || '[]'); }
+        catch (e) { return []; }
+    }
+    function _applyColPins() {
+        var t = table(); if (!t) return;
+        // reset
+        t.querySelectorAll('.bulk-col-pinned').forEach(function (el) {
+            el.classList.remove('bulk-col-pinned');
+            el.style.left = ''; el.style.position = '';
+        });
+        var pins = _pinnedCols().filter(function (k) {
+            return t.querySelector('th.bulk-col-head[data-col-key="' + _cssEsc(k) + '"]');
+        });
+        if (!pins.length) return;
+        // audit F12: sticky cannot reorder columns — cumulative insets must
+        // follow DOM order or an out-of-order pin pair overlaps at rest.
+        var _heads = Array.prototype.slice.call(
+            t.querySelectorAll('th.bulk-col-head[data-col-key]'))
+            .map(function (h) { return h.getAttribute('data-col-key'); });
+        pins.sort(function (a, b) { return _heads.indexOf(a) - _heads.indexOf(b); });
+        // the row-header (qubit id) column is the base offset
+        var rowHead = t.querySelector('tbody th.bulk-rowhead, tbody tr > th');
+        var left = rowHead ? rowHead.offsetWidth : 0;
+        pins.forEach(function (k) {
+            _virtEnsureTd(t.querySelector('td[data-col-key="' + _cssEsc(k) + '"]'));
+            var th = t.querySelector('th.bulk-col-head[data-col-key="' + _cssEsc(k) + '"]');
+            var w = th ? th.offsetWidth : 0;
+            // audit F4: the CELLS and the header only — the resize-handle span
+            // inside the th also carries data-col-key, and an inline
+            // position:sticky killed its absolute anchoring (drag-resize and
+            // double-click auto-fit died on any pinned column).
+            var els = t.querySelectorAll(
+                'th.bulk-col-head[data-col-key="' + _cssEsc(k) + '"], ' +
+                'td[data-col-key="' + _cssEsc(k) + '"]');
+            Array.prototype.forEach.call(els, function (el) {
+                el.classList.add('bulk-col-pinned');
+                el.style.position = 'sticky';
+                el.style.left = left + 'px';
+            });
+            left += w;
+        });
+    }
+    function _applyRowPins() {
+        var t = table(); if (!t) return;
+        var tb = t.querySelector('tbody'); if (!tb) return;
+        var pins = _pinnedRows();
+        t.querySelectorAll('tr.bulk-row-pinned').forEach(function (tr) {
+            tr.classList.remove('bulk-row-pinned');
+        });
+        if (!pins.length) return;
+        // float pinned rows to the top, preserving pin order
+        for (var i = pins.length - 1; i >= 0; i--) {
+            var tr = tb.querySelector('tr[data-qubit="' + _cssEsc(pins[i]) + '"]');
+            if (tr) { tr.classList.add('bulk-row-pinned'); tb.insertBefore(tr, tb.firstChild); }
+        }
+    }
+    // audit F11: the sticky insets are a px snapshot — anything that changes
+    // real widths (font scale, drag-resize, curated column show/hide) must
+    // re-derive them or pinned columns drift over the qubit-name column.
+    function _repinAfterLayout() {
+        if (!_pinnedCols().length) return;
+        _applyColPins();
+    }
+    function _togglePinCol(key) {
+        var arr = _pinnedCols();
+        var i = arr.indexOf(key);
+        if (i >= 0) arr.splice(i, 1); else arr.push(key);
+        try { localStorage.setItem(PIN_COLS_KEY, JSON.stringify(arr)); } catch (e) {}
+        _applyColPins();
+        _syncPinGlyphs();
+    }
+    function _togglePinRow(qid) {
+        var arr = _pinnedRows();
+        var i = arr.indexOf(qid);
+        if (i >= 0) arr.splice(i, 1); else arr.push(qid);
+        try { localStorage.setItem(_pinRowsKey(), JSON.stringify(arr)); } catch (e) {}
+        _applyRowPins();
+        _syncPinGlyphs();
+    }
+    function _syncPinGlyphs() {
+        var t = table(); if (!t) return;
+        var pc = _pinnedCols(), pr = _pinnedRows();
+        t.querySelectorAll('.bulk-pin-col').forEach(function (b) {
+            b.classList.toggle('bulk-pin-on', pc.indexOf(b.getAttribute('data-pin')) >= 0);
+        });
+        t.querySelectorAll('.bulk-pin-row').forEach(function (b) {
+            b.classList.toggle('bulk-pin-on', pr.indexOf(b.getAttribute('data-pin')) >= 0);
+        });
+    }
+    function _injectPinGlyphs() {
+        var t = table(); if (!t) return;
+        t.querySelectorAll('th.bulk-col-head[data-col-key]').forEach(function (th) {
+            if (th.querySelector('.bulk-pin-col')) return;
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'bulk-pin bulk-pin-col';
+            b.setAttribute('data-pin', th.getAttribute('data-col-key'));
+            b.title = 'Pin this column (stays visible while scrolling)';
+            b.textContent = '\uD83D\uDCCC';
+            b.addEventListener('click', function (ev) {
+                ev.stopPropagation();   // never trigger the sort
+                _togglePinCol(b.getAttribute('data-pin'));
+            });
+            th.appendChild(b);
+        });
+        t.querySelectorAll('tbody tr[data-qubit]').forEach(function (tr) {
+            var head = tr.querySelector('th');
+            if (!head || head.querySelector('.bulk-pin-row')) return;
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'bulk-pin bulk-pin-row';
+            b.setAttribute('data-pin', tr.getAttribute('data-qubit'));
+            b.title = 'Pin this qubit row to the top';
+            b.textContent = '\uD83D\uDCCC';
+            b.addEventListener('click', function () {
+                _togglePinRow(b.getAttribute('data-pin'));
+            });
+            head.appendChild(b);
+        });
+        _syncPinGlyphs();
+    }
+
+    // -- unsaved-edit carry across the dyn-column reload ------------------
+    // audit F10: the leave-confirm carve-out and the carry TTL must be ONE
+    // number — a slow /bulk (measured 419 ms, but a 452-column chip is worse)
+    // landing between them re-raised the exact discard confirm the carve-out
+    // exists to remove, over edits that WERE preserved.
+    var CARRY_TTL_MS = 15000;
+    var _editCarry = null;    // {list: [{dp, value}], at}
+    function _captureEditCarry() {
+        var t = table(); if (!t) return;
+        var list = [];
+        _cells(t).forEach(function (c) {
+            if (_isDirty(c) && c.getAttribute('data-dot-path')) {
+                list.push({ dp: c.getAttribute('data-dot-path'), value: c.value });
+            }
+        });
+        if (list.length) {
+            _editCarry = { list: list, at: Date.now() };
+            window._dynReloadAt = Date.now();   // the leave-confirm carve-out
+        }
+    }
+    function _consumeEditCarry() {
+        if (!_editCarry || Date.now() - _editCarry.at > CARRY_TTL_MS) {
+            _editCarry = null; window._dynReloadAt = 0; return;
+        }
+        var t = table(); if (!t) { _editCarry = null; window._dynReloadAt = 0; return; }
+        // audit F3: a carried edit whose column is COLD (docs/105 detached its
+        // inputs, and the fresh pane starts at scrollLeft 0) had no .bulk-cell
+        // to land in and was silently dropped — with the leave-confirm
+        // suppressed. Hydrate everything once when any carried path is
+        // missing, then place them all.
+        var missing = _editCarry.list.some(function (it) {
+            return !t.querySelector('.bulk-cell[data-dot-path="' + _cssEsc(it.dp) + '"]');
+        });
+        if (missing) _virtHydrateAll();
+        var n = 0, lost = 0;
+        _editCarry.list.forEach(function (it) {
+            var c = t.querySelector('.bulk-cell[data-dot-path="' + _cssEsc(it.dp) + '"]');
+            if (!c || c.readOnly) { lost++; return; }
+            if (c.value !== it.value) {
+                c.value = it.value;
+                c.dispatchEvent(new Event('input', { bubbles: true }));
+                // audit F2: mount() calls this BEFORE the table's own 'input'
+                // listener is bound on a fresh table, so the dispatch alone
+                // left carried cells unmarked (row Apply stayed disabled).
+                // Do the marking here — deterministic, no ordering dependency.
+                _markCellDirty(c);
+                if (c.classList.contains('bulk-cell-linked')) _mirrorLinked(c);
+                _refreshRow(_rowOf(c));
+                n++;
+            }
+        });
+        _refreshGlobal();
+        _editCarry = null;
+        window._dynReloadAt = 0;   // audit F8: the carve-out is over
+        if (window.showToast && (n || lost)) {
+            window.showToast(
+                n + ' unsaved edit' + (n === 1 ? '' : 's') + ' preserved across the column change'
+                + (lost ? ' \u2014 ' + lost + ' could not be restored (the field is gone)' : ''));
+        }
+    }
+
+    function _bindGridEditing() {
+        var t = table(); if (!t || t._geBound) return;
+        t._geBound = true;
+        t.addEventListener('click', function (ev) {
+            var cell = ev.target.closest && ev.target.closest('.bulk-cell');
+            if (!cell || cell.readOnly) { if (!ev.shiftKey && !ev.ctrlKey) _clearSel(); return; }
+            var td = cell.closest('td');
+            if (ev.shiftKey && _selAnchor) {
+                if (_selectRange(_selAnchor, td)) ev.preventDefault();
+            } else if (ev.ctrlKey || ev.metaKey) {
+                // audit F1: the contract is SAME-COLUMN selection ("a range
+                // across properties is meaningless") — shift-click enforced it,
+                // ctrl-click did not, so Ctrl+D could fill a T1 value into an
+                // amplitude column. Both paths refuse a foreign column now.
+                if (_selAnchor && _selAnchor.getAttribute('data-col-key')
+                    !== td.getAttribute('data-col-key')) return;
+                td.classList.toggle('bulk-sel');
+                if (!_selAnchor) _selAnchor = td;
+            } else {
+                _clearSel();
+                _selAnchor = td;
+            }
+        });
+        t.addEventListener('keydown', function (ev) {
+            if ((ev.ctrlKey || ev.metaKey) && (ev.key === 'd' || ev.key === 'D')) {
+                if (_selCells().length) { ev.preventDefault(); _fillSelection(); }
+            } else if (ev.key === 'Escape') {
+                _clearSel();
+            }
+        });
+        t.addEventListener('paste', function (ev) {
+            var cell = ev.target.closest && ev.target.closest('.bulk-cell');
+            if (!cell || cell.readOnly) return;
+            var text = ev.clipboardData ? ev.clipboardData.getData('text/plain') : '';
+            if (text && text.indexOf('\n') >= 0) {
+                if (_pasteColumn(cell, text)) ev.preventDefault();
+            }
+        });
+        // sorting reorders the tbody — re-float pinned rows after the sorter ran
+        var thead = t.querySelector('thead');
+        if (thead) {
+            thead.addEventListener('click', function (ev) {
+                // audit F6: the real sort trigger is `thead th[data-col-key]`
+                // — which includes the qubit-name corner (class bulk-corner);
+                // the old selector missed it, so name-sorting scattered pins.
+                if (ev.target.closest && ev.target.closest('thead th[data-col-key]')) {
+                    setTimeout(function () { _applyRowPins(); _applyColPins(); }, 0);
+                }
+            });
+        }
+    }
+
+    window.__bulkRepin = function () { try { _repinAfterLayout(); } catch (e) {} };
     var BulkEdit = {
         mount: function (columns, bandMeta, dynModel, qubitMeta) {
             if (Array.isArray(columns)) COLS = columns;
@@ -1378,6 +1737,14 @@
             // BEFORE virtualization freezes widths + stashes cold HTML.
             if (window.PhysAmp) PhysAmp.applyAll(table());
             _virtInit();            // docs/105 #1 - after layout is final
+            // docs/111 (#11): selection/fill/paste/pins + the dyn-reload
+            // edit carry. Pins re-apply AFTER virtualization (a pinned cold
+            // column is hydrated by _applyColPins itself).
+            _bindGridEditing();
+            _injectPinGlyphs();
+            _applyRowPins();
+            _applyColPins();
+            _consumeEditCarry();
             _setupTopScroll();
             _applyFont();
             _updateTopScroll();
@@ -1531,6 +1898,11 @@
                         // confirm here would be a lie.
                         if (window._undoNavAt
                             && Date.now() - window._undoNavAt < 4000) return;
+                        // docs/111: the dyn-column reload CARRIES the edits
+                        // (_captureEditCarry/_consumeEditCarry) — a discard
+                        // confirm here would be a lie.
+                        if (window._dynReloadAt
+                            && Date.now() - window._dynReloadAt < CARRY_TTL_MS) return;
                         if (!window.confirm('You have unapplied edits in Live State Edit. Leave and discard them?')) {
                             ev.preventDefault();
                         }
@@ -1684,6 +2056,7 @@
             var arr = _dynHidden().filter(function (k) { return _dynHintKeys.indexOf(k) < 0; });
             _saveDynHidden(arr);
             _reopenColvis = true;
+            _captureEditCarry();   // audit F9
             _reloadPane();
         },
 
@@ -1821,12 +2194,14 @@
             _saveHidden(new Set());
             _saveDynHidden([]);
             _reopenColvis = true;
+            _captureEditCarry();   // audit F9
             _reloadPane();
         },
         resetColumns: function () {
             try { localStorage.removeItem(HIDE_KEY); } catch (e) {}
             try { localStorage.removeItem(DYNHIDDEN_KEY); } catch (e) {}
             _reopenColvis = true;
+            _captureEditCarry();   // audit F9
             _reloadPane();
         },
 
@@ -1927,6 +2302,13 @@
         return null;
     }
 
+    // docs/111 test hooks (jsdom selfcheck drives the internals directly)
+    BulkEdit._ge = {
+        selCells: _selCells, fill: _fillSelection, paste: _pasteColumn,
+        pinCol: _togglePinCol, pinRow: _togglePinRow, repin: _repinAfterLayout,
+        captureCarry: _captureEditCarry, consumeCarry: _consumeEditCarry,
+        applyRowPins: _applyRowPins, applyColPins: _applyColPins,
+    };
     window.BulkEdit = BulkEdit;
     // Restore the persisted density scale onto :root at load (this script is eager
     // on every page), so the Review modal honors the user's font/bold choice even
