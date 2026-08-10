@@ -3417,23 +3417,33 @@ window.PhysAmp = (function () {
 /* PaneState (docs/110 #10-A): a tab keeps its state when you return   */
 /* ------------------------------------------------------------------ */
 /* THE most-asked-for UX fix: navigating the main pane used to destroy the
-   previous surface wholesale — search text, expanded tree nodes, scroll,
-   half-typed input ("json tree view에서 검색하다 다른 탭 갔다 오면 초기화").
-   Two tiers:
-   - KEEP routes get full DOM keep-alive: the outgoing pane's nodes are
-     PARKED (detached, listeners intact) and re-attached on return instead
-     of refetching — everything survives. Honesty gate: the tray's data-seq
-     (store.mutation_seq) + the chip token are stamped at park time; if
-     either moved, the pane is REFETCHED, never restored stale (docs/28/87
-     doctrine applied to UI state). A refetch still gets the SOFT tier.
-   - SOFT routes (and stale KEEP refetches) re-apply the user's search-box
-     text after the fresh swap and re-dispatch 'input', so the filter
-     re-runs over FRESH data — the query survives even when the DOM can't.
-     Only search inputs (never .bulk-cell/.edit-input data editors).
-   Parked DOM is detached — document.getElementById can't see it, pollers
-   that look elements up by id simply no-op until restore. Stash: LRU 4,
-   cleared on stateRestored (wholesale replace) and popstate (htmx history
-   owns back/forward). */
+   previous surface wholesale (search text, expanded tree nodes, scroll).
+
+   v2 architecture (the stream-1 audit killed v1's beforeRequest
+   interception: it poisoned htmx's history snapshot, bypassed htmx's
+   pushState, and a failed nav left a blank pane):
+   - Every navigation runs COMPLETELY NORMALLY through htmx (request,
+     history snapshot, URL push, swap) -- PaneState never cancels anything.
+   - PARK happens at htmx:beforeSwap on #table-pane, i.e. AFTER htmx took
+     its history snapshot of the outgoing page and ONLY when a real swap is
+     about to replace the DOM (a failed request never parks -- the pane
+     stays intact). KEEP routes detach their children into the stash;
+     every SOFT route refreshes its search-input capture here too (so a
+     deliberately cleared box is captured as cleared -- never resurrected).
+   - RESTORE happens at htmx:afterSwap: if the arriving route has a FRESH
+     parked copy (tray data-seq + chip token unmoved), the just-swapped
+     server render is discarded (Plotly-purged first) and the parked DOM
+     re-attached -- search text, expanded nodes, scroll, everything. The
+     redundant fetch is the price of letting htmx own history; what
+     keep-alive preserves is CLIENT state, not server cost. A background
+     /state/tray fetch then re-verifies the seq against server truth (the
+     on-screen tray can lag a scheduler adopt) -- a mismatch refetches the
+     pane fresh. Stale/chip-moved copies are dropped and the SOFT tier
+     re-applies the query over the fresh DOM instead.
+   - Back/forward belongs to htmx's own history machinery: popstate and
+     htmx:historyRestore clear the stash AND re-sync the current route.
+   Parked DOM is detached -- getElementById can't see it, pollers no-op
+   until restore. Stash: LRU 4 (evicted holders are Plotly-purged). */
 window.PaneState = (function () {
     var KEEP = ['/explorer'];
     var SOFT = ['/explorer', '/bulk', '/datasets', '/param-history',
@@ -3441,7 +3451,7 @@ window.PaneState = (function () {
                 '/resonators', '/flux', '/couplers'];
     var MAX = 4;
     var stash = {};   // route -> {holder, seq, chip, scroll, order}
-    var soft = {};    // route -> {inputs: [{id, value}]}
+    var soft = {};    // route -> {inputs: [{key, value}]}
     var _order = 0;
     var _cur = location.pathname;
 
@@ -3451,16 +3461,45 @@ window.PaneState = (function () {
         return t ? (t.getAttribute('data-seq') || '') : '';
     }
     function chipNow() { return String(window.__chipToken || ''); }
-    function _esc(s) {
-        return (window.CSS && CSS.escape) ? CSS.escape(s) : s;
-    }
 
+    function _purge(root) {
+        // The app-wide rule: a Plotly node must never die via innerHTML
+        // without purge (WebGL contexts + DOM refs leak).
+        if (window.Plotly && root.querySelectorAll) {
+            root.querySelectorAll('.js-plotly-plot').forEach(function (n) {
+                try { window.Plotly.purge(n); } catch (e) {}
+            });
+        }
+    }
     function _captureSoft(root) {
         var inputs = [];
-        root.querySelectorAll('input[type="search"], .tree-search').forEach(function (el) {
-            if (el.id && el.value) inputs.push({ id: el.id, value: el.value });
+        var els = root.querySelectorAll('input[type="search"], .tree-search');
+        Array.prototype.forEach.call(els, function (el, i) {
+            // keyed by id when present, else by position -- 8 of the 11 SOFT
+            // routes have id-less filter boxes (audit)
+            inputs.push({ key: el.id ? ('#' + el.id) : ('@' + i),
+                          value: el.value });
         });
         return { inputs: inputs };
+    }
+    function _reapplySoft(route) {
+        var d = soft[route];
+        if (!d || !d.inputs.length) return;
+        var p = pane();
+        if (!p) return;
+        var els = p.querySelectorAll('input[type="search"], .tree-search');
+        d.inputs.forEach(function (it) {
+            var el = null;
+            if (it.key.charAt(0) === '#') {
+                el = p.querySelector('input[id="' + it.key.slice(1) + '"]');
+            } else {
+                el = els[parseInt(it.key.slice(1), 10)] || null;
+            }
+            if (el && it.value && el.value !== it.value) {
+                el.value = it.value;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+        });
     }
     function _park(route) {
         var p = pane();
@@ -3474,74 +3513,90 @@ window.PaneState = (function () {
         var keys = Object.keys(stash);
         if (keys.length > MAX) {
             keys.sort(function (a, b) { return stash[a].order - stash[b].order; });
+            _purge(stash[keys[0]].holder);
             delete stash[keys[0]];
         }
+    }
+    function _verifyRestore(route, seqAtRestore) {
+        // Server-truth re-verify (audit M5): the on-screen tray can lag a
+        // mutation that never answered THIS tab (scheduler post-node adopt,
+        // a second window's edit). Mismatch => the restored pane lied --
+        // refetch it fresh. Best-effort: a failed probe changes nothing.
+        try {
+            fetch('/state/tray', { cache: 'no-store' })
+                .then(function (r) { return r.ok ? r.text() : null; })
+                .then(function (html) {
+                    if (!html) return;
+                    var m = html.match(/data-seq="([^"]*)"/);
+                    if (!m || m[1] === seqAtRestore) return;
+                    if (_cur !== route || !window.htmx) return;
+                    delete stash[route];
+                    window.htmx.ajax('GET', route, {
+                        source: '#table-pane', target: '#table-pane',
+                        swap: 'innerHTML' });
+                })
+                .catch(function () {});
+        } catch (e) {}
     }
     function _tryRestore(route) {
         var e = stash[route];
         if (!e) return false;
         delete stash[route];
-        // stale — let the refetch happen; the SOFT tier re-applies the query
+        // stale -- keep the fresh swap; the SOFT tier re-applies the query
         if (e.seq !== seqNow() || e.chip !== chipNow()) return false;
         var p = pane();
         if (!p) return false;
+        _purge(p);                 // the redundant fresh render dies cleanly
         p.innerHTML = '';
         while (e.holder.firstChild) p.appendChild(e.holder.firstChild);
         p.scrollTop = e.scroll || 0;
-        if (window.PhysAmp) window.PhysAmp.applyAll(p);   // viewer prefs moved?
+        if (window.PhysAmp) window.PhysAmp.applyAll(p);
         document.dispatchEvent(new CustomEvent('paneRestored',
                                                { detail: { route: route } }));
+        _verifyRestore(route, e.seq);
         return true;
     }
-    function _reapplySoft(route) {
-        var d = soft[route];
-        if (!d || !d.inputs.length) return;
-        var p = pane();
-        if (!p) return;
-        d.inputs.forEach(function (it) {
-            var el = p.querySelector('#' + _esc(it.id));
-            if (el && !el.value) {
-                el.value = it.value;
-                el.dispatchEvent(new Event('input', { bubbles: true }));
-            }
-        });
+    function _routeOf(detail) {
+        var pi = detail && detail.pathInfo;
+        var path = pi && (pi.finalRequestPath || pi.requestPath);
+        if (!path && detail && detail.requestConfig) path = detail.requestConfig.path;
+        return path ? String(path).split('?')[0] : null;
     }
 
-    document.addEventListener('htmx:beforeRequest', function (evt) {
-        var cfg = evt.detail && evt.detail.requestConfig;
-        if (!cfg || cfg.verb !== 'get') return;
-        var tgt = evt.detail.target;
-        if (!tgt || tgt.id !== 'table-pane') return;
-        var route = (cfg.path || '').split('?')[0];
-        // same-route requests are REFRESHES (chain tabs, pagination) — the
-        // pane must not park onto itself, and never restores over a refresh
-        if (route === _cur) return;
-        _park(_cur);
-        _cur = route;
-        if (_tryRestore(route)) {
-            evt.preventDefault();
-            try { history.pushState({}, '', cfg.path); } catch (e) {}
-            // the sidebar highlight rides htmx:pushedIntoHistory — mirror it
-            document.dispatchEvent(new CustomEvent('htmx:pushedIntoHistory'));
-        }
+    document.addEventListener('htmx:beforeSwap', function (evt) {
+        if (!evt.target || evt.target.id !== 'table-pane') return;
+        if (evt.detail && evt.detail.shouldSwap === false) return;
+        var inRoute = _routeOf(evt.detail);
+        // park the OUTGOING route (htmx's history snapshot is already taken);
+        // a same-route refresh only refreshes the SOFT capture, never parks
+        if (inRoute && inRoute !== _cur) _park(_cur);
+        else if (SOFT.indexOf(_cur) >= 0 && pane()) soft[_cur] = _captureSoft(pane());
     });
     document.addEventListener('htmx:afterSwap', function (evt) {
-        if (evt.target && evt.target.id === 'table-pane') {
-            var pi = evt.detail && evt.detail.pathInfo;
-            var path = pi && (pi.finalRequestPath || pi.requestPath);
-            if (path) _cur = String(path).split('?')[0];
-            _reapplySoft(_cur);
-        }
+        if (!evt.target || evt.target.id !== 'table-pane') return;
+        var route = _routeOf(evt.detail);
+        if (route) _cur = route;
+        if (!_tryRestore(_cur)) _reapplySoft(_cur);
     });
-    // A wholesale working-copy replacement (pull / stage / restore / run
-    // load) invalidates every parked pane; back/forward belongs to htmx's
-    // own history machinery — never restore over it.
-    document.addEventListener('stateRestored', function () { stash = {}; });
-    window.addEventListener('popstate', function () { stash = {}; });
+    // A wholesale working-copy replacement invalidates every parked pane;
+    // back/forward belongs to htmx's own history machinery -- clear AND
+    // re-sync the route (audit M3: a desynced _cur parked the WRONG DOM).
+    function _historyReset() {
+        for (var k in stash) _purge(stash[k].holder);
+        stash = {};
+        _cur = location.pathname;
+    }
+    document.addEventListener('stateRestored', function () {
+        for (var k in stash) _purge(stash[k].holder);
+        stash = {};
+    });
+    window.addEventListener('popstate', _historyReset);
+    document.addEventListener('htmx:historyRestore', _historyReset);
 
     return {
         _stash: function () { return stash; },
         _cur: function () { return _cur; },
+        _soft: function () { return soft; },
         clear: function () { stash = {}; soft = {}; },
     };
 })();

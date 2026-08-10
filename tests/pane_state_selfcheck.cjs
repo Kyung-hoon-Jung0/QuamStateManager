@@ -1,15 +1,12 @@
-/* jsdom selfcheck for PaneState (docs/110 #10-A) — a tab keeps its state.
+/* jsdom selfcheck for PaneState v2 (docs/110 #10-A) — a tab keeps its state.
  *
- * Pins:
- *  1. leaving a KEEP route parks the pane DOM; returning with the SAME
- *     seq+chip cancels the request and re-attaches it (search text, expanded
- *     <details>, everything survives);
- *  2. a moved mutation_seq (the tray's data-seq beacon) forces a REFETCH —
- *     never a stale restore — and the SOFT tier re-applies the search text
- *     over the fresh DOM (input value + a re-dispatched 'input');
- *  3. a chip switch forces a refetch;
- *  4. stateRestored (wholesale replace) clears every parked pane;
- *  5. same-route requests (chain tabs / pagination) are never intercepted.
+ * v2 contract (post-audit): PaneState NEVER cancels htmx — navigation,
+ * history snapshot and URL push all run normally. Park happens at
+ * htmx:beforeSwap (post-snapshot, real swaps only — a failed request never
+ * parks); restore happens at htmx:afterSwap by REPLACING the fresh server
+ * render with the parked DOM when the seq+chip gate passes; stale/chip-moved
+ * copies drop and the SOFT tier re-applies the query. popstate /
+ * htmx:historyRestore clear the stash AND re-sync the route.
  *
  * Run: node tests/pane_state_selfcheck.cjs  (driven by tests/test_pane_state.py)
  */
@@ -32,7 +29,7 @@ global.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () =
 global.sessionStorage = global.localStorage;
 window.localStorage = global.localStorage;
 window.sessionStorage = global.sessionStorage;
-global.fetch = () => new Promise(() => {});
+global.fetch = () => new Promise(() => {});   // the verify probe never resolves — fine
 window.fetch = global.fetch;
 global.requestAnimationFrame = (f) => setTimeout(f, 0);
 window.requestAnimationFrame = global.requestAnimationFrame;
@@ -67,77 +64,98 @@ window.__chipToken = 'chipA';
 
 const pane = () => doc.getElementById('table-pane');
 
-function nav(pathTo) {
-    // CustomEvent.detail is constructor-only (readonly afterwards) — real
-    // htmx builds its events the same way.
-    const ev = new window.CustomEvent('htmx:beforeRequest', {
+// Simulate a full htmx nav: beforeSwap (park side) → server swap → afterSwap.
+function swapTo(pathTo, freshHtml) {
+    const before = new window.CustomEvent('htmx:beforeSwap', {
         cancelable: true,
-        detail: { requestConfig: { verb: 'get', path: pathTo }, target: pane() },
+        detail: { shouldSwap: true, pathInfo: { finalRequestPath: pathTo } },
     });
-    doc.dispatchEvent(ev);
-    return ev;
-}
-function swapDone(pathTo) {
-    const ev = new window.CustomEvent('htmx:afterSwap', {
+    Object.defineProperty(before, 'target', { value: pane() });
+    doc.dispatchEvent(before);
+    pane().innerHTML = freshHtml;              // the htmx swap
+    const after = new window.CustomEvent('htmx:afterSwap', {
         detail: { pathInfo: { finalRequestPath: pathTo } },
     });
-    Object.defineProperty(ev, 'target', { value: pane() });
-    doc.dispatchEvent(ev);
+    Object.defineProperty(after, 'target', { value: pane() });
+    doc.dispatchEvent(after);
 }
 
-// ── 1. park + fresh restore ─────────────────────────────────────────────────
-let ev = nav('/bulk');
-ok(!ev.defaultPrevented, 'leaving /explorer lets the /bulk request run');
-ok(pane().children.length === 0, 'the explorer DOM was parked out of the pane');
-pane().innerHTML = '<div id="bulk-stub">bulk</div>';   // the server swap
-swapDone('/bulk');
-
-ev = nav('/explorer');
-ok(ev.defaultPrevented, 'returning with the same seq+chip cancels the refetch');
+// ── 1. park at beforeSwap + fresh restore at afterSwap ─────────────────────
+swapTo('/bulk', '<div id="bulk-stub">bulk</div>');
+ok(!!doc.getElementById('bulk-stub'), 'navigating away swaps normally (htmx untouched)');
+ok(Object.keys(window.PaneState._stash()).length === 1, 'the explorer DOM was parked');
+swapTo('/explorer', '<div id="fresh-explorer">fresh server render</div>');
+ok(!doc.getElementById('fresh-explorer'),
+   'returning replaces the fresh render with the parked DOM');
 const inp = doc.getElementById('explorer-search');
 ok(!!inp && inp.value === 'f_01', 'the search text survived the round trip');
 ok(!!doc.getElementById('sec-a') && doc.getElementById('sec-a').open,
    'the expanded section survived the round trip');
+ok(window.PaneState._cur() === '/explorer', 'the current route tracks the swap');
 
-// ── 5. same-route refresh is never intercepted ─────────────────────────────
-ev = nav('/explorer?depth=3');
-ok(!ev.defaultPrevented, 'a same-route request (refresh/filter) is not intercepted');
+// ── 2. a failed request never parks (no beforeSwap ⇒ pane intact) ──────────
+// (nothing to simulate — the pins above prove parking only rides beforeSwap;
+// assert the negative: an errored swap event with shouldSwap=false is ignored)
+{
+    const before = new window.CustomEvent('htmx:beforeSwap', {
+        cancelable: true,
+        detail: { shouldSwap: false, pathInfo: { finalRequestPath: '/bulk' } },
+    });
+    Object.defineProperty(before, 'target', { value: pane() });
+    doc.dispatchEvent(before);
+    ok(!!doc.getElementById('explorer-search'),
+       'shouldSwap=false (error path) never parks — the pane stays intact');
+}
 
-// ── 2. stale seq ⇒ refetch + SOFT re-apply ─────────────────────────────────
-ev = nav('/bulk');                              // park explorer again (seq 7)
-pane().innerHTML = '<div id="bulk-stub">bulk</div>';
-swapDone('/bulk');
-doc.getElementById('pending-tray').setAttribute('data-seq', '9');   // an edit happened
-ev = nav('/explorer');
-ok(!ev.defaultPrevented, 'a moved mutation_seq forces a REFETCH (never stale restore)');
-// the fresh server swap arrives WITHOUT the query…
-pane().innerHTML = '<input type="search" id="explorer-search" class="tree-search" value="">';
+// ── 3. stale seq ⇒ the fresh swap WINS + SOFT re-applies the query ─────────
+swapTo('/bulk', '<div id="bulk-stub">bulk</div>');        // park explorer (seq 7)
+doc.getElementById('pending-tray').setAttribute('data-seq', '9');   // an edit
 let inputFired = 0;
-pane().querySelector('#explorer-search').addEventListener('input', () => inputFired++);
-swapDone('/explorer');
-ok(pane().querySelector('#explorer-search').value === 'f_01',
-   'SOFT tier re-applied the search text over the fresh DOM');
-ok(inputFired === 1, 'the re-applied query re-dispatched input (filter re-runs)');
+swapTo('/explorer',
+       '<input type="search" id="explorer-search" class="tree-search" value="">');
+const fresh = doc.getElementById('explorer-search');
+fresh.addEventListener('input', () => inputFired++);
+// _reapplySoft ran synchronously inside afterSwap — value already applied:
+ok(fresh.value === 'f_01', 'stale copy dropped; SOFT re-applied the query on the fresh DOM');
+ok(Object.keys(window.PaneState._stash()).length === 0, 'the stale parked copy was dropped');
 
-// ── 3. chip switch ⇒ refetch ───────────────────────────────────────────────
-doc.getElementById('pending-tray').setAttribute('data-seq', '9');
-ev = nav('/bulk');                               // park explorer (seq 9, chipA)
-pane().innerHTML = '<div>bulk</div>';
-swapDone('/bulk');
+// ── 4. chip switch ⇒ fresh swap wins ───────────────────────────────────────
+swapTo('/bulk', '<div>bulk</div>');                       // park explorer (seq 9)
 window.__chipToken = 'chipB';
-ev = nav('/explorer');
-ok(!ev.defaultPrevented, 'a chip switch forces a refetch');
-pane().innerHTML = '<div>fresh explorer</div>';
-swapDone('/explorer');
+swapTo('/explorer', '<div id="fresh2">fresh</div>');
+ok(!!doc.getElementById('fresh2'), 'a chip switch keeps the fresh render');
 
-// ── 4. stateRestored clears the stash ──────────────────────────────────────
-window.__chipToken = 'chipB';
-ev = nav('/bulk');                               // park explorer
-pane().innerHTML = '<div>bulk</div>';
-swapDone('/bulk');
-ok(Object.keys(window.PaneState._stash()).length === 1, 'explorer is parked');
+// ── 5. same-route refresh only refreshes the SOFT capture, never parks ─────
+pane().innerHTML = '<input type="search" id="explorer-search" class="tree-search" value="qA5">';
+{
+    const before = new window.CustomEvent('htmx:beforeSwap', {
+        cancelable: true,
+        detail: { shouldSwap: true, pathInfo: { finalRequestPath: '/explorer?depth=3' } },
+    });
+    Object.defineProperty(before, 'target', { value: pane() });
+    doc.dispatchEvent(before);
+    ok(Object.keys(window.PaneState._stash()).length === 0,
+       'a same-route request never parks');
+    const cap = window.PaneState._soft()['/explorer'];
+    ok(cap && cap.inputs.some(i => i.value === 'qA5'),
+       'a same-route refresh recaptures the CURRENT query (a cleared box stays cleared)');
+}
+
+// ── 6. popstate / historyRestore clear the stash AND re-sync the route ─────
+swapTo('/bulk', '<div>bulk</div>');                       // parks explorer again
+ok(Object.keys(window.PaneState._stash()).length === 1, 'parked before Back');
+window.dispatchEvent(new window.CustomEvent('popstate'));
+ok(Object.keys(window.PaneState._stash()).length === 0, 'Back clears the stash');
+ok(window.PaneState._cur() === window.location.pathname,
+   'Back re-syncs the current route (the v1 wrong-DOM-under-/explorer bug)');
+
+// ── 7. stateRestored (wholesale replace) clears every parked pane ──────────
+window.PaneState.clear();
+swapTo('/explorer', '<div>x</div>');
+swapTo('/bulk', '<div>bulk</div>');
+ok(Object.keys(window.PaneState._stash()).length === 1, 'parked');
 doc.dispatchEvent(new window.CustomEvent('stateRestored'));
 ok(Object.keys(window.PaneState._stash()).length === 0,
-   'stateRestored (wholesale replace) clears every parked pane');
+   'stateRestored clears every parked pane');
 
 process.exit(fails ? 1 : 0);
