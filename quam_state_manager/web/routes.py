@@ -4470,6 +4470,8 @@ def _render_tray(*, oob: bool) -> str:
         # docs/20 v2: the last apply's pre-apply snapshot ts (this session) —
         # powers the explicit "Revert last apply…" affordance.
         last_apply=(_active_ctx() or {}).get("last_apply"),
+        # docs/110 #10-A: PaneState's freshness beacon (see _pending_tray.html)
+        mutation_seq=(getattr(_store(), "mutation_seq", "") if _store() else ""),
         oob=oob,
     )
 
