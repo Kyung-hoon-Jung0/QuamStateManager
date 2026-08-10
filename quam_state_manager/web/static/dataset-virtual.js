@@ -715,14 +715,24 @@
         window._dsKbBound = true;
         document.addEventListener('keydown', function (ev) {
             if (!_kbBound()) return;
+            // audit: a modal owns the keyboard while it is open — the '?'
+            // cheat sheet's own Close button passed the old focus gate, so
+            // Space "toggled a row" instead of pressing it.
+            if (document.getElementById('kb-cheatsheet')
+                || document.querySelector('.modal:not([hidden]), dialog[open],'
+                    + ' .ch-overlay:not([hidden]), [role="dialog"]:not([hidden])')) return;
             var a = document.activeElement;
             if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA'
                       || a.isContentEditable)) return;
             if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+            // audit: Enter/Space belong to whatever the user FOCUSED — a
+            // button, link, checkbox or summary must keep them even after a
+            // j press. Only claim them while focus sits on the page body.
+            var onBody = !a || a === document.body;
             if (ev.key === 'j') { ev.preventDefault(); _kbMove(1); }
             else if (ev.key === 'k') { ev.preventDefault(); _kbMove(-1); }
-            else if (ev.key === 'Enter' && _kbIdx >= 0) { ev.preventDefault(); _kbOpen(); }
-            else if (ev.key === ' ' && _kbIdx >= 0) { ev.preventDefault(); _kbToggleSelect(); }
+            else if (ev.key === 'Enter' && _kbIdx >= 0 && onBody) { ev.preventDefault(); _kbOpen(); }
+            else if (ev.key === ' ' && _kbIdx >= 0 && onBody) { ev.preventDefault(); _kbToggleSelect(); }
             else if (ev.key === 'Escape' && _kbIdx >= 0) { _kbIdx = -1; _kbHighlight(); }
         });
     }
@@ -735,7 +745,11 @@
             && (state.sortAgg || 'first') === 'first';
     }
     function _updateNewestChip() {
-        var wrap = document.querySelector('.ds-search-wrap');
+        // audit: `.ds-search-wrap` also names the SIDEBAR experiment filter —
+        // the chip was being injected there. Scope to the datasets toolbar.
+        var wrap = document.querySelector('#table-pane .ds-search-wrap')
+                || (document.getElementById('dataset-search')
+                    && document.getElementById('dataset-search').closest('.ds-search-wrap'));
         if (!wrap) return;
         var btn = document.getElementById('ds-sort-newest');
         if (_isDefaultSort()) { if (btn) btn.hidden = true; return; }
@@ -766,7 +780,11 @@
     // filter showed something else (docs/104 #23) — recompute it over the
     // FILTERED set, restoring the server-rendered band byte-identically
     // when no filter is active.
+    // audit: module-level and never reset, this restored a band captured on
+    // a PREVIOUS render (init() runs on every #table-pane swap) — key it to
+    // the band element so a fresh server render is recaptured.
     var _digestOrig = null;
+    var _digestOrigEl = null;
     function _filtersActive() {
         return (state.searchTokens && state.searchTokens.length > 0)
             || (state.searchGroups && state.searchGroups.length > 0)
@@ -782,7 +800,10 @@
     function _updateDigestBand() {
         var band = document.querySelector('.ds-digest-band');
         if (!band) return;
-        if (_digestOrig === null) _digestOrig = band.innerHTML;
+        if (_digestOrig === null || _digestOrigEl !== band) {
+            _digestOrig = band.innerHTML;
+            _digestOrigEl = band;
+        }
         if (!_filtersActive()) {
             if (band.getAttribute('data-filtered') === '1') {
                 band.innerHTML = _digestOrig;
@@ -839,7 +860,13 @@
             b.textContent = q + ' \u00d7' + qfail[q];
             band.appendChild(b);
         });
-        band.appendChild(span('ds-digest-filtered muted', '(filtered set)'));
+        // audit: the band summarises the LATEST DAY of the filtered set while
+        // the count beside it counts ALL matches — say exactly that, or the
+        // two numbers read as a contradiction.
+        band.appendChild(span('ds-digest-filtered muted',
+            state.visible.length > total
+                ? '(latest day of ' + state.visible.length + ' filtered runs)'
+                : '(filtered set)'));
     }
 
     function applyFilters() {

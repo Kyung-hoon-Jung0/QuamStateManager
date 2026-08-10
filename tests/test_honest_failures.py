@@ -118,6 +118,62 @@ class TestWritePermissionPreflight:
         assert "tray-ro-lock" not in client.get("/state/tray").data.decode("utf-8")
 
 
+class TestIntegrationAuditFixes:
+    """The cross-feature audit's confirmed findings, pinned so they cannot
+    return (each was invisible to the per-stream pins)."""
+
+    def test_load_failure_body_is_allowed_to_swap(self):
+        """htmx drops 4xx bodies unless a beforeSwap allowance permits the
+        target — without it the whole persistent-panel feature never reached
+        the DOM and the user fell back to a vanishing toast."""
+        app_js = (Path(__file__).resolve().parent.parent / "quam_state_manager"
+                  / "web" / "static" / "app.js").read_text(encoding="utf-8")
+        assert "load-failed-panel" in app_js,             "the /load 400 body needs an explicit htmx swap allowance"
+        i = app_js.index("load-failed-panel")
+        window = app_js[i - 400:i + 400]
+        assert "table-pane" in window and "shouldSwap = true" in window
+
+    def test_readonly_probe_is_real_not_os_access(self):
+        """os.access(dir, W_OK) is attribute-only on Windows — it reports a
+        read-only share as writable, i.e. it is blind to the exact case the
+        hint exists for."""
+        routes = (Path(__file__).resolve().parent.parent / "quam_state_manager"
+                  / "web" / "routes.py").read_text(encoding="utf-8")
+        assert "_probe_readonly" in routes
+        i = routes.index("def _probe_readonly")
+        body = routes[i:i + 1200]
+        assert "os.access(" not in body,             "the probe must not CALL os.access (the docstring may name it)"
+        assert "sm_write_probe" in body, "it must actually attempt a write"
+
+    def test_readonly_probe_answers_false_on_a_writable_folder(self, tmp_path):
+        from quam_state_manager.web.routes import _probe_readonly
+        assert _probe_readonly(tmp_path) is False
+        assert not list(tmp_path.iterdir()), "the probe must clean up after itself"
+
+    def test_readonly_probe_never_raises_on_a_surprise(self, tmp_path):
+        """A HINT must degrade, never break activation."""
+        from quam_state_manager.web.routes import _probe_readonly
+        assert isinstance(_probe_readonly(tmp_path / "nope"), bool)
+
+    def test_readonly_lock_renders_on_a_FULL_page_too(self, client, tmp_path):
+        """Same class as the mutation_seq beacon: _render_tray stamped the
+        flag but _ctx did not, so the lock only ever appeared after an OOB
+        tray swap — never on the render that FOLLOWS opening the chip."""
+        import quam_state_manager.web.routes as R
+        live = tmp_path / "ro_full"
+        _write_chip(live, _state())
+        assert client.post("/load", data={"folder": str(live)}).status_code in (200, 302)
+        ctx = next(iter(client.application.config["contexts"].values()))
+        ctx["live_readonly_hint"] = True          # as a real read-only share would
+        html = client.get("/explorer").data.decode("utf-8")
+        assert "tray-ro-lock" in html,             "the full-page tray must carry the read-only lock"
+
+    def test_tray_lock_is_labelled_not_a_bare_glyph(self):
+        tray = (Path(__file__).resolve().parent.parent / "quam_state_manager"
+                / "web" / "templates" / "_pending_tray.html").read_text(encoding="utf-8")
+        assert "tray-ro-text" in tray and "read-only" in tray
+
+
 class TestClockVisibleAtRest:
     def test_field_history_button_is_not_invisible(self):
         css = (Path(__file__).resolve().parent.parent / "quam_state_manager"

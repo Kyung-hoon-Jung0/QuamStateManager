@@ -8434,16 +8434,24 @@ button.diag-badge { cursor: pointer; }
    still occupy a phantom line: under every cell input (taller rows) and beside every
    Apply button (pushing it off-center). Collapse them properly when hidden. */
 .bulk-band-msg[hidden], .bulk-row-error[hidden] { display: none; }
+/* docs/115 (#14): Help is an <a> among <button> siblings — strip the link
+   underline/colour so the tools row reads as one group (audit). */
+a.sidebar-tool-btn { text-decoration: none; color: inherit; }
 /* docs/114 (#15/#16): honest failures */
 .load-failed-panel { max-width: 46rem; margin: 2rem auto; padding: 1rem 1.4rem; border: 1px solid var(--color-error-text); border-radius: 8px; }
 .load-failed-panel h3 { margin-top: 0; color: var(--color-error-text); }
 .load-failed-candidates { display: flex; flex-direction: column; gap: .4rem; align-items: flex-start; }
 .ptr-dangling { color: var(--color-error-text) !important; border-color: var(--color-error-text) !important; }
-.tray-ro-lock { margin-right: .3rem; cursor: help; }
+.tray-ro-lock { margin-right: .3rem; cursor: help; color: var(--color-error-text); }
+.tray-ro-text { font-size: .78em; }
 /* docs/115 (#14): onboarding — help page, landing CTA, tray teaching */
 .landing-cta { display: flex; gap: .5rem; flex-wrap: wrap; margin: .8rem 0 .4rem; }
 .landing-cta-open { font-weight: 600; }
-.tray-teach { display: block; flex-basis: 100%; margin-top: .35rem; font-size: .82em; opacity: .85; }
+/* audit: flex-basis:100% claimed its own row inside the topbar's
+   inline-flex tray cluster and pushed the Apply bar down on every page.
+   It is an inline chip that wraps only if it must, capped so a long
+   sentence can never dominate the bar. */
+.tray-teach { display: inline-block; max-width: 34ch; margin-left: .5rem; font-size: .78em; opacity: .8; line-height: 1.25; vertical-align: middle; }
 .tray-teach[hidden] { display: none; }
 .tray-teach-x { border: 0; background: none; cursor: pointer; opacity: .6; margin-left: .4rem; padding: 0 .2rem; }
 .tray-teach-x:hover { opacity: 1; }
@@ -8454,6 +8462,10 @@ button.diag-badge { cursor: pointer; }
 .help-sc-grid kbd { font-family: var(--font-mono, monospace); font-size: .82em; background: var(--pico-background-color); border: 1px solid var(--pico-muted-border-color); border-radius: 4px; padding: .05rem .35rem; }
 /* docs/111 (#11): selection · fill-down · pinning */
 .bulk-td.bulk-sel { outline: 2px solid var(--pico-primary); outline-offset: -2px; background: color-mix(in srgb, var(--pico-primary) 12%, transparent); }
+/* the ANCHOR is the cell whose value Ctrl+D propagates — it must not look
+   like every other selected cell (audit). */
+.bulk-td.bulk-sel-anchor { outline-width: 3px; background: color-mix(in srgb, var(--pico-primary) 22%, transparent); }
+.bulk-sel-hint { font-size: .78em; opacity: .8; margin-right: .5rem; white-space: nowrap; }
 .bulk-pin { border: 0; background: none; padding: 0 2px; margin-left: 2px; font-size: 0.72em; cursor: pointer; opacity: 0; transition: opacity .12s; filter: grayscale(1); }
 th:hover > .bulk-pin, .bulk-pin.bulk-pin-on { opacity: 0.85; }
 .bulk-pin.bulk-pin-on { filter: none; }
@@ -8462,7 +8474,9 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 .bulk-table thead th.bulk-col-pinned { z-index: 4; }
 /* docs/112 (#12): datasets keyboard nav + sort honesty */
 #datasets-tbody tr.ds-row-active > td { outline: 2px solid var(--pico-primary); outline-offset: -2px; }
-.ds-sort-newest { margin-left: .4rem; white-space: nowrap; }
+/* audit: `.ds-search-wrap` also hosts an absolutely-positioned help "?"
+   at right:.4rem — keep clear of it. */
+.ds-sort-newest { margin-left: .4rem; margin-right: 1.6rem; white-space: nowrap; }
 .ds-digest-filtered { font-size: .78em; margin-left: .5rem; opacity: .6; }
 /* docs/113 (#13): the '?' shortcut cheat sheet */
 .kb-sheet-backdrop { position: fixed; inset: 0; z-index: 5000; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; }

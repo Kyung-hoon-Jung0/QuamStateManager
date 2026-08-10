@@ -333,6 +333,16 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
         evt.detail.shouldSwap = true;
         evt.detail.isError = false;
     }
+    // docs/114 (#15): a failed /load answers 400 with the persistent
+    // explanation panel — htmx drops 4xx bodies by default, so without this
+    // allowance the whole feature was invisible and the user fell back to a
+    // vanishing toast (the integration audit caught it). Narrow: only a
+    // /load response carrying that panel may swap into the main pane.
+    if (t.id === 'table-pane' && status === 400 && evt.detail.xhr
+        && /load-failed-panel/.test(evt.detail.xhr.responseText || '')) {
+        evt.detail.shouldSwap = true;
+        evt.detail.isError = false;
+    }
     // Dataset "Load State" gates (r11): chip-mismatch / pending-edits answer
     // 409 with a confirm fragment — same pattern as state-history-detail.
     if (t.id === 'ds-load-state-result' && status === 409) {
@@ -2629,6 +2639,10 @@ window.applyEditsToLive = function () {
                 // status badge's tooltip names the last successful check, so
                 // "Synced" is a claim with a timestamp, not a vibe.
                 try {
+                    // audit: only a SUCCESSFUL poll may claim a check time —
+                    // the failure path reaches here with d === null, and a
+                    // staleness indicator that lies is worse than none.
+                    if (!d) throw 0;
                     var badge = document.querySelector('.tray-indicator');
                     if (badge) {
                         var base = badge.getAttribute('data-tip-base');
@@ -3494,9 +3508,9 @@ window.PhysAmp = (function () {
             ['?', 'this cheat sheet'],
             ['Alt+C', 'calculator'],
             ['Ctrl+Z / Ctrl+Shift+Z', 'undo / redo (crosses saves — staged into Review)'],
-            ['Live State Edit', ''],
+            ['Live State Edit — the Qubits grid', ''],
             ['Tab / Shift+Tab', 'hop between edit cells'],
-            ['Shift+click / Ctrl+click', 'select cells in a column'],
+            ['Shift+click / Ctrl+click', 'select a range / toggle cells in ONE column'],
             ['Ctrl+D', 'fill selection from the anchor cell'],
             ['Ctrl+V (multi-line)', 'paste a column downward'],
             ['Ctrl+Enter', 'Apply all (when armed)'],
@@ -3545,8 +3559,18 @@ window.PhysAmp = (function () {
         if (window.trapFocus) wrap._releaseTrap = window.trapFocus(wrap, _closeSheet);
         close.focus();
     };
+    function _modalOpen() {
+        // audit: a second focus trap over an open modal breaks BOTH — the
+        // older capture-phase trap still runs first, so Escape closed the
+        // wrong thing. Any visible dialog/overlay suppresses / and ?.
+        return !!document.querySelector(
+            '.modal:not([hidden]), dialog[open], .review-overlay:not([hidden]),'
+            + ' .ch-overlay:not([hidden]), .drift-overlay:not([hidden]),'
+            + ' .type-fix-modal:not([hidden]), .fsp-popup:not([hidden])');
+    }
     document.addEventListener('keydown', function (ev) {
         if (ev.key === 'Escape' && _sheet()) { _closeSheet(); return; }
+        if (!_sheet() && _modalOpen()) return;
         if (_typing()) {
             // Ctrl+Enter works FROM a grid cell too — that is where the user is
             if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
@@ -3782,6 +3806,21 @@ window.PaneState = (function () {
     document.addEventListener('htmx:oobAfterSwap', sync);
     if (document.readyState !== 'loading') sync();
 })();
+
+/* docs/115 (#14) — the landing CTA opens the SAME folder browser the
+   sidebar's State Load uses, bound to that form's input (the audit caught
+   the first version calling openFolderBrowser() with no target, so picking
+   a folder filled nothing and submitted nothing). If the browser is
+   unavailable, focus the input so the CTA is never a dead click. */
+window.smOpenStateFolder = function () {
+    var input = document.getElementById('load-path-input')
+             || document.querySelector('#load-form input[name="folder"]');
+    if (input && window.openFolderBrowser) {
+        window.openFolderBrowser(input.id || 'load-path-input');
+        return;
+    }
+    if (input) { input.focus(); input.scrollIntoView({block: 'center'}); }
+};
 
 /* ------------------------------------------------------------------ */
 /* Value delta (Δ) — the JS mirror of core/value_delta.py               */

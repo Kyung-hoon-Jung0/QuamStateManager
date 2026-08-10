@@ -160,5 +160,27 @@ function tick(ms) { return new Promise(r => setTimeout(r, ms || 30)); }
        'clearing the filter restores the server band byte-identically');
   }
 
+  // ── integration-audit fixes ───────────────────────────────────────────────
+  {
+    const w = boot({ key: 'status', desc: false });
+    await tick();
+    const doc = w.document;
+    // the chip must land in the DATASETS toolbar, never the sidebar wrap
+    const chip = doc.getElementById('ds-sort-newest');
+    ok(!!chip && chip.closest('.ds-search-wrap')
+       && chip.closest('.ds-search-wrap').querySelector('#dataset-search'),
+       'audit: the ↻ Newest chip lands in the datasets search wrap');
+    // Enter/Space must stay with a FOCUSED control after a j press
+    key(w, 'j');
+    const btn = doc.createElement('button');
+    let pressed = 0;
+    btn.addEventListener('keydown', e => { if (e.key === 'Enter') pressed++; });
+    doc.body.appendChild(btn); btn.focus();
+    const ev = new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    btn.dispatchEvent(ev);
+    ok(!ev.defaultPrevented, 'audit: Enter belongs to the focused control, not the row nav');
+    btn.blur();
+  }
+
   process.exit(fails ? 1 : 0);
 })();

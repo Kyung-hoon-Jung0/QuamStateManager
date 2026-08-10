@@ -831,6 +831,30 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict, *,
                 ctx.pop("live_drift_count", None)
 
 
+def _probe_readonly(folder) -> bool:
+    """True when the live folder is NOT writable (docs/114 #16).
+
+    A real probe, not ``os.access``: on Windows that call is attribute-only
+    for directories and reports a read-only share as writable. Creating and
+    removing a dot-file is the only answer the OS actually stands behind.
+    Any surprise (missing folder, exotic FS) answers False — this is a HINT
+    and a false alarm would be worse than none.
+    """
+    probe = Path(folder) / ".sm_write_probe"
+    try:
+        with open(probe, "w", encoding="utf-8") as fh:
+            fh.write("")
+        try:
+            probe.unlink()
+        except OSError:
+            pass
+        return False
+    except (PermissionError, OSError):
+        return True
+    except Exception:  # noqa: BLE001 — a hint must never break activation
+        return False
+
+
 def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
     """Load a QUAM state folder and register it as the active context.
 
@@ -943,6 +967,13 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # folder-filter toggles) and outside the cache lock (the reverse
         # index may do a few stats / a rare TOML re-parse). An explicitly
         # pinned name sticks.
+        # docs/114 (#16): re-probe on EVERY activation — a cached chip whose
+        # share was remounted read-only (or repaired) must not keep the answer
+        # from the first open.
+        try:
+            current["live_readonly_hint"] = _probe_readonly(current["path"])
+        except Exception:  # noqa: BLE001 — a hint never blocks activation
+            pass
         _acquire_project_scope(current)
         # docs/20 v2: re-evaluate the first-open chip-name banner on every
         # activation (origin can flip live→archive; a staged name dismisses),
@@ -995,10 +1026,9 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
             # docs/114 (#16): write-permission preflight — a read-only live
             # folder (network share) should be KNOWN at open time, not
             # discovered at apply time after 20 minutes of edits.
-            try:
-                ctx["live_readonly_hint"] = not os.access(str(folder), os.W_OK)
-            except OSError:
-                ctx["live_readonly_hint"] = False
+            # (see _probe_readonly — a real create+delete, because
+            # os.access is attribute-only for directories on Windows)
+            ctx["live_readonly_hint"] = _probe_readonly(folder)
             # (docs/87) The "✓ Live chip updated — N params pulled" one-shot that
             # used to be stashed here is gone with the silent pull it announced.
             # A toast that reports a fait accompli is strictly worse than the
@@ -2835,6 +2865,10 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # that as "the chip moved" and refetches every parked pane. (Caught by
         # the real-browser pass: keep-alive never fired, only the SOFT tier.)
         "mutation_seq": (getattr(_store(), "mutation_seq", "") if _store() else ""),
+        # docs/114 (#16): the read-only lock, like the beacon above, must be
+        # stamped by the FULL-page render too — _render_tray alone meant the
+        # lock only ever appeared after an OOB tray swap.
+        "live_readonly": bool((_active_ctx() or {}).get("live_readonly_hint")),
         "qualibrate_tray": _qualibrate_tray_badge(),
         # docs/63 project lens: the qualibrate project this context operates
         # under (explicitly opened, or reverse-matched from its live folder).
@@ -10632,7 +10666,10 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False):
             "replay": replay,
         })
     except (OSError, ValueError) as exc:
-        return jsonify({"status": "error", "message": f"Apply to live failed: {exc}"}), 500
+        _pd = ("the live folder is READ-ONLY (network share?) — "
+               if getattr(exc, "errno", None) in (13, 1) else "")
+        return jsonify({"status": "error",
+                        "message": f"Apply to live failed: {_pd}{exc}"}), 500
     except Exception as exc:  # noqa: BLE001 — r16 6: honest message, never a dropped 500
         logger.exception("apply-to-live (sync) unexpected failure")
         return jsonify({"status": "error",
@@ -10717,7 +10754,7 @@ def state_apply_to_live():
             )
             # docs/114 (#16): name the permission case explicitly — a
             # read-only share is the common cause and the OS says so.
-            _pd = ("the live folder may be READ-ONLY (network share?) — "
+            _pd = ("the WORKING folder is not writable — "
                    if getattr(exc, "errno", None) in (13, 1) else "")
             return render_template(
                 "_status.html",
@@ -10758,7 +10795,13 @@ def state_apply_to_live():
             and (bool(ctx.get("staged_base"))
                  or not ctx.get("pending_reapply")))
     except (OSError, ValueError) as exc:
-        return render_template("_status.html", message=f"Apply to live failed: {exc}", level="error"), 500
+        # docs/114 (#16): the read-only case fails HERE (the LIVE write), not
+        # in the working-copy save — name it where it actually happens.
+        _pd = ("the live folder is READ-ONLY (network share?) — "
+               if getattr(exc, "errno", None) in (13, 1) else "")
+        return render_template("_status.html",
+                               message=f"Apply to live failed: {_pd}{exc}",
+                               level="error"), 500
     except Exception as exc:  # noqa: BLE001 — r16 6: honest message, never a dropped 500
         logger.exception("apply-to-live unexpected failure")
         return render_template(

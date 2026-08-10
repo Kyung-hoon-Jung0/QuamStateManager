@@ -1356,9 +1356,40 @@
         var t = table(); if (!t) return [];
         return Array.prototype.slice.call(t.querySelectorAll('td.bulk-sel'));
     }
+    // audit: shift-clicking was a discoverable act with an undiscoverable
+    // payoff — the selection painted an outline and the page said nothing.
+    // Announce the count, name the keys, and MARK the anchor whose value
+    // Ctrl+D propagates (all selected cells looked identical before).
+    function _selHintEl() {
+        var el = document.getElementById('bulk-sel-hint');
+        if (!el) {
+            var host = document.getElementById('bulk-dirty-count');
+            if (!host || !host.parentNode) return null;
+            el = document.createElement('span');
+            el.id = 'bulk-sel-hint';
+            el.className = 'bulk-sel-hint';
+            host.parentNode.insertBefore(el, host);
+        }
+        return el;
+    }
+    function _syncSelHint() {
+        var el = _selHintEl(); if (!el) return;
+        var n = _selCells().length;
+        el.textContent = n
+            ? (n + ' cell' + (n === 1 ? '' : 's') + ' selected — Ctrl+D fills from the anchor · Esc clears')
+            : '';
+        var t = table();
+        if (t) {
+            t.querySelectorAll('td.bulk-sel-anchor').forEach(function (td) {
+                td.classList.remove('bulk-sel-anchor');
+            });
+            if (n && _selAnchor) _selAnchor.classList.add('bulk-sel-anchor');
+        }
+    }
     function _clearSel() {
         _selCells().forEach(function (td) { td.classList.remove('bulk-sel'); });
         _selAnchor = null;
+        _syncSelHint();
     }
     function _colCellTds(colKey) {
         // visible rows only, document order
@@ -1377,6 +1408,7 @@
         for (var i = Math.min(a, b); i <= Math.max(a, b); i++) {
             if (_editableIn(tds[i])) tds[i].classList.add('bulk-sel');
         }
+        _syncSelHint();
         return true;
     }
     function _fillSelection() {
@@ -1664,18 +1696,28 @@
                     !== td.getAttribute('data-col-key')) return;
                 td.classList.toggle('bulk-sel');
                 if (!_selAnchor) _selAnchor = td;
+                _syncSelHint();
             } else {
                 _clearSel();
                 _selAnchor = td;
             }
         });
-        t.addEventListener('keydown', function (ev) {
-            if ((ev.ctrlKey || ev.metaKey) && (ev.key === 'd' || ev.key === 'D')) {
-                if (_selCells().length) { ev.preventDefault(); _fillSelection(); }
-            } else if (ev.key === 'Escape') {
-                _clearSel();
-            }
-        });
+        // audit: bound to the TABLE, Ctrl+D reached the browser's bookmark
+        // dialog whenever focus sat anywhere else, and Escape could not clear
+        // a selection the user could still see. Document level, gated on a
+        // live selection so it can never steal either key otherwise.
+        if (!window.__bulkSelKeysBound) {
+            window.__bulkSelKeysBound = true;
+            document.addEventListener('keydown', function (ev) {
+                if (!_selCells().length) return;
+                if ((ev.ctrlKey || ev.metaKey) && (ev.key === 'd' || ev.key === 'D')) {
+                    ev.preventDefault();
+                    _fillSelection();
+                } else if (ev.key === 'Escape') {
+                    _clearSel();
+                }
+            }, true);
+        }
         t.addEventListener('paste', function (ev) {
             var cell = ev.target.closest && ev.target.closest('.bulk-cell');
             if (!cell || cell.readOnly) return;
@@ -1838,7 +1880,9 @@
             t.addEventListener('keydown', function (e) {
                 var cell = e.target.closest && e.target.closest('.bulk-cell');
                 if (!cell) return;
-                if (e.key === 'Enter') {
+                // audit: Ctrl/Cmd+Enter belongs to docs/113's Apply-all — without
+                // this it ALSO fired applyRow, i.e. two concurrent writes.
+                if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
                     e.preventDefault();
                     var b = _rowOf(cell).querySelector('.bulk-row-apply');
                     if (b && !b.disabled) BulkEdit.applyRow(b);
