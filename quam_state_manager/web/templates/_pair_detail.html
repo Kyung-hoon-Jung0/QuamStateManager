@@ -54,7 +54,7 @@
                         {% set _phys = p.dot_path | phys_amp(p.value) %}
                         {% if _phys %}<span class="phys-note muted"{% if _phys.kind == 'mw' %} data-dbm="{{ _phys.dbm }}"{% endif %} title="{% if _phys.kind == 'mw' %}Actual output power: P = FSP ({{ _phys.fsp }} dBm) + 20·log10|amp|{% else %}LF amplitude is the output voltage{% endif %}">&#8776; {{ _phys.text }}</span>{% endif %}
                         {% if p.is_pointer %}
-                        <span class="ptr-inline pointer-badge" title="Resolves to: {{ p.value }}">{{ p.raw }}</span>
+                        {% if p.value == p.raw %}<span class="ptr-inline pointer-badge ptr-dangling" title="DANGLING pointer — its target does not exist in this state (the raw text is shown; nothing resolves)">{{ p.raw }}</span>{% else %}<span class="ptr-inline pointer-badge" title="Resolves to: {{ p.value }}">{{ p.raw }}</span>{% endif %}
                         {% endif %}
                     {% elif p.value is none %}
                         <em class="null-value">not set</em>
