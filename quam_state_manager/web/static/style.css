@@ -8434,6 +8434,17 @@ button.diag-badge { cursor: pointer; }
    still occupy a phantom line: under every cell input (taller rows) and beside every
    Apply button (pushing it off-center). Collapse them properly when hidden. */
 .bulk-band-msg[hidden], .bulk-row-error[hidden] { display: none; }
+/* docs/113 (#13): the '?' shortcut cheat sheet */
+.kb-sheet-backdrop { position: fixed; inset: 0; z-index: 5000; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; }
+.kb-sheet { background: var(--pico-card-background-color); border: 1px solid var(--pico-muted-border-color); border-radius: 8px; padding: 1rem 1.25rem; max-width: 34rem; width: min(92vw, 34rem); max-height: 84vh; overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
+.kb-sheet h3 { margin: 0 0 .5rem; }
+.kb-sheet-rows { display: grid; grid-template-columns: max-content 1fr; gap: .25rem .9rem; align-items: baseline; }
+.kb-sheet-group { grid-column: 1 / -1; font-weight: 700; font-size: .82em; opacity: .65; text-transform: uppercase; letter-spacing: .04em; margin-top: .45rem; }
+.kb-sheet-row { display: contents; }
+.kb-sheet kbd { font-family: var(--font-mono, monospace); font-size: .82em; background: var(--pico-background-color); border: 1px solid var(--pico-muted-border-color); border-radius: 4px; padding: .05rem .35rem; white-space: nowrap; }
+.kb-sheet-hint { margin: .6rem 0 .3rem; font-size: .78em; }
+.kb-sheet-close { margin-top: .2rem; }
+
 /* column header: unit + sort caret + min/max */
 .bulk-col-head { cursor: pointer; user-select: none; }
 /* Drag-to-resize grip on each column header's right edge (dbl-click = auto-fit).
