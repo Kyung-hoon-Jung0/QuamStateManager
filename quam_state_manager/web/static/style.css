@@ -8434,6 +8434,11 @@ button.diag-badge { cursor: pointer; }
    still occupy a phantom line: under every cell input (taller rows) and beside every
    Apply button (pushing it off-center). Collapse them properly when hidden. */
 .bulk-band-msg[hidden], .bulk-row-error[hidden] { display: none; }
+/* docs/112 (#12): datasets keyboard nav + sort honesty */
+#datasets-tbody tr.ds-row-active > td { outline: 2px solid var(--pico-primary); outline-offset: -2px; }
+.ds-sort-newest { margin-left: .4rem; white-space: nowrap; }
+.ds-digest-filtered { font-size: .78em; margin-left: .5rem; opacity: .6; }
+
 /* column header: unit + sort caret + min/max */
 .bulk-col-head { cursor: pointer; user-select: none; }
 /* Drag-to-resize grip on each column header's right edge (dbl-click = auto-fit).

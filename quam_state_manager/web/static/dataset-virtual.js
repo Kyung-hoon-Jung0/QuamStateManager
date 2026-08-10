@@ -661,6 +661,187 @@
         });
     }
 
+
+    // ── docs/112 (#12): j/k keyboard nav · ↻ Newest · digest follows filter ──
+    var _kbIdx = -1;               // index into state.visible
+    function _kbUid() {
+        if (_kbIdx < 0 || _kbIdx >= state.visible.length) return null;
+        var row = state.rows[state.visible[_kbIdx]];
+        // rows carry a folder-aware uid ("<folder>:<id>") — data-id uses it
+        return row ? String(row.uid != null ? row.uid : row.id) : null;
+    }
+    function _kbHighlight() {
+        if (!state.tbody) return;
+        var uid = _kbUid();
+        state.tbody.querySelectorAll('tr.ds-row-active').forEach(function (tr) {
+            tr.classList.remove('ds-row-active');
+        });
+        if (uid == null) return;
+        var tr = state.tbody.querySelector('tr[data-id="' + (window.CSS && CSS.escape ? CSS.escape(uid) : uid) + '"]');
+        if (tr) tr.classList.add('ds-row-active');
+    }
+    function _kbMove(dir) {
+        var n = state.visible.length;
+        if (!n) return;
+        _kbIdx = _kbIdx < 0 ? (dir > 0 ? 0 : n - 1)
+                            : Math.max(0, Math.min(n - 1, _kbIdx + dir));
+        // bring the row into the virtual window
+        if (state.scrollEl) {
+            var y = _kbIdx * ROW_HEIGHT;
+            var top = state.scrollEl.scrollTop, vh = state.scrollEl.clientHeight;
+            if (y < top) state.scrollEl.scrollTop = y;
+            else if (y + ROW_HEIGHT > top + vh) state.scrollEl.scrollTop = y + ROW_HEIGHT - vh;
+        }
+        renderWindow(true);
+        _kbHighlight();
+    }
+    function _kbRow() {
+        var uid = _kbUid();
+        if (uid == null || !state.tbody) return null;
+        return state.tbody.querySelector('tr[data-id="' + (window.CSS && CSS.escape ? CSS.escape(uid) : uid) + '"]');
+    }
+    function _kbOpen() {
+        var tr = _kbRow();
+        if (tr) tr.click();
+    }
+    function _kbToggleSelect() {
+        var tr = _kbRow();
+        if (!tr) return;
+        var cb = tr.querySelector('.col-select input[type="checkbox"], input.ds-row-select');
+        if (cb) cb.click();
+    }
+    function _kbBound() { return !!document.getElementById('datasets-scroll'); }
+    if (!window._dsKbBound) {
+        window._dsKbBound = true;
+        document.addEventListener('keydown', function (ev) {
+            if (!_kbBound()) return;
+            var a = document.activeElement;
+            if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA'
+                      || a.isContentEditable)) return;
+            if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+            if (ev.key === 'j') { ev.preventDefault(); _kbMove(1); }
+            else if (ev.key === 'k') { ev.preventDefault(); _kbMove(-1); }
+            else if (ev.key === 'Enter' && _kbIdx >= 0) { ev.preventDefault(); _kbOpen(); }
+            else if (ev.key === ' ' && _kbIdx >= 0) { ev.preventDefault(); _kbToggleSelect(); }
+            else if (ev.key === 'Escape' && _kbIdx >= 0) { _kbIdx = -1; _kbHighlight(); }
+        });
+    }
+
+    // "↻ Newest first" — the restored sort must never silently bury today's
+    // runs (docs/104 #4): whenever the active sort differs from the default
+    // (id desc), a one-click reset appears beside the search box.
+    function _isDefaultSort() {
+        return state.sortKey === 'id' && state.sortDesc === true
+            && (state.sortAgg || 'first') === 'first';
+    }
+    function _updateNewestChip() {
+        var wrap = document.querySelector('.ds-search-wrap');
+        if (!wrap) return;
+        var btn = document.getElementById('ds-sort-newest');
+        if (_isDefaultSort()) { if (btn) btn.hidden = true; return; }
+        if (!btn) {
+            btn = document.createElement('button');
+            btn.type = 'button';
+            btn.id = 'ds-sort-newest';
+            btn.className = 'btn-sm outline ds-sort-newest';
+            btn.textContent = '\u21bb Newest';
+            btn.title = 'The table is sorted by ' + state.sortKey
+                + ' — click to restore newest-first (the default)';
+            btn.addEventListener('click', function () {
+                state.sortKey = 'id'; state.sortDesc = true; state.sortAgg = 'first';
+                _saveSortPrefs();
+                applyFilters();
+                if (typeof _buildSortBanner === 'function') _buildSortBanner();
+                _updateNewestChip();
+                if (state.scrollEl) state.scrollEl.scrollTop = 0;
+            });
+            wrap.appendChild(btn);
+        }
+        btn.hidden = false;
+        btn.title = 'The table is sorted by ' + state.sortKey
+            + ' — click to restore newest-first (the default)';
+    }
+
+    // The digest band described the LATEST DAY OF ALL RUNS even while a
+    // filter showed something else (docs/104 #23) — recompute it over the
+    // FILTERED set, restoring the server-rendered band byte-identically
+    // when no filter is active.
+    var _digestOrig = null;
+    function _filtersActive() {
+        return (state.searchTokens && state.searchTokens.length > 0)
+            || (state.searchGroups && state.searchGroups.length > 0)
+            || (state.scopedFilters && state.scopedFilters.length > 0)
+            || (state.selectedExps && state.selectedExps.size > 0)
+            || (state.selectedTags && state.selectedTags.size > 0)
+            || (state.qubitFilter && state.qubitFilter.size > 0)
+            || (state.pairFilter && state.pairFilter.size > 0)
+            || (state.paramFilter && state.paramFilter.size > 0)
+            || (state.paramRangeFilter && state.paramRangeFilter.size > 0)
+            || (state.folderFilter && state.folderFilter.size > 0);
+    }
+    function _updateDigestBand() {
+        var band = document.querySelector('.ds-digest-band');
+        if (!band) return;
+        if (_digestOrig === null) _digestOrig = band.innerHTML;
+        if (!_filtersActive()) {
+            if (band.getAttribute('data-filtered') === '1') {
+                band.innerHTML = _digestOrig;
+                band.removeAttribute('data-filtered');
+            }
+            return;
+        }
+        var bad = /error|fail|abort|crash/;
+        var latest = '';
+        for (var i = 0; i < state.visible.length; i++) {
+            var d = state.rows[state.visible[i]].date || '';
+            if (d > latest) latest = d;
+        }
+        var total = 0, failed = 0, qfail = {};
+        for (var j = 0; j < state.visible.length; j++) {
+            var row = state.rows[state.visible[j]];
+            if ((row.date || '') !== latest) continue;
+            total++;
+            if (bad.test(String(row.status || '').toLowerCase())) failed++;
+            if (row.oc) {
+                for (var q in row.oc) {
+                    if (bad.test(String(row.oc[q]).toLowerCase())) {
+                        qfail[q] = (qfail[q] || 0) + 1;
+                    }
+                }
+            }
+        }
+        while (band.firstChild) band.removeChild(band.firstChild);
+        band.setAttribute('data-filtered', '1');
+        function span(cls, text) {
+            var el = document.createElement('span');
+            el.className = cls; el.textContent = text;
+            return el;
+        }
+        band.appendChild(span('ds-digest-date', latest || '\u2014'));
+        band.appendChild(span('ds-digest-item',
+            total + ' run' + (total === 1 ? '' : 's')));
+        if (failed) {
+            var fb = document.createElement('button');
+            fb.className = 'ds-help-example ds-digest-bad';
+            fb.setAttribute('data-example', 'is:failed');
+            fb.textContent = failed + ' failed';
+            band.appendChild(fb);
+        } else {
+            band.appendChild(span('ds-digest-ok', 'all OK'));
+        }
+        var qs = Object.keys(qfail).sort(function (x, y) {
+            return (qfail[y] - qfail[x]) || (x < y ? -1 : 1);
+        }).slice(0, 8);
+        qs.forEach(function (q) {
+            var b = document.createElement('button');
+            b.className = 'ds-help-example ds-digest-qchip';
+            b.setAttribute('data-example', 'qubit:' + q + ' outcome:fail');
+            b.textContent = q + ' \u00d7' + qfail[q];
+            band.appendChild(b);
+        });
+        band.appendChild(span('ds-digest-filtered muted', '(filtered set)'));
+    }
+
     function applyFilters() {
         // Read live from the global exp + tag filter sets (managed by app.js chips).
         state.selectedExps = getSelectedExps();
@@ -783,6 +964,9 @@
     }
 
     function updateFilterCount() {
+        _kbIdx = -1; _kbHighlight();   // the visible set changed under the cursor
+        _updateDigestBand();           // docs/112: digest follows the filter
+        _updateNewestChip();           // docs/112: non-default sort is announced
         var countEl = document.getElementById('dataset-filter-count');
         if (!countEl) return;
         var active = state.searchTokens.length > 0
