@@ -16142,6 +16142,17 @@ def dataset_load_state(uid):
 
     Gates (independent tokens, docs/41 doctrine): chip-identity mismatch →
     ``force_chip=1``; pending working-copy edits → ``force=1``.
+
+    ``apply=1`` (docs/108, user-requested): ONE press stages the snapshot AND
+    pushes it to the live chip through the shared apply core
+    (:func:`_sync_pull_apply_to_live` — the one write path, so the pre-apply
+    snapshot arms "↺ Revert last apply" exactly like every other apply).
+    Covenant-compliant: the button is labeled "Apply to chip", so the press
+    IS the one explicit apply act — no confirm dialog (the no-confirm
+    doctrine), and reversibility is what makes one click safe. The identity /
+    pending-edit gates stay (they answer a DIFFERENT question than consent),
+    and a staleness conflict renders the honest conflict tray rather than
+    force-pushing over a live chip that moved.
     """
     resolved = _resolve_run(uid)
     state_path = None
@@ -16173,6 +16184,9 @@ def dataset_load_state(uid):
     # ---- stage into the ACTIVE chip's working copy ----
     base_url = f"/dataset/{uid}/load-state"
     chip_label = _chip_display_name(Path(ctx["path"]))
+    apply_req = request.values.get("apply") == "1"   # docs/108 one-click
+    apply_qs = "&apply=1" if apply_req else ""
+    apply_note = " It will then be APPLIED to the live chip." if apply_req else ""
 
     # Gate 1 — chip identity: the run's snapshot must fingerprint-align with
     # the loaded chip; UNKNOWN (unreadable fingerprint) also confirms.
@@ -16185,12 +16199,13 @@ def dataset_load_state(uid):
                       if alignment == _hist.ALIGN_UNKNOWN
                       else "looks like a DIFFERENT chip")
             url = (base_url + "?force_chip=1"
-                   + ("&force=1" if request.values.get("force") == "1" else ""))
+                   + ("&force=1" if request.values.get("force") == "1" else "")
+                   + apply_qs)
             return render_template(
                 "_sh_confirm.html",
                 message=(f"This run's quam_state {reason} vs the loaded chip "
                          f"({chip_label}). Loading it replaces the working "
-                         "state wholesale."),
+                         "state wholesale." + apply_note),
                 action_url=url,
                 action_label="Load into working state anyway",
                 confirm=("Replace the working state with a snapshot from a "
@@ -16205,11 +16220,12 @@ def dataset_load_state(uid):
                        or bool(ctx.get("working_dirty")))
     if has_pending and request.values.get("force") != "1":
         url = (base_url + "?force=1"
-               + ("&force_chip=1" if request.values.get("force_chip") == "1" else ""))
+               + ("&force_chip=1" if request.values.get("force_chip") == "1" else "")
+               + apply_qs)
         return render_template(
             "_sh_confirm.html",
             message=("You have unsaved edits in the working state. Loading "
-                     "this run's snapshot will replace them."),
+                     "this run's snapshot will replace them." + apply_note),
             action_url=url,
             action_label="Replace working state anyway",
             confirm="Discard your unsaved edits and load this run's state?",
@@ -16237,6 +16253,49 @@ def dataset_load_state(uid):
                                level="error"), 500
     logger.info("dataset run %s staged into the working copy of %s",
                 uid, ctx["path"])
+
+    if apply_req:
+        # docs/108 one-click: push the just-staged snapshot through the SHARED
+        # apply core — same pre-apply snapshot (arms ↺ Revert last apply),
+        # same staleness handling, same bookkeeping as the ⚡ button.
+        result = _sync_pull_apply_to_live(ctx, None)
+        body = (result[0] if isinstance(result, tuple) else result).get_json()
+        status = (body or {}).get("status")
+        if status == "ok":
+            msg = render_template(
+                "_status.html",
+                message=(f"Run #{run_id}'s state is now LIVE on {chip_label}. "
+                         "Reversible — ↺ Revert last apply (top bar) "
+                         "restores the pre-apply state."),
+                level="success")
+            resp = make_response(msg + "\n" + _tray_oob())
+            resp.headers["HX-Trigger"] = "pulses-changed, stateRestored, diagnostics-changed"
+            return resp
+        if status == "conflict":
+            # The live chip moved since it was loaded — the snapshot is STAGED
+            # (safe), and the honest conflict tray offers the real choices
+            # (docs/65 staged_conflict: overwrite-live or pull-and-discard).
+            # Never force-push over a live chip that changed under us.
+            tray = (body.get("tray_html") or "").replace(
+                '<div id="pending-tray"',
+                '<div id="pending-tray" hx-swap-oob="outerHTML"', 1)
+            msg = render_template(
+                "_status.html",
+                message=(f"Run #{run_id}'s state is staged, but the live chip "
+                         "changed since it was loaded — resolve in the top "
+                         "bar (your staged state is safe)."),
+                level="warning")
+            resp = make_response(msg + "\n" + tray)
+            resp.headers["HX-Trigger"] = "pulses-changed, stateRestored, diagnostics-changed"
+            return resp
+        # error — the staging succeeded; say exactly how far things got.
+        return render_template(
+            "_status.html",
+            message=((body or {}).get("message") or "Apply to live failed")
+            + " — the run's state IS staged in the working copy; retry from "
+              "the top bar.",
+            level="error"), 500
+
     msg = render_template(
         "_status.html",
         message=(f"Run #{run_id}'s state is now the WORKING state of "

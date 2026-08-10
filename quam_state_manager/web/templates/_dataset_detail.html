@@ -405,20 +405,27 @@
 {# ── Tab: State ── #}
 <div class="dataset-tab-content hidden" id="ds-tab-state">
 
-    {# Compact Load State bar (only when quam_state available). r11: the
-       primary action STAGES the snapshot into the open chip's WORKING copy
-       (Sync / Apply pushes it live) — the archive open that used to hijack
-       the active context stays as the secondary read-only button and as the
-       automatic fallback when nothing is loaded. Gates (chip mismatch /
-       pending edits) come back as 409 confirm fragments into the result
+    {# Compact state-action bar (only when quam_state available). docs/108:
+       the PRIMARY action is one-click "Apply to chip" — stage + push through
+       the shared apply core in one press (the labeled press IS the one
+       explicit apply act the covenant requires; no confirm dialog, and it is
+       reversible via ↺ Revert last apply, which is what makes one click
+       safe). "Stage only" keeps the r11 review-first path byte-identically;
+       the archive open stays as the read-only fallback. Gates (chip mismatch
+       / pending edits) come back as 409 confirm fragments into the result
        slot below. #}
     {% if run.has_quam_state %}
     <div class="ds-state-action-bar">
+        <button hx-post="/dataset/{{ uid }}/load-state?apply=1"
+                hx-target="#ds-load-state-result" hx-swap="innerHTML"
+                class="btn-sm"
+                title="One click: this run's state becomes the working state AND is applied to the live chip. Reversible — ↺ Revert last apply restores the pre-apply state.">Apply to chip</button>
         <button hx-post="/dataset/{{ uid }}/load-state"
                 hx-target="#ds-load-state-result" hx-swap="innerHTML"
-                class="btn-sm">Load State</button>
-        <small class="muted">Into the open chip's <b>working</b> state — Sync&nbsp;/&nbsp;Apply
-            pushes it to the live chip. With no chip open, opens read-only.</small>
+                class="btn-sm outline"
+                title="Review first: stage into the open chip's working state only — the live chip is untouched until you Apply from the top bar.">Stage only</button>
+        <small class="muted">Apply writes the live chip now (revertible);
+            Stage&nbsp;only lets you review first. With no chip open, opens read-only.</small>
         <button hx-post="/dataset/{{ uid }}/load-state?mode=archive"
                 hx-target="#ds-load-state-result" hx-swap="innerHTML"
                 class="btn-sm ds-load-archive-btn"
