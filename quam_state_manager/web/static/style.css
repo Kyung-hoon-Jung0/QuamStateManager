@@ -8442,6 +8442,10 @@ th:hover > .bulk-pin, .bulk-pin.bulk-pin-on { opacity: 0.85; }
 tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb, var(--pico-primary) 7%, var(--pico-card-background-color)); }
 .bulk-table .bulk-col-pinned { z-index: 3; background: var(--pico-card-background-color); }
 .bulk-table thead th.bulk-col-pinned { z-index: 4; }
+/* docs/112 (#12): datasets keyboard nav + sort honesty */
+#datasets-tbody tr.ds-row-active > td { outline: 2px solid var(--pico-primary); outline-offset: -2px; }
+.ds-sort-newest { margin-left: .4rem; white-space: nowrap; }
+.ds-digest-filtered { font-size: .78em; margin-left: .5rem; opacity: .6; }
 
 /* column header: unit + sort caret + min/max */
 .bulk-col-head { cursor: pointer; user-select: none; }
