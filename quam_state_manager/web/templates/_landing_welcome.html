@@ -16,6 +16,17 @@
                                 project-first landing lights up:</span></p>
                             {% include '_qualibrate_locate.html' %}
                         </div>
+                        {# docs/115 (#14): the most common first action gets a
+                           BUTTON. The locate block still leads for qualibrate
+                           users, but a standalone user no longer has to infer
+                           the sidebar. #}
+                        <div class="landing-cta">
+                            <button class="btn-sm landing-cta-open"
+                                    onclick="window.openFolderBrowser &amp;&amp; window.openFolderBrowser()"
+                                    title="Open a chip's quam_state folder (state.json + wiring.json)">&#128193; Open a state folder&hellip;</button>
+                            <a class="btn-sm outline" href="/help" hx-get="/help"
+                               hx-target="#table-pane" hx-push-url="true">? How SM works &mdash; 2 min</a>
+                        </div>
                         <p class="welcome-lead">Inspect, edit, generate, and track your QUAM chip state — a working copy always sits between you and the live instrument, so nothing reaches the hardware by accident.</p>
                         {% include '_landing_getting_started.html' %}
                     </div>

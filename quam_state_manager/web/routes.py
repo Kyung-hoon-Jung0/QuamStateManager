@@ -992,6 +992,13 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
                 "saver": Saver(store),
                 "wiring_json": json.dumps(store.wiring),  # cached — immutable after load
             }
+            # docs/114 (#16): write-permission preflight — a read-only live
+            # folder (network share) should be KNOWN at open time, not
+            # discovered at apply time after 20 minutes of edits.
+            try:
+                ctx["live_readonly_hint"] = not os.access(str(folder), os.W_OK)
+            except OSError:
+                ctx["live_readonly_hint"] = False
             # (docs/87) The "✓ Live chip updated — N params pulled" one-shot that
             # used to be stashed here is gone with the silent pull it announced.
             # A toast that reports a fait accompli is strictly worse than the
@@ -3219,6 +3226,21 @@ def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore)
 # ======================================================================
 
 
+@bp.route("/help")
+def help_page():
+    """docs/115 (#14): the manual has a PERMANENT address.
+
+    The working-copy mental model (live chip / working state / snapshot)
+    and the feature tour lived only on the landing — one swap away and
+    gone the moment a user navigated, exactly when they were forming that
+    model. ``/help`` renders the SAME shared fragment
+    (``_landing_getting_started.html`` — one source, no drift) plus the
+    shortcut reference, reachable from the sidebar on every page.
+    """
+    template = "_help.html" if _is_htmx() else "help.html"
+    return render_template(template, **_ctx(page="help"))
+
+
 @bp.route("/")
 def home():
     """Project-first landing (docs/63): with a qualibrate config the home
@@ -3892,7 +3914,28 @@ def load():
     try:
         _activate_quam(folder)
     except (FileNotFoundError, ValueError, OSError) as e:
-        return render_template("_status.html", message=str(e), level="error"), 400
+        # docs/114 (#15): a wrong folder used to answer with a 6-second corner
+        # toast — gone before it was read. Render a PERSISTENT inline panel
+        # into the load target instead, saying what was looked for and
+        # offering any subfolder that ACTUALLY holds a state.json (the old
+        # hint only fired on literal "quam_state" names).
+        candidates = []
+        try:
+            base = Path(folder)
+            if base.is_dir():
+                for child in sorted(base.iterdir()):
+                    try:
+                        if child.is_dir() and (child / "state.json").exists():
+                            candidates.append(str(child))
+                    except OSError:
+                        continue
+                    if len(candidates) >= 6:
+                        break
+        except OSError:
+            pass
+        return render_template(
+            "_load_failed.html",
+            folder=folder, error=str(e), candidates=candidates), 400
 
     _remember_load_path(folder)
     _maybe_auto_add_workspace_root(folder)
@@ -4472,6 +4515,10 @@ def _render_tray(*, oob: bool) -> str:
         last_apply=(_active_ctx() or {}).get("last_apply"),
         # docs/110 #10-A: PaneState's freshness beacon (see _pending_tray.html)
         mutation_seq=(getattr(_store(), "mutation_seq", "") if _store() else ""),
+        # docs/114 (#16): a read-only live folder is announced BEFORE 20
+        # minutes of edits, not at apply time (os.access W_OK — optimistic on
+        # NTFS ACLs but reliable for the read-only-share case this is for).
+        live_readonly=bool((_active_ctx() or {}).get("live_readonly_hint")),
         oob=oob,
     )
 
@@ -10662,10 +10709,14 @@ def state_apply_to_live():
                 "apply-to-live save failed with %d unsaved entries: %s",
                 len(store.change_log), exc,
             )
+            # docs/114 (#16): name the permission case explicitly — a
+            # read-only share is the common cause and the OS says so.
+            _pd = ("the live folder may be READ-ONLY (network share?) — "
+                   if getattr(exc, "errno", None) in (13, 1) else "")
             return render_template(
                 "_status.html",
                 message=(
-                    f"Save failed: {exc}. Your edits are still in memory — "
+                    f"Save failed: {_pd}{exc}. Your edits are still in memory — "
                     "close any program that has state.json open and retry."
                 ),
                 level="error",

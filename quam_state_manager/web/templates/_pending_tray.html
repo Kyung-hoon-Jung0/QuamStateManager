@@ -9,6 +9,7 @@
         longer matches is refetched, never restored stale. #}
      data-seq="{{ mutation_seq | default('') }}"
      {% if oob is defined and oob %}hx-swap-oob="outerHTML:#pending-tray"{% endif %}>
+{% if live_readonly %}<span class="tray-ro-lock" title="The LIVE folder does not appear writable (read-only share?). Edits save to the working copy, but Apply to live will fail until the folder is writable.">&#128274;</span>{% endif %}
 {# Persistent status badge — amber when the working copy has edits not yet on
    the live chip, neutral "Synced" otherwise. Always clickable to review the
    working-copy ↔ live diff (the review surface used to be reachable only when
@@ -43,6 +44,18 @@
        folder name (the button's own title explains the status instead). #}
     {% if active_name %}<span class="state-status-name" title="{{ active_name }}">{{ active_name }}</span>{% endif %}
 </button>
+{% endif %}
+{% if active_name %}
+  {# docs/115 (#14): the working-copy model, taught while the user is still
+     forming it — shown from the first chip open until dismissed once. #}
+  <span class="tray-teach" id="tray-teach" hidden>
+    <b>How this works:</b> edits live in your <b>working state</b> — a private copy.
+    The live chip changes only when you press <b>Apply to live</b>, and that is
+    reversible (<b>&#8634; Revert last apply</b>).
+    <a href="/help" hx-get="/help" hx-target="#table-pane" hx-push-url="true">more&nbsp;&rarr;</a>
+    <button type="button" class="tray-teach-x" onclick="window.dismissTrayTeach &amp;&amp; window.dismissTrayTeach()"
+            aria-label="Got it">&#10005;</button>
+  </span>
 {% endif %}
 {% if active_name and not _archive %}
 {# docs/20 v2 LiveEditUndo: one ↶ = one event, exactly mirrored in the Review
@@ -198,6 +211,7 @@
               hx-disabled-elt="this"
               title="Revert every pending change (Ctrl+Shift+Z restores them one by one)">Discard all</button>
       <span class="muted tray-foot-hint">Durable draft &mdash; the live chip stays untouched.</span>
+
     </div>
   </div>
   {% endif %}

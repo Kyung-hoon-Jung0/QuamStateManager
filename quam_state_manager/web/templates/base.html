@@ -250,6 +250,12 @@
                         aria-expanded="false" aria-controls="calc-popover"
                         title="Calculator — dBm · volt · amplitude · expression (Alt+C)">
                     {{ icon_calculator() }}<span class="sidebar-tool-label">Calculator</span></button>
+                {# docs/115 (#14): the manual is one click from EVERY page —
+                   it used to live only on the landing, one swap from gone. #}
+                <a href="/help" hx-get="/help" hx-target="#table-pane"
+                   hx-sync="#table-pane:replace" hx-push-url="true"
+                   class="sidebar-tool-btn" title="Help — the working-copy model, the feature tour, shortcuts">
+                    <span class="sidebar-tool-icon" aria-hidden="true">?</span><span class="sidebar-tool-label">Help</span></a>
             </div>
             <hr class="sidebar-section-divider sidebar-tools-divider">
             <nav class="sidebar-nav">

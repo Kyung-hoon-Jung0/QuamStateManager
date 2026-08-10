@@ -8434,6 +8434,18 @@ button.diag-badge { cursor: pointer; }
    still occupy a phantom line: under every cell input (taller rows) and beside every
    Apply button (pushing it off-center). Collapse them properly when hidden. */
 .bulk-band-msg[hidden], .bulk-row-error[hidden] { display: none; }
+/* docs/115 (#14): onboarding — help page, landing CTA, tray teaching */
+.landing-cta { display: flex; gap: .5rem; flex-wrap: wrap; margin: .8rem 0 .4rem; }
+.landing-cta-open { font-weight: 600; }
+.tray-teach { display: block; flex-basis: 100%; margin-top: .35rem; font-size: .82em; opacity: .85; }
+.tray-teach[hidden] { display: none; }
+.tray-teach-x { border: 0; background: none; cursor: pointer; opacity: .6; margin-left: .4rem; padding: 0 .2rem; }
+.tray-teach-x:hover { opacity: 1; }
+.help-page { max-width: 60rem; }
+.help-shortcuts { margin-top: 1.5rem; }
+.help-sc-grid { display: grid; grid-template-columns: max-content 1fr; gap: .3rem 1rem; align-items: baseline; }
+.help-sc-group { grid-column: 1 / -1; font-weight: 700; font-size: .82em; opacity: .65; text-transform: uppercase; letter-spacing: .04em; margin-top: .6rem; }
+.help-sc-grid kbd { font-family: var(--font-mono, monospace); font-size: .82em; background: var(--pico-background-color); border: 1px solid var(--pico-muted-border-color); border-radius: 4px; padding: .05rem .35rem; }
 /* docs/111 (#11): selection · fill-down · pinning */
 .bulk-td.bulk-sel { outline: 2px solid var(--pico-primary); outline-offset: -2px; background: color-mix(in srgb, var(--pico-primary) 12%, transparent); }
 .bulk-pin { border: 0; background: none; padding: 0 2px; margin-left: 2px; font-size: 0.72em; cursor: pointer; opacity: 0; transition: opacity .12s; filter: grayscale(1); }
