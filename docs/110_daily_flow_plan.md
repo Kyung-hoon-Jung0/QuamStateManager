@@ -156,3 +156,54 @@ Independently, the campaign's own pins caught the merge dropping the
 whole docs/114 CSS block, and the real-browser pass caught keep-alive
 never firing. Three different mechanisms, three different classes of
 defect — none of which a unit test alone would have found.
+
+
+## Pre-customer-site audit (2026-08-11)
+
+Before taking this build to a customer, a 32-agent audit was scoped to the
+five flows they would actually run — load a state · switch project · Generate
+/ Re-generate Config · modify values · Live State Edit — and every flow was
+ALSO run by hand against the real 21-qubit chip and the machine's real
+QUAlibrate projects. 27 findings, 16 confirmed. What mattered:
+
+**Two that would have touched the customer's own files or lost their work.**
+
+- The docs/114 read-only hint was probing by CREATING AND DELETING a file
+  inside the live chip folder on every activation. That breaks docs/28 (the
+  live files are touched only on an explicit Apply), litters a directory
+  labs keep under version control, and leaves the file behind if the process
+  dies mid-probe. It now opens the EXISTING `state.json` for update (`r+`)
+  and closes it — the same permission an apply needs, nothing created, no
+  content/size/mtime changed. Pinned by a test that asserts the directory
+  listing and `state.json`'s stat are byte-identical across a probe.
+- A mistyped folder path WIPED THE MAIN PANE. The sidebar's State Load form
+  is always mounted and hard-targeted `#table-pane`, so docs/114's failure
+  panel replaced whatever was open — including an in-progress wizard, with
+  no prompt and no draft. The panel now lands in a dedicated sidebar slot;
+  verified live that an open grid survives a bad path.
+
+**Three that were plainly visible.**
+
+- On a real chip EVERY pointer rendered red "DANGLING" (26/26, 61/61, 25/25
+  measured). The mark was decided by `value == raw` — but that builder never
+  resolved pointers at all, which is also the original reason its tooltip
+  read "Resolves to: <the pointer itself>". Dangling is now a resolution
+  FAILURE, computed in all three row builders; where a row has no anchor to
+  resolve from, the tooltip says so rather than claiming a resolution.
+  After: 0 false dangling, all 26 badges intact.
+- Datasets `j`/`k` was DEAD on every page, and `/` and `?` died permanently
+  once any overlay had opened — both guards tested attributes while
+  `base.html` always renders `role="dialog"` nodes and the app closes
+  overlays with `display:none`. One shared visibility test now.
+- Three new global keydown handlers cost **2.34 ms per keystroke app-wide**
+  (measured in a real browser on a 4,851-cell grid) because each queried the
+  DOM before checking whether the key was even theirs. Key-first: **0.005 ms**
+  (468x), feature behaviour re-verified live.
+
+Also fixed: the carry's leave-confirm carve-out could stay armed if the
+reload never landed (a silent-discard window); a blank main pane after
+browser Back on a kept-alive route; a stale selection anchor across a grid
+re-render; and fill/paste skipping the f_01<->RF coupling the manual edit
+path applies. One regression this batch introduced — an indentation slip
+that dropped the pair CR/ZZ builder's rows out of their loop — was caught by
+`test_web`'s `cz_unipolar` pin before it left the branch.
