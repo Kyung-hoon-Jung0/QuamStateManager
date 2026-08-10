@@ -397,6 +397,26 @@ class Modifier:
                         "y" if len(reverted) == 1 else "ies")
             return reverted
 
+    def undo_all(self) -> list[list[ChangeEntry]]:
+        """Undo EVERY pending change as its user-action groups (docs/107
+        "Discard all").  One lock hold; returns the popped groups newest
+        first -- exactly the order repeated Ctrl+Z would have produced, which
+        is what lets the caller push them onto a redo stack so the discard
+        stays recoverable (the license for its no-confirm button).
+
+        A raise mid-way propagates like :meth:`undo_group`'s: every fully
+        popped group is gone, the failing group stays partially in the log
+        (revert-then-pop per entry keeps log==state at all times).
+        """
+        with self.store._lock:
+            groups: list[list[ChangeEntry]] = []
+            while self.store.change_log:
+                group = self.undo_group()
+                if not group:
+                    break
+                groups.append(group)
+            return groups
+
     def discard(self, index: int, expect_path: str | None = None) -> ChangeEntry | None:
         """Discard a specific change by its index in the change log.
 

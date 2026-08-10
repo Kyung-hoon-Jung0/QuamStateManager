@@ -116,4 +116,70 @@ ok(!valInput.classList.contains('edit-input-modified'), 'modified marker cleared
 ok(!td.classList.contains('cell-modified'), 'td modified marker cleared');
 ok(stateChanged === 1, 'cellsReverted dispatches quam:state-changed (grids re-pull)');
 
+// ── 5. docs/107: Ctrl+Shift+Z → POST /redo (same guards) ────────────────────
+function pressShiftZ(target) {
+    const ev = new window.KeyboardEvent('keydown',
+        { key: 'Z', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true });
+    (target || window.document).dispatchEvent(ev);
+    return ev;
+}
+let n0 = calls.length;
+pressShiftZ();
+ok(calls.length === n0 + 1, 'Ctrl+Shift+Z issues exactly one request');
+ok(calls[n0] && calls[n0].method === 'POST' && calls[n0].url === '/redo',
+   'Ctrl+Shift+Z posts /redo (got ' + JSON.stringify(calls[n0]) + ')');
+ok(calls[n0] && calls[n0].opts && calls[n0].opts.source === '#pending-tray'
+   && calls[n0].opts.target === '#pending-tray',
+   'redo request is source+target #pending-tray');
+
+// guard: inside an <input> the browser keeps native redo
+inp.focus();
+n0 = calls.length;
+const rev = pressShiftZ(inp);
+ok(calls.length === n0, 'Ctrl+Shift+Z inside an <input> does NOT hijack');
+ok(!rev.defaultPrevented, 'default not prevented inside an <input> (redo)');
+inp.blur();
+
+// guard: _wizUndo exists on EVERY page (generate.js is head-loaded) — only a
+// MOUNTED wizard may swallow redo (the bug the first real-browser pass caught:
+// a bare existence check ate Ctrl+Shift+Z app-wide).
+window._wizUndo = { tryUndo: () => false, mounted: () => false };
+n0 = calls.length;
+pressShiftZ();
+ok(calls.length === n0 + 1 && calls[n0].url === '/redo',
+   'wizard NOT mounted: Ctrl+Shift+Z still reaches /redo');
+window._wizUndo.mounted = () => true;
+n0 = calls.length;
+const wev = pressShiftZ();
+ok(calls.length === n0, 'wizard mounted: Ctrl+Shift+Z issues no /redo');
+ok(wev.defaultPrevented, 'wizard mounted: the press is swallowed');
+delete window._wizUndo;
+
+// ── 6. docs/107: LiveEditUndo redo stack (tryUndo → tryRedo round trip) ─────
+const cell = window.document.createElement('input');
+cell.className = 'bulk-cell';
+cell.setAttribute('data-dot-path', 'qubits.qA1.f_01');
+cell.value = '7';
+window.document.body.appendChild(cell);
+window.LiveEditUndo.record('test fill', [{ dp: 'qubits.qA1.f_01', prev: '5', next: '7' }]);
+ok(window.LiveEditUndo.tryUndo() === true, 'LiveEditUndo.tryUndo restores the cell');
+ok(cell.value === '5', 'undo put prev back');
+ok(window.LiveEditUndo.tryRedo() === true, 'tryRedo re-applies the action');
+ok(cell.value === '7', 'redo put next back');
+ok(window.LiveEditUndo.tryUndo() === true, 'the redone action is undoable again');
+ok(cell.value === '5', 'second undo works after redo');
+// a NEW action forks history — redo dies
+window.LiveEditUndo.record('fork', [{ dp: 'qubits.qA1.f_01', prev: '5', next: '9' }]);
+ok(window.LiveEditUndo.tryRedo() === false, 'a new record() clears the redo stack');
+// a moved cell is never clobbered by redo
+window.LiveEditUndo.tryUndo();                 // pops 'fork' (cell shows 5)
+cell.value = '42';                             // user typed since
+ok(window.LiveEditUndo.tryRedo() === false, 'redo skips a cell that moved since');
+ok(cell.value === '42', 'moved cell untouched');
+// clear() kills both stacks
+window.LiveEditUndo.record('x', [{ dp: 'qubits.qA1.f_01', prev: '42', next: '43' }]);
+window.LiveEditUndo.tryUndo();
+window.LiveEditUndo.clear();
+ok(window.LiveEditUndo.tryRedo() === false, 'clear() empties the redo stack too');
+
 process.exit(fails ? 1 : 0);

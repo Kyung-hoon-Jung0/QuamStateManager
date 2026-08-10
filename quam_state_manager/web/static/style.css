@@ -1896,6 +1896,14 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
     color: var(--pico-del-color); border-color: var(--pico-del-color);
 }
 .btn-discard:hover { background: var(--color-error-bg); }
+/* docs/107: mass-revert in the drawer foot — same visual language as the
+   per-change ✕ (one act, one look), sized to sit beside its Save neighbour. */
+.btn-discard-all {
+    font-family: var(--font-ui);
+    margin: 0;
+    color: var(--pico-del-color); border-color: var(--pico-del-color);
+}
+.btn-discard-all:hover { background: var(--color-error-bg); }
 
 /* ---------------------------------------------------------------- */
 /* Welcome page                                                      */

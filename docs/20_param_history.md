@@ -754,4 +754,10 @@ then the newest snapshot IS the pre-apply state), memo `ctx["last_apply"]`.
 A clean tray offers the explicit "↺ Revert last apply" button →
 `/state-history/<pre_ts>/stage` (the gated State-History machinery — review
 then Apply completes the revert; Ctrl+Z never crosses the apply boundary
-silently). Save/apply remain the hard undo boundaries.
+silently). ~~Save/apply remain the hard undo boundaries.~~ **Amended by
+docs/107 (2026-08-10):** Ctrl+Z now crosses the save/apply boundary — but
+only by LOUD staging: the cross-save journal stages each older unit's inverse
+into the review tray under a `jrn:` group, and the live chip is still written
+only by an explicit Apply-to-live press (the SM covenant). "Revert last
+apply" stays the one-shot whole-apply revert; the journal is the per-action
+walk.
