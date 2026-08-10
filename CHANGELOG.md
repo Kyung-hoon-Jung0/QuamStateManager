@@ -260,3 +260,69 @@ One thing, done everywhere: the app now speaks a single search grammar. Users ke
 - `q1 | q2` finds both; OR binds tighter than AND (`x180 amplitude | length` = x180 AND (amplitude OR length)); every other pipe stays a literal character — measured, not stylistic: ket notation (`|e>`) lives in 25.7% of real node.json descriptions and must stay searchable. A query of plain words behaves exactly as before, pinned by a 2,000-case fuzz and per-surface checks
 - Found by the same audit and fixed: the global search's category tabs re-issued the query unencoded, so a search containing `&`, `+` or `#` silently broke
 - Second pass, same day: the grammar reached every remaining surface — the global search index, `/pulses`, the param-history typeahead (whose whole-query SQL `LIKE` made a multi-word query structurally unable to hit), the scheduler library filter and the dataset sort-key filters — and the two measured drifts between the Datasets and sidebar parsers were closed (commas now split on both; the negation guard shares one shape, with the remaining difference named as capability, not grammar). Every surface was verified in a real browser on real chips
+
+## v0.9.7 (2026-08-11)
+
+The everyday flow. This release is about the twenty small frictions a user hits
+between opening a chip and applying a value — the ones that never made a bug
+report because each one is survivable. Six streams, each audited on its own
+branch and then together, then run against real chips in a real browser.
+
+**A surface you come back to is the surface you left.** Searching in the Json
+Tree View, filtering the Live State Edit grid, scrolling a long table — leaving
+for another menu used to reset all of it. The pane is now kept alive: state is
+parked when you navigate away and restored when you return, including the query
+text, the filtered view and the scroll position. This was the most-repeated
+request of the round.
+
+**Editing a grid feels like editing a grid.** Fill-down (`Ctrl+D`) over a
+selection, paste a column from Excel, shift-click multi-select, and pin the rows
+you keep coming back to so they float to the top. Tab and the arrow keys already
+walked the grid; the selection now agrees with them.
+
+**Datasets navigate from the keyboard.** `j`/`k` move between runs, `Enter`
+opens, and while you are reading, new runs arriving on disk collect behind an
+"N new runs" pill instead of moving the row under your cursor — click it when
+you are ready.
+
+**Keyboard polish.** `/` focuses the search box on any surface, `?` shows the
+shortcut sheet, `Ctrl+Enter` applies. Measured before shipping: the three new
+global handlers cost 0.005 ms per keystroke (the first draft cost 2.34 ms and
+was rewritten to check the key before touching the DOM).
+
+**Failures explain themselves.** A load that fails now says why — wrong folder,
+missing `state.json`, a folder that holds the right files one level down (with
+the candidates listed) — and it no longer wipes the surface you had open. A
+live folder that is read-only is named as read-only before an edit is offered
+rather than after it fails. And a pointer is marked "dangling" only when it
+actually fails to resolve: the mark used to be decided by a comparison that was
+true for every pointer on a real chip, painting all 26 of them red.
+
+**Onboarding.** A Help page, and the working-copy model — your edits are private
+until you press Apply to live, and that is reversible — taught once in the tray
+instead of being folklore.
+
+### Fixed in the same release
+
+- **A qubit-id search filtered nothing.** Typing `qA1` in Live State Edit left
+  every row visible on any chip whose pair-gate columns carry the partner
+  qubit's name (which is the normal shape for a coupler chip). The two axes each
+  treated a token that matched a column AND a row as "neutral", so it matched
+  everything. A token that names a row now filters rows; column search is
+  unchanged. The pair grid had the same defect and the same fix
+- The onboarding tray sentence wrapped to four lines inside the top bar, giving
+  every page a 250 px header; it is two lines and 157 px now
+- The `Ctrl+D` fill and column paste now apply the same `f_01` <-> RF coupling
+  the manual edit path applies, instead of writing the raw number
+- A grid reload that never lands (error, navigation) no longer leaves the
+  leave-confirm suppressed, which had opened a window where navigating away
+  discarded unapplied edits with no prompt
+- Browser Back onto a kept-alive route no longer lands on a blank pane
+
+### Verified
+
+Real browser, real chips: a 21-qubit chip (4,851 cells / 231 columns) and a
+customer 10-qubit / 9-tunable-coupler chip (5,100 cells / 510 columns, every
+route 200 with no traceback). Search lands in 8-60 ms on both grids and
+15-193 ms on a fully expanded 18,310-node tree. Full suite at the documented
+Windows environmental baseline, no new failures.
