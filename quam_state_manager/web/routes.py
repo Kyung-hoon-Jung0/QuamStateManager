@@ -2829,6 +2829,12 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         "context_type": _context_type(),
         "change_count": _change_count(),
         "working_dirty": _working_dirty(),
+        # docs/110 #10-A: the FULL-page tray must carry the same freshness
+        # beacon the OOB tray does — otherwise a page render stamps "" while
+        # the next mutation's OOB swap stamps a real seq, and PaneState reads
+        # that as "the chip moved" and refetches every parked pane. (Caught by
+        # the real-browser pass: keep-alive never fired, only the SOFT tier.)
+        "mutation_seq": (getattr(_store(), "mutation_seq", "") if _store() else ""),
         "qualibrate_tray": _qualibrate_tray_badge(),
         # docs/63 project lens: the qualibrate project this context operates
         # under (explicitly opened, or reverse-matched from its live folder).

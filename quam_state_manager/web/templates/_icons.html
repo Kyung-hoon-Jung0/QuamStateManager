@@ -21,6 +21,19 @@
 </svg>
 {%- endmacro %}
 
+{# docs/115 (#14): Help — a question mark in a circle. Same 24x24 / 1.7
+   stroke / currentColor contract as its neighbours, so it inherits theme and
+   UI scale (an emoji "?" could do neither). #}
+{% macro icon_help(size=18) -%}
+<svg class="ic ic-help" width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24"
+     fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
+     stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <circle cx="12" cy="12" r="9.2"/>
+  <path d="M9.3 9.1a2.8 2.8 0 1 1 3.5 2.7c-.5.2-.8.7-.8 1.3v.6"/>
+  <circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none"/>
+</svg>
+{%- endmacro %}
+
 {% macro icon_calculator(size=18) -%}
 <svg class="ic ic-calc" width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24"
      fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"

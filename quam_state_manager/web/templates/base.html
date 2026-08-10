@@ -1,4 +1,4 @@
-{% from '_icons.html' import icon_gear, icon_calculator %}
+{% from '_icons.html' import icon_gear, icon_calculator, icon_help %}
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
@@ -255,7 +255,7 @@
                 <a href="/help" hx-get="/help" hx-target="#table-pane"
                    hx-sync="#table-pane:replace" hx-push-url="true"
                    class="sidebar-tool-btn" title="Help — the working-copy model, the feature tour, shortcuts">
-                    <span class="sidebar-tool-icon" aria-hidden="true">?</span><span class="sidebar-tool-label">Help</span></a>
+                    {{ icon_help() }}<span class="sidebar-tool-label">Help</span></a>
             </div>
             <hr class="sidebar-section-divider sidebar-tools-divider">
             <nav class="sidebar-nav">

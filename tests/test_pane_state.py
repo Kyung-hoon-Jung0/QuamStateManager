@@ -54,6 +54,20 @@ class TestSeqBeacon:
         seq1 = html2.split('data-seq="')[1].split('"')[0]
         assert seq1 != seq0, "an edit must move the freshness beacon"
 
+    def test_full_page_tray_carries_the_seq_too(self, env):
+        """THE real-browser bug: the OOB tray carried mutation_seq but a
+        FULL-page render stamped "" — so every parked pane was refetched
+        (keep-alive never fired, only the SOFT tier). Both renders must
+        agree, or the gate reads a page load as "the chip moved"."""
+        c = env["client"]
+        page = c.get("/explorer").data.decode("utf-8")
+        assert 'data-seq="' in page
+        page_seq = page.split('data-seq="')[1].split('"')[0]
+        assert page_seq != "", "a full page render must stamp the real seq"
+        tray_seq = (c.get("/state/tray").data.decode("utf-8")
+                    .split('data-seq="')[1].split('"')[0])
+        assert page_seq == tray_seq,             "the page render and the OOB tray must agree on the beacon"
+
     def test_no_chip_tray_still_renders(self, tmp_path):
         app = create_app(testing=True, instance_path=str(tmp_path / "_i2"))
         c = app.test_client()
