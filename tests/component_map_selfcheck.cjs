@@ -253,9 +253,9 @@ const PANE_HTML =
   '<div id="table-pane">'
   + '<details class="cmap" id="component-map" data-highlight="pairs" open>'
   + '<summary>Chip layout</summary><div class="cmap-body"></div></details>'
-  + '<table><tbody>'
-  + '<tr data-pair-id="qA2-qA1"><td>pair row</td></tr>'
-  + '<tr data-qubit-id="qA1"><td>qubit row</td></tr>'
+  + '<table><thead><tr><th>ID</th><th>P(RO) <span class="unit phys-unit-label">(dBm)</span></th></tr></thead><tbody>'
+  + '<tr data-pair-id="qA2-qA1"><td>pair row</td><td colspan="1">x</td></tr>'
+  + '<tr data-qubit-id="qA1"><td>qubit row</td><td data-dbm="-20">-20.0 dBm</td></tr>'
   + '</tbody></table>'
   + '</div><div id="inspector-pane"></div>';
 
@@ -289,6 +289,28 @@ async function checkComponentMap() {
   ok(win._htmxCalls.some(function (c) { return c[1] === '/qubit/qA1'; }),
      'clicking a map entity opens its inspector');
 
+  // docs/109 (3): the hover card — the entity's table row as a floating
+  // summary (audit: mutation-testing showed the popup had ZERO coverage).
+  stone.dispatchEvent(new win.MouseEvent('mouseover', { bubbles: true }));
+  let pop = doc.querySelector('.cm-popup');
+  ok(!!pop && !pop.hidden, 'hovering a stone shows the summary card');
+  ok(pop.querySelector('.cm-popup-title').textContent === 'qA1',
+     'the card is titled with the entity id');
+  const rows = pop.querySelectorAll('.cm-popup-row');
+  ok(rows.length === 1 && rows[0].querySelector('.cm-popup-k').textContent.indexOf('P(RO)') === 0
+     && rows[0].querySelector('.cm-popup-v').textContent === '-20.0 dBm',
+     'the card pairs the row cells with their thead labels (col 0 skipped)');
+  body.dispatchEvent(new win.MouseEvent('mouseleave'));
+  ok(pop.hidden, 'leaving the map hides the card');
+  // an entity with NO matching row still gets the minimal card
+  const edgeNoRow = body.querySelector('[data-cm="p:qA2-qA1"]');
+  const prowEl = doc.querySelector('tr[data-pair-id="qA2-qA1"]');
+  prowEl.parentNode.removeChild(prowEl);
+  edgeNoRow.dispatchEvent(new win.MouseEvent('mouseover', { bubbles: true }));
+  ok(!pop.hidden && pop.querySelector('.cm-popup-title').textContent === 'pair qA2-qA1'
+     && pop.querySelectorAll('.cm-popup-row').length === 0,
+     'a row-less entity gets the minimal title-only card');
+
   // HTMX swap: replace the pane content, re-mount — binding still single
   const pane = doc.getElementById('table-pane');
   pane.innerHTML = PANE_HTML.replace('<div id="table-pane">', '').replace('</div><div id="inspector-pane"></div>', '');
@@ -296,6 +318,8 @@ async function checkComponentMap() {
   await tick(); await tick();
   const body2 = pane.querySelector('.cmap-body');
   ok(!!body2.querySelector('svg.cm-svg'), 're-mount after a swap renders again');
+  ok(doc.querySelector('.cm-popup').hidden,
+     'a re-mount hides any lingering hover card (audit: swap under a motionless cursor)');
   const prow2 = pane.querySelector('tr[data-pair-id="qA2-qA1"]');
   prow2.dispatchEvent(new win.MouseEvent('mouseover', { bubbles: true }));
   ok(body2.querySelectorAll('.cm-hot').length === 1,

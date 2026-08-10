@@ -393,6 +393,24 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     app.jinja_env.filters["value_delta"] = _value_delta.compute
     app.jinja_env.filters["delta_describe"] = _value_delta.describe
 
+    # `phys_amp` — the TRUE physical output behind an amplitude leaf (docs/109):
+    # MW channel -> dBm via P = FSP + 20·log10|amp| (the FSP-compensation
+    # identity), LF/flux channel -> volts (the amplitude IS volts). Reads the
+    # ACTIVE store's merged doc; returns the annotation dict or None (blank —
+    # a broken/dangling chain is never papered over with an invented number).
+    def _phys_amp_filter(dot_path, value):
+        try:
+            name = app.config.get("active_context")
+            ctx = app.config.get("contexts", {}).get(name) if name else None
+            store = ctx.get("store") if ctx else None
+            if store is None or not dot_path:
+                return None
+            from quam_state_manager.core import physical_units
+            return physical_units.amp_annotation(store.merged, str(dot_path), value)
+        except Exception:
+            return None
+    app.jinja_env.filters["phys_amp"] = _phys_amp_filter
+
     def _flatten_leaves_filter(value, cap: int = 40):
         """(dot_path, leaf_value) pairs for a nested mapping — the Review
         tray's created/deleted subtree expansion (r16 ②, docs/73). Lists are

@@ -702,6 +702,19 @@
         <button onclick="toggleTopbar()" class="settings-opt" id="topbar-toggle">Hide top bar</button>
         </div>
         </div>
+        {# docs/109: how MW amplitude annotations read — some labs think in dBm,
+           others in volts. ONE global viewer setting (quam_phys_unit) drives
+           every surface (Live-Edit sub-lines, Components tables, inspectors);
+           V is always labeled rms @ 50 Ω — an unlabeled "mV" would be
+           ambiguous between rms/pk/pp. #}
+        <div class="settings-group">
+        <small class="settings-label">MW power display <span class="muted">(amp annotations)</span></small>
+        <div class="settings-options" id="phys-unit-options">
+        <button onclick="PhysAmp.setUnit('dbm')" class="settings-opt" data-phys-unit="dbm">dBm</button>
+        <button onclick="PhysAmp.setUnit('v')" class="settings-opt" data-phys-unit="v" title="V_rms into 50 Ω">V<span class="muted">&nbsp;rms</span></button>
+        <button onclick="PhysAmp.setUnit('both')" class="settings-opt" data-phys-unit="both">Both</button>
+        </div>
+        </div>
         </div>
         <div id="calc-popover" class="calc-popover calc-hidden" role="dialog" aria-modal="false" aria-label="Calculator">
         <div class="calc-header" id="calc-header">
