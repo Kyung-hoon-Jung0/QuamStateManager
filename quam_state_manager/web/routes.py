@@ -165,7 +165,7 @@ def _build_bulk_cell(merged: dict, alias: str, modified: dict,
     that labels a shared port. The returned dict carries a transient ``_port`` key
     the 2nd pass pops."""
     from quam_state_manager.core.pointer_path import resolve_field_target
-    from quam_state_manager.core import mw_fem
+    from quam_state_manager.core import mw_fem, physical_units
     try:
         ft = resolve_field_target(merged, alias)
     except Exception:
@@ -208,6 +208,10 @@ def _build_bulk_cell(merged: dict, alias: str, modified: dict,
         # show the quotes + a stored-as-text warning (the user literally could
         # not see, let alone fix, an externally string-ified value).
         "str_numeric": _is_numeric_string(val),
+        # docs/109: what actually leaves the instrument for this amplitude —
+        # MW: FSP + 20·log10|amp| in dBm; LF/flux: the value IS volts. None
+        # (blank) whenever the chain doesn't fully resolve — never invented.
+        "phys": physical_units.amp_annotation(merged, resolved, val),
         "_port": p,
     }
 

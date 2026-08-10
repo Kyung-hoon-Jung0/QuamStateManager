@@ -3294,6 +3294,38 @@ document.addEventListener("DOMContentLoaded", function () {
 });
 
 /* ------------------------------------------------------------------ */
+/* PhysAmp (docs/109): live physical-output recompute under amp cells  */
+/* ------------------------------------------------------------------ */
+/* The server renders .bulk-phys + stamps data-phys-kind/-fsp on amplitude
+   inputs (core/physical_units.py). As the user types, the annotation follows:
+   mw → FSP + 20·log10|amp| (the FSP-compensation identity, mirrored in
+   calc.js), lf → the value IS volts. Invalid or mw-zero → blank (never an
+   invented -∞). One delegated listener covers BOTH Live-Edit grids. */
+document.addEventListener('input', function (e) {
+    var t = e.target;
+    if (!t || !t.classList || !t.classList.contains('bulk-cell')) return;
+    var kind = t.getAttribute('data-phys-kind');
+    if (!kind) return;
+    var td = t.closest('td'); if (!td) return;
+    var el = td.querySelector('.bulk-phys'); if (!el) return;
+    var v = parseFloat(String(t.value).replace(/,/g, ''));
+    var txt = '';
+    if (isFinite(v)) {
+        if (kind === 'mw') {
+            var fsp = parseFloat(t.getAttribute('data-phys-fsp'));
+            if (isFinite(fsp) && v !== 0) {
+                txt = (fsp + 20 * Math.log10(Math.abs(v))).toFixed(1) + ' dBm';
+            }
+        } else {
+            txt = (Math.abs(v) >= 1 || v === 0)
+                ? (Number(v.toPrecision(3)) + ' V')
+                : (Number((v * 1e3).toPrecision(3)) + ' mV');
+        }
+    }
+    el.textContent = txt;
+}, true);
+
+/* ------------------------------------------------------------------ */
 /* Value delta (Δ) — the JS mirror of core/value_delta.py               */
 /* ------------------------------------------------------------------ */
 /* Every before→after surface shows old, new AND the difference (docs/76).

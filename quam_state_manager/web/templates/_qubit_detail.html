@@ -48,6 +48,11 @@
                         </form>
                         {% set _human = p.value | qty(p.key, 'full') %}
                         {% if _human %}<span class="unit-preview muted"{% if _stored %} title="stored raw in {{ _stored }}"{% endif %}>{{ _human }}</span>{% endif %}
+                        {# docs/109: the TRUE physical output for amplitudes —
+                           MW: dBm (FSP + 20·log10|amp|), flux: volts. Blank
+                           when the port chain doesn't fully resolve. #}
+                        {% set _phys = p.dot_path | phys_amp(p.value) %}
+                        {% if _phys %}<span class="phys-note muted" title="{% if _phys.kind == 'mw' %}Actual output power: P = FSP ({{ _phys.fsp }} dBm) + 20·log10|amp|{% else %}LF amplitude is the output voltage{% endif %}">&#8776; {{ _phys.text }}</span>{% endif %}
                         {% if p.is_pointer %}
                         <span class="ptr-inline pointer-badge" title="Resolves to: {{ p.value }}">{{ p.raw }}</span>
                         {% endif %}

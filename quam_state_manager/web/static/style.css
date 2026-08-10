@@ -2122,6 +2122,12 @@ table.data-table th {
     margin-left: 0.4rem; font-size: 0.82em; font-family: var(--font-ui);
     text-transform: none; white-space: nowrap; opacity: 0.75;
 }
+/* docs/109: inspector twin of .bulk-phys — the physical output annotation
+   beside an amplitude row's unit-preview. */
+.phys-note {
+    margin-left: 0.4rem; font-size: 0.82em; font-family: var(--font-ui);
+    text-transform: none; white-space: nowrap; opacity: 0.75;
+}
 table.data-table td {
     padding: var(--data-table-td-pad-v) var(--data-table-td-pad-h);
     font-family: var(--font-mono); font-size: var(--data-table-font);
@@ -8389,6 +8395,11 @@ button.diag-badge { cursor: pointer; }
 /* MW-FEM band-range / LO-conflict warning (advisory — apply still allowed). */
 .bulk-cell.bulk-band-warn { border: 1.5px solid var(--color-error-text); background: color-mix(in srgb, var(--color-error-text) 14%, transparent); }
 .bulk-band-msg { display: block; color: var(--color-error-text); font-size: 0.7em; max-width: 24ch; white-space: normal; }
+/* docs/109: the TRUE physical output under an amplitude cell (MW dBm / LF V) —
+   always visible (feedback: all data on screen, never hover-only), muted so it
+   reads as an annotation, block-level like .bulk-band-msg so the column keeps
+   its input-driven width. */
+.bulk-phys { display: block; font-size: 0.7em; opacity: 0.65; font-family: var(--font-ui); white-space: nowrap; }
 .bulk-band-warn-count, #bulk-band-warn { color: var(--color-error-text); font-size: 0.82em; font-weight: 600; }
 .bulk-apply-col { text-align: center; position: sticky; right: 0; background: var(--pico-card-background-color); }
 .btn-xs { padding: 0.05rem 0.5rem; font-size: 0.78em; width: auto; margin: 0; }
