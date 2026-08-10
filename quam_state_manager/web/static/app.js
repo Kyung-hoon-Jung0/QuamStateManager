@@ -3685,24 +3685,43 @@ document.addEventListener("focusout", function(evt) {
 //   3. server /undo — staged edits, one change_log GROUP per press; the
 //      response swaps the whole Review tray, so one press = exactly one
 //      event's parameters disappearing from Review (the sync contract).
-// Save/apply clear the change log — the intended hard undo boundary
-// ("Revert last apply" is the explicit, confirmed path across it).
-// Input focus: we do NOT hijack Ctrl+Z inside ordinary fields (native
+// docs/107: the save/apply boundary is no longer the end of the chain — with
+// the log empty the server walks the cross-save journal, STAGING each older
+// unit's inverse back into the tray (live untouched; Apply stays the gate).
+// Ctrl+Shift+Z mirrors the chain as redo (wizard swallow → LiveEditUndo
+// tryRedo → server /redo). Ctrl+Y is deliberately unbound (native in-field
+// redo keeps working).
+// Input focus: we do NOT hijack Ctrl(+Shift)+Z inside ordinary fields (native
 // text-undo keeps working) — EXCEPT bulk-grid cells and the Column History
 // panel, where LiveEditUndo owns the history (Escape still restores a
 // cell's original value).
 document.addEventListener("keydown", function(evt) {
     if (!((evt.ctrlKey || evt.metaKey) && (evt.key === "z" || evt.key === "Z")
-          && !evt.shiftKey && !evt.altKey)) return;
+          && !evt.altKey)) return;
     var a = document.activeElement;
     var inGridCell = !!(a && a.classList && a.classList.contains("bulk-cell"));
     var inChPanel = !!(a && a.closest && a.closest(".ch-overlay"));
     if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)
         && !inGridCell && !inChPanel) return;
+    if (evt.shiftKey) {
+        // ---- redo chain (docs/107) ----
+        // Wizard MOUNTED → swallow (the wizard has no redo; letting the press
+        // fall through to chip-level redo would act behind the user's back).
+        // NB: window._wizUndo exists on EVERY page — only its mounted() probe
+        // says whether the wizard is actually on screen (real-browser catch).
+        if (window._wizUndo && window._wizUndo.mounted
+            && window._wizUndo.mounted()) { evt.preventDefault(); return; }
+        if (window.LiveEditUndo && window.LiveEditUndo.tryRedo()) { evt.preventDefault(); return; }
+        if (!window.htmx || !document.getElementById("pending-tray")) return;
+        evt.preventDefault();
+        htmx.ajax("POST", "/redo", {source: "#pending-tray", target: "#pending-tray", swap: "outerHTML"});
+        return;
+    }
+    // ---- undo chain ----
     // Generate-Config wizard mounted → Ctrl+Z is WIZARD-scoped (undoes the last
     // committed wizard field, never a chip edit behind the user's back).
-    if (window._wizUndo && window._wizUndo.tryUndo()) { evt.preventDefault(); return; }
-    if (window.LiveEditUndo && window.LiveEditUndo.tryUndo()) { evt.preventDefault(); return; }
+    if (window._wizUndo && window._wizUndo.tryUndo()) { evt.preventDefault(); window._lastUndoTier = "wizard"; return; }
+    if (window.LiveEditUndo && window.LiveEditUndo.tryUndo()) { evt.preventDefault(); window._lastUndoTier = "liveedit"; return; }
     // audit-r10: mid-typing in a DIRTY cell with an empty in-memory stack —
     // the user means "undo my keystrokes", not "delete a staged group".
     // Restore the cell to its committed value and stop; a CLEAN focused
@@ -3716,6 +3735,7 @@ document.addEventListener("keydown", function(evt) {
     }
     if (!window.htmx || !document.getElementById("pending-tray")) return;
     evt.preventDefault();
+    window._lastUndoTier = "server";
     htmx.ajax("POST", "/undo", {source: "#pending-tray", target: "#pending-tray", swap: "outerHTML"});
 }, true);
 
@@ -13401,6 +13421,7 @@ window.FieldHistory = (function () {
    boundaries. */
 window.LiveEditUndo = (function () {
     var stack = [];        // {label, cells: [{dp, prev, next}]}
+    var redo = [];         // docs/107: what tryUndo popped — Ctrl+Shift+Z target
     var CAP = 100;
 
     function _esc(s) {
@@ -13420,6 +13441,7 @@ window.LiveEditUndo = (function () {
         if (!cells.length) return;
         stack.push({ label: label, cells: cells });
         if (stack.length > CAP) stack.shift();
+        redo = [];   // docs/107: a NEW action forks history — redo dies
         _updateTrayBtn();
     }
 
@@ -13451,6 +13473,8 @@ window.LiveEditUndo = (function () {
             });
             _updateTrayBtn();
             if (restored) {
+                redo.push(a);   // docs/107: Ctrl+Shift+Z re-applies this action
+                if (redo.length > CAP) redo.shift();
                 if (window.showToast) {
                     var extra = [];
                     if (gone) extra.push(gone + " no longer on screen");
@@ -13466,11 +13490,45 @@ window.LiveEditUndo = (function () {
         return false;
     }
 
+    /* docs/107 Ctrl+Shift+Z tier: re-apply the last tryUndo'd action. Same
+       skip discipline, mirrored: a cell is only re-filled when it still shows
+       the value the undo restored (c.prev) — a cell that moved since (typed,
+       staged, re-rendered to a different value) is never clobbered. A fully
+       stale entry drops silently and the loop continues, so stale entries
+       can't eat the press or block the server /redo tier below. */
+    function tryRedo() {
+        while (redo.length) {
+            var a = redo.pop();
+            var applied = 0;
+            a.cells.forEach(function (c) {
+                var input = _input(c.dp);
+                if (!input || input.readOnly) return;
+                if (input.value !== String(c.prev)) return;   // moved since
+                input.value = c.next;
+                input.dispatchEvent(new Event("input", { bubbles: true }));
+                input.classList.add("leu-flash");
+                (function (el) {
+                    setTimeout(function () { el.classList.remove("leu-flash"); }, 650);
+                })(input);
+                applied++;
+            });
+            if (applied) {
+                stack.push(a);   // the redone action is undoable again
+                if (stack.length > CAP) stack.shift();
+                _updateTrayBtn();
+                if (window.showToast) window.showToast("Redid " + a.label);
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Hard boundaries (audit-r10): once content reached the live chip (or
     // was replaced wholesale by a stage/pull), reverting cells from memory
     // would cross the apply boundary — the module's own contract forbids it.
     function clear() {
         stack = [];
+        redo = [];
         _updateTrayBtn();
     }
     document.addEventListener("stateRestored", function () { clear(); });
@@ -13538,12 +13596,21 @@ window.LiveEditUndo = (function () {
                 for (var i = items.length - 1; i >= 0
                      && items[i].getAttribute("data-group-id") === gid; i--) n++;
             }
+            if (gid && gid.indexOf("jrn:") === 0) {
+                // docs/107: with a staged journal step on top, the next press
+                // walks DEEPER into history (stages the previous save's
+                // inverse) — it does not remove the shown entry. The tooltip
+                // must name what the press actually does.
+                tip = "Undo more from history — stages the previous save's "
+                    + "inverse into Review (Ctrl+Z; Ctrl+Shift+Z un-stages)";
+            } else {
             tip = path
                 ? ("Undo staged change to " + path
                    + (n > 1 ? " (+" + (n - 1) + " more in this action)" : "")
                    + " (Ctrl+Z)")
                 : ("Undo last staged change — removes exactly that entry "
                    + "group from Review (Ctrl+Z)");
+            }
         } else {
             tip = "Nothing to undo";
         }
@@ -13569,7 +13636,8 @@ window.LiveEditUndo = (function () {
         _updateTrayBtn();
     }
 
-    return { record: record, tryUndo: tryUndo, trigger: trigger, clear: clear,
+    return { record: record, tryUndo: tryUndo, tryRedo: tryRedo,
+             trigger: trigger, clear: clear,
              refreshTip: refreshTip, _updateTrayBtn: _updateTrayBtn };
 })();
 

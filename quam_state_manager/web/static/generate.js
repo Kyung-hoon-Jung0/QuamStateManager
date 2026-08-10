@@ -6757,6 +6757,11 @@
   });
 
   window._wizUndo = {
+    // docs/107: the module exists on EVERY page (generate.js is head-loaded),
+    // so "is the wizard actually on screen?" needs its own probe — the redo
+    // chain must swallow Ctrl+Shift+Z only while the wizard is mounted, never
+    // app-wide (the bug the first real-browser pass caught).
+    mounted: function () { return !!root(); },
     // Returns true when the event was CONSUMED (wizard mounted). Called by the
     // app-wide Ctrl+Z handler before it posts the server /undo.
     tryUndo: function () {

@@ -163,14 +163,16 @@
           <span class="change-new">{{ c.new_value | groupdigits if c.new_value is not none else 'null' }}</span>
           {{ delta_chip(c.old_value, c.new_value) }}
           {% endif %}
+          {# docs/107: no hx-confirm — the ✕ discards immediately. Recoverable
+             by design: /discard pushes the change onto the redo stack, so
+             Ctrl+Shift+Z brings it back (recoverability licenses no-confirm). #}
           <button class="outline btn-sm btn-discard"
                   hx-post="/discard"
                   hx-target="#pending-tray"
                   hx-swap="outerHTML"
                   hx-vals='{"index": "{{ loop.index0 }}", "expect_path": {{ c.dot_path | tojson }}}'
-                  hx-confirm="Discard change to {{ c.dot_path }}?"
                   aria-label="Discard pending change to {{ c.dot_path }}"
-                  title="Discard this change">&#10005;</button>
+                  title="Discard this change (Ctrl+Shift+Z restores it)">&#10005;</button>
         </div>
       </div>
       {% endfor %}
@@ -182,6 +184,14 @@
               hx-swap="outerHTML"
               hx-disabled-elt="this"
               title="Save these edits to the working state — a durable draft on disk that survives an app restart. The live chip stays untouched.">Save to working state</button>
+      {# docs/107: mass-undo of every pending change. No confirm — each popped
+         group lands on the redo stack, so Ctrl+Shift+Z restores them in order. #}
+      <button class="outline btn-sm btn-discard-all"
+              hx-post="/discard_all"
+              hx-target="#pending-tray"
+              hx-swap="outerHTML"
+              hx-disabled-elt="this"
+              title="Revert every pending change (Ctrl+Shift+Z restores them one by one)">Discard all</button>
       <span class="muted tray-foot-hint">Durable draft &mdash; the live chip stays untouched.</span>
     </div>
   </div>

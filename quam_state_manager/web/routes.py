@@ -66,6 +66,7 @@ from quam_state_manager.core import (
     regenerate,
     safe_io,
     scheduler,
+    undo_journal,
     working_copy,
 )
 from quam_state_manager.core import compare as compare_engine
@@ -991,6 +992,9 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
             # used to be stashed here is gone with the silent pull it announced.
             # A toast that reports a fait accompli is strictly worse than the
             # banner that now asks first — and the banner carries the same count.
+            # docs/107: fresh builds (restart, LRU rehydrate) reload the
+            # cross-save undo journal from its sidecar; cursor starts at tip.
+            _journal_reset(ctx)
         # Project lens (docs/63): fresh builds (first load, LRU-eviction
         # rehydrates, restarts) derive their scope here — BEFORE publication
         # (a concurrent /datasets render must never observe an active scoped
@@ -1208,6 +1212,10 @@ def _rebuild_after_working_copy_replaced(ctx: dict) -> None:
     # audit-r10: a wholesale replace resolves any prior staged base (a pull
     # consumed it; a fresh stage re-sets the flag right after this call).
     ctx["staged_base"] = False
+    # docs/107: the reload cleared the change log, so any staged journal steps
+    # died with it — re-read the sidecar and put the cursor back at the tip
+    # (the redo stack self-invalidates via the mutation_seq handshake).
+    _journal_reset(ctx)
     _reseed_drift_baseline_if_chip_changed(ctx)
     # docs/78: content the user did not type just landed — let the next render
     # raise the type-anomaly popup once (pull / stage / restore / run load).
@@ -1527,6 +1535,127 @@ def _clear_reapply(ctx: dict | None = None) -> None:
         ctx = _active_ctx()
     if ctx is not None:
         ctx["pending_reapply"] = None
+
+
+# ======================================================================
+# Cross-save undo journal + redo stack (docs/107)
+# ======================================================================
+# Ctrl+Z used to die at /save (saver.save clears the change log). The journal
+# records each save's OUTGOING log as units so /undo can keep walking — by
+# STAGING the inverse back into the tray (gid ``jrn:<unit-id>``), never by
+# touching live (the SM covenant: any direct live write requires >= 1 explicit
+# Apply-to-live press). The redo stack (Ctrl+Shift+Z) holds what undo/discard
+# popped; it lives in RAM only and self-invalidates on any FOREIGN mutation
+# via a mutation_seq handshake (edits, reloads and pulls all bump the seq
+# without calling _redo_mark, so no modifier hooks are needed).
+
+_REDO_MAX_FRAMES = 100
+
+
+def _journal_reset(ctx: dict) -> None:
+    """(Re)load the sidecar journal + cursor := tip.
+
+    Called where journal RAM state must be (re)derived: fresh context builds
+    (restart, LRU rehydrate) and wholesale working-copy replacement (pull /
+    stage / restore — ``store.reload`` cleared the log, so any staged journal
+    steps died with it and the cursor must return to the tip; the redo stack
+    dies via the seq handshake). The cached fast path deliberately does NOT
+    reset: a live ctx's units+cursor+staged ``jrn:`` groups are coherent RAM
+    state, and resetting mid-walk would let the next Ctrl+Z re-stage a unit
+    that is already sitting in the tray.
+    """
+    try:
+        if ctx.get("type") != "quam" or (ctx.get("origin") or "live") != "live":
+            ctx["undo_units"], ctx["undo_cursor"] = [], 0
+            return
+        path = undo_journal.sidecar_path(current_app.instance_path, ctx["path"])
+        units = undo_journal.load(path)
+        ctx["undo_units"], ctx["undo_cursor"] = units, len(units)
+    except Exception:
+        logger.warning("undo journal load failed", exc_info=True)
+        ctx["undo_units"], ctx["undo_cursor"] = [], 0
+
+
+def _journal_prepare(store, ctx) -> list[dict]:
+    """Capture phase 1, inside the caller's ``store._lock`` hold: serialize
+    the OUTGOING change log as journal units. Committed only after the save
+    SUCCEEDS (phase 2) — a failed save keeps the log, and appending at prepare
+    time would duplicate the units on the retry. Advisory: never raises."""
+    try:
+        if not ctx or (ctx.get("origin") or "live") != "live":
+            return []
+        return undo_journal.units_from_log(list(store.change_log))
+    except Exception:
+        logger.warning("undo journal capture failed", exc_info=True)
+        return []
+
+
+def _journal_commit(ctx, units: list[dict]) -> None:
+    """Capture phase 2, after a SUCCESSFUL save: append to the sidecar + RAM
+    mirror; cursor := tip (the one rule that collapses every restart /
+    eviction / replace edge). Advisory: never raises."""
+    if not units or not ctx:
+        return
+    try:
+        path = undo_journal.sidecar_path(current_app.instance_path, ctx["path"])
+        ctx["undo_units"] = undo_journal.append_units(path, units)
+        ctx["undo_cursor"] = len(ctx["undo_units"])
+    except Exception:
+        logger.warning("undo journal commit failed", exc_info=True)
+
+
+def _redo_stack(ctx) -> list:
+    return ctx.setdefault("redo_stack", []) if ctx is not None else []
+
+
+def _redo_begin(ctx, store) -> None:
+    """Fork detection, called BEFORE our own pop/push: if the store mutated
+    since our machinery's last op (seq moved without :func:`_redo_mark`), the
+    redo history belongs to a dead timeline — clear it, exactly like typing
+    after undo in an editor."""
+    if ctx is None or store is None:
+        return
+    frames = _redo_stack(ctx)
+    if frames and ctx.get("redo_seq") != store.mutation_seq:
+        frames.clear()
+
+
+def _redo_mark(ctx, store) -> None:
+    """Stamp the seq after one of OUR ops (undo/redo/discard/journal step) so
+    the next :func:`_redo_begin` recognises the interval as ours."""
+    if ctx is not None and store is not None:
+        ctx["redo_seq"] = store.mutation_seq
+
+
+def _redo_push_group(ctx, store, entries, *, mark: bool = True,
+                     keep_jrn: bool = True) -> None:
+    """Push one popped user action (entries newest-first, exactly as
+    ``undo_group``/``undo_all`` return them) onto the redo stack. Only a
+    ``jrn:`` gid is preserved (it routes /redo's cursor bookkeeping); ordinary
+    gids are never reused on re-apply — /redo mints a fresh one.
+
+    ``keep_jrn=False`` (the single-✕ /discard): a ✕ on one entry of a staged
+    journal step never moved the cursor, so its redo frame must not either —
+    the entry re-applies as an ordinary edit."""
+    if ctx is None or not entries:
+        return
+    gid0 = entries[0].group_id
+    frames = _redo_stack(ctx)
+    frames.append({
+        "gid": gid0 if (keep_jrn and isinstance(gid0, str)
+                        and gid0.startswith(undo_journal.GID_PREFIX)) else None,
+        "entries": [{
+            "path": e.dot_path,
+            "new": copy.deepcopy(e.new_value),
+            "created": bool(e.created),
+            "deleted": bool(e.deleted),
+            "source_file": e.source_file,
+        } for e in entries],
+    })
+    if len(frames) > _REDO_MAX_FRAMES:
+        del frames[: len(frames) - _REDO_MAX_FRAMES]
+    if mark:
+        _redo_mark(ctx, store)
 
 
 # Sentinel: a create-collision target whose current value couldn't be read. An
@@ -9387,6 +9516,7 @@ def save():
     # re-apply or stage them even though they're no longer "unsaved".
     with store._lock:
         _stash_reapply(_capture_change_log_as_updates(store), ctx)
+        _jrn_units = _journal_prepare(store, ctx)   # docs/107: outgoing log
     try:
         # Build lock: the save writes the working folder's state/wiring pair —
         # the same files a concurrent _activate_quam reconcile auto-sync
@@ -9395,6 +9525,7 @@ def save():
             saver.save()
     except Exception as e:
         return render_template("_status.html", message=f"Save failed: {e}", level="error"), 500
+    _journal_commit(ctx, _jrn_units)   # docs/107: the log is gone — journal it
 
     # Save writes the working copy only — the live chip is untouched until an
     # explicit "Apply to live".  History is snapshotted on apply, not here.
@@ -9425,6 +9556,22 @@ def undo():
     if not modifier:
         return render_template("_status.html", message="No state loaded", level="warning")
 
+    ctx = _active_ctx()
+    store = ctx.get("store") if ctx else None
+
+    # docs/107 routing: an ordinary group on top undoes exactly as before; an
+    # EMPTY log — or a ``jrn:`` staged step already on top — walks DEEPER into
+    # the cross-save journal (staging the next unit's inverse into the tray)
+    # instead of stopping at the save boundary. No peek route (docs/73): the
+    # decision is made here, on the server, from the log itself.
+    if store is not None:
+        top_gid = store.change_log[-1].group_id if store.change_log else None
+        if (not store.change_log
+                or (isinstance(top_gid, str)
+                    and top_gid.startswith(undo_journal.GID_PREFIX))):
+            return _undo_journal_step(ctx)
+
+    _redo_begin(ctx, store)   # docs/107: a foreign edit since forks history
     try:
         # Undo the last USER ACTION atomically (a batch edit / rename undoes as
         # one unit, not one Ctrl+Z per underlying entry).
@@ -9439,6 +9586,7 @@ def undo():
         # outerHTML swap is a harmless no-op instead of replacing the tray with a
         # status line.
         return _tray_html()
+    _redo_push_group(ctx, store, entries)   # docs/107: Ctrl+Shift+Z target
 
     # Reverts are most-recent-first; report the oldest (the action's anchor) and
     # revert every affected cell/tree-node visually (reuses the /discard path).
@@ -9484,6 +9632,238 @@ def undo():
     return resp
 
 
+def _undo_journal_step(ctx):
+    """Stage the inverse of the next journal unit into the tray (docs/107).
+
+    The SM covenant holds: this NEVER touches the live files — the inverse
+    edits land in the change log (review tray) under gid ``jrn:<unit-id>``,
+    and reaching the chip still requires the user's explicit Apply-to-live.
+
+    All-or-nothing: a partial staging (e.g. the create clobber guard — the
+    key re-appeared since) is rolled back LIFO and answered 409 with the
+    cursor unchanged. Drift is REPORTED, not blocking: values that moved
+    since the unit was recorded are counted off the modifier's own returned
+    ``old_value`` (zero extra reads) and named in the toast.
+
+    Exhausted journal / archive / cursor==0 ⇒ the same silent unchanged-tray
+    no-op the empty-log Ctrl+Z always produced.
+    """
+    store = ctx.get("store") if ctx else None
+    modifier = ctx.get("modifier") if ctx else None
+    units = (ctx.get("undo_units") or []) if ctx else []
+    cursor = int(ctx.get("undo_cursor") or 0) if ctx else 0
+    if (store is None or modifier is None
+            or (ctx.get("origin") or "live") != "live"
+            or cursor <= 0 or cursor > len(units)):
+        return _tray_html()
+
+    unit = units[cursor - 1]
+    uents = list(reversed(unit.get("entries") or []))   # staging order (LIFO)
+    if not uents:
+        ctx["undo_cursor"] = cursor - 1                 # skip an empty unit
+        return _tray_html()
+    gid = undo_journal.GID_PREFIX + str(unit.get("id") or cursor)
+    ops = undo_journal.inverse_ops(unit)
+
+    staged: list = []
+    drift = 0
+    with store._lock:
+        _redo_begin(ctx, store)   # a foreign edit since our last op forks redo
+        try:
+            for (op, path, value, _src), uent in zip(ops, uents):
+                if op == "delete":
+                    e = modifier.delete_subtree(path, group_id=gid)
+                    if e.old_value != uent.get("new"):
+                        drift += 1
+                elif op == "create":
+                    e = modifier.create_subtree(path, value, group_id=gid)
+                else:
+                    # coerce=False: restore the historical value VERBATIM — the
+                    # field's CURRENT type may differ (e.g. a later type-fix),
+                    # and coercion would cast the restoration back to it.
+                    e = modifier.set_value(path, value, coerce=False,
+                                           group_id=gid)
+                    if e.old_value != uent.get("new"):
+                        drift += 1
+                staged.append(e)
+        except Exception as exc:   # noqa: BLE001 — any failure un-stages all
+            for _ in staged:
+                try:
+                    modifier.undo()   # our entries are the log tail — pops LIFO
+                except Exception:
+                    logger.warning("journal-step rollback lagged", exc_info=True)
+                    break
+            _invalidate_engine_cache()
+            return render_template(
+                "_status.html",
+                message=f"Undo (staged) failed, nothing changed: {exc}",
+                level="error"), 409
+
+    ctx["undo_cursor"] = cursor - 1
+    _redo_mark(ctx, store)
+    _invalidate_engine_cache()
+
+    # Response mirrors /undo's exactly (docs/73: UndoNav + cell repaints ride
+    # the response). Flags are the ORIGINAL entry's — original created=True
+    # means the key is removed now (client: "removed"), original deleted=True
+    # means it is restored now — and old_value_str is the value now in place.
+    n = len(uents)
+    anchor = uents[-1]
+    if n > 1:
+        message = f"Undone (staged): {n} changes ({anchor['path']} …)"
+    elif anchor.get("deleted"):
+        message = f"Undone (staged): {anchor['path']} restored"
+    elif anchor.get("created"):
+        message = f"Undone (staged): {anchor['path']} removed"
+    else:
+        from quam_state_manager.core import value_delta as _vd
+        _d = _vd.compute(anchor.get("new"), anchor.get("old"))
+        message = f"Undone (staged): {anchor['path']} → {_fmt_val(anchor.get('old'))}"
+        if _d and _d["dir"] != "same":
+            message += f" ({_d['text']}"
+            message += f", {_d['pct_text']})" if _d["pct_text"] else ")"
+    if drift:
+        message += f" — {drift} value(s) had moved since; the tray now holds the journal value"
+
+    resp = make_response(_tray_html())
+    resp.headers["HX-Trigger"] = json.dumps({
+        "cellsReverted": {
+            "message": message,
+            "entries": [
+                {"dot_path": u["path"], "old_value_str": _fmt_val(u.get("old")),
+                 "created": bool(u.get("created")), "deleted": bool(u.get("deleted")),
+                 "source_file": u.get("source_file", "state")}
+                for u in uents
+            ],
+        },
+        "pulses-changed": True,
+        "diagnostics-changed": True,
+    })
+    return resp
+
+
+@bp.route("/redo", methods=["POST"])
+def redo():
+    """Ctrl+Shift+Z (docs/107). Two cases, no peek route:
+
+    - a ``jrn:`` staged step on top of the log ⇒ un-stage it (this IS
+      ``undo_group``) and move the journal cursor back up;
+    - otherwise pop the redo stack and re-apply that group forward. The stack
+      is only valid if nothing foreign mutated since our machinery's last op
+      (mutation_seq handshake) — a mismatch clears it silently, the same
+      forked-history rule every editor applies.
+
+    Like every undo/redo/discard, this stages into the tray only — the live
+    chip is untouched until an explicit Apply-to-live.
+    """
+    modifier = _modifier()
+    if not modifier:
+        return render_template("_status.html", message="No state loaded", level="warning")
+    ctx = _active_ctx()
+    store = ctx.get("store") if ctx else None
+    if store is None:
+        return _tray_html()
+
+    top_gid = store.change_log[-1].group_id if store.change_log else None
+    if isinstance(top_gid, str) and top_gid.startswith(undo_journal.GID_PREFIX):
+        # Un-stage the staged journal step; cursor moves back toward the tip.
+        try:
+            entries = modifier.undo_group()
+        except KeyError as exc:
+            _invalidate_engine_cache()
+            return render_template("_status.html", message=str(exc), level="error"), 409
+        _invalidate_engine_cache()
+        if not entries:
+            return _tray_html()
+        ctx["undo_cursor"] = min(int(ctx.get("undo_cursor") or 0) + 1,
+                                 len(ctx.get("undo_units") or []))
+        _redo_mark(ctx, store)
+        anchor = entries[-1]
+        n = len(entries)
+        message = (f"Redone: un-staged {n} change(s) ({anchor.dot_path} …)"
+                   if n > 1 else f"Redone: un-staged {anchor.dot_path}")
+        return _redo_response(message, [
+            {"dot_path": e.dot_path, "old_value_str": _fmt_val(e.old_value),
+             "created": e.created, "deleted": e.deleted,
+             "source_file": e.source_file}
+            for e in entries
+        ])
+
+    frames = _redo_stack(ctx)
+    if not frames:
+        return _tray_html()
+    if ctx.get("redo_seq") != store.mutation_seq:
+        frames.clear()   # foreign mutation since — dead timeline, silent no-op
+        return _tray_html()
+    frame = frames.pop()
+
+    fents = list(reversed(frame["entries"]))   # chronological re-apply order
+    is_jrn = bool(frame.get("gid"))
+    gid = frame.get("gid") if is_jrn else (
+        modifier.new_group_id() if len(fents) > 1 else None)
+    staged: list = []
+    with store._lock:
+        try:
+            for fe in fents:
+                if fe["created"]:
+                    e = modifier.create_subtree(fe["path"], fe["new"], group_id=gid)
+                elif fe["deleted"]:
+                    e = modifier.delete_subtree(fe["path"], group_id=gid)
+                else:
+                    e = modifier.set_value(fe["path"], fe["new"], coerce=False,
+                                           group_id=gid)
+                staged.append(e)
+        except Exception as exc:   # noqa: BLE001 — all-or-nothing, frame dropped
+            for _ in staged:
+                try:
+                    modifier.undo()
+                except Exception:
+                    logger.warning("redo rollback lagged", exc_info=True)
+                    break
+            _invalidate_engine_cache()
+            return render_template(
+                "_status.html",
+                message=f"Redo failed, nothing changed: {exc}",
+                level="error"), 409
+    if is_jrn:
+        # Re-staging a discarded journal step re-consumes its unit.
+        ctx["undo_cursor"] = max(int(ctx.get("undo_cursor") or 0) - 1, 0)
+    _redo_mark(ctx, store)
+    _invalidate_engine_cache()
+
+    n = len(fents)
+    anchor = fents[0]
+    if n > 1:
+        message = f"Redone: {n} changes ({anchor['path']} …)"
+    elif anchor["deleted"]:
+        message = f"Redone: {anchor['path']} removed"
+    elif anchor["created"]:
+        message = f"Redone: {anchor['path']} restored"
+    else:
+        message = f"Redone: {anchor['path']} → {_fmt_val(anchor['new'])}"
+    # Client flags describe what happened to the CELL now: a re-applied
+    # create restored it (deleted=True in undo-speak), a re-applied delete
+    # removed it (created=True) — the exact inversion of the frame's flags.
+    return _redo_response(message, [
+        {"dot_path": fe["path"], "old_value_str": _fmt_val(fe["new"]),
+         "created": bool(fe["deleted"]), "deleted": bool(fe["created"]),
+         "source_file": fe.get("source_file", "state")}
+        for fe in reversed(fents)   # newest-first, like /undo's payload
+    ])
+
+
+def _redo_response(message: str, entries_payload: list[dict]):
+    """The /undo response shape (tray + cellsReverted HX-Trigger), reused by
+    both /redo branches so the client repaint/UndoNav path stays ONE."""
+    resp = make_response(_tray_html())
+    resp.headers["HX-Trigger"] = json.dumps({
+        "cellsReverted": {"message": message, "entries": entries_payload},
+        "pulses-changed": True,
+        "diagnostics-changed": True,
+    })
+    return resp
+
+
 @bp.route("/changes")
 def changes():
     modifier = _modifier()
@@ -9510,6 +9890,9 @@ def discard():
     # the stale click can't revert the wrong change.
     expect_path = request.form.get("expect_path") or None
 
+    ctx = _active_ctx()
+    store = ctx.get("store") if ctx else None
+    _redo_begin(ctx, store)   # docs/107: a foreign edit since forks history
     try:
         entry = modifier.discard(index, expect_path=expect_path)
     except KeyError as exc:
@@ -9520,6 +9903,9 @@ def discard():
     _invalidate_engine_cache()
     if entry is None:
         return render_template("_status.html", message="Change not found", level="warning")
+    # docs/107: recoverability is what licenses the ✕'s no-confirm — the
+    # discarded change goes onto the redo stack, Ctrl+Shift+Z brings it back.
+    _redo_push_group(ctx, store, [entry], keep_jrn=False)
 
     resp = make_response(_tray_html())
     resp.headers["HX-Trigger"] = json.dumps({
@@ -9530,6 +9916,64 @@ def discard():
         # open Pulses surfaces re-fetch their rows (no-op elsewhere)
         "pulses-changed": True,
         # refresh the diagnostics tray badge + error banner
+        "diagnostics-changed": True,
+    })
+    return resp
+
+
+@bp.route("/discard_all", methods=["POST"])
+def discard_all():
+    """Revert EVERY pending change in one press (docs/107). No confirm by
+    design: each popped user-action group lands on the redo stack in the
+    order repeated Ctrl+Z would have produced it, so Ctrl+Shift+Z restores
+    them one by one, in order — recoverability is the license. Staged
+    journal steps (``jrn:`` groups) un-stage too, and the journal cursor
+    moves back toward the tip by their count."""
+    modifier = _modifier()
+    if not modifier:
+        return _tray_html()
+    ctx = _active_ctx()
+    store = ctx.get("store") if ctx else None
+    if store is None or not store.change_log:
+        return _tray_html()
+
+    _redo_begin(ctx, store)   # foreign edit since our last op forks history
+    try:
+        groups = modifier.undo_all()
+    except KeyError as exc:
+        # A mid-way raise leaves fully popped groups gone and the failing one
+        # partially in the log (modifier keeps log==state); surface honestly.
+        _invalidate_engine_cache()
+        return render_template("_status.html", message=str(exc), level="error"), 409
+    _invalidate_engine_cache()
+    if not groups:
+        return _tray_html()
+
+    jrn = 0
+    for g in groups:
+        _redo_push_group(ctx, store, g, mark=False)
+        gid0 = g[0].group_id
+        if isinstance(gid0, str) and gid0.startswith(undo_journal.GID_PREFIX):
+            jrn += 1
+    if ctx is not None and jrn:
+        ctx["undo_cursor"] = min(int(ctx.get("undo_cursor") or 0) + jrn,
+                                 len(ctx.get("undo_units") or []))
+    _redo_mark(ctx, store)
+
+    total = sum(len(g) for g in groups)
+    resp = make_response(_tray_html())
+    resp.headers["HX-Trigger"] = json.dumps({
+        "cellsReverted": {
+            "message": (f"Discarded all: {total} change(s) — "
+                        "Ctrl+Shift+Z restores them one by one"),
+            "entries": [
+                {"dot_path": e.dot_path, "old_value_str": _fmt_val(e.old_value),
+                 "created": e.created, "deleted": e.deleted,
+                 "source_file": e.source_file}
+                for g in groups for e in g
+            ],
+        },
+        "pulses-changed": True,
         "diagnostics-changed": True,
     })
     return resp
@@ -10068,6 +10512,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False):
     with store._lock:
         _clear_reapply(ctx)
         _stash_reapply(_capture_change_log_as_updates(store), ctx)
+        _jrn_units = _journal_prepare(store, ctx)   # docs/107: outgoing log
 
     if store.change_log:
         try:
@@ -10085,6 +10530,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False):
                     "close any program that has state.json open and retry."
                 ),
             }), 500
+        _journal_commit(ctx, _jrn_units)   # docs/107: the log is gone — journal it
         _set_working_dirty(True, ctx)
 
     # docs/20 v2 "Revert last apply": capture the PRE-apply live content.
@@ -10195,6 +10641,7 @@ def state_apply_to_live():
     # the captured ctx so a concurrent /load can't divert the stash to another chip.
     with store._lock:
         _stash_reapply(_capture_change_log_as_updates(store), ctx)
+        _jrn_units = _journal_prepare(store, ctx)   # docs/107: outgoing log
 
     if store.change_log:
         try:
@@ -10217,6 +10664,7 @@ def state_apply_to_live():
                 ),
                 level="error",
             ), 500
+        _journal_commit(ctx, _jrn_units)   # docs/107: the log is gone — journal it
         _set_working_dirty(True, ctx)
 
     # docs/20 v2 "Revert last apply": capture the PRE-apply live content.
@@ -15694,6 +16142,17 @@ def dataset_load_state(uid):
 
     Gates (independent tokens, docs/41 doctrine): chip-identity mismatch →
     ``force_chip=1``; pending working-copy edits → ``force=1``.
+
+    ``apply=1`` (docs/108, user-requested): ONE press stages the snapshot AND
+    pushes it to the live chip through the shared apply core
+    (:func:`_sync_pull_apply_to_live` — the one write path, so the pre-apply
+    snapshot arms "↺ Revert last apply" exactly like every other apply).
+    Covenant-compliant: the button is labeled "Apply to chip", so the press
+    IS the one explicit apply act — no confirm dialog (the no-confirm
+    doctrine), and reversibility is what makes one click safe. The identity /
+    pending-edit gates stay (they answer a DIFFERENT question than consent),
+    and a staleness conflict renders the honest conflict tray rather than
+    force-pushing over a live chip that moved.
     """
     resolved = _resolve_run(uid)
     state_path = None
@@ -15725,6 +16184,9 @@ def dataset_load_state(uid):
     # ---- stage into the ACTIVE chip's working copy ----
     base_url = f"/dataset/{uid}/load-state"
     chip_label = _chip_display_name(Path(ctx["path"]))
+    apply_req = request.values.get("apply") == "1"   # docs/108 one-click
+    apply_qs = "&apply=1" if apply_req else ""
+    apply_note = " It will then be APPLIED to the live chip." if apply_req else ""
 
     # Gate 1 — chip identity: the run's snapshot must fingerprint-align with
     # the loaded chip; UNKNOWN (unreadable fingerprint) also confirms.
@@ -15737,12 +16199,13 @@ def dataset_load_state(uid):
                       if alignment == _hist.ALIGN_UNKNOWN
                       else "looks like a DIFFERENT chip")
             url = (base_url + "?force_chip=1"
-                   + ("&force=1" if request.values.get("force") == "1" else ""))
+                   + ("&force=1" if request.values.get("force") == "1" else "")
+                   + apply_qs)
             return render_template(
                 "_sh_confirm.html",
                 message=(f"This run's quam_state {reason} vs the loaded chip "
                          f"({chip_label}). Loading it replaces the working "
-                         "state wholesale."),
+                         "state wholesale." + apply_note),
                 action_url=url,
                 action_label="Load into working state anyway",
                 confirm=("Replace the working state with a snapshot from a "
@@ -15757,11 +16220,12 @@ def dataset_load_state(uid):
                        or bool(ctx.get("working_dirty")))
     if has_pending and request.values.get("force") != "1":
         url = (base_url + "?force=1"
-               + ("&force_chip=1" if request.values.get("force_chip") == "1" else ""))
+               + ("&force_chip=1" if request.values.get("force_chip") == "1" else "")
+               + apply_qs)
         return render_template(
             "_sh_confirm.html",
             message=("You have unsaved edits in the working state. Loading "
-                     "this run's snapshot will replace them."),
+                     "this run's snapshot will replace them." + apply_note),
             action_url=url,
             action_label="Replace working state anyway",
             confirm="Discard your unsaved edits and load this run's state?",
@@ -15789,6 +16253,49 @@ def dataset_load_state(uid):
                                level="error"), 500
     logger.info("dataset run %s staged into the working copy of %s",
                 uid, ctx["path"])
+
+    if apply_req:
+        # docs/108 one-click: push the just-staged snapshot through the SHARED
+        # apply core — same pre-apply snapshot (arms ↺ Revert last apply),
+        # same staleness handling, same bookkeeping as the ⚡ button.
+        result = _sync_pull_apply_to_live(ctx, None)
+        body = (result[0] if isinstance(result, tuple) else result).get_json()
+        status = (body or {}).get("status")
+        if status == "ok":
+            msg = render_template(
+                "_status.html",
+                message=(f"Run #{run_id}'s state is now LIVE on {chip_label}. "
+                         "Reversible — ↺ Revert last apply (top bar) "
+                         "restores the pre-apply state."),
+                level="success")
+            resp = make_response(msg + "\n" + _tray_oob())
+            resp.headers["HX-Trigger"] = "pulses-changed, stateRestored, diagnostics-changed"
+            return resp
+        if status == "conflict":
+            # The live chip moved since it was loaded — the snapshot is STAGED
+            # (safe), and the honest conflict tray offers the real choices
+            # (docs/65 staged_conflict: overwrite-live or pull-and-discard).
+            # Never force-push over a live chip that changed under us.
+            tray = (body.get("tray_html") or "").replace(
+                '<div id="pending-tray"',
+                '<div id="pending-tray" hx-swap-oob="outerHTML"', 1)
+            msg = render_template(
+                "_status.html",
+                message=(f"Run #{run_id}'s state is staged, but the live chip "
+                         "changed since it was loaded — resolve in the top "
+                         "bar (your staged state is safe)."),
+                level="warning")
+            resp = make_response(msg + "\n" + tray)
+            resp.headers["HX-Trigger"] = "pulses-changed, stateRestored, diagnostics-changed"
+            return resp
+        # error — the staging succeeded; say exactly how far things got.
+        return render_template(
+            "_status.html",
+            message=((body or {}).get("message") or "Apply to live failed")
+            + " — the run's state IS staged in the working copy; retry from "
+              "the top bar.",
+            level="error"), 500
+
     msg = render_template(
         "_status.html",
         message=(f"Run #{run_id}'s state is now the WORKING state of "
