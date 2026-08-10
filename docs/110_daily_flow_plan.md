@@ -105,3 +105,54 @@ because the user's own words named state loss, not layout. That call
 holds: with panes preserved, "go look at the other thing and come back"
 costs nothing, which is most of what a split view was for. Revisit only
 if the request returns after living with this.
+
+
+## The integration audit (41 agents, 4 lenses × adversarial verify)
+
+37 findings, 15 confirmed and fixed. The lens that earned its keep was
+**cross-feature** — every confirmed defect lived in the seam between two
+streams or between a stream and the app it landed in, which is exactly
+what per-stream pins cannot see:
+
+- **`/load`'s failure panel never reached the DOM.** htmx drops 4xx
+  bodies unless a `beforeSwap` allowance permits the target; `#table-pane`
+  was not on that list. The whole docs/114 #1 feature was invisible and
+  the user still got the vanishing toast it replaced. Now allowed —
+  narrowly, only for a 400 carrying that panel.
+- **`live_readonly` repeated the beacon bug exactly.** Like
+  `mutation_seq` before it, the flag was stamped by `_render_tray` but
+  not by `_ctx()`, so the 🔒 never appeared on the render that FOLLOWS
+  opening a chip. Both are now in `_ctx()`, both pinned on a full page.
+- **The read-only probe was blind to its own use case.**
+  `os.access(dir, W_OK)` on Windows inspects only
+  `FILE_ATTRIBUTE_READONLY` — meaningless for directories, blind to
+  share/ACL denial — so it reported a read-only lab share as writable.
+  Replaced with a real create+delete probe, re-run on every activation
+  (a cached chip kept the first answer forever).
+- **The permission hint was attached to the wrong failure.** It sat on
+  the working-copy save, which never touches the live folder; the
+  read-only case fails in `apply_to_live`. Moved to both live-write
+  handlers, and the working-copy message no longer implies "live".
+- **The landing CTA dead-ended** (`openFolderBrowser()` with no target
+  input: Select filled nothing, submitted nothing) — the very first
+  action docs/115 added for a first-day student.
+- **The "↻ Newest" chip landed in the sidebar** — `.ds-search-wrap`
+  names two elements, and `querySelector` took the first.
+- **Keyboard collisions:** `j`/`k` claimed Enter/Space away from focused
+  buttons and kept firing under the `?` sheet; `/` and `?` fired over
+  open modals, stacking a second focus trap so one Escape closed both;
+  Ctrl+Enter in a grid cell fired BOTH the row apply and Apply-all.
+- **Honesty:** the drift poll stamped "last checked" even when the poll
+  FAILED; the digest's "(filtered set)" contradicted the count beside it
+  and could restore a band captured on a previous render.
+- **Layout/affordance minors:** the teaching line claimed a full flex row
+  in the topbar and pushed the Apply bar down on every page; the chip
+  overlapped the search-help button; the 🔒 was an unlabelled glyph; the
+  Help link rendered underlined among its button siblings; a selection
+  had no count, no anchor mark and no key hints (and Ctrl+D outside the
+  table reached the browser's bookmark dialog).
+
+Independently, the campaign's own pins caught the merge dropping the
+whole docs/114 CSS block, and the real-browser pass caught keep-alive
+never firing. Three different mechanisms, three different classes of
+defect — none of which a unit test alone would have found.
