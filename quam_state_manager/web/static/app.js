@@ -3414,6 +3414,139 @@ window.PhysAmp = (function () {
 })();
 
 /* ------------------------------------------------------------------ */
+/* PaneState (docs/110 #10-A): a tab keeps its state when you return   */
+/* ------------------------------------------------------------------ */
+/* THE most-asked-for UX fix: navigating the main pane used to destroy the
+   previous surface wholesale — search text, expanded tree nodes, scroll,
+   half-typed input ("json tree view에서 검색하다 다른 탭 갔다 오면 초기화").
+   Two tiers:
+   - KEEP routes get full DOM keep-alive: the outgoing pane's nodes are
+     PARKED (detached, listeners intact) and re-attached on return instead
+     of refetching — everything survives. Honesty gate: the tray's data-seq
+     (store.mutation_seq) + the chip token are stamped at park time; if
+     either moved, the pane is REFETCHED, never restored stale (docs/28/87
+     doctrine applied to UI state). A refetch still gets the SOFT tier.
+   - SOFT routes (and stale KEEP refetches) re-apply the user's search-box
+     text after the fresh swap and re-dispatch 'input', so the filter
+     re-runs over FRESH data — the query survives even when the DOM can't.
+     Only search inputs (never .bulk-cell/.edit-input data editors).
+   Parked DOM is detached — document.getElementById can't see it, pollers
+   that look elements up by id simply no-op until restore. Stash: LRU 4,
+   cleared on stateRestored (wholesale replace) and popstate (htmx history
+   owns back/forward). */
+window.PaneState = (function () {
+    var KEEP = ['/explorer'];
+    var SOFT = ['/explorer', '/bulk', '/datasets', '/param-history',
+                '/pulses', '/state-history', '/qubits', '/pairs',
+                '/resonators', '/flux', '/couplers'];
+    var MAX = 4;
+    var stash = {};   // route -> {holder, seq, chip, scroll, order}
+    var soft = {};    // route -> {inputs: [{id, value}]}
+    var _order = 0;
+    var _cur = location.pathname;
+
+    function pane() { return document.getElementById('table-pane'); }
+    function seqNow() {
+        var t = document.getElementById('pending-tray');
+        return t ? (t.getAttribute('data-seq') || '') : '';
+    }
+    function chipNow() { return String(window.__chipToken || ''); }
+    function _esc(s) {
+        return (window.CSS && CSS.escape) ? CSS.escape(s) : s;
+    }
+
+    function _captureSoft(root) {
+        var inputs = [];
+        root.querySelectorAll('input[type="search"], .tree-search').forEach(function (el) {
+            if (el.id && el.value) inputs.push({ id: el.id, value: el.value });
+        });
+        return { inputs: inputs };
+    }
+    function _park(route) {
+        var p = pane();
+        if (!p || !p.firstChild) return;
+        if (SOFT.indexOf(route) >= 0) soft[route] = _captureSoft(p);
+        if (KEEP.indexOf(route) < 0) return;
+        var holder = document.createElement('div');
+        while (p.firstChild) holder.appendChild(p.firstChild);
+        stash[route] = { holder: holder, seq: seqNow(), chip: chipNow(),
+                         scroll: p.scrollTop, order: ++_order };
+        var keys = Object.keys(stash);
+        if (keys.length > MAX) {
+            keys.sort(function (a, b) { return stash[a].order - stash[b].order; });
+            delete stash[keys[0]];
+        }
+    }
+    function _tryRestore(route) {
+        var e = stash[route];
+        if (!e) return false;
+        delete stash[route];
+        // stale — let the refetch happen; the SOFT tier re-applies the query
+        if (e.seq !== seqNow() || e.chip !== chipNow()) return false;
+        var p = pane();
+        if (!p) return false;
+        p.innerHTML = '';
+        while (e.holder.firstChild) p.appendChild(e.holder.firstChild);
+        p.scrollTop = e.scroll || 0;
+        if (window.PhysAmp) window.PhysAmp.applyAll(p);   // viewer prefs moved?
+        document.dispatchEvent(new CustomEvent('paneRestored',
+                                               { detail: { route: route } }));
+        return true;
+    }
+    function _reapplySoft(route) {
+        var d = soft[route];
+        if (!d || !d.inputs.length) return;
+        var p = pane();
+        if (!p) return;
+        d.inputs.forEach(function (it) {
+            var el = p.querySelector('#' + _esc(it.id));
+            if (el && !el.value) {
+                el.value = it.value;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+        });
+    }
+
+    document.addEventListener('htmx:beforeRequest', function (evt) {
+        var cfg = evt.detail && evt.detail.requestConfig;
+        if (!cfg || cfg.verb !== 'get') return;
+        var tgt = evt.detail.target;
+        if (!tgt || tgt.id !== 'table-pane') return;
+        var route = (cfg.path || '').split('?')[0];
+        // same-route requests are REFRESHES (chain tabs, pagination) — the
+        // pane must not park onto itself, and never restores over a refresh
+        if (route === _cur) return;
+        _park(_cur);
+        _cur = route;
+        if (_tryRestore(route)) {
+            evt.preventDefault();
+            try { history.pushState({}, '', cfg.path); } catch (e) {}
+            // the sidebar highlight rides htmx:pushedIntoHistory — mirror it
+            document.dispatchEvent(new CustomEvent('htmx:pushedIntoHistory'));
+        }
+    });
+    document.addEventListener('htmx:afterSwap', function (evt) {
+        if (evt.target && evt.target.id === 'table-pane') {
+            var pi = evt.detail && evt.detail.pathInfo;
+            var path = pi && (pi.finalRequestPath || pi.requestPath);
+            if (path) _cur = String(path).split('?')[0];
+            _reapplySoft(_cur);
+        }
+    });
+    // A wholesale working-copy replacement (pull / stage / restore / run
+    // load) invalidates every parked pane; back/forward belongs to htmx's
+    // own history machinery — never restore over it.
+    document.addEventListener('stateRestored', function () { stash = {}; });
+    window.addEventListener('popstate', function () { stash = {}; });
+
+    return {
+        _stash: function () { return stash; },
+        _cur: function () { return _cur; },
+        clear: function () { stash = {}; soft = {}; },
+    };
+})();
+
+/* ------------------------------------------------------------------ */
 /* Value delta (Δ) — the JS mirror of core/value_delta.py               */
 /* ------------------------------------------------------------------ */
 /* Every before→after surface shows old, new AND the difference (docs/76).

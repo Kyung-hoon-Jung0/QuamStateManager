@@ -3,6 +3,11 @@
      class="pending-tray{% if not active_name and change_count == 0 and not working_dirty and not (qualibrate_tray is defined and qualibrate_tray) %} tray-empty{% endif %}"
      data-change-count="{{ change_count }}"
      data-working-dirty="{{ '1' if working_dirty else '0' }}"
+     {# docs/110 #10-A: the store's mutation_seq — PaneState's freshness beacon.
+        The tray renders on every page AND OOB-swaps on every mutation, so the
+        CURRENT tray always carries the current seq; a parked pane whose seq no
+        longer matches is refetched, never restored stale. #}
+     data-seq="{{ mutation_seq | default('') }}"
      {% if oob is defined and oob %}hx-swap-oob="outerHTML:#pending-tray"{% endif %}>
 {# Persistent status badge — amber when the working copy has edits not yet on
    the live chip, neutral "Synced" otherwise. Always clickable to review the
