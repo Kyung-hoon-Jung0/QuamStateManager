@@ -8434,6 +8434,12 @@ button.diag-badge { cursor: pointer; }
    still occupy a phantom line: under every cell input (taller rows) and beside every
    Apply button (pushing it off-center). Collapse them properly when hidden. */
 .bulk-band-msg[hidden], .bulk-row-error[hidden] { display: none; }
+/* docs/114 (#15/#16): honest failures */
+.load-failed-panel { max-width: 46rem; margin: 2rem auto; padding: 1rem 1.4rem; border: 1px solid var(--color-error-text); border-radius: 8px; }
+.load-failed-panel h3 { margin-top: 0; color: var(--color-error-text); }
+.load-failed-candidates { display: flex; flex-direction: column; gap: .4rem; align-items: flex-start; }
+.ptr-dangling { color: var(--color-error-text) !important; border-color: var(--color-error-text) !important; }
+.tray-ro-lock { margin-right: .3rem; cursor: help; }
 /* docs/115 (#14): onboarding — help page, landing CTA, tray teaching */
 .landing-cta { display: flex; gap: .5rem; flex-wrap: wrap; margin: .8rem 0 .4rem; }
 .landing-cta-open { font-weight: 600; }
@@ -9930,7 +9936,11 @@ form.inline-edit.fh-host .edit-input { padding-right: 1.5rem; }
 .field-hist-btn {
     position: absolute; right: .18rem; top: 50%; transform: translateY(-50%);
     background: none; border: none; cursor: pointer; padding: 0;
-    margin: 0; width: auto; font-size: .9rem; line-height: 1; opacity: 0;
+    margin: 0; width: auto; font-size: .9rem; line-height: 1;
+    /* docs/114 (#16): visible at REST — an invisible affordance is an
+       undiscoverable feature (it was opacity:0 until row hover). tabindex
+       stays -1 by design: Tab hops between EDIT cells (docs/64 pins). */
+    opacity: .3;
     transition: opacity .12s; display: inline-block;
 }
 tr:hover .field-hist-btn,
