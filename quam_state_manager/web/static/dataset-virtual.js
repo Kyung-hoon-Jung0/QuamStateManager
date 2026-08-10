@@ -714,6 +714,10 @@
     if (!window._dsKbBound) {
         window._dsKbBound = true;
         document.addEventListener('keydown', function (ev) {
+            // KEY FIRST — this fires on every keystroke app-wide; no DOM
+            // query may precede knowing the key is one of ours (perf).
+            if (ev.key !== 'j' && ev.key !== 'k' && ev.key !== 'Enter'
+                && ev.key !== ' ' && ev.key !== 'Escape') return;
             if (!_kbBound()) return;
             // audit: a modal owns the keyboard while it is open — the '?'
             // cheat sheet's own Close button passed the old focus gate, so

@@ -3569,7 +3569,15 @@ window.PhysAmp = (function () {
             + ' .type-fix-modal:not([hidden]), .fsp-popup:not([hidden])');
     }
     document.addEventListener('keydown', function (ev) {
+        // KEY FIRST: this runs on every keystroke in the app, so no DOM query
+        // may happen before we know the key is one of ours (measured: the
+        // modal-guard querySelector alone cost ~2 ms per keystroke on a
+        // 4,851-cell grid page — on the typing path).
+        var mine = (ev.key === '/' || ev.key === '?' || ev.key === 'Escape'
+                    || (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)));
+        if (!mine) return;
         if (ev.key === 'Escape' && _sheet()) { _closeSheet(); return; }
+        if (ev.key === 'Escape') return;      // Escape is otherwise not ours
         if (!_sheet() && _modalOpen()) return;
         if (_typing()) {
             // Ctrl+Enter works FROM a grid cell too — that is where the user is

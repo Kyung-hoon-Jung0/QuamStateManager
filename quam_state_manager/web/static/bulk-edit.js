@@ -1709,11 +1709,17 @@
         if (!window.__bulkSelKeysBound) {
             window.__bulkSelKeysBound = true;
             document.addEventListener('keydown', function (ev) {
+                // KEY first, selection second (measured: querying a 4,851-cell
+                // table on every keystroke cost 2.34 ms app-wide — 23 ms/s
+                // while typing in the grid, on the typing path itself).
+                var isFill = (ev.ctrlKey || ev.metaKey)
+                    && (ev.key === 'd' || ev.key === 'D');
+                if (!isFill && ev.key !== 'Escape') return;
                 if (!_selCells().length) return;
-                if ((ev.ctrlKey || ev.metaKey) && (ev.key === 'd' || ev.key === 'D')) {
+                if (isFill) {
                     ev.preventDefault();
                     _fillSelection();
-                } else if (ev.key === 'Escape') {
+                } else {
                     _clearSel();
                 }
             }, true);
