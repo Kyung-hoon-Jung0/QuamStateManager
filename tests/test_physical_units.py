@@ -22,6 +22,7 @@ _WIRING = {
     "network": {"host": "1.1.1.1", "cluster_name": "C1"},
     "wiring": {"qubits": {"qA1": {
         "xy": {"opx_output": "#/ports/mw_outputs/con1/1/2"},
+        "rr": {"opx_output": "#/ports/mw_outputs/con1/1/1"},
         "z": {"opx_output": "#/ports/analog_outputs/con1/5/1"},
     }}},
 }
@@ -44,12 +45,17 @@ def _state():
                 "joint_offset": 0.01,
                 "operations": {"const": {"amplitude": 0.012, "length": 200}},
             },
+            "resonator": {
+                "opx_output": "#/wiring/qubits/qA1/rr/opx_output",
+                "operations": {"readout": {"amplitude": 0.1, "length": 800}},
+            },
         }},
         "qubit_pairs": {},
         "active_qubit_names": ["qA1"],
         "ports": {
-            "mw_outputs": {"con1": {"1": {"2": {
-                "band": 2, "full_scale_power_dbm": 0}}}},
+            "mw_outputs": {"con1": {"1": {
+                "1": {"band": 1, "full_scale_power_dbm": 0},
+                "2": {"band": 2, "full_scale_power_dbm": 0}}}},
             "analog_outputs": {"con1": {"5": {"1": {
                 "output_mode": "direct", "offset": None}}}},
         },
@@ -150,6 +156,28 @@ class TestSurfaces:
         html = env["client"].get("/qubit/qA1").data.decode("utf-8")
         assert "phys-note" in html
         assert "-20.0 dBm" in html
+
+
+    def test_settings_offers_unit_toggle(self, env):
+        """docs/109 stage 2: the global MW-power unit setting lives in the
+        Settings dropdown — dBm / V rms / Both, driven by PhysAmp.setUnit."""
+        html = env["client"].get("/qubits").data.decode("utf-8")
+        assert 'data-phys-unit="dbm"' in html
+        assert 'data-phys-unit="v"' in html
+        assert 'data-phys-unit="both"' in html
+        assert "PhysAmp.setUnit" in html
+
+    def test_components_tables_carry_p_ro(self, env):
+        """The Qubits + Resonators tables gained the P(RO) column: canonical
+        dBm text, data-dbm for client reformatting, data-sort so ordering is
+        display-unit-independent, and the header unit label follows the
+        setting via .phys-unit-label."""
+        for page in ("/qubits", "/resonators"):
+            html = env["client"].get(page).data.decode("utf-8")
+            assert "P(RO)" in html, page
+            assert "phys-unit-label" in html, page
+            assert "data-sort=" in html, page
+            assert "-20.0 dBm" in html, page   # FSP 0 + amp 0.1
 
     def test_no_ports_chip_stays_blank(self, tmp_path):
         """A chip with no port chain renders ZERO physical annotations —

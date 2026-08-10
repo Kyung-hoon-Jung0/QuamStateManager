@@ -29,10 +29,13 @@
             <th class="sortable" data-col="1" data-type="str">Active</th>
             <th class="sortable" data-col="2" data-type="num">Readout Freq <span class="unit">(GHz)</span></th>
             <th class="sortable" data-col="3" data-type="num">Amplitude</th>
-            <th class="sortable" data-col="4" data-type="num">Length <span class="unit">(ns)</span></th>
-            <th class="sortable" data-col="5" data-type="num">Threshold</th>
-            <th class="sortable" data-col="6" data-type="num">Time of Flight <span class="unit">(ns)</span></th>
-            <th class="sortable" data-col="7" data-type="str">Grid</th>
+            {# docs/109: the TRUE readout output power — unit follows the global
+               MW-power setting (Settings), sort key stays dBm via data-sort. #}
+            <th class="sortable" data-col="4" data-type="num">P(RO) <span class="unit phys-unit-label">(dBm)</span></th>
+            <th class="sortable" data-col="5" data-type="num">Length <span class="unit">(ns)</span></th>
+            <th class="sortable" data-col="6" data-type="num">Threshold</th>
+            <th class="sortable" data-col="7" data-type="num">Time of Flight <span class="unit">(ns)</span></th>
+            <th class="sortable" data-col="8" data-type="str">Grid</th>
         </tr>
     </thead>
     <tbody>
@@ -43,6 +46,8 @@
             <td>{% if q.is_active %}<span class="cell-good" aria-label="Active" title="Listed in active_qubit_names">&#10003;</span>{% else %}<span class="muted" aria-label="Inactive" title="Not in active_qubit_names">off</span>{% endif %}</td>
             <td>{{ q.readout_frequency | qty('readout_frequency') }}</td>
             <td>{% if q.readout_amplitude is none %}-{% elif q.readout_amplitude is number %}{{ "%.4f" | format(q.readout_amplitude) }}{% else %}<span class="muted" title="Stored as text — see Diagnostics (the alarm banner offers a one-click fix)">&quot;{{ q.readout_amplitude }}&quot;</span>{% endif %}</td>
+            {% set _ph = ('qubits.' ~ q.id ~ '.resonator.operations.readout.amplitude') | phys_amp(q.readout_amplitude) %}
+            <td class="col-phys"{% if _ph and _ph.kind == 'mw' %} data-dbm="{{ _ph.dbm }}" data-sort="{{ _ph.dbm }}"{% endif %}>{% if _ph and _ph.kind == 'mw' %}{{ _ph.text }}{% else %}<span class="muted" title="No MW output power to state: the readout chain does not resolve to an MW-FEM port with full_scale_power_dbm, or the amplitude is 0 / stored as text.">-</span>{% endif %}</td>
             <td>{{ q.readout_length if q.readout_length is not none else '-' }}</td>
             <td>{% if q.readout_threshold is none %}-{% elif q.readout_threshold is number %}{{ "%.4f" | format(q.readout_threshold) }}{% else %}<span class="muted" title="Stored as text — see Diagnostics (the alarm banner offers a one-click fix)">&quot;{{ q.readout_threshold }}&quot;</span>{% endif %}</td>
             <td>{{ q.time_of_flight | qty('time_of_flight') }}</td>
@@ -50,7 +55,7 @@
         </tr>
     {% endfor %}
     {% else %}
-        <tr><td colspan="8" class="muted" style="text-align:center;padding:2rem">No resonators found in this state file.</td></tr>
+        <tr><td colspan="9" class="muted" style="text-align:center;padding:2rem">No resonators found in this state file.</td></tr>
     {% endif %}
     </tbody>
 </table>

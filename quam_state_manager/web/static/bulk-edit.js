@@ -1246,6 +1246,10 @@
         });
         if (!_virt.cold.size) { _virt = null; _virtStyleEl().textContent = ''; }
         _hayCache = null;            // hydrated inputs join the DOM haystacks
+        // docs/109: cold cells were detached with their SERVER-rendered dBm
+        // annotations — if the viewer switched the MW-power unit meanwhile,
+        // the re-inserted text would be stale; reformat on arrival.
+        if (window.PhysAmp) window.PhysAmp.applyAll(t);
     }
     function _virtEnsureTd(td) {
         if (_virt && td) {
@@ -1370,6 +1374,9 @@
             _applyColumnVisibility();
             _applyQubitVisCore();   // restore the persisted ⚏ Qubits selection
             _recomputeStats();
+            // docs/109 audit: reformat annotations to the viewer's unit
+            // BEFORE virtualization freezes widths + stashes cold HTML.
+            if (window.PhysAmp) PhysAmp.applyAll(table());
             _virtInit();            // docs/105 #1 - after layout is final
             _setupTopScroll();
             _applyFont();

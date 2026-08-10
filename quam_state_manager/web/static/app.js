@@ -906,8 +906,13 @@ window.showWaveformPlot = function(btn) {
 
         var rows = Array.from(tbody.querySelectorAll('tr'));
         rows.sort(function(a, b) {
-            var aText = (a.cells[col] ? a.cells[col].textContent.trim() : '');
-            var bText = (b.cells[col] ? b.cells[col].textContent.trim() : '');
+            // docs/109: a cell may carry data-sort — a display-independent sort
+            // key (the phys columns sort by dBm no matter which unit is shown;
+            // "12 mV" vs "1.2 V" would otherwise compare 12 > 1.2).
+            var aText = (a.cells[col] ? (a.cells[col].getAttribute('data-sort')
+                         || a.cells[col].textContent.trim()) : '');
+            var bText = (b.cells[col] ? (b.cells[col].getAttribute('data-sort')
+                         || b.cells[col].textContent.trim()) : '');
             if (isNum) {
                 var aVal = parseFloat(aText.replace(/[^0-9eE.\-+]/g, '')) || 0;
                 var bVal = parseFloat(bText.replace(/[^0-9eE.\-+]/g, '')) || 0;
@@ -3294,36 +3299,119 @@ document.addEventListener("DOMContentLoaded", function () {
 });
 
 /* ------------------------------------------------------------------ */
-/* PhysAmp (docs/109): live physical-output recompute under amp cells  */
+/* PhysAmp (docs/109): physical output under amp cells + unit setting */
 /* ------------------------------------------------------------------ */
-/* The server renders .bulk-phys + stamps data-phys-kind/-fsp on amplitude
-   inputs (core/physical_units.py). As the user types, the annotation follows:
-   mw → FSP + 20·log10|amp| (the FSP-compensation identity, mirrored in
-   calc.js), lf → the value IS volts. Invalid or mw-zero → blank (never an
-   invented -∞). One delegated listener covers BOTH Live-Edit grids. */
-document.addEventListener('input', function (e) {
-    var t = e.target;
-    if (!t || !t.classList || !t.classList.contains('bulk-cell')) return;
-    var kind = t.getAttribute('data-phys-kind');
-    if (!kind) return;
-    var td = t.closest('td'); if (!td) return;
-    var el = td.querySelector('.bulk-phys'); if (!el) return;
-    var v = parseFloat(String(t.value).replace(/,/g, ''));
-    var txt = '';
-    if (isFinite(v)) {
+/* The server renders MW annotations in canonical dBm and stamps data-dbm on
+   the span + data-phys-kind/-fsp on amplitude inputs (core/physical_units.py).
+   This module owns the VIEWER's unit preference (localStorage quam_phys_unit:
+   'dbm' | 'v' | 'both' — some labs think in dBm, others in volts): one global
+   setting reformats EVERY [data-dbm] surface (Live-Edit sub-lines, Components
+   tables, inspector notes). V is always V_rms @ 50 Ω and labeled so — the
+   same identity as the calculator's dBm↔V section. LF/flux annotations are
+   already volts and never converted. Live typing recomputes via the
+   FSP-compensation identity (fsp + 20·log10|amp|); invalid or mw-zero →
+   blank (never an invented -∞). */
+window.PhysAmp = (function () {
+    var KEY = 'quam_phys_unit';
+    function unit() {
+        var u = null;
+        try { u = localStorage.getItem(KEY); } catch (e) {}
+        return (u === 'v' || u === 'both') ? u : 'dbm';
+    }
+    function vrms(dbm) { return Math.sqrt(50 * Math.pow(10, (dbm - 30) / 10)); }
+    function fmtV(v) {
+        return (Math.abs(v) >= 1 ? Number(v.toPrecision(3)) + ' V'
+                                 : Number((v * 1e3).toPrecision(3)) + ' mV') + ' rms';
+    }
+    function fmt(dbm) {
+        var d = dbm.toFixed(1) + ' dBm';
+        var u = unit();
+        if (u === 'dbm') return d;
+        if (u === 'v') return fmtV(vrms(dbm));
+        return d + ' · ' + fmtV(vrms(dbm));
+    }
+    function paint(el, dbm) {
+        var prefix = el.classList.contains('phys-note') ? '≈ ' : '';
+        if (dbm === null || !isFinite(dbm)) {
+            el.textContent = '';
+            el.removeAttribute('data-dbm');
+            return;
+        }
+        el.setAttribute('data-dbm', String(dbm));
+        el.textContent = prefix + fmt(dbm);
+    }
+    function applyAll(root) {
+        (root || document).querySelectorAll('[data-dbm]').forEach(function (el) {
+            var d = parseFloat(el.getAttribute('data-dbm'));
+            if (isFinite(d)) paint(el, d);
+        });
+        // Column headers name the unit too (the Components P(·) columns);
+        // the 50 Ω assumption is stated where V is shown (audit: it lived
+        // only in code comments before).
+        var u = unit();
+        var lbl = u === 'dbm' ? '(dBm)'
+                : u === 'v' ? '(V rms)' : '(dBm · V rms)';
+        document.querySelectorAll('.phys-unit-label').forEach(function (el) {
+            el.textContent = lbl;
+            if (u !== 'dbm') el.title = 'V_rms into 50 Ω';
+            else el.removeAttribute('title');
+        });
+        _markButtons();
+    }
+    function setUnit(u) {
+        try { localStorage.setItem(KEY, u); } catch (e) {}
+        applyAll(document);
+    }
+    function _markButtons() {
+        document.querySelectorAll('[data-phys-unit]').forEach(function (b) {
+            b.classList.toggle('settings-opt-active',
+                               b.getAttribute('data-phys-unit') === unit());
+        });
+    }
+    document.addEventListener('input', function (e) {
+        var t = e.target;
+        if (!t || !t.classList || !t.classList.contains('bulk-cell')) return;
+        var kind = t.getAttribute('data-phys-kind');
+        if (!kind) return;
+        var td = t.closest('td'); if (!td) return;
+        var el = td.querySelector('.bulk-phys'); if (!el) return;
+        var v = parseFloat(String(t.value).replace(/,/g, ''));
         if (kind === 'mw') {
             var fsp = parseFloat(t.getAttribute('data-phys-fsp'));
-            if (isFinite(fsp) && v !== 0) {
-                txt = (fsp + 20 * Math.log10(Math.abs(v))).toFixed(1) + ' dBm';
+            if (isFinite(v) && isFinite(fsp) && v !== 0) {
+                paint(el, fsp + 20 * Math.log10(Math.abs(v)));
+            } else {
+                paint(el, null);
             }
         } else {
-            txt = (Math.abs(v) >= 1 || v === 0)
-                ? (Number(v.toPrecision(3)) + ' V')
-                : (Number((v * 1e3).toPrecision(3)) + ' mV');
+            el.textContent = isFinite(v)
+                ? (Math.abs(v) >= 1 || v === 0
+                   ? Number(v.toPrecision(3)) + ' V'
+                   : Number((v * 1e3).toPrecision(3)) + ' mV')
+                : '';
+        }
+    }, true);
+    // Fresh server fragments arrive in canonical dBm — reformat to the
+    // viewer's unit on every swap (and once at load). The gate also matches
+    // .phys-unit-label (audit): a P(·) column whose every row failed to
+    // annotate ships a header but zero [data-dbm] cells, and its "(dBm)"
+    // must still be relabeled to the viewer's unit.
+    function _onSwap(e) {
+        if (e.target && e.target.querySelector
+            && e.target.querySelector('[data-dbm], .phys-unit-label')) {
+            applyAll(e.target);
         }
     }
-    el.textContent = txt;
-}, true);
+    document.addEventListener('htmx:afterSwap', _onSwap);
+    document.addEventListener('htmx:oobAfterSwap', _onSwap);
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function () { applyAll(document); });
+    } else {
+        applyAll(document);
+    }
+    return { unit: unit, setUnit: setUnit, applyAll: applyAll,
+             fmt: fmt, vrms: vrms };
+})();
 
 /* ------------------------------------------------------------------ */
 /* Value delta (Δ) — the JS mirror of core/value_delta.py               */

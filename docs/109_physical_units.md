@@ -49,7 +49,7 @@ a new ``phys_amp`` Jinja filter (web/app.py, reads the ACTIVE store) used by
 `_qubit_detail.html` + `_pair_detail.html`, so every emit site converges on
 one implementation.
 
-## Verification
+## Verification (stage 1)
 
 `tests/test_physical_units.py` (12): the −20 dBm identity (FSP 0 + amp 0.1 —
 the docs/95-pinned example), alias-path equivalence, LF volts + formats, MW
@@ -57,3 +57,66 @@ zero / text / non-amplitude / broken-chain / no-ancestor all blank, /bulk +
 /qubit surfaces annotate, and a portless chip renders ZERO annotations.
 Guard suites green: `test_bulk_edit`, `test_pair_columns`, `test_bulk_virt`,
 `test_value_delta`, `bulk_dyncols/bulk_virt/tab_focus/ctrlz` selfchecks.
+
+## Stage 2 (user-approved ①②③): unit setting · Components columns · map hover card
+
+The user's original intent was the **Chip Components menu** — and some labs
+think in volts, not dBm.
+
+**① One global unit setting.** Settings → "MW power display": `dBm · V rms ·
+Both` (`localStorage quam_phys_unit`). The server always renders canonical
+dBm and stamps `data-dbm`; `window.PhysAmp` reformats EVERY `[data-dbm]`
+surface (grid sub-lines, Components cells, inspector notes) + the
+`.phys-unit-label` column headers on load / every swap / unit change — one
+setting, every surface, no server round-trip. V is **always labeled rms**
+and the 50 Ω assumption is stated on the V surfaces (button + header
+titles), never assumed silently. `vrms = sqrt(50·10^((dBm−30)/10))` — the
+calculator's own dBm↔V section is the identity's reference.
+
+**② Components tables.** `_qubits.html` + `_resonators.html` gained a
+**P(RO)** column (real column — these tables are narrow, the /bulk width
+argument doesn't apply): canonical dBm text + `data-dbm` + `data-sort` (the
+shared sorter now prefers a cell's `data-sort`, so ordering is
+display-unit-independent — "12 mV" vs "1.2 V" would parseFloat-compare 12 >
+1.2). A cell annotates ONLY `kind == 'mw'` (an LF-resolving readout chain
+must not print volts under a dBm header); the `-` blank carries an honest
+reason title. Flux/Couplers already carried `(V)`/`(ns)` labels; the Pairs
+CR drive amp is deliberately not annotated in the TABLE (its channel home is
+flavor-dependent — `cr_semantics`; the pair INSPECTOR + Live-Edit pair grid
+annotate it through the shared resolvers).
+
+**③ Component-map hover card.** Hovering a stone/edge shows a floating
+summary card = **the entity's table row re-read as label→value pairs at
+hover time** (headers from the row's own `<thead>`) — it can never disagree
+with the page, needs no endpoint, and the P(·) columns ride along already
+unit-formatted. docs/92 §2.4 holds: numbers stay OFF the drawing (pinned);
+the card is transient detail-on-demand and the same data lives permanently
+in the table below ("all data visible" holds too). Body-level singleton,
+`pointer-events:none`, DOM-API text only. Entities with no row on the
+current page (a qubit stone on the couplers page) get the minimal
+title+hint card, so hover never feels dead.
+
+## The audit (user-mandated, adversarial)
+
+A 31-agent workflow (5 lenses: JS correctness · Py/Jinja · user-UX · pinned
+regressions · physics honesty → per-finding adversarial verify) confirmed
+25 findings; every one was fixed or consciously ruled:
+
+- popup: colSpan-aware header pairing (the pairs page's poisoned-run
+  `colspan=7` rows would have labeled error text "Control"); native SVG
+  `<title>` parked while the card shows (double-tooltip); hidden on
+  re-mount + `htmx:beforeSwap` + capture-phase scroll (orphan/stale-position
+  cases); same-entity memo (rebuild churn); minimal card for row-less
+  entities.
+- units: swap gates widened to `[data-dbm], .phys-unit-label` (an all-blank
+  P(·) fragment must still relabel its header); grid tooltips became
+  formula-only (a baked dBm value contradicted the V setting); `.bulk-phys`
+  wraps under `Both` (23-ch nowrap widened the column);
+  `PhysAmp.applyAll` runs BEFORE `_virtInit` (frozen widths + stashed cold
+  HTML in the viewer's unit) and again on hydration.
+- coverage: the popup had ZERO selfcheck coverage (mutation-verified) —
+  `component_map_selfcheck.cjs` now pins card content/labels/minimal-card/
+  re-mount-hide.
+- consciously accepted: Python `%.3g` vs JS `toPrecision(3)` diverge only
+  outside the DAC's physical range (±2.5 V); JS `toFixed(1)` vs Python
+  `%.1f` rounding differs only on exact half-ULP boundaries.

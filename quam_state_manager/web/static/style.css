@@ -2122,6 +2122,23 @@ table.data-table th {
     margin-left: 0.4rem; font-size: 0.82em; font-family: var(--font-ui);
     text-transform: none; white-space: nowrap; opacity: 0.75;
 }
+/* docs/109 ③: the component-map hover card — the entity's table row as a
+   floating summary. Body-level (never clipped), pointer-events:none (never
+   traps hover), themed via the card tokens. */
+.cm-popup {
+    position: fixed; z-index: 4000; pointer-events: none;
+    min-width: 14rem; max-width: 24rem;
+    background: var(--pico-card-background-color);
+    border: 1px solid var(--pico-muted-border-color);
+    border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,.35);
+    padding: .5rem .65rem; font-size: .82em; font-family: var(--font-ui);
+}
+.cm-popup-title { font-weight: 700; margin-bottom: .3rem; }
+.cm-popup-row { display: flex; justify-content: space-between; gap: 1rem; padding: .08rem 0; }
+.cm-popup-k { opacity: .65; white-space: nowrap; }
+.cm-popup-v { font-family: var(--font-mono, monospace); text-align: right; overflow-wrap: anywhere; }
+.cm-popup-hint { margin-top: .35rem; opacity: .5; font-size: .9em; }
+
 /* docs/109: inspector twin of .bulk-phys — the physical output annotation
    beside an amplitude row's unit-preview. */
 .phys-note {
@@ -8399,7 +8416,7 @@ button.diag-badge { cursor: pointer; }
    always visible (feedback: all data on screen, never hover-only), muted so it
    reads as an annotation, block-level like .bulk-band-msg so the column keeps
    its input-driven width. */
-.bulk-phys { display: block; font-size: 0.7em; opacity: 0.65; font-family: var(--font-ui); white-space: nowrap; }
+.bulk-phys { display: block; font-size: 0.7em; opacity: 0.65; font-family: var(--font-ui); max-width: 24ch; white-space: normal; }
 .bulk-band-warn-count, #bulk-band-warn { color: var(--color-error-text); font-size: 0.82em; font-weight: 600; }
 .bulk-apply-col { text-align: center; position: sticky; right: 0; background: var(--pico-card-background-color); }
 .btn-xs { padding: 0.05rem 0.5rem; font-size: 0.78em; width: auto; margin: 0; }
