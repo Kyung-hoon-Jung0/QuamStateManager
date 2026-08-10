@@ -65,3 +65,43 @@ scroll, half-typed input). So #10 ships in two phases:
 - No new pollers; ride existing events. No live-file reads on render
   (docs/28). All colors via tokens; SM global styles only.
 - Every stream lands with pins (pytest + cjs selfchecks where DOM-level).
+
+
+---
+
+## Campaign record (2026-08-11) — all seven workstreams shipped
+
+| # | Stream | Doc | Branch |
+|---|--------|-----|--------|
+| #10-A | tab state survives navigation | docs/110 | `feat/pane-state` |
+| #11 | grid editing toolkit | docs/111 | `feat/grid-editing` |
+| #12 | datasets daily flow | docs/112 | `feat/datasets-flow` |
+| #13 | keyboard polish (overhead-gated) | docs/113 | `feat/keyboard-polish` |
+| #15+#16 | failures that explain themselves | docs/114 | `fix/honest-failures` |
+| #14 + README | the first hour | docs/115 | `feat/onboarding` |
+| — | integration + cross-feature audit | this file | `integrate/daily-flow` |
+
+**Audits ran at every step, as instructed.** The PaneState audit (24
+findings) rewrote that stream's architecture before it could spread —
+v1 intercepted `htmx:beforeRequest`, which poisoned htmx's own history
+snapshot, bypassed its `pushState`, and left a blank pane whenever a
+request failed; v2 parks at `beforeSwap` and restores at `afterSwap`,
+letting htmx own navigation completely. The grid-editing audit (22
+findings, verify pass cut short by a provider limit → triaged by hand)
+produced 14 real fixes, each pinned.
+
+**The integration pass earned its keep twice.** Two defects no unit pin
+could see: (1) the freshness beacon disagreed with itself — the OOB tray
+stamped `mutation_seq` but a full-page render did not, so PaneState read
+every ordinary page load as "the chip moved" and **keep-alive never
+fired in the real app** (only the SOFT tier did, which is exactly why it
+still looked like it worked); (2) the sidebar Help entry rendered a bare
+`?` beside two SVG-iconed neighbours. Both fixed and pinned.
+
+## #10-B (side-by-side / run pin-bar) — still deferred, now with evidence
+
+The original finding asked for split panes. #10-A was shipped first
+because the user's own words named state loss, not layout. That call
+holds: with panes preserved, "go look at the other thing and come back"
+costs nothing, which is most of what a split view was for. Revisit only
+if the request returns after living with this.
