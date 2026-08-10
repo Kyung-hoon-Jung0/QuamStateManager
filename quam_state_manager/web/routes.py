@@ -832,25 +832,37 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict, *,
 
 
 def _probe_readonly(folder) -> bool:
-    """True when the live folder is NOT writable (docs/114 #16).
+    """True when the live chip's files are NOT writable (docs/114 #16).
 
-    A real probe, not ``os.access``: on Windows that call is attribute-only
-    for directories and reports a read-only share as writable. Creating and
-    removing a dot-file is the only answer the OS actually stands behind.
-    Any surprise (missing folder, exotic FS) answers False — this is a HINT
-    and a false alarm would be worse than none.
+    NON-DESTRUCTIVE by construction. Two rejected designs first, because the
+    reason matters:
+
+    * ``os.access(dir, W_OK)`` is attribute-only for directories on Windows —
+      it reports a read-only share as writable, i.e. it is blind to the exact
+      case this exists for.
+    * Creating and deleting a probe file inside the folder answers correctly
+      but WRITES INTO THE CUSTOMER'S LIVE CHIP FOLDER on every activation.
+      That breaks the docs/28 rule (the live files are touched only on an
+      explicit Apply), litters a directory labs keep under version control,
+      and leaves the file behind if the process dies mid-probe.
+
+    So: open the EXISTING ``state.json`` for update (``r+``) and close it
+    immediately. Opening for update needs the same permission the apply
+    needs, and — because nothing is written — it changes no content, no
+    size and no mtime. Anything unexpected answers False: this is a HINT,
+    and a false alarm is worse than no alarm.
     """
-    probe = Path(folder) / ".sm_write_probe"
+    target = Path(folder) / "state.json"
     try:
-        with open(probe, "w", encoding="utf-8") as fh:
-            fh.write("")
-        try:
-            probe.unlink()
-        except OSError:
+        with open(target, "r+", encoding="utf-8"):
             pass
         return False
-    except (PermissionError, OSError):
+    except PermissionError:
         return True
+    except OSError as exc:
+        # EACCES/EROFS mean not writable; anything else (missing file, exotic
+        # FS) is not evidence of a read-only share.
+        return getattr(exc, "errno", None) in (13, 30)
     except Exception:  # noqa: BLE001 — a hint must never break activation
         return False
 

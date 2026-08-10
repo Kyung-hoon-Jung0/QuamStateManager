@@ -137,13 +137,30 @@ class TestIntegrationAuditFixes:
         """os.access(dir, W_OK) is attribute-only on Windows — it reports a
         read-only share as writable, i.e. it is blind to the exact case the
         hint exists for."""
-        routes = (Path(__file__).resolve().parent.parent / "quam_state_manager"
-                  / "web" / "routes.py").read_text(encoding="utf-8")
-        assert "_probe_readonly" in routes
-        i = routes.index("def _probe_readonly")
-        body = routes[i:i + 1200]
-        assert "os.access(" not in body,             "the probe must not CALL os.access (the docstring may name it)"
-        assert "sm_write_probe" in body, "it must actually attempt a write"
+        import ast
+        src = (Path(__file__).resolve().parent.parent / "quam_state_manager"
+               / "web" / "routes.py").read_text(encoding="utf-8")
+        fn = next(n for n in ast.parse(src).body
+                  if isinstance(n, ast.FunctionDef) and n.name == "_probe_readonly")
+        # AST, not text: the docstring legitimately NAMES the rejected designs
+        calls = [ast.unparse(n.func) for n in ast.walk(fn) if isinstance(n, ast.Call)]
+        assert "os.access" not in calls,             "the probe must not CALL os.access (attribute-only for dirs on Windows)"
+        code = ast.unparse(fn)
+        body_only = code.split('"""', 2)[-1] if '"""' in code else code
+        assert "sm_write_probe" not in body_only,             "the probe must NOT create files in the customer's live folder (docs/28)"
+        assert "'r+'" in body_only or '"r+"' in body_only,             "it opens the existing state.json for update instead"
+
+    def test_readonly_probe_creates_nothing(self, tmp_path):
+        """docs/28: SM touches the live files only on an explicit Apply — a
+        permission HINT may not litter a lab's version-controlled state dir."""
+        from quam_state_manager.web.routes import _probe_readonly
+        _write_chip(tmp_path, _state())
+        before = sorted(p.name for p in tmp_path.iterdir())
+        stat_before = (tmp_path / "state.json").stat()
+        assert _probe_readonly(tmp_path) is False
+        assert sorted(p.name for p in tmp_path.iterdir()) == before
+        stat_after = (tmp_path / "state.json").stat()
+        assert (stat_after.st_mtime, stat_after.st_size) ==                (stat_before.st_mtime, stat_before.st_size),             "the probe must not touch content, size or mtime"
 
     def test_readonly_probe_answers_false_on_a_writable_folder(self, tmp_path):
         from quam_state_manager.web.routes import _probe_readonly
