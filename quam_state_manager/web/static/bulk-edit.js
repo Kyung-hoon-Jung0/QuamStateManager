@@ -317,6 +317,9 @@
                 // wholesale, which would otherwise reset this <details> to closed
                 // (review-r7: "checking a box collapses the menu").
                 _reopenColvis = true;
+                // docs/111 (#11): a dyn toggle used to DESTROY unsaved edits
+                // (the reload swaps the pane wholesale) — carry them across.
+                _captureEditCarry();
                 _reloadPane();
             });
         });
@@ -1340,6 +1343,281 @@
         _applyColWidthStyle();
     }
 
+
+    // ── docs/111 (#11): selection · fill-down · paste-a-column · pinning ──
+    // The 21-qubit-retune toolkit. Entirely client-side: /bulk HTML is
+    // byte-identical (every server pin holds); pin glyphs are JS-injected.
+    var _selAnchor = null;            // anchor td of the current selection
+    function _selCells() {
+        var t = table(); if (!t) return [];
+        return Array.prototype.slice.call(t.querySelectorAll('td.bulk-sel'));
+    }
+    function _clearSel() {
+        _selCells().forEach(function (td) { td.classList.remove('bulk-sel'); });
+        _selAnchor = null;
+    }
+    function _colCellTds(colKey) {
+        // visible rows only, document order
+        return _navRows().map(function (tr) {
+            return tr.querySelector('td[data-col-key="' + _cssEsc(colKey) + '"]');
+        }).filter(Boolean);
+    }
+    function _selectRange(fromTd, toTd) {
+        var key = fromTd.getAttribute('data-col-key');
+        if (!key || key !== toTd.getAttribute('data-col-key')) return false;
+        var tds = _colCellTds(key);
+        var a = tds.indexOf(fromTd), b = tds.indexOf(toTd);
+        if (a < 0 || b < 0) return false;
+        _clearSel();
+        _selAnchor = fromTd;
+        for (var i = Math.min(a, b); i <= Math.max(a, b); i++) {
+            if (_editableIn(tds[i])) tds[i].classList.add('bulk-sel');
+        }
+        return true;
+    }
+    function _fillSelection() {
+        var sel = _selCells();
+        if (!sel.length || !_selAnchor) return 0;
+        var src = _editableIn(_selAnchor) || _selAnchor.querySelector('.bulk-cell');
+        if (!src) return 0;
+        var v = src.value;
+        var undo = [], n = 0;
+        sel.forEach(function (td) {
+            var c = _editableIn(td);
+            if (!c || c === src || c.value === v) return;
+            undo.push({ dp: c.getAttribute('data-dot-path'), prev: c.value, next: v });
+            c.value = v;
+            c.dispatchEvent(new Event('input', { bubbles: true }));
+            n++;
+        });
+        if (n && window.LiveEditUndo) {
+            window.LiveEditUndo.record('fill-down (' + n + ' cells)', undo);
+        }
+        if (n && window.showToast) window.showToast('Filled ' + n + ' cell' + (n === 1 ? '' : 's') + ' — review, then Apply');
+        return n;
+    }
+    function _pasteColumn(cell, text) {
+        var lines = String(text).replace(/\r/g, '').split('\n')
+            .map(function (l) { return l.split('\t')[0].trim(); })
+            .filter(function (l, i, arr) { return !(l === '' && i === arr.length - 1); });
+        if (lines.length < 2) return false;   // single value → native paste
+        var td = cell.closest('td');
+        var key = td && td.getAttribute('data-col-key');
+        if (!key) return false;
+        var tds = _colCellTds(key);
+        var start = tds.indexOf(td);
+        if (start < 0) return false;
+        var undo = [], applied = 0;
+        for (var i = 0; i < lines.length && start + i < tds.length; i++) {
+            var c = _editableIn(tds[start + i]);
+            if (!c) continue;
+            if (c.value === lines[i]) { applied++; continue; }
+            undo.push({ dp: c.getAttribute('data-dot-path'), prev: c.value, next: lines[i] });
+            c.value = lines[i];
+            c.dispatchEvent(new Event('input', { bubbles: true }));
+            applied++;
+        }
+        var ignored = lines.length - applied;
+        if (undo.length && window.LiveEditUndo) {
+            window.LiveEditUndo.record('pasted column (' + undo.length + ' cells)', undo);
+        }
+        if (window.showToast) {
+            window.showToast('Pasted ' + applied + ' value' + (applied === 1 ? '' : 's')
+                + (ignored > 0 ? ' (' + ignored + ' beyond the last row ignored)' : '')
+                + ' — review, then Apply');
+        }
+        return true;
+    }
+
+    // -- pinning ---------------------------------------------------------
+    var PIN_COLS_KEY = 'quam_bulk_pinned_cols';
+    function _pinRowsKey() {
+        return 'quam_bulk_pinned_rows::' + String(window.__chipToken || 'chip');
+    }
+    function _pinnedCols() {
+        try { return JSON.parse(localStorage.getItem(PIN_COLS_KEY) || '[]'); }
+        catch (e) { return []; }
+    }
+    function _pinnedRows() {
+        try { return JSON.parse(localStorage.getItem(_pinRowsKey()) || '[]'); }
+        catch (e) { return []; }
+    }
+    function _applyColPins() {
+        var t = table(); if (!t) return;
+        // reset
+        t.querySelectorAll('.bulk-col-pinned').forEach(function (el) {
+            el.classList.remove('bulk-col-pinned');
+            el.style.left = ''; el.style.position = '';
+        });
+        var pins = _pinnedCols().filter(function (k) {
+            return t.querySelector('th.bulk-col-head[data-col-key="' + _cssEsc(k) + '"]');
+        });
+        if (!pins.length) return;
+        // the row-header (qubit id) column is the base offset
+        var rowHead = t.querySelector('tbody th.bulk-rowhead, tbody tr > th');
+        var left = rowHead ? rowHead.offsetWidth : 0;
+        pins.forEach(function (k) {
+            _virtEnsureTd(t.querySelector('td[data-col-key="' + _cssEsc(k) + '"]'));
+            var th = t.querySelector('th.bulk-col-head[data-col-key="' + _cssEsc(k) + '"]');
+            var w = th ? th.offsetWidth : 0;
+            var els = t.querySelectorAll('[data-col-key="' + _cssEsc(k) + '"]');
+            Array.prototype.forEach.call(els, function (el) {
+                el.classList.add('bulk-col-pinned');
+                el.style.position = 'sticky';
+                el.style.left = left + 'px';
+            });
+            left += w;
+        });
+    }
+    function _applyRowPins() {
+        var t = table(); if (!t) return;
+        var tb = t.querySelector('tbody'); if (!tb) return;
+        var pins = _pinnedRows();
+        t.querySelectorAll('tr.bulk-row-pinned').forEach(function (tr) {
+            tr.classList.remove('bulk-row-pinned');
+        });
+        if (!pins.length) return;
+        // float pinned rows to the top, preserving pin order
+        for (var i = pins.length - 1; i >= 0; i--) {
+            var tr = tb.querySelector('tr[data-qubit="' + _cssEsc(pins[i]) + '"]');
+            if (tr) { tr.classList.add('bulk-row-pinned'); tb.insertBefore(tr, tb.firstChild); }
+        }
+    }
+    function _togglePinCol(key) {
+        var arr = _pinnedCols();
+        var i = arr.indexOf(key);
+        if (i >= 0) arr.splice(i, 1); else arr.push(key);
+        try { localStorage.setItem(PIN_COLS_KEY, JSON.stringify(arr)); } catch (e) {}
+        _applyColPins();
+        _syncPinGlyphs();
+    }
+    function _togglePinRow(qid) {
+        var arr = _pinnedRows();
+        var i = arr.indexOf(qid);
+        if (i >= 0) arr.splice(i, 1); else arr.push(qid);
+        try { localStorage.setItem(_pinRowsKey(), JSON.stringify(arr)); } catch (e) {}
+        _applyRowPins();
+        _syncPinGlyphs();
+    }
+    function _syncPinGlyphs() {
+        var t = table(); if (!t) return;
+        var pc = _pinnedCols(), pr = _pinnedRows();
+        t.querySelectorAll('.bulk-pin-col').forEach(function (b) {
+            b.classList.toggle('bulk-pin-on', pc.indexOf(b.getAttribute('data-pin')) >= 0);
+        });
+        t.querySelectorAll('.bulk-pin-row').forEach(function (b) {
+            b.classList.toggle('bulk-pin-on', pr.indexOf(b.getAttribute('data-pin')) >= 0);
+        });
+    }
+    function _injectPinGlyphs() {
+        var t = table(); if (!t) return;
+        t.querySelectorAll('th.bulk-col-head[data-col-key]').forEach(function (th) {
+            if (th.querySelector('.bulk-pin-col')) return;
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'bulk-pin bulk-pin-col';
+            b.setAttribute('data-pin', th.getAttribute('data-col-key'));
+            b.title = 'Pin this column (stays visible while scrolling)';
+            b.textContent = '\uD83D\uDCCC';
+            b.addEventListener('click', function (ev) {
+                ev.stopPropagation();   // never trigger the sort
+                _togglePinCol(b.getAttribute('data-pin'));
+            });
+            th.appendChild(b);
+        });
+        t.querySelectorAll('tbody tr[data-qubit]').forEach(function (tr) {
+            var head = tr.querySelector('th');
+            if (!head || head.querySelector('.bulk-pin-row')) return;
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'bulk-pin bulk-pin-row';
+            b.setAttribute('data-pin', tr.getAttribute('data-qubit'));
+            b.title = 'Pin this qubit row to the top';
+            b.textContent = '\uD83D\uDCCC';
+            b.addEventListener('click', function () {
+                _togglePinRow(b.getAttribute('data-pin'));
+            });
+            head.appendChild(b);
+        });
+        _syncPinGlyphs();
+    }
+
+    // -- unsaved-edit carry across the dyn-column reload ------------------
+    var _editCarry = null;    // {list: [{dp, value}], at}
+    function _captureEditCarry() {
+        var t = table(); if (!t) return;
+        var list = [];
+        _cells(t).forEach(function (c) {
+            if (_isDirty(c) && c.getAttribute('data-dot-path')) {
+                list.push({ dp: c.getAttribute('data-dot-path'), value: c.value });
+            }
+        });
+        if (list.length) {
+            _editCarry = { list: list, at: Date.now() };
+            window._dynReloadAt = Date.now();   // the leave-confirm carve-out
+        }
+    }
+    function _consumeEditCarry() {
+        if (!_editCarry || Date.now() - _editCarry.at > 15000) { _editCarry = null; return; }
+        var t = table(); if (!t) { _editCarry = null; return; }
+        var n = 0;
+        _editCarry.list.forEach(function (it) {
+            var c = t.querySelector('.bulk-cell[data-dot-path="' + _cssEsc(it.dp) + '"]');
+            if (c && !c.readOnly && c.value !== it.value) {
+                c.value = it.value;
+                c.dispatchEvent(new Event('input', { bubbles: true }));
+                n++;
+            }
+        });
+        _editCarry = null;
+        if (n && window.showToast) {
+            window.showToast(n + ' unsaved edit' + (n === 1 ? '' : 's') + ' preserved across the column change');
+        }
+    }
+
+    function _bindGridEditing() {
+        var t = table(); if (!t || t._geBound) return;
+        t._geBound = true;
+        t.addEventListener('click', function (ev) {
+            var cell = ev.target.closest && ev.target.closest('.bulk-cell');
+            if (!cell || cell.readOnly) { if (!ev.shiftKey && !ev.ctrlKey) _clearSel(); return; }
+            var td = cell.closest('td');
+            if (ev.shiftKey && _selAnchor) {
+                if (_selectRange(_selAnchor, td)) ev.preventDefault();
+            } else if (ev.ctrlKey || ev.metaKey) {
+                td.classList.toggle('bulk-sel');
+                if (!_selAnchor) _selAnchor = td;
+            } else {
+                _clearSel();
+                _selAnchor = td;
+            }
+        });
+        t.addEventListener('keydown', function (ev) {
+            if ((ev.ctrlKey || ev.metaKey) && (ev.key === 'd' || ev.key === 'D')) {
+                if (_selCells().length) { ev.preventDefault(); _fillSelection(); }
+            } else if (ev.key === 'Escape') {
+                _clearSel();
+            }
+        });
+        t.addEventListener('paste', function (ev) {
+            var cell = ev.target.closest && ev.target.closest('.bulk-cell');
+            if (!cell || cell.readOnly) return;
+            var text = ev.clipboardData ? ev.clipboardData.getData('text/plain') : '';
+            if (text && text.indexOf('\n') >= 0) {
+                if (_pasteColumn(cell, text)) ev.preventDefault();
+            }
+        });
+        // sorting reorders the tbody — re-float pinned rows after the sorter ran
+        var thead = t.querySelector('thead');
+        if (thead) {
+            thead.addEventListener('click', function (ev) {
+                if (ev.target.closest && ev.target.closest('th.sortable, th.bulk-col-head')) {
+                    setTimeout(function () { _applyRowPins(); _applyColPins(); }, 0);
+                }
+            });
+        }
+    }
+
     var BulkEdit = {
         mount: function (columns, bandMeta, dynModel, qubitMeta) {
             if (Array.isArray(columns)) COLS = columns;
@@ -1378,6 +1656,14 @@
             // BEFORE virtualization freezes widths + stashes cold HTML.
             if (window.PhysAmp) PhysAmp.applyAll(table());
             _virtInit();            // docs/105 #1 - after layout is final
+            // docs/111 (#11): selection/fill/paste/pins + the dyn-reload
+            // edit carry. Pins re-apply AFTER virtualization (a pinned cold
+            // column is hydrated by _applyColPins itself).
+            _bindGridEditing();
+            _injectPinGlyphs();
+            _applyRowPins();
+            _applyColPins();
+            _consumeEditCarry();
             _setupTopScroll();
             _applyFont();
             _updateTopScroll();
@@ -1531,6 +1817,11 @@
                         // confirm here would be a lie.
                         if (window._undoNavAt
                             && Date.now() - window._undoNavAt < 4000) return;
+                        // docs/111: the dyn-column reload CARRIES the edits
+                        // (_captureEditCarry/_consumeEditCarry) — a discard
+                        // confirm here would be a lie.
+                        if (window._dynReloadAt
+                            && Date.now() - window._dynReloadAt < 4000) return;
                         if (!window.confirm('You have unapplied edits in Live State Edit. Leave and discard them?')) {
                             ev.preventDefault();
                         }
@@ -1927,6 +2218,13 @@
         return null;
     }
 
+    // docs/111 test hooks (jsdom selfcheck drives the internals directly)
+    BulkEdit._ge = {
+        selCells: _selCells, fill: _fillSelection, paste: _pasteColumn,
+        pinCol: _togglePinCol, pinRow: _togglePinRow,
+        captureCarry: _captureEditCarry, consumeCarry: _consumeEditCarry,
+        applyRowPins: _applyRowPins, applyColPins: _applyColPins,
+    };
     window.BulkEdit = BulkEdit;
     // Restore the persisted density scale onto :root at load (this script is eager
     // on every page), so the Review modal honors the user's font/bold choice even
