@@ -8434,6 +8434,64 @@ button.diag-badge { cursor: pointer; }
    still occupy a phantom line: under every cell input (taller rows) and beside every
    Apply button (pushing it off-center). Collapse them properly when hidden. */
 .bulk-band-msg[hidden], .bulk-row-error[hidden] { display: none; }
+/* docs/115 (#14): Help is an <a> among <button> siblings — strip the link
+   underline/colour so the tools row reads as one group (audit). */
+a.sidebar-tool-btn { text-decoration: none; color: inherit; }
+/* docs/114 (#15/#16): honest failures */
+.load-failed-panel { max-width: 46rem; margin: 2rem auto; padding: 1rem 1.4rem; border: 1px solid var(--color-error-text); border-radius: 8px; }
+.load-failed-panel h3 { margin-top: 0; color: var(--color-error-text); }
+.load-failed-candidates { display: flex; flex-direction: column; gap: .4rem; align-items: flex-start; }
+.ptr-dangling { color: var(--color-error-text) !important; border-color: var(--color-error-text) !important; }
+.tray-ro-lock { margin-right: .3rem; cursor: help; color: var(--color-error-text); }
+.tray-ro-text { font-size: .78em; }
+/* docs/115 (#14): onboarding — help page, landing CTA, tray teaching */
+.landing-cta { display: flex; gap: .5rem; flex-wrap: wrap; margin: .8rem 0 .4rem; }
+.landing-cta-open { font-weight: 600; }
+/* audit: flex-basis:100% claimed its own row inside the topbar's
+   inline-flex tray cluster and pushed the Apply bar down on every page.
+   It is an inline chip that wraps only if it must, capped so a long
+   sentence can never dominate the bar. */
+/* The topbar strip is a flex ROW: a paragraph here sets the height of the
+   header on EVERY page. 34ch wrapped the sentence to four lines on a real
+   1680px window — the width is now the window's to give. */
+.tray-teach { display: inline-block; max-width: min(92ch, 46vw); margin-left: .5rem; font-size: .78em; opacity: .8; line-height: 1.25; vertical-align: middle; }
+.tray-teach[hidden] { display: none; }
+.tray-teach-x { border: 0; background: none; cursor: pointer; opacity: .6; margin-left: .4rem; padding: 0 .2rem; }
+.tray-teach-x:hover { opacity: 1; }
+.help-page { max-width: 60rem; }
+.help-shortcuts { margin-top: 1.5rem; }
+.help-sc-grid { display: grid; grid-template-columns: max-content 1fr; gap: .3rem 1rem; align-items: baseline; }
+.help-sc-group { grid-column: 1 / -1; font-weight: 700; font-size: .82em; opacity: .65; text-transform: uppercase; letter-spacing: .04em; margin-top: .6rem; }
+.help-sc-grid kbd { font-family: var(--font-mono, monospace); font-size: .82em; background: var(--pico-background-color); border: 1px solid var(--pico-muted-border-color); border-radius: 4px; padding: .05rem .35rem; }
+/* docs/111 (#11): selection · fill-down · pinning */
+.bulk-td.bulk-sel { outline: 2px solid var(--pico-primary); outline-offset: -2px; background: color-mix(in srgb, var(--pico-primary) 12%, transparent); }
+/* the ANCHOR is the cell whose value Ctrl+D propagates — it must not look
+   like every other selected cell (audit). */
+.bulk-td.bulk-sel-anchor { outline-width: 3px; background: color-mix(in srgb, var(--pico-primary) 22%, transparent); }
+.bulk-sel-hint { font-size: .78em; opacity: .8; margin-right: .5rem; white-space: nowrap; }
+.bulk-pin { border: 0; background: none; padding: 0 2px; margin-left: 2px; font-size: 0.72em; cursor: pointer; opacity: 0; transition: opacity .12s; filter: grayscale(1); }
+th:hover > .bulk-pin, .bulk-pin.bulk-pin-on { opacity: 0.85; }
+.bulk-pin.bulk-pin-on { filter: none; }
+tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb, var(--pico-primary) 7%, var(--pico-card-background-color)); }
+.bulk-table .bulk-col-pinned { z-index: 3; background: var(--pico-card-background-color); }
+.bulk-table thead th.bulk-col-pinned { z-index: 4; }
+/* docs/112 (#12): datasets keyboard nav + sort honesty */
+#datasets-tbody tr.ds-row-active > td { outline: 2px solid var(--pico-primary); outline-offset: -2px; }
+/* audit: `.ds-search-wrap` also hosts an absolutely-positioned help "?"
+   at right:.4rem — keep clear of it. */
+.ds-sort-newest { margin-left: .4rem; margin-right: 1.6rem; white-space: nowrap; }
+.ds-digest-filtered { font-size: .78em; margin-left: .5rem; opacity: .6; }
+/* docs/113 (#13): the '?' shortcut cheat sheet */
+.kb-sheet-backdrop { position: fixed; inset: 0; z-index: 5000; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; }
+.kb-sheet { background: var(--pico-card-background-color); border: 1px solid var(--pico-muted-border-color); border-radius: 8px; padding: 1rem 1.25rem; max-width: 34rem; width: min(92vw, 34rem); max-height: 84vh; overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
+.kb-sheet h3 { margin: 0 0 .5rem; }
+.kb-sheet-rows { display: grid; grid-template-columns: max-content 1fr; gap: .25rem .9rem; align-items: baseline; }
+.kb-sheet-group { grid-column: 1 / -1; font-weight: 700; font-size: .82em; opacity: .65; text-transform: uppercase; letter-spacing: .04em; margin-top: .45rem; }
+.kb-sheet-row { display: contents; }
+.kb-sheet kbd { font-family: var(--font-mono, monospace); font-size: .82em; background: var(--pico-background-color); border: 1px solid var(--pico-muted-border-color); border-radius: 4px; padding: .05rem .35rem; white-space: nowrap; }
+.kb-sheet-hint { margin: .6rem 0 .3rem; font-size: .78em; }
+.kb-sheet-close { margin-top: .2rem; }
+
 /* column header: unit + sort caret + min/max */
 .bulk-col-head { cursor: pointer; user-select: none; }
 /* Drag-to-resize grip on each column header's right edge (dbl-click = auto-fit).
@@ -9895,7 +9953,11 @@ form.inline-edit.fh-host .edit-input { padding-right: 1.5rem; }
 .field-hist-btn {
     position: absolute; right: .18rem; top: 50%; transform: translateY(-50%);
     background: none; border: none; cursor: pointer; padding: 0;
-    margin: 0; width: auto; font-size: .9rem; line-height: 1; opacity: 0;
+    margin: 0; width: auto; font-size: .9rem; line-height: 1;
+    /* docs/114 (#16): visible at REST — an invisible affordance is an
+       undiscoverable feature (it was opacity:0 until row hover). tabindex
+       stays -1 by design: Tab hops between EDIT cells (docs/64 pins). */
+    opacity: .3;
     transition: opacity .12s; display: inline-block;
 }
 tr:hover .field-hist-btn,

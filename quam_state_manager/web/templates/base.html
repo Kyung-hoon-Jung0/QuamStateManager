@@ -1,4 +1,4 @@
-{% from '_icons.html' import icon_gear, icon_calculator %}
+{% from '_icons.html' import icon_gear, icon_calculator, icon_help %}
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
@@ -250,6 +250,12 @@
                         aria-expanded="false" aria-controls="calc-popover"
                         title="Calculator — dBm · volt · amplitude · expression (Alt+C)">
                     {{ icon_calculator() }}<span class="sidebar-tool-label">Calculator</span></button>
+                {# docs/115 (#14): the manual is one click from EVERY page —
+                   it used to live only on the landing, one swap from gone. #}
+                <a href="/help" hx-get="/help" hx-target="#table-pane"
+                   hx-sync="#table-pane:replace" hx-push-url="true"
+                   class="sidebar-tool-btn" title="Help — the working-copy model, the feature tour, shortcuts">
+                    {{ icon_help() }}<span class="sidebar-tool-label">Help</span></a>
             </div>
             <hr class="sidebar-section-divider sidebar-tools-divider">
             <nav class="sidebar-nav">
@@ -281,9 +287,14 @@
                any project coupling (docs/63 — independent sources stay
                first-class and render exactly as before). #}
             <div class="sidebar-load">
-                <form id="load-form" hx-post="/load" hx-target="#table-pane">
+                {# docs/114 (#15) + pre-customer audit: the failure body lands in a
+                   dedicated sidebar slot, NOT the main pane — a mistyped path must
+                   never destroy an open surface (the wizard has no draft). Success
+                   answers HX-Redirect, so this target is only ever used on failure. #}
+                <form id="load-form" hx-post="/load" hx-target="#load-failed-slot">
                     <div class="path-input-group">
-                        <input type="text" name="folder" id="load-path-input"
+                        <div id="load-failed-slot" aria-live="polite"></div>
+                    <input type="text" name="folder" id="load-path-input"
                                placeholder="quam_state folder path..." autocomplete="off">
                         <button type="button" class="outline btn-sm btn-browse"
                                 onclick="openFolderBrowser('load-path-input')" title="Browse folders">&#128193;</button>

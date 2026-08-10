@@ -1,0 +1,34 @@
+{# docs/115 (#14): the manual, at a permanent address. The BODY is the
+   same fragment the landing shows — one source of truth for the mental
+   model, so the two can never drift. #}
+<div class="help-page welcome">
+    <div class="table-header-row">
+        <h2 style="margin:0">Help &amp; getting started</h2>
+        <span class="muted">the working-copy model, the feature tour, and every shortcut</span>
+    </div>
+    {% include '_landing_getting_started.html' %}
+
+    <div class="help-shortcuts">
+        <h3>Keyboard shortcuts</h3>
+        <div class="help-sc-grid">
+            <div class="help-sc-group">Global</div>
+            <div><kbd>Ctrl</kbd>+<kbd>K</kbd></div><div>search palette (toggle)</div>
+            <div><kbd>/</kbd></div><div>focus the page search</div>
+            <div><kbd>?</kbd></div><div>shortcut cheat sheet</div>
+            <div><kbd>Alt</kbd>+<kbd>C</kbd></div><div>calculator</div>
+            <div><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></div>
+            <div>undo / redo — crosses saves by STAGING into Review; the live chip
+                 is only ever written by an explicit <b>Apply to live</b></div>
+            <div class="help-sc-group">Live State Edit <span class="muted" style="text-transform:none;font-weight:400">— the Qubits grid</span></div>
+            <div><kbd>Tab</kbd></div><div>hop between edit cells</div>
+            <div><kbd>Shift</kbd>+click</div><div>select a range in one column</div>
+            <div><kbd>Ctrl</kbd>+<kbd>D</kbd></div><div>fill the selection from the anchor</div>
+            <div><kbd>Ctrl</kbd>+<kbd>V</kbd></div><div>paste a column of values downward</div>
+            <div><kbd>Ctrl</kbd>+<kbd>Enter</kbd></div><div>Apply all</div>
+            <div class="help-sc-group">Datasets</div>
+            <div><kbd>j</kbd> / <kbd>k</kbd></div><div>move through runs</div>
+            <div><kbd>Enter</kbd> / <kbd>Space</kbd></div><div>open / select the active run</div>
+            <div><kbd>[</kbd> / <kbd>]</kbd></div><div>previous / next run in the open detail</div>
+        </div>
+    </div>
+</div>

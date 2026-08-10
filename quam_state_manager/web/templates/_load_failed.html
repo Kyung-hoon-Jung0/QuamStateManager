@@ -1,0 +1,20 @@
+{# docs/114 (#15): a failed folder load renders a PERSISTENT explanation in
+   place (the old 6-second toast vanished before it was read), with one-click
+   candidates for any immediate subfolder that actually holds a state.json. #}
+<div class="load-failed-panel">
+  <h3>&#9888; This folder is not a QUAM state</h3>
+  <p class="muted"><code>{{ folder }}</code></p>
+  <p>{{ error }}</p>
+  <p class="muted">A loadable folder contains <code>state.json</code> (and
+     usually <code>wiring.json</code>) directly.</p>
+  {% if candidates %}
+  <p><b>Found inside this folder:</b></p>
+  <div class="load-failed-candidates">
+    {% for c in candidates %}
+    <button class="btn-sm" hx-post="/load" hx-vals='{{ {"folder": c} | tojson }}'
+            hx-target="#table-pane" hx-swap="innerHTML"
+            title="Load {{ c }}">&#128193; {{ c }}</button>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>

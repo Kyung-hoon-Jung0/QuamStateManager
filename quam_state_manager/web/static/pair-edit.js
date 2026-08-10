@@ -132,8 +132,12 @@
 
         var ids = _rows().map(function (r) { return (r.getAttribute('data-qubit') || '').toLowerCase(); });
         var tokInfo = tokens.map(function (tok) {
-            var colHit = visCols.some(function (c) { return (c.label + ' ' + c.key + ' ' + c.section).toLowerCase().indexOf(tok) >= 0; });
-            var idHit = ids.some(function (id) { return id.indexOf(tok) >= 0; });
+            // Exclusive by precedence, and a row-naming token wins — see the
+            // long note in bulk-edit.js applySearch(): a token hitting BOTH
+            // axes was neutral on both, i.e. filtered nothing.
+            var named = ids.some(function (id) { return id.indexOf(tok) === 0; });
+            var colHit = !named && visCols.some(function (c) { return (c.label + ' ' + c.key + ' ' + c.section).toLowerCase().indexOf(tok) >= 0; });
+            var idHit = !colHit && ids.some(function (id) { return id.indexOf(tok) >= 0; });
             return { tok: tok, isCol: colHit, isId: idHit, isVal: !colHit && !idHit };
         });
         // Shared grammar (kept in sync with bulk-edit.js): space = AND across

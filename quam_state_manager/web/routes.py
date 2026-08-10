@@ -831,6 +831,42 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict, *,
                 ctx.pop("live_drift_count", None)
 
 
+def _probe_readonly(folder) -> bool:
+    """True when the live chip's files are NOT writable (docs/114 #16).
+
+    NON-DESTRUCTIVE by construction. Two rejected designs first, because the
+    reason matters:
+
+    * ``os.access(dir, W_OK)`` is attribute-only for directories on Windows —
+      it reports a read-only share as writable, i.e. it is blind to the exact
+      case this exists for.
+    * Creating and deleting a probe file inside the folder answers correctly
+      but WRITES INTO THE CUSTOMER'S LIVE CHIP FOLDER on every activation.
+      That breaks the docs/28 rule (the live files are touched only on an
+      explicit Apply), litters a directory labs keep under version control,
+      and leaves the file behind if the process dies mid-probe.
+
+    So: open the EXISTING ``state.json`` for update (``r+``) and close it
+    immediately. Opening for update needs the same permission the apply
+    needs, and — because nothing is written — it changes no content, no
+    size and no mtime. Anything unexpected answers False: this is a HINT,
+    and a false alarm is worse than no alarm.
+    """
+    target = Path(folder) / "state.json"
+    try:
+        with open(target, "r+", encoding="utf-8"):
+            pass
+        return False
+    except PermissionError:
+        return True
+    except OSError as exc:
+        # EACCES/EROFS mean not writable; anything else (missing file, exotic
+        # FS) is not evidence of a read-only share.
+        return getattr(exc, "errno", None) in (13, 30)
+    except Exception:  # noqa: BLE001 — a hint must never break activation
+        return False
+
+
 def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
     """Load a QUAM state folder and register it as the active context.
 
@@ -943,6 +979,13 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # folder-filter toggles) and outside the cache lock (the reverse
         # index may do a few stats / a rare TOML re-parse). An explicitly
         # pinned name sticks.
+        # docs/114 (#16): re-probe on EVERY activation — a cached chip whose
+        # share was remounted read-only (or repaired) must not keep the answer
+        # from the first open.
+        try:
+            current["live_readonly_hint"] = _probe_readonly(current["path"])
+        except Exception:  # noqa: BLE001 — a hint never blocks activation
+            pass
         _acquire_project_scope(current)
         # docs/20 v2: re-evaluate the first-open chip-name banner on every
         # activation (origin can flip live→archive; a staged name dismisses),
@@ -992,6 +1035,12 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
                 "saver": Saver(store),
                 "wiring_json": json.dumps(store.wiring),  # cached — immutable after load
             }
+            # docs/114 (#16): write-permission preflight — a read-only live
+            # folder (network share) should be KNOWN at open time, not
+            # discovered at apply time after 20 minutes of edits.
+            # (see _probe_readonly — a real create+delete, because
+            # os.access is attribute-only for directories on Windows)
+            ctx["live_readonly_hint"] = _probe_readonly(folder)
             # (docs/87) The "✓ Live chip updated — N params pulled" one-shot that
             # used to be stashed here is gone with the silent pull it announced.
             # A toast that reports a fait accompli is strictly worse than the
@@ -2822,6 +2871,16 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         "context_type": _context_type(),
         "change_count": _change_count(),
         "working_dirty": _working_dirty(),
+        # docs/110 #10-A: the FULL-page tray must carry the same freshness
+        # beacon the OOB tray does — otherwise a page render stamps "" while
+        # the next mutation's OOB swap stamps a real seq, and PaneState reads
+        # that as "the chip moved" and refetches every parked pane. (Caught by
+        # the real-browser pass: keep-alive never fired, only the SOFT tier.)
+        "mutation_seq": (getattr(_store(), "mutation_seq", "") if _store() else ""),
+        # docs/114 (#16): the read-only lock, like the beacon above, must be
+        # stamped by the FULL-page render too — _render_tray alone meant the
+        # lock only ever appeared after an OOB tray swap.
+        "live_readonly": bool((_active_ctx() or {}).get("live_readonly_hint")),
         "qualibrate_tray": _qualibrate_tray_badge(),
         # docs/63 project lens: the qualibrate project this context operates
         # under (explicitly opened, or reverse-matched from its live folder).
@@ -2888,6 +2947,22 @@ def _build_qubit_sections(name: str, qubit_data: dict[str, Any], store: QuamStor
             except (KeyError, TypeError):
                 pass
 
+        # docs/114 (#15): a pointer row must say what it RESOLVES to, and
+        # "dangling" must mean a resolution FAILURE — not the accident that
+        # this builder passed the raw pointer through as the value (which is
+        # why the old tooltip read "Resolves to: <the pointer itself>", and
+        # why deciding on equality painted EVERY pointer on a real chip red).
+        dangling = False
+        if ptr and not self_ref and dot_path:
+            try:
+                _res = store.resolve_pointer(raw_value, tuple(dot_path.split(".")))
+                if _res == raw_value:
+                    dangling = True      # the resolver handed it straight back
+                else:
+                    resolved_value = _res
+            except Exception:            # noqa: BLE001 — display must not break
+                dangling = True
+
         editable = dot_path is not None and key != "id"
         if isinstance(resolved_value, (list, dict)):
             editable = False
@@ -2899,6 +2974,7 @@ def _build_qubit_sections(name: str, qubit_data: dict[str, Any], store: QuamStor
             "dot_path": dot_path,
             "is_pointer": ptr and not self_ref,
             "is_self_ref": self_ref,
+            "dangling": dangling,
             "editable": editable,
             "_present": present,
         })
@@ -2996,6 +3072,8 @@ def _pair_prop(store: QuamStore, key: str, dot_path: str | None,
         "dot_path": dot_path,
         "is_pointer": ptr and not self_ref,
         "is_self_ref": self_ref,
+        # docs/114 (#15): dangling == the resolver handed the pointer back
+        "dangling": bool(ptr and not self_ref and resolved_value == raw_value),
         "editable": editable,
     }
 
@@ -3124,6 +3202,22 @@ def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore)
             except (KeyError, TypeError):
                 pass
 
+        # docs/114 (#15): a pointer row must say what it RESOLVES to, and
+        # "dangling" must mean a resolution FAILURE — not the accident that
+        # this builder passed the raw pointer through as the value (which is
+        # why the old tooltip read "Resolves to: <the pointer itself>", and
+        # why deciding on equality painted EVERY pointer on a real chip red).
+        dangling = False
+        if ptr and not self_ref and dot_path:
+            try:
+                _res = store.resolve_pointer(raw_value, tuple(dot_path.split(".")))
+                if _res == raw_value:
+                    dangling = True      # the resolver handed it straight back
+                else:
+                    resolved_value = _res
+            except Exception:            # noqa: BLE001 — display must not break
+                dangling = True
+
         editable = dot_path is not None and key != "id"
         if isinstance(resolved_value, (list, dict)):
             editable = False
@@ -3135,6 +3229,7 @@ def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore)
             "dot_path": dot_path,
             "is_pointer": ptr and not self_ref,
             "is_self_ref": self_ref,
+            "dangling": dangling,
             "editable": editable,
         })
 
@@ -3194,6 +3289,23 @@ def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore)
             except (KeyError, TypeError):
                 pass
 
+            # docs/114 (#15): a pointer row must say what it RESOLVES to, and
+            # "dangling" must mean a resolution FAILURE — not the accident that
+            # this builder passed the raw pointer through as the value (which
+            # is why the old tooltip read "Resolves to: <the pointer itself>",
+            # and why deciding on equality painted EVERY pointer red).
+            dangling = False
+            if ptr and not self_ref and dot_path:
+                try:
+                    _res = store.resolve_pointer(raw_value,
+                                                 tuple(dot_path.split(".")))
+                    if _res == raw_value:
+                        dangling = True   # the resolver handed it straight back
+                    else:
+                        resolved_value = _res
+                except Exception:         # noqa: BLE001 — display must not break
+                    dangling = True
+
             editable = True
             if isinstance(resolved_value, (list, dict)):
                 editable = False
@@ -3205,6 +3317,7 @@ def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore)
                 "dot_path": dot_path,
                 "is_pointer": ptr and not self_ref,
                 "is_self_ref": self_ref,
+                "dangling": dangling,
                 "editable": editable,
             })
 
@@ -3217,6 +3330,21 @@ def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore)
 # ======================================================================
 # Home / Load
 # ======================================================================
+
+
+@bp.route("/help")
+def help_page():
+    """docs/115 (#14): the manual has a PERMANENT address.
+
+    The working-copy mental model (live chip / working state / snapshot)
+    and the feature tour lived only on the landing — one swap away and
+    gone the moment a user navigated, exactly when they were forming that
+    model. ``/help`` renders the SAME shared fragment
+    (``_landing_getting_started.html`` — one source, no drift) plus the
+    shortcut reference, reachable from the sidebar on every page.
+    """
+    template = "_help.html" if _is_htmx() else "help.html"
+    return render_template(template, **_ctx(page="help"))
 
 
 @bp.route("/")
@@ -3892,7 +4020,28 @@ def load():
     try:
         _activate_quam(folder)
     except (FileNotFoundError, ValueError, OSError) as e:
-        return render_template("_status.html", message=str(e), level="error"), 400
+        # docs/114 (#15): a wrong folder used to answer with a 6-second corner
+        # toast — gone before it was read. Render a PERSISTENT inline panel
+        # into the load target instead, saying what was looked for and
+        # offering any subfolder that ACTUALLY holds a state.json (the old
+        # hint only fired on literal "quam_state" names).
+        candidates = []
+        try:
+            base = Path(folder)
+            if base.is_dir():
+                for child in sorted(base.iterdir()):
+                    try:
+                        if child.is_dir() and (child / "state.json").exists():
+                            candidates.append(str(child))
+                    except OSError:
+                        continue
+                    if len(candidates) >= 6:
+                        break
+        except OSError:
+            pass
+        return render_template(
+            "_load_failed.html",
+            folder=folder, error=str(e), candidates=candidates), 400
 
     _remember_load_path(folder)
     _maybe_auto_add_workspace_root(folder)
@@ -4470,6 +4619,12 @@ def _render_tray(*, oob: bool) -> str:
         # docs/20 v2: the last apply's pre-apply snapshot ts (this session) —
         # powers the explicit "Revert last apply…" affordance.
         last_apply=(_active_ctx() or {}).get("last_apply"),
+        # docs/110 #10-A: PaneState's freshness beacon (see _pending_tray.html)
+        mutation_seq=(getattr(_store(), "mutation_seq", "") if _store() else ""),
+        # docs/114 (#16): a read-only live folder is announced BEFORE 20
+        # minutes of edits, not at apply time (os.access W_OK — optimistic on
+        # NTFS ACLs but reliable for the read-only-share case this is for).
+        live_readonly=bool((_active_ctx() or {}).get("live_readonly_hint")),
         oob=oob,
     )
 
@@ -10577,7 +10732,10 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False):
             "replay": replay,
         })
     except (OSError, ValueError) as exc:
-        return jsonify({"status": "error", "message": f"Apply to live failed: {exc}"}), 500
+        _pd = ("the live folder is READ-ONLY (network share?) — "
+               if getattr(exc, "errno", None) in (13, 1) else "")
+        return jsonify({"status": "error",
+                        "message": f"Apply to live failed: {_pd}{exc}"}), 500
     except Exception as exc:  # noqa: BLE001 — r16 6: honest message, never a dropped 500
         logger.exception("apply-to-live (sync) unexpected failure")
         return jsonify({"status": "error",
@@ -10660,10 +10818,14 @@ def state_apply_to_live():
                 "apply-to-live save failed with %d unsaved entries: %s",
                 len(store.change_log), exc,
             )
+            # docs/114 (#16): name the permission case explicitly — a
+            # read-only share is the common cause and the OS says so.
+            _pd = ("the WORKING folder is not writable — "
+                   if getattr(exc, "errno", None) in (13, 1) else "")
             return render_template(
                 "_status.html",
                 message=(
-                    f"Save failed: {exc}. Your edits are still in memory — "
+                    f"Save failed: {_pd}{exc}. Your edits are still in memory — "
                     "close any program that has state.json open and retry."
                 ),
                 level="error",
@@ -10699,7 +10861,13 @@ def state_apply_to_live():
             and (bool(ctx.get("staged_base"))
                  or not ctx.get("pending_reapply")))
     except (OSError, ValueError) as exc:
-        return render_template("_status.html", message=f"Apply to live failed: {exc}", level="error"), 500
+        # docs/114 (#16): the read-only case fails HERE (the LIVE write), not
+        # in the working-copy save — name it where it actually happens.
+        _pd = ("the live folder is READ-ONLY (network share?) — "
+               if getattr(exc, "errno", None) in (13, 1) else "")
+        return render_template("_status.html",
+                               message=f"Apply to live failed: {_pd}{exc}",
+                               level="error"), 500
     except Exception as exc:  # noqa: BLE001 — r16 6: honest message, never a dropped 500
         logger.exception("apply-to-live unexpected failure")
         return render_template(

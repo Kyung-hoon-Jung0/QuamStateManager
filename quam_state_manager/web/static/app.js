@@ -333,6 +333,17 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
         evt.detail.shouldSwap = true;
         evt.detail.isError = false;
     }
+    // docs/114 (#15): a failed /load answers 400 with the persistent
+    // explanation panel — htmx drops 4xx bodies by default, so without this
+    // allowance the whole feature was invisible and the user fell back to a
+    // vanishing toast (the integration audit caught it). Narrow: only a
+    // /load response carrying that panel may swap into the main pane.
+    if ((t.id === 'load-failed-slot' || t.id === 'table-pane')
+        && status === 400 && evt.detail.xhr
+        && /load-failed-panel/.test(evt.detail.xhr.responseText || '')) {
+        evt.detail.shouldSwap = true;
+        evt.detail.isError = false;
+    }
     // Dataset "Load State" gates (r11): chip-mismatch / pending-edits answer
     // 409 with a confirm fragment — same pattern as state-history-detail.
     if (t.id === 'ds-load-state-result' && status === 409) {
@@ -2625,6 +2636,29 @@ window.applyEditsToLive = function () {
                     if (window._driftOverlayOpen) _loadDriftView();
                 }
                 _lastCount = count;
+                // docs/113 (#13): staleness indicators get a "when" — the
+                // status badge's tooltip names the last successful check, so
+                // "Synced" is a claim with a timestamp, not a vibe.
+                try {
+                    // audit: only a SUCCESSFUL poll may claim a check time —
+                    // the failure path reaches here with d === null, and a
+                    // staleness indicator that lies is worse than none.
+                    if (!d) throw 0;
+                    var badge = document.querySelector('.tray-indicator');
+                    if (badge) {
+                        var base = badge.getAttribute('data-tip-base');
+                        if (base === null) {
+                            base = badge.getAttribute('title') || '';
+                            badge.setAttribute('data-tip-base', base);
+                        }
+                        var t = new Date();
+                        var hh = ('0' + t.getHours()).slice(-2)
+                            + ':' + ('0' + t.getMinutes()).slice(-2)
+                            + ':' + ('0' + t.getSeconds()).slice(-2);
+                        badge.setAttribute('title',
+                            (base ? base + ' — ' : '') + 'last checked ' + hh);
+                    }
+                } catch (e) {}
             })
             .catch(function () {})
             .then(function () { _driftPolling = false; });
@@ -3412,6 +3446,418 @@ window.PhysAmp = (function () {
     return { unit: unit, setUnit: setUnit, applyAll: applyAll,
              fmt: fmt, vrms: vrms };
 })();
+
+
+/* ------------------------------------------------------------------ */
+/* Keyboard polish (docs/113 #13): '/' search, Ctrl+Enter, '?' sheet  */
+/* ------------------------------------------------------------------ */
+/* Three low-overhead shortcuts (each gated on not-typing-in-a-field):
+   - '/' focuses the page's PRIMARY search: the first visible search box in
+     the main pane, else the topbar global search — the muscle memory every
+     list UI ships.
+   - Ctrl+Enter presses "Apply all" when the Live-Edit grid is mounted and
+     the button is armed (disabled = silently nothing; the button's own
+     confirm/warning path runs unchanged — this is a CLICK, not a bypass).
+   - '?' (Shift+/) toggles a static shortcut cheat sheet (Esc closes; the
+     shared trapFocus keeps Tab inside). */
+(function () {
+    function _typing() {
+        var a = document.activeElement;
+        return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA'
+                     || a.isContentEditable);
+    }
+    function _primarySearch() {
+        var pane = document.getElementById('table-pane');
+        if (pane) {
+            var els = pane.querySelectorAll('input[type="search"], .tree-search');
+            // offsetParent is null for EVERYTHING when no layout engine runs
+            // (jsdom) — only trust it when at least one element has layout.
+            var layout = false;
+            for (var i = 0; i < els.length; i++) {
+                if (els[i].offsetParent !== null) { layout = true; break; }
+            }
+            for (var j = 0; j < els.length; j++) {
+                var el = els[j];
+                if (el.hidden || (el.closest && el.closest('[hidden]'))) continue;
+                if (layout && el.offsetParent === null) continue;
+                return el;
+            }
+        }
+        return document.getElementById('global-search');
+    }
+    var SHEET_ID = 'kb-cheatsheet';
+    function _sheet() { return document.getElementById(SHEET_ID); }
+    function _closeSheet() {
+        var el = _sheet();
+        if (!el) return;
+        if (el._releaseTrap) { try { el._releaseTrap(); } catch (e) {} }
+        el.remove();
+    }
+    window._kbToggleCheatsheet = function () {
+        if (_sheet()) { _closeSheet(); return; }
+        var wrap = document.createElement('div');
+        wrap.id = SHEET_ID;
+        wrap.className = 'kb-sheet-backdrop';
+        wrap.setAttribute('role', 'dialog');
+        wrap.setAttribute('aria-label', 'Keyboard shortcuts');
+        var card = document.createElement('div');
+        card.className = 'kb-sheet';
+        var rows = [
+            ['Global', ''],
+            ['Ctrl+K', 'search palette (toggle)'],
+            ['/', 'focus the page search'],
+            ['?', 'this cheat sheet'],
+            ['Alt+C', 'calculator'],
+            ['Ctrl+Z / Ctrl+Shift+Z', 'undo / redo (crosses saves — staged into Review)'],
+            ['Live State Edit — the Qubits grid', ''],
+            ['Tab / Shift+Tab', 'hop between edit cells'],
+            ['Shift+click / Ctrl+click', 'select a range / toggle cells in ONE column'],
+            ['Ctrl+D', 'fill selection from the anchor cell'],
+            ['Ctrl+V (multi-line)', 'paste a column downward'],
+            ['Ctrl+Enter', 'Apply all (when armed)'],
+            ['Datasets', ''],
+            ['j / k', 'move through runs'],
+            ['Enter / Space', 'open / select the active run'],
+            ['[ / ]', 'previous / next run in the open detail'],
+        ];
+        var h = document.createElement('h3');
+        h.textContent = 'Keyboard shortcuts';
+        card.appendChild(h);
+        var dl = document.createElement('div');
+        dl.className = 'kb-sheet-rows';
+        rows.forEach(function (r) {
+            if (!r[1]) {
+                var g = document.createElement('div');
+                g.className = 'kb-sheet-group';
+                g.textContent = r[0];
+                dl.appendChild(g);
+                return;
+            }
+            var row = document.createElement('div');
+            row.className = 'kb-sheet-row';
+            var k = document.createElement('kbd');
+            k.textContent = r[0];
+            var v = document.createElement('span');
+            v.textContent = r[1];
+            row.appendChild(k); row.appendChild(v);
+            dl.appendChild(row);
+        });
+        card.appendChild(dl);
+        var hint = document.createElement('p');
+        hint.className = 'muted kb-sheet-hint';
+        hint.textContent = 'Esc closes';
+        card.appendChild(hint);
+        var close = document.createElement('button');
+        close.className = 'btn-sm outline kb-sheet-close';
+        close.textContent = 'Close';
+        close.addEventListener('click', _closeSheet);
+        card.appendChild(close);
+        wrap.appendChild(card);
+        wrap.addEventListener('click', function (ev) {
+            if (ev.target === wrap) _closeSheet();
+        });
+        document.body.appendChild(wrap);
+        if (window.trapFocus) wrap._releaseTrap = window.trapFocus(wrap, _closeSheet);
+        close.focus();
+    };
+    function _modalOpen() {
+        // a second focus trap over an open modal breaks BOTH (the older
+        // capture-phase trap runs first, so Escape closed the wrong thing).
+        // Visibility, not attributes — see window.smModalOpen.
+        return window.smModalOpen ? window.smModalOpen() : false;
+    }
+    document.addEventListener('keydown', function (ev) {
+        // KEY FIRST: this runs on every keystroke in the app, so no DOM query
+        // may happen before we know the key is one of ours (measured: the
+        // modal-guard querySelector alone cost ~2 ms per keystroke on a
+        // 4,851-cell grid page — on the typing path).
+        var mine = (ev.key === '/' || ev.key === '?' || ev.key === 'Escape'
+                    || (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)));
+        if (!mine) return;
+        if (ev.key === 'Escape' && _sheet()) { _closeSheet(); return; }
+        if (ev.key === 'Escape') return;      // Escape is otherwise not ours
+        if (!_sheet() && _modalOpen()) return;
+        if (_typing()) {
+            // Ctrl+Enter works FROM a grid cell too — that is where the user is
+            if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
+                var btn0 = document.getElementById('bulk-apply-all');
+                if (btn0 && !btn0.disabled) { ev.preventDefault(); btn0.click(); }
+            }
+            return;
+        }
+        if (ev.ctrlKey || ev.metaKey || ev.altKey) {
+            if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
+                var btn = document.getElementById('bulk-apply-all');
+                if (btn && !btn.disabled) { ev.preventDefault(); btn.click(); }
+            }
+            return;
+        }
+        if (ev.key === '/') {
+            var el = _primarySearch();
+            if (el) { ev.preventDefault(); el.focus(); el.select && el.select(); }
+        } else if (ev.key === '?') {
+            ev.preventDefault();
+            window._kbToggleCheatsheet();
+        }
+    });
+})();
+
+
+/* Is a real modal on screen? The app closes its overlays with
+   display:none (not [hidden]) and base.html always renders several
+   role="dialog" nodes, so an attribute test is either always-true or
+   always-false — both were shipped and both were wrong. Test what the
+   user can actually see. */
+window.smModalOpen = function () {
+    if (document.querySelector('dialog[open]')) return true;
+    var sel = '.ch-overlay, #state-review-overlay, #live-drift-overlay,'
+            + ' #plot-apply-popup, #new-run-popup, #cmd-palette, #kb-cheatsheet,'
+            + ' .modal';
+    var els = document.querySelectorAll(sel);
+    for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        if (el.hidden) continue;
+        var st = window.getComputedStyle(el);
+        if (st.display !== 'none' && st.visibility !== 'hidden') return true;
+    }
+    return false;
+};
+
+/* ------------------------------------------------------------------ */
+/* PaneState (docs/110 #10-A): a tab keeps its state when you return   */
+/* ------------------------------------------------------------------ */
+/* THE most-asked-for UX fix: navigating the main pane used to destroy the
+   previous surface wholesale (search text, expanded tree nodes, scroll).
+
+   v2 architecture (the stream-1 audit killed v1's beforeRequest
+   interception: it poisoned htmx's history snapshot, bypassed htmx's
+   pushState, and a failed nav left a blank pane):
+   - Every navigation runs COMPLETELY NORMALLY through htmx (request,
+     history snapshot, URL push, swap) -- PaneState never cancels anything.
+   - PARK happens at htmx:beforeSwap on #table-pane, i.e. AFTER htmx took
+     its history snapshot of the outgoing page and ONLY when a real swap is
+     about to replace the DOM (a failed request never parks -- the pane
+     stays intact). KEEP routes detach their children into the stash;
+     every SOFT route refreshes its search-input capture here too (so a
+     deliberately cleared box is captured as cleared -- never resurrected).
+   - RESTORE happens at htmx:afterSwap: if the arriving route has a FRESH
+     parked copy (tray data-seq + chip token unmoved), the just-swapped
+     server render is discarded (Plotly-purged first) and the parked DOM
+     re-attached -- search text, expanded nodes, scroll, everything. The
+     redundant fetch is the price of letting htmx own history; what
+     keep-alive preserves is CLIENT state, not server cost. A background
+     /state/tray fetch then re-verifies the seq against server truth (the
+     on-screen tray can lag a scheduler adopt) -- a mismatch refetches the
+     pane fresh. Stale/chip-moved copies are dropped and the SOFT tier
+     re-applies the query over the fresh DOM instead.
+   - Back/forward belongs to htmx's own history machinery: popstate and
+     htmx:historyRestore clear the stash AND re-sync the current route.
+   Parked DOM is detached -- getElementById can't see it, pollers no-op
+   until restore. Stash: LRU 4 (evicted holders are Plotly-purged). */
+window.PaneState = (function () {
+    var KEEP = ['/explorer'];
+    var SOFT = ['/explorer', '/bulk', '/datasets', '/param-history',
+                '/pulses', '/state-history', '/qubits', '/pairs',
+                '/resonators', '/flux', '/couplers'];
+    var MAX = 4;
+    var stash = {};   // route -> {holder, seq, chip, scroll, order}
+    var soft = {};    // route -> {inputs: [{key, value}]}
+    var _order = 0;
+    var _cur = location.pathname;
+
+    function pane() { return document.getElementById('table-pane'); }
+    function seqNow() {
+        var t = document.getElementById('pending-tray');
+        return t ? (t.getAttribute('data-seq') || '') : '';
+    }
+    function chipNow() { return String(window.__chipToken || ''); }
+
+    function _purge(root) {
+        // The app-wide rule: a Plotly node must never die via innerHTML
+        // without purge (WebGL contexts + DOM refs leak).
+        if (window.Plotly && root.querySelectorAll) {
+            root.querySelectorAll('.js-plotly-plot').forEach(function (n) {
+                try { window.Plotly.purge(n); } catch (e) {}
+            });
+        }
+    }
+    function _captureSoft(root) {
+        var inputs = [];
+        var els = root.querySelectorAll('input[type="search"], .tree-search');
+        Array.prototype.forEach.call(els, function (el, i) {
+            // keyed by id when present, else by position -- 8 of the 11 SOFT
+            // routes have id-less filter boxes (audit)
+            inputs.push({ key: el.id ? ('#' + el.id) : ('@' + i),
+                          value: el.value });
+        });
+        return { inputs: inputs };
+    }
+    function _reapplySoft(route) {
+        var d = soft[route];
+        if (!d || !d.inputs.length) return;
+        var p = pane();
+        if (!p) return;
+        var els = p.querySelectorAll('input[type="search"], .tree-search');
+        d.inputs.forEach(function (it) {
+            var el = null;
+            if (it.key.charAt(0) === '#') {
+                el = p.querySelector('input[id="' + it.key.slice(1) + '"]');
+            } else {
+                el = els[parseInt(it.key.slice(1), 10)] || null;
+            }
+            if (el && it.value && el.value !== it.value) {
+                el.value = it.value;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+        });
+    }
+    function _park(route) {
+        var p = pane();
+        if (!p || !p.firstChild) return;
+        if (SOFT.indexOf(route) >= 0) soft[route] = _captureSoft(p);
+        if (KEEP.indexOf(route) < 0) return;
+        var holder = document.createElement('div');
+        while (p.firstChild) holder.appendChild(p.firstChild);
+        stash[route] = { holder: holder, seq: seqNow(), chip: chipNow(),
+                         scroll: p.scrollTop, order: ++_order };
+        var keys = Object.keys(stash);
+        if (keys.length > MAX) {
+            keys.sort(function (a, b) { return stash[a].order - stash[b].order; });
+            _purge(stash[keys[0]].holder);
+            delete stash[keys[0]];
+        }
+    }
+    function _verifyRestore(route, seqAtRestore) {
+        // Server-truth re-verify (audit M5): the on-screen tray can lag a
+        // mutation that never answered THIS tab (scheduler post-node adopt,
+        // a second window's edit). Mismatch => the restored pane lied --
+        // refetch it fresh. Best-effort: a failed probe changes nothing.
+        try {
+            fetch('/state/tray', { cache: 'no-store' })
+                .then(function (r) { return r.ok ? r.text() : null; })
+                .then(function (html) {
+                    if (!html) return;
+                    var m = html.match(/data-seq="([^"]*)"/);
+                    if (!m || m[1] === seqAtRestore) return;
+                    if (_cur !== route || !window.htmx) return;
+                    delete stash[route];
+                    window.htmx.ajax('GET', route, {
+                        source: '#table-pane', target: '#table-pane',
+                        swap: 'innerHTML' });
+                })
+                .catch(function () {});
+        } catch (e) {}
+    }
+    function _tryRestore(route) {
+        var e = stash[route];
+        if (!e) return false;
+        delete stash[route];
+        // stale -- keep the fresh swap; the SOFT tier re-applies the query
+        if (e.seq !== seqNow() || e.chip !== chipNow()) return false;
+        var p = pane();
+        if (!p) return false;
+        _purge(p);                 // the redundant fresh render dies cleanly
+        p.innerHTML = '';
+        while (e.holder.firstChild) p.appendChild(e.holder.firstChild);
+        p.scrollTop = e.scroll || 0;
+        if (window.PhysAmp) window.PhysAmp.applyAll(p);
+        document.dispatchEvent(new CustomEvent('paneRestored',
+                                               { detail: { route: route } }));
+        _verifyRestore(route, e.seq);
+        return true;
+    }
+    function _routeOf(detail) {
+        var pi = detail && detail.pathInfo;
+        var path = pi && (pi.finalRequestPath || pi.requestPath);
+        if (!path && detail && detail.requestConfig) path = detail.requestConfig.path;
+        return path ? String(path).split('?')[0] : null;
+    }
+
+    document.addEventListener('htmx:beforeSwap', function (evt) {
+        if (!evt.target || evt.target.id !== 'table-pane') return;
+        if (evt.detail && evt.detail.shouldSwap === false) return;
+        var inRoute = _routeOf(evt.detail);
+        // park the OUTGOING route (htmx's history snapshot is already taken);
+        // a same-route refresh only refreshes the SOFT capture, never parks
+        if (inRoute && inRoute !== _cur) _park(_cur);
+        else if (SOFT.indexOf(_cur) >= 0 && pane()) soft[_cur] = _captureSoft(pane());
+    });
+    document.addEventListener('htmx:afterSwap', function (evt) {
+        if (!evt.target || evt.target.id !== 'table-pane') return;
+        var route = _routeOf(evt.detail);
+        if (route) _cur = route;
+        if (!_tryRestore(_cur)) _reapplySoft(_cur);
+    });
+    // A wholesale working-copy replacement invalidates every parked pane;
+    // back/forward belongs to htmx's own history machinery -- clear AND
+    // re-sync the route (audit M3: a desynced _cur parked the WRONG DOM).
+    function _historyReset() {
+        for (var k in stash) _purge(stash[k].holder);
+        stash = {};
+        _cur = location.pathname;
+        // htmx's history cache may hold a snapshot taken while this pane was
+        // PARKED (i.e. empty). Never leave the user on a blank pane: refetch.
+        setTimeout(function () {
+            var p = pane();
+            if (p && !p.firstElementChild && window.htmx) {
+                window.htmx.ajax('GET', location.pathname + location.search,
+                                 { source: '#table-pane', target: '#table-pane',
+                                   swap: 'innerHTML' });
+            }
+        }, 60);
+    }
+    document.addEventListener('stateRestored', function () {
+        for (var k in stash) _purge(stash[k].holder);
+        stash = {};
+    });
+    window.addEventListener('popstate', _historyReset);
+    document.addEventListener('htmx:historyRestore', _historyReset);
+
+    return {
+        _stash: function () { return stash; },
+        _cur: function () { return _cur; },
+        _soft: function () { return soft; },
+        clear: function () { stash = {}; soft = {}; },
+    };
+})();
+
+/* docs/115 (#14): the tray's teaching line — shown until dismissed ONCE.
+   A new user forms the working-copy model in their first minutes; hiding
+   the explanation until they already understand it is backwards. */
+(function () {
+    var KEY = 'quam_tray_teach_done';
+    function done() {
+        try { return localStorage.getItem(KEY) === '1'; } catch (e) { return false; }
+    }
+    window.dismissTrayTeach = function () {
+        try { localStorage.setItem(KEY, '1'); } catch (e) {}
+        var el = document.getElementById('tray-teach');
+        if (el) el.hidden = true;
+    };
+    function sync() {
+        var el = document.getElementById('tray-teach');
+        if (el) el.hidden = done();
+    }
+    document.addEventListener('DOMContentLoaded', sync);
+    document.addEventListener('htmx:afterSwap', sync);
+    document.addEventListener('htmx:oobAfterSwap', sync);
+    if (document.readyState !== 'loading') sync();
+})();
+
+/* docs/115 (#14) — the landing CTA opens the SAME folder browser the
+   sidebar's State Load uses, bound to that form's input (the audit caught
+   the first version calling openFolderBrowser() with no target, so picking
+   a folder filled nothing and submitted nothing). If the browser is
+   unavailable, focus the input so the CTA is never a dead click. */
+window.smOpenStateFolder = function () {
+    var input = document.getElementById('load-path-input')
+             || document.querySelector('#load-form input[name="folder"]');
+    if (input && window.openFolderBrowser) {
+        window.openFolderBrowser(input.id || 'load-path-input');
+        return;
+    }
+    if (input) { input.focus(); input.scrollIntoView({block: 'center'}); }
+};
 
 /* ------------------------------------------------------------------ */
 /* Value delta (Δ) — the JS mirror of core/value_delta.py               */
@@ -13675,6 +14121,17 @@ window.LiveEditUndo = (function () {
         _snap = { dp: dp, value: t.value };
     });
 
+    /* docs/111 audit F14: a programmatic write into a cell the user had ALREADY
+       typed in would be recorded twice — once explicitly by the writer (paste
+       /fill) and once by the change-listener below on the eventual blur, whose
+       snapshot still holds the pre-typing value. The writer calls resync() to
+       move the snapshot forward, so only its own single action is recorded. */
+    function resync(input) {
+        if (!input) return;
+        var dp = (input.dataset && input.dataset.dotPath) || '';
+        if (_snap && _snap.dp === dp) _snap = { dp: dp, value: input.value };
+    }
+
     /* The tray ↶ runs the SAME tier chain as Ctrl+Z. */
     function trigger() {
         if (window._wizUndo && window._wizUndo.tryUndo()) return;
@@ -13756,7 +14213,7 @@ window.LiveEditUndo = (function () {
         _updateTrayBtn();
     }
 
-    return { record: record, tryUndo: tryUndo, tryRedo: tryRedo,
+    return { record: record, tryUndo: tryUndo, tryRedo: tryRedo, resync: resync,
              trigger: trigger, clear: clear,
              refreshTip: refreshTip, _updateTrayBtn: _updateTrayBtn };
 })();

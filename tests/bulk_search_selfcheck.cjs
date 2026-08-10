@@ -25,6 +25,10 @@ const SRC = path.join(__dirname, '..', 'quam_state_manager', 'web', 'static', 'b
 const COLS = [
   { key: 'f_01', label: 'f01', section: 'Qubit', unit: 'Hz', default_on: true },
   { key: 'T1', label: 'T1', section: 'Qubit', unit: 's', default_on: true },
+  // A real chip's pair-gate column carries the PARTNER qubit's id in `search`
+  // (folded header, docs/85). That made every qubit-id token hit both axes.
+  { key: 'cz_amp', label: 'cz amp', section: 'Gate', unit: '', default_on: true,
+    search: 'cz_SNZ_flux_pulse_q10 cz_SNZ_flux_pulse_q2' },
 ];
 function cellTd(colKey, qid, val) {
   return '<td class="bulk-td" data-col-key="' + colKey + '">' +
@@ -33,7 +37,7 @@ function cellTd(colKey, qid, val) {
 }
 function row(qid, f01, t1) {
   return '<tr data-qubit="' + qid + '"><th class="bulk-rowhead" data-col-key="__id__">' + qid + '</th>' +
-    cellTd('f_01', qid, f01) + cellTd('T1', qid, t1) +
+    cellTd('f_01', qid, f01) + cellTd('T1', qid, t1) + cellTd('cz_amp', qid, '0.1') +
     '<td class="bulk-apply-col"><button class="btn-xs bulk-row-apply" disabled>Apply</button>' +
     '<span class="bulk-row-error" hidden></span></td></tr>';
 }
@@ -114,6 +118,25 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   type('0.000055');
   await sleep(300);
   check('D1 search correct after sort', visibleRows().join(',') === 'q10', visibleRows().join(','));
+
+  // E. a qubit-id token must filter ROWS even though a column's search text
+  //    names that qubit. Before the fix both axes read it as "neutral", so on
+  //    the real 21-qubit chip typing a qubit id filtered nothing at all.
+  type('q10');
+  await sleep(300);
+  check('E1 an id named by a column still narrows rows',
+        visibleRows().join(',') === 'q10', visibleRows().join(','));
+  const colsShown = Array.prototype.slice
+    .call(w.document.querySelectorAll('#bulk-table th.bulk-col-head'))
+    .filter(function (h) { return !h.classList.contains('bulk-search-hidden'); }).length;
+  check('E2 an id token leaves every column visible', colsShown === 3, String(colsShown));
+  // a token that only occurs INSIDE an id keeps the column reading
+  type('cz_snz');
+  await sleep(300);
+  check('E3 a column-only token still filters columns, not rows',
+        visibleRows().length === 3, visibleRows().join(','));
+  type('');
+  await sleep(300);
 
   if (failures) { console.error(failures + ' check(s) failed'); process.exit(1); }
   console.log('all checks passed');
