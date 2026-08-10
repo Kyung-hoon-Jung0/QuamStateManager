@@ -2625,6 +2625,25 @@ window.applyEditsToLive = function () {
                     if (window._driftOverlayOpen) _loadDriftView();
                 }
                 _lastCount = count;
+                // docs/113 (#13): staleness indicators get a "when" — the
+                // status badge's tooltip names the last successful check, so
+                // "Synced" is a claim with a timestamp, not a vibe.
+                try {
+                    var badge = document.querySelector('.tray-indicator');
+                    if (badge) {
+                        var base = badge.getAttribute('data-tip-base');
+                        if (base === null) {
+                            base = badge.getAttribute('title') || '';
+                            badge.setAttribute('data-tip-base', base);
+                        }
+                        var t = new Date();
+                        var hh = ('0' + t.getHours()).slice(-2)
+                            + ':' + ('0' + t.getMinutes()).slice(-2)
+                            + ':' + ('0' + t.getSeconds()).slice(-2);
+                        badge.setAttribute('title',
+                            (base ? base + ' — ' : '') + 'last checked ' + hh);
+                    }
+                } catch (e) {}
             })
             .catch(function () {})
             .then(function () { _driftPolling = false; });
@@ -3411,6 +3430,146 @@ window.PhysAmp = (function () {
     }
     return { unit: unit, setUnit: setUnit, applyAll: applyAll,
              fmt: fmt, vrms: vrms };
+})();
+
+
+/* ------------------------------------------------------------------ */
+/* Keyboard polish (docs/113 #13): '/' search, Ctrl+Enter, '?' sheet  */
+/* ------------------------------------------------------------------ */
+/* Three low-overhead shortcuts (each gated on not-typing-in-a-field):
+   - '/' focuses the page's PRIMARY search: the first visible search box in
+     the main pane, else the topbar global search — the muscle memory every
+     list UI ships.
+   - Ctrl+Enter presses "Apply all" when the Live-Edit grid is mounted and
+     the button is armed (disabled = silently nothing; the button's own
+     confirm/warning path runs unchanged — this is a CLICK, not a bypass).
+   - '?' (Shift+/) toggles a static shortcut cheat sheet (Esc closes; the
+     shared trapFocus keeps Tab inside). */
+(function () {
+    function _typing() {
+        var a = document.activeElement;
+        return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA'
+                     || a.isContentEditable);
+    }
+    function _primarySearch() {
+        var pane = document.getElementById('table-pane');
+        if (pane) {
+            var els = pane.querySelectorAll('input[type="search"], .tree-search');
+            // offsetParent is null for EVERYTHING when no layout engine runs
+            // (jsdom) — only trust it when at least one element has layout.
+            var layout = false;
+            for (var i = 0; i < els.length; i++) {
+                if (els[i].offsetParent !== null) { layout = true; break; }
+            }
+            for (var j = 0; j < els.length; j++) {
+                var el = els[j];
+                if (el.hidden || (el.closest && el.closest('[hidden]'))) continue;
+                if (layout && el.offsetParent === null) continue;
+                return el;
+            }
+        }
+        return document.getElementById('global-search');
+    }
+    var SHEET_ID = 'kb-cheatsheet';
+    function _sheet() { return document.getElementById(SHEET_ID); }
+    function _closeSheet() {
+        var el = _sheet();
+        if (!el) return;
+        if (el._releaseTrap) { try { el._releaseTrap(); } catch (e) {} }
+        el.remove();
+    }
+    window._kbToggleCheatsheet = function () {
+        if (_sheet()) { _closeSheet(); return; }
+        var wrap = document.createElement('div');
+        wrap.id = SHEET_ID;
+        wrap.className = 'kb-sheet-backdrop';
+        wrap.setAttribute('role', 'dialog');
+        wrap.setAttribute('aria-label', 'Keyboard shortcuts');
+        var card = document.createElement('div');
+        card.className = 'kb-sheet';
+        var rows = [
+            ['Global', ''],
+            ['Ctrl+K', 'search palette (toggle)'],
+            ['/', 'focus the page search'],
+            ['?', 'this cheat sheet'],
+            ['Alt+C', 'calculator'],
+            ['Ctrl+Z / Ctrl+Shift+Z', 'undo / redo (crosses saves — staged into Review)'],
+            ['Live State Edit', ''],
+            ['Tab / Shift+Tab', 'hop between edit cells'],
+            ['Shift+click / Ctrl+click', 'select cells in a column'],
+            ['Ctrl+D', 'fill selection from the anchor cell'],
+            ['Ctrl+V (multi-line)', 'paste a column downward'],
+            ['Ctrl+Enter', 'Apply all (when armed)'],
+            ['Datasets', ''],
+            ['j / k', 'move through runs'],
+            ['Enter / Space', 'open / select the active run'],
+            ['[ / ]', 'previous / next run in the open detail'],
+        ];
+        var h = document.createElement('h3');
+        h.textContent = 'Keyboard shortcuts';
+        card.appendChild(h);
+        var dl = document.createElement('div');
+        dl.className = 'kb-sheet-rows';
+        rows.forEach(function (r) {
+            if (!r[1]) {
+                var g = document.createElement('div');
+                g.className = 'kb-sheet-group';
+                g.textContent = r[0];
+                dl.appendChild(g);
+                return;
+            }
+            var row = document.createElement('div');
+            row.className = 'kb-sheet-row';
+            var k = document.createElement('kbd');
+            k.textContent = r[0];
+            var v = document.createElement('span');
+            v.textContent = r[1];
+            row.appendChild(k); row.appendChild(v);
+            dl.appendChild(row);
+        });
+        card.appendChild(dl);
+        var hint = document.createElement('p');
+        hint.className = 'muted kb-sheet-hint';
+        hint.textContent = 'Esc closes';
+        card.appendChild(hint);
+        var close = document.createElement('button');
+        close.className = 'btn-sm outline kb-sheet-close';
+        close.textContent = 'Close';
+        close.addEventListener('click', _closeSheet);
+        card.appendChild(close);
+        wrap.appendChild(card);
+        wrap.addEventListener('click', function (ev) {
+            if (ev.target === wrap) _closeSheet();
+        });
+        document.body.appendChild(wrap);
+        if (window.trapFocus) wrap._releaseTrap = window.trapFocus(wrap, _closeSheet);
+        close.focus();
+    };
+    document.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Escape' && _sheet()) { _closeSheet(); return; }
+        if (_typing()) {
+            // Ctrl+Enter works FROM a grid cell too — that is where the user is
+            if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
+                var btn0 = document.getElementById('bulk-apply-all');
+                if (btn0 && !btn0.disabled) { ev.preventDefault(); btn0.click(); }
+            }
+            return;
+        }
+        if (ev.ctrlKey || ev.metaKey || ev.altKey) {
+            if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
+                var btn = document.getElementById('bulk-apply-all');
+                if (btn && !btn.disabled) { ev.preventDefault(); btn.click(); }
+            }
+            return;
+        }
+        if (ev.key === '/') {
+            var el = _primarySearch();
+            if (el) { ev.preventDefault(); el.focus(); el.select && el.select(); }
+        } else if (ev.key === '?') {
+            ev.preventDefault();
+            window._kbToggleCheatsheet();
+        }
+    });
 })();
 
 /* ------------------------------------------------------------------ */
