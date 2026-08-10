@@ -2947,6 +2947,22 @@ def _build_qubit_sections(name: str, qubit_data: dict[str, Any], store: QuamStor
             except (KeyError, TypeError):
                 pass
 
+        # docs/114 (#15): a pointer row must say what it RESOLVES to, and
+        # "dangling" must mean a resolution FAILURE — not the accident that
+        # this builder passed the raw pointer through as the value (which is
+        # why the old tooltip read "Resolves to: <the pointer itself>", and
+        # why deciding on equality painted EVERY pointer on a real chip red).
+        dangling = False
+        if ptr and not self_ref and dot_path:
+            try:
+                _res = store.resolve_pointer(raw_value, tuple(dot_path.split(".")))
+                if _res == raw_value:
+                    dangling = True      # the resolver handed it straight back
+                else:
+                    resolved_value = _res
+            except Exception:            # noqa: BLE001 — display must not break
+                dangling = True
+
         editable = dot_path is not None and key != "id"
         if isinstance(resolved_value, (list, dict)):
             editable = False
@@ -2958,6 +2974,7 @@ def _build_qubit_sections(name: str, qubit_data: dict[str, Any], store: QuamStor
             "dot_path": dot_path,
             "is_pointer": ptr and not self_ref,
             "is_self_ref": self_ref,
+            "dangling": dangling,
             "editable": editable,
             "_present": present,
         })
@@ -3055,6 +3072,8 @@ def _pair_prop(store: QuamStore, key: str, dot_path: str | None,
         "dot_path": dot_path,
         "is_pointer": ptr and not self_ref,
         "is_self_ref": self_ref,
+        # docs/114 (#15): dangling == the resolver handed the pointer back
+        "dangling": bool(ptr and not self_ref and resolved_value == raw_value),
         "editable": editable,
     }
 
@@ -3183,6 +3202,22 @@ def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore)
             except (KeyError, TypeError):
                 pass
 
+        # docs/114 (#15): a pointer row must say what it RESOLVES to, and
+        # "dangling" must mean a resolution FAILURE — not the accident that
+        # this builder passed the raw pointer through as the value (which is
+        # why the old tooltip read "Resolves to: <the pointer itself>", and
+        # why deciding on equality painted EVERY pointer on a real chip red).
+        dangling = False
+        if ptr and not self_ref and dot_path:
+            try:
+                _res = store.resolve_pointer(raw_value, tuple(dot_path.split(".")))
+                if _res == raw_value:
+                    dangling = True      # the resolver handed it straight back
+                else:
+                    resolved_value = _res
+            except Exception:            # noqa: BLE001 — display must not break
+                dangling = True
+
         editable = dot_path is not None and key != "id"
         if isinstance(resolved_value, (list, dict)):
             editable = False
@@ -3194,6 +3229,7 @@ def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore)
             "dot_path": dot_path,
             "is_pointer": ptr and not self_ref,
             "is_self_ref": self_ref,
+            "dangling": dangling,
             "editable": editable,
         })
 
@@ -3253,6 +3289,23 @@ def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore)
             except (KeyError, TypeError):
                 pass
 
+            # docs/114 (#15): a pointer row must say what it RESOLVES to, and
+            # "dangling" must mean a resolution FAILURE — not the accident that
+            # this builder passed the raw pointer through as the value (which
+            # is why the old tooltip read "Resolves to: <the pointer itself>",
+            # and why deciding on equality painted EVERY pointer red).
+            dangling = False
+            if ptr and not self_ref and dot_path:
+                try:
+                    _res = store.resolve_pointer(raw_value,
+                                                 tuple(dot_path.split(".")))
+                    if _res == raw_value:
+                        dangling = True   # the resolver handed it straight back
+                    else:
+                        resolved_value = _res
+                except Exception:         # noqa: BLE001 — display must not break
+                    dangling = True
+
             editable = True
             if isinstance(resolved_value, (list, dict)):
                 editable = False
@@ -3264,6 +3317,7 @@ def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore)
                 "dot_path": dot_path,
                 "is_pointer": ptr and not self_ref,
                 "is_self_ref": self_ref,
+                "dangling": dangling,
                 "editable": editable,
             })
 

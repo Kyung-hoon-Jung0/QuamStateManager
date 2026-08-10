@@ -338,7 +338,8 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     // allowance the whole feature was invisible and the user fell back to a
     // vanishing toast (the integration audit caught it). Narrow: only a
     // /load response carrying that panel may swap into the main pane.
-    if (t.id === 'table-pane' && status === 400 && evt.detail.xhr
+    if ((t.id === 'load-failed-slot' || t.id === 'table-pane')
+        && status === 400 && evt.detail.xhr
         && /load-failed-panel/.test(evt.detail.xhr.responseText || '')) {
         evt.detail.shouldSwap = true;
         evt.detail.isError = false;
@@ -3560,13 +3561,10 @@ window.PhysAmp = (function () {
         close.focus();
     };
     function _modalOpen() {
-        // audit: a second focus trap over an open modal breaks BOTH — the
-        // older capture-phase trap still runs first, so Escape closed the
-        // wrong thing. Any visible dialog/overlay suppresses / and ?.
-        return !!document.querySelector(
-            '.modal:not([hidden]), dialog[open], .review-overlay:not([hidden]),'
-            + ' .ch-overlay:not([hidden]), .drift-overlay:not([hidden]),'
-            + ' .type-fix-modal:not([hidden]), .fsp-popup:not([hidden])');
+        // a second focus trap over an open modal breaks BOTH (the older
+        // capture-phase trap runs first, so Escape closed the wrong thing).
+        // Visibility, not attributes — see window.smModalOpen.
+        return window.smModalOpen ? window.smModalOpen() : false;
     }
     document.addEventListener('keydown', function (ev) {
         // KEY FIRST: this runs on every keystroke in the app, so no DOM query
@@ -3603,6 +3601,27 @@ window.PhysAmp = (function () {
         }
     });
 })();
+
+
+/* Is a real modal on screen? The app closes its overlays with
+   display:none (not [hidden]) and base.html always renders several
+   role="dialog" nodes, so an attribute test is either always-true or
+   always-false — both were shipped and both were wrong. Test what the
+   user can actually see. */
+window.smModalOpen = function () {
+    if (document.querySelector('dialog[open]')) return true;
+    var sel = '.ch-overlay, #state-review-overlay, #live-drift-overlay,'
+            + ' #plot-apply-popup, #new-run-popup, #cmd-palette, #kb-cheatsheet,'
+            + ' .modal';
+    var els = document.querySelectorAll(sel);
+    for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        if (el.hidden) continue;
+        var st = window.getComputedStyle(el);
+        if (st.display !== 'none' && st.visibility !== 'hidden') return true;
+    }
+    return false;
+};
 
 /* ------------------------------------------------------------------ */
 /* PaneState (docs/110 #10-A): a tab keeps its state when you return   */
@@ -3776,6 +3795,16 @@ window.PaneState = (function () {
         for (var k in stash) _purge(stash[k].holder);
         stash = {};
         _cur = location.pathname;
+        // htmx's history cache may hold a snapshot taken while this pane was
+        // PARKED (i.e. empty). Never leave the user on a blank pane: refetch.
+        setTimeout(function () {
+            var p = pane();
+            if (p && !p.firstElementChild && window.htmx) {
+                window.htmx.ajax('GET', location.pathname + location.search,
+                                 { source: '#table-pane', target: '#table-pane',
+                                   swap: 'innerHTML' });
+            }
+        }, 60);
     }
     document.addEventListener('stateRestored', function () {
         for (var k in stash) _purge(stash[k].holder);

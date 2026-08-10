@@ -287,9 +287,14 @@
                any project coupling (docs/63 — independent sources stay
                first-class and render exactly as before). #}
             <div class="sidebar-load">
-                <form id="load-form" hx-post="/load" hx-target="#table-pane">
+                {# docs/114 (#15) + pre-customer audit: the failure body lands in a
+                   dedicated sidebar slot, NOT the main pane — a mistyped path must
+                   never destroy an open surface (the wizard has no draft). Success
+                   answers HX-Redirect, so this target is only ever used on failure. #}
+                <form id="load-form" hx-post="/load" hx-target="#load-failed-slot">
                     <div class="path-input-group">
-                        <input type="text" name="folder" id="load-path-input"
+                        <div id="load-failed-slot" aria-live="polite"></div>
+                    <input type="text" name="folder" id="load-path-input"
                                placeholder="quam_state folder path..." autocomplete="off">
                         <button type="button" class="outline btn-sm btn-browse"
                                 onclick="openFolderBrowser('load-path-input')" title="Browse folders">&#128193;</button>

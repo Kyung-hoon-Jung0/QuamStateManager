@@ -147,6 +147,22 @@
     }
     // Re-GET /bulk into the table pane — the same idiom the cross-surface
     // state-changed listener uses; configRequest re-attaches dynhide.
+    // pre-customer audit: if the /bulk reload never lands (error, abort,
+    // the user navigates away), _consumeEditCarry never runs and the
+    // leave-confirm carve-out stays armed — a window in which navigation
+    // discards unapplied edits with NO prompt. Disarm on every outcome.
+    function _armCarryDisarm() {
+        var off = function () {
+            document.removeEventListener('htmx:afterRequest', off, true);
+            document.removeEventListener('htmx:responseError', off, true);
+            document.removeEventListener('htmx:sendError', off, true);
+            if (_editCarry) { window._dynReloadAt = 0; }
+        };
+        document.addEventListener('htmx:afterRequest', off, true);
+        document.addEventListener('htmx:responseError', off, true);
+        document.addEventListener('htmx:sendError', off, true);
+        setTimeout(off, CARRY_TTL_MS);
+    }
     function _reloadPane() {
         if (window.htmx) htmx.ajax('GET', '/bulk', { target: '#table-pane', swap: 'innerHTML' });
     }
@@ -1422,6 +1438,10 @@
             var c = _editableIn(td);
             if (!c || c === src || c.value === v) return;
             undo.push({ dp: c.getAttribute('data-dot-path'), prev: c.value, next: v });
+            // the manual path decides f_01<->RF coupling at FOCUS; a
+            // programmatic fill must do the same or the twin silently
+            // desyncs on exactly the retune this feature exists for.
+            if (FREQ_TWIN[_colKeyOf(c)]) _freqFocus(c);
             c.value = v;
             c.dispatchEvent(new Event('input', { bubbles: true }));
             n++;
@@ -1459,6 +1479,7 @@
             if (it.prev === it.value) return;
             undo.push({ dp: it.cell.getAttribute('data-dot-path'),
                         prev: it.prev, next: it.value });
+            if (FREQ_TWIN[_colKeyOf(it.cell)]) _freqFocus(it.cell);
             it.cell.value = it.value;
             it.cell.dispatchEvent(new Event('input', { bubbles: true }));
         });
@@ -1635,6 +1656,7 @@
         if (list.length) {
             _editCarry = { list: list, at: Date.now() };
             window._dynReloadAt = Date.now();   // the leave-confirm carve-out
+            _armCarryDisarm();                  // ...and its guaranteed release
         }
     }
     function _consumeEditCarry() {
@@ -1788,6 +1810,7 @@
             // docs/111 (#11): selection/fill/paste/pins + the dyn-reload
             // edit carry. Pins re-apply AFTER virtualization (a pinned cold
             // column is hydrated by _applyColPins itself).
+            _selAnchor = null;      // a stale anchor from the previous DOM
             _bindGridEditing();
             _injectPinGlyphs();
             _applyRowPins();

@@ -722,9 +722,10 @@
             // audit: a modal owns the keyboard while it is open — the '?'
             // cheat sheet's own Close button passed the old focus gate, so
             // Space "toggled a row" instead of pressing it.
-            if (document.getElementById('kb-cheatsheet')
-                || document.querySelector('.modal:not([hidden]), dialog[open],'
-                    + ' .ch-overlay:not([hidden]), [role="dialog"]:not([hidden])')) return;
+            // base.html always renders several role="dialog" nodes (the
+            // archive popover, the calculator), so the old attribute test made
+            // j/k DEAD on every page. Visibility only.
+            if (window.smModalOpen && window.smModalOpen()) return;
             var a = document.activeElement;
             if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA'
                       || a.isContentEditable)) return;
