@@ -13675,6 +13675,17 @@ window.LiveEditUndo = (function () {
         _snap = { dp: dp, value: t.value };
     });
 
+    /* docs/111 audit F14: a programmatic write into a cell the user had ALREADY
+       typed in would be recorded twice — once explicitly by the writer (paste
+       /fill) and once by the change-listener below on the eventual blur, whose
+       snapshot still holds the pre-typing value. The writer calls resync() to
+       move the snapshot forward, so only its own single action is recorded. */
+    function resync(input) {
+        if (!input) return;
+        var dp = (input.dataset && input.dataset.dotPath) || '';
+        if (_snap && _snap.dp === dp) _snap = { dp: dp, value: input.value };
+    }
+
     /* The tray ↶ runs the SAME tier chain as Ctrl+Z. */
     function trigger() {
         if (window._wizUndo && window._wizUndo.tryUndo()) return;
@@ -13756,7 +13767,7 @@ window.LiveEditUndo = (function () {
         _updateTrayBtn();
     }
 
-    return { record: record, tryUndo: tryUndo, tryRedo: tryRedo,
+    return { record: record, tryUndo: tryUndo, tryRedo: tryRedo, resync: resync,
              trigger: trigger, clear: clear,
              refreshTip: refreshTip, _updateTrayBtn: _updateTrayBtn };
 })();

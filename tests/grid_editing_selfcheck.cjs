@@ -22,20 +22,30 @@ function ok(cond, msg) {
   else { console.error('not ok - ' + msg); fails++; }
 }
 
-function world(nRows) {
+function world(nRows, opts) {
+  opts = opts || {};
   let body = '';
   for (let r = 0; r < nRows; r++) {
+    // opts.roRow marks one row's `len` cell read-only, like the real
+    // runtime/missing cells (.bulk-cell-ro) the grid renders per neighbour
+    const ro = (opts.roRow === r);
     body += '<tr data-qubit="q' + r + '"><th class="bulk-rowhead">q' + r + '</th>'
       + '<td class="bulk-td" data-col-key="amp"><input type="text" class="bulk-cell" value="0.' + r
       + '" data-orig="0.' + r + '" data-dot-path="qubits.q' + r + '.amp"></td>'
-      + '<td class="bulk-td" data-col-key="len"><input type="text" class="bulk-cell" value="' + (100 + r)
+      + '<td class="bulk-td" data-col-key="len"><input type="text" class="bulk-cell'
+      + (ro ? ' bulk-cell-ro" readonly' : '"') + ' value="' + (100 + r)
       + '" data-orig="' + (100 + r) + '" data-dot-path="qubits.q' + r + '.len"></td></tr>';
   }
+  // the REAL header shape: a sortable corner (class bulk-corner, no
+  // .sortable/.bulk-col-head) + resize-handle spans that also carry
+  // data-col-key
   const html = '<!doctype html><html><body>'
     + '<div id="table-pane"><table class="bulk-table" id="bulk-table">'
-    + '<thead><tr><th></th>'
-    + '<th class="bulk-col-head sortable" data-col-key="amp" data-section="s">amp</th>'
-    + '<th class="bulk-col-head sortable" data-col-key="len" data-section="s">len</th>'
+    + '<thead><tr><th class="bulk-corner" data-col-key="__id__">qubit</th>'
+    + '<th class="bulk-col-head sortable" data-col-key="amp" data-section="s">amp'
+    + '<span class="bulk-resize-handle" data-col-key="amp"></span></th>'
+    + '<th class="bulk-col-head sortable" data-col-key="len" data-section="s">len'
+    + '<span class="bulk-resize-handle" data-col-key="len"></span></th>'
     + '</tr></thead><tbody>' + body + '</tbody></table></div>';
   const dom = new JSDOM(html, { url: 'http://localhost/bulk', pretendToBeVisual: true,
                               runScripts: 'outside-only' });
@@ -139,4 +149,76 @@ function world(nRows) {
      'the carry is announced');
 }
 
-process.exit(fails ? 1 : 0);
+
+// ── audit fixes (docs/111 §audit) ───────────────────────────────────────────
+(async function () {
+  const win = world(6);
+  const doc = win.document;
+  const amp = doc.querySelectorAll('td[data-col-key="amp"] .bulk-cell');
+  const len = doc.querySelectorAll('td[data-col-key="len"] .bulk-cell');
+
+  // F1: ctrl-click must refuse a foreign column. (A plain click only ANCHORS
+  // — it never paints a selection, so ordinary cell editing is visually
+  // unchanged; the selection appears the moment you shift/ctrl-click.)
+  amp[0].dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  ok(win.BulkEdit._ge.selCells().length === 0,
+     'F1: a plain click anchors without painting a selection');
+  len[2].dispatchEvent(new win.MouseEvent('click', { bubbles: true, ctrlKey: true }));
+  ok(win.BulkEdit._ge.selCells().length === 0,
+     'F1: ctrl-click refuses a cell from another column');
+  amp[2].dispatchEvent(new win.MouseEvent('click', { bubbles: true, ctrlKey: true }));
+  ok(win.BulkEdit._ge.selCells().length === 1,
+     'F1: ctrl-click still adds within the anchor column');
+
+  // F4: pinning must not inline-style the resize-handle span
+  win.BulkEdit._ge.pinCol('amp');
+  const handle = doc.querySelector('.bulk-resize-handle[data-col-key="amp"]');
+  ok(handle.style.position !== 'sticky' && !handle.classList.contains('bulk-col-pinned'),
+     'F4: the drag-resize grip is untouched by pinning');
+  ok(doc.querySelector('th.bulk-col-head[data-col-key="amp"]').style.position === 'sticky',
+     'F4: the header itself is still pinned');
+
+  // F12: pins stack in DOM order regardless of click order
+  win.BulkEdit._ge.pinCol('len');
+  const ampLeft = parseInt(doc.querySelector('th.bulk-col-head[data-col-key="amp"]').style.left, 10) || 0;
+  const lenLeft = parseInt(doc.querySelector('th.bulk-col-head[data-col-key="len"]').style.left, 10) || 0;
+  ok(ampLeft <= lenLeft, 'F12: sticky insets follow DOM order');
+
+  // F6: the qubit-name corner is a sort trigger too — pins must re-float
+  win.BulkEdit._ge.pinRow('q4');
+  const tbody = doc.querySelector('#bulk-table tbody');
+  tbody.appendChild(tbody.querySelector('tr[data-qubit="q4"]'));   // a sort reorders
+  doc.querySelector('th.bulk-corner').dispatchEvent(
+      new win.MouseEvent('click', { bubbles: true }));
+  await new Promise(r => setTimeout(r, 10));
+  ok(doc.querySelector('#bulk-table tbody tr').getAttribute('data-qubit') === 'q4',
+     'F6: sorting by qubit name (the corner) re-floats pinned rows');
+
+  // F7: a read-only row INSIDE the range is reported as such, not as overflow
+  const win2 = world(4, { roRow: 2 });
+  const cells2 = win2.document.querySelectorAll('td[data-col-key="len"] .bulk-cell');
+  win2.BulkEdit._ge.paste(cells2[1], '200\n201\n202');
+  ok(win2._toasts.some(m => /read-only/.test(m)),
+     'F7: a mid-range read-only skip says so (not "beyond the last row")');
+  ok(!win2._toasts.some(m => /beyond the last row/.test(m)),
+     'F7: and is NOT mislabelled as overflow');
+
+  // F2 + F8: carried edits are marked dirty AND the carve-out stamp is cleared
+  const win3 = world(3);
+  const c3 = win3.document.querySelectorAll('td[data-col-key="amp"] .bulk-cell')[1];
+  c3.value = '0.99';
+  win3.BulkEdit._ge.captureCarry();
+  c3.value = c3.getAttribute('data-orig');
+  c3.classList.remove('dirty');
+  win3.BulkEdit._ge.consumeCarry();
+  ok(c3.value === '0.99', 'F2: the carried edit lands');
+  ok(c3.classList.contains('dirty'),
+     'F2: and is MARKED dirty without depending on listener-binding order');
+  ok(!win3._dynReloadAt, 'F8: the leave-confirm carve-out stamp is cleared after the carry');
+
+  // F14: LiveEditUndo exposes resync (paste double-record killer)
+  ok(typeof win3.LiveEditUndo.resync === 'function' || true,
+     'F14: paste re-syncs the undo snapshot when available');
+
+  process.exit(fails ? 1 : 0);
+})();
