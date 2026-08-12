@@ -326,3 +326,44 @@ customer 10-qubit / 9-tunable-coupler chip (5,100 cells / 510 columns, every
 route 200 with no traceback). Search lands in 8-60 ms on both grids and
 15-193 ms on a fully expanded 18,310-node tree. Full suite at the documented
 Windows environmental baseline, no new failures.
+
+## v0.9.8 (2026-08-12)
+
+One press of **Apply to chip** now reaches the live chip in the situation it
+usually fails in.
+
+**The bug.** Pressing "Apply to chip" on a dataset run often wrote nothing and
+asked instead whether to pull the live state into SM — a question from a
+different flow, whose "take live" option would have discarded the run the user
+had just chosen. Root cause: the safety gate compared the live files against
+*SM's own last sync point*, never against the content it was about to write. So
+it fired whenever anything had touched the live chip since SM loaded it —
+including when the live chip **already held byte-for-byte what the button would
+write**. Reproduced with both sides holding the same value: a provable no-op,
+refused. That is the ordinary case for this button, because the run being
+applied is usually the very program that last wrote the chip.
+
+**The fix.** An apply that would change nothing is no longer a conflict: SM
+advances its sync point and reports success. The carve-out is identical content
+only — a live chip holding genuinely different values is still never
+overwritten without an explicit choice.
+
+**When it IS a real difference**, the answer now arrives where the button was,
+not in a one-line pointer to the top bar, and it offers the choice the press
+actually meant: **⚡ Apply run #N over live** · Review changes · Leave live as
+it is — with the reversibility (↺ Revert last apply) named on screen.
+
+**One question, one answer.** The gate panels ("You have unsaved edits…",
+"This run looks like a DIFFERENT chip…") stacked a browser confirm dialog on top
+of a panel that already was the confirmation, so one decision cost two answers.
+The dialog is gone; the panel stays. The conflict tray's own force button keeps
+its dialog — it has no prose beside it to name what disappears.
+
+### Also
+
+- A drift banner could print a stale count ("N values differ") left over from an
+  earlier divergence: the count is cleared everywhere its verdict is, and a
+  re-raised banner with no fresh count now says nothing rather than inventing one
+- Verified in a real browser on a copy of a real chip; 141 tests across the
+  live-write suites pass, with four new pins covering the no-op apply, a real
+  difference still conflicting, the in-place continuation, and the single ask
