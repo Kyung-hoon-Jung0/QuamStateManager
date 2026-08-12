@@ -145,7 +145,9 @@ def run_regenerate(
 
     result = regen_merge.merge_states(old_state, new_state,
                                       class_schemas=class_schemas,
-                                      protect_paths=protect)
+                                      protect_paths=protect,
+                                      old_wiring=old_wiring,
+                                      new_wiring=new_wiring)
     result.stats.populate_conflicts.extend(pop_conflicts)
 
     # TWPAs are grafted back at the state level but the builder made no TWPA
@@ -202,12 +204,20 @@ def run_regenerate(
         "graft_subtrees": s.graft_subtrees[:50],
         "superseded": len(s.superseded),
         "superseded_paths": s.superseded[:80],
+        "superseded_paths_total": len(s.superseded),
+        # docs/118: these lists are CAPPED. Shipping only the cap made the
+        # report understate the loss — a rebuild that dropped 1,104 pair leaves
+        # showed "200", and a reader had no way to know the list ended early.
+        # The totals ride alongside so the panel can say "200 of N shown".
         "residual_lost": s.residual_lost[:200],
+        "residual_lost_total": len(s.residual_lost),
         "dangling_grafts": s.dangling_grafts[:200],
+        "dangling_grafts_total": len(s.dangling_grafts),
         "pruned_ops": len(s.pruned_ops),
         "twpa_wiring_carried": twpa_carried,
         "schema_dropped": len(s.schema_dropped),
         "schema_dropped_paths": s.schema_dropped[:200],
+        "schema_dropped_paths_total": len(s.schema_dropped),
         "populate_protected": len(s.populate_protected),
         "populate_protected_paths": s.populate_protected[:80],
         "populate_conflicts": s.populate_conflicts[:20],

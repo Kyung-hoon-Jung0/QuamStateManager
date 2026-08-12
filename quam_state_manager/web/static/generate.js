@@ -6070,8 +6070,13 @@
       if (res.merge) {
         var m = res.merge;
         var supN = m.superseded || 0;               // value moved to a reference (preserved)
-        var lostN = (m.residual_lost || []).length; // TRULY not carried
-        var dangN = (m.dangling_grafts || []).length;
+        // docs/118: the server CAPS these lists at 200. Counting the array
+        // reported the cap, not the loss — a rebuild that dropped 1,104 pair
+        // leaves said "200". Prefer the true total the server now sends.
+        var lostN = (m.residual_lost_total != null)
+            ? m.residual_lost_total : (m.residual_lost || []).length;
+        var dangN = (m.dangling_grafts_total != null)
+            ? m.dangling_grafts_total : (m.dangling_grafts || []).length;
         var twpaN = m.twpa_wiring_carried || 0;     // TWPAs carried (wiring + ports)
         var prunedN = m.pruned_ops || 0;            // redundant old ops cleaned
         var schemaDropN = m.schema_dropped || 0;    // old-stack fields the new env's classes don't know

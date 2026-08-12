@@ -28,6 +28,8 @@ import copy
 from dataclasses import dataclass, field
 from typing import Any
 
+from quam_state_manager.core import regen_spec
+
 
 # Top-level dicts whose keys ARE structural entities: the rebuilt spec owns
 # their membership, so an OLD-only entity here was intentionally removed by the
@@ -217,17 +219,40 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
     return copy.deepcopy(old)
 
 
-def _pair_membership(pair: Any) -> tuple[str, str] | None:
-    """(control_qubit_name, target_qubit_name) for a pair, from its refs."""
+def _pair_membership(pair: Any, root: dict | None = None) -> tuple[str, str] | None:
+    """(control_qubit_name, target_qubit_name) for a pair, from its refs.
+
+    docs/118: the refs can be TWO-hop pointers (`#/wiring/qubit_pairs/<p>/c/
+    control_qubit` -> `#/qubits/qX`). Reading only the last path segment gave
+    the literal field name, so pair-id reconciliation matched nothing and every
+    pair's calibration was reported lost. `root` is optional so the pure
+    last-segment behaviour still applies to a one-hop chip when no document is
+    available to resolve against.
+    """
     if not isinstance(pair, dict):
         return None
     c, t = pair.get("qubit_control"), pair.get("qubit_target")
     if not (isinstance(c, str) and isinstance(t, str)):
         return None
+    if root is not None:
+        cn = regen_spec.qubit_ref_name(root, c)
+        tn = regen_spec.qubit_ref_name(root, t)
+        if cn and tn:
+            return (cn, tn)
     return (c.split("/")[-1], t.split("/")[-1])
 
 
-def _reconcile_pair_ids(old_state: dict, new_state: dict) -> dict:
+def _merged_doc(state: dict, wiring: dict | None) -> dict:
+    """state + its wiring, the shape an absolute `#/...` pointer resolves in."""
+    doc = dict(state)
+    if isinstance(wiring, dict):
+        doc["wiring"] = wiring.get("wiring", wiring)
+    return doc
+
+
+def _reconcile_pair_ids(old_state: dict, new_state: dict,
+                        old_wiring: dict | None = None,
+                        new_wiring: dict | None = None) -> dict:
     """Rename NEW ``qubit_pairs`` keys to the OLD ids where the (control, target)
     membership matches.
 
@@ -239,9 +264,11 @@ def _reconcile_pair_ids(old_state: dict, new_state: dict) -> dict:
     references a pair by ``#/qubit_pairs/<id>`` (verified on real archives).
     Returns ``new_state`` (a shallow copy when a rename was needed).
     """
+    # docs/118: resolve each side's refs against ITS OWN document — a two-hop
+    # pointer only means something inside the state it came from.
     old_by_mem: dict[tuple[str, str], str] = {}
     for oid, op in (old_state.get("qubit_pairs") or {}).items():
-        m = _pair_membership(op)
+        m = _pair_membership(op, _merged_doc(old_state, old_wiring))
         if m is not None:
             old_by_mem.setdefault(m, oid)
     if not old_by_mem:
@@ -251,7 +278,8 @@ def _reconcile_pair_ids(old_state: dict, new_state: dict) -> dict:
     remapped: dict[str, Any] = {}
     changed = False
     for nid, npair in new_pairs.items():
-        target = old_by_mem.get(_pair_membership(npair))
+        target = old_by_mem.get(
+            _pair_membership(npair, _merged_doc(new_state, new_wiring)))
         key = target if (target and target not in remapped) else nid
         if key != nid:
             changed = True
@@ -456,7 +484,9 @@ def graft_twpa_wiring(merged_state: dict, old_state: dict,
 
 def merge_states(old_state: dict, new_state: dict,
                  class_schemas: dict[str, list[str]] | None = None,
-                 protect_paths: set[str] | None = None) -> MergeResult:
+                 protect_paths: set[str] | None = None,
+                 old_wiring: dict | None = None,
+                 new_wiring: dict | None = None) -> MergeResult:
     """Merge the OLD calibrated state onto the NEW rebuilt structure.
 
     Returns the merged state plus :class:`MergeStats`. ``stats.residual_lost``
@@ -481,7 +511,12 @@ def merge_states(old_state: dict, new_state: dict,
     ``stats.populate_protected``; ``None`` ⇒ legacy behavior.
     """
     stats = MergeStats()
-    new_state = _reconcile_pair_ids(old_state, new_state)   # align pair ids first
+    # docs/118: the wirings are what make a TWO-hop pair reference resolvable —
+    # without them the membership key falls back to the last path segment and
+    # every pair id reconciliation silently misses, orphaning the pairs'
+    # calibration in the merge.
+    new_state = _reconcile_pair_ids(old_state, new_state,
+                                    old_wiring, new_wiring)   # align pair ids first
     merged = _merge(old_state, new_state, "", stats, class_schemas, protect_paths)
     stats.schema_dropped.sort()
     stats.populate_protected.sort()

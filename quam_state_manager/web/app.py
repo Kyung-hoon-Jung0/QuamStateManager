@@ -390,6 +390,13 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # arithmetic; mirrored character-for-character by window.ValueDelta in
     # app.js (pinned by tests/test_value_delta.py).
     from quam_state_manager.core import value_delta as _value_delta
+    # docs/118: the run-comparison cell highlight must use the SAME equality
+    # rule as the server-side row verdict. It used to be a private Jinja
+    # expression (`v.value != ref_val`) that disagreed with it, so a row could
+    # be listed as a difference with nothing highlighted (int vs float) or
+    # highlighted while both values were NaN.
+    from quam_state_manager.core.differ import compare_equal as _cmp_equal
+    app.jinja_env.globals["cmp_equal"] = _cmp_equal
     app.jinja_env.filters["value_delta"] = _value_delta.compute
     app.jinja_env.filters["delta_describe"] = _value_delta.describe
 
