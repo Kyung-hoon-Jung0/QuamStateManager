@@ -19,7 +19,28 @@ Kept in core (not web) so the CLI can import them without pulling in Flask.
 
 from __future__ import annotations
 
+import math
 from typing import Any
+
+CAS_REL_TOL = 1e-9      # docs/117: the ONE compare-and-swap tolerance
+
+
+def cas_equal(a: Any, b: Any) -> bool:
+    """Compare-and-swap equality for "is this value still what I wrote?".
+
+    docs/117: a revert must refuse when someone else moved the value since,
+    but two floats that went through a JSON round-trip are not bit-equal, so
+    an exact == would refuse reverts that are perfectly safe. Numbers compare
+    with a relative tolerance; bools are NOT numbers here (True == 1 would
+    make a boolean flip invisible); everything else is plain equality.
+
+    Lifted verbatim from ``autofit/writer._values_equal`` (docs/56 §8), which
+    now delegates here so the robot path and the user path can never drift.
+    """
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)) \
+            and not isinstance(a, bool) and not isinstance(b, bool):
+        return math.isclose(float(a), float(b), rel_tol=CAS_REL_TOL, abs_tol=0.0)
+    return a == b
 
 
 def resolve_edit_path(store: Any, dot_path: str) -> str:

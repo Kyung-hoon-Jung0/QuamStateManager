@@ -6,10 +6,14 @@ module records the OUTGOING log at each save as *units* (one unit == one
 user action == exactly what one ``undo_group`` press would have popped), so
 the undo chain can keep walking past the save/apply boundary.
 
-Covenant (user-stated, binding): **any direct live write requires >= 1
-explicit press of Apply-to-live.**  A journal step therefore never touches
-the live files -- it only STAGES the inverse edits back into the change log
-(the review tray), under a ``jrn:<unit-id>`` group id.  The gid prefix is the
+Covenant (user-stated, binding; AMENDED 2026-08-12 -- docs/117): **a direct
+live write happens only on an explicit Apply press OR inside a user-enabled
+auto-apply session** (default OFF, always visible, auto-disarmed on conflict).
+A journal step is unaffected: it never touches the live files -- it only
+STAGES the inverse edits back into the change log (the review tray), under a
+``jrn:<unit-id>`` group id.  With a session armed, that staged inverse is
+flushed by the ordinary apply route, so undo still reaches the chip through
+the ONE door.  The gid prefix is the
 routing marker: /undo seeing a ``jrn:`` group on top walks DEEPER into the
 journal instead of popping it; /redo seeing it on top un-stages it.
 
@@ -87,10 +91,19 @@ def segment_change_log(log: list[ChangeEntry]) -> list[list[ChangeEntry]]:
     return units
 
 
-def make_unit(entries: list[ChangeEntry], ts: float | None = None) -> dict:
+def make_unit(entries: list[ChangeEntry], ts: float | None = None,
+              meta: dict | None = None) -> dict:
     """Serialize one unit.  Values are deep-copied so the sidecar (and the
-    RAM mirror) can never alias a live subtree that later mutates."""
-    return {
+    RAM mirror) can never alias a live subtree that later mutates.
+
+    docs/117: `meta` is an OPTIONAL, additive dict describing how the unit
+    came to be (``{"src": "auto"}`` for an auto-apply flush).  It is what
+    lets the applied-log show only the changes that actually reached the
+    live chip, without a second store beside this one.  Nothing reads it
+    except that log, `JOURNAL_VERSION` is unchanged, and a sidecar written
+    by an older build simply has no meta.
+    """
+    unit = {
         "id": uuid.uuid4().hex[:12],
         "ts": time.time() if ts is None else ts,
         "entries": [
@@ -105,12 +118,15 @@ def make_unit(entries: list[ChangeEntry], ts: float | None = None) -> dict:
             for e in entries
         ],
     }
+    if meta:
+        unit["meta"] = dict(meta)
+    return unit
 
 
-def units_from_log(log: list[ChangeEntry]) -> list[dict]:
+def units_from_log(log: list[ChangeEntry], meta: dict | None = None) -> list[dict]:
     """Segment + serialize an outgoing change log (oldest unit first)."""
     ts = time.time()
-    return [make_unit(seg, ts=ts) for seg in segment_change_log(log)]
+    return [make_unit(seg, ts=ts, meta=meta) for seg in segment_change_log(log)]
 
 
 # ----------------------------------------------------------------------
@@ -157,6 +173,36 @@ def load(path: str | Path) -> list[dict]:
     except Exception:
         logger.warning("undo journal unreadable, starting empty: %s", p)
         return []
+
+
+def mark_unit(path: str | Path, unit_id: str, patch: dict) -> list[dict]:
+    """Merge `patch` into one unit's ``meta`` (load-merge-write under the
+    module lock, atomic write).  Returns the full post-write list.
+
+    docs/117: used to stamp ``reverted_by`` on an applied-log row, so a
+    reverted row can render struck-through with its X disabled instead of
+    inviting a second revert of the same change.  Advisory exactly like
+    :func:`append_units` -- a failed write must never break the caller.
+    """
+    p = Path(path)
+    with _lock:
+        units = load(p)
+        hit = False
+        for u in units:
+            if u.get("id") == unit_id:
+                meta = dict(u.get("meta") or {})
+                meta.update(patch)
+                u["meta"] = meta
+                hit = True
+                break
+        if not hit:
+            return units
+        try:
+            safe_io.atomic_write_json(p, {"version": JOURNAL_VERSION,
+                                          "units": units})
+        except Exception:
+            logger.warning("undo journal mark failed: %s", p, exc_info=True)
+        return units
 
 
 def append_units(path: str | Path, new_units: list[dict]) -> list[dict]:

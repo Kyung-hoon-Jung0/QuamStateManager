@@ -1635,7 +1635,7 @@ def _journal_reset(ctx: dict) -> None:
         ctx["undo_units"], ctx["undo_cursor"] = [], 0
 
 
-def _journal_prepare(store, ctx) -> list[dict]:
+def _journal_prepare(store, ctx, meta: dict | None = None) -> list[dict]:
     """Capture phase 1, inside the caller's ``store._lock`` hold: serialize
     the OUTGOING change log as journal units. Committed only after the save
     SUCCEEDS (phase 2) — a failed save keeps the log, and appending at prepare
@@ -1643,7 +1643,7 @@ def _journal_prepare(store, ctx) -> list[dict]:
     try:
         if not ctx or (ctx.get("origin") or "live") != "live":
             return []
-        return undo_journal.units_from_log(list(store.change_log))
+        return undo_journal.units_from_log(list(store.change_log), meta=meta)
     except Exception:
         logger.warning("undo journal capture failed", exc_info=True)
         return []
@@ -2894,6 +2894,13 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         "project_scope": (_active_ctx() or {}).get("qualibrate_project"),
         "live_diverged": bool(_ctx_obj("live_diverged")),
         "live_drift_count": (_active_ctx() or {}).get("live_drift_count"),
+        # docs/117: base.html includes the tray directly, so a FULL page render
+        # gets its context from here, not from _render_tray. Both must stamp
+        # these or the pill vanishes on every navigation (the same trap
+        # mutation_seq hit in docs/110 — real-browser caught both).
+        "auto_apply": _auto_apply_state(),
+        "auto_apply_armable": _auto_apply_armable(),
+        "applied_log": _applied_log_rows(),
         # docs/20 v2: first-open "name this chip?" banner payload (None when
         # named / declined / archive / no chip) + declared-but-unreachable
         # extras.data_folder values (muted note, never an error).
@@ -4601,6 +4608,73 @@ def _pair_bulk_grid(store: QuamStore, modified: dict
     return columns, groups, rows
 
 
+# ── docs/117: the auto-apply session ──────────────────────────────────────
+# The covenant (docs/107) reads, as amended by the user on 2026-08-12: a direct
+# live write happens only on an explicit Apply press OR inside a user-enabled
+# auto-apply session. The session is what that press authorizes, so it lives on
+# the ctx — it ends for free on chip switch, LRU eviction and restart, and it is
+# never persisted to disk (an armed session must not outlive the app that shows
+# it). There is deliberately no idle timeout: the user asked for "armed until I
+# turn it off", and the pill makes the state impossible to miss.
+_AUTO_SNAPSHOT_MIN_S = 120.0     # post-apply history snapshots, per session
+
+
+def _auto_apply_state(ctx: dict | None = None) -> dict | None:
+    """The armed session for the active (or given) ctx, else None."""
+    ctx = ctx if ctx is not None else _active_ctx()
+    if not ctx or ctx.get("type") != "quam":
+        return None
+    return ctx.get("auto_apply") or None
+
+
+def _auto_apply_armable(ctx: dict | None = None) -> tuple[bool, str]:
+    """(can arm, why not). Refusals are the ones where arming would be a trap,
+    not a nuisance: nothing to write to, nothing writable, or a chip that has
+    ALREADY diverged (arming into a guaranteed immediate conflict)."""
+    ctx = ctx if ctx is not None else _active_ctx()
+    if not ctx or ctx.get("type") != "quam":
+        return False, "No chip is open."
+    if (ctx.get("origin") or "live") != "live":
+        return False, "This is a read-only archive."
+    if ctx.get("live_readonly_hint"):
+        return False, "The live folder is read-only."
+    if ctx.get("live_diverged"):
+        return False, ("The live chip changed outside SM \u2014 resolve that first.")
+    return True, ""
+
+
+def _applied_log_rows(ctx: dict | None = None, limit: int = 50) -> list[dict]:
+    """The applied log: journal units that actually reached the live chip in an
+    auto-apply session, newest first.
+
+    Source is `ctx["undo_units"]` (docs/107) rather than a second store: it is
+    already per chip, already on disk, already segmented one-row-per-user-action
+    and already holds the old/new the revert needs. The cap matters because the
+    tray renders on EVERY page and on every mutation.
+    """
+    ctx = ctx if ctx is not None else _active_ctx()
+    if not ctx or ctx.get("type") != "quam":
+        return []
+    rows: list[dict] = []
+    for u in reversed(ctx.get("undo_units") or []):
+        meta = u.get("meta") or {}
+        if meta.get("src") != "auto":
+            continue
+        ents = u.get("entries") or []
+        if not ents:
+            continue
+        rows.append({
+            "id": u.get("id"),
+            "ts": u.get("ts"),
+            "n": len(ents),
+            "entries": ents,
+            "reverted_by": meta.get("reverted_by"),
+        })
+        if len(rows) >= limit:
+            break
+    return rows
+
+
 def _render_tray(*, oob: bool) -> str:
     """Render ``#pending-tray`` — the single tray renderer for both direct
     target swaps and OOB swaps.
@@ -4631,6 +4705,12 @@ def _render_tray(*, oob: bool) -> str:
         # minutes of edits, not at apply time (os.access W_OK — optimistic on
         # NTFS ACLs but reliable for the read-only-share case this is for).
         live_readonly=bool((_active_ctx() or {}).get("live_readonly_hint")),
+        # docs/117: the pill and the behaviour read the SAME attribute on the
+        # SAME element, so they cannot disagree; an F5 keeps the truth because
+        # the server owns it.
+        auto_apply=_auto_apply_state(),
+        auto_apply_armable=_auto_apply_armable(),
+        applied_log=_applied_log_rows(),
         oob=oob,
     )
 
@@ -10145,6 +10225,214 @@ def discard_all():
 
 
 # ======================================================================
+# Auto-apply (docs/117) — the session the covenant amendment authorizes
+# ======================================================================
+
+
+def _auto_disarm_response(ctx, body: str, reason: str, status: int = 200):
+    """Clear the session and hand the body back with the disarm signal.
+
+    The client stops scheduling the moment it sees ``autoApplyDisarm``; the
+    server has already forgotten the session, so the two cannot disagree even
+    if the trigger is lost. Used by every failure branch of the apply route —
+    a background writer must never keep pushing at a chip that refused it.
+    """
+    if ctx is not None:
+        ctx.pop("auto_apply", None)
+    resp = make_response(body, status)
+    resp.headers["HX-Trigger"] = json.dumps({
+        "autoApplyDisarm": {"reason": reason},
+    })
+    return resp
+
+
+@bp.route("/auto-apply/arm", methods=["POST"])
+def auto_apply_arm():
+    """Arm the session. THIS press is the consent the covenant asks for —
+    one labelled act, no confirm dialog (docs/104 #1), and the pill it turns
+    on is visible on every page until the user turns it off."""
+    ctx = _active_ctx()
+    ok, why = _auto_apply_armable(ctx)
+    if not ok:
+        return render_template("_status.html", message=why, level="warning"), 409
+    ctx["auto_apply"] = {
+        "armed_at": time.time(),
+        "pre_ts": None,        # the session's ONE revert anchor (docs/117)
+        "last_snap": 0.0,      # post-apply snapshot throttle
+        "flushes": 0,
+    }
+    resp = make_response(_tray_html())
+    # Pending edits made BEFORE arming are flushed by the client's first
+    # mutation-driven pass; the label said so before the press.
+    resp.headers["HX-Trigger"] = json.dumps({"autoApplyArmed": True})
+    return resp
+
+
+@bp.route("/auto-apply/disarm", methods=["POST"])
+def auto_apply_disarm():
+    """Turn it off and close the session with one unconditional snapshot, so a
+    session always ends on a captured state even though the flushes in between
+    were throttled."""
+    ctx = _active_ctx()
+    sess = _auto_apply_state(ctx)
+    if ctx is not None:
+        ctx.pop("auto_apply", None)
+    if sess and sess.get("flushes"):
+        try:
+            _history().check_and_snapshot(
+                ctx["path"], "save",
+                defer_index=not current_app.config.get("TESTING"),
+                project=_scope_for(ctx["path"], ctx))
+        except Exception:
+            logger.warning("Auto-apply closing snapshot failed", exc_info=True)
+    return _tray_html()
+
+
+@bp.route("/auto-apply/gate")
+def auto_apply_gate():
+    """What the pill needs to describe itself. Informational only: a run in
+    progress is REPORTED, never a block (the user's explicit choice, and the
+    docs/86 precedent — a run going wrong is a reason to be editing)."""
+    ctx = _active_ctx()
+    ok, why = _auto_apply_armable(ctx)
+    run_active, run_label = False, ""
+    try:
+        inst = _sched_inst()
+        st = inst.status() if inst else None
+        if isinstance(st, dict) and st.get("is_running"):
+            run_active = True
+            run_label = str(st.get("current_label") or st.get("current") or "")
+    except Exception:          # noqa: BLE001 — the pill must never break a page
+        pass
+    return jsonify({
+        "ok": True,
+        "armed": bool(_auto_apply_state(ctx)),
+        "armable": ok,
+        "reason": why,
+        "run_active": run_active,
+        "run_label": run_label,
+    })
+
+
+@bp.route("/auto-apply/revert", methods=["POST"])
+def auto_apply_revert():
+    """Revert ONE applied change from the log (its ✕).
+
+    Compare-and-swap, mirroring ``autofit/writer.revert_patches`` (docs/56 §8):
+    the unit's ``new`` must still be what the chip holds, or a later change to
+    the same path would be destroyed by a blind restore. A mismatch refuses with
+    the reason and writes NOTHING.
+
+    Like every other undo in SM this only STAGES the inverse (gid ``alr:`` —
+    never ``jrn:``, which routes /undo deeper and moves the journal cursor).
+    While the session is armed the client's flusher pushes it immediately, so
+    the ✕ reaches the chip through the same one door as everything else; with
+    the session off it waits in the review tray, which is the ordinary model.
+    """
+    from quam_state_manager.core import edit_policy
+    from quam_state_manager.core.pointer_path import resolve_field_target
+
+    ctx = _active_ctx()
+    store = ctx.get("store") if ctx else None
+    modifier = ctx.get("modifier") if ctx else None
+    if store is None or modifier is None or (ctx.get("origin") or "live") != "live":
+        return render_template("_status.html", message="No live chip is open.",
+                               level="warning"), 409
+    unit_id = (request.values.get("unit_id") or "").strip()
+    unit = None
+    for u in (ctx.get("undo_units") or []):
+        if u.get("id") == unit_id:
+            unit = u
+            break
+    if unit is None:
+        return render_template("_status.html",
+                               message="That change is no longer in the log.",
+                               level="warning"), 409
+    if (unit.get("meta") or {}).get("reverted_by"):
+        return render_template("_status.html",
+                               message="That change was already reverted.",
+                               level="warning"), 409
+
+    ents = list(reversed(unit.get("entries") or []))
+    ops = undo_journal.inverse_ops(unit)
+    gid = "alr:" + str(unit_id)
+    staged: list = []
+    with store._lock:
+        # ── CAS pre-check under the same lock hold as the staging, so nothing
+        # can move between the check and the write (the advisory-then-recheck
+        # split in the autofit writer exists because it releases the lock).
+        merged = store.merged
+        for e in ents:
+            if e.get("created") or e.get("deleted"):
+                continue           # structural ops: inverse_ops handles them
+            try:
+                cur = resolve_field_target(merged, e["path"]).get("resolved_value")
+            except Exception:      # noqa: BLE001 — unreadable == moved
+                cur = None
+            if not edit_policy.cas_equal(cur, e.get("new")):
+                return render_template(
+                    "_status.html", level="warning",
+                    message=(f"Not reverted — {e['path']} has changed since "
+                             f"(now {_fmt_val(cur)}, this change wrote "
+                             f"{_fmt_val(e.get('new'))}). Nothing was written.")
+                ), 409
+
+        _redo_begin(ctx, store)
+        try:
+            for (op, path, value, _src) in ops:
+                if op == "delete":
+                    staged.append(modifier.delete_subtree(path, group_id=gid))
+                elif op == "create":
+                    staged.append(modifier.create_subtree(path, value, group_id=gid))
+                else:
+                    # coerce=False: restore the historical value VERBATIM
+                    staged.append(modifier.set_value(path, value, coerce=False,
+                                                     group_id=gid))
+        except Exception as exc:   # noqa: BLE001 — all-or-nothing
+            for _ in staged:
+                try:
+                    modifier.undo()
+                except Exception:
+                    logger.warning("applied-log revert rollback lagged",
+                                   exc_info=True)
+                    break
+            _invalidate_engine_cache()
+            return render_template(
+                "_status.html", level="error",
+                message=f"Revert failed, nothing changed: {exc}"), 409
+
+    # Mark the row so it renders reverted instead of inviting a second revert.
+    try:
+        meta_patch = {"reverted_by": gid}
+        path = undo_journal.sidecar_path(current_app.instance_path, ctx["path"])
+        ctx["undo_units"] = undo_journal.mark_unit(path, unit_id, meta_patch)
+        ctx["undo_cursor"] = min(int(ctx.get("undo_cursor") or 0),
+                                 len(ctx["undo_units"]))
+    except Exception:
+        logger.warning("applied-log mark failed", exc_info=True)
+
+    _redo_mark(ctx, store)
+    _invalidate_engine_cache()
+    anchor = ents[-1] if ents else {"path": "?"}
+    resp = make_response(_tray_html())
+    resp.headers["HX-Trigger"] = json.dumps({
+        "cellsReverted": {
+            "message": (f"Reverted: {anchor['path']}"
+                        + (f" (+{len(ents) - 1} more)" if len(ents) > 1 else "")),
+            "entries": [
+                {"dot_path": e.dot_path, "old_value_str": _fmt_val(e.old_value),
+                 "created": e.created, "deleted": e.deleted,
+                 "source_file": e.source_file}
+                for e in staged
+            ],
+        },
+        "pulses-changed": True,
+        "diagnostics-changed": True,
+    })
+    return resp
+
+
+# ======================================================================
 # Live-state sync / apply (working-copy <-> live chip)
 # ======================================================================
 
@@ -10804,13 +11092,18 @@ def state_apply_to_live():
     store = ctx["store"]
     saver = ctx["saver"]
     force = request.values.get("force") == "1"
+    # docs/117: an armed session turns THIS route into the auto-apply writer.
+    # It is still the only thing that writes live; the session just presses it.
+    _auto = _auto_apply_state(ctx)
 
     # Stash the edits before save() clears the change log, so if this hits a
     # staleness conflict the subsequent pull can re-apply or stage them. Pin to
     # the captured ctx so a concurrent /load can't divert the stash to another chip.
     with store._lock:
         _stash_reapply(_capture_change_log_as_updates(store), ctx)
-        _jrn_units = _journal_prepare(store, ctx)   # docs/107: outgoing log
+        _jrn_units = _journal_prepare(          # docs/107: outgoing log
+            store, ctx,
+            meta={"src": "auto", "at": time.time()} if _auto else None)
 
     if store.change_log:
         try:
@@ -10843,44 +11136,62 @@ def state_apply_to_live():
     # docs/20 v2 "Revert last apply": capture the PRE-apply live content.
     # audit-r10: ctx-pinned + content-matched fallback (see the sync twin —
     # "newest snapshot" is wrong after an A-B-A revert cycle).
-    pre_apply_ts = None
-    try:
-        _hm = _history()
-        _pre = _hm.check_and_snapshot(
-            ctx["path"], "auto",
-            defer_index=not current_app.config.get("TESTING"),
-            project=_scope_for(ctx["path"], ctx))
-        if _pre is not None:
-            pre_apply_ts = _pre.timestamp
-        else:
-            pre_apply_ts = _hm.snapshot_ts_for_current_content(ctx["path"])
-    except Exception:
-        logger.warning("Pre-apply snapshot failed", exc_info=True)
+    # docs/117: under auto-apply the anchor is the SESSION, not the flush —
+    # "revert last apply" means "put back what the chip held when I armed it"
+    # (the user's own choice; per-change revert is the applied log's X). Taking
+    # it once is also what stops a 10-minute session writing 200 full snapshots.
+    pre_apply_ts = (_auto or {}).get("pre_ts")
+    if not pre_apply_ts:
+        try:
+            _hm = _history()
+            _pre = _hm.check_and_snapshot(
+                ctx["path"], "auto",
+                defer_index=not current_app.config.get("TESTING"),
+                project=_scope_for(ctx["path"], ctx))
+            if _pre is not None:
+                pre_apply_ts = _pre.timestamp
+            else:
+                pre_apply_ts = _hm.snapshot_ts_for_current_content(ctx["path"])
+        except Exception:
+            logger.warning("Pre-apply snapshot failed", exc_info=True)
+        if _auto is not None and pre_apply_ts:
+            _auto["pre_ts"] = pre_apply_ts
 
     try:
         with _active_wc_lock(ctx):
             working_copy.apply_to_live(wc, force=force)
     except working_copy.StaleLiveError:
         # stash kept for the pull choice; staged_conflict — see the sync twin
-        return render_template(
+        body = render_template(
             "_state_apply_conflict.html",
             staged_conflict=bool(ctx.get("working_dirty"))
             and (bool(ctx.get("staged_base"))
                  or not ctx.get("pending_reapply")))
+        # docs/117: nothing was written (apply_to_live raises BEFORE its write)
+        # and the edit is safe in the working copy, but a background writer the
+        # user may have forgotten about must never keep pushing at a chip that
+        # moved. Disarm, and say so where they are looking.
+        return _auto_disarm_response(ctx, body, "conflict") if _auto else body
     except (OSError, ValueError) as exc:
         # docs/114 (#16): the read-only case fails HERE (the LIVE write), not
         # in the working-copy save — name it where it actually happens.
         _pd = ("the live folder is READ-ONLY (network share?) — "
                if getattr(exc, "errno", None) in (13, 1) else "")
-        return render_template("_status.html",
-                               message=f"Apply to live failed: {_pd}{exc}",
-                               level="error"), 500
+        _body = render_template("_status.html",
+                                message=f"Apply to live failed: {_pd}{exc}",
+                                level="error")
+        if _auto:
+            return _auto_disarm_response(ctx, _body, "error", status=500)
+        return _body, 500
     except Exception as exc:  # noqa: BLE001 — r16 6: honest message, never a dropped 500
         logger.exception("apply-to-live unexpected failure")
-        return render_template(
+        _body = render_template(
             "_status.html", level="error",
             message=f"Apply to live failed unexpectedly: "
-                    f"{type(exc).__name__}: {exc}"), 500
+                    f"{type(exc).__name__}: {exc}")
+        if _auto:
+            return _auto_disarm_response(ctx, _body, "error", status=500)
+        return _body, 500
 
     _set_working_dirty(False, ctx)
     ctx["staged_base"] = False   # the staged content reached live (audit-r10)
@@ -10900,13 +11211,31 @@ def state_apply_to_live():
         ctx.pop("last_apply", None)
     # Snapshot files + meta synchronously; only the SQLite indexing is deferred —
     # see the pull-apply path above for the full rationale.
-    try:
-        _history().check_and_snapshot(
-            ctx["path"], "save",
-            defer_index=not current_app.config.get("TESTING"),
-            project=_scope_for(ctx["path"], ctx))
-    except Exception:
-        logger.warning("History snapshot after apply failed", exc_info=True)
+    # docs/117: under auto-apply this would run once per edit — a full copy of
+    # state+wiring every few seconds. Throttled per session; the disarm route
+    # takes the unconditional closing one, so a session always ends captured.
+    _snap_now = True
+    if _auto is not None:
+        _last = float(_auto.get("last_snap") or 0.0)
+        _snap_now = (time.time() - _last) >= _AUTO_SNAPSHOT_MIN_S
+    if _snap_now:
+        try:
+            _history().check_and_snapshot(
+                ctx["path"], "save",
+                defer_index=not current_app.config.get("TESTING"),
+                project=_scope_for(ctx["path"], ctx))
+            if _auto is not None:
+                _auto["last_snap"] = time.time()
+        except Exception:
+            logger.warning("History snapshot after apply failed", exc_info=True)
+    if _auto is not None:
+        # The applied log IS the feedback; one success toast per edit would be
+        # noise the user cannot dismiss fast enough.
+        _auto["flushes"] = int(_auto.get("flushes") or 0) + 1
+        resp = make_response(_tray_html())
+        resp.headers["HX-Trigger"] = ("liveDriftChanged, stateHistoryChanged, "
+                                      "autoApplyApplied")
+        return resp
     toast = render_template(
         "_status.html", message="Applied to the live chip.", level="success")
     resp = make_response(_tray_html() + "\n"

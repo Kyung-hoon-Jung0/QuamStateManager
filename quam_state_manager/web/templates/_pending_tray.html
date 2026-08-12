@@ -8,6 +8,11 @@
         CURRENT tray always carries the current seq; a parked pane whose seq no
         longer matches is refetched, never restored stale. #}
      data-seq="{{ mutation_seq | default('') }}"
+     {# docs/117: the client owns no armed flag — it reads this attribute, which
+        the server stamps from the session. The pill below and the flusher
+        therefore cannot disagree, and F5 keeps the truth. #}
+     {% if auto_apply is defined and auto_apply %}data-auto-apply="1"
+     data-auto-since="{{ auto_apply.armed_at | default(0) }}"{% endif %}
      {% if oob is defined and oob %}hx-swap-oob="outerHTML:#pending-tray"{% endif %}>
 {% if live_readonly %}<span class="tray-ro-lock" title="The LIVE folder does not appear writable (read-only share?). Edits save to the working copy, but Apply to live will fail until the folder is writable.">&#128274;&nbsp;<span class="tray-ro-text">read-only</span></span>{% endif %}
 {# Persistent status badge — amber when the working copy has edits not yet on
@@ -49,14 +54,44 @@
   {# docs/115 (#14): the working-copy model, taught while the user is still
      forming it — shown from the first chip open until dismissed once. #}
   <span class="tray-teach" id="tray-teach" hidden>
+    {# docs/117: while auto-apply is ON this sentence would be FALSE — the
+       whole point of the mode is that leaving a field writes the chip. The
+       teaching follows the mode rather than contradicting it. #}
+    {% if auto_apply %}
+    <b>Auto-apply is ON:</b> leaving an edited field writes it straight to the
+    <b>live chip</b>. Every change is listed below and revertible with its <b>&#10005;</b>.
+    {% else %}
     <b>How this works:</b> edits stay in your <b>working state</b> (a private copy)
     until you press <b>Apply to live</b> — reversible with <b>&#8634; Revert last apply</b>.
+    {% endif %}
     <a href="/help" hx-get="/help" hx-target="#table-pane" hx-push-url="true">more&nbsp;&rarr;</a>
     <button type="button" class="tray-teach-x" onclick="window.dismissTrayTeach &amp;&amp; window.dismissTrayTeach()"
             aria-label="Got it">&#10005;</button>
   </span>
 {% endif %}
 {% if active_name and not _archive %}
+{# docs/117 — auto-apply. Pressing this IS the consent the covenant asks for:
+   one labelled act, no dialog (docs/104 #1). While armed it is deliberately
+   loud and permanent — a mode that changes what leaving a cell DOES may never
+   be quiet. Turning it off is the same button. #}
+{% if auto_apply %}
+<button type="button" class="auto-apply-pill auto-apply-on"
+        hx-post="/auto-apply/disarm" hx-target="#pending-tray" hx-swap="outerHTML"
+        title="Auto-apply is ON: leaving an edited field writes it to the live chip. Click to turn it off.">
+  &#9889; Auto-apply <b>ON</b>
+  {%- if auto_apply.flushes %} <span class="aa-count">{{ auto_apply.flushes }}</span>{% endif %}
+  <span class="aa-power">&#9211;</span></button>
+{% elif auto_apply_armable and auto_apply_armable[0] %}
+<button type="button" class="auto-apply-pill auto-apply-off"
+        hx-post="/auto-apply/arm" hx-target="#pending-tray" hx-swap="outerHTML"
+        title="Turn on auto-apply: after this, leaving an edited field writes it straight to the live chip (each change stays revertible).">
+  &#9889; Auto-apply
+  {%- if change_count > 0 %} <span class="aa-hint">(will apply {{ change_count }} pending)</span>{% endif %}
+</button>
+{% elif auto_apply_armable %}
+<span class="auto-apply-pill auto-apply-blocked" title="{{ auto_apply_armable[1] }}">
+  &#9889; Auto-apply</span>
+{% endif %}
 {# docs/20 v2 LiveEditUndo: one ↶ = one event, exactly mirrored in the Review
    list (staged undos swap this whole tray via /undo's response; un-staged
    fill undos leave it untouched — they were never in the change_log).
@@ -74,9 +109,16 @@
         hx-post="/state-history/{{ last_apply.pre_ts }}/stage?from=tray"
         hx-target="#status-bar" hx-swap="innerHTML"
         hx-confirm="Load the state as it was BEFORE your last Apply back into the working copy? You review it first — Apply to live completes the revert."
-        title="Revert last apply (done {{ last_apply.at }}) — stages the pre-apply state for review; nothing touches the live chip until you Apply.">
-  &#8634; Revert last apply</button>
+        title="{% if auto_apply %}Revert the whole auto-apply session — stages the state as it was when you turned auto-apply ON{% else %}Revert last apply (done {{ last_apply.at }}) — stages the pre-apply state for review; nothing touches the live chip until you Apply{% endif %}.">
+  {# docs/117: under an armed session the anchor IS the session (one snapshot,
+     taken at the first flush), so the label must not promise "the last one" —
+     per-change revert is the applied log's ✕. #}
+  &#8634; Revert {% if auto_apply %}this session{% else %}last apply{% endif %}</button>
 {% endif %}
+{# docs/117: the applied log is NOT inside the pending drawer — after a flush
+   there is nothing pending, which is precisely when this list is the only
+   feedback the user has. It takes its own row (flex-basis:100%). #}
+{% if auto_apply or applied_log %}{% include '_applied_log.html' %}{% endif %}
 {% if change_count > 0 or working_dirty %}
   <div class="tray-bar">
     {% if change_count > 0 %}

@@ -25,7 +25,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from quam_state_manager.core import working_copy
+from quam_state_manager.core import edit_policy, working_copy
 from quam_state_manager.core.autofit.synth import patch_path_to_dotted
 
 logger = logging.getLogger(__name__)
@@ -64,10 +64,10 @@ class WriteOutcome:
 
 
 def _values_equal(a, b) -> bool:
-    if isinstance(a, (int, float)) and isinstance(b, (int, float)) \
-            and not isinstance(a, bool) and not isinstance(b, bool):
-        return math.isclose(float(a), float(b), rel_tol=_REL_TOL, abs_tol=0.0)
-    return a == b
+    # docs/117: ONE comparator, shared with the applied-log revert. Kept as a
+    # module-level name because the doctrine block above and several call
+    # sites refer to it.
+    return edit_policy.cas_equal(a, b)
 
 
 def _current_value(chip: ChipHandle, dotted: str):
