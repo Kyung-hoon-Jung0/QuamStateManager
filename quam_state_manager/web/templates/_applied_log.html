@@ -1,0 +1,55 @@
+{% from '_delta_macros.html' import delta_chip %}
+{# docs/117 — the applied log: what auto-apply has written to the live chip in
+   this session, newest first, each row revertible on its own.
+
+   Source is the undo journal (docs/107), so this is not a second record of
+   "what did I change" — it is the same one, labelled. Rows survive a reload
+   because that journal is a per-chip sidecar on disk.
+
+   The ✕ has no confirm, for the same reason the tray's ✕ has none (docs/107:
+   recoverability is the license) and one stronger: the revert is
+   compare-and-swap guarded, so it refuses rather than clobbering when the
+   value moved since. #}
+<div id="applied-log" class="applied-log{% if not applied_log %} applied-log-empty{% endif %}">
+  <div class="applied-log-head">
+    <span class="applied-log-title">&#9889; Applied to live</span>
+    <span class="applied-log-count">{{ applied_log | length }}</span>
+    <button type="button" class="applied-log-toggle" onclick="window.AutoApply &amp;&amp; AutoApply.toggleLog(this)"
+            aria-label="Show or hide the applied log">&#9662;</button>
+  </div>
+  <div class="applied-log-list">
+    {% for r in applied_log %}
+    <div class="applied-log-row{% if r.reverted_by %} al-reverted{% endif %}"
+         data-unit-id="{{ r.id }}">
+      <div class="applied-log-vals">
+        {% set e0 = r.entries[-1] %}
+        <code class="tray-change-path" title="{{ e0.path }}">{{ e0.path }}</code>
+        {% if e0.created %}
+          <span class="change-added">+ added</span>
+        {% elif e0.deleted %}
+          <span class="change-deleted">&minus; deleted</span>
+        {% else %}
+          <span class="change-old">{{ e0.old | groupdigits }}</span>
+          <span class="tray-arrow">&rarr;</span>
+          <span class="change-new">{{ e0.new | groupdigits }}</span>
+          {{ delta_chip(e0.old, e0.new) }}
+        {% endif %}
+        {% if r.n > 1 %}<span class="applied-log-more">+{{ r.n - 1 }} more</span>{% endif %}
+      </div>
+      {% if r.reverted_by %}
+        <span class="applied-log-reverted" title="Already reverted">reverted</span>
+      {% else %}
+        <button type="button" class="outline btn-sm btn-al-revert"
+                hx-post="/auto-apply/revert"
+                hx-target="#pending-tray" hx-swap="outerHTML"
+                hx-vals='{"unit_id": "{{ r.id }}"}'
+                aria-label="Revert this applied change"
+                title="Put this change back. Compare-and-swap: if the value moved since, this refuses instead of overwriting.">&#10005;</button>
+      {% endif %}
+    </div>
+    {% endfor %}
+    {% if not applied_log %}
+    <div class="applied-log-none">Nothing applied yet in this session.</div>
+    {% endif %}
+  </div>
+</div>

@@ -19,6 +19,26 @@ family as docs/104 #1 (the Apply button needs no confirm — the labeled press
 IS the consent): consent = one explicit Apply act, no more (no dialogs), no
 less (no silent writes).
 
+### AMENDED 2026-08-12 by the user (docs/117)
+
+> 즉, auto apply를 함으로써 SM은 이제 사용자가 무언가를 변경하면 곧바로 state에
+> 적용되게 하는거지. … 값을 modify하고 그 셀을 나가기만 하면 곧바로 live에
+> 적용이 되는거야.
+
+**A direct live write happens only on an explicit Apply press OR inside a
+user-enabled auto-apply session** — default OFF, always visible while armed,
+and auto-disarmed the moment the chip refuses a write. The floor did not move:
+one explicit user act still stands between an edit and the live chip. What
+changed is its SCOPE — the act now authorizes a session rather than a single
+write, which is exactly what the user asked for and what the pill makes
+impossible to forget. Everything the old sentence protected is still true:
+nothing writes live silently, nothing forces over a chip that moved, and every
+applied change stays revertible (now individually, from the applied log).
+
+The journal itself is unchanged by the amendment: a journal step still only
+STAGES. Under an armed session that staged inverse is then flushed by the same
+`/state/apply-to-live` press-alike as everything else — one door, not two.
+
 ## What was actually the boundary
 
 The change log dies on **/save** (`saver.save()` clears it), not on apply —

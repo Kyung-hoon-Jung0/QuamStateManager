@@ -69,6 +69,9 @@
     <script src="{{ asset_url('wiring-grid.js') }}"></script>
     <script src="{{ asset_url('chip-status.js') }}"></script>
     <script src="{{ asset_url('bulk-edit.js') }}"></script>
+    {# docs/117: the auto-apply flusher — kept out of app.js so its
+       behaviour is testable in isolation under jsdom. #}
+    <script src="{{ asset_url('auto-apply.js') }}"></script>
     <script src="{{ asset_url('pair-edit.js') }}"></script>
     <script src="{{ asset_url('all-values.js') }}"></script>
     <script src="{{ asset_url('pulses.js') }}"></script>

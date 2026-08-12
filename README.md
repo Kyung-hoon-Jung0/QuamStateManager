@@ -14,12 +14,19 @@ SM never edits your instrument's files behind your back. Three objects, one rule
 | **Working state** | your private editable copy — every edit lands here first |
 | **Snapshot** | an immutable timestamped archive (State History) you can roll back to |
 
-**The rule:** the live chip is written **only** when you press **Apply to live** —
-one explicit press, never a dialog-chain, never automatically. And that press is
-reversible: SM snapshots the pre-apply live first, so **↺ Revert last apply** is
-always there. Everything else (typing, filling, pasting, undo, redo, staging a
-snapshot, loading a run's state) stages into the working state, listed in the
-Review tray at the bottom of the window.
+**The rule:** the live chip is written **only** when you press **Apply to live**
+— one explicit press, never a dialog-chain, never behind your back. And that
+press is reversible: SM snapshots the pre-apply live first, so **↺ Revert last
+apply** is always there. Everything else (typing, filling, pasting, undo, redo,
+staging a snapshot, loading a run's state) stages into the working state, listed
+in the Review tray.
+
+**Auto-apply** (default OFF) is the one way to change that rule, and you turn it
+on yourself: press **⚡ Auto-apply** and from then on leaving an edited field
+writes it straight to the live chip. While it is on the pill says so on every
+page, every applied change is listed with its own **✕** to put it back, and the
+moment the chip changes underneath you (an experiment writing to it) SM stops,
+turns the mode off, and asks — it never overwrites a chip that moved.
 
 Consequences worth knowing:
 
