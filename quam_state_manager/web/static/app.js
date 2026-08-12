@@ -428,11 +428,22 @@ var INTERACTIVE_RENDER_BUDGET = 6;
 function _purgeInteractiveTile(div) {
     if (!div) return;
     try {
-        var inner = div.querySelector('.js-plotly-plot');
+        // docs/118: purge the tile's OWN plot node; falling back to the tile
+        // itself covers the narrow race where a prune lands mid-draw, before
+        // Plotly has added .js-plotly-plot — detaching that un-purged is what
+        // leaves dangling <defs>/clip-paths behind.
+        var inner = div.querySelector('.js-plotly-plot') || div.firstElementChild;
         if (inner && typeof Plotly !== 'undefined') Plotly.purge(inner);
     } catch (e) {}
     div.innerHTML = '';
     div.setAttribute('data-rendered', '0');
+    // docs/118: a purged tile that stayed in container._rendered inflated the
+    // budget, so the soft prune under-freed and the hard cap engaged early.
+    var host = div.closest && div.closest('[id$="interactive-container"]');
+    if (host && host._rendered) {
+        var at = host._rendered.indexOf(div);
+        if (at >= 0) host._rendered.splice(at, 1);
+    }
 }
 
 // Purge the least-recently-rendered OFFSCREEN tiles until within budget.
@@ -463,10 +474,33 @@ function _pruneInteractiveTiles(container) {
             excess--;
         }
     }
-    // Hard cap: too many visible-and-rendered tiles → drop the oldest regardless.
-    while (rendered.length > INTERACTIVE_RENDER_HARD_CAP) {
-        var old = rendered.shift();
-        if (old && old.getAttribute('data-rendered') === '1') _purgeInteractiveTile(old);
+    // Hard cap: too many rendered tiles at once → drop the oldest.
+    //
+    // docs/118: this used to purge the oldest tile "even if visible (it
+    // re-renders on the next observer tick)" — which it does NOT. An
+    // IntersectionObserver only fires on a threshold CROSSING, and an emptied
+    // tile keeps its min-height, so its intersection state never changes: the
+    // tile stays blank until the user scrolls it fully out and back in. Purging
+    // a visible tile is therefore purging it forever. Prefer offscreen tiles;
+    // if the cap is still exceeded by visible ones, re-arm the observer for the
+    // one we drop so it comes back on the next tick for real.
+    var guard = 0;
+    while (rendered.length > INTERACTIVE_RENDER_HARD_CAP && guard++ < 500) {
+        var idx = -1;
+        for (var k = 0; k < rendered.length; k++) {
+            if (rendered[k] && !rendered[k]._isVisible) { idx = k; break; }
+        }
+        if (idx < 0) idx = 0;                       // all visible — oldest goes
+        var old = rendered.splice(idx, 1)[0];
+        if (old && old.getAttribute('data-rendered') === '1') {
+            _purgeInteractiveTile(old);
+            if (old._isVisible && container._io) {
+                try {
+                    container._io.unobserve(old);
+                    container._io.observe(old);     // forces a fresh callback
+                } catch (e) {}
+            }
+        }
     }
 }
 // Explicit binding for the jsdom selfcheck (eval'd contexts don't hoist
@@ -7865,6 +7899,12 @@ window.switchDatasetTab = function(tabName, linkEl) {
         var c = panel.querySelector('[id$="interactive-container"]');
         var rid = c ? c.getAttribute('data-run-id') : null;   // uid string
         if (rid) loadDatasetInteractive(rid, panel);
+        // docs/118: tiles already rendered were drawn for the geometry they
+        // were last shown in. Re-showing the tab is exactly when that is wrong.
+        if (c) {
+            _observeInteractiveResize(c);
+            setTimeout(function() { window.resizeInteractiveTiles(c); }, 0);
+        }
     }
     // Lazy-load the Prev State diff the first time the tab is shown.
     if (tabName === 'prev') {
@@ -8053,6 +8093,15 @@ window.toggleFigureZoom = function(imgEl) {
  */
 function _h5Panel(el) {
     return (el && el.closest('.inspector-pinned-col, .inspector-current-col'))
+           // docs/118: a run opened as a FULL PAGE ("Open as a full page", or a
+           // /dataset/<uid> URL) renders into #table-pane, not the inspector.
+           // The old fallback then scoped every query below to a pane that does
+           // not contain the tabs, so switchDatasetTab set _dsActiveTab and
+           // changed NOTHING on screen: no tab ever switched and Interactive
+           // never loaded. The detail root that actually CONTAINS the link is
+           // the honest answer; the global fallback stays for callers that pass
+           // no element.
+           || (el && el.closest('#ds-detail-root, .dataset-detail'))
            || document.getElementById('inspector-pane');
 }
 
@@ -8227,6 +8276,10 @@ window.loadDatasetInteractive = function(runId, panel) {
             }, { rootMargin: '200px' });
             container._io = io;
             plots.forEach(function(p) { io.observe(p); });
+            // docs/118: attach the size watcher at BOTH mount points, so a
+            // container reached by any path (not just a tab click) tracks its
+            // own geometry.
+            _observeInteractiveResize(container);
         })
         .catch(function(e) {
             if (container._gen !== gen) return;
@@ -8290,6 +8343,10 @@ window.loadDatasetReplot = function(runId, panel, force) {
             }, { rootMargin: '200px' });
             container._io = io;
             plots.forEach(function(p) { io.observe(p); });
+            // docs/118: attach the size watcher at BOTH mount points, so a
+            // container reached by any path (not just a tab click) tracks its
+            // own geometry.
+            _observeInteractiveResize(container);
         })
         .catch(function(e) {
             if (container._gen !== gen) return;
@@ -8325,6 +8382,64 @@ window.setInteractiveCols = function(n, btn) {
         });
     }
 };
+
+/**
+ * docs/118: re-size every rendered interactive tile inside `scope`.
+ *
+ * Plotly fixes a plot's pixel size at draw time. These tiles are drawn once and
+ * then survive tab switches (CSS `hidden`), split-preset changes (clicking a
+ * sidebar menu collapses the split, base.html) and window resizes — none of
+ * which redrew them. Coming back therefore showed figures still sized for the
+ * geometry they were drawn in: squashed, clipped, or with a stranded modebar.
+ * `setInteractiveCols` was the ONLY caller of Plots.resize before this.
+ */
+window.resizeInteractiveTiles = function(scope) {
+    if (typeof Plotly === 'undefined') return;
+    var root = scope || document;
+    root.querySelectorAll('.ds-interactive-list .js-plotly-plot').forEach(function(el) {
+        if (!el.offsetParent) return;          // hidden — resizing it is a no-op
+        try { Plotly.Plots.resize(el); } catch (e) {}
+    });
+};
+
+/**
+ * docs/118: revive interactive markup that was round-tripped through a STRING.
+ *
+ * Pin & Browse serializes the pane (`clone.innerHTML`), and unpin / close-keep
+ * do `pane.innerHTML = otherCol.innerHTML` — after purging the live plots. What
+ * lands back in the DOM is therefore SVG with no Plotly instance behind it,
+ * still carrying `data-loaded="1"` on the container and `data-rendered="1"` on
+ * every tile. Those two flags are exactly what the loader and the tile fetcher
+ * check, so they refuse to rebuild: the figures look drawn, respond to nothing,
+ * and can never come back. Resetting the flags (and dropping the corpse markup)
+ * is what lets the ordinary lazy path draw them again.
+ */
+function _reviveInteractiveMarkup(root) {
+    if (!root || !root.querySelectorAll) return;
+    root.querySelectorAll('[id$="interactive-container"]').forEach(function(c) {
+        c.setAttribute('data-loaded', '0');
+        c._rendered = [];
+        if (c._io) { try { c._io.disconnect(); } catch (e) {} c._io = null; }
+        c._gen = (c._gen || 0) + 1;
+        if (c._ro) { try { c._ro.disconnect(); } catch (e) {} c._ro = null; }
+    });
+    root.querySelectorAll('.ds-interactive-plot').forEach(function(t) {
+        t.setAttribute('data-rendered', '0');
+        t.innerHTML = '';
+    });
+}
+window._reviveInteractiveMarkup = _reviveInteractiveMarkup;
+
+/** docs/118: keep tiles matched to their container without polling. */
+function _observeInteractiveResize(container) {
+    if (!container || container._ro || typeof ResizeObserver === 'undefined') return;
+    var t = null;
+    container._ro = new ResizeObserver(function() {
+        clearTimeout(t);
+        t = setTimeout(function() { window.resizeInteractiveTiles(container); }, 120);
+    });
+    try { container._ro.observe(container); } catch (e) { container._ro = null; }
+}
 
 /**
  * Fetch one interactive figure's Plotly JSON and render it. Attaches the
@@ -8477,6 +8592,11 @@ function _resolveExperimentPath(experimentName, qubitName) {
 }
 
 function _attachPlotClickHandler(plotDiv) {
+    // docs/118: clearing first is what makes a re-render idempotent. Without
+    // it, any path that draws into the SAME node twice (Plotly.react) leaves two
+    // handlers, and one click stages the edit twice. ndview.js has done this
+    // since docs/67; the interactive tiles never did.
+    try { if (plotDiv.removeAllListeners) plotDiv.removeAllListeners('plotly_click'); } catch (e) {}
     plotDiv.on('plotly_click', function(eventData) {
         if (!eventData || !eventData.points || !eventData.points.length) return;
         var pt = eventData.points[0];
@@ -10436,6 +10556,7 @@ window.unpinDataset = function() {
         if (window.Plotly) pane.querySelectorAll('.js-plotly-plot')
             .forEach(function (p) { try { Plotly.purge(p); } catch (e) {} });
         pane.innerHTML = currentCol.innerHTML;
+        _reviveInteractiveMarkup(pane);     // docs/118: the plots above are gone
         _activatePinnedPane(pane);
     }
 };
@@ -10461,6 +10582,7 @@ function _closeCurrentKeepPinned() {
     if (window.Plotly) pane.querySelectorAll('.js-plotly-plot')
         .forEach(function (p) { try { Plotly.purge(p); } catch (e) {} });
     pane.innerHTML = tmp.innerHTML;
+    _reviveInteractiveMarkup(pane);         // docs/118
     _activatePinnedPane(pane);
 }
 
@@ -10582,6 +10704,7 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     var pane = document.getElementById('inspector-pane');
     if (pane) {
         pane.innerHTML = _wrapPinnedLayout(window._pinnedHtml, evt.detail.serverResponse);
+        _reviveInteractiveMarkup(pane);     // docs/118: the pinned half is a string
         // innerHTML skips <script> execution + htmx wiring, so without this the
         // browsed (right) column's Raw Data tab (hx-trigger container) never
         // activates and spins "Loading data files…" forever — the inert-column bug.

@@ -11,6 +11,7 @@ Provides:
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -280,7 +281,8 @@ class Differ:
                 {"label": label, "value": ctx.parameters.get(key)}
                 for ctx, label in zip(contexts, labels)
             ]
-            differs = _has_difference(values)
+            # docs/118: this surface had no tolerance while every sibling did
+            differs = _has_difference(values, tolerance=CMP_TOLERANCE)
             if differs or include_equal:
                 rows.append({"key": key, "values": values,
                              "same": not differs})
@@ -321,7 +323,7 @@ class Differ:
                 for ctx, label in zip(contexts, labels):
                     qvals = ctx.fit_results.get(qubit, {})
                     values.append({"label": label, "value": qvals.get(prop)})
-                if _has_difference(values):
+                if _has_difference(values, tolerance=CMP_TOLERANCE):
                     rows.append({"qubit": qubit, "property": prop, "values": values})
         return rows
 
@@ -359,6 +361,52 @@ def _is_number(x: Any) -> bool:
     return isinstance(x, (int, float)) and not isinstance(x, bool)
 
 
+# docs/118: the tolerance the RUN-comparison surfaces use. Its siblings
+# already had one (/chip-compare 1e-9, Differ.diff 1e-12) and this path did
+# not, so sub-ppb float noise between two runs was a "difference" here and
+# nowhere else.
+CMP_TOLERANCE = 1e-9
+
+
+def compare_equal(a: Any, b: Any, tolerance: float | None = CMP_TOLERANCE) -> bool:
+    """Are these two values the SAME for the purpose of a run comparison?
+
+    docs/118: this is the one rule. It used to live in two places that
+    disagreed — a server-side row verdict (exact, plus a type check) and a
+    template expression (`v.value != ref_val`, exact, no type check) — so a
+    row could be listed as a difference with no cell highlighted, and vice
+    versa. Both now call this.
+
+    Three deliberate answers:
+
+    * **NaN equals NaN.** `float('nan') != float('nan')` is true in Python, so
+      a fit that failed in BOTH runs was reported as a difference — on a
+      surface whose header says it shows differences only. Two failures are
+      not a change.
+    * **int vs float is not a difference.** `100` and `100.0` are the same
+      measurement stored differently (docs/76 says the same thing when it
+      renders "same numeric value (stored type differs)").
+    * **numbers compare with a relative tolerance**, like every sibling
+      surface; `tolerance=None` restores exact comparison for callers that
+      want it.
+    """
+    a_num = _is_number(a)
+    b_num = _is_number(b)
+    if a_num and b_num:
+        fa, fb = float(a), float(b)
+        if math.isnan(fa) and math.isnan(fb):
+            return True                 # both failed — not a change
+        if math.isnan(fa) or math.isnan(fb):
+            return False
+        if tolerance is None:
+            return fa == fb
+        return abs(fa - fb) <= max(tolerance * max(abs(fa), abs(fb)),
+                                   _TOLERANCE_ABS_FLOOR)
+    if a_num != b_num:
+        return False
+    return a == b
+
+
 def _has_difference(values: list[dict[str, Any]],
                     *, tolerance: float | None = None) -> bool:
     """Return True if at least one value in the list differs from the others.
@@ -374,17 +422,20 @@ def _has_difference(values: list[dict[str, Any]],
     first = concrete[0]
     for val in concrete[1:]:
         if tolerance is not None and _is_number(first) and _is_number(val):
-            a, b = float(first), float(val)
-            if abs(a - b) > max(tolerance * max(abs(a), abs(b)),
-                                _TOLERANCE_ABS_FLOOR):
+            if not compare_equal(first, val, tolerance):
+                return True
+            continue
+        # docs/118: even on the exact path, two NaNs are not a difference and
+        # int-vs-float alone is not one either — that pair used to produce a
+        # row in the differences list with NO cell highlighted, because the
+        # template compared values only.
+        if _is_number(first) and _is_number(val):
+            if not compare_equal(first, val, None):
                 return True
             continue
         if type(first) is not type(val):
             return True
-        if isinstance(first, float) and isinstance(val, float):
-            if first != val:
-                return True
-        elif first != val:
+        if first != val:
             return True
     if len(concrete) != len(values):
         return True

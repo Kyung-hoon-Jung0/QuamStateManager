@@ -64,7 +64,10 @@
             <td><code>{{ row.property }}</code></td>
             {% set ref_val = row["values"][ref_idx].value %}
             {% for v in row["values"] %}
-            {% set is_diff = (loop.index0 != ref_idx) and (v.value != ref_val) %}
+            {# docs/118: ONE rule, shared with the server-side row verdict —
+               NaN vs NaN is not a change, int vs float is not a change, and
+               numbers compare with the surface tolerance. #}
+            {% set is_diff = (loop.index0 != ref_idx) and not cmp_equal(v.value, ref_val) %}
             <td{% if is_diff %} class="cell-diff"{% endif %}>
                 {% if v.value is none %}<span class="muted">-</span>
                 {% elif v.value is number and (v.value | abs >= 1e6 or (0 < v.value | abs < 1e-3)) %}{{ "%.6e" | format(v.value) }}
@@ -110,11 +113,15 @@
             <td><code>{{ row.key }}</code></td>
             {% set ref_val = row["values"][ref_idx].value %}
             {% for v in row["values"] %}
-            {% set is_diff = (loop.index0 != ref_idx) and (v.value != ref_val) %}
+            {# docs/118: ONE rule, shared with the server-side row verdict —
+               NaN vs NaN is not a change, int vs float is not a change, and
+               numbers compare with the surface tolerance. #}
+            {% set is_diff = (loop.index0 != ref_idx) and not cmp_equal(v.value, ref_val) %}
             <td{% if is_diff %} class="cell-diff"{% endif %}>
                 {% if v.value is none %}<span class="muted">-</span>
                 {% elif v.value is number %}{{ "%.4g" | format(v.value) }}
-                {% elif v.value is iterable and v.value is not string %}<small class="muted">[{{ v.value | length }} items]</small>
+                {% elif v.value is iterable and v.value is not string %}<small class="muted"
+                    title="{{ v.value | tojson | truncate(300) }}">[{{ v.value | length }} items]</small>
                 {% else %}{{ v.value }}{% endif %}
                 {# docs/76: how far this run sits from the reference run #}
                 {% if is_diff %}{{ delta_chip(ref_val, v.value) }}{% endif %}
