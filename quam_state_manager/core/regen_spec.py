@@ -97,6 +97,49 @@ def _resolve_ptr(root: dict, ptr: Any, _depth: int = 0) -> Any:
     return node
 
 
+def qubit_ref_name(root: dict, ref: Any) -> str:
+    """The QUBIT NAME a pair's control/target reference points at.
+
+    docs/118: this used to be ``str(ref).split("/")[-1]``, which is correct only
+    for a ONE-hop ``#/qubits/qX``. A chip built by a modern quam_builder stores
+    the reference as a TWO-hop pointer through wiring —
+    ``#/wiring/qubit_pairs/q1-2/c/control_qubit`` -> ``#/qubits/q2`` — so the
+    bare split returned the literal field name ``control_qubit``. Every pair was
+    then dropped from the reconstructed spec as "references qubit(s) not on this
+    chip", populate.pairs came back empty, and every pair's calibration landed in
+    residual_lost: a REBUILD THAT SILENTLY LOST 9 PAIRS' WORTH OF VALUES while
+    reporting success (measured on a real 10-qubit chip: 1,878 pair leaves in the
+    source, 774 after the rebuild).
+
+    Follows the chain with the module's own resolver and takes the last segment
+    of the FINAL pointer, so a one-hop chip behaves exactly as before.
+    """
+    if not isinstance(ref, str) or not ref:
+        return ""
+    # One hop at a time: `_resolve_ptr` follows the whole chain and hands back
+    # the VALUE (here, the qubit dict), which cannot tell us the qubit's NAME.
+    # What we need is the last POINTER in the chain.
+    def _hop(ptr: str) -> Any:
+        node: Any = root
+        for seg in ptr[2:].split("/"):
+            if isinstance(node, dict) and seg in node:
+                node = node[seg]
+            else:
+                return None
+        return node
+
+    cur = ref
+    for _ in range(4):                      # a pair ref is 1-2 hops in practice
+        if not cur.startswith("#/"):
+            break
+        nxt = _hop(cur)
+        if isinstance(nxt, str) and nxt.startswith("#/"):
+            cur = nxt                       # another pointer — keep going
+            continue
+        break                               # resolved to a value (or nothing)
+    return cur.split("/")[-1]
+
+
 def _num(v: Any) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
@@ -113,14 +156,14 @@ def _populate_pair_key(pid: str, pair: dict, root: dict) -> str:
     pair list (state refs first, coupler-channel wiring refs as fallback);
     the raw name only when neither resolves.
     """
-    ctrl = str(pair.get("qubit_control", "")).split("/")[-1]
-    tgt = str(pair.get("qubit_target", "")).split("/")[-1]
+    ctrl = qubit_ref_name(root, pair.get("qubit_control"))
+    tgt = qubit_ref_name(root, pair.get("qubit_target"))
     if not (ctrl and tgt):
         wp = ((root.get("wiring") or {}).get("qubit_pairs") or {}).get(pid)
         c = wp.get("c") if isinstance(wp, dict) else None
         if isinstance(c, dict):
-            ctrl = ctrl or str(c.get("control_qubit", "")).split("/")[-1]
-            tgt = tgt or str(c.get("target_qubit", "")).split("/")[-1]
+            ctrl = ctrl or qubit_ref_name(root, c.get("control_qubit"))
+            tgt = tgt or qubit_ref_name(root, c.get("target_qubit"))
     return f"{ctrl}-{tgt}" if ctrl and tgt else pid
 
 
@@ -309,7 +352,7 @@ def _extract_populate(state: dict, root: dict) -> dict:
             # Explicit-null / pointer-string xy and operations are real
             # serializations — the type guards (not dict.get defaults) are
             # what keep a sparse chip from 500-ing the Re-generate wizard.
-            tgt_name = str(pair.get("qubit_target", "")).split("/")[-1]
+            tgt_name = qubit_ref_name(root, pair.get("qubit_target"))
             tq = (state.get("qubits") or {}).get(tgt_name)
             txy = tq.get("xy") if isinstance(tq, dict) else None
             txy_ops = (txy.get("operations") or {}) if isinstance(txy, dict) else {}
@@ -491,17 +534,23 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
     cr_total = 0                 # CR lines seen / sharing the control xy port
     cr_shared = 0
     wire_pairs = wire.get("qubit_pairs") or {}
+    # docs/118: a pair's control/target can be a TWO-hop pointer through wiring
+    # (#/wiring/qubit_pairs/<p>/c/control_qubit -> #/qubits/qX), so naming the
+    # qubit needs the MERGED document — same shape as the `merged` built further
+    # down for populate.
+    root = dict(state)
+    root["wiring"] = wiring.get("wiring", {})
     for pid, p in (state.get("qubit_pairs") or {}).items():
         if not isinstance(p, dict):
             continue
-        ctrl = str(p.get("qubit_control", "")).split("/")[-1]
-        tgt = str(p.get("qubit_target", "")).split("/")[-1]
+        ctrl = qubit_ref_name(root, p.get("qubit_control"))
+        tgt = qubit_ref_name(root, p.get("qubit_target"))
         wp = wire_pairs.get(pid, {}) if isinstance(wire_pairs.get(pid), dict) else {}
         c = (wp.get("c") or {}) if isinstance(wp, dict) else {}
         if not ctrl:
-            ctrl = str(c.get("control_qubit", "")).split("/")[-1]
+            ctrl = qubit_ref_name(root, c.get("control_qubit"))
         if not tgt:
-            tgt = str(c.get("target_qubit", "")).split("/")[-1]
+            tgt = qubit_ref_name(root, c.get("target_qubit"))
         if not (ctrl and tgt):
             notes.append(f"pair {pid!r}: could not read control/target qubits")
             continue
