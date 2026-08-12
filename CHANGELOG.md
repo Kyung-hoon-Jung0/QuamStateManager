@@ -261,7 +261,7 @@ One thing, done everywhere: the app now speaks a single search grammar. Users ke
 - Found by the same audit and fixed: the global search's category tabs re-issued the query unencoded, so a search containing `&`, `+` or `#` silently broke
 - Second pass, same day: the grammar reached every remaining surface — the global search index, `/pulses`, the param-history typeahead (whose whole-query SQL `LIKE` made a multi-word query structurally unable to hit), the scheduler library filter and the dataset sort-key filters — and the two measured drifts between the Datasets and sidebar parsers were closed (commas now split on both; the negation guard shares one shape, with the remaining difference named as capability, not grammar). Every surface was verified in a real browser on real chips
 
-## v0.9.7 (2026-08-11)
+## v0.9.7 (2026-08-12)
 
 The everyday flow. This release is about the twenty small frictions a user hits
 between opening a chip and applying a value — the ones that never made a bug
@@ -327,7 +327,7 @@ route 200 with no traceback). Search lands in 8-60 ms on both grids and
 15-193 ms on a fully expanded 18,310-node tree. Full suite at the documented
 Windows environmental baseline, no new failures.
 
-## v0.9.8 (2026-08-12)
+### Apply to chip reaches the chip (docs/116)
 
 One press of **Apply to chip** now reaches the live chip in the situation it
 usually fails in.
@@ -368,7 +368,7 @@ its dialog — it has no prose beside it to name what disappears.
   live-write suites pass, with four new pins covering the no-op apply, a real
   difference still conflicting, the in-place continuation, and the single ask
 
-## v0.9.9 (2026-08-12)
+### Auto-apply (docs/117)
 
 **Auto-apply.** Several labs asked for a VS-Code-style auto-save, and this
 release changes SM's rule to allow it — deliberately, and only when you turn it
