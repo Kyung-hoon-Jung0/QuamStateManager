@@ -529,6 +529,10 @@ def _refresh_live_diverged(ctx) -> None:
     try:
         if working_copy.live_diverged_now(wc):
             ctx["live_diverged"] = True
+            # docs/116: this escalation carries no count of its own, and a
+            # count left from an EARLIER divergence would be printed as if it
+            # described this one. None => the banner says nothing (docs/87).
+            ctx.pop("live_drift_count", None)
     except Exception:   # noqa: BLE001 — a probe failure must never break a render
         logger.debug("live-diverged re-check failed", exc_info=True)
     finally:
@@ -783,6 +787,7 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict, *,
                 ctx["wiring_json"] = json.dumps(store.wiring)
                 ctx["working_dirty"] = False
                 ctx["live_diverged"] = False
+                ctx.pop("live_drift_count", None)   # docs/116
             engine = ctx.get("engine")
             if engine:
                 engine.invalidate_cache()
@@ -1262,6 +1267,7 @@ def _rebuild_after_working_copy_replaced(ctx: dict) -> None:
     _invalidate_engine_cache()
     ctx["working_dirty"] = False
     ctx["live_diverged"] = False
+    ctx.pop("live_drift_count", None)   # docs/116: the count dies with the verdict
     # audit-r10: a wholesale replace resolves any prior staged base (a pull
     # consumed it; a fresh stage re-sets the flag right after this call).
     ctx["staged_base"] = False
@@ -10746,6 +10752,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False):
     ctx["staged_base"] = False   # the staged content reached live (audit-r10)
     _clear_reapply(ctx)  # edits are on the live chip now — nothing left to re-apply
     ctx["live_diverged"] = False  # live now holds the merged working content
+    ctx.pop("live_drift_count", None)   # docs/116
     _reset_baseline_after_apply(ctx)  # the user's own change isn't "live drift"
     if pre_apply_ts:
         ctx["last_apply"] = {
@@ -10879,6 +10886,7 @@ def state_apply_to_live():
     ctx["staged_base"] = False   # the staged content reached live (audit-r10)
     _clear_reapply(ctx)  # the edits are now on the live chip — nothing left to re-apply
     ctx["live_diverged"] = False  # live now holds the working content (incl. force)
+    ctx.pop("live_drift_count", None)   # docs/116
     _reset_baseline_after_apply(ctx)  # the user's own change isn't "live drift"
     if pre_apply_ts:
         ctx["last_apply"] = {
@@ -16445,18 +16453,23 @@ def dataset_load_state(uid):
             return resp
         if status == "conflict":
             # The live chip moved since it was loaded — the snapshot is STAGED
-            # (safe), and the honest conflict tray offers the real choices
-            # (docs/65 staged_conflict: overwrite-live or pull-and-discard).
-            # Never force-push over a live chip that changed under us.
+            # (safe) and live was NOT written; docs/108 never force-pushes over
+            # a chip that changed under us.
+            #
+            # docs/116: that verdict used to arrive as a one-line warning
+            # pointing at the TOP BAR, and the tray it pointed at asks the
+            # question of a different flow ("choose which side wins" — whose
+            # ↓ option discards the run the user had just chosen). One press
+            # therefore became: read a warning, go find the tray, pick from
+            # choices that misdescribe the situation, then answer a native
+            # confirm. The continuation now renders in #ds-load-state-result
+            # — where the button was — and offers the choice the press meant.
+            # The tray still swaps OOB so the two surfaces cannot disagree.
             tray = (body.get("tray_html") or "").replace(
                 '<div id="pending-tray"',
                 '<div id="pending-tray" hx-swap-oob="outerHTML"', 1)
-            msg = render_template(
-                "_status.html",
-                message=(f"Run #{run_id}'s state is staged, but the live chip "
-                         "changed since it was loaded — resolve in the top "
-                         "bar (your staged state is safe)."),
-                level="warning")
+            msg = render_template("_ds_apply_conflict.html",
+                                  run_id=run_id, chip_label=chip_label)
             resp = make_response(msg + "\n" + tray)
             resp.headers["HX-Trigger"] = "pulses-changed, stateRestored, diagnostics-changed"
             return resp

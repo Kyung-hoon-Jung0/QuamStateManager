@@ -643,6 +643,42 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False) -> None:
             except OSError:
                 stale = False   # unreadable live → let the write path surface it
         if stale:
+            # docs/116: `stale` answers "did live move away from OUR sync
+            # point?" — but the question this gate refuses on behalf of is
+            # "would this write DESTROY someone else's write?". When the live
+            # chip already holds exactly the content we are about to write,
+            # the answer is provably no: the write is a no-op.
+            #
+            # That is the ORDINARY case for the docs/108 "Apply to chip"
+            # button, not an edge case — the run whose snapshot is being
+            # applied is usually the very program that last wrote the live
+            # chip, so live differs from our older sync point while being
+            # identical to the payload. Refusing there asked the user to
+            # resolve a conflict between a value and itself, and the tray it
+            # sent them to offered to discard the run they had just chosen.
+            # `reconcile_with_live` has had this identical-content adopt
+            # since docs/28; `apply_to_live` never grew its twin.
+            adopted = False
+            try:
+                l_state, l_wiring = safe_io.read_state_wiring(wc.live_folder)
+                live_hash = content_hash(l_state, l_wiring)
+                w_state, w_wiring = safe_io.read_state_wiring(wc.working_folder)
+                if content_hash(w_state, w_wiring) == live_hash:
+                    st_mt, wi_mt = safe_io.state_wiring_mtimes(wc.live_folder)
+                    # Advance the sync point to what live ALREADY holds. Meta
+                    # first, exactly like the write path below: a failed meta
+                    # write must never leave memory ahead of disk.
+                    wc._write_meta_pair(st_mt, wi_mt, live_hash)
+                    wc.synced_state_mtime = st_mt
+                    wc.synced_wiring_mtime = wi_mt
+                    wc.synced_live_hash = live_hash
+                    adopted = True
+            except OSError:
+                adopted = False     # unreadable → fall through and refuse
+            if adopted:
+                logger.info("Apply to live was a no-op (live already holds "
+                            "this content): %s", wc.live_folder)
+                return
             raise StaleLiveError(
                 "The live state files changed since they were loaded or synced."
             )

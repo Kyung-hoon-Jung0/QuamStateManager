@@ -160,10 +160,70 @@ class TestOneClickApply:
         r = c.post(f"/dataset/{uid}/load-state?apply=1")
         assert r.status_code == 200
         html = r.data.decode()
-        assert "staged state is safe" in html
+        assert "is safe" in html
         assert "pending-tray-conflict" in html      # the honest tray, OOB
         assert _live_off(env) == 0.5, "a drifted live chip is never clobbered"
         assert _ctx(env)["working_dirty"]
+
+    def test_conflict_answers_where_the_press_happened(self, env):
+        """docs/116: the verdict used to be a one-liner pointing at the top
+        bar, and the tray it pointed at asked a DIFFERENT flow's question
+        (\"choose which side wins\", whose down-choice discards the run just
+        chosen). The continuation now renders in place, names the run, and
+        offers the choice the press actually meant."""
+        c = env["client"]
+        root = env["tmp"] / "data"
+        _seed_run(root, 44, _state(off_a=0.076))
+        uid = _uid(env, root, 44)
+        _write_chip(env["live"], _state(off_a=0.5))
+        html = c.post(f"/dataset/{uid}/load-state?apply=1").data.decode()
+
+        assert "ds-apply-conflict" in html            # rendered in place
+        assert "Apply run #44 over live" in html      # the one continuation
+        assert "/state/apply-to-live?force=1" in html
+        assert "Leave live as it is" in html
+        assert "Review changes" in html
+        # the panel IS the confirmation - no native dialog stacked on top.
+        # (Scoped to the PANEL: the OOB tray below keeps its own confirm,
+        # which docs/86 requires of a force button that has no prose.)
+        panel = html.split('<div id="pending-tray"')[0]
+        assert 'hx-confirm=' not in panel
+        # and it still refuses to write by itself
+        assert _live_off(env) == 0.5
+
+    def test_apply_that_changes_nothing_is_not_a_conflict(self, env):
+        """docs/116 (the root cause): the staleness gate answered \"did live
+        move away from our sync point?\" when the question it refuses on
+        behalf of is \"would this write DESTROY something?\". Applying a run
+        whose snapshot the live chip ALREADY holds - the ordinary case, since
+        that run is usually what last wrote the chip - was a conflict about a
+        value and itself."""
+        c = env["client"]
+        root = env["tmp"] / "data"
+        _seed_run(root, 45, _state(off_a=0.079))
+        uid = _uid(env, root, 45)
+        # live already holds exactly what the run would write, but its mtime
+        # (and content) moved away from the working copy's sync point
+        _write_chip(env["live"], _state(off_a=0.079))
+        html = c.post(f"/dataset/{uid}/load-state?apply=1").data.decode()
+
+        assert "pending-tray-conflict" not in html
+        assert "ds-apply-conflict" not in html
+        assert "now LIVE" in html
+        assert _live_off(env) == 0.079
+        assert not _ctx(env)["working_dirty"]
+
+    def test_a_real_difference_still_conflicts(self, env):
+        """The carve-out is identical-content ONLY: a live chip holding
+        DIFFERENT values is still never clobbered."""
+        c = env["client"]
+        root = env["tmp"] / "data"
+        _seed_run(root, 46, _state(off_a=0.076))
+        uid = _uid(env, root, 46)
+        _write_chip(env["live"], _state(off_a=0.31))
+        html = c.post(f"/dataset/{uid}/load-state?apply=1").data.decode()
+        assert "ds-apply-conflict" in html
+        assert _live_off(env) == 0.31
 
     def test_template_offers_both_buttons(self, env):
         c = env["client"]
@@ -176,3 +236,15 @@ class TestOneClickApply:
         assert "Apply to chip" in html
         assert "Stage only" in html
         assert "load-state?mode=archive" in html
+
+
+def test_gate_panels_ask_once_not_twice():
+    """docs/116: `_sh_confirm.html` is itself the confirmation - it names what
+    is lost and its button names the act. It carried an hx-confirm as well, so
+    one decision cost two answers (a native dialog on top of the panel the
+    user had just read and clicked)."""
+    from pathlib import Path
+    tpl = (Path(__file__).resolve().parent.parent / "quam_state_manager"
+           / "web" / "templates" / "_sh_confirm.html").read_text(encoding="utf-8")
+    assert 'hx-confirm=' not in tpl        # the ATTRIBUTE, not the word
+    assert "hx-post" in tpl and "action_label" in tpl      # still completable

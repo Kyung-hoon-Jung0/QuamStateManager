@@ -6149,6 +6149,13 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
     flex-wrap: wrap; gap: 0.4rem; padding: 0 1rem 0.6rem;
 }
 .tray-conflict-choices .tray-force-btn { margin-left: auto; opacity: 0.85; }
+/* docs/116: the dataset Apply-to-chip conflict answers in place. Same
+   error-tinted force button as the tray (one visual language for one act,
+   docs/86), but laid out as a sentence of choices rather than pushed to the
+   far edge - here it sits between Review and the way out. */
+.ds-apply-conflict .tray-conflict-choices { margin-top: .45rem; gap: .4rem; flex-wrap: wrap; }
+.ds-apply-conflict .tray-conflict-choices .tray-force-btn { margin-left: 0; opacity: 1; }
+.ds-apply-conflict-note { font-size: .82em; margin: .4rem 0 0; }
 
 /* ──────────────────────────────────────────────────────────────────
  * Param History dashboard

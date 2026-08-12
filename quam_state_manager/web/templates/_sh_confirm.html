@@ -8,6 +8,10 @@
     <p>{{ message }}</p>
     <button type="button" class="contrast btn-sm"
             hx-post="{{ action_url }}"
+            {# docs/116: NO hx-confirm. This panel is already the confirmation
+               — it names what is lost and its button names the act; the native
+               dialog on top asked the same question a second time. `confirm`
+               is still accepted (and ignored) so callers stay valid. #}
             hx-target="{{ target | default('#state-history-detail') }}" hx-swap="innerHTML"
-            hx-confirm="{{ confirm }}">{{ action_label }}</button>
+            >{{ action_label }}</button>
 </div>
