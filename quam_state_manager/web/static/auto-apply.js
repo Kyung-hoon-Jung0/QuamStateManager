@@ -67,8 +67,12 @@
     }
 
     function onTrayChanged() {
+        // A disarmed tray is the SERVER agreeing that the session is over —
+        // that, and only that, releases the stop. (Clearing it on a timer
+        // would re-open the window the disarm exists to close: a stale tray
+        // still carrying the attribute would schedule another write.)
+        if (!armed()) { _stopped = false; _queued = false; return; }
         if (_stopped) return;
-        if (!armed()) { _queued = false; return; }
         if (!pending()) { _queued = false; return; }
         flush();
     }
@@ -118,9 +122,10 @@
         // the session, so the client must stop scheduling even if a stale tray
         // still carries the attribute for one render.
         _disarm: function (reason) {
+            // Held until a tray renders WITHOUT the armed attribute (see
+            // onTrayChanged) — never released on a timer.
             _stopped = true;
             _queued = false;
-            setTimeout(function () { _stopped = false; }, 0);   // re-armable
             if (reason === 'conflict') {
                 toast('The live chip changed — auto-apply is OFF. '
                       + 'Choose how to resolve it.', 'warning');

@@ -31,4 +31,4 @@ def test_auto_apply_client_timing():
     res = subprocess.run([_node(), str(_SELFCHECK)], capture_output=True,
                          text=True, encoding="utf-8", timeout=120)
     assert res.returncode == 0, f"auto-apply selfcheck failed:\n{res.stdout}\n{res.stderr}"
-    assert res.stdout.count("  ok  ") >= 13, res.stdout
+    assert res.stdout.count("  ok  ") >= 14, res.stdout

@@ -111,6 +111,17 @@ function replaceTrayOuterHTML(attrs) {
   check('A11 and it says why', /auto-apply is OFF/i.test(
         w.document.getElementById('status-bar').textContent));
 
+  // 6b. the stop is released only by a tray that AGREES it is disarmed
+  replaceTrayOuterHTML({ 'data-auto-apply': '0', 'data-change-count': '1' });
+  await sleep(20);
+  const k = calls.length;
+  replaceTrayOuterHTML({ 'data-auto-apply': '1', 'data-change-count': '1' });
+  await sleep(30);
+  check('A14 re-arming after a disarmed render flushes again',
+        calls.length === k + 1, String(calls.length));
+  settle();
+  await sleep(20);
+
   // 7. the log collapse toggle persists (re-mount it: the outerHTML replace
   //    above wiped the tray's children, exactly as a real swap would)
   tray().innerHTML = '<div id="applied-log"><button class="applied-log-toggle"></button></div>';
