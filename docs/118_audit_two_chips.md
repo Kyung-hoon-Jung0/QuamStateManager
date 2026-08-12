@@ -136,7 +136,12 @@ CELL was highlighted (a bare `!=`). So:
 
 There is now one rule — `differ.compare_equal`, registered as a Jinja global so
 the highlight cannot drift from the verdict: NaN equals NaN, int-vs-float is not
-a change, numbers use the surface tolerance. List cells disclose their contents
+a change, numbers use the surface tolerance — and the two run-comparison callers
+pass that tolerance, which is what actually turns it on. The EXACT path stays
+exact: `/compare`'s "Exact" preset deliberately surfaces an int-vs-float type
+mismatch, and the first version of this fix widened it. The full suite caught
+that (`test_compare_hub_p0::test_exact_mode_unchanged_int_vs_float_differs`);
+the only thing exact mode gained is that two NaNs stopped being a difference. List cells disclose their contents
 on hover so a real difference cannot hide behind `[42 items]`.
 
 Verified on two real runs of the same experiment: 57 highlighted cells, **zero

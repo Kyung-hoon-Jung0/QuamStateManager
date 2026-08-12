@@ -425,17 +425,20 @@ def _has_difference(values: list[dict[str, Any]],
             if not compare_equal(first, val, tolerance):
                 return True
             continue
-        # docs/118: even on the exact path, two NaNs are not a difference and
-        # int-vs-float alone is not one either — that pair used to produce a
-        # row in the differences list with NO cell highlighted, because the
-        # template compared values only.
-        if _is_number(first) and _is_number(val):
-            if not compare_equal(first, val, None):
-                return True
+        # docs/118: two NaNs are never a difference — a fit that failed in BOTH
+        # runs is not a change, and `nan != nan` made it one. Everything else on
+        # the EXACT path is untouched: `tolerance=None` still means exact,
+        # including the int-vs-float type mismatch that /compare's "Exact"
+        # preset deliberately surfaces (pinned in test_compare_hub_p0).
+        if (_is_number(first) and _is_number(val)
+                and math.isnan(float(first)) and math.isnan(float(val))):
             continue
         if type(first) is not type(val):
             return True
-        if first != val:
+        if isinstance(first, float) and isinstance(val, float):
+            if first != val:
+                return True
+        elif first != val:
             return True
     if len(concrete) != len(values):
         return True

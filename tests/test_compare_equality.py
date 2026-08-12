@@ -69,8 +69,14 @@ class TestRowVerdict:
     def test_nan_pair_is_not_listed(self):
         assert self._differs([float("nan"), float("nan")]) is False
 
-    def test_int_float_pair_is_not_listed(self):
-        assert self._differs([100, 100.0]) is False
+    def test_int_float_pair_is_not_listed_on_the_surface_tolerance(self):
+        # The RUN-comparison surfaces pass CMP_TOLERANCE (that is the fix).
+        assert self._differs([100, 100.0], tolerance=CMP_TOLERANCE) is False
+
+    def test_exact_mode_still_means_exact(self):
+        """/compare's "Exact" preset deliberately surfaces an int-vs-float type
+        mismatch — docs/118 must not quietly widen it (test_compare_hub_p0)."""
+        assert self._differs([40, 40.0]) is True
 
     def test_a_real_change_still_is(self):
         assert self._differs([100, 101]) is True
