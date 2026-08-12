@@ -413,3 +413,33 @@ is recorded in `docs/107`, the module that quotes the covenant, and the README.
   session rather than "the last apply"
 - History does not flood: one pre-apply anchor per session and a throttled
   post-apply snapshot, instead of a full state copy per edit
+
+### Fixed by the two-chip audit and two customer reports (docs/118)
+
+Audited State load · Config generation · Live edit · Json tree view against two
+real chips (a 10-qubit / 9-tunable-coupler chip and a 21-qubit / 31-pair CR
+chip), 60 checks. The 21-qubit chip came back clean on all 31. Three real
+defects on the other, plus the two reports:
+
+- **Re-generate silently lost pair calibration.** A pair's control/target is a
+  pointer, and on a chip built by a modern `quam_builder` it is a TWO-hop
+  pointer through wiring. SM read only the last path segment, got the literal
+  field name, and dropped every pair from the reconstructed spec with a false
+  "references qubit(s) not on this chip" — while the build still reported
+  success. Measured: 1,878 pair leaves in the source, 774 in the rebuild. Now
+  9/9 pairs, all nine CZ macro variants preserved, and 98% of pair leaves
+  carried; the rebuilt chip loads and generates its config
+- **A capped list looked like a total.** The transparency panel counted a
+  200-entry slice, so a rebuild that lost 1,104 leaves displayed "200". The
+  true totals now ride alongside
+- **The Interactive panel.** A run opened as a full page could not switch tabs
+  at all (Interactive never loaded); nothing re-sized a figure when its
+  container's geometry changed (a sidebar collapse left a 615 px plot in a
+  748 px box); the render cap could blank a visible tile forever; and Pin &
+  Browse round-tripped live plots through a string, leaving figures that could
+  never rebuild
+- **`vs prev` highlighted things that were not differences.** The row verdict
+  and the cell highlight used two different rules — so `100` vs `100.0` was
+  listed with nothing highlighted, and a fit that failed in BOTH runs showed
+  `nan | nan` in amber. One rule now, with the tolerance every sibling surface
+  already had. `/compare`'s "Exact" preset keeps meaning exact
