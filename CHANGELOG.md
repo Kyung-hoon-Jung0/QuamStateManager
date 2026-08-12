@@ -367,3 +367,49 @@ its dialog — it has no prose beside it to name what disappears.
 - Verified in a real browser on a copy of a real chip; 141 tests across the
   live-write suites pass, with four new pins covering the no-op apply, a real
   difference still conflicting, the in-place continuation, and the single ask
+
+## v0.9.9 (2026-08-12)
+
+**Auto-apply.** Several labs asked for a VS-Code-style auto-save, and this
+release changes SM's rule to allow it — deliberately, and only when you turn it
+on yourself.
+
+Press **⚡ Auto-apply** once. From then on, editing a value and simply **leaving
+the field** writes it straight to the live chip — in the Live State Edit grids,
+the Json Tree View, the inspectors, anywhere an edit lands. A live **Applied to
+live** log sits at the top of the window, newest first, and every row carries
+its own **✕** that puts that one change back.
+
+**The rule, restated.** SM's covenant used to be "the live chip is written only
+on an explicit Apply press". It is now: *"a direct live write happens on an
+explicit Apply press **or** inside a user-enabled auto-apply session"* — default
+OFF, visible on every page while it is on, and switched off automatically the
+moment the chip refuses a write. One explicit act still stands between an edit
+and the chip; it now authorizes a session instead of a single write. The change
+is recorded in `docs/107`, the module that quotes the covenant, and the README.
+
+### What it does and does not do
+
+- **Immediate, without hammering the disk.** A single edit is written with no
+  delay; edits that arrive while a write is in flight are coalesced into
+  exactly one more, so tabbing across ten rows is one write, not ten
+- **Never overwrites a chip that moved.** If something else (an experiment
+  node, another window) writes the live files, the next flush refuses, the mode
+  switches itself off, and the existing conflict screen appears with the live
+  content intact and your edit safe in the working state
+- **Every change stays revertible.** The log's ✕ is compare-and-swap: if the
+  value has moved on since, it refuses rather than clobbering the newer value.
+  ↺ **Revert this session** puts back the state as it was when you armed the
+  mode
+- **Cannot be armed** on a read-only folder, a dataset archive, or a chip that
+  has already drifted
+- **Off by default, and off after a restart** — an armed session never outlives
+  the window that shows it
+
+### Also
+
+- The onboarding line no longer claims edits stay private while auto-apply is
+  on (it says what the mode does instead), and the revert button names the
+  session rather than "the last apply"
+- History does not flood: one pre-apply anchor per session and a throttled
+  post-apply snapshot, instead of a full state copy per edit
