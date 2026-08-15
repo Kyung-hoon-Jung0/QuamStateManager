@@ -211,6 +211,100 @@ class TestReverseIndex:
         assert qc.project_state_paths() == {"active": None, "projects": []}
 
 
+class TestStandaloneBadge:
+    """docs/120 item 1 — a chip in no project SAYS it is a standalone folder.
+
+    Customer: *"sometimes a user just opens an arbitrary state file and wants
+    to handle the FULL state file. It's enough to indicate that the user is
+    now modifying a specific folder, not a project."*
+
+    Editing an unaffiliated folder always worked; the gap was that SM said
+    nothing — ``_qualibrate_tray_badge`` returned None, so an empty slot meant
+    both "you are on a bare folder" and "this badge doesn't apply". The chip is
+    informational only and must never wear a warn/danger colour.
+    """
+
+    def _page(self, scoped) -> str:
+        return scoped["client"].get("/").get_data(as_text=True)
+
+    def test_standalone_chip_says_so(self, scoped):
+        scoped["client"].post("/load", data={"folder": str(scoped["standalone"])})
+        page = self._page(scoped)
+        assert "Standalone folder" in page
+        assert "tray-standalone-badge" in page
+
+    def test_a_project_chip_does_not(self, scoped):
+        scoped["client"].post("/load", data={"folder": str(scoped["chip_a"])})
+        page = self._page(scoped)
+        assert "Standalone folder" not in page
+        # the ⚗ badge still names the project, exactly as before
+        assert "qualibrate-tray-badge" in page and "alpha" in page
+
+    def test_it_sits_beside_an_active_project_badge(self, scoped):
+        """The most informative case: qualibrate HAS an active project, but the
+        open chip belongs to none. Both render — the standalone chip is what
+        explains the ⚗ badge's amber (no project at all, not a different one)."""
+        scoped["client"].post("/load", data={"folder": str(scoped["standalone"])})
+        page = self._page(scoped)
+        assert "Standalone folder" in page
+        assert "alpha" in page  # qualibrate's active project still shown
+
+    def test_never_prints_a_bare_none(self, scoped):
+        """The badge dict can now carry project=None (standalone with no active
+        project), and the ⚗ anchor prints ``sm_scope or project`` — it must be
+        skipped entirely rather than rendering the string 'None'."""
+        _write(scoped["cfg"] / "config.toml", f'''
+[qualibrate]
+version = 5
+
+[quam]
+state_path = "{scoped["chip_a"].as_posix()}"
+version = 3
+''')
+        qc._state_index_cache.clear()
+        scoped["client"].post("/load", data={"folder": str(scoped["standalone"])})
+        page = self._page(scoped)
+        assert "Standalone folder" in page
+        assert "&nbsp;None" not in page and ">None<" not in page
+
+    def test_no_qualibrate_config_is_byte_identical_legacy(self, tmp_path, monkeypatch):
+        """Without a config, 'project' is not a concept this user has, so the
+        contrast the word draws would be meaningless — render nothing at all
+        (docs/63: scope None ⇒ legacy behaviour)."""
+        monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(tmp_path / "nope"))
+        monkeypatch.delenv("QUALIBRATE_CONFIG_DIR", raising=False)
+        qc._state_index_cache.clear()
+        chip = _chip(tmp_path / "bare")
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(chip)})
+        page = c.get("/").get_data(as_text=True)
+        assert "Standalone folder" not in page
+        assert "qualibrate-tray-badge" not in page
+
+    def test_it_is_not_a_warning(self, scoped):
+        """A statement of fact carries no warn/danger class — those keep their
+        docs/55 meanings (dangling state_path / chip mismatch)."""
+        scoped["client"].post("/load", data={"folder": str(scoped["standalone"])})
+        page = self._page(scoped)
+        i = page.index("tray-standalone-badge")
+        chunk = page[i - 200:i + 200]
+        assert "qualibrate-tray-warn" not in chunk
+        assert "qualibrate-tray-danger" not in chunk
+
+    def test_archive_is_excluded(self, scoped, monkeypatch):
+        """A dataset archive is not 'a folder you are working in', and the
+        status badge already names it — a second 'standalone' chip beside
+        'Archive (read-only)' would be noise."""
+        scoped["client"].post("/load", data={"folder": str(scoped["standalone"])})
+        app = scoped["app"]
+        name = app.config.get("active_context")
+        ctx = app.config["contexts"][name]
+        ctx["origin"] = "dataset_archive"
+        page = self._page(scoped)
+        assert "Standalone folder" not in page
+
+
 class TestSidebarReorg:
     """Step-4 pins (docs/63): Projects first, State Load beneath, subnav
     expanded + restore-registered, palette entry."""

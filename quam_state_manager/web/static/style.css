@@ -9881,6 +9881,14 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
     color: var(--cell-ok-color, #ff7f0e); }
 .qualibrate-tray-danger { border-color: var(--cell-bad-color, #d62728);
     color: var(--cell-bad-color, #d62728); }
+/* docs/120 item 1 — "this chip is a bare folder, not a project". A statement
+   of fact, not a problem: it borrows the badge shape but stays deliberately
+   quieter than the ⚗ badge beside it (dashed border, muted text, no hover
+   affordance) because nothing here is clickable or wrong. Its own class, NOT
+   the sidebar tree's `.status-standalone` — that one belongs to the run-status
+   family (.status-finished/.status-failed) and would drag this along with any
+   future change to run colours. */
+.tray-standalone-badge { border-style: dashed; cursor: default; }
 /* Project lens (docs/63): muted "(qualibrate: <active>)" note when SM's scope
    differs from qualibrate's active project — informational, never a warn color */
 .qualibrate-tray-active-note { color: var(--pico-muted-color); font-size: .92em; }
