@@ -51,6 +51,7 @@ from pathlib import Path
 # run_build.py's defensive sys.path insert before importing _script_common).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _script_common import library_versions as _library_versions  # noqa: E402
+from _script_common import QDAC_COMPONENTS_MODULE as _QDAC_MOD  # noqa: E402
 
 
 # --- the capability catalog (pure data — NO QM imports at module load) ------
@@ -95,11 +96,16 @@ CATALOG: dict[str, dict] = {
     "wire.pair_cross_resonance_line": {"module": _WIRER, "cls": "Connectivity", "method": "add_qubit_pair_cross_resonance_lines"},
     "wire.pair_zz_drive_line": {"module": _WIRER, "cls": "Connectivity", "method": "add_qubit_pair_zz_drive_lines"},
     "wire.twpa_lines": {"module": _WIRER, "cls": "Connectivity", "method": "add_twpa_lines"},
+    "wire.qdac_trigger_line": {"module": _WIRER, "cls": "Connectivity", "method": "add_wiring_spec"},
     # -- instruments: Instruments FEM/hardware methods --------------------
     "instr.mw_fem": {"module": _WIRER, "cls": "Instruments", "method": "add_mw_fem"},
     "instr.lf_fem": {"module": _WIRER, "cls": "Instruments", "method": "add_lf_fem"},
     "instr.opx_plus": {"module": _WIRER, "cls": "Instruments", "method": "add_opx_plus"},
     "instr.octave": {"module": _WIRER, "cls": "Instruments", "method": "add_octave"},
+    # QDAC-II bias support: no upstream package, entirely customer-local code.
+    # Bare-import locator (no attr/cls) — capability present iff this module
+    # is importable in the selected env at all.
+    "instr.qdac": {"module": _QDAC_MOD},
     # -- build core -------------------------------------------------------
     "build.quam_wiring": {"module": "quam_builder.builder.qop_connectivity", "attr": "build_quam_wiring"},
     "build.quam": {"module": "quam_builder.builder.superconducting", "attr": "build_quam"},

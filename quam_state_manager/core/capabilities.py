@@ -88,6 +88,13 @@ REGISTRY: dict[str, dict] = {
         "produces": "pump + pump_ channels on one MW-FEM port per TWPA",
         "fix": "upgrade qualang-tools to a build that exposes add_twpa_lines",
         "severity": DEGRADE},
+    "wire.qdac_trigger_line": {
+        "label": "QDAC-II digital trigger lines", "category": "wiring",
+        "package": "qualang-tools", "symbol": "Connectivity.add_wiring_spec",
+        "produces": "an auto-allocated OPX digital-output port per QDAC-biased "
+                    "qubit (arms the QDAC-II external trigger input)",
+        "fix": "upgrade qualang-tools to a build that exposes "
+               "Connectivity.add_wiring_spec", "severity": DEGRADE},
     # -- instruments -------------------------------------------------------
     "instr.mw_fem": {
         "label": "MW-FEM", "category": "instruments",
@@ -109,6 +116,15 @@ REGISTRY: dict[str, dict] = {
         "package": "qualang-tools", "symbol": "Instruments.add_octave",
         "produces": "Octave up/down-conversion channels",
         "fix": "install/upgrade qualang-tools", "severity": BLOCKER},
+    "instr.qdac": {
+        "label": "QDAC-II bias support", "category": "instruments",
+        "package": "quam_config (customer-local package)",
+        "symbol": "quam_config.qdac_components",
+        "produces": "the QdacInstrument + QdacBiasLine components that give a "
+                    "QDAC-biased qubit its z channel (else the biased qubit "
+                    "builds with no z/flux component at all)",
+        "fix": "install the customer's quam_config package (editable or "
+               "otherwise) in the selected env", "severity": DEGRADE},
     # -- build core --------------------------------------------------------
     "build.quam_wiring": {
         "label": "Wiring builder", "category": "build",
@@ -343,6 +359,11 @@ def required_capabilities(spec: dict) -> set[str]:
     # allocate_wiring(block_used_channels=...) for the two-phase allocation.
     if spec.get("cr_port_mode") == "shared_xy":
         req.add("wire.alloc_block_reuse")
+
+    # QDAC-II bias: only requested when the user actually declared a biased qubit.
+    if (spec.get("qdac") or {}).get("qubits"):
+        req.add("instr.qdac")
+        req.add("wire.qdac_trigger_line")
 
     # per-pair CZ variants + parametric gate type (from the populate step).
     # blank / "all" (the default since the all-gates-by-default change) adds

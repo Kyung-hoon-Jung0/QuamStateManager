@@ -6822,6 +6822,37 @@ button.recents-item:focus {
     --pico-form-element-spacing-horizontal: var(--compact-field-pico-sh);
     font-size: 0.867em; line-height: 1.3; font-family: var(--font-mono); font-variant-numeric: tabular-nums;
 }
+/* QDAC-II band — richer per-row content than TWPA's single id input, so its
+   own rules rather than folding into .gen-pair-list/.gen-twpa-list. */
+.gen-qdac-instrument { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.5rem; flex-wrap: wrap; }
+.gen-qdac-instrument label { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85em; margin: 0; }
+.gen-qdac-instrument input, .gen-qdac-instrument select {
+    margin: 0; width: auto;
+    --pico-form-element-spacing-vertical: var(--compact-field-pico-sv);
+    --pico-form-element-spacing-horizontal: var(--compact-field-pico-sh);
+    font-size: 0.867em; font-family: var(--font-mono);
+}
+.gen-qdac-list { display: flex; flex-direction: column; gap: 0.3rem; }
+.gen-qdac-row {
+    display: flex; flex-direction: column; gap: 0.3rem; padding: 0.2rem 0;
+    border-bottom: 1px solid var(--pico-muted-border-color);
+}
+.gen-qdac-row > span:first-child { display: inline-flex; align-items: center; gap: 0.4rem; }
+.gen-qdac-fields {
+    display: grid; grid-template-columns: repeat(4, minmax(6rem, 1fr)); gap: 0.3rem 0.6rem;
+    margin-left: 1.6rem;   /* aligns under the qubit label, past the checkbox */
+}
+.gen-qdac-fields:empty { display: none; }
+.gen-qdac-fields label {
+    display: flex; flex-direction: column; font-size: 0.72em;
+    color: var(--pico-muted-color); gap: 0.1rem; margin: 0;
+}
+.gen-qdac-fields input, .gen-qdac-fields select {
+    margin: 0;
+    --pico-form-element-spacing-vertical: var(--compact-field-pico-sv);
+    --pico-form-element-spacing-horizontal: var(--compact-field-pico-sh);
+    font-size: 0.867em; font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+}
 .gen-row-del {
     /* fixed-px box (was 1.7em) — same no-inflation rule as .gen-chassis-del */
     width: 26px; height: 26px; padding: 0; line-height: 1; margin: 0;

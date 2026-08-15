@@ -75,6 +75,53 @@ def test_twpa_and_cr_and_octave_required_when_present():
     assert "pair.cz_gate" not in req
 
 
+def test_qdac_required_when_biased_qubits_present():
+    spec = {"instruments": {"controllers": [{"con": 1, "fems": [{"slot": 1, "fem": "mw"}]}]},
+            "qubit_pairs": [], "lines": [{"element": "q1", "line": "resonator"},
+                                          {"element": "q1", "line": "drive"}],
+            "qdac": {"communication_type": "Ethernet", "ip_address": "1.2.3.4",
+                     "qubits": {"q1": {"channel": 1}}}}
+    req = cap.required_capabilities(spec)
+    assert "instr.qdac" in req
+    assert "wire.qdac_trigger_line" in req
+
+
+def test_qdac_not_required_when_no_biased_qubits():
+    spec = {"instruments": {"controllers": [{"con": 1, "fems": [{"slot": 1, "fem": "mw"}]}]},
+            "qubit_pairs": [], "lines": [{"element": "q1", "line": "resonator"},
+                                          {"element": "q1", "line": "drive"}]}
+    req = cap.required_capabilities(spec)
+    assert "instr.qdac" not in req
+    assert "wire.qdac_trigger_line" not in req
+
+
+def test_assess_missing_qdac_is_degrade_not_blocker():
+    spec = {"qubit_pairs": [], "lines": [{"element": "q1", "line": "resonator"},
+                                          {"element": "q1", "line": "drive"}],
+            "qdac": {"communication_type": "Ethernet", "ip_address": "1.2.3.4",
+                     "qubits": {"q1": {"channel": 1}}}}
+    req = cap.required_capabilities(spec)
+    have = req - {"instr.qdac", "wire.qdac_trigger_line"}
+    rep = cap.assess(spec, _manifest(have))
+    assert rep["buildable"] is True                 # degrade doesn't block
+    ids = {w["id"] for w in rep["warnings"]}
+    assert {"instr.qdac", "wire.qdac_trigger_line"} <= ids
+    assert rep["blockers"] == []
+    for w in rep["warnings"]:
+        if w["id"] in ("instr.qdac", "wire.qdac_trigger_line"):
+            assert w["severity"] == cap.DEGRADE and w["produces"] and w["fix"]
+
+
+def test_qdac_not_requested_missing_is_never_a_warning():
+    spec = {"qubit_pairs": [], "lines": [{"element": "q1", "line": "resonator"},
+                                          {"element": "q1", "line": "drive"}]}
+    have = set(CATALOG_IDS) - {"instr.qdac", "wire.qdac_trigger_line"}
+    rep = cap.assess(spec, _manifest(have))
+    ids = {r["id"] for r in rep["blockers"] + rep["warnings"]}
+    assert "instr.qdac" not in ids and "wire.qdac_trigger_line" not in ids
+    assert rep["buildable"] is True
+
+
 def test_bipolar_needs_two_pulse_shapes():
     spec = {"qubit_pairs": [["q1", "q2"]], "pair_gate": "cz_tunable",
             "lines": [{"element": "q1", "line": "flux"},

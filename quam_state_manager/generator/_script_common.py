@@ -13,6 +13,15 @@ frozen bundle automatically.
 """
 
 
+# The customer-local package providing QDAC-II QUAM components (QdacInstrument,
+# QdacBiasLine, QdacBiasedFixedFrequencyTransmon). There is no upstream
+# qualang_tools/quam_builder support for QDAC-II — this module only exists in
+# specific customer environments. Centralized here (not hardcoded separately
+# in run_build.py and probe_capabilities.py) so both scripts agree on where to
+# look and a future rename touches one line.
+QDAC_COMPONENTS_MODULE = "quam_config.qdac_components"
+
+
 def library_versions() -> dict:
     """Best-effort version string for each QM library the scripts rely on."""
     from importlib.metadata import version, PackageNotFoundError

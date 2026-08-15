@@ -232,6 +232,84 @@ class TestValidateSpecErrors:
         assert any("qubit" in e for e in errors)
 
 
+class TestValidateSpecQdac:
+    """QDAC-II bias declaration (spec['qdac']) — validate_spec's structural checks."""
+
+    def _qdac_spec(self, **qubit_fields):
+        spec = _valid_spec()
+        # q2 has no wiring lines in _valid_spec() — safe to bias it.
+        fields = {"channel": 13, "trigger_port": "ext1"}
+        fields.update(qubit_fields)
+        spec["qdac"] = {
+            "communication_type": "Ethernet",
+            "ip_address": "192.168.88.244",
+            "port": 5025,
+            "qubits": {"q2": fields},
+        }
+        return spec
+
+    def test_valid_qdac_spec_has_no_errors(self):
+        assert validate_spec(self._qdac_spec()) == []
+
+    def test_ethernet_requires_ip_address(self):
+        spec = self._qdac_spec()
+        spec["qdac"]["ip_address"] = None
+        assert any("qdac.ip_address" in e for e in validate_spec(spec))
+
+    def test_usb_requires_usb_device(self):
+        spec = self._qdac_spec()
+        spec["qdac"]["communication_type"] = "USB"
+        spec["qdac"]["ip_address"] = None
+        assert any("qdac.usb_device" in e for e in validate_spec(spec))
+
+    def test_usb_with_device_int_is_valid(self):
+        spec = self._qdac_spec()
+        spec["qdac"]["communication_type"] = "USB"
+        spec["qdac"]["ip_address"] = None
+        spec["qdac"]["usb_device"] = 0
+        assert validate_spec(spec) == []
+
+    def test_undeclared_qubit_errors(self):
+        spec = self._qdac_spec()
+        spec["qdac"]["qubits"]["qZZ"] = {"channel": 1}
+        assert any("is not a declared qubit" in e for e in validate_spec(spec))
+
+    def test_missing_channel_errors(self):
+        spec = self._qdac_spec()
+        del spec["qdac"]["qubits"]["q2"]["channel"]
+        assert any("qdac.qubits" in e and "channel" in e for e in validate_spec(spec))
+
+    def test_duplicate_channel_errors(self):
+        spec = self._qdac_spec()
+        spec["qubits"] = ["q1", "q2", "q3"]
+        spec["qdac"]["qubits"]["q3"] = {"channel": 13}  # same as q2's
+        errors = validate_spec(spec)
+        assert any("already used by" in e for e in errors)
+
+    def test_bad_trigger_port_errors(self):
+        spec = self._qdac_spec(trigger_port="ext9")
+        assert any("trigger_port" in e for e in validate_spec(spec))
+
+    def test_bad_output_range_errors(self):
+        spec = self._qdac_spec(output_range="medium")
+        assert any("output_range" in e for e in validate_spec(spec))
+
+    def test_bad_output_filter_errors(self):
+        spec = self._qdac_spec(output_filter="weird")
+        assert any("output_filter" in e for e in validate_spec(spec))
+
+    def test_biased_qubit_with_flux_line_errors(self):
+        spec = self._qdac_spec()
+        # q1 already has a flux line in _valid_spec(); bias it too.
+        spec["qdac"]["qubits"]["q1"] = {"channel": 1}
+        errors = validate_spec(spec)
+        assert any("QDAC-biased" in e and "flux line" in e for e in errors)
+
+    def test_biased_qubit_without_flux_line_is_valid(self):
+        # q2 (the biased qubit in _qdac_spec()) has no flux line — fine.
+        assert validate_spec(self._qdac_spec()) == []
+
+
 class TestLineTypeFlexibility:
     """Specs with subset line types should validate and (on real QM envs) build."""
 

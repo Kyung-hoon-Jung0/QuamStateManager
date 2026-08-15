@@ -20,6 +20,14 @@
       qubits: [],
       qubit_pairs: [],
       twpas: [],
+      // QDAC-II: an external DC voltage source that can flux-bias specific
+      // qubits instead of an OPX LF-FEM port. `qubits` maps qubit id -> its
+      // channel/trigger/bias fields; a qubit is QDAC-biased iff its id is a
+      // key here (see isQdacBiased()). No native qualang_tools/quam_builder
+      // support exists — the build subprocess imports the customer's own
+      // quam_config.qdac_components when available and degrades otherwise.
+      qdac: { communication_type: "Ethernet", ip_address: "", port: 5025,
+              usb_device: null, lib: "@py", qubits: {} },
       lines: [],
       populate: {},
       pair_gate: "cz_tunable"
@@ -964,6 +972,14 @@
     (sp.twpas || []).forEach(function (tw) {
       tw.qubits = (tw.qubits || []).map(function (q) { return map[q] || q; });
     });
+    // QDAC-biased qubit map is keyed by qubit id — re-key it too.
+    if (sp.qdac && sp.qdac.qubits) {
+      var nqd = {};
+      Object.keys(sp.qdac.qubits).forEach(function (qid) {
+        nqd[map[qid] || qid] = sp.qdac.qubits[qid];
+      });
+      sp.qdac.qubits = nqd;
+    }
     state.allocation = null;        // old element-id keys are stale → re-allocate
     state.pairsTouched = true;
     deriveLines();
@@ -1487,6 +1503,138 @@
     });
   }
 
+  // -- step 4: QDAC-II bias ----------------------------------------------
+  // Simple, TWPA-style: no auto-allocated resource pool, no step-5 diagram
+  // integration. The user marks which existing qubits are QDAC-biased and
+  // enters (or accepts defaults for) their channel/trigger/bias fields.
+
+  function isQdacBiased(qid) {
+    return !!(state.spec.qdac && state.spec.qdac.qubits && state.spec.qdac.qubits[qid]);
+  }
+
+  function qdacDefaults() {
+    return { channel: null, dc_offset: 0, trigger_port: null, dwell: 2e-6,
+             slew_rate: 2e7, output_range: "low", output_filter: "med",
+             settle_time: null };
+  }
+
+  function renderQdacInstrument() {
+    var qd = (state.spec.qdac = state.spec.qdac || qdacInstrumentDefaults());
+    var comm = document.getElementById("gen-qdac-comm");
+    var ip = document.getElementById("gen-qdac-ip");
+    var port = document.getElementById("gen-qdac-port");
+    var usb = document.getElementById("gen-qdac-usb");
+    var ipLabel = document.getElementById("gen-qdac-ip-label");
+    var usbLabel = document.getElementById("gen-qdac-usb-label");
+    if (comm) comm.value = qd.communication_type || "Ethernet";
+    if (ip) ip.value = qd.ip_address || "";
+    if (port) port.value = qd.port == null ? 5025 : qd.port;
+    if (usb) usb.value = qd.usb_device == null ? "" : qd.usb_device;
+    var isEthernet = (qd.communication_type || "Ethernet") === "Ethernet";
+    if (ipLabel) ipLabel.hidden = !isEthernet;
+    if (usbLabel) usbLabel.hidden = isEthernet;
+  }
+
+  function qdacInstrumentDefaults() {
+    return { communication_type: "Ethernet", ip_address: "", port: 5025,
+             usb_device: null, lib: "@py", qubits: {} };
+  }
+
+  // One compact field grid per QDAC-biased qubit row. Bound directly onto
+  // that qubit's entry in spec.qdac.qubits — same one-input-per-field idiom
+  // as renderTwpas' single text input, just several fields per row.
+  function renderQdacFields(container, fieldsObj) {
+    container.innerHTML = "";
+    function field(label, key, type, extra) {
+      var wrap = document.createElement("label");
+      var span = document.createElement("span");
+      span.textContent = label;
+      var input = document.createElement(type === "select" ? "select" : "input");
+      if (type === "select") {
+        (extra.options || []).forEach(function (opt) {
+          var o = document.createElement("option");
+          o.value = opt.value;
+          o.textContent = opt.label;
+          input.appendChild(o);
+        });
+        input.value = fieldsObj[key] == null ? "" : fieldsObj[key];
+      } else {
+        input.type = type;
+        if (type === "number" && extra && extra.step) input.step = extra.step;
+        input.value = fieldsObj[key] == null ? "" : fieldsObj[key];
+      }
+      input.addEventListener("input", function () {
+        if (type === "number") {
+          var v = input.value === "" ? null : Number(input.value);
+          fieldsObj[key] = (v === null || isNaN(v)) ? null : v;
+        } else {
+          fieldsObj[key] = input.value === "" ? null : input.value;
+        }
+      });
+      wrap.appendChild(span);
+      wrap.appendChild(input);
+      container.appendChild(wrap);
+    }
+    field("Channel", "channel", "number", { step: "1" });
+    field("Trigger port", "trigger_port", "select", { options: [
+      { value: "", label: "(none)" },
+      { value: "ext1", label: "ext1" }, { value: "ext2", label: "ext2" },
+      { value: "ext3", label: "ext3" }, { value: "ext4", label: "ext4" },
+    ] });
+    field("Dwell (s)", "dwell", "number", { step: "any" });
+    field("Slew rate (V/s)", "slew_rate", "number", { step: "any" });
+    field("Output range", "output_range", "select", { options: [
+      { value: "low", label: "low" }, { value: "high", label: "high" },
+    ] });
+    field("Output filter", "output_filter", "select", { options: [
+      { value: "dc", label: "dc" }, { value: "med", label: "med" },
+      { value: "high", label: "high" },
+    ] });
+    field("Settle time (ns)", "settle_time", "number", { step: "any" });
+    field("DC offset (V)", "dc_offset", "number", { step: "any" });
+  }
+
+  function renderQdacBand() {
+    var list = document.getElementById("gen-qdac-list");
+    if (!list) return;
+    list.innerHTML = "";
+    var qd = (state.spec.qdac = state.spec.qdac || qdacInstrumentDefaults());
+    qd.qubits = qd.qubits || {};
+    if (!state.spec.qubits.length) {
+      list.innerHTML = '<p class="muted">No qubits yet.</p>';
+      return;
+    }
+    state.spec.qubits.forEach(function (qid) {
+      var row = document.createElement("div");
+      row.className = "gen-qdac-row";
+      var head = document.createElement("span");
+      var chk = document.createElement("input");
+      chk.type = "checkbox";
+      chk.checked = isQdacBiased(qid);
+      var label = document.createElement("span");
+      label.textContent = qid;
+      head.appendChild(chk);
+      head.appendChild(label);
+      row.appendChild(head);
+
+      var fields = document.createElement("div");
+      fields.className = "gen-qdac-fields";
+      if (chk.checked) renderQdacFields(fields, qd.qubits[qid]);
+      row.appendChild(fields);
+
+      chk.addEventListener("change", function () {
+        if (chk.checked) {
+          qd.qubits[qid] = qdacDefaults();
+        } else {
+          delete qd.qubits[qid];
+        }
+        deriveLines();          // the qubit's flux line must appear/disappear
+        renderQdacBand();       // re-render to show/hide the field grid
+      });
+      list.appendChild(row);
+    });
+  }
+
   // Refresh the line-type checkboxes to match hardware and state.
   // The effective (hardware-constrained) qubitFlux+pairGate map back to a chip
   // architecture so the explicit selector always reflects what will be built.
@@ -1769,6 +1917,8 @@
     renderQubitSummary();
     renderPairs();
     renderTwpas();
+    renderQdacInstrument();
+    renderQdacBand();
     syncLineTypeToggles();
     renderNamingUi();
     // The board is always visible now — repaint it on every qubits-step
@@ -1908,6 +2058,36 @@
       });
     }
     if (nmApply) nmApply.addEventListener("click", applyNamingScheme);
+
+    // QDAC-II instrument fields (per-qubit fields are bound inline by
+    // renderQdacFields on every render, same as the naming controls above).
+    var qdComm = document.getElementById("gen-qdac-comm");
+    var qdIp = document.getElementById("gen-qdac-ip");
+    var qdPort = document.getElementById("gen-qdac-port");
+    var qdUsb = document.getElementById("gen-qdac-usb");
+    var qd = (state.spec.qdac = state.spec.qdac || qdacInstrumentDefaults());
+    if (qdComm) {
+      qdComm.addEventListener("change", function () {
+        qd.communication_type = qdComm.value;
+        renderQdacInstrument();
+      });
+    }
+    if (qdIp) qdIp.addEventListener("input", function () { qd.ip_address = qdIp.value.trim(); });
+    if (qdPort) {
+      qdPort.addEventListener("input", function () {
+        // An empty field falls back to the 5025 default rather than an
+        // explicit null — Python's qdac.get("port", 5025) only substitutes
+        // the default when the key is ABSENT, not when it's None.
+        var v = parseInt(qdPort.value, 10);
+        qd.port = isNaN(v) ? 5025 : v;
+      });
+    }
+    if (qdUsb) {
+      qdUsb.addEventListener("input", function () {
+        var v = parseInt(qdUsb.value, 10);
+        qd.usb_device = isNaN(v) ? null : v;
+      });
+    }
 
     bindTopoBoard();
     renderQubitsStep();
@@ -2061,7 +2241,7 @@
       if (wantDrive) {
         lines.push({ element: q, line: "drive", channel: pinned[q + "|drive"] || null });
       }
-      if (wantFlux) {
+      if (wantFlux && !isQdacBiased(q)) {
         lines.push({ element: q, line: "flux", channel: pinned[q + "|flux"] || null });
       }
     });
@@ -5703,10 +5883,23 @@
       ["Qubits / Pairs / TWPAs", sp.qubits.length + " / " +
         sp.qubit_pairs.length + " / " + sp.twpas.length],
       ["Control lines", linesSummary],
+    ];
+    var qdacQubits = Object.keys((sp.qdac && sp.qdac.qubits) || {});
+    if (qdacQubits.length) {
+      var qdAddr = sp.qdac.communication_type === "USB"
+        ? "USB device " + (sp.qdac.usb_device == null ? "?" : sp.qdac.usb_device)
+        : (sp.qdac.ip_address || "?") + ":" + (sp.qdac.port == null ? "?" : sp.qdac.port);
+      rows.push(["QDAC-II", qdacQubits.length + " qubit(s) biased (" + qdAddr +
+        ") — channels " + qdacQubits.map(function (q) {
+          var ch = sp.qdac.qubits[q].channel;
+          return ch == null ? "?" : ch;
+        }).join(", ")]);
+    }
+    rows.push(
       ["Output folder", getOutputPath() || "(not set — step 7)"],
       ["Python scripts", state.scriptsEnabled
         ? (getScriptsPath() || "(folder not set — step 7)") : "(off)"]
-    ];
+    );
     // CZ chips: surface how the pair roles were assigned before generating.
     if (czOrderActive() && sp.qubit_pairs.length) {
       var czCounts = { ok: 0, manual: 0, pending: 0, equal: 0 };
@@ -6842,6 +7035,14 @@
              : { id: String(t), qubits: [] };
       });
     }
+    // Defensively normalize a missing/malformed spec.qdac — applyDraft's
+    // freshSpec() merge only fills the key when entirely absent, not when
+    // partially shaped (e.g. an older sidecar with no .qubits map).
+    if (spec && (!spec.qdac || typeof spec.qdac !== "object")) {
+      spec.qdac = qdacInstrumentDefaults();
+    } else if (spec && spec.qdac && !spec.qdac.qubits) {
+      spec.qdac.qubits = {};
+    }
     var pg = (spec && spec.pair_gate) || "cz_tunable";
     var arch = pg === "cr" ? "fixed_frequency"
              : pg === "cz_fixed" ? "flux_tunable_fixed_coupler"
@@ -6919,6 +7120,10 @@
       applyPortCsv: applyPortCsv,
       pinToChannel: pinToChannel,
       deriveLines: deriveLines,
+      isQdacBiased: isQdacBiased,
+      qdacDefaults: qdacDefaults,
+      renderQdacBand: renderQdacBand,
+      renderQdacInstrument: renderQdacInstrument,
       pairPopCols: pairPopCols,
       ALLOC_KEY: ALLOC_KEY,
       buildInstrumentData: buildInstrumentData,

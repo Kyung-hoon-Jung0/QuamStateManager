@@ -408,33 +408,43 @@ def _apply_pairs(machine, pairs_vals):
         )
 
         if moving_q is not None and getattr(moving_q, "z", None) is not None:
-            pulse_id = "cz_" + quam_id.replace("-", "_") + "_pulse"
-            moving_q.z.operations[pulse_id] = SquarePulse(
-                length=duration, amplitude=amplitude
-            )
-            if gate_type == "cz_parametric":
-                # Lazy import so installations without the upgraded
-                # quam_builder still load the rest of the generator.
-                try:
-                    from quam_builder.architecture.superconducting.custom_gates.flux_tunable_transmon_pair.two_qubit_gates import (
-                        ParametricCZGate,
-                    )
-                except ImportError:
-                    print(
-                        f"WARNING: pair {quam_id}: gate_type='cz_parametric' requested "
-                        "but ParametricCZGate is not available in this quam_builder "
-                        "install — falling back to cz_unipolar.",
-                        file=sys.stderr,
-                    )
-                    pair.macros["cz_unipolar"] = _make_cz_gate(CZGate, pulse_id, moving)
-                else:
-                    mod_freq = vals.get("cz_modulation_frequency", 0.0)
-                    pair.macros["cz_parametric"] = ParametricCZGate(
-                        flux_pulse_qubit=pulse_id,
-                        modulation_frequency=float(mod_freq),
-                    )
+            if not hasattr(moving_q.z, "operations"):
+                # QDAC-biased moving qubit — its z has no operations dict
+                # (static DC bias, not a pulsed OPX flux line).
+                print(
+                    f"WARNING: pair {quam_id}: moving qubit is QDAC-biased "
+                    "(no OPX flux line) — cannot play a CZ flux pulse there; "
+                    "this pair's CZ macro was skipped.",
+                    file=sys.stderr,
+                )
             else:
-                pair.macros["cz_unipolar"] = _make_cz_gate(CZGate, pulse_id, moving)
+                pulse_id = "cz_" + quam_id.replace("-", "_") + "_pulse"
+                moving_q.z.operations[pulse_id] = SquarePulse(
+                    length=duration, amplitude=amplitude
+                )
+                if gate_type == "cz_parametric":
+                    # Lazy import so installations without the upgraded
+                    # quam_builder still load the rest of the generator.
+                    try:
+                        from quam_builder.architecture.superconducting.custom_gates.flux_tunable_transmon_pair.two_qubit_gates import (
+                            ParametricCZGate,
+                        )
+                    except ImportError:
+                        print(
+                            f"WARNING: pair {quam_id}: gate_type='cz_parametric' requested "
+                            "but ParametricCZGate is not available in this quam_builder "
+                            "install — falling back to cz_unipolar.",
+                            file=sys.stderr,
+                        )
+                        pair.macros["cz_unipolar"] = _make_cz_gate(CZGate, pulse_id, moving)
+                    else:
+                        mod_freq = vals.get("cz_modulation_frequency", 0.0)
+                        pair.macros["cz_parametric"] = ParametricCZGate(
+                            flux_pulse_qubit=pulse_id,
+                            modulation_frequency=float(mod_freq),
+                        )
+                else:
+                    pair.macros["cz_unipolar"] = _make_cz_gate(CZGate, pulse_id, moving)
 
         coupler = getattr(pair, "coupler", None)
         if coupler is not None:
@@ -472,8 +482,13 @@ def apply_populate(machine, populate, handle_pairs=True):
             _apply_qubit(qubits[qid], vals)
 
     for qid, vals in (populate.get("flux") or {}).items():
-        if qid in qubits and getattr(qubits[qid], "z", None) is not None:
-            _apply_flux(qubits[qid].z, vals)
+        if qid not in qubits:
+            continue
+        z = getattr(qubits[qid], "z", None)
+        # hasattr(z, "independent_offset") excludes a QDAC-biased qubit's
+        # QdacBiasLine (no such field) without importing quam_config here.
+        if z is not None and hasattr(z, "independent_offset"):
+            _apply_flux(z, vals)
 
     _apply_pulses(machine, populate.get("pulses") or {})
 
@@ -695,6 +710,12 @@ def _seed_cz_variant(pair, *, variant="unipolar", amplitude=0.1, duration=100,
     moving_q = qc if moving == "control" else qt
     if getattr(moving_q, "z", None) is None:
         return None
+    if not hasattr(moving_q.z, "operations"):
+        # QDAC-biased moving qubit — its z has no operations dict (static DC
+        # bias, not a pulsed OPX flux line).
+        return (f"pair: moving qubit {getattr(moving_q, 'name', moving_q)} is "
+                "QDAC-biased (no OPX flux line) — cannot play a CZ flux pulse "
+                "there; this pair's CZ macro was skipped.")
 
     warning = None
     if variant not in _CZ_VARIANTS:
@@ -1339,6 +1360,11 @@ def _finalize_pair_gates(machine, spec, pair_gate):
                 )
                 if vw:
                     warnings.append(vw)
+                    if "QDAC-biased" in vw:
+                        # The moving qubit's z is fixed for this pair — every
+                        # remaining variant would hit the identical guard and
+                        # re-emit the identical message.
+                        break
         if w:
             warnings.append(w)
 
