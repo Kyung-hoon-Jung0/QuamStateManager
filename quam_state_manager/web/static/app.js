@@ -7734,40 +7734,29 @@ window.filterDatasetTable = function(input) {
  * HTMX innerHTML-swaps on every date-tab / rescan / nav-back. Delegated
  * listeners on document.body avoid re-binding after every swap.
  *
- * Open triggers:
- *   - first focus on #dataset-search per browser session (sessionStorage flag)
- *   - any click on #ds-search-help-toggle (the ? icon)
- * Close trigger:
- *   - click on #ds-search-help-close (the × button)
+ * Open/close trigger (docs/120 item 3): the ? icon TOGGLES. Nothing opens
+ * this panel on its own any more — it used to open on the first focus of
+ * #dataset-search per browser session, which meant the panel appeared the
+ * moment you started typing and then would not close from the same button
+ * you opened it with (the ? was open-only). The ? is the whole affordance.
+ * Also closable via #ds-search-help-close (the × button).
  *
  * Per user spec: NO auto-dismiss on blur/outside-click. The panel persists
  * through typing, sorting, chip clicks, and HTMX swaps until X is clicked.
  */
 (function() {
-    var FOCUS_FLAG = 'quam_dataset_search_help_shown';
-
-    function openHelp() {
-        var panel = document.getElementById('ds-search-help');
-        if (panel) panel.hidden = false;
-    }
     function closeHelp() {
         var panel = document.getElementById('ds-search-help');
         if (panel) panel.hidden = true;
     }
+    function toggleHelp() {
+        var panel = document.getElementById('ds-search-help');
+        if (panel) panel.hidden = !panel.hidden;
+    }
 
     // Attach to document (not document.body) — app.js loads in <head> with no
-    // defer, so document.body is null at script-parse time. Both focusin and
-    // click bubble up to document, so delegation works identically.
-    document.addEventListener('focusin', function(e) {
-        var t = e.target;
-        if (!t || t.id !== 'dataset-search') return;
-        try {
-            if (sessionStorage.getItem(FOCUS_FLAG) === '1') return;
-            sessionStorage.setItem(FOCUS_FLAG, '1');
-        } catch (_err) { /* sessionStorage may be disabled — open anyway */ }
-        openHelp();
-    });
-
+    // defer, so document.body is null at script-parse time. Click bubbles up
+    // to document, so delegation works identically.
     document.addEventListener('click', function(e) {
         var t = e.target;
         if (!t) return;
@@ -7779,7 +7768,7 @@ window.filterDatasetTable = function(input) {
         if (t.closest && t.closest('#datasets-scroll')) closeHelp();
         if (t.id === 'ds-search-help-toggle') {
             e.preventDefault();
-            openHelp();
+            toggleHelp();
             return;
         }
         if (t.id === 'ds-search-help-close') {
@@ -7805,32 +7794,23 @@ window.filterDatasetTable = function(input) {
  *   ? icon:  class="search-help-toggle"  data-search-help="<panel-id>"
  *   × close: class="search-help-close"   data-search-help="<panel-id>"
  *   example: class="search-help-example" data-search-help-input="<input-id>" data-example="…"
- * Opens on first focus per session (flag keyed by panel id) + on ? click;
- * closes only via ×. Delegated on document (app.js loads in <head>). The
- * Datasets page keeps its own id-based handler above, unchanged. */
+ * The ? TOGGLES; × closes. Delegated on document (app.js loads in <head>).
+ * The Datasets page keeps its own id-based handler above.
+ *
+ * docs/120 item 3 — nothing auto-opens this any more. It used to open on the
+ * first focus of the input per browser session, and the sidebar's copy of the
+ * panel is deliberately `position: static` (style.css, so a narrow scrolling
+ * sidebar can't clip an absolute popover) — meaning it renders INLINE and
+ * pushes the experiment tree down. Typing one character therefore buried the
+ * folder list, and the ? could not put it back because it was open-only. */
 (function() {
-    function flagKey(panelId) { return 'quam_search_help_shown:' + panelId; }
-
-    document.addEventListener('focusin', function(e) {
-        var t = e.target;
-        if (!t || !t.classList || !t.classList.contains('search-help-input')) return;
-        var panelId = t.getAttribute('data-search-help');
-        if (!panelId) return;
-        try {
-            if (sessionStorage.getItem(flagKey(panelId)) === '1') return;
-            sessionStorage.setItem(flagKey(panelId), '1');
-        } catch (_e) { /* sessionStorage disabled — open anyway */ }
-        var panel = document.getElementById(panelId);
-        if (panel) panel.hidden = false;
-    });
-
     document.addEventListener('click', function(e) {
         var t = e.target;
         if (!t || !t.classList) return;
         if (t.classList.contains('search-help-toggle')) {
             e.preventDefault();
             var p = document.getElementById(t.getAttribute('data-search-help'));
-            if (p) p.hidden = false;
+            if (p) p.hidden = !p.hidden;
             return;
         }
         if (t.classList.contains('search-help-close')) {
