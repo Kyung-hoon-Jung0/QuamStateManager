@@ -212,6 +212,71 @@ def validate_spec(spec) -> list[str]:
         else:
             errors.append(f"twpas[{i}]: needs an 'id'")
 
+    # -- qdac ----------------------------------------------------------------
+    # QDAC-II is an external DC voltage source used to flux-bias specific
+    # qubits instead of an OPX LF-FEM port. There is no native qualang_tools/
+    # quam_builder support for it (see docs/... — capability ids instr.qdac /
+    # wire.qdac_trigger_line degrade gracefully when the env lacks it); this
+    # is purely a structural/type check, same spirit as the twpas block above.
+    qdac_qubit_ids: set = set()
+    qdac = spec.get("qdac")
+    if qdac:
+        if not isinstance(qdac, dict):
+            errors.append("qdac: must be an object")
+            qdac = {}
+        comm = qdac.get("communication_type", "Ethernet")
+        if comm not in ("Ethernet", "USB"):
+            errors.append("qdac.communication_type: must be 'Ethernet' or 'USB'")
+        if comm == "Ethernet" and not qdac.get("ip_address"):
+            errors.append("qdac.ip_address: required when communication_type is 'Ethernet'")
+        if comm == "USB" and not _is_int(qdac.get("usb_device")):
+            errors.append("qdac.usb_device: required integer when communication_type is 'USB'")
+        port = qdac.get("port", 5025)
+        if port is not None and not _is_int(port):
+            errors.append("qdac.port: must be an integer")
+
+        qdac_qubits = qdac.get("qubits") or {}
+        if not isinstance(qdac_qubits, dict):
+            errors.append("qdac.qubits: must be an object")
+            qdac_qubits = {}
+        seen_channels: dict = {}
+        for qid, fields in qdac_qubits.items():
+            if qid not in qubit_set:
+                errors.append(f"qdac.qubits[{qid!r}]: is not a declared qubit")
+                continue
+            qdac_qubit_ids.add(qid)
+            if not isinstance(fields, dict):
+                errors.append(f"qdac.qubits[{qid!r}]: must be an object")
+                continue
+            ch = fields.get("channel")
+            if not _is_int(ch) or ch <= 0:
+                errors.append(f"qdac.qubits[{qid!r}].channel: required positive integer")
+            elif ch in seen_channels:
+                errors.append(
+                    f"qdac.qubits[{qid!r}].channel: {ch} is already used by "
+                    f"qubit {seen_channels[ch]!r} — each qubit needs its own QDAC channel"
+                )
+            else:
+                seen_channels[ch] = qid
+            trigger_port = fields.get("trigger_port")
+            if trigger_port is not None and trigger_port not in ("ext1", "ext2", "ext3", "ext4"):
+                errors.append(
+                    f"qdac.qubits[{qid!r}].trigger_port: must be one of "
+                    "'ext1'..'ext4' or null"
+                )
+            output_range = fields.get("output_range")
+            if output_range is not None and output_range not in ("low", "high"):
+                errors.append(f"qdac.qubits[{qid!r}].output_range: must be 'low' or 'high'")
+            output_filter = fields.get("output_filter")
+            if output_filter is not None and output_filter not in ("dc", "med", "high"):
+                errors.append(
+                    f"qdac.qubits[{qid!r}].output_filter: must be 'dc', 'med', or 'high'"
+                )
+            for numfield in ("dwell", "slew_rate", "settle_time", "dc_offset"):
+                v = fields.get(numfield)
+                if v is not None and not isinstance(v, (int, float)):
+                    errors.append(f"qdac.qubits[{qid!r}].{numfield}: must be a number")
+
     # -- lines -------------------------------------------------------------
     lines = spec.get("lines", []) or []
     if not isinstance(lines, list):
@@ -231,6 +296,12 @@ def validate_spec(spec) -> list[str]:
         elif line_type in QUBIT_LINE_TYPES and str(element) not in qubit_set:
             errors.append(
                 f"lines[{i}]: {line_type} element '{element}' is not a declared qubit"
+            )
+        elif line_type == "flux" and str(element) in qdac_qubit_ids:
+            errors.append(
+                f"lines[{i}]: qubit '{element}' is QDAC-biased (declared in "
+                "spec.qdac.qubits) and must not also have an OPX flux line — "
+                "its z bias comes from the QDAC, not an LF-FEM port"
             )
         elif line_type in PAIR_LINE_TYPES:
             parts = str(element).split("-", 1)

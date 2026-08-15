@@ -259,6 +259,26 @@
         <button type="button" class="outline btn-sm" id="gen-add-twpa">
           + Add TWPA</button>
       </div>
+
+      {# ---- QDAC-II bias band #}
+      <div class="gen-band">
+        <div class="gen-band-head"><span class="gen-band-title">QDAC-II bias</span> <span class="muted">&mdash; optional</span></div>
+        <p class="muted gen-oneline"
+           title="Generated only when the selected env can import the customer's quam_config.qdac_components module (no upstream qualang_tools/quam_builder support exists) — otherwise the build degrades gracefully and these qubits build with no z/bias component.">
+          Mark qubits whose Z bias comes from an external QDAC-II instead of an OPX flux port. Trigger wiring auto-allocates a digital output.</p>
+        <div class="gen-qdac-instrument">
+          <label>Link
+            <select id="gen-qdac-comm">
+              <option value="Ethernet">Ethernet</option>
+              <option value="USB">USB</option>
+            </select>
+          </label>
+          <label id="gen-qdac-ip-label">IP <input type="text" id="gen-qdac-ip" placeholder="192.168.88.244"></label>
+          <label>Port <input type="number" id="gen-qdac-port" value="5025"></label>
+          <label id="gen-qdac-usb-label" hidden>USB device <input type="number" id="gen-qdac-usb"></label>
+        </div>
+        <div id="gen-qdac-list" class="gen-qdac-list"></div>
+      </div>
     </section>
 
     <section class="gen-panel" data-step="5">

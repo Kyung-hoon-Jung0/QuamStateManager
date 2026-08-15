@@ -825,33 +825,43 @@ def _apply_pairs(machine, pairs_vals):
         )
 
         if moving_q is not None and getattr(moving_q, "z", None) is not None:
-            pulse_id = "cz_" + quam_id.replace("-", "_") + "_pulse"
-            moving_q.z.operations[pulse_id] = SquarePulse(
-                length=duration, amplitude=amplitude
-            )
-            if gate_type == "cz_parametric":
-                # Lazy import so installations without the upgraded
-                # quam_builder still load the rest of the generator.
-                try:
-                    from quam_builder.architecture.superconducting.custom_gates.flux_tunable_transmon_pair.two_qubit_gates import (
-                        ParametricCZGate,
-                    )
-                except ImportError:
-                    print(
-                        f"WARNING: pair {quam_id}: gate_type='cz_parametric' requested "
-                        "but ParametricCZGate is not available in this quam_builder "
-                        "install — falling back to cz_unipolar.",
-                        file=sys.stderr,
-                    )
-                    pair.macros["cz_unipolar"] = _make_cz_gate(CZGate, pulse_id, moving)
-                else:
-                    mod_freq = vals.get("cz_modulation_frequency", 0.0)
-                    pair.macros["cz_parametric"] = ParametricCZGate(
-                        flux_pulse_qubit=pulse_id,
-                        modulation_frequency=float(mod_freq),
-                    )
+            if not hasattr(moving_q.z, "operations"):
+                # QDAC-biased moving qubit — its z has no operations dict
+                # (static DC bias, not a pulsed OPX flux line).
+                print(
+                    f"WARNING: pair {quam_id}: moving qubit is QDAC-biased "
+                    "(no OPX flux line) — cannot play a CZ flux pulse there; "
+                    "this pair's CZ macro was skipped.",
+                    file=sys.stderr,
+                )
             else:
-                pair.macros["cz_unipolar"] = _make_cz_gate(CZGate, pulse_id, moving)
+                pulse_id = "cz_" + quam_id.replace("-", "_") + "_pulse"
+                moving_q.z.operations[pulse_id] = SquarePulse(
+                    length=duration, amplitude=amplitude
+                )
+                if gate_type == "cz_parametric":
+                    # Lazy import so installations without the upgraded
+                    # quam_builder still load the rest of the generator.
+                    try:
+                        from quam_builder.architecture.superconducting.custom_gates.flux_tunable_transmon_pair.two_qubit_gates import (
+                            ParametricCZGate,
+                        )
+                    except ImportError:
+                        print(
+                            f"WARNING: pair {quam_id}: gate_type='cz_parametric' requested "
+                            "but ParametricCZGate is not available in this quam_builder "
+                            "install — falling back to cz_unipolar.",
+                            file=sys.stderr,
+                        )
+                        pair.macros["cz_unipolar"] = _make_cz_gate(CZGate, pulse_id, moving)
+                    else:
+                        mod_freq = vals.get("cz_modulation_frequency", 0.0)
+                        pair.macros["cz_parametric"] = ParametricCZGate(
+                            flux_pulse_qubit=pulse_id,
+                            modulation_frequency=float(mod_freq),
+                        )
+                else:
+                    pair.macros["cz_unipolar"] = _make_cz_gate(CZGate, pulse_id, moving)
 
         coupler = getattr(pair, "coupler", None)
         if coupler is not None:
@@ -890,8 +900,13 @@ def apply_populate(machine, populate, handle_pairs=True):
             _apply_qubit(qubits[qid], vals)
 
     for qid, vals in (populate.get("flux") or {}).items():
-        if qid in qubits and getattr(qubits[qid], "z", None) is not None:
-            _apply_flux(qubits[qid].z, vals)
+        if qid not in qubits:
+            continue
+        z = getattr(qubits[qid], "z", None)
+        # hasattr(z, "independent_offset") excludes a QDAC-biased qubit's
+        # QdacBiasLine (no such field) without importing quam_config here.
+        if z is not None and hasattr(z, "independent_offset"):
+            _apply_flux(z, vals)
 
     _apply_pulses(machine, populate.get("pulses") or {})
 
@@ -899,6 +914,327 @@ def apply_populate(machine, populate, handle_pairs=True):
         pairs = populate.get("pairs") or {}
         if pairs:
             _apply_pairs(machine, pairs)
+
+
+# ---------------------------------------------------------------------------
+# QDAC-II bias
+# ---------------------------------------------------------------------------
+# QDAC-II (an external DC voltage source used to flux-bias specific qubits
+# instead of an OPX LF-FEM port) has NO native qualang_tools/quam_builder
+# support — it exists only as a customer-local module, quam_config.qdac_components
+# (QdacInstrument / QdacBiasLine / QdacBiasedFixedFrequencyTransmon), imported
+# directly when present in the selected env. Everything below is DEGRADE-only:
+# a missing module, a failed trigger allocation, or any per-qubit attach error
+# leaves that qubit with no z/bias component and appends a warning — it never
+# raises and never blocks the rest of the build. Mirrors the TWPA
+# hasattr(connectivity, "add_twpa_lines") belt-and-suspenders pattern.
+
+def _import_qdac_components():
+    """Try-import the customer's QDAC-II QUAM component classes.
+
+    Returns ``(QdacInstrument, QdacBiasLine, QdacBiasedFixedFrequencyTransmon)``
+    or ``None`` if the module isn't importable in this env (belt on top of
+    the ``instr.qdac`` capability probe's suspenders).
+    """
+    import importlib
+
+    from _script_common import QDAC_COMPONENTS_MODULE
+
+    try:
+        mod = importlib.import_module(QDAC_COMPONENTS_MODULE)
+    except ImportError:
+        return None
+    trio = (getattr(mod, "QdacInstrument", None),
+            getattr(mod, "QdacBiasLine", None),
+            getattr(mod, "QdacBiasedFixedFrequencyTransmon", None))
+    if None in trio:
+        return None
+    return trio
+
+
+def _allocate_qdac_triggers(spec: dict, instruments) -> tuple[dict, list]:
+    """Second, ISOLATED allocation pass for QDAC-II digital trigger lines.
+
+    Deliberately never merged into build_connectivity()'s Connectivity object:
+    quam_builder's create_wiring()/build_quam() raise ValueError on any wiring
+    line type they don't recognize, and the QDAC-II trigger's custom "qt" line
+    type is not in their whitelist (confirmed against the customer's own
+    build_quam_wiring_qdac.py, which forks the whole wiring builder rather
+    than teach create_wiring "qt"). A separate Connectivity + allocate_wiring
+    call — sharing *instruments* so the port pool stays conflict-free with the
+    main allocation — lets us read back (con, slot, port) via read_allocation()
+    WITHOUT ever letting a "qt" spec reach build_quam_wiring/build_quam.
+
+    Unlike the customer's own trigger cabling (which shares one physical port
+    across qubits armed on the same ext input), the wizard gives every
+    QDAC-biased qubit its OWN dedicated auto-allocated digital-output port —
+    simpler, and correct per the "no port sharing" UI decision.
+
+    Returns ``({qubit_id: (con, slot, port)}, [warning, ...])``. Never raises
+    — any failure (old qualang_tools, private-API drift) degrades to "no
+    trigger wiring" with a warning; the static dc_offset bias still works.
+    """
+    qids = list(((spec.get("qdac") or {}).get("qubits") or {}).keys())
+    if not qids:
+        return {}, []
+
+    warnings: list = []
+    try:
+        from qualang_tools.wirer import Connectivity, allocate_wiring
+        from qualang_tools.wirer.connectivity.wiring_spec import (
+            WiringFrequency,
+            WiringIOType,
+        )
+    except ImportError:
+        warnings.append(
+            "QDAC trigger wiring skipped: this qualang_tools has no wiring-"
+            "spec API (WiringFrequency/WiringIOType) — biased qubit(s) will "
+            "have no opx_trigger_out (the static dc_offset bias still works)."
+        )
+        return {}, warnings
+
+    qdac_conn = Connectivity()
+    if not (hasattr(qdac_conn, "add_wiring_spec")
+            and hasattr(qdac_conn, "_make_qubit_elements")):
+        warnings.append(
+            "QDAC trigger wiring skipped: this qualang_tools Connectivity has "
+            "no add_wiring_spec/_make_qubit_elements — biased qubit(s) will "
+            "have no opx_trigger_out (the static dc_offset bias still works)."
+        )
+        return {}, warnings
+
+    try:
+        indices = [_norm_index(q) for q in qids]
+        elements = qdac_conn._make_qubit_elements(indices)
+        qdac_conn.add_wiring_spec(
+            WiringFrequency.DO, WiringIOType.OUTPUT, "qt", True, None, elements
+        )
+        allocate_wiring(qdac_conn, instruments, block_used_channels=False)
+    except Exception as exc:  # noqa: BLE001 — never fail the whole build over this
+        warnings.append(
+            f"QDAC trigger wiring failed ({type(exc).__name__}: {exc}) — "
+            "biased qubit(s) built without opx_trigger_out."
+        )
+        return {}, warnings
+
+    # A qubit element's str() renders as f"q{index}" (see _norm_index), which
+    # round-trips exactly back to the original spec qubit id — so the
+    # allocation dict is already keyed the way we need it.
+    allocation = read_allocation(qdac_conn)
+    pins: dict = {}
+    for qid in qids:
+        chans = (allocation.get(qid) or {}).get("qt") or []
+        if not chans:
+            continue
+        ch = chans[0]
+        con, slot, port = ch.get("con"), ch.get("slot"), ch.get("port")
+        if None in (con, slot, port):
+            continue
+        pins[qid] = (con, slot, port)
+
+    missing = sorted(set(qids) - set(pins))
+    if missing:
+        warnings.append(f"QDAC trigger wiring: no digital port allocated for {missing}.")
+    return pins, warnings
+
+
+def _apply_qdac(machine, spec: dict, instruments, warnings: list) -> tuple[dict, dict | None]:
+    """Attach the per-qubit QdacBiasLine after build_quam.
+
+    Must run BEFORE apply_populate/_finalize_pair_gates so their z.operations
+    guards see the final per-qubit class.
+
+    NOTE: the top-level QDAC-II instrument entry is deliberately NOT attached
+    live here (``machine.qdac = QdacInstrument(...)``) — verified against a
+    real build that ``FluxTunableQuam``/``FixedFrequencyQuam`` (the QPU root
+    classes this generator builds onto) declare no ``qdac`` dataclass field,
+    so an assigned-but-undeclared attribute is silently dropped by
+    ``Quam.save()`` (it sets without error, but never reaches state.json —
+    unlike ``qubit.z``, which is a REAL declared field on every transmon
+    class). Instead this returns a ready-to-write instrument dict for
+    :func:`_inject_qdac_state`'s post-save file patch — same reasoning as
+    :func:`_inject_qdac_trigger_wiring`'s wiring.json patch.
+
+    Returns ``({qubit_id: (con, slot, port)}, instrument_dict_or_None)``.
+    """
+    qdac_spec = spec.get("qdac") or {}
+    qdac_qubits = qdac_spec.get("qubits") or {}
+    if not qdac_qubits:
+        return {}, None
+
+    trio = _import_qdac_components()
+    if trio is None:
+        warnings.append(
+            "QDAC-biased qubits requested but quam_config.qdac_components is "
+            "not importable in this env — built without QDAC bias (the "
+            "biased qubit(s) have no z/flux component at all). Install the "
+            "customer's quam_config package in the selected env to attach it."
+        )
+        return {}, None
+    QdacInstrument, QdacBiasLine, QdacBiasedFixedFrequencyTransmon = trio
+
+    pins, trig_warnings = _allocate_qdac_triggers(spec, instruments)
+    warnings.extend(trig_warnings)
+
+    instrument_fields = {
+        "id": qdac_spec.get("id", "qdac"),
+        "communication_type": qdac_spec.get("communication_type", "Ethernet"),
+        "ip_address": qdac_spec.get("ip_address"),
+        "port": qdac_spec.get("port", 5025),
+        "usb_device": qdac_spec.get("usb_device"),
+        "lib": qdac_spec.get("lib", "@py"),
+    }
+    instrument_dict = None
+    try:
+        QdacInstrument(**instrument_fields)  # construction-only validation
+        instrument_dict = dict(instrument_fields,
+                               __class__=f"{QdacInstrument.__module__}.{QdacInstrument.__name__}")
+    except Exception as exc:  # noqa: BLE001 — degrade, don't crash the build
+        warnings.append(
+            f"QDAC instrument attach failed ({type(exc).__name__}: {exc}) — "
+            "no top-level 'qdac' entry was written."
+        )
+
+    qubits = getattr(machine, "qubits", None) or {}
+    wired_pins: dict = {}
+    for qid, fields in qdac_qubits.items():
+        qubit = qubits.get(qid)
+        if qubit is None:
+            continue  # spec/UI drift; ignore defensively like other seeders
+        if getattr(qubit, "z", None) is not None:
+            warnings.append(
+                f"qubit {qid}: already has a z component from wiring — left "
+                "untouched (QDAC bias not applied; check spec.qdac.qubits "
+                "against any 'flux' line for this qubit)."
+            )
+            continue
+
+        # Reassign the runtime class in place — QdacBiasedFixedFrequencyTransmon
+        # differs from the qubit's already-built class only in the type of
+        # `z` (confirmed against the customer's own qdac_components.py: it
+        # adds no other fields), so this keeps the SAME object (same identity,
+        # same already-built resonator/xy children, same parent/root wiring)
+        # rather than reconstructing a fresh instance and moving children
+        # between parents.
+        try:
+            qubit.__class__ = QdacBiasedFixedFrequencyTransmon
+            qubit.z = QdacBiasLine(
+                channel=fields["channel"],
+                dc_offset=fields.get("dc_offset", 0.0),
+                trigger_port=fields.get("trigger_port"),
+                dwell=fields.get("dwell", 2e-6),
+                slew_rate=fields.get("slew_rate", 2e7),
+                output_range=fields.get("output_range", "low"),
+                output_filter=fields.get("output_filter", "med"),
+                settle_time=fields.get("settle_time"),
+            )
+        except Exception as exc:  # noqa: BLE001 — degrade, don't crash the build
+            warnings.append(
+                f"qubit {qid}: QDAC bias attach failed ({type(exc).__name__}: "
+                f"{exc}) — z left as None."
+            )
+            continue
+
+        pin = pins.get(qid)
+        if pin is None:
+            continue  # trigger wiring degraded above; static bias still works
+        con, slot, port = pin
+        try:
+            machine.ports.get_digital_output(f"con{con}", slot, port, create=True)
+        except Exception as exc:  # noqa: BLE001 — degrade, don't crash the build
+            warnings.append(
+                f"qubit {qid}: could not create digital output port "
+                f"con{con}/{slot}/{port} ({type(exc).__name__}: {exc}) — "
+                "opx_trigger_out left unset."
+            )
+            continue
+
+        try:
+            from quam.components import Channel, pulses
+            from quam.components.channels import DigitalOutputChannel
+
+            qubit.z.opx_trigger_out = Channel(
+                id=f"{qid}_qdac_trigger",
+                digital_outputs={
+                    "trigger": DigitalOutputChannel(
+                        opx_output=f"#/wiring/qubits/{qid}/qt/digital_output",
+                        shareable=True,
+                    )
+                },
+                operations={"trigger": pulses.Pulse(length=100, digital_marker="ON")},
+            )
+        except Exception as exc:  # noqa: BLE001 — degrade, don't crash the build
+            warnings.append(
+                f"qubit {qid}: opx_trigger_out channel build failed "
+                f"({type(exc).__name__}: {exc}) — QDAC channel/dc_offset "
+                "still set, trigger wiring skipped."
+            )
+            continue
+
+        wired_pins[qid] = pin
+
+    return wired_pins, instrument_dict
+
+
+def _inject_qdac_state(state_path, qdac_instrument: dict | None) -> None:
+    """Patch state.json to add the top-level 'qdac' instrument entry.
+
+    File-level, post-save, ATOMIC (tmp + os.replace) — see :func:`_apply_qdac`
+    for why this can't be a live ``machine.qdac = ...`` assignment. No-op if
+    *qdac_instrument* is None (nothing to write / import degraded).
+    """
+    if not qdac_instrument:
+        return
+    state_path = Path(state_path)
+    if not state_path.exists():
+        return
+
+    with open(state_path, "r", encoding="utf-8") as fh:
+        state = json.load(fh)
+    if state.get("qdac") == qdac_instrument:
+        return
+    state["qdac"] = qdac_instrument
+
+    tmp = state_path.with_suffix(state_path.suffix + ".qdac.tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(state, fh, indent=4)
+    os.replace(tmp, state_path)
+
+
+def _inject_qdac_trigger_wiring(wiring_path, qdac_pins: dict) -> None:
+    """Patch wiring.json to add ``qubits.<qid>.qt.digital_output`` for every
+    QDAC-biased qubit whose trigger port was allocated.
+
+    File-level, post-save, ATOMIC (tmp + os.replace) — never through a live
+    ``machine.wiring`` write. The customer's own build_quam_wiring_qdac.py
+    warns that ``machine.wiring``'s ``setdefault`` returns detached copies,
+    so a nested post-assignment write silently drops the leaf; mirrors
+    :func:`_link_input_downconverters_to_outputs`'s own file-level patch for
+    the same reason. No-op if *qdac_pins* is empty.
+    """
+    if not qdac_pins:
+        return
+    wiring_path = Path(wiring_path)
+    if not wiring_path.exists():
+        return
+
+    with open(wiring_path, "r", encoding="utf-8") as fh:
+        wiring = json.load(fh)
+    qubits = wiring.setdefault("wiring", {}).setdefault("qubits", {})
+    changed = False
+    for qid, (con, slot, port) in qdac_pins.items():
+        entry = qubits.setdefault(qid, {})
+        ref = f"#/ports/digital_outputs/con{con}/{slot}/{port}"
+        if entry.get("qt", {}).get("digital_output") != ref:
+            entry["qt"] = {"digital_output": ref}
+            changed = True
+    if not changed:
+        return
+
+    tmp = wiring_path.with_suffix(wiring_path.suffix + ".qdac.tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(wiring, fh, indent=4)
+    os.replace(tmp, wiring_path)
 
 
 # ---------------------------------------------------------------------------
@@ -1104,6 +1440,12 @@ def _seed_cz_variant(pair, *, variant="unipolar", amplitude=0.1, duration=100,
     moving_q = qc if moving == "control" else qt
     if getattr(moving_q, "z", None) is None:
         return None
+    if not hasattr(moving_q.z, "operations"):
+        # QDAC-biased moving qubit — its z has no operations dict (static DC
+        # bias, not a pulsed OPX flux line).
+        return (f"pair: moving qubit {getattr(moving_q, 'name', moving_q)} is "
+                "QDAC-biased (no OPX flux line) — cannot play a CZ flux pulse "
+                "there; this pair's CZ macro was skipped.")
 
     warning = None
     if variant not in _CZ_VARIANTS:
@@ -1892,6 +2234,11 @@ def _finalize_pair_gates(machine, spec, pair_gate):
                 )
                 if vw:
                     warnings.append(vw)
+                    if "QDAC-biased" in vw:
+                        # The moving qubit's z is fixed for this pair — every
+                        # remaining variant would hit the identical guard and
+                        # re-emit the identical message.
+                        break
         if w:
             warnings.append(w)
 
@@ -1999,6 +2346,11 @@ def run_build(spec: dict, out_dir: Path) -> dict:
         machine = quam_cls.load()
         build_quam(machine)
 
+        # 2b. QDAC-II bias (DEGRADE-only — see _apply_qdac). Must run BEFORE
+        #     apply_populate/_finalize_pair_gates so their z.operations
+        #     guards see the final per-qubit class.
+        qdac_pins, qdac_instrument = _apply_qdac(machine, spec, instruments, warnings)
+
         # 3. Apply the populate physics values, then the shared-port dual-
         #    upconverter surgery (LO1/f_01 must already be set; the CR seed
         #    then points at upconverters/2), then the chosen 2Q-gate macros,
@@ -2038,6 +2390,22 @@ def run_build(spec: dict, out_dir: Path) -> dict:
             + traceback.format_exc()
         )
 
+    try:
+        _inject_qdac_state(state_path, qdac_instrument)
+    except Exception:  # noqa: BLE001 - defensive: build success must not
+        # depend on this post-fixup either.
+        sys.stderr.write(
+            "warning: _inject_qdac_state failed\n" + traceback.format_exc()
+        )
+
+    try:
+        _inject_qdac_trigger_wiring(wiring_path, qdac_pins)
+    except Exception:  # noqa: BLE001 - defensive: build success must not
+        # depend on this post-fixup either.
+        sys.stderr.write(
+            "warning: _inject_qdac_trigger_wiring failed\n" + traceback.format_exc()
+        )
+
     return {
         "files": {
             "state": str(state_path) if state_path.exists() else None,
@@ -2046,6 +2414,8 @@ def run_build(spec: dict, out_dir: Path) -> dict:
         "quam_class": quam_cls.__name__,
         "qubits": sorted(str(q) for q in getattr(machine, "qubits", {}) or {}),
         "qubit_pairs": sorted(str(p) for p in getattr(machine, "qubit_pairs", {}) or {}),
+        "qdac_qubits": sorted(qdac_pins.keys()) if qdac_pins else
+                       sorted((spec.get("qdac") or {}).get("qubits") or {}),
         "allocation": read_allocation(connectivity),
         "warnings": warnings,
         "class_schemas": _collect_class_schemas(state_path, wiring_path),
