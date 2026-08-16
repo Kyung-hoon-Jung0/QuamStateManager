@@ -8350,6 +8350,52 @@ button.diag-badge { cursor: pointer; }
 .bulk-toolbar { display: flex; align-items: center; gap: 0.7rem; margin-bottom: 0.6rem; flex-wrap: wrap; }
 .bulk-toolbar-title { margin-bottom: 0.3rem; }   /* tight gap to the controls row below */
 /* user font-size control (tiles + slider + bold) */
+/* docs/120 item 4 — quick-filter chips, in the row the readability cluster
+   used to occupy. Its own line under the controls row: on a real chip this is
+   ~17 chips, which would push the search box off a laptop screen if it shared
+   a row, and it wraps to a horizontal scroll rather than growing the toolbar
+   downward while the user works. */
+.bulk-chipbar { display: flex; align-items: center; gap: 0.3rem;
+    margin: 0.1rem 0 0.35rem; }
+.bulk-chip-scroll { display: flex; align-items: center; gap: 0.25rem;
+    overflow-x: auto; scrollbar-width: thin; padding-bottom: 2px; min-width: 0; }
+.bulk-chip { flex: 0 0 auto; margin: 0; width: auto;
+    padding: 0.08rem 0.5rem; border-radius: 1rem;
+    border: 1px solid var(--pico-muted-border-color);
+    background: transparent; color: var(--color-text-muted, var(--pico-muted-color));
+    font-size: 0.74rem; line-height: 1.5; cursor: pointer; white-space: nowrap; }
+.bulk-chip:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
+.bulk-chip.active { background: var(--pico-primary); color: var(--pico-primary-inverse);
+    border-color: var(--pico-primary); }
+/* Leftmost and prominent, per the user — it governs every chip beside it, so
+   it must not read as one of them. Square, bordered, never the chip pill. */
+.bulk-chip-mode { flex: 0 0 auto; margin: 0; width: auto;
+    padding: 0.08rem 0.45rem; border-radius: 0.25rem;
+    border: 1px solid var(--pico-muted-border-color);
+    background: transparent; color: var(--pico-contrast, inherit);
+    font-size: 0.7rem; font-weight: 700; letter-spacing: 0.03em;
+    cursor: pointer; white-space: nowrap; }
+.bulk-chip-mode:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
+.bulk-chip-mode.chip-mode-or { border-color: var(--pico-primary);
+    color: var(--pico-primary); }
+.bulk-chip-offer { flex: 0 0 auto; display: inline-flex; align-items: center;
+    gap: 0.25rem; font-size: 0.72rem;
+    color: var(--color-warning-text, var(--pico-muted-color)); }
+.bulk-chip-offer[hidden] { display: none; }
+.bulk-chip-offer-yes, .bulk-chip-offer-no { margin: 0; width: auto;
+    padding: 0.02rem 0.4rem; border-radius: 0.25rem; font-size: 0.72rem;
+    border: 1px solid var(--color-warning-border, var(--pico-muted-border-color));
+    background: transparent; color: inherit; cursor: pointer; }
+.bulk-chip-offer-yes:hover, .bulk-chip-offer-no:hover {
+    background: var(--color-warning-bg, transparent); }
+/* Settings ▸ Live Edit — two labelled sub-rows (Table / Flat), because the two
+   views keep independent keys and merging them would silently change behaviour. */
+.settings-sub { margin: 0.15rem 0 0.3rem; }
+.settings-sub-label { display: block; font-size: 0.7rem;
+    color: var(--pico-muted-color); margin-bottom: 0.15rem; }
+.settings-slider { display: flex; align-items: center; gap: 0.3rem;
+    margin: 0.2rem 0 0; }
+.settings-slider input[type=range] { width: 100%; margin: 0; }
 .bulk-font-ctl { display: inline-flex; align-items: center; gap: 0.25rem; }
 .bulk-font-ctl .bulk-font-label { font-size: 0.78em; color: var(--pico-muted-color); }
 .bulk-font-ctl .btn-xs { margin: 0; padding: 0.05rem 0.45rem; width: auto; }

@@ -74,20 +74,47 @@
                title="When on, editing a qubit/readout frequency mirrors its f₀₁↔RF twin — but only when the two are currently equal. RF_frequency is what the hardware actually plays (the config's IF is inferred from it); f_01 is bookkeeping the calibration keeps equal to it. An already-detuned pair is left untouched. Turn off to detune one deliberately.">
             <input type="checkbox" id="bulk-freq-sync" checked onchange="BulkEdit.setFreqSync(this.checked)">
             &#128279;&nbsp;Sync f&#8320;&#8321;&#8596;RF</label>
-        <span class="bulk-font-ctl" title="Cell readability — size · weight · letter spacing">
-            <span class="bulk-font-label">Aa</span>
-            <button type="button" class="btn-xs outline bulk-font-preset" data-fs="0.85" onclick="BulkEdit.setFont(0.85)">S</button>
-            <button type="button" class="btn-xs outline bulk-font-preset" data-fs="1" onclick="BulkEdit.setFont(1)">M</button>
-            <button type="button" class="btn-xs outline bulk-font-preset" data-fs="1.25" onclick="BulkEdit.setFont(1.25)">L</button>
-            <input type="range" id="bulk-font-slider" min="0.75" max="1.7" step="0.05" value="1"
-                   oninput="BulkEdit.setFont(this.value)" aria-label="Cell font size" title="Font size">
-            <button type="button" class="btn-xs outline bulk-bold-toggle" id="bulk-bold"
-                    onclick="BulkEdit.toggleBold()" aria-pressed="false" title="Bold values">B</button>
-            <span class="bulk-font-label bulk-ls-label" title="Letter spacing">&#8596;</span>
-            <input type="range" id="bulk-ls-slider" min="0" max="0.12" step="0.02" value="0"
-                   oninput="BulkEdit.setLetterSpacing(this.value)" aria-label="Cell letter spacing" title="Letter spacing (digit gap)">
+    </div>
+    {# ── docs/120 item 4: quick-filter chips ────────────────────────────────
+       The readability cluster (Aa · S M L · B · letter spacing) that used to
+       occupy this row moved into Settings ▸ Live Edit — it is set once and
+       then never touched, while THIS is the row a user works in all day.
+
+       The customer's own description of the daily loop: "go to the search box
+       and TYPE x180, amp, ro, power ... it's very repetitive and eats time."
+       So the parameters are clickable, multi-select, and they drive the SAME
+       #bulk-search box the user can still type into freely — which is why one
+       chip filters both grids (they share that input) and why typing a chip's
+       word by hand lights the chip. Chips are a VIEW of the query, not a
+       second filter that could disagree with it.
+
+       Terms are validated server-side against this chip's real columns
+       (_bulk_filter_chips), so a chip is never offered that would match
+       nothing, and any band the curated keywords miss is appended. #}
+    {% if filter_chips %}
+    <div class="bulk-chipbar" id="bulk-chipbar" role="group" aria-label="Quick parameter filters">
+        {# Leftmost and prominent, per the user. AND is the default: a lab types
+           "x180 amp" far more often than it wants a union. #}
+        <button type="button" class="bulk-chip-mode" id="bulk-chip-mode"
+                aria-pressed="false" data-mode="and"
+                title="How selected chips combine. AND = a column must match every chip. OR = matching any chip is enough.">AND</button>
+        <span class="bulk-chip-scroll">
+        {% for ch in filter_chips %}
+            <button type="button" class="bulk-chip" data-chip-term="{{ ch.term }}"
+                    aria-pressed="false"
+                    title="{{ ch.n }} column{{ '' if ch.n == 1 else 's' }} match &quot;{{ ch.term }}&quot;">{{ ch.label }}</button>
+        {% endfor %}
+        </span>
+        {# Zero matches is the one moment a user is likely to want the other
+           mode, so offer it AS a mode switch rather than making them find the
+           toggle: accepting costs the same single click. #}
+        <span class="bulk-chip-offer" id="bulk-chip-offer" hidden>
+            <span class="bulk-chip-offer-text">No matches — try OR?</span>
+            <button type="button" class="bulk-chip-offer-yes" id="bulk-chip-offer-yes">Yes</button>
+            <button type="button" class="bulk-chip-offer-no" id="bulk-chip-offer-no">No</button>
         </span>
     </div>
+    {% endif %}
     {# docs/94: the derived-column cap must never be silent — when it trips,
        say so where the missing columns would have been. #}
     {% if dyn_truncated %}

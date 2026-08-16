@@ -729,6 +729,55 @@
         <button onclick="PhysAmp.setUnit('both')" class="settings-opt" data-phys-unit="both">Both</button>
         </div>
         </div>
+        {# docs/120 item 4 — the Live-Edit readability cluster lived in the grid
+           toolbar, in the row a user works in all day, to control something set
+           once and then never touched. Its old spot is now the quick-filter
+           chips. Two rows, not one merged control: the Table and Flat views
+           keep their own independent localStorage keys (quam_bulk_* vs
+           quam_av_*), so this is a pure relocation with no behaviour change.
+
+           Safe to call from every page: base.html loads bulk-edit.js and
+           all-values.js unconditionally, and both apply functions early-return
+           when their pane is not mounted — the choice persists and lands on the
+           next render. #}
+        <div class="settings-group">
+        <small class="settings-label">Live Edit <span class="muted">(cell readability)</span></small>
+        <div class="settings-sub">
+        <span class="settings-sub-label">Table view</span>
+        <div class="settings-options">
+        <button onclick="BulkEdit.setFont(0.85)" class="settings-opt bulk-font-preset" data-fs="0.85">S</button>
+        <button onclick="BulkEdit.setFont(1)" class="settings-opt bulk-font-preset" data-fs="1">M</button>
+        <button onclick="BulkEdit.setFont(1.25)" class="settings-opt bulk-font-preset" data-fs="1.25">L</button>
+        <button onclick="BulkEdit.toggleBold()" class="settings-opt bulk-bold-toggle" id="bulk-bold"
+                aria-pressed="false" title="Bold values">B</button>
+        </div>
+        <label class="settings-slider" title="Letter spacing (digit gap)">
+        <span class="muted">&#8596;</span>
+        <input type="range" id="bulk-ls-slider" min="0" max="0.12" step="0.02" value="0"
+               oninput="BulkEdit.setLetterSpacing(this.value)" aria-label="Table cell letter spacing">
+        </label>
+        </div>
+        <div class="settings-sub">
+        <span class="settings-sub-label">Flat view</span>
+        <div class="settings-options">
+        <button onclick="AllValues.setFont(0.85)" class="settings-opt" data-av-fs="0.85">S</button>
+        <button onclick="AllValues.setFont(1)" class="settings-opt" data-av-fs="1">M</button>
+        <button onclick="AllValues.setFont(1.2)" class="settings-opt" data-av-fs="1.2">L</button>
+        <button onclick="AllValues.toggleBold()" class="settings-opt" id="av-bold"
+                aria-pressed="false" title="Bold values">B</button>
+        </div>
+        <label class="settings-slider" title="Letter spacing (digit gap)">
+        <span class="muted">&#8596;</span>
+        <input type="range" id="av-ls-slider" min="0" max="0.12" step="0.02" value="0"
+               oninput="AllValues.setLetterSpacing(this.value)" aria-label="Flat view letter spacing">
+        </label>
+        <label class="settings-slider" title="Row spacing">
+        <span class="muted">&#8597;</span>
+        <input type="range" id="av-rh-slider" min="1" max="1.6" step="0.05" value="1"
+               oninput="AllValues.setRowSpacing(this.value)" aria-label="Flat view row spacing">
+        </label>
+        </div>
+        </div>
         </div>
         <div id="calc-popover" class="calc-popover calc-hidden" role="dialog" aria-modal="false" aria-label="Calculator">
         <div class="calc-header" id="calc-header">
