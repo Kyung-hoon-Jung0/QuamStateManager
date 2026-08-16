@@ -5318,6 +5318,10 @@ def qubit_edit(name: str):
         _pr = _pointer_cell_refusal(modifier.store, dot_path, raw_value)
         if _pr is not None:
             raise ValueError(_pr)
+        # ...and a null field takes its type from the rest of the chip.
+        _sr = _sibling_type_refusal(modifier.store, dot_path, raw_value)
+        if _sr is not None:
+            raise ValueError(_sr)
         parsed = _parse_for_target(modifier.store, target_path, raw_value)
         # Mint one group id when the freq-mirror can fire, so the primary edit
         # and its mirrored twin share it and a single Ctrl+Z reverts both
@@ -5354,6 +5358,12 @@ def _op_of_path(dot_path: str) -> str | None:
         if i + 1 < len(segs):
             return segs[i + 1]
     return None
+
+
+def _sibling_type_refusal(store, dot_path: str, new_value):
+    """Thin wrapper — the rule lives in core.edit_policy, beside its twin."""
+    from quam_state_manager.core.edit_policy import sibling_type_refusal
+    return sibling_type_refusal(store, dot_path, new_value)
 
 
 def _pointer_cell_refusal(store, dot_path: str, new_value):
@@ -5498,6 +5508,10 @@ def field_edit():
         _pr = _pointer_cell_refusal(modifier.store, dot_path, raw_value)
         if _pr is not None:
             raise ValueError(_pr)
+        # ...and a null field takes its type from the rest of the chip.
+        _sr = _sibling_type_refusal(modifier.store, dot_path, raw_value)
+        if _sr is not None:
+            raise ValueError(_sr)
         # docs/20 r12-B: an FSP edit NEVER silently changes amplitudes — and
         # never commits before the user saw the compensation offer. Without
         # an ack the plan comes back 409; the popup then applies FSP+amps in
@@ -5651,13 +5665,29 @@ def _parse_for_target(store, target_path: str, raw_value: str):
     """
     from quam_state_manager.core import type_policy as _tp
     from quam_state_manager.core.edit_policy import is_free_form_path
-    if is_free_form_path(target_path):
-        try:
-            current = store.get_value(target_path)
-        except Exception:  # noqa: BLE001 — fall through to the normal path
-            current = None
-        if isinstance(current, str) and not is_pointer(current):
-            return raw_value
+    try:
+        current = store.get_value(target_path)
+    except Exception:  # noqa: BLE001 — fall through to the normal path
+        current = None
+    # A TEXT leaf keeps what the user typed, verbatim.
+    #
+    # docs/81 introduced this for `extras` only, on the reasoning "free-form
+    # means the text is the value" — but that reasoning never depended on
+    # `extras`. Measured on the real chip: typing into `grid_location` (a plain
+    # chip field holding "1,0") stored `1032`, because the parser strips the
+    # thousands separators the grid itself prints and the coercer casts the
+    # number back to str. The Review tray then showed
+    # `grid_location  1,0 -> 1032  +1,022 (+10220%)` — a percentage delta on a
+    # coordinate. The comma IS the separator; "007" loses its zeros the same way.
+    #
+    # Gated on the current value being a NON-NUMERIC string, which is the
+    # narrowest form of the rule: a field genuinely holding "0.13" still parses,
+    # so docs/56's stored-as-TEXT detection and its convert/keep offer are
+    # untouched, and nothing about non-string fields changes. `extras` is
+    # subsumed (its numeric values were already parsed under the old gate too).
+    if (isinstance(current, str) and not is_pointer(current)
+            and (is_free_form_path(target_path) or not _is_numeric_string(current))):
+        return raw_value
     policy = getattr(store, "type_policy", None)
     expected = None
     if policy is not None:
@@ -7034,6 +7064,10 @@ def field_edit_batch():
                 _pr = _pointer_cell_refusal(modifier.store, dot_path, raw_value)
                 if _pr is not None:
                     raise ValueError(_pr)
+                # ...and a null field takes its type from the rest of the chip.
+                _sr = _sibling_type_refusal(modifier.store, dot_path, raw_value)
+                if _sr is not None:
+                    raise ValueError(_sr)
                 # String values parse against the TARGET's expectation (JSON
                 # values pass through — the modifier gate is the backstop).
                 parsed = (_parse_for_target(modifier.store, target_path, raw_value)
@@ -7854,6 +7888,10 @@ def pair_edit(name: str):
         _pr = _pointer_cell_refusal(modifier.store, dot_path, raw_value)
         if _pr is not None:
             raise ValueError(_pr)
+        # ...and a null field takes its type from the rest of the chip.
+        _sr = _sibling_type_refusal(modifier.store, dot_path, raw_value)
+        if _sr is not None:
+            raise ValueError(_sr)
         parsed = _parse_for_target(modifier.store, target_path, raw_value)
         # Group primary + freq-mirror twin under one id (see qubit_edit) so a
         # single Ctrl+Z reverts both atomically instead of leaving f_01≠RF.
@@ -8645,8 +8683,23 @@ def topology_trends():
     sel = [m for m in sel if m in curated][:8]
 
     series = _trend_series_curated(hm, path, sel) if sel else []
-    if extra:
-        series += _trend_series_leaf(hm, path, extra, qubits)
+    extra_series = _trend_series_leaf(hm, path, extra, qubits) if extra else []
+    series += extra_series
+
+    # The same parameter must appear ONCE per qubit. A typed path like
+    # `qubits.q1.f_01` derives the label `f_01`, which is also a curated metric
+    # name, so the two tiers landed in one bucket and the chart drew every qubit
+    # twice and titled itself "f_01 · 40 qubits" on a 20-qubit chip. The curated
+    # tier is the denser series, so it wins; the leaf tier fills what it lacks.
+    _seen_series: set = set()
+    _deduped = []
+    for _s in series:
+        _k = (_s.get("metric"), _s.get("entity"))
+        if _k in _seen_series:
+            continue
+        _seen_series.add(_k)
+        _deduped.append(_s)
+    series = _deduped
 
     if len(series) > _TRENDS_MAX_SERIES:
         series = series[:_TRENDS_MAX_SERIES]
@@ -8669,6 +8722,15 @@ def topology_trends():
         if m not in by_metric:
             charts.append({"metric": m, "series": [], "n_entities": 0,
                            "unit": _trend_unit(m)})
+    # ...and the same courtesy for a TYPED path. A path the index cannot chart
+    # produced no series, so nothing was appended and the section came back
+    # byte-identical: no chart, no message, no error, the box still holding what
+    # the user typed. An empty slot renders the template's honest "Nothing
+    # recorded" line against the path itself, which at least distinguishes
+    # "asked and found nothing" from "the box ignored you".
+    if extra and not extra_series:
+        charts.append({"metric": extra, "series": [], "n_entities": 0,
+                       "unit": _trend_unit(extra)})
 
     return render_template("_topo_trends.html", charts=charts, curated=curated,
                            selected=sel, extra=extra, no_chip=False,

@@ -186,6 +186,80 @@ def pointer_cell_refusal(store: Any, dot_path: str, new_value: Any) -> str | Non
             f"deliberately.")
 
 
+def sibling_type_refusal(store: Any, dot_path: str, new_value: Any) -> str | None:
+    """Why a NULL field refuses prose, using the chip's own evidence, or None.
+
+    A field holding ``null`` carries no type, so with no env schema attached SM
+    had nothing to judge against and `qubits.q18.T1 <- "abc"` was stored as a
+    string, HTTP 200, no warning. The next `Quam.load()` gets a str where a
+    float belongs, and every consumer of T1 breaks.
+
+    But the chip is not silent about it: the SAME leaf on the sibling entities
+    usually holds real numbers. That is data-derived evidence, not an invented
+    schema — so the refusal only fires when the chip itself demonstrates the
+    type, and says which qubits it read. On a chip in early bring-up where the
+    leaf is null everywhere (the real customer chip), there is nothing to infer
+    and behaviour is byte-identical to before: SM does not know, so it does not
+    pretend to.
+
+    Narrow by construction: only a currently-NULL leaf, only when the typed text
+    is not itself a number / pointer / null token, and only under an entity
+    collection (`qubits.<id>.…`, `qubit_pairs.<id>.…`).
+    """
+    from quam_state_manager.core.pointer_resolver import is_pointer
+    if not isinstance(new_value, str):
+        return None                      # already parsed to a real type
+    s_new = new_value.strip()
+    if not s_new or is_pointer(s_new) or s_new.lower() in ("null", "none"):
+        return None
+    try:
+        float(s_new)
+        return None                      # a number is never the problem
+    except ValueError:
+        pass
+    try:
+        if store.get_value(dot_path) is not None:
+            return None                  # only a NULL field lacks a type
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None
+
+    segs = dot_path.split(".")
+    if len(segs) < 3 or segs[0] not in ("qubits", "qubit_pairs"):
+        return None
+    coll = (store.merged or {}).get(segs[0])
+    if not isinstance(coll, dict):
+        return None
+    leaf, me = segs[2:], segs[1]
+    numeric, other, witnesses = 0, 0, []
+    for ent, node in coll.items():
+        if ent == me:
+            continue
+        cur = node
+        for k in leaf:
+            if not isinstance(cur, dict) or k not in cur:
+                cur = None
+                break
+            cur = cur[k]
+        if cur is None:
+            continue
+        if isinstance(cur, bool):
+            other += 1
+        elif isinstance(cur, (int, float)):
+            numeric += 1
+            if len(witnesses) < 3:
+                witnesses.append(ent)
+        else:
+            other += 1
+    # Unanimous, and enough of them to mean something.
+    if numeric >= 2 and other == 0:
+        return (f"{'.'.join(leaf)} is a number on this chip "
+                f"({numeric} other {segs[0].rstrip('s')}s, e.g. "
+                f"{', '.join(witnesses)}), and {new_value!r} is not one. "
+                f"This field is empty, so its type comes from the rest of the "
+                f"chip. Type a number, or clear it with 'null'.")
+    return None
+
+
 def _container_at(merged: Any, segs: list[str]) -> Any:
     """Walk ``merged`` by string segments (dict keys or list indices). Returns the
     value at the path, or None if any segment is missing/out of range."""

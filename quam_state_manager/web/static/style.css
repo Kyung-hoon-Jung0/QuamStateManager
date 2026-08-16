@@ -8689,9 +8689,23 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
    conflict tray's force button and the drift banner / review modal's
    "Keep mine — overwrite live" are the same act, so they must not look like
    two different weights of decision. */
+/* SPECIFICITY, not order. Each of these buttons also carries a two-class base
+   (`.btn-sync.outline`, `.btn-sm.primary`), which outranks a single class no
+   matter where it sits in the file — so this rule was written, shipped, and
+   silently lost every cascade. Measured in Chrome: "↑ Keep mine — overwrite
+   live" computed to rgb(152,161,179) on rgb(32,38,50), byte-identical to the
+   "Close" button beside it, while --color-error-text is #f5a0a8. The most
+   destructive control on the screen looked exactly like the least. Each
+   selector is now paired with the base class it actually ships with. */
+.btn-sm.tray-force-btn,
+.btn-sync.state-review-overwrite-btn,
+.btn-sm.live-diverged-overwrite,
 .tray-force-btn,
 .state-review-overwrite-btn,
 .live-diverged-overwrite { color: var(--color-error-text); border-color: var(--color-error-text); }
+.btn-sm.tray-force-btn:hover,
+.btn-sync.state-review-overwrite-btn:hover,
+.btn-sm.live-diverged-overwrite:hover,
 .tray-force-btn:hover,
 .state-review-overwrite-btn:hover,
 .live-diverged-overwrite:hover { background: var(--color-error-text); color: var(--pico-card-background-color); border-color: var(--color-error-text); }

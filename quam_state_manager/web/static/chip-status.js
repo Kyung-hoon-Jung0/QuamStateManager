@@ -254,7 +254,7 @@ window.ChipStatus.mount = function (opts) {
     // One qubit-card / popup property row with the physical gate applied: an
     // unphysical fit shows its raw value struck-through ("bad fit"), never a
     // heat colour. nullLabel is what a genuinely-missing value renders as
-    // ('—' on cards, 'None' in popups).
+    // ('—' everywhere: cards, popups and heatmaps say absence the same way).
     function _propRowHtml(n, p, nullLabel) {
         if (_badFit(n, p.key)) {
             return '<div class="topo-prop-row" data-prop="' + p.key + '">'
@@ -650,7 +650,8 @@ window.ChipStatus.mount = function (opts) {
             var html = '<div class="topo-popup-header"><span>' + n.id + ' \u2014 details</span>'
                 + '<button class="topo-popup-close">\u2715</button></div>';
             SECONDARY_PROPS.forEach(function(p) {
-                html += _propRowHtml(n, p, 'None');
+                // '—', not Python's None spelled out — see the heatmap note.
+                html += _propRowHtml(n, p, '—');
             });
             // Per-metric recency: the 1Q gate fidelity carries its own measurement
             // time — show it honestly (only metric on the qubit that has one).
@@ -1249,7 +1250,7 @@ window.ChipStatus.mount = function (opts) {
                 }
 
                 // Render a cell for EVERY pair at its grid position — pairs with
-                // no RB data for THIS gate show a grey "None" instead of leaving a
+                // no RB data for THIS gate show a grey em dash instead of leaving a
                 // gap, so the topology shape is preserved and an uncalibrated pair
                 // is a visible to-do, not invisible. (Without a grid we can only
                 // place the data pairs.)
@@ -1269,7 +1270,13 @@ window.ChipStatus.mount = function (opts) {
                             + 'title="' + pidE + ' \u2014 ' + gateLabel + ': not measured \u00b7 click to inspect" '
                             + 'style="' + posStyle + '">'
                             + '<div class="heatmap-cell-name">' + pidE + '</div>'
-                            + '<div class="heatmap-cell-value">None</div></div>';
+                            // Python's None reached the screen as a WORD. The
+                            // title beside it already says "not measured" and the
+                            // panel header says "(1/20 qubits)", so three places
+                            // described the same absence and one of them used a
+                            // foreign language's null literal. An em dash is what
+                            // the hero map already prints for exactly this.
+                            + '<div class="heatmap-cell-value">—</div></div>';
                         return;
                     }
                     var bg, fg, ht;
@@ -1326,7 +1333,7 @@ window.ChipStatus.mount = function (opts) {
                     config: {responsive: true, displayModeBar: false},
                     computeLayout: function(chartEl, base) {
                         // Size to the bar COUNT (capped) — NOT the topology grid height.
-                        // The grid now shows every pair (grey "None"), so matching it blew
+                        // The grid now shows every pair (grey em dash), so matching it blew
                         // the chart up to ~1000px and overlapped the next panel.
                         base.height = Math.min(640, Math.max(160, sorted.length * 26));
                         return base;
@@ -1490,7 +1497,8 @@ window.ChipStatus.mount = function (opts) {
                     + tAttr
                     + 'style="' + posStyle + (v == null ? '' : 'background-color:' + bg + ';color:' + fg + ';') + '">'
                     + '<div class="heatmap-cell-name">' + nidE + '</div>'
-                    + '<div class="heatmap-cell-value">' + (v != null ? prop.fmtFn(v) : 'None') + '</div></div>';
+                    + '<div class="heatmap-cell-value">'
+                    + (v != null ? prop.fmtFn(v) : '—') + '</div></div>';
             });
             sectionHtml += '</div>'; // close grid
 

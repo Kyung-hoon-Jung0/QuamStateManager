@@ -274,9 +274,20 @@
                 var t = document.getElementById(id);
                 if (!t) return;
                 seen = true;
+                // Count DATA columns only. Subtracting just `.bulk-corner`
+                // left the permanent apply-column header in the total, so the
+                // minimum was 1 per table and `=== 0` was unreachable on any
+                // chip — the "No matches — try OR?" offer could never appear,
+                // however many chips you ANDed together. Every real column
+                // carries data-col-key; no permanent header does.
+                // ...and never the row-name column. `__id__` is the qubit /
+                // pair name: always visible, not a value, one per table — so
+                // counting it kept the floor at 2 and `=== 0` stayed
+                // unreachable even after the apply header was excluded.
                 n += t.querySelectorAll(
-                        'thead th:not(.bulk-search-hidden):not(.bulk-col-hidden)').length
-                   - t.querySelectorAll('thead .bulk-corner').length;
+                    'thead th[data-col-key]:not([data-col-key="__id__"])'
+                    + ':not(.bulk-search-hidden):not(.bulk-col-hidden)'
+                ).length;
             });
             return seen ? n : 1;   // no grid mounted → never claim "no matches"
         }

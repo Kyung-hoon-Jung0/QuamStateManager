@@ -465,7 +465,19 @@ class TestPulseDelete:
         assert resp.status_code == 200
         assert resp.headers.get("HX-Trigger") == "pulses-changed, diagnostics-changed"
         html = loaded_client.get("/pulses").data.decode()
-        assert "saturation" not in html
+        # Scoped to the pulse TABLE, not the whole page. The Review drawer now
+        # renders on a full page load (it used to be silently empty — the
+        # `_ctx()` / `_render_tray` field mismatch), and it correctly lists the
+        # pending deletion by path. A whole-page `not in` therefore fails on the
+        # very evidence the drawer exists to show.
+        import re as _re
+        table = _re.search(r"<table[^>]*pulse[^>]*>.*?</table>", html, _re.S | _re.I)
+        body = table.group(0) if table else html.split('id="pending-tray"')[0]
+        assert "saturation" not in body, "the deleted pulse is still listed"
+        # ...and the deletion IS reported where a user reviews changes — a
+        # delete the review surface hid would be the real defect.
+        assert "tray-change-item" in html
+        assert f"{XY}.saturation" in html
 
     def test_delete_referenced_409_without_force(self, loaded_client):
         resp = loaded_client.post("/api/pulse/delete",
