@@ -254,6 +254,106 @@ def _bulk_column_groups(columns: list[dict]) -> list[dict[str, Any]]:
     return column_groups
 
 
+# docs/120 item 4 — quick-filter chips for the Live-Edit search box.
+#
+# The customer's daily loop is "go to the search box and TYPE x180, amp, ro,
+# power ... over and over", and they asked for those to be clickable instead:
+# "it's very repetitive and eats time". A real chip carries 314 columns in 22
+# sections, so a chip per section would be a wall — but a SUBSTRING keyword
+# spans the related bands for free (`xy` covers XY Drive / XY Port / XY+ /
+# XY Port+), which is exactly why the client haystack now includes `section`.
+#
+# Curated for the order and the short words a user actually thinks in; DERIVED
+# for the coverage guarantee. Anything the curated list does not already reach
+# is appended from the chip's own section names, so the set is complete by
+# construction on any chip and never offers a term that matches nothing.
+_BULK_CHIP_TERMS: tuple[tuple[str, str], ...] = (
+    ("freq", "Freq"),
+    ("xy", "XY"),
+    ("readout", "Readout"),
+    ("resonator", "Resonator"),
+    ("flux", "Flux"),
+    ("coupler", "Coupler"),
+    ("amp", "Amp"),
+    ("power", "Power"),
+    ("length", "Length"),
+    ("delay", "Delay"),
+    ("offset", "Offset"),
+    ("filter", "Filter"),
+    ("phase", "Phase"),
+    ("coherence", "Coherence"),
+    ("fidelity", "Fidelity"),
+    ("port", "Port"),
+    ("band", "Band"),
+)
+
+
+def _bulk_filter_chips(*column_sets: list[dict]) -> list[dict[str, Any]]:
+    """The chip row, validated against THIS chip's real columns.
+
+    One entry per offered term: ``{term, label, n}``. ``n`` is how many columns
+    the term reaches, across every grid that shares the one search box (the
+    qubit grid and the pair grid both read ``#bulk-search``), so a chip is only
+    rendered when pressing it would do something.
+
+    The haystack mirrors ``_colHay`` in bulk-edit.js — label + key + section +
+    search — because a chip that matched here and not there would be a lie.
+    """
+    hays: list[str] = []
+    sections: list[str] = []
+    for cols in column_sets:
+        for c in cols or []:
+            hays.append(" ".join((
+                str(c.get("label") or ""), str(c.get("key") or ""),
+                str(c.get("section") or ""), str(c.get("search") or ""),
+            )).lower())
+            sec = str(c.get("section") or "").strip()
+            if sec and sec not in sections:
+                sections.append(sec)
+
+    def _hits(term: str) -> int:
+        return sum(1 for h in hays if term in h)
+
+    chips: list[dict[str, Any]] = []
+    taken: set[str] = set()
+    for term, label in _BULK_CHIP_TERMS:
+        n = _hits(term)
+        if n:
+            chips.append({"term": term, "label": label, "n": n})
+            taken.add(term)
+
+    # Coverage sweep: any band no curated chip already reaches gets its own, so
+    # the set is complete on a chip whose architecture nobody has thought of.
+    #
+    # The term is the section's FIRST WORD. It has to be a single token because
+    # the search splits on whitespace — a two-word term would silently become
+    # an AND of two tokens — and it usefully collapses siblings: one `cz` chip
+    # covers CZ Unipolar / CZ Flattop / CZ Bipolar.
+    #
+    # Coverage is tested PREFIX-wise against each word, not by substring
+    # anywhere in the name. Substring matching looked right and quietly dropped
+    # the CZ bands on a real chip: the `Z+` section contributes the term "z",
+    # and "z" is a substring of "cz", so every gate band read as already
+    # covered. A prefix test keeps "freq" ⊃ "Frequencies" while letting "cz"
+    # through.
+    def _covered(sec_words: list[str]) -> bool:
+        return any(w.startswith(t) for w in sec_words for t in taken)
+
+    for sec in sections:
+        words = [w.strip("+*·").lower() for w in sec.split()]
+        words = [w for w in words if w]
+        if not words or _covered(words):
+            continue
+        term = words[0]
+        if term in taken:
+            continue
+        n = _hits(term)
+        if n:
+            chips.append({"term": term, "label": sec.rstrip("+").strip(), "n": n})
+            taken.add(term)
+    return chips
+
+
 def _bulk_col_maxlen(columns: list[dict], grid: dict, ids: list[str]) -> None:
     """Per-column display width = the widest value IN THAT COLUMN (uniform cells).
 
@@ -4396,12 +4496,16 @@ def bulk_edit():
     # its z-port filter columns with no trace). Surface it as an honest line.
     dyn_truncated = next(
         (c["label"] for c in dyn_model if c.get("kind") == "note"), None)
+    # docs/120 item 4 — validated against BOTH grids, because they share the
+    # one #bulk-search box, so a chip must not go dead just because its columns
+    # live in the pair table.
+    filter_chips = _bulk_filter_chips(columns, pair_columns)
     template = "_bulkedit.html" if _is_htmx() else "bulkedit.html"
     html = render_template(template, **_ctx(page="bulk", columns=columns, rows=rows,
                                             column_groups=column_groups, band_meta=band_meta,
                                             dyn_cols=dyn_cols, qubit_meta=qubit_meta,
                                             pair_columns=pair_columns, pair_groups=pair_groups,
-                                            pair_rows=pair_rows,
+                                            pair_rows=pair_rows, filter_chips=filter_chips,
                                             dyn_truncated=dyn_truncated))
     # docs/103: this is the app's largest response by an order of magnitude
     # (measured 10.0 MB / 6.5 MB HTML on real 21Q/10Q chips — docs/85 ships
@@ -8086,6 +8190,99 @@ def state_history_snapshot():
         return render_template("_status.html",
                                message=f"Snapshot failed: {exc}", level="error"), 500
     return state_history()
+
+
+# ── docs/120 item 10 — the working-state version, from the top bar ────────
+#
+# Customer: "move the bookmark button below Calculator, and in its place show
+# the current state working version id. Since we're adding Auto-Sync, revert
+# back and forth has to be really free. Clicking it lists the version history
+# with WHEN each was updated, checkboxes to pick several -> show just the
+# combined diff -> and let a chosen state be applied to the live chip."
+#
+# Deliberately a thin, reachable surface over machinery that already exists:
+# the snapshots are State History's, the 2-way diff is the docs/84 workbench's
+# front door, an N-way pick is the Compare hub's basket, and applying is
+# /state-history/<ts>/restore-live WITH BOTH its independent force gates. The
+# value added is that it is one click from every page rather than a navigation.
+#
+# The version ID is the snapshot TIMESTAMP. Not store.mutation_seq: that resets
+# on reload, eviction and restart, so it is a liveness pulse, never an identity.
+# Which snapshot is "now" is CONTENT-matched (snapshot_ts_for_current_content),
+# never "the newest" -- after an A->B->A cycle the newest snapshot holds the
+# wrong content, which is the audit-r10 finding that put that helper there.
+
+
+def _state_version_now(ctx: dict | None) -> dict:
+    """What the top-bar chip shows. Never called from a page render.
+
+    Resolving this hashes the live state+wiring pair, so it rides its own lazy
+    endpoint (docs/28: no live reads on a surface that renders on every page).
+    """
+    out: dict[str, Any] = {"ts": None, "count": 0, "unmatched": False}
+    if not ctx or ctx.get("type") != "quam" or not ctx.get("path"):
+        return out
+    hm = _history()
+    try:
+        out["count"] = len(hm.list_snapshots(Path(ctx["path"])))
+    except Exception:  # noqa: BLE001
+        return out
+    try:
+        out["ts"] = hm.snapshot_ts_for_current_content(Path(ctx["path"]))
+    except Exception:  # noqa: BLE001
+        out["ts"] = None
+    # "No snapshot holds exactly this content" is the ORDINARY mid-edit state,
+    # not a fault — say so plainly rather than inventing a nearest match.
+    out["unmatched"] = out["ts"] is None and out["count"] > 0
+    return out
+
+
+@bp.route("/state/version")
+def state_version_chip():
+    """The top-bar version chip (lazy; see _state_version_now)."""
+    ctx = _active_ctx()
+    # Gate on a chip actually being OPEN, not on a display name — the raw ctx
+    # carries no "name" (that is assembled by _ctx for full renders), and using
+    # it here made the chip silently render empty on every page.
+    return render_template("_state_version_chip.html",
+                           ver=_state_version_now(ctx),
+                           has_chip=bool(ctx and ctx.get("type") == "quam"
+                                         and ctx.get("path")))
+
+
+@bp.route("/state/versions")
+def state_versions_panel():
+    """The version list the chip opens: when each was recorded, what produced
+    it, and the two things a user wants from it — compare, and go back."""
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam" or not ctx.get("path"):
+        return render_template("_state_versions.html", rows=[], ver=_state_version_now(None),
+                               chip_key="", archive=True)
+    hm = _history()
+    path = Path(ctx["path"])
+    try:
+        snaps = hm.list_snapshots(path)
+    except Exception:  # noqa: BLE001
+        snaps = []
+    try:
+        chip_key = Path(hm.resolve_chip_dir(path)[0]).name
+    except Exception:  # noqa: BLE001
+        chip_key = ""
+    ver = _state_version_now(ctx)
+    limit = min(_int_arg("limit", 40, minimum=1), 500)
+    rows = [{
+        "ts": m.timestamp,
+        "trigger": m.trigger,
+        "label": m.label,
+        "note": m.note,
+        "pinned": bool(m.pinned),
+        "experiment": m.experiment_name,
+        "run_id": m.run_id,
+        "current": m.timestamp == ver["ts"],
+    } for m in snaps[:limit]]
+    return render_template("_state_versions.html", rows=rows, ver=ver,
+                           chip_key=chip_key, total=len(snaps),
+                           archive=(ctx.get("origin") or "live") != "live")
 
 
 @bp.route("/state/archive", methods=["POST"])

@@ -167,7 +167,145 @@
         if (window.htmx) htmx.ajax('GET', '/bulk', { target: '#table-pane', swap: 'innerHTML' });
     }
 
+    /* ── docs/120 item 4: the quick-filter chip bar ────────────────────────
+     *
+     * The customer's daily loop was "go to the search box and TYPE x180, amp,
+     * ro, power ... over and over -- very repetitive, eats time". So the common
+     * parameters are chips.
+     *
+     * The chips are a VIEW OF THE QUERY STRING, never a second filter. Toggling
+     * one rewrites #bulk-search and lets the existing search do all the work,
+     * which buys three things for free: one chip filters BOTH grids (they read
+     * the same input), typing a chip's word by hand lights that chip, and
+     * deleting it un-lights it. A parallel filter could disagree with the box;
+     * this cannot.
+     *
+     * The query is rebuilt as `<free text> <chip segment>`, where the segment
+     * joins the active terms with ' ' (AND) or ' | ' (OR) -- the docs/96
+     * grammar the search already parses, so there is no new matching logic
+     * anywhere. Free text the user typed is preserved verbatim.
+     */
+    var ChipBar = (function () {
+        var MODE_KEY = 'quam_bulk_chip_mode';
+        var terms = [];          // every term this chip renders, from the server
+        var active = [];         // ordered, the ones currently pressed
+        var mode = 'and';
+        var offerDismissed = false;
+
+        function bar() { return document.getElementById('bulk-chipbar'); }
+        function input() { return document.getElementById('bulk-search'); }
+        function _readMode() {
+            try { return localStorage.getItem(MODE_KEY) === 'or' ? 'or' : 'and'; }
+            catch (e) { return 'and'; }
+        }
+        function _tokens() {
+            var el = input();
+            return el ? el.value.trim().split(/\s+/).filter(Boolean) : [];
+        }
+        /* Everything that is NOT one of our chips (and not a bare pipe we
+           emitted). Kept verbatim and in order so a user's own query survives
+           every chip press. */
+        function _freeTokens() {
+            var out = [], toks = _tokens();
+            for (var i = 0; i < toks.length; i++) {
+                var t = toks[i].toLowerCase();
+                if (t === '|' || terms.indexOf(t) >= 0) continue;
+                out.push(toks[i]);
+            }
+            return out;
+        }
+        function _write() {
+            var el = input(); if (!el) return;
+            var seg = active.join(mode === 'or' ? ' | ' : ' ');
+            var free = _freeTokens().join(' ');
+            el.value = (free ? free + ' ' : '') + seg;
+            try { localStorage.setItem(SEARCH_KEY, el.value); } catch (e) {}
+            _paint();
+            offerDismissed = false;
+            applySearch();
+            _offer();
+        }
+        function _paint() {
+            var b = bar(); if (!b) return;
+            Array.prototype.slice.call(b.querySelectorAll('.bulk-chip')).forEach(function (btn) {
+                var on = active.indexOf(btn.getAttribute('data-chip-term')) >= 0;
+                btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+                btn.classList.toggle('active', on);
+            });
+            var m = document.getElementById('bulk-chip-mode');
+            if (m) {
+                m.textContent = mode === 'or' ? 'OR' : 'AND';
+                m.setAttribute('data-mode', mode);
+                m.setAttribute('aria-pressed', mode === 'or' ? 'true' : 'false');
+                m.classList.toggle('chip-mode-or', mode === 'or');
+            }
+        }
+        /* Zero matches with 2+ chips in AND is the one moment the other mode is
+           probably what was meant -- so offer it AS a switch. Accepting costs
+           the same single click as finding the toggle, which is the whole
+           point (the user's own framing). Never shown in OR: if a union
+           matches nothing, the other mode cannot help. */
+        function _offer() {
+            var o = document.getElementById('bulk-chip-offer'); if (!o) return;
+            var show = !offerDismissed && mode === 'and' && active.length > 1
+                && _visibleColCount() === 0;
+            o.hidden = !show;
+        }
+        function _visibleColCount() {
+            var t = table(); if (!t) return 1;
+            return t.querySelectorAll('thead th:not(.bulk-search-hidden):not(.bulk-col-hidden)').length
+                 - t.querySelectorAll('thead .bulk-corner').length;
+        }
+        function toggle(term) {
+            var i = active.indexOf(term);
+            if (i >= 0) active.splice(i, 1); else active.push(term);
+            _write();
+        }
+        function setMode(next) {
+            mode = next === 'or' ? 'or' : 'and';
+            try { localStorage.setItem(MODE_KEY, mode); } catch (e) {}
+            _write();
+        }
+        /* The box is the truth: re-derive which chips are lit from its tokens.
+           Called on every keystroke, so hand-typing `flux` lights Flux. */
+        function syncFromQuery() {
+            var toks = _tokens().map(function (t) { return t.toLowerCase(); });
+            active = terms.filter(function (t) { return toks.indexOf(t) >= 0; });
+            _paint();
+        }
+        function mount() {
+            var b = bar(); if (!b) return;
+            terms = Array.prototype.slice.call(b.querySelectorAll('.bulk-chip'))
+                .map(function (x) { return x.getAttribute('data-chip-term'); });
+            mode = _readMode();
+            if (b._chipWired) { syncFromQuery(); _paint(); return; }
+            b._chipWired = true;
+            b.addEventListener('click', function (e) {
+                var t = e.target;
+                if (!t || !t.classList) return;
+                if (t.classList.contains('bulk-chip')) {
+                    toggle(t.getAttribute('data-chip-term'));
+                } else if (t.id === 'bulk-chip-mode') {
+                    setMode(mode === 'and' ? 'or' : 'and');
+                } else if (t.id === 'bulk-chip-offer-yes') {
+                    setMode('or');
+                } else if (t.id === 'bulk-chip-offer-no') {
+                    offerDismissed = true;
+                    _offer();
+                }
+            });
+            syncFromQuery();
+        }
+        return { mount: mount, syncFromQuery: syncFromQuery, toggle: toggle,
+                 setMode: setMode,
+                 _state: function () { return { mode: mode, active: active.slice(), terms: terms.slice() }; } };
+    })();
+
     // ── user font size + weight + letter-spacing (persisted; applied globally) ─
+    // Controls live in Settings ▸ Live Edit since docs/120 item 4 (they were in
+    // the grid toolbar, where the chip bar now is). The setters are unchanged
+    // and stay panel-absent-safe, because base.html loads this file on EVERY
+    // page while #bulk-panel exists only on /bulk.
     var FONT_KEY = 'quam_bulk_fs', BOLD_KEY = 'quam_bulk_bold', LS_KEY = 'quam_bulk_ls';
     function _readScale() {
         var fs = parseFloat(localStorage.getItem(FONT_KEY));
@@ -553,8 +691,15 @@
         // strip rewrote `cz_flattop_pulse_q1_q2` into `cz_flattop_pulse_q1`.
         // `search` carries the real operation ids so looking for the name you
         // actually have in state.json finds its column.
+        // docs/120 item 4: the SECTION joins the haystack. It is the band name
+        // already printed above the column (`_bulk_column_groups`), so a user
+        // searching "readout" or "flux" plainly means "that band" — and the
+        // quick-filter chips emit exactly these words, which is what lets one
+        // short keyword span the four XY-ish sections a chip really has
+        // (XY Drive / XY Port / XY+ / XY Port+) instead of needing four chips.
         function _colHay(c) {
-            return (c.label + ' ' + c.key + ' ' + (c.search || '')).toLowerCase();
+            return (c.label + ' ' + c.key + ' ' + (c.section || '')
+                    + ' ' + (c.search || '')).toLowerCase();
         }
         var visCols = COLS.filter(function (c) { return !hide.has(c.key); });
         var tokens = q ? q.split(/\s+/) : [];
@@ -1955,6 +2100,7 @@
             var search = document.getElementById('bulk-search');
             if (search) search.addEventListener('input', function () {
                 try { localStorage.setItem(SEARCH_KEY, search.value); } catch (e) {}
+                ChipBar.syncFromQuery();   // typing a chip's word lights the chip
                 // DEBOUNCED (audit: typing here was slow): applySearch re-scans
                 // the table and re-toggles ~2000 cells' classes — a full-table
                 // reflow on a multi-MB DOM. One pass shortly after the last
@@ -1962,6 +2108,7 @@
                 if (_searchTimer) clearTimeout(_searchTimer);
                 _searchTimer = setTimeout(applySearch, 120);
             });
+            ChipBar.mount();
 
             // nav guard: warn before losing unapplied edits
             if (!window._bulkNavGuard) {
@@ -2266,6 +2413,7 @@
             applyQubitVis();
             _buildQubitMenu();
         },
+        chips: ChipBar,   // docs/120 item 4 — quick-filter chip bar
         setFont: function (scale) { try { localStorage.setItem(FONT_KEY, String(scale)); } catch (e) {} _applyFont(); },
         setLetterSpacing: function (ls) { try { localStorage.setItem(LS_KEY, String(ls)); } catch (e) {} _applyFont(); },
         toggleBold: function () {

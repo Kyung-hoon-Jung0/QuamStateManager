@@ -1,0 +1,74 @@
+{# docs/120 item 10 — the version list the top-bar chip opens.
+
+   Customer: "clicking it lists the version history with WHEN each was updated,
+   checkboxes to pick several -> show just the combined diff -> and let a chosen
+   state be applied to the live chip."
+
+   Everything here delegates to machinery that already exists and is already
+   gated; this surface exists to make it reachable in one click from any page:
+     - 2 selected  -> /diff/snapshots, the docs/84 workbench front door
+     - 3+ selected -> the Compare hub basket (hist: ref tokens)
+     - "Go back"   -> /state-history/<ts>/restore-live, WITH both of its
+                      independent force gates intact (unsaved edits, wiring
+                      topology). They are not weakened for being one click
+                      closer; the confirm panel is the same _sh_confirm.html.
+#}
+<div class="state-versions" role="dialog" aria-label="State versions">
+    <div class="state-versions-head">
+        <strong>Versions</strong>
+        {% if total %}<span class="muted">{{ rows | length }} of {{ total }}</span>{% endif %}
+        <button type="button" class="state-versions-close" onclick="StateVersions.close()"
+                aria-label="Close">&times;</button>
+    </div>
+
+    {% if not rows %}
+    {# Honest empty state: no history for this chip is a fact, not a failure. #}
+    <p class="muted state-versions-empty">
+        No recorded versions for this chip yet. One is captured on every save and
+        apply, or on demand from <a href="/state-history" hx-get="/state-history"
+        hx-target="#table-pane" hx-push-url="true" onclick="StateVersions.close()">State History</a>.
+    </p>
+    {% else %}
+
+    <div class="state-versions-actions">
+        <button type="button" class="btn-sm outline" id="sv-compare" disabled
+                onclick="StateVersions.compare('{{ chip_key }}')">Compare</button>
+        <span class="muted sv-hint" id="sv-hint">Tick two versions to see what changed.</span>
+    </div>
+
+    <ul class="state-versions-list">
+        {% for r in rows %}
+        <li class="state-version-row{% if r.current %} sv-current{% endif %}">
+            <label class="sv-pick">
+                <input type="checkbox" class="sv-check" value="{{ r.ts }}"
+                       onchange="StateVersions.pick()">
+                <span class="sv-when">
+                    {# ts_local renders the recorded moment in the viewer's zone —
+                       "when was this updated" is the column the user asked for. #}
+                    <span class="sv-time">{{ r.ts | ts_local }}</span>
+                    <span class="sv-id">{{ r.ts }}</span>
+                </span>
+            </label>
+            <span class="sv-meta">
+                <span class="sv-trigger sv-trigger-{{ r.trigger }}">{{ r.trigger }}</span>
+                {% if r.pinned %}<span class="sv-pin" title="Pinned — exempt from pruning">&#128204;</span>{% endif %}
+                {% if r.current %}<span class="sv-now" title="The live chip currently holds exactly this content">on this now</span>{% endif %}
+                {% if r.label %}<span class="sv-label">{{ r.label }}</span>{% endif %}
+                {% if r.experiment %}<span class="sv-exp muted">after {{ r.experiment }}{% if r.run_id %} #{{ r.run_id }}{% endif %}</span>{% endif %}
+                {% if r.note %}<span class="sv-note muted">{{ r.note }}</span>{% endif %}
+            </span>
+            <span class="sv-row-actions">
+                {% if not archive and not r.current %}
+                {# The same route State History uses, gates and all. #}
+                <button type="button" class="btn-xs outline sv-restore"
+                        hx-post="/state-history/{{ r.ts }}/restore-live"
+                        hx-target="#table-pane" hx-swap="innerHTML"
+                        onclick="StateVersions.close()"
+                        title="Put the live chip back on this version. Unsaved edits and a wiring-topology mismatch each ask first.">&#8617; Go back</button>
+                {% endif %}
+            </span>
+        </li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+</div>

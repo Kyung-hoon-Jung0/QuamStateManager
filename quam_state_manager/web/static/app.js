@@ -14849,3 +14849,89 @@ window.ColumnHistory = (function () {
              switchView: switchView };
 })();
 
+
+/* ── docs/120 item 10: the working-state version panel ───────────────────
+ *
+ * Customer: "move the bookmark below Calculator and put the current state
+ * working version id in its place ... clicking it lists the versions with when
+ * each was updated, checkboxes to pick several -> show just the combined diff
+ * -> and let a chosen state be applied to the live chip."
+ *
+ * This module is only the popover mechanics and the selection maths. Every
+ * ACTION delegates to a surface that already exists and is already gated:
+ * two ticks open the docs/84 diff workbench, three or more open the Compare
+ * hub basket, and "Go back" posts the same restore-live route State History
+ * uses, with both of its independent force gates intact.
+ */
+window.StateVersions = (function () {
+    function panel() { return document.getElementById('state-version-panel'); }
+    function chip() { return document.querySelector('.state-version-chip'); }
+
+    function close() {
+        var p = panel(); if (!p) return;
+        p.hidden = true;
+        var c = chip(); if (c) c.setAttribute('aria-expanded', 'false');
+    }
+    function toggle() {
+        var p = panel(); if (!p) return;
+        // htmx fills the panel from the same click; only visibility is ours.
+        var opening = p.hidden;
+        p.hidden = !opening;
+        var c = chip(); if (c) c.setAttribute('aria-expanded', opening ? 'true' : 'false');
+        if (opening) {
+            setTimeout(function () {
+                document.addEventListener('click', function away(e) {
+                    if (p.hidden) { document.removeEventListener('click', away); return; }
+                    if (p.contains(e.target) || (chip() && chip().contains(e.target))) return;
+                    close();
+                    document.removeEventListener('click', away);
+                });
+            }, 0);
+        }
+    }
+    function _checked() {
+        return Array.prototype.slice
+            .call(document.querySelectorAll('#state-version-panel .sv-check:checked'))
+            .map(function (c) { return c.value; });
+    }
+    /* The button says what the current selection will actually do, rather than
+       being enabled-and-then-explaining afterwards. */
+    function pick() {
+        var n = _checked().length;
+        var btn = document.getElementById('sv-compare');
+        var hint = document.getElementById('sv-hint');
+        if (!btn) return;
+        btn.disabled = n < 2;
+        if (hint) {
+            hint.textContent = n === 0 ? 'Tick two versions to see what changed.'
+                : n === 1 ? 'Tick one more.'
+                : n === 2 ? 'Opens the diff of these two.'
+                : 'Opens all ' + n + ' in the Compare hub.';
+        }
+    }
+    function compare(chipKey) {
+        var sel = _checked();
+        if (sel.length < 2) return;
+        // Oldest first, so the diff reads forward in time like every other
+        // before -> after surface in SM (docs/76).
+        sel.sort();
+        var url;
+        if (sel.length === 2) {
+            url = '/diff/snapshots?ts_a=' + encodeURIComponent(sel[0])
+                + '&ts_b=' + encodeURIComponent(sel[1])
+                + (chipKey ? '&chip_key=' + encodeURIComponent(chipKey) : '');
+        } else {
+            url = '/compare-hub?' + sel.map(function (ts) {
+                return 'src=' + encodeURIComponent('hist:' + chipKey + '/' + ts);
+            }).join('&');
+        }
+        close();
+        if (window.htmx) {
+            htmx.ajax('GET', url, { target: '#table-pane', swap: 'innerHTML' });
+            try { history.pushState({}, '', url); } catch (e) {}
+        } else {
+            window.location.href = url;
+        }
+    }
+    return { toggle: toggle, close: close, pick: pick, compare: compare };
+})();
