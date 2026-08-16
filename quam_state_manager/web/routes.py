@@ -288,23 +288,66 @@ _BULK_CHIP_TERMS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _bulk_op_names(labels: list[str]) -> list[str]:
+    """The chip's own pulse-operation names, harvested from its column labels.
+
+    ``x180`` is the term the customer named FIRST — and it is not a section, so
+    the band sweep below could never reach it. It is an *operation*, and both
+    grids already render one: ``_build_bulk_cell`` labels an operation leaf
+    ``op · x180_DragCosine · amplitude`` (and its alias column ``op · x180``),
+    on the qubit grid and the pair grid alike. So the names are on screen; they
+    were simply never offered.
+
+    The term is the name's FIRST underscore segment, which is what collapses
+    ``x180`` + ``x180_DragCosine`` into the one chip a user means by "x180" —
+    and it stays a substring of the longer spelling, so the shorter term still
+    reaches every leaf of the longer one. Order is the chip's own.
+    """
+    names: list[str] = []
+    for lab in labels:
+        if not lab.startswith("op · "):
+            continue
+        rest = lab[5:].split(" · ", 1)[0].strip()
+        # A leading sign is NOT part of the term. Real chips carry the
+        # negative-amplitude aliases `-x90` / `-y90`, and `-` opens a NEGATED
+        # term in the docs/96 grammar — a chip labelled "-x90" would have
+        # filtered to everything EXCEPT x90. Stripped, it collapses into the
+        # `x90` chip, which reaches those columns as a substring anyway.
+        rest = rest.lstrip("-+ ")
+        term = rest.split("_", 1)[0].strip().lower()
+        # Two characters is the floor: a one-letter term would match half the
+        # chip, which is not a filter.
+        if len(term) < 2 or term.isdigit() or term in names:
+            continue
+        names.append(term)
+    return names
+
+
 def _bulk_filter_chips(*column_sets: list[dict]) -> list[dict[str, Any]]:
     """The chip row, validated against THIS chip's real columns.
 
-    One entry per offered term: ``{term, label, n}``. ``n`` is how many columns
-    the term reaches, across every grid that shares the one search box (the
-    qubit grid and the pair grid both read ``#bulk-search``), so a chip is only
-    rendered when pressing it would do something.
+    One entry per offered term: ``{term, label, n, kind}``. ``n`` is how many
+    columns the term reaches, across every grid that shares the one search box
+    (the qubit grid and the pair grid both read ``#bulk-search``), so a chip is
+    only rendered when pressing it would do something.
+
+    Three groups, in the order the query reads left to right: the chip's own
+    operations (``x180`` — WHICH pulse), then the curated property words
+    (``amp`` — WHICH property), then any band neither reached. That order is
+    the customer's own example sentence, "x180 amp", turned into two clicks.
 
     The haystack mirrors ``_colHay`` in bulk-edit.js — label + key + section +
     search — because a chip that matched here and not there would be a lie.
     """
     hays: list[str] = []
     sections: list[str] = []
+    labels: list[str] = []
     for cols in column_sets:
         for c in cols or []:
+            lab = str(c.get("label") or "")
+            labels.append(lab)
             hays.append(" ".join((
-                str(c.get("label") or ""), str(c.get("key") or ""),
+                lab, str(c.get("key") or ""),
                 str(c.get("section") or ""), str(c.get("search") or ""),
             )).lower())
             sec = str(c.get("section") or "").strip()
@@ -316,11 +359,25 @@ def _bulk_filter_chips(*column_sets: list[dict]) -> list[dict[str, Any]]:
 
     chips: list[dict[str, Any]] = []
     taken: set[str] = set()
+
+    # Curated first for the DEDUP claim only — a curated word keeps its nicer
+    # label ("Readout" over "readout") when an operation shares its spelling.
+    kw_chips: list[dict[str, Any]] = []
     for term, label in _BULK_CHIP_TERMS:
         n = _hits(term)
         if n:
-            chips.append({"term": term, "label": label, "n": n})
+            kw_chips.append({"term": term, "label": label, "n": n, "kind": "kw"})
             taken.add(term)
+
+    for term in _bulk_op_names(labels):
+        if term in taken:
+            continue
+        n = _hits(term)
+        if n:
+            chips.append({"term": term, "label": term, "n": n, "kind": "op"})
+            taken.add(term)
+
+    chips.extend(kw_chips)
 
     # Coverage sweep: any band no curated chip already reaches gets its own, so
     # the set is complete on a chip whose architecture nobody has thought of.
@@ -349,7 +406,8 @@ def _bulk_filter_chips(*column_sets: list[dict]) -> list[dict[str, Any]]:
             continue
         n = _hits(term)
         if n:
-            chips.append({"term": term, "label": sec.rstrip("+").strip(), "n": n})
+            chips.append({"term": term, "label": sec.rstrip("+").strip(),
+                          "n": n, "kind": "band"})
             taken.add(term)
     return chips
 
@@ -8310,6 +8368,44 @@ def state_history_snapshot():
 _TRENDS_MAX_SERIES = 400        # a 20-qubit chip x 4 metrics is 80; armor only.
 
 
+_SNAP_TS_RE = re.compile(r"^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})")
+
+
+def _snap_iso(ts: Any) -> str | None:
+    """A snapshot id as a real instant, or None if it is not one.
+
+    Snapshot ids are ``20260816_012907_4661``. Printed raw on an axis they are
+    unreadable, and — worse — a CATEGORY axis spaces them evenly, so a value
+    that sat untouched for three weeks looks exactly like one that moved twice
+    in a minute. The question this page exists to answer is *when did this
+    drift*, so the gaps ARE the information and the axis has to be time.
+
+    Returns None rather than guessing: an id that does not parse keeps its raw
+    label, which is honest, instead of being placed at a fabricated instant.
+    """
+    m = _SNAP_TS_RE.match(str(ts or ""))
+    if not m:
+        return None
+    y, mo, d, h, mi, s = m.groups()
+    return f"{y}-{mo}-{d}T{h}:{mi}:{s}"
+
+
+def _trend_points(values: list[dict]) -> list[tuple]:
+    """``[(snapshot id, value, iso instant)]`` — the id survives for the hover.
+
+    The user reads the date on the axis but needs the id to find the snapshot
+    in State History, so both travel; the client falls back to the id when the
+    instant is None.
+    """
+    out = []
+    for p in values or []:
+        v = p.get("value")
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            ts = p.get("timestamp")
+            out.append((ts, v, _snap_iso(ts)))
+    return out
+
+
 def _trend_series_curated(hm, path: Path, props: list[str]) -> list[dict]:
     """The SQLite property index — one call returns EVERY qubit for a metric."""
     try:
@@ -8318,8 +8414,7 @@ def _trend_series_curated(hm, path: Path, props: list[str]) -> list[dict]:
         return []
     out = []
     for r in rows:
-        pts = [(p.get("timestamp"), p.get("value")) for p in (r.get("values") or [])
-               if isinstance(p.get("value"), (int, float))]
+        pts = _trend_points(r.get("values") or [])
         if pts:
             out.append({"metric": r["property"], "entity": r["qubit"], "points": pts})
     return out
@@ -8371,7 +8466,7 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str]) -> list
             by_q[".".join(tmpl)] = q
         got = hm.leaf_field_series_many(path, list(by_q))
         for dp, q in by_q.items():
-            pts = [(r[0], r[1]) for r in (got.get(dp) or [])
+            pts = [(r[0], r[1], _snap_iso(r[0])) for r in (got.get(dp) or [])
                    if isinstance(r[1], (int, float))]
             if pts:
                 out.append({"metric": label, "entity": q, "points": pts})
@@ -8379,7 +8474,8 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str]) -> list
     # Not qubit-scoped (a port, a pair leaf, a top-level key) — one line, and
     # the path itself is the legend, because there is nothing to fan out over.
     rows = hm.leaf_field_series(path, dot_path)
-    pts = [(r[0], r[1]) for r in (rows or []) if isinstance(r[1], (int, float))]
+    pts = [(r[0], r[1], _snap_iso(r[0])) for r in (rows or [])
+           if isinstance(r[1], (int, float))]
     if pts:
         out.append({"metric": dot_path, "entity": dot_path.split(".")[-1], "points": pts})
     return out
@@ -8492,7 +8588,8 @@ def _state_version_now(ctx: dict | None) -> dict:
     Resolving this hashes the live state+wiring pair, so it rides its own lazy
     endpoint (docs/28: no live reads on a surface that renders on every page).
     """
-    out: dict[str, Any] = {"ts": None, "count": 0, "unmatched": False}
+    out: dict[str, Any] = {"ts": None, "count": 0, "unmatched": False,
+                           "dirty": False}
     if not ctx or ctx.get("type") != "quam" or not ctx.get("path"):
         return out
     hm = _history()
@@ -8507,6 +8604,11 @@ def _state_version_now(ctx: dict | None) -> dict:
     # "No snapshot holds exactly this content" is the ORDINARY mid-edit state,
     # not a fault — say so plainly rather than inventing a nearest match.
     out["unmatched"] = out["ts"] is None and out["count"] > 0
+    # WHOSE version this is, stated rather than assumed. The hash above is of
+    # ``ctx["path"]`` — the LIVE pair — so the id names what the chip is on,
+    # not what SM is holding. With unapplied edits those are different states,
+    # and a bare id would read as "your work is recorded as this". It is not.
+    out["dirty"] = _quam_ctx_dirty(ctx)
     return out
 
 
@@ -8523,6 +8625,11 @@ def state_version_chip():
                                          and ctx.get("path")))
 
 
+# One fetch must stay one fetch: 500 rows of this panel is ~90 KB, and beyond
+# that the right surface is State History, which the footer names.
+_STATE_VERSIONS_CAP = 500
+
+
 @bp.route("/state/versions")
 def state_versions_panel():
     """The version list the chip opens: when each was recorded, what produced
@@ -8530,7 +8637,8 @@ def state_versions_panel():
     ctx = _active_ctx()
     if not ctx or ctx.get("type") != "quam" or not ctx.get("path"):
         return render_template("_state_versions.html", rows=[], ver=_state_version_now(None),
-                               chip_key="", archive=True)
+                               chip_key="", total=0, cap=_STATE_VERSIONS_CAP,
+                               archive=True)
     hm = _history()
     path = Path(ctx["path"])
     try:
@@ -8542,7 +8650,7 @@ def state_versions_panel():
     except Exception:  # noqa: BLE001
         chip_key = ""
     ver = _state_version_now(ctx)
-    limit = min(_int_arg("limit", 40, minimum=1), 500)
+    limit = min(_int_arg("limit", 40, minimum=1), _STATE_VERSIONS_CAP)
     rows = [{
         "ts": m.timestamp,
         "trigger": m.trigger,
@@ -8555,6 +8663,7 @@ def state_versions_panel():
     } for m in snaps[:limit]]
     return render_template("_state_versions.html", rows=rows, ver=ver,
                            chip_key=chip_key, total=len(snaps),
+                           cap=_STATE_VERSIONS_CAP,
                            archive=(ctx.get("origin") or "live") != "live")
 
 

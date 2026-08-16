@@ -256,3 +256,65 @@ class TestTheReviewFindings:
         # charts a single path and correctly still uses the singular form
         fanout = body[:body.index("# Not qubit-scoped")]
         assert "hm.leaf_field_series(" not in fanout
+
+
+class TestTimeAxis:
+    """The x axis is TIME, not the snapshot sequence (review finding 2).
+
+    A category axis spaces 433 snapshots evenly, which redraws three quiet
+    weeks and two minutes of frantic retuning as the same distance -- on the
+    one page whose question is "when did this drift". And the raw ids
+    ("20260816_012907_4661") are unreadable as tick labels at that count.
+    """
+
+    def test_a_snapshot_id_becomes_an_instant(self):
+        from quam_state_manager.web.routes import _snap_iso
+        assert _snap_iso("20260816_012907_4661") == "2026-08-16T01:29:07"
+        # the microsecond suffix is optional in the id grammar
+        assert _snap_iso("20260816_012907") == "2026-08-16T01:29:07"
+
+    def test_an_unparseable_id_is_none_not_a_guess(self):
+        """Placing it at a fabricated instant would move a real point on a
+        real timeline; None keeps the raw label instead."""
+        from quam_state_manager.web.routes import _snap_iso
+        for bad in ("", None, "not-a-timestamp", "2026-08-16", "abcdefgh_012907"):
+            assert _snap_iso(bad) is None
+
+    def test_points_carry_the_id_AND_the_instant(self):
+        """The user reads the date on the axis but needs the id to find the
+        snapshot in State History, so both travel."""
+        from quam_state_manager.web.routes import _trend_points
+        pts = _trend_points([
+            {"timestamp": "20260816_012907_4661", "value": 1.5},
+            {"timestamp": "20260817_090000_0001", "value": 2.5},
+        ])
+        assert pts == [("20260816_012907_4661", 1.5, "2026-08-16T01:29:07"),
+                       ("20260817_090000_0001", 2.5, "2026-08-17T09:00:00")]
+
+    def test_non_numeric_and_bools_never_become_points(self):
+        from quam_state_manager.web.routes import _trend_points
+        pts = _trend_points([
+            {"timestamp": "20260816_012907_4661", "value": None},
+            {"timestamp": "20260816_012908_4661", "value": "0.13"},
+            {"timestamp": "20260816_012909_4661", "value": True},
+            {"timestamp": "20260816_012910_4661", "value": 0.0},
+        ])
+        assert [p[1] for p in pts] == [0.0]
+
+    def test_the_renderer_picks_the_axis_from_the_data(self):
+        """All points dated -> a date axis; one undated point -> the whole
+        chart falls back to category, because mixing them would put the
+        undated points at epoch zero."""
+        import re as _re
+        from pathlib import Path as _P
+        src = _P("quam_state_manager/web/static/chip-status.js").read_text(encoding="utf-8")
+        i = src.index("function _axisFor(")
+        body = src[i:i + 400]
+        assert "allDated" in body
+        assert "'date'" in body and "'category'" in body
+        # the axis is not hardcoded at the layout any more
+        j = src.index("window.ChipTrends")
+        assert "type: axisType" in src[j:]
+        assert "type: 'category'" not in src[j:]
+        # the snapshot id survives into the hover
+        assert "customdata" in src[j:]

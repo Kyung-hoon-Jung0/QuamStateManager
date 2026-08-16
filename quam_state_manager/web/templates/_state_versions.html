@@ -70,5 +70,26 @@
         </li>
         {% endfor %}
     </ul>
+
+    {# The list is paged, and a page that ends without saying so is a lie about
+       the chip's history — a real chip here has 433 versions and the first
+       render showed 40 of them with no way to reach the rest. Ticked rows
+       survive the fetch (StateVersions.more re-applies the selection), so
+       comparing an old version against a recent one does not mean starting the
+       selection over. #}
+    {% if total and rows | length < total %}
+    <div class="state-versions-more">
+        <button type="button" class="btn-xs outline"
+                onclick="StateVersions.more({{ rows | length + 40 }})">Show 40 more</button>
+        <button type="button" class="btn-xs outline"
+                onclick="StateVersions.more({{ cap }})">All {{ total if total <= cap else cap }}</button>
+        {% if total > cap %}
+        <span class="muted sv-cap-note">of {{ total }} — open
+            <a href="/state-history" hx-get="/state-history" hx-target="#table-pane"
+               hx-push-url="true" onclick="StateVersions.close()">State History</a>
+            for the full list</span>
+        {% endif %}
+    </div>
+    {% endif %}
     {% endif %}
 </div>

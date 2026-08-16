@@ -90,7 +90,13 @@
 
        Terms are validated server-side against this chip's real columns
        (_bulk_filter_chips), so a chip is never offered that would match
-       nothing, and any band the curated keywords miss is appended. #}
+       nothing, and any band the curated keywords miss is appended.
+
+       Reading order is the customer's own sentence, "x180 amp": the chip's own
+       OPERATIONS first (which pulse), then the property words (which value),
+       then any remaining band. `x180` is an operation, not a section — the
+       band sweep alone could never have offered the very term they named
+       first. #}
     {% if filter_chips %}
     <div class="bulk-chipbar" id="bulk-chipbar" role="group" aria-label="Quick parameter filters">
         {# Leftmost and prominent, per the user. AND is the default: a lab types
@@ -100,8 +106,8 @@
                 title="How selected chips combine. AND = a column must match every chip. OR = matching any chip is enough.">AND</button>
         <span class="bulk-chip-scroll">
         {% for ch in filter_chips %}
-            <button type="button" class="bulk-chip" data-chip-term="{{ ch.term }}"
-                    aria-pressed="false"
+            <button type="button" class="bulk-chip bulk-chip-{{ ch.kind|default('kw') }}"
+                    data-chip-term="{{ ch.term }}" aria-pressed="false"
                     title="{{ ch.n }} column{{ '' if ch.n == 1 else 's' }} match &quot;{{ ch.term }}&quot;">{{ ch.label }}</button>
         {% endfor %}
         </span>

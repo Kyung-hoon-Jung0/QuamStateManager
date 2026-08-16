@@ -1,4 +1,4 @@
-"""The working-state version, from the top bar (docs/120 item 10).
+"""The live chip's recorded version, from the top bar (docs/120 item 10).
 
 Customer: *"Move the bookmark button below Calculator, and in its place show
 the current state working version id. Since we're adding Auto-Sync, revert back
@@ -88,7 +88,11 @@ class TestVersionChip:
         empty state is what explains where versions come from."""
         body = client.get("/state/version").get_data(as_text=True)
         assert "state-version-chip" in body
-        assert "unsaved" in body
+        # "unrecorded", not "unsaved": the chip hashes the LIVE pair, so this
+        # state is reached by an out-of-band write as readily as by an edit and
+        # must not name a culprit it did not observe (review finding 4).
+        assert "unrecorded" in body
+        assert "unsaved" not in body
 
     def test_nothing_at_all_without_a_chip(self, tmp_path):
         app = create_app(testing=True, instance_path=str(tmp_path / "_i2"))
@@ -175,3 +179,65 @@ class TestVersionsPanel:
         app = create_app(testing=True, instance_path=str(tmp_path / "_i3"))
         r = app.test_client().get("/state/versions")
         assert r.status_code == 200
+
+
+class TestReviewFindings:
+    """The heavy review's findings on this surface, each pinned.
+
+    Both are honesty defects rather than crashes, which is exactly why they
+    needed pins: nothing failed, the surface simply said something that was not
+    so.
+    """
+
+    def test_the_list_is_paged_and_says_so(self, client):
+        """A real chip has 433 versions; the first page shows 40 and used to
+        end there with no footer, so the list silently claimed to BE the
+        history."""
+        for i in range(45):
+            client.post("/state/archive", data={"tag": f"v{i}"})
+        body = client.get("/state/versions").get_data(as_text=True)
+        n = body.count('class="sv-check"')
+        assert n == 40, n
+        assert "state-versions-more" in body
+        assert "Show 40 more" in body
+        assert "StateVersions.more(" in body
+
+    def test_show_more_reaches_the_rest(self, client):
+        for i in range(45):
+            client.post("/state/archive", data={"tag": f"v{i}"})
+        body = client.get("/state/versions?limit=200").get_data(as_text=True)
+        assert body.count('class="sv-check"') > 40
+        # nothing left to page to -> no footer claiming there is
+        assert "state-versions-more" not in body
+
+    def test_the_page_size_is_bounded_however_it_is_asked(self, client):
+        """`limit` is user input on a route that renders every row it is
+        given."""
+        from quam_state_manager.web.routes import _STATE_VERSIONS_CAP
+        client.post("/state/archive", data={"tag": "t"})
+        r = client.get(f"/state/versions?limit={_STATE_VERSIONS_CAP * 10}")
+        assert r.status_code == 200
+        assert r.get_data(as_text=True).count('class="sv-check"') <= _STATE_VERSIONS_CAP
+
+    def test_the_chip_marks_edits_that_are_not_in_the_named_version(self, client):
+        """The id names the LIVE chip. Unapplied edits mean SM is holding
+        something else, and a bare id would read as "your work is recorded as
+        this"."""
+        client.post("/state/archive", data={"tag": "t"})
+        clean = client.get("/state/version").get_data(as_text=True)
+        assert "state-version-dirty" not in clean
+        assert "state-version-edits" not in clean
+
+        client.post("/field/edit", data={"dot_path": "qubits.q1.f_01", "value": "6.2e9"})
+        dirty = client.get("/state/version").get_data(as_text=True)
+        assert "state-version-dirty" in dirty
+        assert "state-version-edits" in dirty
+        # the version id itself is still shown -- it is still true, just no
+        # longer the whole truth
+        assert re.search(r'class="state-version-id"[^>]*>\d{8}_', dirty)
+        assert "not in it yet" in dirty
+
+    def test_the_tooltip_never_calls_the_live_id_the_working_state(self, client):
+        client.post("/state/archive", data={"tag": "t"})
+        body = client.get("/state/version").get_data(as_text=True)
+        assert "The live chip is on this recorded version" in body

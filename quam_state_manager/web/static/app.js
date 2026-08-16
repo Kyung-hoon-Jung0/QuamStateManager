@@ -14967,6 +14967,25 @@ window.StateVersions = (function () {
             .call(document.querySelectorAll('#state-version-panel .sv-check:checked'))
             .map(function (c) { return c.value; });
     }
+    /* Paging. A real chip has hundreds of versions and the first page shows 40,
+       so the rest has to be reachable — but re-fetching replaces the list, and
+       a user who has already ticked the version they want to compare against
+       must not lose it just for scrolling further back. So the selection is
+       carried across the swap and re-applied by value. */
+    function more(limit) {
+        if (!window.htmx) return;
+        var keep = _checked();
+        htmx.ajax('GET', '/state/versions?limit=' + encodeURIComponent(limit),
+                  { target: '#state-version-panel', swap: 'innerHTML' })
+            .then(function () {
+                keep.forEach(function (ts) {
+                    var el = document.querySelector(
+                        '#state-version-panel .sv-check[value="' + ts + '"]');
+                    if (el) el.checked = true;
+                });
+                pick();
+            });
+    }
     /* The button says what the current selection will actually do, rather than
        being enabled-and-then-explaining afterwards. */
     function pick() {
@@ -15006,5 +15025,6 @@ window.StateVersions = (function () {
             window.location.href = url;
         }
     }
-    return { toggle: toggle, close: close, pick: pick, compare: compare };
+    return { toggle: toggle, close: close, pick: pick, compare: compare,
+             more: more };
 })();

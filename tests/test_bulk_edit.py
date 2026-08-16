@@ -939,3 +939,91 @@ def test_chipbar_selfcheck():
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
     assert r.stdout.count("ok - ") >= 28, r.stdout
+
+
+class TestOperationChips:
+    """The term the customer named FIRST had to be typed (review finding 1).
+
+    Their sentence was "go to the search box and TYPE x180, amp, ro, power".
+    `amp` and `power` are curated keywords and `readout` is a section, but
+    ``x180`` is neither -- it is an *operation*, and the chip row was derived
+    from curated words plus SECTION names only. So the one term they led with
+    was the one the feature could not offer.
+
+    Both grids already render operations: ``_build_bulk_cell`` labels an
+    operation leaf ``op . x180_DragCosine . amplitude`` (U+00B7), plus the
+    alias column ``op . x180``. The names were on screen the whole time.
+    """
+
+    def _chips(self, cols, pair_cols=None):
+        from quam_state_manager.web.routes import _bulk_filter_chips
+        return _bulk_filter_chips(cols, pair_cols or [])
+
+    def _terms(self, *a, **k):
+        return [c["term"] for c in self._chips(*a, **k)]
+
+    def test_x180_is_offered(self):
+        cols = [
+            {"key": "dyn__xy_operations_x180", "label": "op \u00b7 x180", "section": "XY+"},
+            {"key": "dyn__xy_operations_x180_DragCosine_amplitude",
+             "label": "op \u00b7 x180_DragCosine \u00b7 amplitude", "section": "XY+"},
+        ]
+        assert "x180" in self._terms(cols)
+
+    def test_the_short_alias_absorbs_the_long_spelling(self):
+        """`x180` and `x180_DragCosine` are one thing to a user, and the short
+        term is a substring of the long one, so it reaches every leaf."""
+        cols = [
+            {"key": "a", "label": "op \u00b7 x180_DragCosine \u00b7 amplitude", "section": "XY+"},
+            {"key": "b", "label": "op \u00b7 x180_DragCosine \u00b7 length", "section": "XY+"},
+        ]
+        chips = {c["term"]: c for c in self._chips(cols)}
+        assert "x180" in chips
+        assert "x180_dragcosine" not in chips
+        assert chips["x180"]["n"] == 2
+
+    def test_a_signed_alias_never_becomes_a_negated_term(self):
+        """Real chips carry `-x90` / `-y90`. A leading `-` opens a NEGATED term
+        in the docs/96 grammar, so a chip labelled "-x90" would have filtered
+        to everything EXCEPT x90 -- the exact opposite of its own label."""
+        cols = [{"key": "a", "label": "op \u00b7 -x90", "section": "XY+"},
+                {"key": "b", "label": "op \u00b7 x90_DragCosine \u00b7 amplitude",
+                 "section": "XY+"}]
+        terms = self._terms(cols)
+        assert not any(t.startswith("-") for t in terms), terms
+        assert "x90" in terms
+
+    def test_operations_lead_the_row(self):
+        """Reading order is the customer's own sentence: which pulse, then
+        which property."""
+        cols = [{"key": "a", "label": "op \u00b7 x180 \u00b7 amplitude", "section": "XY Drive"}]
+        chips = self._chips(cols)
+        kinds = [c["kind"] for c in chips]
+        assert kinds[0] == "op"
+        assert "kw" in kinds
+        assert kinds.index("op") < kinds.index("kw")
+
+    def test_a_curated_word_keeps_its_label_when_an_operation_shares_it(self):
+        """One chip, one term -- and the nicer label wins."""
+        cols = [{"key": "a", "label": "op \u00b7 readout \u00b7 amplitude",
+                 "section": "Readout"}]
+        chips = [c for c in self._chips(cols) if c["term"] == "readout"]
+        assert len(chips) == 1
+        assert chips[0]["label"] == "Readout"
+
+    def test_a_one_letter_operation_is_not_a_filter(self):
+        cols = [{"key": "a", "label": "op \u00b7 p \u00b7 amplitude", "section": "XY+"}]
+        assert "p" not in self._terms(cols)
+
+    def test_pair_gate_operations_are_harvested_too(self):
+        """One search box, two grids -- the pair grid labels its operations the
+        same way."""
+        pair = [{"key": "coupler__coupler_operations_const_amplitude",
+                 "label": "op \u00b7 const \u00b7 amplitude", "section": "Coupler"}]
+        assert "const" in self._terms([], pair)
+
+    def test_a_chip_with_no_operations_is_unchanged(self):
+        """The extension-shaped pin: nothing is invented where there is
+        nothing to harvest."""
+        cols = [{"key": "f_01", "label": "Qubit f01", "section": "Frequencies"}]
+        assert all(c["kind"] != "op" for c in self._chips(cols))

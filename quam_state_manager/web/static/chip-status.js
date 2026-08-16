@@ -2478,10 +2478,26 @@ window.ChipTrends = (function () {
                 .catch(function () { box.hidden = true; });
         }, 220);
     }
-    /* Charts arrive as [{metric, series:[{entity, points:[[ts, value], ...]}]}].
-       Timestamps are the snapshot ids ("20260816_012907_4661") — rendered as a
-       category axis in recorded order, which is what makes uneven calibration
-       intervals read as a sequence of events rather than as misleading gaps. */
+    /* Charts arrive as
+       [{metric, series:[{entity, points:[[snapId, value, iso], ...]}]}].
+
+       The axis is TIME, not the snapshot sequence. A category axis spaces 433
+       snapshots evenly, which silently redraws three quiet weeks and two
+       minutes of frantic retuning as the same distance — on the one page whose
+       question is "when did this drift". The snapshot id stays in the hover,
+       because that is what a user carries over to State History.
+
+       An id that did not parse to an instant (iso === null) keeps its raw
+       label rather than being placed at an invented one; such a chart falls
+       back to the category axis wholesale, since mixing the two would put the
+       unparsed points at epoch zero. */
+    function _axisFor(series) {
+        var allDated = true;
+        series.forEach(function (s) {
+            s.points.forEach(function (p) { if (!p[2]) allDated = false; });
+        });
+        return allDated ? 'date' : 'category';
+    }
     function render(charts) {
         if (!window._plotlyRender || !charts) return;
         charts.forEach(function (c, idx) {
@@ -2495,14 +2511,21 @@ window.ChipTrends = (function () {
             var dense = c.series.length > 8;
             var longest = c.series.reduce(function (m, s) {
                 return Math.max(m, s.points.length); }, 0);
+            var axisType = _axisFor(c.series);
             var traces = c.series.map(function (s) {
                 return {
-                    x: s.points.map(function (p) { return p[0]; }),
+                    x: s.points.map(function (p) {
+                        return axisType === 'date' ? p[2] : p[0]; }),
                     y: s.points.map(function (p) { return p[1]; }),
+                    // The snapshot id, carried per point so the hover can name
+                    // the snapshot the value came from even on a date axis.
+                    customdata: s.points.map(function (p) { return p[0]; }),
                     mode: longest > 120 ? 'lines' : 'lines+markers',
                     type: dense ? 'scattergl' : 'scatter', name: s.entity,
                     connectgaps: false, marker: { size: 5 },
-                    hovertemplate: '%{fullData.name}<br>%{x}<br>%{y}<extra></extra>',
+                    hovertemplate: '%{fullData.name}<br>%{x}<br>%{y}'
+                                 + '<br><span style="font-size:.85em">%{customdata}</span>'
+                                 + '<extra></extra>',
                 };
             });
             var layout = {
@@ -2511,8 +2534,8 @@ window.ChipTrends = (function () {
                 showlegend: true,
                 legend: { orientation: 'h', y: -0.28, font: { size: 10 } },
                 colorway: (window.UI_CONFIG && UI_CONFIG.plotly && UI_CONFIG.plotly.colorway) || undefined,
-                xaxis: { type: 'category', tickangle: -40, tickfont: { size: 9 },
-                         automargin: true },
+                xaxis: { type: axisType, tickangle: axisType === 'date' ? 0 : -40,
+                         tickfont: { size: 9 }, automargin: true },
                 yaxis: { title: { text: c.metric, font: { size: 11 } },
                          tickfont: { size: 10 }, automargin: true },
                 plot_bgcolor: 'transparent', paper_bgcolor: 'transparent',

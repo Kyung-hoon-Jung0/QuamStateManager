@@ -475,3 +475,103 @@ rather than by test. A pull-only session must never make the client start
 writing; that has its own pin. Sessions are per-chip and never persisted —
 arming chip A cannot authorize a write to chip B.
 
+
+---
+
+## The heavy review — findings and what they changed
+
+The user asked for a red-team pass at every phase and, at the end, one over
+the whole campaign in the customer's own role, weighted to *speed, performance
+and stability*. Three reviewers ran in parallel. The HIGH/MEDIUM findings were
+fixed in `ada1e1b`; this section records the tail that outlived it, because
+each is a case of the surface **saying something that is not so** — nothing
+crashed, no test failed, and that is exactly why they needed pins.
+
+### 1 — `x180` was the one term the chip row could not offer
+
+The customer's sentence was *"go to the search box and TYPE **x180**, amp, ro,
+power"*. `amp` and `power` are curated keywords and `readout` is a section, but
+`x180` is neither: it is an **operation**, and the row was built from curated
+words plus SECTION names only. So the feature answered every part of the
+complaint except the word they led with.
+
+Both grids already render operations — `_build_bulk_cell` labels an operation
+leaf `op · x180_DragCosine · amplitude` (U+00B7) and its alias column
+`op · x180` — so the names were on screen the whole time. `_bulk_op_names`
+harvests them from the labels, on the qubit grid and the pair grid alike.
+
+Two details decided by real data rather than taste:
+
+- **The term is the name's first underscore segment.** That is what collapses
+  `x180` + `x180_DragCosine` into the one chip a user means by "x180", and the
+  short term stays a substring of the long spelling, so it still reaches every
+  leaf of it.
+- **A leading sign is stripped.** The real chip carries `-x90` and `-y90`
+  (negative-amplitude aliases). `-` opens a **negated** term in the docs/96
+  grammar, so a chip labelled `-x90` would have filtered to everything *except*
+  x90 — the exact opposite of its own label. Stripped, it collapses into the
+  `x90` chip, which reaches those columns anyway.
+
+Order is now the customer's own sentence: operations (*which pulse*), then the
+property words (*which value*), then any band neither reached. On the real
+20-qubit chip the row is `x90 y90 saturation x180 y180 const cz` + 13 keywords
++ 3 bands, and the `cz` operation chip now covers the three CZ bands the sweep
+used to name separately — the same term either way, so the coverage promise
+holds. Ops wear `bulk-chip-op` (monospace, dashed) because an operation is a
+name from *your chip*, not a property word; the class is visual only, which is
+what `chipbar_selfcheck.cjs` block I exists to prove.
+
+### 2 — the Trends x axis was the snapshot sequence, not time
+
+433 snapshots on a `type: 'category'` axis are spaced **evenly**, so three
+quiet weeks and two minutes of frantic retuning are drawn the same distance
+apart — on the one page whose question is *when did this drift*. The raw ids
+(`20260816_012907_4661`) are also unreadable as tick labels at that count.
+
+The gaps are the information here, so the axis is time: `_snap_iso` parses the
+id to an instant, `_trend_points` ships `(id, value, iso)` so the **snapshot id
+survives into the hover** — that is what a user carries over to State History —
+and `_axisFor` picks `date` only when *every* point parsed, falling back to
+`category` wholesale otherwise, because mixing them would place the unparsed
+points at epoch zero. An id that does not parse returns `None` rather than a
+guess.
+
+Param History's own `_trend_chart.html` keeps its category axis and that is not
+an inconsistency: it plots a handful of *hand-picked* snapshots, which are
+chosen items, not a timeline.
+
+### 3 — the version panel showed 40 of 433 and stopped
+
+No footer, no paging: the list silently claimed to *be* the history. It now
+pages — **Show 40 more** and **All** — bounded by `_STATE_VERSIONS_CAP = 500`
+(one fetch stays one fetch; ~90 KB), and past the cap it says so and names
+State History. `limit` is user input on a route that renders every row it is
+given, so the clamp has its own pin.
+
+`StateVersions.more()` carries the **ticked rows across the fetch** and
+re-applies them by value. Comparing an old version against a recent one is the
+motivating case, and it must not mean starting the selection over just because
+the old one was on page 3.
+
+### 4 — the chip called the *live* version the *working* one
+
+`_state_version_now` hashes `ctx["path"]` — the **live** pair. The template
+called itself "the working-state version", and with unapplied edits in SM those
+are different states, so a bare id read as *"your work is recorded as this"*.
+It is not.
+
+The id is right and stays; what was missing is whose it is. `ver.dirty` now
+marks it (`+`, warning-tinted) and the tooltip says plainly that SM holds edits
+not in it yet. Two smaller honesty edits went with it: the unmatched label
+`unsaved` → **`unrecorded`** (an out-of-band write reaches that state as
+readily as an edit does, so it must not name a culprit it did not observe), and
+the file's own header comment, which was the source of the confusion.
+
+### Findings recorded and NOT taken
+
+| # | finding | why it waits |
+|---|---|---|
+| 5 | Trends metric selection is not persisted across a reload | a preference, not a lie; no data is misrepresented |
+| 6 | per-pair CZ fidelity became hover-only when the card diagram went | the hero map's own metric selector still prints it per node; the cards' loss is disclosed in the item 11 record |
+| 7 | dead tunables + ~44 card-only CSS rules survive the deletion | inert; removing them is a separate sweep with its own regression surface |
+| 8 | `/auto-apply/gate` reports `armed:false` for a pull-only session | correct as written — that route answers "may I write?", and a pull-only session may not. Renaming it would touch every push caller |

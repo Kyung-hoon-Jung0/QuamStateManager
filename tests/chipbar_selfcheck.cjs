@@ -50,7 +50,12 @@ const COLS = [
   { key: 'x180_amplitude', label: 'x180 amp', section: 'XY Drive', default_on: true },
   { key: 'z_joint_offset', label: 'Flux offset', section: 'Flux', default_on: true },
 ];
-const CHIPS = ['freq', 'readout', 'amp', 'flux'];
+// `x180` is an OPERATION chip (kind "op"), which the server now leads the row
+// with -- it was the term the customer named first and the one the row could
+// not offer. It carries an extra class; everything below must treat it as an
+// ordinary chip, which is exactly what that extra class could have broken.
+const CHIPS = [['x180', 'op'], ['freq', 'kw'], ['readout', 'kw'],
+               ['amp', 'kw'], ['flux', 'kw']];
 
 const DOM = `
 <div class="bulk-panel" id="bulk-panel">
@@ -60,7 +65,7 @@ const DOM = `
   <div class="bulk-chipbar" id="bulk-chipbar">
     <button class="bulk-chip-mode" id="bulk-chip-mode" aria-pressed="false" data-mode="and">AND</button>
     <span class="bulk-chip-scroll">
-      ${CHIPS.map(t => `<button class="bulk-chip" data-chip-term="${t}" aria-pressed="false">${t}</button>`).join('')}
+      ${CHIPS.map(([t, k]) => `<button class="bulk-chip bulk-chip-${k}" data-chip-term="${t}" aria-pressed="false">${t}</button>`).join('')}
     </span>
     <span class="bulk-chip-offer" id="bulk-chip-offer" hidden>
       <button id="bulk-chip-offer-yes">Yes</button>
@@ -194,5 +199,30 @@ click(chip('freq'));
 ok(offer().hidden === true, 'H1: never offered for a single chip');
 typeBox('zzzznothing');
 ok(offer().hidden === true, 'H2: nor for free text that matches nothing');
+
+/* ── I. an operation chip is an ordinary chip ────────────────────────
+   docs/120 review finding 1. `x180` is what the customer types most and the
+   row could not offer it, because terms came from curated words and SECTION
+   names while x180 is an operation. The server harvests it now and marks it
+   `bulk-chip-op` so it reads as a name rather than a property word — a purely
+   visual distinction that must not reach the behaviour. */
+typeBox('');
+// Block G left the toggle on OR; this block is about AND.
+if (modeBtn().textContent === 'OR') click(modeBtn());
+click(chip('freq'));   // clear the H-block selection
+click(chip('freq'));
+ok(q() === '' && modeBtn().textContent === 'AND', 'I0: starting clean, in AND');
+const x180 = chip('x180');
+ok(!!x180 && x180.className.indexOf('bulk-chip-op') !== -1,
+   'I1: the operation chip carries its own class');
+click(x180);
+ok(q() === 'x180', 'I2: ...and writes the plain term, with no class artefact');
+ok(x180.getAttribute('aria-pressed') === 'true', 'I3: it toggles like any chip');
+ok(shown() === 1, 'I4: and filters — x180 amp is the one column it names');
+click(chip('amp'));
+ok(q() === 'x180 amp', 'I5: the customer’s own sentence, as two clicks');
+ok(shown() === 1, 'I6: AND of an operation and a property still matches it');
+click(x180); click(chip('amp'));
+ok(q() === '', 'I7: releasing both empties the box');
 
 process.exit(fails ? 1 : 0);
