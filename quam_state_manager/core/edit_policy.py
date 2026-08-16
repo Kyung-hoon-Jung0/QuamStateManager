@@ -80,9 +80,21 @@ def resolve_edit_path(store: Any, dot_path: str) -> str:
             return target
         return dot_path
     # Navigable as-is. Follow a leaf-pointer to its literal target (value-mode).
+    #
+    # ONLY to a literal. The promise quoted above — "the generic edit surfaces
+    # render these as the resolved NUMBER" — is the whole justification for
+    # redirecting the write, and it does not hold when the pointer reaches a
+    # CONTAINER. `qubit_pairs.q1-2.qubit_control = "#/qubits/q1"` resolved to
+    # `qubits.q1`, so a write aimed at the cell was aimed at the entire qubit
+    # object; only the type judge ("Expected dict, got str") stood between a
+    # typed qubit name and a chip whose q1 became a string (docs/121). A
+    # container target means the cell IS the pointer, so the pointer is what the
+    # write must land on.
     if isinstance(current, str) and is_pointer(current):
         ft = resolve_field_target(store.merged, dot_path)
-        if ft["resolvable"] and ft["resolved_path"] != dot_path:
+        if (ft["resolvable"] and ft["resolved_path"] != dot_path
+                and not isinstance(_container_at(
+                    store.merged, str(ft["resolved_path"]).split(".")), (dict, list))):
             return ft["resolved_path"]
     return dot_path
 
@@ -129,6 +141,49 @@ def leaf_is_absent(store: Any, dot_path: str) -> bool:
     parent, leaf = dot_path.rsplit(".", 1)
     container = _container_at(store.merged, parent.split("."))
     return isinstance(container, dict) and leaf not in container
+
+
+def pointer_cell_refusal(store: Any, dot_path: str, new_value: Any) -> str | None:
+    """Why a pointer-valued cell refuses *new_value*, or None to proceed.
+
+    docs/121. The grids now SHOW the pointer whenever there is no scalar behind
+    it (``qubit_control = "#/qubits/q1"``, a dangling ``LO_frequency``), which
+    is what the customer asked for — but showing an editable pointer without
+    this guard is worse than showing nothing. Measured on the real chip: typing
+    ``q3`` stored the literal ``"q3"``, and typing ``6.1e9`` over a dangling
+    pointer stored the STRING ``"6100000000.0"``. Both succeeded, both silent,
+    and the first is a ``Quam.load()`` failure the user would meet days later.
+
+    The refusal is narrow by construction: it fires ONLY where the cell has no
+    scalar behind the pointer. A pointer that reaches a real number keeps
+    value-mode untouched — typing a number there writes the number at the
+    target, which is the long-standing promise and is not this function's
+    business. Breaking a link on purpose stays possible; it just has to be
+    said out loud, on the Pulses page's explicit 3-mode editor.
+    """
+    from quam_state_manager.core.pointer_path import resolve_field_target
+    from quam_state_manager.core.pointer_resolver import is_pointer
+    try:
+        current = store.get_value(dot_path)
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None
+    if not (isinstance(current, str) and is_pointer(current)):
+        return None
+    if isinstance(new_value, str) and is_pointer(new_value.strip()):
+        return None                     # re-pointing is the ordinary edit here
+    try:
+        ft = resolve_field_target(store.merged, dot_path)
+    except Exception:                   # noqa: BLE001 — best-effort, never blocks
+        return None
+    if ft.get("resolvable") and ft.get("resolved_path") != dot_path:
+        target = _container_at(store.merged, str(ft["resolved_path"]).split("."))
+        if not isinstance(target, (dict, list)):
+            return None                 # value-mode: unchanged, always
+    return (f"This field is a reference ({current}), not a value. Writing "
+            f"{new_value!r} here would replace the link with plain text and "
+            f"break it. Enter a pointer (e.g. {current}) to re-point it, or "
+            f"use the Pulses page's pointer editor to break the link "
+            f"deliberately.")
 
 
 def _container_at(merged: Any, segs: list[str]) -> Any:

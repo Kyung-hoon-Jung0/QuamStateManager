@@ -177,11 +177,32 @@ def _build_bulk_cell(merged: dict, alias: str, modified: dict,
     # resolved_value is scalar-nulled for containers, so a real LIST leaf reads
     # as null — one cheap walk (only on the resolvable-but-null case) detects it
     # for the ✎ list-cell swap.
+    #
+    # docs/121: the same null ALSO arrives from two other shapes, and reading it
+    # as "this field is not set" is what made `qubit_control` / `qubit_target`
+    # render blank while Json Tree View showed `#/qubits/q1` right there. The
+    # question "does the pointer reach a scalar" is not the question "does this
+    # field have a value" — so ask the alias what IT holds, in the SAME branch
+    # (a cell with a scalar never pays for this walk).
     is_list = False
-    if resolvable and val is None:
+    ptr_kind: str | None = None      # dict | list | dangling — pointer, no scalar
+    raw_present = False
+    raw_val = None
+    if val is None:
         from quam_state_manager.core.pointer_path import _walk as _walk_abs
-        found, node = _walk_abs(merged, resolved.split("."))
-        is_list = bool(found) and isinstance(node, list)
+        from quam_state_manager.core.pointer_resolver import is_pointer
+        container = False
+        if resolvable:
+            found, node = _walk_abs(merged, resolved.split("."))
+            is_list = bool(found) and isinstance(node, list)
+            container = bool(found) and isinstance(node, (dict, list))
+        rfound, raw_val = _walk_abs(merged, alias.split("."))
+        raw_present = bool(rfound) and raw_val is not None
+        if raw_present and isinstance(raw_val, str) and is_pointer(raw_val):
+            # A pointer that reaches an entity/pulse dict, a list, or nothing at
+            # all. In every case the field HAS a value — the pointer itself —
+            # and that is what the inspector and the tree already show.
+            ptr_kind = "list" if is_list else ("dict" if container else "dangling")
     p = mw_fem.port_of_resolved(resolved)
     if p:
         kind, con, fem, port, field = p
@@ -195,9 +216,19 @@ def _build_bulk_cell(merged: dict, alias: str, modified: dict,
     return {
         "dot_path": alias,            # what we POST (edit-batch re-resolves)
         "resolved_path": resolved,    # what the change_log keys on
-        "display": _bulk_display(val),
-        "is_pointer": bool(ft.get("is_pointer")),
-        "missing": (not resolvable) or val is None,
+        # A pointer with no scalar behind it SHOWS THE POINTER, exactly as
+        # `_pair_detail.html`'s pointer-badge and the tree already do. Blank was
+        # never a rendering choice, it was `_bulk_display(None)`.
+        "display": raw_val if ptr_kind else _bulk_display(val),
+        "is_pointer": bool(ft.get("is_pointer")) or bool(ptr_kind),
+        # docs/121: "missing" means the field is genuinely ABSENT — that is the
+        # question docs/88 made it answer (it is what turns into `create: true`).
+        # A pointer, a dict or a list is a value, so none of them is missing.
+        "missing": (not raw_present) and val is None,
+        # What the cell holds when there is no scalar: a pointer to a container,
+        # or one that resolves to nothing. Blank whenever it IS a scalar, so
+        # every previously-correct cell is byte-identical.
+        "ptr_kind": ptr_kind,
         "linkable": resolvable,
         "modified": resolved in modified,
         "old_display": _bulk_display(modified.get(resolved)),
@@ -5233,6 +5264,11 @@ def qubit_edit(name: str):
         _ro = _editability_reason(modifier.store, target_path)
         if _ro is not None:
             raise ValueError(_ro)
+        # docs/121: a pointer cell now SHOWS its pointer, so plain text
+        # typed into one must never silently replace the link.
+        _pr = _pointer_cell_refusal(modifier.store, dot_path, raw_value)
+        if _pr is not None:
+            raise ValueError(_pr)
         parsed = _parse_for_target(modifier.store, target_path, raw_value)
         # Mint one group id when the freq-mirror can fire, so the primary edit
         # and its mirrored twin share it and a single Ctrl+Z reverts both
@@ -5269,6 +5305,13 @@ def _op_of_path(dot_path: str) -> str | None:
         if i + 1 < len(segs):
             return segs[i + 1]
     return None
+
+
+def _pointer_cell_refusal(store, dot_path: str, new_value):
+    """Thin wrapper — the rule lives in core.edit_policy so the four generic
+    value-edit surfaces cannot drift on what a pointer cell accepts."""
+    from quam_state_manager.core.edit_policy import pointer_cell_refusal
+    return pointer_cell_refusal(store, dot_path, new_value)
 
 
 def _resolve_edit_path(store, dot_path: str) -> str:
@@ -5401,6 +5444,11 @@ def field_edit():
         _ro = _editability_reason(modifier.store, target_path)
         if _ro is not None:
             raise ValueError(_ro)
+        # docs/121: a pointer cell now SHOWS its pointer, so plain text
+        # typed into one must never silently replace the link.
+        _pr = _pointer_cell_refusal(modifier.store, dot_path, raw_value)
+        if _pr is not None:
+            raise ValueError(_pr)
         # docs/20 r12-B: an FSP edit NEVER silently changes amplitudes — and
         # never commits before the user saw the compensation offer. Without
         # an ack the plan comes back 409; the popup then applies FSP+amps in
@@ -6932,6 +6980,11 @@ def field_edit_batch():
                 _ro = _editability_reason(modifier.store, target_path)
                 if _ro is not None:
                     raise ValueError(_ro)   # read-only policy → existing atomic rollback (audit P0)
+                # docs/121: a pointer cell now SHOWS its pointer, so plain text
+                # typed into one must never silently replace the link.
+                _pr = _pointer_cell_refusal(modifier.store, dot_path, raw_value)
+                if _pr is not None:
+                    raise ValueError(_pr)
                 # String values parse against the TARGET's expectation (JSON
                 # values pass through — the modifier gate is the backstop).
                 parsed = (_parse_for_target(modifier.store, target_path, raw_value)
@@ -7747,6 +7800,11 @@ def pair_edit(name: str):
         _ro = _editability_reason(modifier.store, target_path)
         if _ro is not None:
             raise ValueError(_ro)
+        # docs/121: a pointer cell now SHOWS its pointer, so plain text
+        # typed into one must never silently replace the link.
+        _pr = _pointer_cell_refusal(modifier.store, dot_path, raw_value)
+        if _pr is not None:
+            raise ValueError(_pr)
         parsed = _parse_for_target(modifier.store, target_path, raw_value)
         # Group primary + freq-mirror twin under one id (see qubit_edit) so a
         # single Ctrl+Z reverts both atomically instead of leaving f_01≠RF.
