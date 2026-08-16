@@ -87,15 +87,27 @@ function checkRenderLayout() {
   const feeds = m.querySelectorAll('.cm-feed');
   ok(feeds.length === 1, 'ONE feedline bus for the shared rr_port group (con1/fem1/p1 x2)');
 
-  // §2.4: NO numbers — the only rendered text is the qubit id
+  // §2.4: NO NUMBERS. docs/120 item 11 added the C/T/M role markers here (the
+  // customer asked for ONE convention across SM), so the pin is restated at
+  // the invariant it always meant rather than at "text length == qubit count":
+  // every rendered string is either a qubit id or a role LETTER, and nothing
+  // drawn is a number. Values still live in the table beside the map.
   const texts = m.querySelectorAll('svg text');
-  ok(texts.length === 3, 'exactly one text per qubit (no value text anywhere)');
   const idSet = { qA1: 1, qA2: 1, qA3: 1 };
-  let onlyIds = true;
+  const roleSet = { C: 1, T: 1, M: 1 };
+  ok(m.querySelectorAll('text.cm-id').length === 3,
+     'exactly one id text per qubit (no value text anywhere)');
+  let onlyIdsOrRoles = true, anyNumeric = false;
   texts.forEach(function (t) {
-    if (!idSet[t.textContent] || t.getAttribute('class') !== 'cm-id') onlyIds = false;
+    const s = t.textContent;
+    const cls = t.getAttribute('class') || '';
+    const isId = idSet[s] && cls === 'cm-id';
+    const isRole = roleSet[s] && cls.indexOf('cm-role-txt') !== -1;
+    if (!isId && !isRole) onlyIdsOrRoles = false;
+    if (/[0-9]/.test(s) && !idSet[s]) anyNumeric = true;
   });
-  ok(onlyIds, 'every rendered text is a bare qubit id (numbers live in the table — docs/91 §2.4)');
+  ok(onlyIdsOrRoles, 'every rendered text is a qubit id or a C/T/M role letter');
+  ok(!anyNumeric, 'no NUMBER is ever drawn on the component map (docs/91 §2.4)');
 
   // emphasis never changes content: same drawing under a different highlight
   const m2 = win.document.createElement('div');

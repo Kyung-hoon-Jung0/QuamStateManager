@@ -707,6 +707,17 @@ class QueryEngine:
                 # coupler counts, an explicit null does not (docs/92 — the
                 # component-map coupler symbols key on this)
                 "has_coupler": isinstance(p.get("coupler"), dict),
+                # docs/120 item 11 — which END of this pair actually moves.
+                # A ROLE ("control"/"target"), never a qubit id: quam_builder
+                # writes it as a role and defaults it to the higher-f_01 qubit
+                # (run_build._seed_cz_variant), so M always coincides with C or
+                # T and is drawn as a combined marker, never a third position.
+                # None on a chip that does not record it — the map then simply
+                # shows no M rather than inferring one from the frequencies,
+                # because an override is exactly the case worth seeing.
+                "moving_qubit": (p.get("moving_qubit")
+                                 if p.get("moving_qubit") in ("control", "target")
+                                 else None),
                 "cz_fidelity": best_fidelity,
                 "fidelity_source": fidelity_source,
                 "gate_kind": "cr" if _is_cr_pair else ("cz" if macros else "none"),

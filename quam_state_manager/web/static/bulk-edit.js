@@ -223,6 +223,14 @@
             _paint();
             offerDismissed = false;
             applySearch();
+            // The PAIR grid listens on this input's 'input' EVENT (pair-edit.js
+            // keeps its own applySearch — deliberately isolated). Assigning
+            // .value programmatically fires nothing, so without this dispatch a
+            // chip narrowed the qubit grid and left the pair table untouched —
+            // while this module's own comment claimed one chip filters both.
+            // Review caught it because the selfcheck fixture had no pair table.
+            try { el.dispatchEvent(new Event('input', { bubbles: true })); }
+            catch (e) { /* pre-Event browsers: the qubit grid is already done */ }
             _offer();
         }
         function _paint() {
@@ -251,10 +259,21 @@
                 && _visibleColCount() === 0;
             o.hidden = !show;
         }
+        /* Both grids, because both are filtered by these chips. Counting only
+           the qubit table offered "No matches — try OR?" while the pair table
+           below was full of hits, which is a false statement about the screen
+           the user is looking at. */
         function _visibleColCount() {
-            var t = table(); if (!t) return 1;
-            return t.querySelectorAll('thead th:not(.bulk-search-hidden):not(.bulk-col-hidden)').length
-                 - t.querySelectorAll('thead .bulk-corner').length;
+            var n = 0, seen = false;
+            ['bulk-table', 'bulk-pair-table'].forEach(function (id) {
+                var t = document.getElementById(id);
+                if (!t) return;
+                seen = true;
+                n += t.querySelectorAll(
+                        'thead th:not(.bulk-search-hidden):not(.bulk-col-hidden)').length
+                   - t.querySelectorAll('thead .bulk-corner').length;
+            });
+            return seen ? n : 1;   // no grid mounted → never claim "no matches"
         }
         function toggle(term) {
             var i = active.indexOf(term);
@@ -270,7 +289,16 @@
            Called on every keystroke, so hand-typing `flux` lights Flux. */
         function syncFromQuery() {
             var toks = _tokens().map(function (t) { return t.toLowerCase(); });
-            active = terms.filter(function (t) { return toks.indexOf(t) >= 0; });
+            // Order comes from the QUERY, not from the chip row. Deriving it
+            // from `terms` re-sorted the selection into render order on every
+            // keystroke, so the box visibly reshuffled itself as the user
+            // toggled — and, once _write started dispatching `input` for the
+            // pair grid, that reshuffle fed straight back into the next write.
+            var seen = {};
+            active = [];
+            toks.forEach(function (t) {
+                if (terms.indexOf(t) >= 0 && !seen[t]) { seen[t] = 1; active.push(t); }
+            });
             _paint();
         }
         function mount() {

@@ -343,25 +343,135 @@ confirming the fix; all **59 selfchecks pass, 0 skipped**.
 
 ---
 
-## Wave 3 — planned
+## Wave 3 — shipped
 
-| item | branch |
-|---|---|
-| 11 — one chip map | `feat/one-chip-map` |
-| 5/9 — Chip Status Trends | `feat/chip-trends` |
-| 8 — bidirectional Auto-Sync | `feat/auto-sync` |
+### Item 11 — one chip map, with the pair roles on it
 
-(Waves 1 and 2 shipped on `fix/search-help-toggle`, `fix/dormant-selfchecks`,
-`feat/fsp-editable-amps` and `feat/live-edit-chips`, all merged into
-`integrate/customer-feedback`.)
+> *"On Chip Status → Topology the qubit layout appears **twice**… users are
+> confused — why does the first one exist? — but they **prefer** the first one.
+> Put the pair design into the first layout, make it fill the screen more, and
+> bring the second layout's information across."*
 
-Their design decisions are recorded in the campaign plan and will be expanded
-into docs/121+ as each lands. Two are called out as needing an audit even if
-their stream looks clean:
+They were never two designs. When the hero shipped, the pre-existing card
+diagram was left underneath it — docs/92 says so verbatim, *"cards below
+untouched"* — so this was an unfinished migration reported as a UX complaint.
 
-- **item 11** relocates `openQubitMore` / `_sharedQubitPopup` out of
-  `buildTopology` before deleting the card diagram. The failure mode is
-  **silent** — `bindHover` guards on a null `_sharedQubitPopup`, so the hover
-  popup would simply stop opening, with no error and no failing test.
-- **item 8** splits arm-ability per direction. The existing gate refuses when
-  `live_diverged`, which is correct for push and backwards for pull.
+The cards are deleted. The hero took their space (`CELL` 96 → 132, and it is
+now **responsive** through its own viewBox rather than a fixed pixel size that
+scrolled sideways), their frequency chevrons, and their control/target
+information.
+
+**The trap, and why this was not a simple deletion.** `_sharedQubitPopup` is
+what the hero's hover handler opens, and it was only ever *assigned* inside
+`buildTopology` — the IIFE that drew the cards. Deleting that block wholesale
+would have left the bridge null forever, and `bindHover` merely guards on it:
+
+```js
+if (!_sharedQubitPopup) return;
+```
+
+so the qubit detail popup — `SECONDARY_PROPS`, the gate-fidelity recency line,
+the lazy sparkline fetch — would have stopped opening with **no error, no
+console warning and no failing test**. It lives in its own `buildQubitPopup`
+now, and `tests/hero_popup_selfcheck.cjs` exists purely to prove a hover still
+opens it.
+
+**Roles, to the customer's convention**: the arrow direction encodes the f₀₁
+inequality, and C / T / M are small circles beside each qubit at the end of the
+arrow they belong to. `moving_qubit` is a **role** (`"control"`/`"target"`), so
+M always coincides with C or T and is never a third position; a chip recording
+none gets **no M** rather than one inferred from the frequencies, because
+quam_builder defaults the mover to the higher-f₀₁ qubit and a guess would hide
+exactly the override worth seeing. Verified on the real chip: 30 chevrons,
+C/T/M on all 30 pairs, **M at the declared end for every one**.
+
+The drawing is **shared** (`TopoGraph.pairGlyphs`), so the hero and the
+component-page maps cannot drift into two conventions — which is what the
+customer asked for. The chevron half is lifted verbatim and the component map's
+output is byte-identical.
+
+Three more things the deletion would have silently taken, each caught:
+
+- the **"changed vs live" highlight** queried `[data-qubit]`, a *card*
+  attribute, so it would have matched nothing on the page;
+- the **"Edge labels" checkbox** controlled the cards' text labels — removed
+  rather than left as a control that does nothing;
+- my own **M geometry**: offset along the edge, it overshot the midpoint on a
+  one-cell pair and landed nearer the *other* qubit, the exact opposite of its
+  meaning. It stacks perpendicular now.
+
+Markers carry `data-cm-pair` **and** `data-cm-at`, because a qubit is the
+control of one pair and the target of another on any chain — "the C nearest
+qA1" is an ambiguous question, and the first version of the test asked it and
+got the wrong answer.
+
+### Items 5 + 9 — Trends: every qubit on one plot per metric
+
+> *"To see T1/RB/T2 trends today you go to Param History, but that shows
+> **per-qubit** trends, not an **integrated** one. Add a Trends tab under Chip
+> Status where **all qubits' T1 appear in a SINGLE plot**."*
+
+One chart per metric, one line per qubit, legend = the qubit ids. Verified on
+the real chip: a single `f_01` chart carrying **20 qubit lines in 37 ms**.
+
+Most of it already existed. `extract_property_history` always returned every
+qubit for a metric in one call — `/api/topology/sparklines` just happened to
+pass one — and `_trend_chart.html` already rendered exactly this shape, using
+the colorway `app.js` documents as being for *"each qubit's line"*. What was
+missing was the surface.
+
+**Any numeric parameter**, per the overhead investigation above. A qubit-scoped
+path fans out across the chip, because charting one qubit's copy of a parameter
+is not what this page is for.
+
+Honest three ways: a selected metric with nothing recorded still gets a slot
+that **says so**; only numeric points become line points, so a null never
+becomes a 0; and it is **lazy**, because docs/28's rule against paying for what
+the render does not need applies equally to a section a user may never scroll
+to.
+
+Registered in all **seven** places a Chip Status section must be declared at
+once, and pinned — missing one leaves a tab that exists but never builds.
+
+### Item 8 — Auto-Sync: the covenant amended for the pull direction
+
+> *"Many mature users run VS Code with auto-save on… SM's original design
+> concept was: never pull/push the source of truth without the user's
+> permission. It's time to drop that. What users want is auto pull/push **when
+> they allow it**."*
+
+docs/107 stated the covenant; docs/117 amended its **scope** so one press could
+authorize a session of *writes*. This amends the other direction for the first
+time — replacing the working copy *from* live.
+
+The line the user drew, and the whole feature:
+
+| pull | replace | local edits | behaviour |
+|---|---|---|---|
+| on | on | either | live wins, **silently** — the tick *is* the consent |
+| on | off | no | pull silently (today's `RECONCILE_SYNCED`) |
+| on | off | **yes** | **do not pull**; the drift banner asks |
+| off | — | — | byte-identical to today, **and that row is a test** |
+
+The third row is docs/87 intact: with replace unticked, SM still refuses to
+choose between the user's work and the chip.
+
+The **policy lives entirely in `POST /auto-sync/pull`**; the client only
+notices `auto_pull` on the poll and presses the button, so the rule cannot be
+half-implemented in two places. **No new poller** (docs/110) — the signal rides
+`/state/drift`, carried on *every* branch including the untracked ones, since a
+chip with no drift baseline can still have diverged. The pull takes
+`window._applyInFlight`, the same latch the manual Apply and the push flusher
+use.
+
+**Arm-ability is split per direction**, which is the subtle part: the push gate
+refuses on `live_diverged` and on a read-only live folder. Both are wrong for
+pull — divergence is the very condition that makes pulling useful, and a pull
+only reads live while writing the working copy.
+
+One session dict holds all three flags, and `_auto_apply_state` returns it only
+when `push` is on, so every existing push path is unchanged **by construction**
+rather than by test. A pull-only session must never make the client start
+writing; that has its own pin. Sessions are per-chip and never persisted —
+arming chip A cannot authorize a write to chip B.
+

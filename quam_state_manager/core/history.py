@@ -2947,6 +2947,44 @@ class HistoryManager:
         finally:
             conn.close()
 
+    def leaf_field_series_many(
+            self, quam_state_path: str | Path,
+            dot_paths: list[str]) -> dict[str, list[tuple]]:
+        """:meth:`leaf_field_series` for MANY paths over ONE connection.
+
+        The per-path variant opens and closes its own SQLite connection, and
+        each open re-applies ``PRAGMA cache_size`` / ``mmap_size``. Calling it
+        once per qubit to build a chip-wide overlay therefore spent almost all
+        of its time in connect/close rather than in the query -- measured 458 ms
+        for 20 qubits, of which the queries were a small fraction, and it scaled
+        with QUBIT COUNT while being independent of history depth.
+
+        Same semantics per path: a path this index must decline (a pointer
+        somewhere in its history) is simply absent from the result, exactly as
+        the singular form returns None.
+        """
+        out: dict[str, list[tuple]] = {}
+        if not dot_paths:
+            return out
+        try:
+            self._ensure_leaf_index_fresh(Path(quam_state_path))
+            conn = self._open_index(Path(quam_state_path))
+        except sqlite3.Error:
+            return out
+        try:
+            for dp in dot_paths:
+                try:
+                    if leaf_index.path_needs_scan(conn, dp):
+                        continue
+                    rows = leaf_index.series(conn, dp)
+                    if rows:
+                        out[dp] = rows
+                except sqlite3.Error:
+                    continue          # one bad path must not lose the rest
+        finally:
+            conn.close()
+        return out
+
     def leaf_changes(self, quam_state_path: str | Path, *, limit: int = 200,
                      prefix: str | None = None,
                      before_ts: str | None = None) -> list[dict]:
@@ -3184,6 +3222,13 @@ class HistoryManager:
         n = len(cleaned)
         if max_points <= 0 or n <= max_points:
             return cleaned
+        # LTTB keeps the first and last point and buckets the rest, so it needs
+        # at least three. Below that the bucket divisor is 0 or negative and the
+        # whole call raised ZeroDivisionError — a caller asking for "just enough
+        # to see whether this metric has ANY data" got a crash instead of two
+        # points. Degrade to the endpoints, which is what 2 points means.
+        if max_points < 3:
+            return [cleaned[0], cleaned[-1]][:max_points]
 
         bucket_size = (n - 2) / (max_points - 2)
         sampled: list[tuple[str, float]] = [cleaned[0]]

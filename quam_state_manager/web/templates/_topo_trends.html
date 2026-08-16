@@ -1,0 +1,76 @@
+{# docs/120 items 5+9 — chip-wide Trends.
+
+   Customer, twice: "to see T1/RB/T2 trends today you go to Param History, but
+   that shows PER-QUBIT trends, not an INTEGRATED one. Add a Trends tab under
+   Chip Status where ALL qubits' T1 appear in a SINGLE plot. A multiple-line
+   plot, legend = all qubits."
+
+   So: one chart per metric, one LINE per qubit, legend = the qubit ids. The
+   rendering follows _trend_chart.html's existing convention (group by property,
+   one trace per entity, UI_CONFIG.plotly.colorway — which app.js documents as
+   being exactly for "each qubit's line"), and the data comes from the history
+   index rather than from a hand-picked basket of snapshots.
+
+   Honesty: a selected metric with nothing recorded still gets a slot that SAYS
+   so. Dropping it would make a chip with no T1 history look like a chip with
+   fewer metrics. #}
+<div class="topo-trends" id="topo-trends">
+{% if no_chip %}
+    <p class="muted">No chip is open.</p>
+{% else %}
+    <div class="topo-trends-controls">
+        <span class="muted topo-trends-label">Metrics</span>
+        <span class="topo-trends-chips">
+        {% for m in curated %}
+            <button type="button" class="topo-trend-chip{% if m in selected %} active{% endif %}"
+                    data-trend-metric="{{ m }}" aria-pressed="{{ 'true' if m in selected else 'false' }}"
+                    onclick="ChipTrends.toggle('{{ m }}')">{{ m }}</button>
+        {% endfor %}
+        </span>
+        {# The docs/83 tier: ANY numeric leaf, not just the curated eleven.
+           On this chip the curated set is largely null while ~588 other
+           parameters have a real history, which is the whole argument for
+           offering it. #}
+        <span class="topo-trends-any">
+            <input type="search" id="topo-trend-path" class="topo-trend-path"
+                   placeholder="…or any parameter: x180 amplitude, full_scale_power…"
+                   value="{{ extra }}" autocomplete="off"
+                   oninput="ChipTrends.suggest(this.value)"
+                   onkeydown="if(event.key==='Enter'){ChipTrends.setPath(this.value);}">
+            <div class="topo-trend-suggest" id="topo-trend-suggest" hidden></div>
+        </span>
+        {% if snapshots is defined %}
+        <span class="muted topo-trends-count">{{ snapshots }} snapshot{{ '' if snapshots == 1 else 's' }}</span>
+        {% endif %}
+    </div>
+
+    {% if not charts %}
+    <p class="muted">Pick a metric above.</p>
+    {% endif %}
+
+    <div class="topo-trends-grid">
+    {% for c in charts %}
+        <div class="topo-trend-box" data-trend-metric="{{ c.metric }}">
+            <div class="topo-trend-title">{{ c.metric }}
+                {% if c.n_entities %}<span class="muted">· {{ c.n_entities }} qubit{{ '' if c.n_entities == 1 else 's' }}</span>{% endif %}
+            </div>
+            {% if c.series %}
+            <div class="topo-trend-chart" id="topo-trend-{{ loop.index0 }}"></div>
+            {% else %}
+            {# Never an empty axis pretending to be a plot. #}
+            <p class="muted topo-trend-empty">Nothing recorded for this metric yet.
+               It appears here once a run or a save writes it.</p>
+            {% endif %}
+        </div>
+    {% endfor %}
+    </div>
+
+    <script type="application/json" id="topo-trends-data">{{ charts | tojson }}</script>
+    <script>
+      (function () {
+        var el = document.getElementById('topo-trends-data');
+        if (el && window.ChipTrends) ChipTrends.render(JSON.parse(el.textContent));
+      })();
+    </script>
+{% endif %}
+</div>

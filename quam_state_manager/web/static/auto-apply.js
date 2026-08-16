@@ -111,6 +111,15 @@
         _onTrayChanged: onTrayChanged,
         armed: armed,
         pending: pending,
+        /* Someone ELSE held window._applyInFlight and has just released it.
+           `_queued` is drained only by this module's own completion handler, so
+           without a poke an edit that committed during (say) an Auto-Sync pull
+           would sit unapplied until the next tray mutation — while the pill
+           still said auto-push was on. docs/120 item 8 review finding. */
+        drain: function () {
+            if (_queued) { _queued = false; setTimeout(flush, 0); }
+            else flush();
+        },
         toggleLog: function (btn) {
             var log = document.getElementById('applied-log');
             if (!log) return;
@@ -148,4 +157,61 @@
         onTrayChanged();      // an armed session + pending edits after a reload
     });
     document.addEventListener('htmx:afterSwap', function () { applyLogState(); });
+})();
+
+/* ── docs/120 item 8: the Auto-Sync popup ────────────────────────────────
+ *
+ * Only the popover mechanics live here. The three switches POST to
+ * /auto-sync/set and every decision that follows -- whether pull is armed,
+ * whether live diverged, whether unapplied edits block a replace -- is made on
+ * the server, so the covenant is stated in exactly one place.
+ */
+window.AutoSync = (function () {
+    function host() { return document.getElementById('auto-sync-pop-host'); }
+    function pop() { return document.getElementById('auto-sync-pop'); }
+    function btn() { return document.querySelector('.auto-apply-pill'); }
+
+    function close() {
+        var h = host(); if (h) h.innerHTML = '';
+        var b = btn(); if (b) b.setAttribute('aria-expanded', 'false');
+    }
+    function toggle() {
+        var h = host(); if (!h) return;
+        var p = pop();
+        if (p) {                                  // open -> close
+            h.innerHTML = '';
+            var b0 = btn(); if (b0) b0.setAttribute('aria-expanded', 'false');
+            return;
+        }
+        // Fetched fresh so the switches always show the CURRENT session, and
+        // so a tray swap mid-configuration cannot destroy a partial choice.
+        var b = btn(); if (b) b.setAttribute('aria-expanded', 'true');
+        if (!window.htmx) return;
+        window.htmx.ajax('GET', '/auto-sync/panel',
+                         { target: '#auto-sync-pop-host', swap: 'innerHTML' })
+            .then(function () { syncNested(); _bindAway(); });
+    }
+    function _bindAway() {
+        setTimeout(function () {
+            document.addEventListener('click', function away(e) {
+                var pp = pop();
+                if (!pp) { document.removeEventListener('click', away); return; }
+                if (pp.contains(e.target) || (btn() && btn().contains(e.target))) return;
+                close();
+                document.removeEventListener('click', away);
+            });
+        }, 0);
+    }
+    /* "Replace" qualifies a pull rather than being a mode of its own, so it is
+       disabled (and visibly so) when pull is off -- a checkbox that cannot mean
+       anything should not look like it can. */
+    function syncNested() {
+        var pull = document.getElementById('as-pull');
+        var rep = document.getElementById('as-pull-replace');
+        if (!pull || !rep) return;
+        rep.disabled = !pull.checked;
+        var row = rep.closest('.as-row');
+        if (row) row.classList.toggle('as-row-disabled', !pull.checked);
+    }
+    return { toggle: toggle, close: close, syncNested: syncNested };
 })();

@@ -90,24 +90,40 @@
    one labelled act, no dialog (docs/104 #1). While armed it is deliberately
    loud and permanent — a mode that changes what leaving a cell DOES may never
    be quiet. Turning it off is the same button. #}
-{% if auto_apply %}
+{# docs/120 item 8 — Auto-SYNC. The pill was "Auto-apply" (push only); the
+   user asked for both directions behind one control: "change the Auto-apply
+   button into an Auto-Sync button, click it and a popup opens with checkboxes
+   — auto pulling from the live chip, auto replace the current modified values
+   in SM, auto pushing to the live chip — all checked, uncheck what you don't
+   want."
+
+   The popup IS the consent. While armed the pill states the MODE rather than
+   just "ON", because pull and push are different promises and a user must be
+   able to see which ones they granted. #}
+{% set _as = auto_sync if auto_sync is defined else None %}
+<span class="auto-sync-wrap">
+{% if _as %}
 <button type="button" class="auto-apply-pill auto-apply-on"
-        hx-post="/auto-apply/disarm" hx-target="#pending-tray" hx-swap="outerHTML"
-        title="Auto-apply is ON: leaving an edited field writes it to the live chip. Click to turn it off.">
-  &#9889; Auto-apply <b>ON</b>
-  {%- if auto_apply.flushes %} <span class="aa-count">{{ auto_apply.flushes }}</span>{% endif %}
+        onclick="AutoSync.toggle(this)" aria-haspopup="dialog" aria-expanded="false"
+        title="Auto-Sync is ON. Click to change what it does, or turn it off.">
+  &#9889; Auto-Sync
+  <b>{% if _as.pull and _as.push %}both{% elif _as.push %}push{% else %}pull{% endif %}</b>
+  {%- if _as.pull and not _as.pull_replace %} <span class="aa-hint">(asks before replacing)</span>{% endif %}
+  {%- if _as.flushes %} <span class="aa-count">{{ _as.flushes }}</span>{% endif %}
   <span class="aa-power">&#9211;</span></button>
-{% elif auto_apply_armable and auto_apply_armable[0] %}
+{% elif (auto_apply_armable and auto_apply_armable[0]) or auto_pull_armable and auto_pull_armable[0] %}
 <button type="button" class="auto-apply-pill auto-apply-off"
-        hx-post="/auto-apply/arm" hx-target="#pending-tray" hx-swap="outerHTML"
-        title="Turn on auto-apply: after this, leaving an edited field writes it straight to the live chip (each change stays revertible).">
-  &#9889; Auto-apply
-  {%- if change_count > 0 %} <span class="aa-hint">(will apply {{ change_count }} pending)</span>{% endif %}
+        onclick="AutoSync.toggle(this)" aria-haspopup="dialog" aria-expanded="false"
+        title="Turn on Auto-Sync: keep SM and the live chip in step without pressing anything.">
+  &#9889; Auto-Sync
+  {%- if change_count > 0 %} <span class="aa-hint">({{ change_count }} pending)</span>{% endif %}
 </button>
 {% elif auto_apply_armable %}
 <span class="auto-apply-pill auto-apply-blocked" title="{{ auto_apply_armable[1] }}">
-  &#9889; Auto-apply</span>
+  &#9889; Auto-Sync</span>
 {% endif %}
+
+</span>
 {# docs/20 v2 LiveEditUndo: one ↶ = one event, exactly mirrored in the Review
    list (staged undos swap this whole tray via /undo's response; un-staged
    fill undos leave it untouched — they were never in the change_log).

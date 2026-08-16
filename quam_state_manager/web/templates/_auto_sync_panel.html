@@ -1,0 +1,45 @@
+{# docs/120 item 8 — the Auto-Sync switches, as their OWN fragment.
+
+   They started life inside `#pending-tray`, which OOB-swaps on every commit and
+   on every auto-apply flush — so opening the popup and starting to untick
+   "replace" while a session was flushing destroyed the popup and the partial
+   choice. An attempt to REDUCE permissions failing silently is the worst
+   possible thing for this control to do, so it now lives at body level and is
+   fetched fresh when opened (the same shape as item 10's version panel). #}
+{% set _as = auto_sync if auto_sync is defined else None %}
+<div class="auto-sync-pop" id="auto-sync-pop" role="dialog" aria-label="Auto-Sync">
+  <form hx-post="/auto-sync/set" hx-target="#pending-tray" hx-swap="outerHTML"
+        onsubmit="AutoSync.close()">
+    <strong class="as-title">Auto-Sync</strong>
+    <label class="as-row">
+      <input type="checkbox" name="pull" value="1" id="as-pull"
+             {% if not _as or _as.pull %}checked{% endif %}
+             onchange="AutoSync.syncNested()">
+      <span>Auto <b>pull</b> from the live chip</span></label>
+    <label class="as-row as-row-sub">
+      <input type="checkbox" name="pull_replace" value="1" id="as-pull-replace"
+             {% if not _as or _as.pull_replace %}checked{% endif %}>
+      <span>…and <b>replace</b> my unapplied edits
+        <small class="muted">Off: SM asks instead of discarding your work.</small></span></label>
+    <label class="as-row">
+      <input type="checkbox" name="push" value="1" id="as-push"
+             {% if not _as or _as.push %}checked{% endif %}>
+      <span>Auto <b>push</b> to the live chip</span></label>
+    {# The risk of REPLACE is unapplied work, not applied work — a pull that
+       replaces discards edits that never reached the tray's undo journal, so
+       reassuring the user about "revertible applies" here would answer a
+       question they did not ask. Say what actually disappears. #}
+    <p class="as-note muted">Ticking <b>replace</b> means the live chip always
+      wins, without asking — <b>unapplied edits in SM are discarded</b> and are
+      not recoverable with Ctrl+Z. Anything already applied to the chip stays
+      revertible as usual.</p>
+    <div class="as-actions">
+      <button type="submit" class="btn-sm">Save</button>
+      {% if _as %}
+      <button type="button" class="btn-sm outline"
+              hx-post="/auto-apply/disarm" hx-target="#pending-tray" hx-swap="outerHTML"
+              onclick="AutoSync.close()">Turn off</button>
+      {% endif %}
+    </div>
+  </form>
+</div>

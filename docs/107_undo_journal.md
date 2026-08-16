@@ -39,6 +39,48 @@ The journal itself is unchanged by the amendment: a journal step still only
 STAGES. Under an armed session that staged inverse is then flushed by the same
 `/state/apply-to-live` press-alike as everything else — one door, not two.
 
+### AMENDED AGAIN 2026-08-16 by the user (docs/120 item 8)
+
+> 많은 성숙한 사용자들은 vscode의 auto save mode를 켜놓고 쓰거든? … SM은 원래
+> **초기 디자인 컨셉** 자체가 절대로 source of truth 자체는 *유저의 허락없이는
+> pull/push*를 하지 말자! 라고 컨셉을 잡았거든. 이제 이걸 버릴때가 온거지.
+> 유저가 원하는 것은, **허락하면 auto pull/push를 할수있도록!!** 하는 것이거든.
+
+docs/117 amended the covenant's scope for **writes to live**. This amends the
+other direction for the first time — replacing the WORKING COPY from live —
+because until now that also required an explicit act.
+
+**Auto-Sync** is one session with three switches (default OFF as a whole; all
+three ON inside the popup, per the user): auto pull · auto replace on pull ·
+auto push. The line the user drew, verbatim:
+
+> 사용자가 1-1을 체크박스를 활성화한다! 라는 행위자체가 이미 사용자가 replace를
+> pull할 때 조용히 무조건 그냥 하도록 하겠다고 동의하는 행위로 간주할 수 있기
+> 때문에 1-1이 활성화 되었을 때는 **Live상태가 무조건 이긴다**.
+
+So the floor still has not moved — it is the same shape as before, one
+explicit act authorizing a session:
+
+| pull | replace | local edits | behaviour |
+|---|---|---|---|
+| on | on | either | live wins, **silently** — the tick IS the consent |
+| on | off | no | pull silently (a provably clean copy — today's `RECONCILE_SYNCED`) |
+| on | off | **yes** | **do not pull**; the drift banner asks |
+| off | — | — | byte-identical to today, and that row is a test |
+
+The third row is docs/87 ("SM never swaps what you are looking at") intact:
+with replace unticked, SM still refuses to choose between the user's work and
+the chip. The only configuration in which SM discards work without a question
+is the one the user explicitly asked for.
+
+Where it lives: the POLICY is entirely inside `POST /auto-sync/pull`, so it can
+never be half-implemented across client and server. The client's only job is to
+notice `auto_pull` on the existing `/state/drift` poll (no new poller — docs/110)
+and press the button, sharing `window._applyInFlight` with the manual Apply and
+the push flusher so the two directions cannot interleave. Arm-ability is split
+per direction: the push gate refuses on `live_diverged`, which is correct for
+push and exactly backwards for pull.
+
 ## What was actually the boundary
 
 The change log dies on **/save** (`saver.save()` clears it), not on apply —
