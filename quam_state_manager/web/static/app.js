@@ -14328,9 +14328,25 @@ window.LiveEditUndo = (function () {
             a.cells.forEach(function (c) {
                 var input = _input(c.dp);
                 if (!input || input.readOnly) { gone++; return; }
-                if (input.getAttribute("data-orig") === String(c.next)) {
-                    staged++; return;
-                }
+                // "Committed since" has TWO spellings, and only one was
+                // recognised. `c.next` is the RAW TYPED TEXT, captured by the
+                // change listener; a commit rewrites data-orig with the
+                // STORED value, which is formatted (4.41e9 -> 4,410,000,000).
+                // On the ENTER path the two happen to match, so Ctrl+Z
+                // correctly fell through to the server. On the CLICK-AWAY
+                // path `change` fires before `focusout`, the stored text
+                // differs from what was typed, the guard missed — and Ctrl+Z
+                // then "undid" locally: no request, the cell rewound and was
+                // re-marked dirty, while the working state still held the new
+                // value. On a field that was "not set" it staged an empty
+                // string that Apply-all could never coerce, wedging the grid
+                // until a Reset threw away every pending edit.
+                //
+                // A committed cell is a CLEAN cell, whatever the formatting
+                // did to the text, so ask that instead.
+                var _committed = input.getAttribute("data-orig") === String(c.next)
+                    || input.value === input.getAttribute("data-orig");
+                if (_committed) { staged++; return; }
                 input.value = c.prev;
                 input.dispatchEvent(new Event("input", { bubbles: true }));
                 input.classList.add("leu-flash");

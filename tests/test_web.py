@@ -7213,3 +7213,60 @@ class TestSidebarRunIdSearchR16:
         conds = _parse_tree_query("rabi")
         assert _entry_matches(self._entry(780, "power_rabi"), conds)
         assert not _entry_matches(self._entry(780, "t1"), conds)
+
+
+class TestTheReviewDrawerFillsOnAFullPageLoad:
+    """The review surface — the whole point of the working-copy model — was
+    EMPTY on every full page load while the badge beside it said "N unsaved
+    changes".
+
+    `base.html` includes `_pending_tray.html` directly, so a full page render
+    takes the tray's context from `_ctx()`, not from `_render_tray`. `_ctx()`
+    supplied `change_count` but not `changes`, so the drawer's
+    `{% for c in changes %}` iterated an Undefined and rendered zero rows. The
+    next edit's OOB swap refilled it, which is why it looked intermittent.
+
+    This is the docs/110 / docs/117 trap for the third time — both renderers
+    must stamp every field the template reads — so it is pinned as a rule,
+    not just as this field.
+    """
+
+    def test_ctx_supplies_every_field_render_tray_does(self):
+        """Byte-for-byte the load-bearing invariant: anything the OOB renderer
+        passes to the tray template, the full-page renderer must pass too."""
+        import re as _re
+        from pathlib import Path as _P
+        from quam_state_manager.web import routes as R
+        src = _P(R.__file__).read_text(encoding="utf-8")
+        i = src.index('"_pending_tray.html",')
+        tray_kwargs = set(_re.findall(r"^\s*(\w+)=", src[i:i + 1200], _re.M))
+        j = src.index("def _ctx(")
+        ctx_keys = set(_re.findall(r'"(\w+)":', src[j:j + 8000]))
+        missing = {k for k in ("changes", "change_count", "working_dirty")
+                   if k in tray_kwargs and k not in ctx_keys}
+        assert not missing, f"_ctx() does not stamp {missing} — the full-page tray will lie"
+
+    def test_ctx_hands_the_template_the_real_change_log(self, loaded_client):
+        """Not just the key — the rows. The drawer loops over these."""
+        from quam_state_manager.web import routes as R
+        app = loaded_client.application
+        # find a real leaf on this fixture and edit it through the real route
+        mod = None
+        for name in (app.config.get("contexts") or {}):
+            mod = (app.config["contexts"][name] or {}).get("modifier")
+            if mod:
+                break
+        assert mod is not None, "no modifier on the loaded context"
+        leaf = next(iter(mod.store.state.get("qubits", {})), None)
+        assert leaf, "fixture has no qubits"
+        r = loaded_client.post("/field/edit",
+                               data={"dot_path": f"qubits.{leaf}.f_01",
+                                     "value": "6.25e9"})
+        assert r.status_code == 200, r.get_data(as_text=True)[:200]
+
+        with app.test_request_context("/"):
+            ctx = R._ctx()
+        assert "changes" in ctx, "the drawer would render zero rows"
+        # the count the badge shows and the rows the drawer loops over are the
+        # SAME fact — that they disagreed is the whole bug
+        assert len(ctx["changes"]) == ctx["change_count"] >= 1

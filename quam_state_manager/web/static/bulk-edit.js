@@ -2092,7 +2092,17 @@
                 // COMMIT of the focused row. relatedTarget is null in some engines,
                 // so also honour the toolbar pointerdown stamp that fires before blur.
                 if (BulkEdit._toolbarPressTs && (Date.now() - BulkEdit._toolbarPressTs) < 1000) return;
-                if (to && to.closest && to.closest('#bulk-apply-all, #bulk-apply-sync, #bulk-reset')) return;
+                // ...and the same reasoning covers LEAVING. Clicking a sidebar link
+                // blurs the focused cell first, so this handler committed that one
+                // row, and only THEN did the leave-guard ask "Leave and discard
+                // them?". Accepting the discard then dropped every pasted value
+                // EXCEPT the focused one, which survived as a pending edit armed to
+                // reach the chip on the next Apply to live — a discard that commits.
+                // Anything that swaps #table-pane IS a leave; let the leave-guard own
+                // the decision rather than committing behind it.
+                if (to && to.closest && to.closest(
+                        '#bulk-apply-all, #bulk-apply-sync, #bulk-reset, '
+                        + '[hx-target="#table-pane"]')) return;
                 var b = row && row.querySelector('.bulk-row-apply');
                 if (b && !b.disabled) BulkEdit.applyRow(b);
             });

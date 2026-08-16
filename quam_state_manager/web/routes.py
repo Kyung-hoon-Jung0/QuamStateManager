@@ -3113,6 +3113,17 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         "chip_token": _active_chip_token() or "",
         "context_type": _context_type(),
         "change_count": _change_count(),
+        # THE SAME TRAP, THIRD FIELD. base.html includes _pending_tray.html
+        # directly, so on a FULL page render the tray's context comes from
+        # HERE, not from _render_tray — and the Review drawer loops over
+        # `changes`. Without it Jinja iterates an Undefined and silently
+        # renders ZERO rows while the badge beside it says "N unsaved
+        # changes": the review surface, which is the whole point of the
+        # working-copy model, was empty on every page load until the next
+        # edit's OOB swap refilled it. docs/110 caught this with
+        # `mutation_seq` and docs/117 with the auto-apply session; the rule
+        # is that BOTH renderers stamp every field the template reads.
+        "changes": (_modifier().get_change_log() if _modifier() else []),
         "working_dirty": _working_dirty(),
         # docs/110 #10-A: the FULL-page tray must carry the same freshness
         # beacon the OOB tray does — otherwise a page render stamps "" while

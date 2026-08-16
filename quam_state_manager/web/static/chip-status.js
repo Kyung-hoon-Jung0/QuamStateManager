@@ -2252,7 +2252,13 @@ window.ChipStatus.mount = function (opts) {
             var r = from.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
             var best = null, bestScore = Infinity;
             cells().forEach(function(c) {
-                if (c === from || !c.offsetParent) return;   // skip hidden
+                // `offsetParent` is HTMLElement-only. docs/120 item 11 repointed
+                // this selector at the hero stones, which are SVG <g> nodes, so
+                // the guard scored all 20 as hidden and nearest() always returned
+                // null — arrow keys could never move, on any chip. getClientRects()
+                // is defined on Element and agrees with offsetParent on all 120
+                // real heatmap cells (measured, 0 disagreements).
+                if (c === from || !c.getClientRects().length) return;   // skip hidden
                 var b = c.getBoundingClientRect(), x = b.left + b.width / 2, y = b.top + b.height / 2;
                 var dx = x - cx, dy = y - cy;
                 var ok = dir === 'down' ? dy > 4 : dir === 'up' ? dy < -4 : dir === 'right' ? dx > 4 : dx < -4;
@@ -2306,7 +2312,17 @@ window.ChipStatus.mount = function (opts) {
             }
             var cell = t.closest('[data-kbd-cell]');
             if (!cell) return;
-            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); cell.click(); return; }
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                // Same cause: SVGElement has no .click(), so Enter threw
+                // "cell.click is not a function" and the inspector never opened.
+                // Every consumer listens via addEventListener, so a bubbling
+                // MouseEvent is identical for the HTML cells and the only thing
+                // that works for the SVG ones.
+                cell.dispatchEvent(new MouseEvent('click',
+                    { bubbles: true, cancelable: true, view: window }));
+                return;
+            }
             var dir = ARROWS[e.key];
             if (!dir) return;
             decorate();                    // pick up any lazily-built panel cells

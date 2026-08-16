@@ -109,3 +109,44 @@ def test_a_bogus_moving_qubit_is_dropped_not_passed_through(tmp_path):
     topo = _client(tmp_path, moving="qA1").get("/api/topology").get_json()
     assert topo["edges"], "fixture must have pairs for this to mean anything"
     assert all(e["moving_qubit"] is None for e in topo["edges"])
+
+
+class TestTheHeroMapIsKeyboardReachable:
+    """`_wiring.html` promises "Tab into the grid, ←↑↓→ to move, Enter to
+    inspect" — and neither worked on the hero map.
+
+    docs/120 item 11 repointed the roving-grid selector from `.topo-node-card`
+    (HTML divs) to `[data-hero-qubit]`, which are SVG `<g>` nodes. Two
+    HTMLElement-only APIs came along for the ride: `offsetParent` (undefined on
+    SVGElement, so the neighbour search scored all 20 stones "hidden" and
+    nearest() always returned null) and `.click()` (absent, so Enter threw
+    "cell.click is not a function" and the inspector never opened).
+
+    Verified in real Chrome after the fix: q4 -> q5/q3/q9/q1 on the four
+    arrows, Enter opens "QUBIT q4" with zero page errors.
+    """
+
+    def _js(self):
+        from pathlib import Path
+        return Path("quam_state_manager/web/static/chip-status.js").read_text(encoding="utf-8")
+
+    def test_visibility_uses_a_predicate_that_exists_on_svg(self):
+        src = self._js()
+        i = src.index("function nearest(")
+        body = src[i:i + 1200]
+        assert "getClientRects().length" in body
+        assert "c.offsetParent" not in body, "offsetParent is HTMLElement-only"
+
+    def test_enter_dispatches_a_click_rather_than_calling_one(self):
+        src = self._js()
+        assert "cell.click()" not in src, "SVGElement has no .click()"
+        assert "cell.dispatchEvent(new MouseEvent('click'" in src
+        i = src.index("cell.dispatchEvent(new MouseEvent('click'")
+        assert "bubbles: true" in src[i:i + 160], "the delegated handler needs it to bubble"
+
+    def test_the_tip_that_promises_this_still_exists(self):
+        """If the promise is removed instead of kept, this test should be the
+        thing that says so."""
+        from pathlib import Path
+        tpl = Path("quam_state_manager/web/templates/_wiring.html").read_text(encoding="utf-8")
+        assert "<kbd>Enter</kbd> to inspect" in tpl
