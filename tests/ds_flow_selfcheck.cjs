@@ -56,6 +56,13 @@ function boot(preSort) {
   w.requestAnimationFrame = w.requestAnimationFrame || (cb => setTimeout(cb, 0));
   w.cancelAnimationFrame = w.cancelAnimationFrame || (id => clearTimeout(id));
   global.window = w;
+  // jsdom bridges only what we hand it, and `CSS` was never on the list: the
+  // window HAS a CSS object, but bare `CSS` is undefined here, so
+  // dataset-virtual.js's `window.CSS && CSS.escape ? CSS.escape(uid) : uid`
+  // THREW ReferenceError instead of taking either branch — _kbHighlight blew
+  // up on the first j/k press. A browser has CSS as a global; the harness must
+  // too.
+  global.CSS = w.CSS;
   global.document = w.document;
   global.Event = w.Event;
   global.CustomEvent = w.CustomEvent;
