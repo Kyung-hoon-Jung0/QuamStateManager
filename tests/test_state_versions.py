@@ -244,3 +244,56 @@ class TestReviewFindings:
         client.post("/state/archive", data={"tag": "t"})
         body = client.get("/state/version").get_data(as_text=True)
         assert "The live chip is on this recorded version" in body
+
+
+class TestTheAuditsHonestyFindings:
+    """Four surfaces stated something that was not so. Each is pinned here
+    because nothing failed when they were wrong — the code worked, the words
+    were false, and only a person reading them found out."""
+
+    def test_the_empty_state_does_not_promise_a_save_records_a_version(self, client):
+        """It said "captured on every save and apply". Measured by the audit:
+        46 save cycles produced 0 versions — /save's own comment says history
+        is snapshotted on apply, not there."""
+        body = client.get("/state/versions").get_data(as_text=True)
+        assert "applied to live" in body
+        assert "on every save" not in body
+
+    def test_going_back_wears_the_overwrite_live_language(self, client):
+        """It writes the LIVE chip in one click from any page, and shipped as a
+        neutral `outline` button — the most consequential affordance in the
+        panel rendered as the least distinguishable. docs/86/97 established one
+        visual language for writing over live; this reuses it rather than
+        inventing a second."""
+        client.post("/state/archive", data={"tag": "a"})
+        client.post("/field/edit", data={"dot_path": "qubits.q1.f_01", "value": "6.2e9"})
+        client.post("/state/archive", data={"tag": "b"})
+        body = client.get("/state/versions").get_data(as_text=True)
+        assert "restore-live" in body
+        assert "live-diverged-overwrite" in body, "not the shared overwrite style"
+        assert "overwrite live" in body, "the button must name the act"
+
+    def test_the_gates_are_untouched_by_the_restyle(self, client):
+        """Style and wording only — the two independent force tokens still
+        gate the route this button posts to."""
+        from quam_state_manager.web import routes as R
+        src = Path(R.__file__).read_text(encoding="utf-8")
+        i = src.index("def state_history_restore_live")
+        body = src[i:i + 6000]
+        assert "force_pending" in body and "force_align" in body
+
+
+class TestTheManualStatesTheCurrentCovenant:
+    """The covenant was amended twice (docs/117 push, docs/120 pull) and the
+    in-app manual still stated the original, unconditionally. README was
+    updated; the two screens a newcomer actually reads were not."""
+
+    def test_help_names_auto_sync(self, client):
+        body = client.get("/help").get_data(as_text=True)
+        assert "Auto-Sync" in body
+        assert "is only ever written by an explicit" not in body
+
+    def test_the_landing_glossary_names_it_too(self, client):
+        body = client.get("/").get_data(as_text=True)
+        assert "Auto-Sync" in body
+        assert "edits here never touch the instrument" not in body

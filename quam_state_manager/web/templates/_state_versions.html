@@ -8,10 +8,12 @@
    gated; this surface exists to make it reachable in one click from any page:
      - 2 selected  -> /diff/snapshots, the docs/84 workbench front door
      - 3+ selected -> the Compare hub basket (hist: ref tokens)
-     - "Go back"   -> /state-history/<ts>/restore-live, WITH both of its
+     - "Put live back" -> /state-history/<ts>/restore-live, WITH both of its
                       independent force gates intact (unsaved edits, wiring
                       topology). They are not weakened for being one click
                       closer; the confirm panel is the same _sh_confirm.html.
+                      It wears the ONE overwrite-live language (docs/86/97),
+                      because that is what it does.
 #}
 <div class="state-versions" role="dialog" aria-label="State versions">
     <div class="state-versions-head">
@@ -24,8 +26,9 @@
     {% if not rows %}
     {# Honest empty state: no history for this chip is a fact, not a failure. #}
     <p class="muted state-versions-empty">
-        No recorded versions for this chip yet. One is captured on every save and
-        apply, or on demand from <a href="/state-history" hx-get="/state-history"
+        No recorded versions for this chip yet. One is captured every time the
+        chip is <b>applied to live</b> — saving alone stays in your working copy
+        — or on demand from <a href="/state-history" hx-get="/state-history"
         hx-target="#table-pane" hx-push-url="true" onclick="StateVersions.close()">State History</a>.
     </p>
     {% else %}
@@ -59,12 +62,19 @@
             </span>
             <span class="sv-row-actions">
                 {% if not archive and not r.current %}
-                {# The same route State History uses, gates and all. #}
-                <button type="button" class="btn-xs outline sv-restore"
+                {# The same route State History uses, gates and all — but it
+                   WRITES THE LIVE CHIP, and docs/86/97 established one visual
+                   language for that: error-tinted, never the primary action.
+                   This shipped as a neutral `outline` button reachable in one
+                   click from every page, which made the most consequential
+                   affordance in the panel the least distinguishable one.
+                   The two independent force gates are unchanged; this is the
+                   styling and the wording catching up to what the button does. #}
+                <button type="button" class="btn-xs outline sv-restore live-diverged-overwrite"
                         hx-post="/state-history/{{ r.ts }}/restore-live"
                         hx-target="#table-pane" hx-swap="innerHTML"
                         onclick="StateVersions.close()"
-                        title="Put the live chip back on this version. Unsaved edits and a wiring-topology mismatch each ask first.">&#8617; Go back</button>
+                        title="Overwrite the LIVE chip with this version. Unsaved edits and a wiring-topology mismatch each ask first, and the current live state is snapshotted so this is reversible.">&#8593; Put live back <span class="sync-btn-sub">&mdash; overwrite live</span></button>
                 {% endif %}
             </span>
         </li>

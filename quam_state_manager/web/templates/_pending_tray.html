@@ -283,7 +283,14 @@
               hx-swap="outerHTML"
               hx-disabled-elt="this"
               title="Revert every pending change (Ctrl+Shift+Z restores them one by one)">Discard all</button>
+      {# The armed session is exactly when this promise stops being true — and
+   the same panel already says so at the top. Two lines, one panel,
+   opposite claims is worse than either alone. #}
+      {% if auto_apply and auto_apply.on %}
+      <span class="muted tray-foot-hint">Durable draft &mdash; and Auto-Sync is applying it as you go.</span>
+      {% else %}
       <span class="muted tray-foot-hint">Durable draft &mdash; the live chip stays untouched.</span>
+      {% endif %}
 
     </div>
   </div>

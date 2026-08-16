@@ -575,3 +575,79 @@ the file's own header comment, which was the source of the confusion.
 | 6 | per-pair CZ fidelity became hover-only when the card diagram went | the hero map's own metric selector still prints it per node; the cards' loss is disclosed in the item 11 record |
 | 7 | dead tunables + ~44 card-only CSS rules survive the deletion | inert; removing them is a separate sweep with its own regression surface |
 | 8 | `/auto-apply/gate` reports `armed:false` for a pull-only session | correct as written — that route answers "may I write?", and a pull-only session may not. Renaming it would touch every push caller |
+
+---
+
+## The three audits (speed · red-team · customer roles)
+
+Run in parallel over the whole campaign at the user's instruction, weighted to
+**speed and stability**, with the customer-role pass driving the real 20-qubit
+CQT chip as four different people. Everything below was reproduced before a
+line was changed.
+
+### Data loss — three, all confirmed
+
+1. **Auto-Sync's DOM-dirt detector could never fire.** It queried
+   `.bulk-cell.bulk-dirty`; the grid sets **`dirty`**, and `bulk-dirty` exists
+   only as the id of the *counter* span. The fallback called
+   `BulkEdit.hasUnsaved`, which does not exist anywhere in the repo. So
+   `dom_dirty` was never sent, and a filled-down column was destroyed by a pull
+   with **replace unchecked** — the one row of the policy table that exists to
+   ask. Nothing failed: the pytest pin posts `dom_dirty=1` **by hand**, so it
+   proved the server honours the flag and never that the client raises it.
+   `tests/dom_dirty_selfcheck.cjs` now closes both ends.
+
+2. **The pull re-checked before its I/O, not after.** The window the code's own
+   comment describes is spent *inside* `sync_from_live`, which holds no
+   `store._lock` — so `/field/edit` could land there, return 200, appear in the
+   tray, and be destroyed by the reload. Now re-checked after the I/O under
+   `store._lock`, resolving exactly as `_reconcile_cached_quam_ctx` does.
+
+3. **A failed pull left the stale store ACTIVE.** Popping from `_quam_cache`
+   does not deactivate a context — `app.config["contexts"]` holds the same dict
+   and that is what `_active_ctx()` reads. A later save+apply then wrote the old
+   content back over the chip, **unforced**, because the sync point already
+   matched live. The failure path now makes disk == memory instead of hoping
+   the context is re-read.
+
+### Speed — measured, four fixed
+
+| surface | before | after |
+|---|---|---|
+| `/topology/trends` per point | 61 B (the instant shipped alongside the id it is derived from) | 38 B — **−38 %** |
+| `/state/version` | 4.1 ms, a **526 KB live read + sha256 on every page load and every apply** | **0.49 ms**, stat-gated on `(mtime, size)` |
+| one quick-filter chip press | **two** full scans of a 4,480-cell table | one |
+| `_STATE_VERSIONS_CAP` | comment claimed "500 rows ≈ 90 KB" | measured **1.35 KB/row**; cap 500 → 150 |
+
+The hot paths did not regress: `/bulk` 152 ms vs 148 ms on main (+0.51 % payload),
+`_build_bulk_cell` **faster** (20.5 vs 29.0 ms over 2,600 aliases), no new
+poller or observer, and `chip-status.js` is a net −214 lines.
+
+### Honesty — four false statements, all removed
+
+- `/help` and the landing glossary still asserted the **original** covenant
+  ("edits here *never* touch the instrument", "*only ever* written by an
+  explicit Apply to live") and never mentioned Auto-Sync. README had been
+  updated; the two screens a newcomer actually reads had not.
+- The versions panel promised "one is captured on every **save** and apply" —
+  46 save cycles produced **zero** versions, and `/save`'s own comment says
+  history is snapshotted on apply, not there.
+- The Review tray rendered *"Auto-apply is ON: … writes it straight to the live
+  chip"* and *"Durable draft — the live chip stays untouched"* **in the same
+  panel**.
+- `↩ Go back` wrote the live chip in one click from any page as a neutral
+  `outline` button — the most consequential affordance in the panel rendered as
+  the least distinguishable one. It now wears the ONE overwrite-live language
+  docs/86/97 established (error-tinted, names the act); both independent force
+  gates are untouched.
+
+### Recorded, not taken
+
+Trends mixes the dense curated tier and the change-point leaf tier with no
+marker (a real parameter shows 20×4 points curated vs 17 single-point series
+typed); the QDAC-biased qubits render 99 editable `not set` boxes for a `z` that
+is a `QdacBiasLine`; the leaf typeahead returns `[]` until a 13 s index rebuild
+that only the *chart* query triggers; and `run_selfchecks.cjs` prints
+`(0 assertions)` for pins that do run — indistinguishable from the dormant state
+docs/120 was written about. Each is real; none is a false statement or a data
+loss, and each is a separate piece of work.
