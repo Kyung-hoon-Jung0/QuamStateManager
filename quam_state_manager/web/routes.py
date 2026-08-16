@@ -3125,6 +3125,8 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # is that BOTH renderers stamp every field the template reads.
         "changes": (_modifier().get_change_log() if _modifier() else []),
         "working_dirty": _working_dirty(),
+        # ...and the badge's live verdict, for the same reason as `changes`.
+        "live_diverged": bool((_active_ctx() or {}).get("live_diverged")),
         # docs/110 #10-A: the FULL-page tray must carry the same freshness
         # beacon the OOB tray does — otherwise a page render stamps "" while
         # the next mutation's OOB swap stamps a real seq, and PaneState reads
@@ -5053,6 +5055,12 @@ def _render_tray(*, oob: bool) -> str:
         changes=changes,
         change_count=len(changes),
         working_dirty=_working_dirty(),
+        # The badge's else-branch says "Working state matches the live chip" —
+        # a claim about LIVE — while its verdict was built only from LOCAL edit
+        # flags. So with no edits of your own and a chip that moved underneath
+        # you, it rendered "● Synced" directly above the amber banner saying the
+        # live state files had changed on disk. Both visible, contradicting.
+        live_diverged=bool((_active_ctx() or {}).get("live_diverged")),
         active_name=ident["name"] if ident else None,
         chip_origin=ident["origin"] if ident else "live",
         qualibrate_tray=_qualibrate_tray_badge(),

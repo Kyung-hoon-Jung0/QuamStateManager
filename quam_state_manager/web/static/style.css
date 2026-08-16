@@ -1788,6 +1788,14 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
     background: color-mix(in srgb, #a855f7 14%, transparent);
 }
 .state-status-archive .state-status-dot { color: #a855f7; }
+/* The chip moved under a working state you have not edited. Not green (nothing
+   is "synced") and not the amber of YOUR pending edits — this is the live side
+   that changed, and the drift banner beside it offers the choice. */
+.state-status-drifted {
+    border-color: #38bdf8;
+    background: color-mix(in srgb, #38bdf8 14%, transparent);
+}
+.state-status-drifted .state-status-dot { color: #38bdf8; }
 /* Folder names are user-controlled and can be long — cap them so one name
    can't push the whole topbar cluster into wrapping. Full name in tooltip. */
 .state-status-name { opacity: .65; font-weight: 400; margin-left: .1rem;

@@ -52,14 +52,23 @@
 {% endif %}
 {% if active_name or change_count > 0 or working_dirty %}
 {% set _dirty = change_count > 0 or working_dirty %}
+{# A THIRD state. `_dirty` answers "have I edited?"; it does not answer "does my
+   working state match the chip?", which is what the badge's own words claim.
+   With no local edits and a chip that moved underneath you, the badge said
+   "● Synced — Working state matches the live chip" directly above the banner
+   announcing that the live files had changed. Local-clean-but-live-moved is
+   neither dirty nor synced, and the banner beside it already offers the
+   choice — the badge only has to stop contradicting it. #}
+{% set _drifted = live_diverged and not _dirty %}
 <button type="button"
-        class="state-status-badge {{ 'state-status-archive' if _archive else 'state-status-dirty' if _dirty else 'state-status-synced' }}"
+        class="state-status-badge {{ 'state-status-archive' if _archive else 'state-status-dirty' if _dirty else 'state-status-drifted' if _drifted else 'state-status-synced' }}"
         onclick="openReview()"
-        title="{% if _archive %}Opened from a dataset run archive (read-only) — load the live folder to edit/apply{% elif _dirty %}Local edits live in the working state — click to review and apply to the live chip{% else %}Working state matches the live chip — click to review{% endif %}">
+        title="{% if _archive %}Opened from a dataset run archive (read-only) — load the live folder to edit/apply{% elif _dirty %}Local edits live in the working state — click to review and apply to the live chip{% elif _drifted %}The live chip changed on disk since your working state was synced — click to review and choose which side wins{% else %}Working state matches the live chip — click to review{% endif %}">
     <span class="state-status-dot" aria-hidden="true">&#9679;</span>
     {% if _archive %}Archive (read-only)
     {% elif change_count > 0 %}Working state · {{ change_count }} unsaved
     {% elif working_dirty %}Working state · not applied
+    {% elif _drifted %}Live chip moved
     {% else %}Synced{% endif %}
     {# title: the name span ellipsizes at 26ch, so hover must recover the full
        folder name (the button's own title explains the status instead). #}
