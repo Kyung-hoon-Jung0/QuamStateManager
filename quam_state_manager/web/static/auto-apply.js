@@ -213,5 +213,23 @@ window.AutoSync = (function () {
         var row = rep.closest('.as-row');
         if (row) row.classList.toggle('as-row-disabled', !pull.checked);
     }
+    // Close from the DOCUMENT, never from the panel itself.
+    //
+    // Both of this popup's buttons target `#pending-tray`, which is an ANCESTOR
+    // of the form — so the swap destroys the form, and anything hung on the
+    // form (`hx-on::after-request`) never fires. The first cut had the opposite
+    // failure of the same shape: `onsubmit="AutoSync.close()"` ran BEFORE htmx
+    // and deleted the form out of the DOM, so no request was ever issued and
+    // Auto-Sync could not be armed OR disarmed from the UI at all. Confirmed in
+    // a real browser: clicking Save produced zero network traffic.
+    //
+    // A document listener survives both, because it is not attached to the
+    // thing being replaced.
+    document.addEventListener('htmx:afterRequest', function (e) {
+        var d = e && e.detail;
+        var url = (d && d.pathInfo && (d.pathInfo.requestPath || d.pathInfo.finalRequestPath)) || '';
+        if (/\/auto-sync\/set|\/auto-apply\/disarm/.test(url)) close();
+    });
+
     return { toggle: toggle, close: close, syncNested: syncNested };
 })();

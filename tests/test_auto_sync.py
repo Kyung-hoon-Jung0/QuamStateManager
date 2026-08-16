@@ -526,3 +526,65 @@ class TestAFailedPullLeavesNothingStale:
         c.post("/auto-sync/pull")
         sess = _ctx(app).get("auto_sync") or {}
         assert not sess.get("pull"), "a failing pull must not retry every poll"
+
+
+class TestTheButtonActuallyPosts:
+    """The whole feature was unreachable from the UI, and no test saw it.
+
+    Found by driving real Chrome: clicking **Save** in the Auto-Sync popup
+    produced ZERO network requests. Auto-Sync could not be armed — and, once
+    armed by any other means, auto-push to the LIVE chip could not be turned
+    off. Every server-side pin in this file passed the whole time, because they
+    POST to /auto-sync/set directly and never press the button that is supposed
+    to.
+
+    Mechanism, and it bit twice in opposite directions:
+      1. `onsubmit="AutoSync.close()"` ran BEFORE htmx and does
+         `host.innerHTML = ''` — the form deleted ITSELF out of the DOM in the
+         same tick, so htmx never issued anything, and the docs/75 document-level
+         submit armor cancelled the native fallback too. Inert button.
+      2. Moving the close to `hx-on::after-request` on the form did not fire
+         either: both buttons target `#pending-tray`, an ANCESTOR of the form,
+         so the swap destroys the element the handler is attached to.
+    The close therefore lives on a DOCUMENT listener, which survives both.
+    """
+
+    def _panel(self):
+        return Path("quam_state_manager/web/templates/_auto_sync_panel.html").read_text(
+            encoding="utf-8")
+
+    def test_no_handler_destroys_the_form_before_htmx_can_post(self):
+        p = self._panel()
+        assert "onsubmit=" not in p, (
+            "an inline onsubmit that closes the popup deletes the form before "
+            "htmx issues the request")
+        # the disarm button had the same shape
+        assert 'onclick="AutoSync.close()"' not in p
+
+    def test_the_form_still_posts_to_the_route(self):
+        p = self._panel()
+        assert 'hx-post="/auto-sync/set"' in p
+        assert 'hx-post="/auto-apply/disarm"' in p
+
+    def test_the_popup_closes_from_the_document_not_from_itself(self):
+        """Anything hung on the form dies with the swap that replaces its
+        ancestor, so the listener cannot live there."""
+        js = Path("quam_state_manager/web/static/auto-apply.js").read_text(encoding="utf-8")
+        assert "document.addEventListener('htmx:afterRequest'" in js
+        i = js.index("document.addEventListener('htmx:afterRequest'")
+        block = js[i:i + 500]
+        # the source carries an escaped regex literal, so match on the route
+        # names rather than on a slash spelling
+        assert "auto-sync" in block and "set" in block
+        assert "auto-apply" in block and "disarm" in block
+        assert "close()" in block
+
+    def test_the_panel_offers_turn_off_only_when_armed(self, tmp_path):
+        """The disarm button is the only way back out; if it is not rendered
+        while a session is live, an armed auto-push cannot be stopped."""
+        app, c, live = _mk(tmp_path)
+        off = c.get("/auto-sync/panel").get_data(as_text=True)
+        assert "/auto-apply/disarm" not in off
+        c.post("/auto-sync/set", data={"pull": "1", "push": "1"})
+        on = c.get("/auto-sync/panel").get_data(as_text=True)
+        assert "/auto-apply/disarm" in on
