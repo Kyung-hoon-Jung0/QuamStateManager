@@ -1,0 +1,12 @@
+{
+  "name": "quam-state-manager-testdeps",
+  "private": true,
+  "description": "Node dependencies for the .cjs selfchecks in tests/. The app itself ships no npm dependencies — HTMX, Pico, Split.js and Plotly are vendored in quam_state_manager/web/static/. This file exists ONLY so `npm install` provisions the selfcheck harness, which drives the real shipped JS under jsdom. Without it the drivers call pytest.skip('jsdom not installed') and every DOM-level pin reports green without executing (docs/120: that state hid four genuinely failing selfchecks).",
+  "scripts": {
+    "selfcheck": "for f in tests/*_selfcheck.cjs; do node \"$f\" || exit 1; done"
+  },
+  "devDependencies": {
+    "canvas": "^3.2.3",
+    "jsdom": "^30.0.1"
+  }
+}
