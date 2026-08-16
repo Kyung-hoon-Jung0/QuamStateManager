@@ -4295,12 +4295,21 @@ document.addEventListener("focusout", function(evt) {
 // text-undo keeps working) — EXCEPT bulk-grid cells and the Column History
 // panel, where LiveEditUndo owns the history (Escape still restores a
 // cell's original value).
+//
+// The carve-out keys on the Column History panel's OWN class, not on the
+// shared `.ch-overlay` shell. Four dialogs reuse that shell (Column History,
+// the type-fix repair dialog, the env-schema dialog, and the FSP compensation
+// popup) and only Column History wants LiveEditUndo to own the keystroke. When
+// docs/120 item 7 made the FSP amplitudes editable, a `.ch-overlay` test meant
+// Ctrl+Z on a typo in an amplitude field skipped the native-undo bail-out and
+// fell through to the app-wide chain — silently restoring a grid cell hidden
+// behind the modal, or POSTing /undo to discard a staged group.
 document.addEventListener("keydown", function(evt) {
     if (!((evt.ctrlKey || evt.metaKey) && (evt.key === "z" || evt.key === "Z")
           && !evt.altKey)) return;
     var a = document.activeElement;
     var inGridCell = !!(a && a.classList && a.classList.contains("bulk-cell"));
-    var inChPanel = !!(a && a.closest && a.closest(".ch-overlay"));
+    var inChPanel = !!(a && a.closest && a.closest(".colhist-overlay"));
     if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)
         && !inGridCell && !inChPanel) return;
     if (evt.shiftKey) {
@@ -7790,12 +7799,16 @@ window.filterDatasetTable = function(input) {
 
 /* Generic scoped-search help panel — reused by any search box that opts in via
  * classes + data-attributes (currently the sidebar workspace filter):
- *   input:   class="search-help-input"   data-search-help="<panel-id>"
  *   ? icon:  class="search-help-toggle"  data-search-help="<panel-id>"
  *   × close: class="search-help-close"   data-search-help="<panel-id>"
  *   example: class="search-help-example" data-search-help-input="<input-id>" data-example="…"
  * The ? TOGGLES; × closes. Delegated on document (app.js loads in <head>).
  * The Datasets page keeps its own id-based handler above.
+ *
+ * The INPUT needs no markup contract any more. It used to carry
+ * class="search-help-input" + data-search-help so the focus handler could find
+ * its panel; with that handler gone nothing reads either, and base.html's
+ * leftovers are vestigial — a new search box only needs the three rows above.
  *
  * docs/120 item 3 — nothing auto-opens this any more. It used to open on the
  * first focus of the input per browser session, and the sidebar's copy of the
@@ -9467,16 +9480,14 @@ window._openFspPopup = (function () {
             "To keep every pulse's real output power constant, SM will update "
             + "these amplitudes WITH the port change. Nothing is written until "
             + "you choose below."));
-        if (plan.clip_count) {
-            var lowering = Number(plan.fsp_new) < Number(plan.fsp_old);
-            card.appendChild(_el("p", "fsp-warn",
-                "⚠ " + plan.clip_count + " compensated amplitude"
-                + (plan.clip_count === 1 ? "" : "s") + " would exceed 1.0 — the "
-                + "DAC clips. "
-                + (lowering
-                   ? "Do not lower FSP this far (or reduce those pulses' powers first)."
-                   : "Those pulses already sit past DAC full scale — fix them first.")));
-        }
+        // docs/120 item 7 — the compensated amplitudes are EDITABLE, so this
+        // warning can no longer be a fact baked in at 409 time: it has to track
+        // what will ACTUALLY be written. Always build it, hide it at zero, and
+        // recompute on every keystroke (_recount below).
+        var lowering = Number(plan.fsp_new) < Number(plan.fsp_old);
+        var clipWarn = _el("p", "fsp-warn");
+        clipWarn.style.display = "none";
+        card.appendChild(clipWarn);
         if (plan.range_warn) card.appendChild(_el("p", "fsp-warn", "⚠ " + plan.range_warn));
         if (plan.more_fsp_in_batch) {
             card.appendChild(_el("p", "fsp-note",
@@ -9486,24 +9497,108 @@ window._openFspPopup = (function () {
         var table = _el("table", "ch-table");
         var thead = document.createElement("thead");
         var hr = document.createElement("tr");
-        ["pulse", "amplitude now", "", "compensated", "Δ", ""].forEach(function (t) {
+        ["pulse", "amplitude now", "", "compensated", "Δ", "", ""].forEach(function (t) {
             hr.appendChild(_el("th", null, t));
         });
         thead.appendChild(hr);
         table.appendChild(thead);
         var tbody = document.createElement("tbody");
+        var rows = [];   // {a, input, dTd, mark, reset}
+
+        /* The value this row will actually write. `a.new` stays the COMPUTED
+           value forever so "reset" has something to return to; the user's
+           override rides alongside as `a.userNew` (read back by
+           _fspCompUpdates). Blank means "use the computed one" — deleting the
+           contents is not a request to write nothing. */
+        function _rowValue(r) {
+            var raw = String(r.input.value).trim();
+            if (raw === "") return Number(r.a.new);
+            var v = Number(raw);
+            return isFinite(v) ? v : NaN;
+        }
+        function _recount() {
+            var clips = 0, bad = 0, edited = 0;
+            rows.forEach(function (r) {
+                var v = _rowValue(r);
+                var raw = String(r.input.value).trim();
+                if (!isFinite(v)) {
+                    bad++;
+                    r.input.classList.add("fsp-amp-bad");
+                    r.mark.textContent = "not a number";
+                    r.dTd.textContent = ""; r.dTd.hidden = true;
+                } else {
+                    r.input.classList.remove("fsp-amp-bad");
+                    if (Math.abs(v) > 1.0) { clips++; r.mark.textContent = "⚠ >1.0"; }
+                    else { r.mark.textContent = ""; }
+                    if (window.ValueDelta) window.ValueDelta.paint(r.dTd, r.a.old, v);
+                }
+                r.input.classList.toggle("fsp-amp-clip", isFinite(v) && Math.abs(v) > 1.0);
+                // "edited" means differs from the computed value, not merely
+                // non-empty — retyping the same number is not an override.
+                var isEdit = raw !== "" && Number(raw) !== Number(r.a.new);
+                if (isEdit) edited++;
+                r.reset.style.visibility = isEdit ? "visible" : "hidden";
+                r.a.userNew = isEdit && isFinite(v) ? v : undefined;
+            });
+            if (clips) {
+                clipWarn.textContent = "⚠ " + clips + " amplitude"
+                    + (clips === 1 ? "" : "s") + " above 1.0 — the DAC clips. "
+                    + (lowering
+                       ? "Do not lower FSP this far (or reduce those pulses' powers first)."
+                       : "Those pulses already sit past DAC full scale — fix them first.");
+                clipWarn.style.display = "";
+            } else {
+                clipWarn.style.display = "none";
+            }
+            // Never let a typo be written: an unparseable cell blocks the apply
+            // rather than silently falling back to the computed value.
+            bComp.disabled = !rows.length || bad > 0;
+            bComp.title = bad
+                ? bad + " amplitude" + (bad === 1 ? " is" : "s are") + " not a number"
+                : (edited ? edited + " amplitude" + (edited === 1 ? "" : "s")
+                            + " edited from the computed value" : "");
+            editNote.style.display = edited ? "" : "none";
+        }
+
         (plan.amps || []).forEach(function (a) {
             var tr = document.createElement("tr");
             tr.appendChild(_el("td", "fsp-pulse", (a.channel || "") + " · " + (a.op || "")));
             tr.appendChild(_el("td", null, _fmt(a.old)));
             tr.appendChild(_el("td", "fsp-arrow", "→"));
-            tr.appendChild(_el("td", a.clips ? "fsp-clip" : null, _fmt(a.new)));
+            // docs/120 item 7: an input, not text. The customer had only
+            // accept-all or discard-all; they want to nudge an amplitude and
+            // then commit. RAW value (never _fmt) — thousands separators would
+            // not parse back.
+            var inTd = _el("td");
+            var inp = document.createElement("input");
+            inp.type = "text";
+            inp.className = "fsp-amp-input" + (a.clips ? " fsp-amp-clip" : "");
+            inp.value = String(a.new);
+            inp.setAttribute("inputmode", "decimal");
+            inp.setAttribute("aria-label", "compensated amplitude for "
+                + (a.channel || "") + " " + (a.op || ""));
+            inp.addEventListener("input", _recount);
+            inTd.appendChild(inp);
+            tr.appendChild(inTd);
             // docs/76: the compensation factor is uniform, but the amplitude
             // MOVE per pulse is not — show it per row.
             var dTd = _el("td", "fsp-delta");
-            if (window.ValueDelta) window.ValueDelta.paint(dTd, a.old, a.new);
             tr.appendChild(dTd);
-            tr.appendChild(_el("td", "fsp-clipmark", a.clips ? "⚠ >1.0" : ""));
+            var mark = _el("td", "fsp-clipmark");
+            tr.appendChild(mark);
+            var reset = _el("button", "fsp-amp-reset", "↺");
+            reset.type = "button";
+            reset.title = "Back to the computed value (" + String(a.new) + ")";
+            reset.style.visibility = "hidden";
+            reset.addEventListener("click", function () {
+                inp.value = String(a.new);
+                _recount();
+                inp.focus();
+            });
+            var rTd = _el("td");
+            rTd.appendChild(reset);
+            tr.appendChild(rTd);
+            rows.push({ a: a, input: inp, dTd: dTd, mark: mark, reset: reset });
             tbody.appendChild(tr);
         });
         table.appendChild(tbody);
@@ -9516,6 +9611,14 @@ window._openFspPopup = (function () {
                 }).join("; "));
             card.appendChild(sk);
         }
+        // Shown only once something is actually overridden — the identity is
+        // what the compensation is FOR, so departing from it should be said out
+        // loud rather than left for the user to notice later in the tray.
+        var editNote = _el("p", "fsp-note fsp-edited-note",
+            "Edited amplitudes no longer satisfy P = FSP + 20·log10|amp| — those "
+            + "pulses' output power will move. ↺ restores the computed value.");
+        editNote.style.display = "none";
+        card.appendChild(editNote);
         var foot = _el("div", "fsp-actions");
         var n = (plan.amps || []).length;
         var bComp = _el("button", "btn-sync primary", "Apply FSP + compensate "
@@ -9534,6 +9637,10 @@ window._openFspPopup = (function () {
         foot.appendChild(bSolo);
         foot.appendChild(bCancel);
         card.appendChild(foot);
+        // First pass paints every Δ / clip mark from the seeded inputs, so the
+        // clip warning above is derived by the SAME code that will keep it in
+        // sync as the user types — never a baked count that drifts.
+        _recount();
         o.style.display = "flex";
         if (window.trapFocus) {
             o._releaseTrap = window.trapFocus(card, function () { finish("cancel"); });
@@ -9542,10 +9649,22 @@ window._openFspPopup = (function () {
     return open;
 })();
 
-/* Build the compensated-amp updates a 'comp' resend appends to the batch. */
+/* Build the compensated-amp updates a 'comp' resend appends to the batch.
+ *
+ * THE one place every caller funnels through (Explorer, both grids, All-values,
+ * and the plot-apply popup's per-row + Apply-All paths), which is why docs/120
+ * item 7 -- "users want to adjust the amps a little and then update" -- lands
+ * here rather than in five resend sites.
+ *
+ * `a.new` is always the value SM computed from P = FSP + 20*log10|amp|;
+ * `a.userNew` is set by the popup only when the user typed something different,
+ * so a plan that was never edited (or came from an un-wired caller that never
+ * opened the popup) serialises byte-identically to before. */
 window._fspCompUpdates = function (plan) {
     return (plan && plan.amps ? plan.amps : []).map(function (a) {
-        return { dot_path: a.path, value: String(a.new) };
+        var v = (a.userNew === undefined || a.userNew === null
+                 || !isFinite(a.userNew)) ? a.new : a.userNew;
+        return { dot_path: a.path, value: String(v) };
     });
 };
 
@@ -14564,7 +14683,10 @@ window.ColumnHistory = (function () {
     function ensureOverlay() {
         if (overlay) return overlay;
         overlay = document.createElement("div");
-        overlay.className = "ch-overlay";
+        // `colhist-overlay` is what the Ctrl+Z carve-out keys on: inside THIS
+        // panel LiveEditUndo owns the keystroke. The bare `.ch-overlay` shell
+        // is shared with three other dialogs that must keep native text undo.
+        overlay.className = "ch-overlay colhist-overlay";
         overlay.style.display = "none";
         var backdrop = document.createElement("div");
         backdrop.className = "ch-backdrop";

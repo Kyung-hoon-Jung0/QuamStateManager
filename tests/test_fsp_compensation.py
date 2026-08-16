@@ -282,3 +282,74 @@ class TestNeverSilent:
         popup = app_js[j1:j2]
         assert "btn-sync primary" in popup, "comp button must be the one filled CTA"
         assert "cnb-" not in popup, "banner-scoped cnb-* classes are unstyled in the popup"
+
+
+# ── docs/120 item 7 — the compensated amplitudes are EDITABLE ─────────────
+#
+# Customer: "when you change FSP the option to change the related amps comes up
+# too -- that itself is really good. The problem is the user can't edit the amps
+# at all: it's accept, or discard and update FSP only. Users want to be able to
+# adjust the amps a little and then update."
+#
+# The SERVER is deliberately unchanged: fsp_ack=comp has always accepted
+# whatever amplitude values the batch carries -- it never re-derives them -- so
+# this is entirely a client concern, and every one of the five call sites picks
+# it up because they all build their resend through window._fspCompUpdates.
+# TestNeverSilent above still pins the server contract.
+
+_SELFCHECK = Path(__file__).resolve().parent / "fsp_edit_selfcheck.cjs"
+
+
+def _node() -> str | None:
+    import shutil
+    return shutil.which("node")
+
+
+class TestEditableAmpsWiring:
+    """Source-level pins: the one helper reads the override, and the popup no
+    longer renders the compensated value as dead text."""
+
+    _APP_JS = (Path(__file__).resolve().parent.parent
+               / "quam_state_manager" / "web" / "static" / "app.js")
+
+    def test_the_shared_helper_prefers_the_user_value(self):
+        src = self._APP_JS.read_text(encoding="utf-8")
+        # the DEFINITION, not one of the five call sites that come first
+        i = src.index("window._fspCompUpdates = function")
+        body = src[i:i + 700]
+        # a.new stays the computed anchor; a.userNew is the override
+        assert "userNew" in body, body
+        assert "a.new" in body, body
+
+    def test_rows_render_an_input(self):
+        src = self._APP_JS.read_text(encoding="utf-8")
+        assert "fsp-amp-input" in src
+        assert "fsp-amp-reset" in src
+
+    def test_the_clip_warning_is_recomputed_not_baked(self):
+        """It is a claim about what will be WRITTEN. Baking plan.clip_count in
+        at 409 time would let it contradict an edited value."""
+        src = self._APP_JS.read_text(encoding="utf-8")
+        i = src.index("window._openFspPopup = (function")
+        body = src[i:i + 9000]
+        assert "_recount" in body
+
+
+@pytest.mark.skipif(_node() is None, reason="node not available")
+def test_fsp_edit_selfcheck():
+    """Seeded-from-computed, live Δ / clip recompute, per-row reset, typo
+    blocks the apply, blank falls back, and an UN-edited plan serialises
+    exactly as before -- against the REAL app.js."""
+    import subprocess
+    try:
+        subprocess.run([_node(), "-e", "require('jsdom')"],
+                       check=True, capture_output=True, timeout=30)
+    except Exception:
+        pytest.skip("jsdom not installed")
+    root = Path(__file__).resolve().parent.parent
+    r = subprocess.run([_node(), str(_SELFCHECK)], capture_output=True,
+                       text=True, encoding="utf-8", timeout=180, cwd=str(root))
+    if r.returncode == 2:
+        pytest.skip("jsdom not installed")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.count("ok - ") >= 30, r.stdout
