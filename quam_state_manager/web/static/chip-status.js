@@ -2478,23 +2478,35 @@ window.ChipTrends = (function () {
                 .catch(function () { box.hidden = true; });
         }, 220);
     }
-    /* Charts arrive as
-       [{metric, series:[{entity, points:[[snapId, value, iso], ...]}]}].
+    /* Charts arrive as [{metric, series:[{entity, points:[[snapId, value]]}]}].
 
-       The axis is TIME, not the snapshot sequence. A category axis spaces 433
+       The instant is DERIVED here, not shipped: it is a pure reformat of the
+       snapshot id, and sending it too cost 61 bytes/point — up to 2.3 MB of
+       HTML for one section on a 419-snapshot chip. `_iso` is the character-for-
+       character twin of `routes._snap_iso`, including its refusal to guess:
+       an id that does not parse returns null and keeps its raw label rather
+       than being placed at a fabricated instant. */
+    var _TS_RE = /^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/;
+    function _iso(ts) {
+        var m = _TS_RE.exec(String(ts == null ? '' : ts));
+        if (!m) return null;
+        return m[1] + '-' + m[2] + '-' + m[3] + 'T' + m[4] + ':' + m[5] + ':' + m[6];
+    }
+
+    /* The axis is TIME, not the snapshot sequence. A category axis spaces 433
        snapshots evenly, which silently redraws three quiet weeks and two
        minutes of frantic retuning as the same distance — on the one page whose
        question is "when did this drift". The snapshot id stays in the hover,
        because that is what a user carries over to State History.
 
-       An id that did not parse to an instant (iso === null) keeps its raw
-       label rather than being placed at an invented one; such a chart falls
-       back to the category axis wholesale, since mixing the two would put the
-       unparsed points at epoch zero. */
+       An id that does not parse to an instant keeps its raw label rather than
+       being placed at an invented one; such a chart falls back to the category
+       axis WHOLESALE, since mixing the two would put the unparsed points at
+       epoch zero. */
     function _axisFor(series) {
         var allDated = true;
         series.forEach(function (s) {
-            s.points.forEach(function (p) { if (!p[2]) allDated = false; });
+            s.points.forEach(function (p) { if (!_iso(p[0])) allDated = false; });
         });
         return allDated ? 'date' : 'category';
     }
@@ -2515,7 +2527,7 @@ window.ChipTrends = (function () {
             var traces = c.series.map(function (s) {
                 return {
                     x: s.points.map(function (p) {
-                        return axisType === 'date' ? p[2] : p[0]; }),
+                        return axisType === 'date' ? _iso(p[0]) : p[0]; }),
                     y: s.points.map(function (p) { return p[1]; }),
                     // The snapshot id, carried per point so the hover can name
                     // the snapshot the value came from even on a date axis.

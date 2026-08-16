@@ -229,8 +229,13 @@
             // chip narrowed the qubit grid and left the pair table untouched —
             // while this module's own comment claimed one chip filters both.
             // Review caught it because the selfcheck fixture had no pair table.
+            // ...and the flag tells THIS grid's own listener that its scan is
+            // already done, so the dispatch costs one pass, not two. Cleared in
+            // a finally: leaving it set would mute every later keystroke.
+            window._chipDrivenSearch = true;
             try { el.dispatchEvent(new Event('input', { bubbles: true })); }
             catch (e) { /* pre-Event browsers: the qubit grid is already done */ }
+            finally { window._chipDrivenSearch = false; }
             _offer();
         }
         function _paint() {
@@ -2129,6 +2134,13 @@
             if (search) search.addEventListener('input', function () {
                 try { localStorage.setItem(SEARCH_KEY, search.value); } catch (e) {}
                 ChipBar.syncFromQuery();   // typing a chip's word lights the chip
+                // A chip press already ran applySearch SYNCHRONOUSLY and only
+                // dispatches this event to reach the pair grid, which listens
+                // here. Without this check the press cost TWO full scans of a
+                // 4,480-cell table (measured 12.9-30.5 ms sync + another
+                // debounced pass) — so the button built to replace typing cost
+                // about twice what typing the same word does.
+                if (window._chipDrivenSearch) return;
                 // DEBOUNCED (audit: typing here was slow): applySearch re-scans
                 // the table and re-toggles ~2000 cells' classes — a full-table
                 // reflow on a multi-MB DOM. One pass shortly after the last

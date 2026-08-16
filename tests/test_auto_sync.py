@@ -345,7 +345,9 @@ class TestTheRedTeamFindings:
         from quam_state_manager.web import routes as R
         src = Path(R.__file__).read_text(encoding="utf-8")
         i = src.index("def auto_sync_pull")
-        body = src[i:i + 4600]
+        # Sliced generously: the function grew when the post-I/O re-check
+        # landed, and a slice too short reads as "the call is gone".
+        body = src[i:i + 9000]
         assert "_clear_reapply(ctx)" in body
 
     def test_typed_but_uncommitted_cells_block_a_non_replace_pull(self, tmp_path):
@@ -401,3 +403,126 @@ class TestTheRedTeamFindings:
         assert sess["push"] is False, "push is withheld, not the whole session"
         assert "Auto-push is off" in (r.headers.get("HX-Trigger") or ""), \
             "and the user is told which half was withheld"
+
+
+class TestTheRaceInsideTheWindow:
+    """The re-check the comment promised, actually placed after the I/O.
+
+    The first cut re-checked inside the build lock but BEFORE
+    ``sync_from_live`` — while the window its own comment describes ("tens of
+    ms locally, seconds on a share") is spent INSIDE that call, which holds no
+    ``store._lock``. So ``/field/edit`` could still land mid-pull, return 200,
+    appear in the Review tray, and then be destroyed by the ``store.reload()``
+    that follows. Found by the audit, reproduced with a barrier.
+    """
+
+    def test_an_edit_landing_mid_pull_survives(self, tmp_path, monkeypatch):
+        import threading
+        from quam_state_manager.core import working_copy as WC
+
+        app, c, live = _mk(tmp_path)
+        c.post("/auto-sync/set", data={"pull": "1"})     # replace OFF
+        _diverge(app, live, 7.7e9)
+
+        entered = threading.Event()
+        release = threading.Event()
+        real = WC.sync_from_live
+
+        def slow(wc, *a, **k):
+            entered.set()
+            release.wait(5)
+            return real(wc, *a, **k)
+
+        monkeypatch.setattr(WC, "sync_from_live", slow)
+
+        out = {}
+
+        def puller():
+            out["pull"] = c.post("/auto-sync/pull").status_code
+
+        t = threading.Thread(target=puller)
+        t.start()
+        assert entered.wait(5), "the pull never reached sync_from_live"
+        # The edit lands INSIDE the window. It takes only store._lock.
+        r = c.post("/field/edit", data={"dot_path": "qubits.q1.f_01", "value": "3.3e9"})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        release.set()
+        t.join(10)
+
+        # The edit is what the user is looking at, so the edit wins and the
+        # banner asks. Live is untouched either way.
+        assert _f01(app) == 3.3e9, "the edit was destroyed by the pull"
+        assert _ctx(app)["store"].change_log, "the change log was cleared"
+        # C29: disk must match memory, or an LRU evict + rehydrate would read
+        # the pulled working files, compute working_dirty=False and drop it.
+        wf = Path(_ctx(app)["working_copy"].working_folder)
+        on_disk = json.loads((wf / "state.json").read_text(encoding="utf-8"))
+        assert on_disk["qubits"]["q1"]["f_01"] == 3.3e9
+
+    def test_a_replace_pull_still_wins_in_the_same_window(self, tmp_path, monkeypatch):
+        """Ticking replace IS the consent — the re-check must not quietly turn
+        it into a refusal."""
+        import threading
+        from quam_state_manager.core import working_copy as WC
+
+        app, c, live = _mk(tmp_path)
+        c.post("/auto-sync/set", data={"pull": "1", "pull_replace": "1"})
+        _diverge(app, live, 7.7e9)
+
+        entered, release = threading.Event(), threading.Event()
+        real = WC.sync_from_live
+
+        def slow(wc, *a, **k):
+            entered.set()
+            release.wait(5)
+            return real(wc, *a, **k)
+
+        monkeypatch.setattr(WC, "sync_from_live", slow)
+        t = threading.Thread(target=lambda: c.post("/auto-sync/pull"))
+        t.start()
+        assert entered.wait(5)
+        c.post("/field/edit", data={"dot_path": "qubits.q1.f_01", "value": "3.3e9"})
+        release.set()
+        t.join(10)
+        assert _f01(app) == 7.7e9, "live must win when replace is ticked"
+
+
+class TestAFailedPullLeavesNothingStale:
+    """A failed pull used to leave the OLD store ACTIVE while the working
+    folder and sync point had already advanced — an absorbing stale state where
+    the next save+apply wrote the old content back over the chip, UNFORCED
+    (the staleness gate sees nothing wrong once the sync point matches live).
+
+    Evicting from ``_quam_cache`` did not fix it: ``app.config["contexts"]``
+    holds the SAME dict, and that is what ``_active_ctx()`` reads.
+    """
+
+    def test_disk_matches_memory_after_a_failed_pull(self, tmp_path, monkeypatch):
+        from quam_state_manager.web import routes as R
+
+        app, c, live = _mk(tmp_path)
+        c.post("/auto-sync/set", data={"pull": "1"})
+        _diverge(app, live, 7.7e9)
+
+        monkeypatch.setattr(R, "_rebuild_after_working_copy_replaced",
+                            lambda ctx: (_ for _ in ()).throw(OSError("boom")))
+        assert c.post("/auto-sync/pull").status_code == 204
+
+        ctx = _ctx(app)
+        wf = Path(ctx["working_copy"].working_folder)
+        on_disk = json.loads((wf / "state.json").read_text(encoding="utf-8"))
+        assert on_disk["qubits"]["q1"]["f_01"] == _f01(app), (
+            "the working folder and the in-memory store disagree — a later "
+            "save would write the stale side back over the chip")
+
+    def test_the_session_disarms_on_failure(self, tmp_path, monkeypatch):
+        from quam_state_manager.web import routes as R
+
+        app, c, live = _mk(tmp_path)
+        c.post("/auto-sync/set", data={"pull": "1"})
+        _diverge(app, live, 7.7e9)
+        monkeypatch.setattr(R, "_rebuild_after_working_copy_replaced",
+                            lambda ctx: (_ for _ in ()).throw(OSError("boom")))
+        c.post("/auto-sync/pull")
+        sess = _ctx(app).get("auto_sync") or {}
+        assert not sess.get("pull"), "a failing pull must not retry every poll"

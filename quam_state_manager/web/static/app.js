@@ -2706,11 +2706,18 @@ window.applyEditsToLive = function () {
                         // (a fill-down or pasted column lives only in the DOM
                         // until Apply), so it would read the working copy as
                         // clean and pull straight over them. Report them.
-                        var _domDirty = !!document.querySelector(
-                            '.bulk-cell.bulk-dirty, .bulk-cell[data-dirty="1"]');
-                        if (!_domDirty && window.BulkEdit && window.BulkEdit.hasUnsaved) {
-                            try { _domDirty = !!window.BulkEdit.hasUnsaved(); } catch (e3) {}
-                        }
+                        //
+                        // The class is `dirty`, set by `_markCellDirty` in BOTH
+                        // bulk-edit.js and pair-edit.js. The first cut looked
+                        // for `.bulk-dirty` — which exists only as the id of the
+                        // COUNTER span (`#bulk-dirty-count`) — and fell back to
+                        // `BulkEdit.hasUnsaved`, which does not exist. So this
+                        // never once reported dirt, and a filled-down column was
+                        // destroyed by a pull with "replace" UNCHECKED: exactly
+                        // the row of the policy table that is supposed to ask.
+                        // Nothing failed and no test saw it, because the pin
+                        // posted `dom_dirty=1` by hand.
+                        var _domDirty = !!document.querySelector('.bulk-cell.dirty');
                         var pp = window.htmx.ajax('POST',
                             '/auto-sync/pull' + (_domDirty ? '?dom_dirty=1' : ''), {
                             target: '#pending-tray', swap: 'outerHTML',

@@ -46,12 +46,16 @@ def _state() -> dict:
                     "operations": {
                         # alias -> the real pulse dict (a pointer to a CONTAINER)
                         "x180": "#./x180_DragCosine",
-                        "x180_DragCosine": {"amplitude": 0.4, "length": 40},
+                        "x180_DragCosine": {"amplitude": 0.4, "length": 40,
+                                            "digital_marker": None},
                         # pointer -> a scalar: value-mode, and must stay untouched
                         "x90_amp_ref": "#/qubits/q1/xy/operations/x180_DragCosine/amplitude",
                     },
-                    # resolves to nothing on this chip
+                    # a `#./` self-ref quam computes at runtime — the shape of
+                    # `#./upconverter_frequency` / `#./inferred_intermediate_frequency`
                     "LO_ref": "#./upconverter_frequency",
+                    # unresolvable and NOT a self-ref: genuinely dangling
+                    "broken_ref": "#/qubits/qZZ/f_01",
                 },
             },
             "q2": {"id": "q2", "f_01": 6.3e9},
@@ -97,10 +101,37 @@ class TestAReferenceIsAValue:
     def test_a_dangling_pointer_says_so_rather_than_going_blank(self, merged):
         """docs/114's rule, which the grid was not applying: a pointer that
         resolves to nothing still HAS a value — the pointer."""
-        c = _cell(merged, "qubits.q1.xy.LO_ref")
-        assert c["display"] == "#./upconverter_frequency"
+        c = _cell(merged, "qubits.q1.xy.broken_ref")
+        assert c["display"] == "#/qubits/qZZ/f_01"
         assert c["missing"] is False
         assert c["ptr_kind"] == "dangling"
+
+    def test_a_self_ref_quam_computes_is_RUNTIME_not_dangling(self):
+        """`#./upconverter_frequency` does not resolve statically because the
+        component computes it — `qubit_columns` has always classified that
+        shape as `runtime`, so the derived LO_frequency column read "computed
+        at runtime" while the curated sibling read "dangling". One shape, two
+        verdicts, one of them false."""
+        m = QuamStore.from_dicts(_state(), {"network": {"host": "1.2.3.4"}}).merged
+        c = _cell(m, "qubits.q1.xy.LO_ref")
+        assert c["ptr_kind"] == "runtime"
+        assert c["missing"] is False
+
+    def test_a_pointer_to_a_NULL_scalar_stays_in_value_mode(self):
+        """The customer-role audit's find, and the sharpest line in this file.
+
+        `-x90.digital_marker = "#../x180_DragCosine/digital_marker"` resolves
+        PERFECTLY — to a target holding null. The first cut called that
+        "dangling" and told the user to type a pointer, while
+        `resolve_edit_path` still ran value-mode: typing `ON` was accepted and
+        written to the SHARED x180 pulse, a path the user never named. Screen
+        and behaviour said opposite things. Dangling means the RESOLUTION
+        failed, never that the value found is null."""
+        m = QuamStore.from_dicts(_state(), {"network": {"host": "1.2.3.4"}}).merged
+        c = _cell(m, "qubits.q1.xy.operations.marker_ref")
+        assert c["ptr_kind"] is None, "a resolvable pointer is not dangling"
+        assert c["missing"] is True, "its value is null — the pre-docs/121 cell"
+        assert c["display"] == ""
 
     def test_a_list_leaf_is_not_missing(self, merged):
         """It already reached the list-cell swap; it was ALSO claiming to be

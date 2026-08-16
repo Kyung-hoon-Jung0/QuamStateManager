@@ -280,16 +280,31 @@ class TestTimeAxis:
         for bad in ("", None, "not-a-timestamp", "2026-08-16", "abcdefgh_012907"):
             assert _snap_iso(bad) is None
 
-    def test_points_carry_the_id_AND_the_instant(self):
-        """The user reads the date on the axis but needs the id to find the
-        snapshot in State History, so both travel."""
+    def test_a_point_is_the_id_and_the_value_ONLY(self):
+        """The instant is DERIVED on the client, never shipped.
+
+        It is a pure reformat of the id, so sending it too was the same
+        information twice — measured at 61 bytes/point, up to 2.3 MB of HTML
+        for one section on a real 419-snapshot chip. The id still travels
+        because that is what a user carries over to State History."""
         from quam_state_manager.web.routes import _trend_points
         pts = _trend_points([
             {"timestamp": "20260816_012907_4661", "value": 1.5},
             {"timestamp": "20260817_090000_0001", "value": 2.5},
         ])
-        assert pts == [("20260816_012907_4661", 1.5, "2026-08-16T01:29:07"),
-                       ("20260817_090000_0001", 2.5, "2026-08-17T09:00:00")]
+        assert pts == [("20260816_012907_4661", 1.5),
+                       ("20260817_090000_0001", 2.5)]
+
+    def test_the_client_derives_the_instant_by_the_SAME_rule(self):
+        """JS<->PY parity: `_snap_iso` and `ChipTrends._iso` must agree, or the
+        axis and the server disagree about what is dateable."""
+        from pathlib import Path as _P
+        src = _P("quam_state_manager/web/static/chip-status.js").read_text(encoding="utf-8")
+        assert "function _iso(ts)" in src
+        # same anchored 8+6 grammar, same refusal to guess
+        assert r"/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/" in src
+        assert "return null" in src[src.index("function _iso(ts)"):
+                                    src.index("function _iso(ts)") + 300]
 
     def test_non_numeric_and_bools_never_become_points(self):
         from quam_state_manager.web.routes import _trend_points

@@ -199,10 +199,35 @@ def _build_bulk_cell(merged: dict, alias: str, modified: dict,
         rfound, raw_val = _walk_abs(merged, alias.split("."))
         raw_present = bool(rfound) and raw_val is not None
         if raw_present and isinstance(raw_val, str) and is_pointer(raw_val):
-            # A pointer that reaches an entity/pulse dict, a list, or nothing at
-            # all. In every case the field HAS a value — the pointer itself —
-            # and that is what the inspector and the tree already show.
-            ptr_kind = "list" if is_list else ("dict" if container else "dangling")
+            # A pointer with no SCALAR behind it: it reaches a dict, a list, or
+            # nothing at all. In each case the field's value IS the pointer, and
+            # that is what the inspector and the tree already show.
+            #
+            # DANGLING MEANS THE RESOLUTION FAILED — never merely that the value
+            # found is null. The first cut conflated the two, and the customer
+            # -role audit caught what that costs: `-x90.digital_marker` is
+            # `#../x180_DragCosine/digital_marker`, which resolves PERFECTLY to a
+            # target holding null. It was badged "resolves to NOTHING (dangling),
+            # type a pointer to re-point it" while `resolve_edit_path` still ran
+            # value-mode — so typing `ON` was accepted and written to the SHARED
+            # x180 pulse, a path the user never named. Screen and behaviour said
+            # opposite things. A pointer that reaches a scalar (null included) is
+            # ordinary value-mode and keeps its pre-docs/121 rendering exactly.
+            if is_list:
+                ptr_kind = "list"
+            elif container:
+                ptr_kind = "dict"
+            elif not resolvable:
+                # A `#./` self-ref that does not resolve is quam's shape for a
+                # value the COMPONENT computes — `#./inferred_intermediate_
+                # frequency`, `#./upconverter_frequency`. `qubit_columns`
+                # already classifies exactly this as `runtime` (its own rule:
+                # "#./ self-ref → runtime … editing breaks the link"), which is
+                # why the derived `LO_frequency` column reads "computed at
+                # runtime" while the CURATED sibling read "dangling". Same
+                # shape, two verdicts, one of them false. Reuse the one rule.
+                from quam_state_manager.core.pointer_resolver import is_self_ref
+                ptr_kind = "runtime" if is_self_ref(raw_val) else "dangling"
     p = mw_fem.port_of_resolved(resolved)
     if p:
         kind, con, fem, port, field = p
@@ -223,8 +248,13 @@ def _build_bulk_cell(merged: dict, alias: str, modified: dict,
         "is_pointer": bool(ft.get("is_pointer")) or bool(ptr_kind),
         # docs/121: "missing" means the field is genuinely ABSENT — that is the
         # question docs/88 made it answer (it is what turns into `create: true`).
-        # A pointer, a dict or a list is a value, so none of them is missing.
-        "missing": (not raw_present) and val is None,
+        # A cell is not missing exactly when it is SHOWING something: a scalar,
+        # a pointer rendered as itself, or a container. Keyed off what is on
+        # screen rather than off `raw_present`, so a pointer that resolves to a
+        # null scalar keeps its pre-docs/121 "not set" cell — it is in
+        # value-mode, and its value really is null.
+        "missing": val is None and not ptr_kind and not is_list
+                   and not isinstance(raw_val, (dict, list)),
         # What the cell holds when there is no scalar: a pointer to a container,
         # or one that resolves to nothing. Blank whenever it IS a scalar, so
         # every previously-correct cell is byte-identical.
@@ -8449,18 +8479,20 @@ def _snap_iso(ts: Any) -> str | None:
 
 
 def _trend_points(values: list[dict]) -> list[tuple]:
-    """``[(snapshot id, value, iso instant)]`` — the id survives for the hover.
+    """``[(snapshot id, value)]`` — two elements, deliberately.
 
-    The user reads the date on the axis but needs the id to find the snapshot
-    in State History, so both travel; the client falls back to the id when the
-    instant is None.
+    The instant is a pure regex reformat of the id, so shipping it as a third
+    element sent the same information twice: measured on a real 419-snapshot
+    chip that was 61 bytes/point and up to 2.3 MB of HTML for one section. The
+    client derives it with the same rule (``ChipTrends._iso``, parity-pinned),
+    and the id still travels because that is what a user carries over to State
+    History.
     """
     out = []
     for p in values or []:
         v = p.get("value")
         if isinstance(v, (int, float)) and not isinstance(v, bool):
-            ts = p.get("timestamp")
-            out.append((ts, v, _snap_iso(ts)))
+            out.append((p.get("timestamp"), v))
     return out
 
 
@@ -8524,7 +8556,7 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str]) -> list
             by_q[".".join(tmpl)] = q
         got = hm.leaf_field_series_many(path, list(by_q))
         for dp, q in by_q.items():
-            pts = [(r[0], r[1], _snap_iso(r[0])) for r in (got.get(dp) or [])
+            pts = [(r[0], r[1]) for r in (got.get(dp) or [])
                    if isinstance(r[1], (int, float))]
             if pts:
                 out.append({"metric": label, "entity": q, "points": pts})
@@ -8532,7 +8564,7 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str]) -> list
     # Not qubit-scoped (a port, a pair leaf, a top-level key) — one line, and
     # the path itself is the legend, because there is nothing to fan out over.
     rows = hm.leaf_field_series(path, dot_path)
-    pts = [(r[0], r[1], _snap_iso(r[0])) for r in (rows or [])
+    pts = [(r[0], r[1]) for r in (rows or [])
            if isinstance(r[1], (int, float))]
     if pts:
         out.append({"metric": dot_path, "entity": dot_path.split(".")[-1], "points": pts})
@@ -8655,10 +8687,33 @@ def _state_version_now(ctx: dict | None) -> dict:
         out["count"] = len(hm.list_snapshots(Path(ctx["path"])))
     except Exception:  # noqa: BLE001
         return out
+    # STAT-GATED. Resolving `ts` reads BOTH live files whole, re-serializes them
+    # canonically and sha256s them — 526 KB on the real chip, 3.9 of the 4.1 ms
+    # this call costs. Cheap on NVMe; a lab `state_path` is often a share, and
+    # `stateHistoryChanged` fires on every apply (so every Auto-Sync flush
+    # too), which turns it into a network read per committed edit. The content
+    # cannot change without the files' (mtime, size) changing, which is the
+    # same gate `working_copy.live_diverged_now` already trusts — so recompute
+    # only when they actually moved. Keyed by path so switching chips can never
+    # serve the other one's answer.
+    stamp = None
     try:
-        out["ts"] = hm.snapshot_ts_for_current_content(Path(ctx["path"]))
-    except Exception:  # noqa: BLE001
-        out["ts"] = None
+        p = Path(ctx["path"])
+        stamp = tuple(sorted(
+            (n, s.st_mtime_ns, s.st_size)
+            for n, s in ((n, (p / n).stat()) for n in ("state.json", "wiring.json"))))
+    except OSError:
+        stamp = None
+    memo = ctx.get("_version_memo")
+    if stamp is not None and memo and memo[0] == str(p) and memo[1] == stamp:
+        out["ts"] = memo[2]
+    else:
+        try:
+            out["ts"] = hm.snapshot_ts_for_current_content(Path(ctx["path"]))
+        except Exception:  # noqa: BLE001
+            out["ts"] = None
+        if stamp is not None:
+            ctx["_version_memo"] = (str(p), stamp, out["ts"])
     # "No snapshot holds exactly this content" is the ORDINARY mid-edit state,
     # not a fault — say so plainly rather than inventing a nearest match.
     out["unmatched"] = out["ts"] is None and out["count"] > 0
@@ -8683,9 +8738,13 @@ def state_version_chip():
                                          and ctx.get("path")))
 
 
-# One fetch must stay one fetch: 500 rows of this panel is ~90 KB, and beyond
-# that the right surface is State History, which the footer names.
-_STATE_VERSIONS_CAP = 500
+# One fetch must stay one fetch. The first guess at this said "500 rows is
+# ~90 KB"; MEASURED on a real 419-snapshot chip it is 1.35 KB/row — 566 KB at
+# 419 rows, so 500 would be ~675 KB into a top-bar popover. Each row carries a
+# full hx-post restore button plus six spans. 150 keeps the fetch ~200 KB and
+# still reaches months of history in two clicks; beyond it the right surface is
+# State History, which the footer names.
+_STATE_VERSIONS_CAP = 150
 
 
 @bp.route("/state/versions")
@@ -11079,6 +11138,29 @@ def auto_sync_pull():
                 except Exception:      # noqa: BLE001 — never block the pull
                     logger.warning("pre-pull snapshot failed", exc_info=True)
             working_copy.sync_from_live(wc)
+            # RE-CHECK AGAIN, NOW THAT THE I/O IS DONE. The check above closed
+            # the lock-acquisition window; it did NOT close the window the
+            # comment itself describes, because `sync_from_live` is where those
+            # "tens of ms locally, seconds on a share" are actually spent and it
+            # holds no `store._lock` — so /field/edit can still land inside it,
+            # return 200, appear in the Review tray, and then be destroyed by
+            # the `store.reload()` below. Reproduced. This is the same race
+            # `_reconcile_cached_quam_ctx` re-checks for after ITS content I/O,
+            # and the resolution is the same: keep the edit, re-persist it so
+            # disk == memory (audit C29 — otherwise an LRU evict + rehydrate
+            # reads the new-live working files and silently drops it), and let
+            # the banner ask.
+            _st = ctx.get("store")
+            if _st is not None:
+                with _st._lock:
+                    if _quam_ctx_dirty(ctx) and not sess.get("pull_replace"):
+                        try:
+                            safe_io.write_state_wiring(
+                                wc.working_folder, _st.state, _st.wiring)
+                        except OSError:
+                            logger.exception("post-pull re-persist failed")
+                        ctx["live_diverged"] = True
+                        return "", 204
             ctx["_alarm_reason"] = "live-pull"
             _rebuild_after_working_copy_replaced(ctx)
             # Every other caller of the rebuild pairs it with this. Leaving the
@@ -11092,8 +11174,28 @@ def auto_sync_pull():
         # sync_from_live may already have advanced the working folder and the
         # sync point while the in-memory store still holds the OLD content --
         # an absorbing stale state where a later /save would write the old
-        # content back over the pulled files. Evict so the next access rebuilds
-        # from disk, which is what _reconcile_cached_quam_ctx does here.
+        # content back over the pulled files, UNFORCED, because the sync point
+        # now equals live and the staleness gate sees nothing wrong.
+        #
+        # Evicting from _quam_cache does NOT fix that: `_activate_quam` stores
+        # the SAME dict object in app.config["contexts"], which is what
+        # `_active_ctx()` reads, so the stale store stayed active until the user
+        # re-opened the chip. Reproduced — a failed pull then let a save+apply
+        # overwrite an experiment's f_01.
+        #
+        # So make the state consistent instead of hoping it is re-read:
+        # re-persist the in-memory content onto the working folder (C29's move)
+        # so disk == memory whichever step failed, and raise the banner. The
+        # eviction stays as belt-and-braces, no longer load-bearing.
+        try:
+            _st = ctx.get("store")
+            if _st is not None and wc is not None:
+                with _st._lock:
+                    safe_io.write_state_wiring(
+                        wc.working_folder, _st.state, _st.wiring)
+            ctx["live_diverged"] = True
+        except Exception:              # noqa: BLE001 — best effort on a failure path
+            logger.warning("post-failure re-persist failed", exc_info=True)
         try:
             with _quam_cache_lock:
                 for k in list(_quam_cache.keys()):

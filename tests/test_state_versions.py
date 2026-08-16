@@ -115,7 +115,10 @@ class TestVersionChip:
         from quam_state_manager.web import routes as R
         src = Path(R.__file__).read_text(encoding="utf-8")
         i = src.index("def _state_version_now")
-        body = src[i:i + 1400]
+        # Sliced to the next def: the function grew a stat-gated memo around
+        # the hash (it read 526 KB of live files on every page load), and a
+        # fixed-length slice reads that growth as "the helper is gone".
+        body = src[i:src.index("@bp.route", i)]
         assert "snapshot_ts_for_current_content" in body
         assert "mutation_seq" not in body
 

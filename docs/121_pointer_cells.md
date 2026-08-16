@@ -100,3 +100,56 @@ genuinely absent (`T1`, `T2echo`, `T2ramsey`, `chi` — the not-yet-calibrated
 fields of an early bring-up chip), which is the correct answer.
 
 Pinned by `tests/test_pointer_cells.py`.
+
+---
+
+## The audit's correction (same day)
+
+Three parallel audits — speed, red-team, customer-roles — ran over the whole
+campaign. Two of their findings were in THIS change, and both were the same
+mistake: a verdict that was easy to compute standing in for the one that is
+true.
+
+### `dangling` must mean the resolution FAILED
+
+`-x90_DragCosine.digital_marker = "#../x180_DragCosine/digital_marker"`
+resolves **perfectly** — to a target that holds `null`. The first cut derived
+`dangling` from *"no container behind it"*, so it badged that cell **"resolves
+to NOTHING (dangling) — type a pointer to re-point it"** while
+`resolve_edit_path` still ran value-mode underneath. Typing `ON` was accepted,
+returned 200, and wrote to the **shared x180 pulse** — a path the user never
+named, feeding six aliases. The screen and the behaviour said opposite things,
+which is worse than the blank cell this doc set out to fix. 100 cells.
+
+A pointer that reaches a scalar — `null` included — is in value-mode and keeps
+its pre-docs/121 rendering exactly. `missing` is now derived from *what the
+cell is showing*, not from whether the alias holds bytes.
+
+### A `#./` self-ref is `runtime`, and SM already knew that
+
+`#./upconverter_frequency` and `#./inferred_intermediate_frequency` do not
+resolve statically because the **component computes them**. `qubit_columns`
+has classified that shape as `runtime` since it was written — *"#./ self-ref →
+runtime … editing breaks the link"* — which is why the DERIVED `LO_frequency`
+column read "computed at runtime" while the CURATED sibling read "dangling".
+One shape, two verdicts, one of them false. `_build_bulk_cell` now reuses the
+one rule.
+
+### On the real chip, after
+
+| badge | cells |
+|---|---|
+| dangling (false) | **200 → 0** |
+| computed at runtime (honest) | 20 |
+| reference to a dict | 90 |
+| "not set" | 379 — genuinely absent, plus the null-valued pointers back in value-mode |
+
+### And the door this opened
+
+`resolve_edit_path` no longer follows a container pointer, so the write lands
+on the pointer cell — where the type judge used to refuse it. The four web
+routes gained `pointer_cell_refusal` in the same change; **`cli.py` did not**,
+and it is the surface with no working copy. `cli set qubit_pairs.q1-2.
+qubit_control q3 --save` wrote `"q3"` over `#/qubits/q1` in the **live**
+`state.json` and exited 0. Fixed by the three lines that make the comment above
+it ("the same hardening as /field/edit — they MUST NOT diverge") true.
