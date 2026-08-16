@@ -225,6 +225,34 @@ class TestFailuresDisarm:
         r = c.post("/auto-sync/pull")
         assert r.status_code in (204, 200)
         assert _ctx(app).get("auto_apply") is None, "the session was cleared"
+        # ...and the client stops WITHOUT needing to have received the disarm
+        # trigger. The signal is derived from the session, so clearing it is
+        # self-healing: a 204 whose HX-Trigger the client never processed
+        # cannot leave a pull spinning every 5 s.
+        assert c.get("/state/drift").get_json().get("auto_pull") is False
+
+
+class TestSessionsDoNotLeakAcrossChips:
+    def test_arming_one_chip_never_arms_another(self, tmp_path):
+        """The session lives on the chip's context. Arming chip A and then
+        opening chip B must not authorize writes to B — that would be a
+        permission granted for one device applied to a different one."""
+        a, c, _ = _mk(tmp_path / "a")
+        c.post("/auto-sync/set", data={"pull": "1", "pull_replace": "1", "push": "1"})
+        assert _ctx(a)["auto_apply"]
+
+        other = tmp_path / "b" / "quam_state"
+        other.mkdir(parents=True)
+        (other / "state.json").write_text(json.dumps(
+            {"qubits": {"q1": {"id": "q1", "f_01": 7.0e9}},
+             "qubit_pairs": {}, "active_qubit_names": ["q1"]}), encoding="utf-8")
+        (other / "wiring.json").write_text(json.dumps(
+            {"network": {"host": "2.2.2.2"}, "wiring": {"qubits": {}}}), encoding="utf-8")
+        c.post("/load", data={"folder": str(other)})
+
+        assert _ctx(a).get("auto_apply") is None, "chip B is not armed"
+        assert 'data-auto-apply="1"' not in c.get("/state/tray").get_data(as_text=True)
+        assert c.get("/state/drift").get_json().get("auto_pull") is False
 
 
 class TestTheTraySaysWhichModeIsOn:
