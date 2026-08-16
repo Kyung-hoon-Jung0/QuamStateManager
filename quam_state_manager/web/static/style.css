@@ -3829,6 +3829,10 @@ td.col-delta .val-delta { margin-left: 0; }
 .topo-verdict-banner .verdict-text { line-height: 1.35; }
 .topo-verdict-banner.pass { background: var(--color-success-bg); border-color: var(--color-success-border); }
 .topo-verdict-banner.warn { background: var(--color-warning-bg); border-color: var(--color-warning-border); }
+/* Nothing measured yet — neither healthy nor unhealthy. Green here was the
+   lie: a chip in early bring-up has no coherence or fidelity data at all. */
+.topo-verdict-banner.unknown { background: var(--pico-card-sectioning-background-color,
+    var(--pico-card-background-color)); border-color: var(--pico-muted-border-color); }
 .topo-verdict-banner.fail { background: var(--color-error-bg);   border-color: var(--color-error-border); }
 .verdict-avoid { color: var(--pico-muted-color); }
 .verdict-avoid-chip {

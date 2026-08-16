@@ -1911,6 +1911,21 @@ window.ChipStatus.mount = function (opts) {
             });
         });
         var belowCount = Object.keys(below).length;
+        // A qubit with NO data is UNJUDGED, not "in spec".
+        //
+        // `_verdict(null, …)` returns neither 'fail' nor 'warn', so a qubit
+        // that has never been measured simply never enters `below` — and on a
+        // chip in early bring-up, where T1 / T2 / fidelity are null CHIP-WIDE
+        // (exactly the real customer chip), that made belowCount 0 and the
+        // banner announce "Chip looks healthy — all 20 qubits in spec" over a
+        // chip with no calibration data at all. The map's own legend already
+        // had a distinct "No data" swatch; only the verdict was pretending.
+        var measuredCount = nodes.filter(function (n) {
+            return NODE_METRICS.some(function (m) {
+                var v = _mval(n, m);
+                return typeof v === 'number' && isFinite(v);
+            });
+        }).length;
         var failCount = Object.keys(below).filter(function(k) { return below[k] === 'fail'; }).length;
         var czBelow = edges.filter(function(e) {
             var v = _verdict(_mval(e, 'cz_fidelity'), thresholds.cz_fidelity); return v === 'warn' || v === 'fail';
@@ -1931,11 +1946,30 @@ window.ChipStatus.mount = function (opts) {
         html += _hTile('qubits', nodes.length, 'neutral', edges.length + ' pairs');
         html += _hTile('oldest calibration', _ageLabel(oc), _ageClass(oc),
                        summ.newest_calibration ? 'newest ' + _ageLabel(summ.newest_calibration) : 'no timestamps');
-        html += _hTile('qubits below spec', belowCount, belowCount ? (failCount ? 'fail' : 'warn') : 'pass',
+        html += _hTile('qubits below spec', belowCount,
+                       belowCount ? (failCount ? 'fail' : 'warn')
+                                  : (measuredCount ? 'pass' : 'neutral'),
                        failCount ? (failCount + ' failing &middot; ' + (belowCount - failCount) + ' warn')
-                                 : (belowCount ? 'to watch' : 'all in spec'));
-        html += _hTile('CZ below spec', czBelow, czBelow ? (czFailCount ? 'fail' : 'warn') : 'pass',
-                       czBelow ? 'of ' + edges.length + ' pairs' : 'all pairs in spec');
+                                 : (belowCount ? 'to watch'
+                                    : (measuredCount === 0 ? 'no data yet'
+                                       : (measuredCount < nodes.length
+                                          ? measuredCount + ' of ' + nodes.length + ' measured'
+                                          : 'all in spec'))));
+        // Same rule on the pair side: cz_fidelity is null chip-wide on a chip
+        // that has not run 2Q calibration yet, and "all pairs in spec" over
+        // zero measurements is the same lie as its qubit twin above.
+        var czMeasured = edges.filter(function (e) {
+            var v = _mval(e, 'cz_fidelity');
+            return typeof v === 'number' && isFinite(v);
+        }).length;
+        html += _hTile('CZ below spec', czBelow,
+                       czBelow ? (czFailCount ? 'fail' : 'warn')
+                               : (czMeasured ? 'pass' : 'neutral'),
+                       czBelow ? 'of ' + edges.length + ' pairs'
+                               : (czMeasured === 0 ? 'no data yet'
+                                  : (czMeasured < edges.length
+                                     ? czMeasured + ' of ' + edges.length + ' measured'
+                                     : 'all pairs in spec')));
         var diagTotal = diagErr + diagWarn;
         html += '<a class="topo-health-tile ' + (diagErr ? 'fail' : (diagWarn ? 'warn' : 'pass')) + '" ' +
                 'href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane" hx-push-url="true" ' +
@@ -1955,7 +1989,20 @@ window.ChipStatus.mount = function (opts) {
                         : (belowCount > 0 || czBelow > 0 || diagWarn > 0) ? 'warn' : 'pass';
             var icon = verdict === 'fail' ? '⛔' : (verdict === 'warn' ? '⚠' : '✓');
             var headline;
-            if (verdict === 'pass') {
+            if (verdict === 'pass' && measuredCount === 0) {
+                // Nothing was measured, so nothing passed. Say that.
+                verdict = 'unknown';
+                icon = 'ⓘ';
+                headline = 'No coherence or fidelity data on this chip yet — '
+                         + 'nothing to judge'
+                         + (diagTotal ? '' : ', and no structural issues found') + '.';
+            } else if (verdict === 'pass' && measuredCount < nodes.length) {
+                headline = 'All ' + measuredCount + ' measured qubit'
+                         + (measuredCount === 1 ? '' : 's') + ' in spec — '
+                         + (nodes.length - measuredCount) + ' of ' + nodes.length
+                         + ' not measured yet'
+                         + (diagTotal ? '' : ', no structural issues') + '.';
+            } else if (verdict === 'pass') {
                 headline = 'Chip looks healthy — all ' + nodes.length + ' qubits in spec'
                          + (diagTotal ? '' : ', no structural issues') + '.';
             } else {
