@@ -3646,8 +3646,12 @@ def _qualibrate_tray_badge() -> dict | None:
     chip SM has open, or None when either side is unknown. ``sm_scope`` is
     SM's OWN project scope (docs/63) — shown as the badge name when present;
     a mere scope≠active difference is NEVER a warn/danger color (``match``
-    keeps meaning "SM's chip == qualibrate's active write target"). Hidden
-    only when there's no config, or neither an active project nor a scope."""
+    keeps meaning "SM's chip == qualibrate's active write target").
+
+    Hidden entirely when there is no config. Otherwise it renders for an
+    active project, for SM's own scope, or — docs/120 item 1 — for a chip that
+    belongs to no project at all (``standalone``), which SM used to say
+    nothing whatsoever about."""
     from quam_state_manager.core import qualibrate_config
 
     try:
@@ -3658,6 +3662,12 @@ def _qualibrate_tray_badge() -> dict | None:
     sm_scope = (ctx or {}).get("qualibrate_project")
     if not st.get("config_exists"):
         return None
+    match = None
+    live = (ctx or {}).get("live_path")
+    if live and st.get("state_native") and st.get("state_exists"):
+        # samefile-grounded — resolve()-equality false-ambered on case-variant
+        # spellings of one folder on case-insensitive (macOS/Windows) hosts.
+        match = path_match.same_folder(live, st["state_native"])
     # docs\120 item 1: an open chip that belongs to NO project is standalone,
     # and SM used to say nothing whatsoever about that — this function returned
     # None, so the slot rendered empty and "you are editing a bare folder" was
@@ -3666,20 +3676,22 @@ def _qualibrate_tray_badge() -> dict | None:
     # without one "project" is not a concept this user has, so the contrast
     # the word draws would be meaningless. An archive is excluded: it is not a
     # folder you are working in, and the status badge already names it.
+    #
+    # ``match is not True`` keeps the tray from contradicting itself. sm_scope
+    # is a per-ctx memo derived at ACTIVATION, so pointing qualibrate at the
+    # already-open chip afterwards leaves it None — and the tray would then say
+    # "same chip as loaded in SM" on the alembic badge while the chip beside it
+    # said "not part of any QUAlibrate project". Whatever the memo says, a chip
+    # qualibrate is demonstrably writing to is not standalone.
     standalone = bool(
         ctx
         and ctx.get("type") == "quam"
         and (ctx.get("origin") or "live") == "live"
         and not sm_scope
+        and match is not True
     )
     if not (st.get("active") or sm_scope or standalone):
         return None
-    match = None
-    live = (ctx or {}).get("live_path")
-    if live and st.get("state_native") and st.get("state_exists"):
-        # samefile-grounded — resolve()-equality false-ambered on case-variant
-        # spellings of one folder on case-insensitive (macOS/Windows) hosts.
-        match = path_match.same_folder(live, st["state_native"])
     return {"project": st["active"],
             # dangling only ever describes the ACTIVE project's state_path —
             # a scope-only badge (no active project) must not read as broken.

@@ -4295,12 +4295,21 @@ document.addEventListener("focusout", function(evt) {
 // text-undo keeps working) — EXCEPT bulk-grid cells and the Column History
 // panel, where LiveEditUndo owns the history (Escape still restores a
 // cell's original value).
+//
+// The carve-out keys on the Column History panel's OWN class, not on the
+// shared `.ch-overlay` shell. Four dialogs reuse that shell (Column History,
+// the type-fix repair dialog, the env-schema dialog, and the FSP compensation
+// popup) and only Column History wants LiveEditUndo to own the keystroke. When
+// docs/120 item 7 made the FSP amplitudes editable, a `.ch-overlay` test meant
+// Ctrl+Z on a typo in an amplitude field skipped the native-undo bail-out and
+// fell through to the app-wide chain — silently restoring a grid cell hidden
+// behind the modal, or POSTing /undo to discard a staged group.
 document.addEventListener("keydown", function(evt) {
     if (!((evt.ctrlKey || evt.metaKey) && (evt.key === "z" || evt.key === "Z")
           && !evt.altKey)) return;
     var a = document.activeElement;
     var inGridCell = !!(a && a.classList && a.classList.contains("bulk-cell"));
-    var inChPanel = !!(a && a.closest && a.closest(".ch-overlay"));
+    var inChPanel = !!(a && a.closest && a.closest(".colhist-overlay"));
     if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)
         && !inGridCell && !inChPanel) return;
     if (evt.shiftKey) {
@@ -7790,12 +7799,16 @@ window.filterDatasetTable = function(input) {
 
 /* Generic scoped-search help panel — reused by any search box that opts in via
  * classes + data-attributes (currently the sidebar workspace filter):
- *   input:   class="search-help-input"   data-search-help="<panel-id>"
  *   ? icon:  class="search-help-toggle"  data-search-help="<panel-id>"
  *   × close: class="search-help-close"   data-search-help="<panel-id>"
  *   example: class="search-help-example" data-search-help-input="<input-id>" data-example="…"
  * The ? TOGGLES; × closes. Delegated on document (app.js loads in <head>).
  * The Datasets page keeps its own id-based handler above.
+ *
+ * The INPUT needs no markup contract any more. It used to carry
+ * class="search-help-input" + data-search-help so the focus handler could find
+ * its panel; with that handler gone nothing reads either, and base.html's
+ * leftovers are vestigial — a new search box only needs the three rows above.
  *
  * docs/120 item 3 — nothing auto-opens this any more. It used to open on the
  * first focus of the input per browser session, and the sidebar's copy of the
@@ -14670,7 +14683,10 @@ window.ColumnHistory = (function () {
     function ensureOverlay() {
         if (overlay) return overlay;
         overlay = document.createElement("div");
-        overlay.className = "ch-overlay";
+        // `colhist-overlay` is what the Ctrl+Z carve-out keys on: inside THIS
+        // panel LiveEditUndo owns the keystroke. The bare `.ch-overlay` shell
+        // is shared with three other dialogs that must keep native text undo.
+        overlay.className = "ch-overlay colhist-overlay";
         overlay.style.display = "none";
         var backdrop = document.createElement("div");
         backdrop.className = "ch-backdrop";

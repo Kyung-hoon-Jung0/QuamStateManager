@@ -176,4 +176,28 @@ openPopup(empty);
 ok(inputs().length === 0, 'J1: no rows, no inputs');
 ok(compBtn().disabled === true, 'J2: nothing to compensate — apply stays disabled');
 
+/* ── K. Ctrl+Z in an amplitude field is NATIVE text undo ─────────────── */
+// Review finding: the app-wide Ctrl+Z handler skips its "leave ordinary inputs
+// alone" bail-out inside `.ch-overlay`, a carve-out written for the Column
+// History panel (which has no text fields). This popup reuses that shell, so
+// making the amplitudes editable would have routed a typo-undo into
+// LiveEditUndo -- restoring a grid cell hidden behind the modal -- or into
+// POST /undo, discarding a staged change group. The carve-out now keys on the
+// Column History panel's own class instead.
+plan = mkPlan();
+openPopup(plan);
+let undoTiers = 0;
+const realTryUndo = window.LiveEditUndo.tryUndo;
+window.LiveEditUndo.tryUndo = function () { undoTiers++; return false; };
+let ajaxCalls = 0;
+window.htmx.ajax = function () { ajaxCalls++; return Promise.resolve(); };
+inputs()[0].focus();
+const ev = new window.KeyboardEvent('keydown',
+  { key: 'z', ctrlKey: true, bubbles: true, cancelable: true });
+doc.dispatchEvent(ev);
+ok(undoTiers === 0, 'K1: Ctrl+Z in an amplitude field does NOT reach LiveEditUndo');
+ok(ajaxCalls === 0, 'K2: and never POSTs /undo behind the modal');
+ok(ev.defaultPrevented === false, 'K3: the browser keeps its native text undo');
+window.LiveEditUndo.tryUndo = realTryUndo;
+
 process.exit(fails ? 1 : 0);
