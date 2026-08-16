@@ -243,15 +243,117 @@ degrading, so a new harness must bridge every global its code reads bare.**
 
 ---
 
-## Waves 2 and 3 — planned
+## Wave 2 — shipped
 
-| wave | item | branch |
+### Item 4 — quick-filter chips where the readability controls were
+
+> *"The most common workflow is going to the search box and TYPING x180, amp,
+> ro, power ... it's very repetitive and eats time. Move Aa/S-M-L into the
+> Settings menu under a Live Edit section, and in that exact spot put the main
+> parameters as clickable patches — multi-select of course. And the patches
+> must cover ALL the major column items."*
+
+Chips are a **view of the query string**, never a second filter. Toggling one
+rewrites `#bulk-search` and lets the existing search do the work, which buys
+three things for nothing: one chip filters **both** grids (they read the same
+input), typing a chip's word by hand lights that chip, and deleting it unlights
+it. A parallel filter could disagree with the box; this cannot. The AND/OR
+toggle is therefore string assembly — `' '` or `' | '`, the docs/96 grammar the
+search already parses — and not one line of new matching logic.
+
+Per the user: the toggle is leftmost and prominent, **AND** is the default, and
+zero matches offers OR as a **one-click** switch, so accepting costs exactly
+what finding the toggle would.
+
+The chip set is derived server-side (`_bulk_filter_chips`) against the chip's
+real columns — curated short keywords, then a coverage sweep so no band is
+unreachable — and a term that would match nothing is never offered. On the real
+20-qubit chip: **22 chips over 314 columns in 22 sections.**
+
+Two derivation details, both pinned:
+
+- the term is a section's **first word**. The search splits on whitespace, so a
+  two-word term would silently become an AND of two tokens — and taking the
+  first word usefully collapses siblings: one `cz` chip covers CZ Unipolar /
+  CZ Flattop / CZ Bipolar.
+- coverage is tested **prefix-wise per word**, not by substring. Substring
+  looked right and quietly dropped every CZ band on the real chip: the `Z+`
+  section contributes the term `z`, and `"z"` is a substring of `"cz"`, so the
+  gates read as already covered and got no chip at all.
+
+`section` joined the client haystack (`_colHay`) — it is the band name already
+printed above the column, and it is what lets one `xy` chip span the four
+XY-ish sections a real chip has. Note this **aligns** the grids rather than
+inventing something: the pair grid always included section; the qubit grid was
+the outlier.
+
+The readability cluster moved to Settings ▸ Live Edit as two labelled rows
+(Table / Flat) keeping their independent localStorage keys — a pure relocation.
+`test_readability_controls_present` was **re-targeted** at the full page rather
+than weakened, plus a new sibling pinning that the cluster is gone from the
+grid's working row.
+
+### Item 10 — the working-state version, one click from every page
+
+> *"Move the bookmark button below Calculator, and in its place show the current
+> state working version id. Since we're adding Auto-Sync, revert back and forth
+> has to be really free. Clicking it lists the version history with when each
+> was updated, checkboxes to pick several → show just the combined diff → and
+> let a chosen state be applied to the live chip."*
+
+Deliberately thin: every action delegates to machinery that already exists and
+is already gated. Two ticks open the docs/84 diff workbench, three or more open
+the Compare hub basket, and *Go back* posts the same
+`/state-history/<ts>/restore-live` **with both independent force gates**
+(unsaved edits, wiring topology) — not weakened for being one click closer.
+What this adds is reachability from every page instead of a navigation.
+
+The version id is the snapshot **timestamp**, and which one is "now" is
+**content-matched** (`snapshot_ts_for_current_content`) — never "the newest",
+because after an A→B→A cycle the newest snapshot holds the wrong content (the
+audit-r10 finding that helper exists for), and never `store.mutation_seq`,
+which resets on reload/eviction/restart. Both pinned.
+
+**Lazy by construction**: resolving the version hashes the live state+wiring
+pair, and docs/28 forbids a live read on a surface that renders on every page —
+so the chip rides its own endpoint fetched after paint, like the diagnostics and
+instances slots beside it. The panel lives **outside** the swap target, because
+an `innerHTML` swap on the slot would delete it on every refresh.
+
+Three honest states: a matching snapshot names it; no match says *unsaved* (the
+ordinary mid-edit condition, muted rather than warned); no chip open renders
+nothing. A chip with no history **still** gets the affordance — the panel's
+empty state is what explains where versions come from.
+
+---
+
+## The measured baseline (env `cqt`, wave 2)
+
+`39 failed, 5,648 passed, 247 skipped`, accounted for completely:
+
+| group | n | status |
 |---|---|---|
-| 2 | 4 — Live-Edit parameter chips | `feat/live-edit-chips` |
-| 2 | 10 — version id + history in the top bar | `feat/version-history-topbar` |
-| 3 | 11 — one chip map | `feat/one-chip-map` |
-| 3 | 5/9 — Chip Status Trends | `feat/chip-trends` |
-| 3 | 8 — bidirectional Auto-Sync | `feat/auto-sync` |
+| documented environmental (CLAUDE.md list) | ~15 | expected |
+| autofit/synth, two families + flux cube | ~22 | **pre-existing**, verified on a clean pre-campaign commit |
+| load-induced timing flakes | 2 | **pass in isolation**; Windows mtime family |
+
+**Zero regressions across waves 1–2.** The four selfchecks repaired above
+(`ctrlz`, `ds_flow`, `state_roundtrip`, `undo_nav`) are absent from this list,
+confirming the fix; all **59 selfchecks pass, 0 skipped**.
+
+---
+
+## Wave 3 — planned
+
+| item | branch |
+|---|---|
+| 11 — one chip map | `feat/one-chip-map` |
+| 5/9 — Chip Status Trends | `feat/chip-trends` |
+| 8 — bidirectional Auto-Sync | `feat/auto-sync` |
+
+(Waves 1 and 2 shipped on `fix/search-help-toggle`, `fix/dormant-selfchecks`,
+`feat/fsp-editable-amps` and `feat/live-edit-chips`, all merged into
+`integrate/customer-feedback`.)
 
 Their design decisions are recorded in the campaign plan and will be expanded
 into docs/121+ as each lands. Two are called out as needing an audit even if
