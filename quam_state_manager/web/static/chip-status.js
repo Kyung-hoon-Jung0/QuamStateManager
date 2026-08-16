@@ -2503,6 +2503,27 @@ window.ChipTrends = (function () {
        being placed at an invented one; such a chart falls back to the category
        axis WHOLESALE, since mixing the two would put the unparsed points at
        epoch zero. */
+    /* Above this many drawn nodes SVG genuinely hurts (the server caps a series
+       at 400 points, so 20 qubits x 400 = 8,000 is the real worst case). Below
+       it, SVG is faster to first paint and CANNOT fail the way GL can. */
+    var GL_MIN_NODES = 4000;
+    var _glBudget = 0;          // WebGL contexts we are willing to spend, per render
+
+    /* Plotly does not throw when a WebGL context is refused — it writes "WebGL
+       is not supported by your browser" into the div and returns normally. So
+       the only way to know is to LOOK, and the only honest response is to draw
+       the same data again as SVG rather than leave the user staring at a chart
+       that silently contains no data. */
+    function _healIfBlank(host, traces, layout, config) {
+        if (!host || !/WebGL is not supported/i.test(host.innerHTML || '')) return;
+        var svg = traces.map(function (t) {
+            var c = {}; for (var k in t) if (Object.prototype.hasOwnProperty.call(t, k)) c[k] = t[k];
+            c.type = 'scatter';
+            return c;
+        });
+        try { window._plotlyRender(host, svg, layout, config); } catch (e) { /* nothing left to try */ }
+    }
+
     function _axisFor(series) {
         var allDated = true;
         series.forEach(function (s) {
@@ -2512,18 +2533,57 @@ window.ChipTrends = (function () {
     }
     function render(charts) {
         if (!window._plotlyRender || !charts) return;
+        // One budget per render pass, spent by the first genuinely dense chart.
+        _glBudget = 1;
         charts.forEach(function (c, idx) {
             var host = document.getElementById('topo-trend-' + idx);
             if (!host || !c.series || !c.series.length) return;
-            // A 20-qubit chip with 400 points per series is 8,000 nodes per
-            // chart in Plotly's SVG renderer, and this section auto-loads from
-            // the scroll observer — the user never opted into it. WebGL past a
-            // handful of series, and markers only while they are still
-            // distinguishable; the line is the signal either way.
-            var dense = c.series.length > 8;
+            // WebGL is EARNED BY NODE COUNT, and only while contexts remain.
+            //
+            // The first cut gated on `series.length > 8` — the qubit count —
+            // so every chip bigger than 8 qubits went to WebGL no matter how
+            // little data it had. On the real 20-qubit chip that meant 20
+            // series x 7 points = 140 nodes rendered through GL, and, worse,
+            // THREE scattergl charts on one page. Each takes ~3 WebGL contexts,
+            // browsers cap the total (~16), and Plotly's failure mode when a
+            // context is refused is to REPLACE THE CHART with the text "WebGL
+            // is not supported by your browser". Measured in real Chrome with a
+            // working GPU (Intel Arc / ANGLE D3D11): all three Trends charts
+            // blank, axes and legend drawn, not one data point visible.
+            //
+            // So: GL only for a genuinely large chart, and at most one per
+            // render — plus the post-draw fallback below, because a silent
+            // blank chart on the page whose whole job is showing values move is
+            // the worst failure this surface can have.
             var longest = c.series.reduce(function (m, s) {
                 return Math.max(m, s.points.length); }, 0);
+            var nodes = c.series.length * longest;
+            var dense = nodes > GL_MIN_NODES && _glBudget > 0;
+            if (dense) _glBudget--;
             var axisType = _axisFor(c.series);
+            // A parameter that has NOT moved is the common case on a healthy
+            // chip, and Plotly's autorange for a set of identical small values
+            // spans zero: readout_amplitude = 0.00447 chip-wide drew a flat
+            // line at 0 on a -0.5..1 axis, which reads as "this is zero".
+            // Give a constant series a range around ITS OWN value instead.
+            var _lo = Infinity, _hi = -Infinity;
+            c.series.forEach(function (s2) {
+                s2.points.forEach(function (p) {
+                    if (typeof p[1] === 'number' && isFinite(p[1])) {
+                        if (p[1] < _lo) _lo = p[1];
+                        if (p[1] > _hi) _hi = p[1];
+                    }
+                });
+            });
+            var _flat = null;
+            if (isFinite(_lo) && isFinite(_hi)) {
+                var _span = _hi - _lo;
+                var _scale = Math.max(Math.abs(_lo), Math.abs(_hi));
+                if (_scale > 0 && _span <= _scale * 1e-9) {
+                    var _pad = _scale * 0.05;
+                    _flat = [_lo - _pad, _hi + _pad];
+                }
+            }
             var traces = c.series.map(function (s) {
                 return {
                     x: s.points.map(function (p) {
@@ -2548,17 +2608,37 @@ window.ChipTrends = (function () {
                 colorway: (window.UI_CONFIG && UI_CONFIG.plotly && UI_CONFIG.plotly.colorway) || undefined,
                 xaxis: { type: axisType, tickangle: axisType === 'date' ? 0 : -40,
                          tickfont: { size: 9 }, automargin: true },
-                yaxis: { title: { text: c.metric, font: { size: 11 } },
-                         tickfont: { size: 10 }, automargin: true },
+                yaxis: { title: { text: c.metric + (c.unit ? ' (' + c.unit + ')' : ''),
+                                  font: { size: 11 } },
+                         // SI prefixes, not US-billions: a 4.333 GHz qubit read
+                         // "4.3B" on an axis whose only other label was the bare
+                         // metric name. `~s` gives 4.3G, and the unit now sits
+                         // in the title, so the axis says what it means.
+                         tickformat: '~s',
+                         tickfont: { size: 10 }, automargin: true,
+                         range: _flat || undefined,
+                         autorange: _flat ? false : true },
                 plot_bgcolor: 'transparent', paper_bgcolor: 'transparent',
             };
             // Zoom/pan matter MORE here than anywhere else in the app: the
             // question this page answers is "when did this drift", which needs
             // a closer look at a region.
-            window._plotlyRender(host, traces, layout, {
+            var cfg = {
                 displayModeBar: 'hover', responsive: true,
                 modeBarButtonsToRemove: ['lasso2d', 'select2d'],
-                displaylogo: false });
+                displaylogo: false };
+            var drawn = window._plotlyRender(host, traces, layout, cfg);
+            // Plotly writes the WebGL message asynchronously, after the promise
+            // its renderer returns; check on the far side of it, and once more
+            // on the next frame for the case where it lands later still.
+            if (drawn && typeof drawn.then === 'function') {
+                drawn.then(function () {
+                    _healIfBlank(host, traces, layout, cfg);
+                    setTimeout(function () { _healIfBlank(host, traces, layout, cfg); }, 250);
+                });
+            } else {
+                setTimeout(function () { _healIfBlank(host, traces, layout, cfg); }, 250);
+            }
         });
     }
     return { toggle: toggle, setPath: setPath, suggest: suggest, render: render };

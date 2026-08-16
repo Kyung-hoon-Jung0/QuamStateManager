@@ -28,6 +28,30 @@ const PY = 'D:\\miniconda3\\envs\\cqt\\python.exe';
 const CHIP = 'D:\\work\\Customer_Codes\\CQT\\CS_installations\\qualibration_graphs'
            + '\\superconducting\\quam_state';
 
+// REFUSE to start on a port something else already holds. Without this the
+// readiness probe below is satisfied by the STALE server — it GETs "/" on the
+// port, gets 200 from the old process, prints READY, and every subsequent
+// measurement is taken against code that is not the code under test. That
+// happened, and it cost a full verification round before it was noticed.
+const net = require('net');
+const probe = net.createServer();
+let portBusy = false;
+try {
+  probe.listen({ port: Number(PORT), host: '127.0.0.1', exclusive: true });
+} catch (e) { portBusy = true; }
+probe.on('error', () => { portBusy = true; });
+// Give the bind a tick to fail, then decide.
+setTimeout(() => {
+  if (portBusy) {
+    console.error('[srv] FATAL: port ' + PORT + ' is already in use — refusing to '
+      + 'start, because a stale server there would answer the readiness probe '
+      + 'and silently serve old code.');
+    process.exit(2);
+  }
+  probe.close(() => start());
+}, 300);
+
+function start() {
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'smbrowse_' + TAG + '_'));
 const chip = path.join(root, 'quam_state');
 fs.cpSync(CHIP, chip, { recursive: true });
@@ -83,3 +107,5 @@ p.stderr.on('data', (d) => process.stderr.write('[srv] ' + d));
 p.on('exit', (c) => { process.stderr.write('[srv] exited ' + c + '\n'); process.exit(c || 0); });
 
 console.log(JSON.stringify({ port: Number(PORT), root, chip, instance: inst, pid: p.pid }));
+
+}

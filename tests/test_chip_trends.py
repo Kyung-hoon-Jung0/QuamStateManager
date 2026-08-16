@@ -333,3 +333,102 @@ class TestTimeAxis:
         assert "type: 'category'" not in src[j:]
         # the snapshot id survives into the hover
         assert "customdata" in src[j:]
+
+
+class TestTheChartActuallyDraws:
+    """Found by driving real Chrome — invisible to jsdom, which has no WebGL and
+    no Plotly renderer at all.
+
+    On the real 20-qubit chip EVERY Trends chart was blank, with the text
+    "WebGL is not supported by your browser" where the data should be. The
+    browser was fine (Intel Arc via ANGLE D3D11, webgl1 and webgl2 both
+    available) and a SINGLE scattergl chart drew correctly; it took THREE on one
+    page to break, because each takes ~3 WebGL contexts, browsers cap the total,
+    and Plotly's response to a refused context is to replace the chart with that
+    sentence rather than to throw.
+
+    The gate was `series.length > 8` — the QUBIT count. So every chip bigger
+    than 8 qubits, i.e. every real customer chip, took the WebGL path to draw
+    20 x 7 = 140 points.
+    """
+
+    def _js(self):
+        from pathlib import Path as _P
+        return _P("quam_state_manager/web/static/chip-status.js").read_text(encoding="utf-8")
+
+    def test_webgl_is_gated_on_node_count_not_qubit_count(self):
+        src = self._js()
+        assert "var nodes = c.series.length * longest;" in src
+        assert "nodes > GL_MIN_NODES" in src
+        # the qubit-count gate must be gone, not merely supplemented
+        assert "c.series.length > 8" not in src
+
+    def test_only_one_chart_may_spend_a_webgl_context(self):
+        """Three scattergl charts on one page is what actually broke it, so the
+        budget — not just the threshold — is load-bearing."""
+        src = self._js()
+        assert "_glBudget" in src
+        assert "_glBudget = 1;" in src, "the budget must be reset per render pass"
+        assert "if (dense) _glBudget--;" in src
+
+    def test_a_blank_chart_heals_itself(self):
+        """Plotly does not throw when a context is refused — it writes the
+        sentence into the div and returns normally. The only honest response is
+        to look, and redraw as SVG."""
+        src = self._js()
+        i = src.index("function _healIfBlank(")
+        body = src[i:i + 900]
+        assert "WebGL is not supported" in body
+        assert "'scatter'" in body, "the retry must be the SVG renderer"
+        assert "_healIfBlank(host, traces, layout, cfg)" in src, "and it must be called"
+
+    def test_the_threshold_leaves_real_data_on_svg(self):
+        """The server caps a series at 400 points, so 20 qubits x 400 = 8,000 is
+        the true worst case; a threshold above that would never use GL at all,
+        and one at 140 is what caused this."""
+        src = self._js()
+        m = re.search(r"var GL_MIN_NODES = (\d+);", src)
+        assert m, "GL_MIN_NODES must be a named constant"
+        n = int(m.group(1))
+        assert 1000 <= n <= 8000, n
+        assert 20 * 7 < n, "a 20-qubit chip with a few snapshots must stay on SVG"
+
+
+class TestTheAxisSaysWhatItMeans:
+    """Also from the real browser: the f_01 chart's y ticks read 4.3B / 4.4B —
+    US-billions — and the only other text on the plot was the bare metric name.
+    Nothing said Hz. And a parameter that had not moved (readout_amplitude,
+    0.00447 chip-wide) was drawn as a flat line at 0 on a -0.5..1 axis, which
+    reads as "this parameter is zero"."""
+
+    def test_the_unit_comes_from_the_chip_s_own_column_spec(self):
+        from quam_state_manager.web.routes import _trend_unit
+        assert _trend_unit("f_01") == "Hz"
+        assert _trend_unit("T1") == "s"
+
+    def test_an_unknown_metric_gets_no_invented_unit(self):
+        """Any leaf path typed into the "any parameter" box lands here."""
+        from quam_state_manager.web.routes import _trend_unit
+        assert _trend_unit("qubits.q1.xy.operations.x180_DragCosine.amplitude") == ""
+        assert _trend_unit("") == ""
+
+    def test_the_chart_payload_carries_the_unit(self, client):
+        body = client.get("/topology/trends?metrics=f_01").get_data(as_text=True)
+        assert '"unit": "Hz"' in body
+
+    def test_ticks_use_si_prefixes_and_the_title_carries_the_unit(self):
+        from pathlib import Path as _P
+        src = _P("quam_state_manager/web/static/chip-status.js").read_text(encoding="utf-8")
+        assert "tickformat: '~s'" in src, "4.3B is not a physics unit"
+        assert "c.metric + (c.unit ? ' (' + c.unit + ')' : '')" in src
+
+    def test_a_constant_series_is_not_drawn_against_zero(self):
+        src = _P_read()
+        assert "_flat" in src
+        assert "range: _flat || undefined" in src
+        assert "autorange: _flat ? false : true" in src
+
+
+def _P_read():
+    from pathlib import Path as _P
+    return _P("quam_state_manager/web/static/chip-status.js").read_text(encoding="utf-8")

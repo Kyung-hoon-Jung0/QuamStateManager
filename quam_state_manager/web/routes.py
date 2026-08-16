@@ -8496,6 +8496,21 @@ def _trend_points(values: list[dict]) -> list[tuple]:
     return out
 
 
+def _trend_unit(metric: str) -> str:
+    """The unit the grid already prints beside this very number.
+
+    A trend chart drew `4.6B` on an axis titled `f_01` — US-billions, and no
+    unit anywhere on the plot. The chip's own column spec has carried
+    ``unit: "Hz"`` for that field all along, so the axis can simply say so
+    instead of the reader having to know. Unknown metric (any leaf path typed
+    into the box) => empty, never a guessed unit.
+    """
+    for spec in _BULK_COLUMNS_SPEC:
+        if isinstance(spec, dict) and spec.get("key") == metric:
+            return str(spec.get("unit") or "")
+    return ""
+
+
 def _trend_series_curated(hm, path: Path, props: list[str]) -> list[dict]:
     """The SQLite property index — one call returns EVERY qubit for a metric."""
     try:
@@ -8627,13 +8642,14 @@ def topology_trends():
             order.append(s["metric"])
         by_metric[s["metric"]].append(s)
     charts = [{"metric": m, "series": by_metric[m],
-               "n_entities": len(by_metric[m])} for m in order]
+               "n_entities": len(by_metric[m]), "unit": _trend_unit(m)} for m in order]
     # A selected metric with NO series still gets a chart slot so the page can
     # say "nothing recorded yet" for it, instead of quietly showing fewer
     # charts than the user asked for.
     for m in sel:
         if m not in by_metric:
-            charts.append({"metric": m, "series": [], "n_entities": 0})
+            charts.append({"metric": m, "series": [], "n_entities": 0,
+                           "unit": _trend_unit(m)})
 
     return render_template("_topo_trends.html", charts=charts, curated=curated,
                            selected=sel, extra=extra, no_chip=False,
