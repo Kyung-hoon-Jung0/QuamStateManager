@@ -49,6 +49,7 @@ instance_audit*/
 node_modules
 node_modules/
 package-lock.json
+tests/browser/_*.cjs
 tests/browser/_shots/
 tmp_cr_audit/
 venv/
