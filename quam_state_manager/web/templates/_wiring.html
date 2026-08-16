@@ -58,6 +58,9 @@
             onclick="setChipStatusView('frequencies', this, true)" title="Jump to the frequency panels">Frequencies</button>
     <button type="button" class="topo-subnav-btn" role="tab" data-view="calibration"
             onclick="setChipStatusView('calibration', this, true)" title="Jump to the calibration panels">Calibration</button>
+    {# docs/120 items 5+9 #}
+    <button type="button" class="topo-subnav-btn" role="tab" data-view="trends"
+            onclick="setChipStatusView('trends', this, true)" title="Jump to the chip-wide trends">Trends</button>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
@@ -156,6 +159,18 @@
      Section 6: Per-Metric Detail Panels (grid + bar chart each)
      ═══════════════════════════════════════════════════════════════════ -->
 <div id="topo-metric-panels" data-topo-section="metrics"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     docs/120 items 5+9 — chip-wide Trends: every qubit on ONE plot per
+     metric. Param History answers "how did THIS qubit move"; the customer
+     asked for the integrated view, and asked for it twice.
+     Lazily fetched (see _ensureSectionBuilt) — it reads the history index,
+     which is not cheap enough to ride the Chip Status page render.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="topo-section" data-topo-section="trends">
+    <h3 class="topo-section-title">Trends</h3>
+    <div id="topo-trends" class="topo-trends"></div>
+</div>
 
 <!-- JSON drill-down panel (hidden by default) -->
 <div id="json-panel" class="json-panel hidden">

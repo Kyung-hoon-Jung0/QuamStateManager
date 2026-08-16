@@ -7725,7 +7725,7 @@ def wiring_view():
     # the topology-diagram-only view.
     # Phase C scroll-spy sections (+ "full" kept for old bookmarks → topology).
     _CHIP_VIEWS = {"topology", "overview", "distributions", "gate", "fidelity",
-                   "coherence", "frequencies", "calibration", "full"}
+                   "coherence", "frequencies", "calibration", "trends", "full"}
     chip_view = request.args.get("view", "").strip().lower()
     if chip_view not in _CHIP_VIEWS:
         chip_view = ""
@@ -8190,6 +8190,143 @@ def state_history_snapshot():
         return render_template("_status.html",
                                message=f"Snapshot failed: {exc}", level="error"), 500
     return state_history()
+
+
+# ── docs/120 items 5+9 — chip-wide Trends ─────────────────────────────────
+#
+# Customer (twice, as items 5 and 9): "to see T1/RB/T2 trends today you go to
+# Param History, but that shows PER-QUBIT trends, not an INTEGRATED one. Add a
+# Trends tab under Chip Status where ALL qubits' T1 appear in a SINGLE plot.
+# A multiple-line plot, legend = all qubits."
+#
+# The user approved "any numeric parameter" conditionally on the overhead
+# investigation, which came back green (docs/120): a whole-chip leaf index is
+# 1.21 MB over 433 real snapshots and a 20-qubit overlay of one metric costs
+# 0.32-0.92 ms. Coverage is why it matters -- on the real chip T1/T2/fidelity
+# are null and the curated eleven would render an almost empty page, while 588
+# parameters have a real history.
+#
+# So: the curated properties are the DEFAULT selection (useful on open, and the
+# fast SQL tier), and any other numeric leaf is reachable by dot-path through
+# the docs/83 leaf index. Both tiers are normalised to ONE series shape so the
+# template renders them identically.
+
+_TRENDS_MAX_SERIES = 400        # a 20-qubit chip x 4 metrics is 80; armor only.
+
+
+def _trend_series_curated(hm, path: Path, props: list[str]) -> list[dict]:
+    """The SQLite property index — one call returns EVERY qubit for a metric."""
+    try:
+        rows = hm.extract_property_history(path, props, downsample=400)
+    except Exception:  # noqa: BLE001
+        return []
+    out = []
+    for r in rows:
+        pts = [(p.get("timestamp"), p.get("value")) for p in (r.get("values") or [])
+               if isinstance(p.get("value"), (int, float))]
+        if pts:
+            out.append({"metric": r["property"], "entity": r["qubit"], "points": pts})
+    return out
+
+
+def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str]) -> list[dict]:
+    """Any numeric leaf, via the docs/83 change-point index.
+
+    A path names ONE qubit (``qubits.q3.xy.operations.x180.amplitude``); the
+    point of this page is every qubit at once, so the qubit segment is swapped
+    across the chip and each concrete path queried. A qubit that never carried
+    the leaf simply contributes no line — absence is not an error.
+    """
+    parts = dot_path.split(".")
+    out: list[dict] = []
+    if len(parts) >= 3 and parts[0] == "qubits":
+        tmpl, label = parts[:], ".".join(parts[2:])
+        for q in qubits:
+            tmpl[1] = q
+            rows = hm.leaf_field_series(path, ".".join(tmpl))
+            pts = [(r[0], r[1]) for r in (rows or []) if isinstance(r[1], (int, float))]
+            if pts:
+                out.append({"metric": label, "entity": q, "points": pts})
+        return out
+    # Not qubit-scoped (a port, a pair leaf, a top-level key) — one line, and
+    # the path itself is the legend, because there is nothing to fan out over.
+    rows = hm.leaf_field_series(path, dot_path)
+    pts = [(r[0], r[1]) for r in (rows or []) if isinstance(r[1], (int, float))]
+    if pts:
+        out.append({"metric": dot_path, "entity": dot_path.split(".")[-1], "points": pts})
+    return out
+
+
+@bp.route("/topology/trends")
+def topology_trends():
+    """The Trends section: one chart per metric, one line per qubit.
+
+    Lazily fetched by the section (never on the Chip Status render) because it
+    touches the history index, and a chip with hundreds of snapshots should not
+    pay for a page the user may not scroll to.
+    """
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam" or not ctx.get("path"):
+        return render_template("_topo_trends.html", charts=[], curated=[],
+                               selected=[], extra="", no_chip=True)
+    hm = _history()
+    path = Path(ctx["path"])
+    store = _store()
+    qubits = list(store.qubit_names) if store else []
+
+    curated = list(DEFAULT_TRACKED_PROPERTIES)
+    extra = (request.args.get("path") or "").strip()
+    sel = [m for m in (request.args.get("metrics") or "").split(",") if m.strip()]
+    # Default only on a BARE request. Turning every chip off is a choice, and
+    # re-injecting the defaults over it would make the last chip un-turn-off-able
+    # whenever a parameter path was also being charted.
+    if not sel and "metrics" not in request.args and not extra:
+        # A useful default rather than an empty page: the coherence + fidelity
+        # trio a lab looks at first. Metrics with no data still render, saying
+        # so — see the template; silently dropping them would make a chip look
+        # like it has no history at all.
+        sel = ["T1", "T2echo", "gate_fidelity_avg"]
+    sel = [m for m in sel if m in curated][:8]
+
+    series = _trend_series_curated(hm, path, sel) if sel else []
+    if extra:
+        series += _trend_series_leaf(hm, path, extra, qubits)
+
+    if len(series) > _TRENDS_MAX_SERIES:
+        series = series[:_TRENDS_MAX_SERIES]
+
+    # Group into one chart per metric, preserving the requested order so the
+    # page does not reshuffle as data arrives.
+    order: list[str] = []
+    by_metric: dict[str, list[dict]] = {}
+    for s in series:
+        by_metric.setdefault(s["metric"], [])
+        if s["metric"] not in order:
+            order.append(s["metric"])
+        by_metric[s["metric"]].append(s)
+    charts = [{"metric": m, "series": by_metric[m],
+               "n_entities": len(by_metric[m])} for m in order]
+    # A selected metric with NO series still gets a chart slot so the page can
+    # say "nothing recorded yet" for it, instead of quietly showing fewer
+    # charts than the user asked for.
+    for m in sel:
+        if m not in by_metric:
+            charts.append({"metric": m, "series": [], "n_entities": 0})
+
+    return render_template("_topo_trends.html", charts=charts, curated=curated,
+                           selected=sel, extra=extra, no_chip=False,
+                           snapshots=len(hm.list_snapshots(path)))
+
+
+@bp.route("/topology/trends/paths")
+def topology_trends_paths():
+    """Typeahead over every numeric leaf the chip has ever recorded."""
+    q = (request.args.get("q") or "").strip()
+    ctx = _active_ctx()
+    if not q or not ctx or not ctx.get("path"):
+        return jsonify([])
+    hits = _history().leaf_search(Path(ctx["path"]), q, limit=25)
+    return jsonify(hits)
 
 
 # ── docs/120 item 10 — the working-state version, from the top bar ────────

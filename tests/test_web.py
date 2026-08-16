@@ -1581,12 +1581,17 @@ class TestSidebarFeatures:
                 / "quam_state_manager" / "web" / "templates" / "base.html")
         text = base.read_text(encoding="utf-8")
         assert 'id="chip-status-subnav"' in text, "left-nav Chip Status sub-items missing"
-        # 8 sections, each wired to chipNavView(), in top-to-bottom scroll order.
-        assert text.count("chipNavView(") == 8
+        # 9 sections, each wired to chipNavView(), in top-to-bottom scroll order.
+        # Trends joined in docs/120 items 5+9 (all qubits on one plot per metric).
+        assert text.count("chipNavView(") == 9
         assert "view=full" not in text, "Full View was removed in the Phase C scroll dashboard"
+        assert "view=trends" in text
         assert text.index("view=topology") < text.index("view=overview") < text.index("view=distributions"), (
             "Topology should lead, then Overview, then Distributions."
         )
+        # Trends reads history rather than the loaded chip, so it sits last —
+        # after the live-state sections, not among them.
+        assert text.index("view=calibration") < text.index("view=trends")
 
     def test_core_scripts_not_deferred(self):
         """app.js (UI_CONFIG) and dataset-virtual.js (DatasetVirtual) must load

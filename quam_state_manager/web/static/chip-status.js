@@ -1697,6 +1697,8 @@ window.ChipStatus.mount = function (opts) {
         coherence:    { build: 'metrics',       sel: '#topo-metric-panels [data-group="coherence"]' },
         frequencies:  { build: 'metrics',       sel: '#topo-metric-panels [data-group="frequency"]' },
         calibration:  { build: 'metrics',       sel: '#topo-metric-panels [data-group="calibration"]' },
+        // docs/120 items 5+9 — every qubit on ONE plot per metric.
+        trends:       { build: 'trends',        sel: '[data-topo-section="trends"]' },
     };
     var _chipSectionBuilt = {};   // section key -> built once (lazy heavy builders)
     var _suppressSpyUntil = 0;    // ignore scroll-spy briefly after a click-jump
@@ -1707,6 +1709,15 @@ window.ChipStatus.mount = function (opts) {
         if (key === 'distributions') renderHistograms();
         else if (key === '2qrb') build2QRBPanels();
         else if (key === 'metrics') buildMetricPanels();
+        // Trends fetches its own data (the history index is not cheap enough to
+        // ride the page render), so building it means asking for it once.
+        else if (key === 'trends') {
+            var host = document.getElementById('topo-trends');
+            if (host && window.htmx) {
+                htmx.ajax('GET', '/topology/trends',
+                          { target: '#topo-trends', swap: 'outerHTML' });
+            }
+        }
     }
 
     function _throttle(fn, ms) {
@@ -1748,14 +1759,14 @@ window.ChipStatus.mount = function (opts) {
     // Lazy build: materialise a heavy section as it approaches the viewport.
     function _setupLazyBuild() {
         if (!window.IntersectionObserver) {       // fallback: build everything now
-            ['distributions', '2qrb', 'metrics'].forEach(_ensureSectionBuilt); return;
+            ['distributions', '2qrb', 'metrics', 'trends'].forEach(_ensureSectionBuilt); return;
         }
         var io = new IntersectionObserver(function(entries) {
             entries.forEach(function(e) {
                 if (e.isIntersecting) _ensureSectionBuilt(e.target.getAttribute('data-topo-section'));
             });
         }, { root: _scrollPane(), rootMargin: '400px 0px 400px 0px' });
-        ['distributions', '2qrb', 'metrics'].forEach(function(k) {
+        ['distributions', '2qrb', 'metrics', 'trends'].forEach(function(k) {
             var el = document.querySelector('[data-topo-section="' + k + '"]');
             if (el) io.observe(el);
         });
@@ -2381,3 +2392,109 @@ window.ChipStatus.liveDetection = function () {
         }
     });
 };
+
+/* ── docs/120 items 5+9: chip-wide Trends ────────────────────────────────
+ *
+ * Customer: "to see T1/RB/T2 trends today you go to Param History, but that
+ * shows PER-QUBIT trends, not an INTEGRATED one. Add a Trends tab under Chip
+ * Status where ALL qubits' T1 appear in a SINGLE plot. A multiple-line plot,
+ * legend = all qubits."
+ *
+ * One chart per metric, one trace per qubit, legend = the qubit ids. The
+ * colorway is UI_CONFIG.plotly.colorway, which app.js documents as being for
+ * exactly this ("Plotly cycles through these colors to draw each qubit's
+ * line"), so the chip-wide view matches every other multi-qubit surface.
+ */
+window.ChipTrends = (function () {
+    function _params() {
+        var box = document.getElementById('topo-trends');
+        var sel = [];
+        if (box) {
+            Array.prototype.slice.call(box.querySelectorAll('.topo-trend-chip.active'))
+                .forEach(function (b) { sel.push(b.getAttribute('data-trend-metric')); });
+        }
+        var pathEl = document.getElementById('topo-trend-path');
+        var q = 'metrics=' + encodeURIComponent(sel.join(','));
+        if (pathEl && pathEl.value.trim()) q += '&path=' + encodeURIComponent(pathEl.value.trim());
+        return q;
+    }
+    function _reload() {
+        if (!window.htmx) return;
+        htmx.ajax('GET', '/topology/trends?' + _params(),
+                  { target: '#topo-trends', swap: 'outerHTML' });
+    }
+    function toggle(metric) {
+        var b = document.querySelector('.topo-trend-chip[data-trend-metric="' + metric + '"]');
+        if (b) {
+            var on = b.classList.toggle('active');
+            b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        }
+        _reload();
+    }
+    function setPath(p) {
+        var el = document.getElementById('topo-trend-path');
+        if (el) el.value = p || '';
+        var s = document.getElementById('topo-trend-suggest');
+        if (s) s.hidden = true;
+        _reload();
+    }
+    var _sugTimer = null;
+    function suggest(q) {
+        clearTimeout(_sugTimer);
+        var box = document.getElementById('topo-trend-suggest');
+        if (!box) return;
+        if (!q || q.trim().length < 2) { box.hidden = true; return; }
+        _sugTimer = setTimeout(function () {
+            fetch('/topology/trends/paths?q=' + encodeURIComponent(q.trim()))
+                .then(function (r) { return r.json(); })
+                .then(function (rows) {
+                    if (!rows || !rows.length) { box.hidden = true; return; }
+                    box.innerHTML = rows.map(function (r) {
+                        var p = (typeof r === 'string') ? r : (r.path || r.dot_path || '');
+                        return '<button type="button" class="topo-trend-sug"'
+                             + ' onclick="ChipTrends.setPath(this.textContent)">'
+                             + p.replace(/[&<>"]/g, function (c) {
+                                 return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+                               }) + '</button>';
+                    }).join('');
+                    box.hidden = false;
+                })
+                .catch(function () { box.hidden = true; });
+        }, 220);
+    }
+    /* Charts arrive as [{metric, series:[{entity, points:[[ts, value], ...]}]}].
+       Timestamps are the snapshot ids ("20260816_012907_4661") — rendered as a
+       category axis in recorded order, which is what makes uneven calibration
+       intervals read as a sequence of events rather than as misleading gaps. */
+    function render(charts) {
+        if (!window._plotlyRender || !charts) return;
+        charts.forEach(function (c, idx) {
+            var host = document.getElementById('topo-trend-' + idx);
+            if (!host || !c.series || !c.series.length) return;
+            var traces = c.series.map(function (s) {
+                return {
+                    x: s.points.map(function (p) { return p[0]; }),
+                    y: s.points.map(function (p) { return p[1]; }),
+                    mode: 'lines+markers', type: 'scatter', name: s.entity,
+                    connectgaps: false, marker: { size: 5 },
+                    hovertemplate: '%{fullData.name}<br>%{x}<br>%{y}<extra></extra>',
+                };
+            });
+            var layout = {
+                margin: { l: 58, r: 12, t: 8, b: 64 },
+                height: 300,
+                showlegend: true,
+                legend: { orientation: 'h', y: -0.28, font: { size: 10 } },
+                colorway: (window.UI_CONFIG && UI_CONFIG.plotly && UI_CONFIG.plotly.colorway) || undefined,
+                xaxis: { type: 'category', tickangle: -40, tickfont: { size: 9 },
+                         automargin: true },
+                yaxis: { title: { text: c.metric, font: { size: 11 } },
+                         tickfont: { size: 10 }, automargin: true },
+                plot_bgcolor: 'transparent', paper_bgcolor: 'transparent',
+            };
+            window._plotlyRender(host, traces, layout, { displayModeBar: false,
+                                                         responsive: true });
+        });
+    }
+    return { toggle: toggle, setPath: setPath, suggest: suggest, render: render };
+})();
