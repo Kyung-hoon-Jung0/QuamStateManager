@@ -96,7 +96,12 @@
                    (not hx-get); opens in a new tab. #}
                 <li><a href="/workbench" target="_blank" rel="noopener"
                        class="wb-link" title="Open Qualibrate side-by-side with the State Manager">⌗ Sync-Qualibrate</a></li>
-                <li id="topbar-tray-slot">{% include '_pending_tray.html' %}</li>
+                <li id="topbar-tray-slot">{% include '_pending_tray.html' %}
+                    {# docs/120 item 8: OUTSIDE #pending-tray (which OOB-swaps on
+                       every commit) but inside its slot, so the popup survives a
+                       flush and the CSS can still anchor to the pill. Filled on
+                       demand — the switches must show the CURRENT session. #}
+                    <span id="auto-sync-pop-host"></span></li>
                 {# docs/120 item 10 — the working-state VERSION, in the slot the
                    bookmark used to hold (it moved to the sidebar tools, below
                    Calculator, per the user). It sits immediately right of the
@@ -785,6 +790,11 @@
         <button onclick="BulkEdit.toggleBold()" class="settings-opt bulk-bold-toggle" id="bulk-bold"
                 aria-pressed="false" title="Bold values">B</button>
         </div>
+        <label class="settings-slider" title="Font size">
+        <span class="muted">Aa</span>
+        <input type="range" id="bulk-font-slider" min="0.75" max="1.7" step="0.05" value="1"
+               oninput="BulkEdit.setFont(this.value)" aria-label="Table cell font size">
+        </label>
         <label class="settings-slider" title="Letter spacing (digit gap)">
         <span class="muted">&#8596;</span>
         <input type="range" id="bulk-ls-slider" min="0" max="0.12" step="0.02" value="0"
@@ -800,6 +810,11 @@
         <button onclick="AllValues.toggleBold()" class="settings-opt" id="av-bold"
                 aria-pressed="false" title="Bold values">B</button>
         </div>
+        <label class="settings-slider" title="Font size">
+        <span class="muted">Aa</span>
+        <input type="range" id="av-font-slider" min="0.85" max="1.3" step="0.05" value="1"
+               oninput="AllValues.setFont(this.value)" aria-label="Flat view font size">
+        </label>
         <label class="settings-slider" title="Letter spacing (digit gap)">
         <span class="muted">&#8596;</span>
         <input type="range" id="av-ls-slider" min="0" max="0.12" step="0.02" value="0"

@@ -10641,3 +10641,55 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .as-row-disabled { opacity: 0.45; }
 .as-note { font-size: 0.72rem; margin: 0.4rem 0 0.5rem; line-height: 1.35; }
 .as-actions { display: flex; gap: 0.4rem; }
+
+/* ── docs/120 items 5+9: chip-wide Trends ──────────────────────────────────
+   The customer asked for this to be "BIG, NICE, MODERN and FANCY" — it is the
+   final read on a whole chip. The first cut shipped with NO rules at all, so
+   under Pico every <button> rendered as a full-width solid primary block with a
+   1rem margin: eleven identical blue slabs, no visible selected state, and a
+   suggestion list that shoved the page down instead of floating. These follow
+   .topo-hero-mbtn, the same control pattern one section above. */
+.topo-trends-controls { display: flex; align-items: center; gap: .5rem;
+    flex-wrap: wrap; margin-bottom: .7rem; }
+.topo-trends-label { font-size: .74rem; text-transform: uppercase;
+    letter-spacing: .05em; }
+.topo-trends-chips { display: flex; align-items: center; gap: .3rem;
+    flex-wrap: wrap; min-width: 0; }
+.topo-trend-chip { margin: 0; width: auto;
+    font-size: .76em; padding: .16rem .6rem; border-radius: 999px;
+    border: 1px solid var(--pico-muted-border-color); background: transparent;
+    color: var(--pico-muted-color); cursor: pointer; line-height: 1.35;
+    white-space: nowrap; font-family: var(--font-mono); }
+.topo-trend-chip:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
+.topo-trend-chip.active { background: var(--pico-primary);
+    border-color: var(--pico-primary); color: var(--pico-primary-inverse);
+    font-weight: 600; }
+.topo-trends-count { font-size: .74rem; margin-left: auto; }
+
+/* The any-parameter typeahead: a real dropdown, not a page-shoving list. */
+.topo-trends-any { position: relative; flex: 1 1 16rem; min-width: 12rem; }
+.topo-trend-path { width: 100%; margin: 0; padding: .2rem .5rem;
+    font-size: .78rem; height: auto; font-family: var(--font-mono); }
+.topo-trend-suggest { position: absolute; top: calc(100% + .2rem); left: 0; right: 0;
+    z-index: 30; max-height: 16rem; overflow-y: auto;
+    background: var(--pico-card-background-color);
+    border: 1px solid var(--pico-muted-border-color); border-radius: .3rem;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, .16); }
+.topo-trend-suggest[hidden] { display: none; }
+.topo-trend-sug { display: block; width: 100%; margin: 0; text-align: left;
+    padding: .22rem .5rem; border: none; border-radius: 0; background: transparent;
+    color: inherit; font-family: var(--font-mono); font-size: .72rem;
+    cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topo-trend-sug:hover { background: var(--pico-primary); color: var(--pico-primary-inverse); }
+
+/* Charts: two-up on a wide pane, one-up when narrow. Big is the point. */
+.topo-trends-grid { display: grid; gap: .9rem;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 30rem), 1fr)); }
+.topo-trend-box { border: 1px solid var(--pico-muted-border-color);
+    border-radius: .45rem; padding: .5rem .6rem .3rem;
+    background: var(--pico-card-background-color); min-width: 0; }
+.topo-trend-title { font-size: .82rem; font-weight: 600; margin-bottom: .2rem;
+    font-family: var(--font-mono); }
+.topo-trend-title .muted { font-family: var(--font-sans, inherit); font-weight: 400; }
+.topo-trend-chart { min-height: 300px; }
+.topo-trend-empty { font-size: .76rem; margin: .6rem 0 .9rem; line-height: 1.4; }

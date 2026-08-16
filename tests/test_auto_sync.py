@@ -203,15 +203,22 @@ class TestTheSignalRidesTheExistingPoll:
         src = (Path(__file__).resolve().parent.parent / "quam_state_manager"
                / "web" / "static" / "app.js").read_text(encoding="utf-8")
         i = src.index("/auto-sync/pull")
-        chunk = src[i - 900:i + 400]
+        chunk = src[i - 2600:i + 600]
         assert "_applyInFlight" in chunk
+        # ...and it must always be released, including when the request never
+        # settles — the same latch gates the manual Apply buttons, so a wedged
+        # pull would make them read as dead clicks (the docs/80 lesson).
+        assert "setTimeout(_rel" in chunk
+        # ...and releasing must poke the push flusher, whose queued work is
+        # drained only by its own completion handler.
+        assert "AutoApply.drain" in chunk
 
     def test_no_new_poller_was_added(self):
         src = (Path(__file__).resolve().parent.parent / "quam_state_manager"
                / "web" / "static" / "app.js").read_text(encoding="utf-8")
         # the pull is issued from inside the existing drift poll's handler
         i = src.index("/auto-sync/pull")
-        assert "/state/drift" in src[max(0, i - 2000):i]
+        assert "/state/drift" in src[max(0, i - 4000):i]
 
 
 class TestFailuresDisarm:
@@ -273,9 +280,124 @@ class TestTheTraySaysWhichModeIsOn:
         assert "asks before replacing" in c.get("/state/tray").get_data(as_text=True)
 
     def test_the_three_switches_default_to_on(self, tmp_path):
-        """The user's call: all checked, uncheck what you don't want."""
+        """The user's call: all checked, uncheck what you don't want.
+
+        The switches are their own fragment now, fetched when the pill is
+        clicked — they used to live inside #pending-tray, which OOB-swaps on
+        every commit, so a flush mid-configuration destroyed a partial choice.
+        """
         app, c, _ = _mk(tmp_path)
-        body = c.get("/state/tray").get_data(as_text=True)
+        body = c.get("/auto-sync/panel").get_data(as_text=True)
         for cid in ("as-pull", "as-pull-replace", "as-push"):
             i = body.index(f'id="{cid}"')
             assert "checked" in body[i:i + 200], cid
+
+    def test_the_switches_are_not_inside_the_swapped_tray(self, tmp_path):
+        """Reducing permissions must not be able to fail silently."""
+        app, c, _ = _mk(tmp_path)
+        assert 'id="auto-sync-pop"' not in c.get("/state/tray").get_data(as_text=True)
+        assert 'id="auto-sync-pop"' in c.get("/auto-sync/panel").get_data(as_text=True)
+
+    def test_the_panel_shows_the_session_that_is_actually_armed(self, tmp_path):
+        app, c, _ = _mk(tmp_path)
+        c.post("/auto-sync/set", data={"pull": "1"})     # replace OFF
+        body = c.get("/auto-sync/panel").get_data(as_text=True)
+        i = body.index('id="as-pull-replace"')
+        assert "checked" not in body[i:i + 200]
+
+
+class TestTheRedTeamFindings:
+    """Each of these is a way the first cut destroyed work or lied. They are
+    pinned by the scenario that produced them, not by the patch that fixed
+    them."""
+
+    def test_the_dirty_check_is_repeated_inside_the_build_lock(self, tmp_path):
+        """/field/edit takes only store._lock, and the window between the
+        outer check and store.reload() spans lock acquisition plus two live
+        reads and two working-folder writes — it opens exactly when an
+        experiment just wrote the chip, i.e. when someone is mid-edit. An edit
+        landing there was destroyed with "replace" UNCHECKED."""
+        from quam_state_manager.web import routes as R
+        src = Path(R.__file__).read_text(encoding="utf-8")
+        i = src.index("def auto_sync_pull")
+        body = src[i:i + 4600]
+        lock_at = body.index("with build_lock:")
+        after = body[lock_at:]
+        assert "_quam_ctx_dirty(ctx)" in after, "no re-check inside the lock"
+
+    def test_a_replace_pull_snapshots_before_discarding(self, tmp_path):
+        """The change log is not journalled (the journal captures on save) and
+        the redo stack self-invalidates, so without this the discarded work
+        existed NOWHERE — while the popup promised revertibility."""
+        app, c, live = _mk(tmp_path)
+        c.post("/auto-sync/set", data={"pull": "1", "pull_replace": "1"})
+        c.post("/field/edit", data={"dot_path": "qubits.q1.f_01", "value": "5.5e9"})
+        _diverge(app, live, 6.9e9)
+        assert c.post("/auto-sync/pull").status_code == 200
+        body = c.get("/state/versions").get_data(as_text=True)
+        assert 'class="sv-check"' in body, "the pre-pull state is recoverable"
+
+    def test_the_reapply_stash_is_cleared(self, tmp_path):
+        """Every other _rebuild_after_working_copy_replaced caller pairs it with
+        _clear_reapply. Leaving the stash lets a later "Pull & apply (merge)"
+        replay the very values the user was told had been replaced — onto the
+        chip."""
+        from quam_state_manager.web import routes as R
+        src = Path(R.__file__).read_text(encoding="utf-8")
+        i = src.index("def auto_sync_pull")
+        body = src[i:i + 4600]
+        assert "_clear_reapply(ctx)" in body
+
+    def test_typed_but_uncommitted_cells_block_a_non_replace_pull(self, tmp_path):
+        """A fill-down or pasted column lives only in the DOM until Apply, so
+        the server reads the working copy as CLEAN and the "no local edits"
+        row would fire and wipe the column with no prompt. The client reports
+        it; the server treats it as dirt."""
+        app, c, live = _mk(tmp_path)
+        c.post("/auto-sync/set", data={"pull": "1"})       # replace OFF
+        _diverge(app, live, 6.7e9)
+        assert c.post("/auto-sync/pull?dom_dirty=1").status_code == 204
+        assert _f01(app) == 6.0e9, "the typed column was not pulled over"
+        # ...and with replace ticked the user has consented, so it proceeds
+        c.post("/auto-sync/set", data={"pull": "1", "pull_replace": "1"})
+        assert c.post("/auto-sync/pull?dom_dirty=1").status_code == 200
+
+    def test_a_declined_pull_stops_being_advertised(self, tmp_path):
+        """live_diverged never clears on its own, so the client used to POST a
+        204-ing pull every 5 s forever — and each took window._applyInFlight,
+        which also gates the manual Apply buttons, making them dead clicks."""
+        app, c, live = _mk(tmp_path)
+        c.post("/auto-sync/set", data={"pull": "1"})       # replace OFF
+        c.post("/field/edit", data={"dot_path": "qubits.q1.f_01", "value": "5.5e9"})
+        _diverge(app, live, 6.8e9)
+        assert c.get("/state/drift").get_json().get("auto_pull") is False
+
+    def test_changing_a_switch_keeps_the_revert_anchor(self, tmp_path):
+        """docs/117 anchors "Revert last apply" to the session. Rebuilding it
+        wholesale turned "undo this session" into "undo the next edit", with
+        nothing on screen saying so."""
+        app, c, _ = _mk(tmp_path)
+        c.post("/auto-sync/set", data={"pull": "1", "pull_replace": "1", "push": "1"})
+        sess = _ctx(app)["auto_apply"]
+        sess["pre_ts"] = "20260101_000000_0000"
+        sess["flushes"] = 7
+        c.post("/auto-sync/set", data={"pull": "1", "push": "1"})   # untick replace
+        after = _ctx(app)["auto_apply"]
+        assert after["pre_ts"] == "20260101_000000_0000"
+        assert after["flushes"] == 7
+        assert after["pull_replace"] is False, "the switch itself did change"
+
+    def test_a_drifted_chip_arms_what_it_can_instead_of_nothing(self, tmp_path):
+        """The popup opens all-checked, and a drifted chip is exactly when a
+        user reaches for Auto-Sync — refusing the whole submission armed
+        NOTHING and cost four extra interactions."""
+        app, c, live = _mk(tmp_path)
+        _diverge(app, live, 6.1e9)
+        r = c.post("/auto-sync/set",
+                   data={"pull": "1", "pull_replace": "1", "push": "1"})
+        assert r.status_code == 200
+        sess = _ctx(app)["auto_apply"]
+        assert sess["pull"] is True and sess["pull_replace"] is True
+        assert sess["push"] is False, "push is withheld, not the whole session"
+        assert "Auto-push is off" in (r.headers.get("HX-Trigger") or ""), \
+            "and the user is told which half was withheld"

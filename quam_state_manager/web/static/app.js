@@ -350,6 +350,18 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
         evt.detail.shouldSwap = true;
         evt.detail.isError = false;
     }
+    // docs/120 item 10: the top-bar version panel's "Go back" posts the SAME
+    // gated restore-live route, into #table-pane. Its two independent gates
+    // (unsaved edits, wiring-topology mismatch) answer 409 with the force
+    // panel, and having unsaved edits is the ORDINARY state — so without this
+    // the button was a dead click exactly when "revert back and forth has to
+    // be really free" mattered most. Narrow, like its siblings: only a body
+    // that actually carries the confirm fragment may swap.
+    if (t.id === 'table-pane' && status === 409 && evt.detail.xhr
+        && /sh-confirm/.test(evt.detail.xhr.responseText || '')) {
+        evt.detail.shouldSwap = true;
+        evt.detail.isError = false;
+    }
     // The tray's "Revert last apply" targets #status-bar; a stale tray can post
     // while edits exist and the stage gate 409s with a confirm fragment —
     // render it there instead of a dead click (docs/65). Narrowed to the
@@ -2671,9 +2683,36 @@ window.applyEditsToLive = function () {
                 // never interleave with a push.
                 if (d && d.auto_pull && !window._applyInFlight && window.htmx) {
                     window._applyInFlight = true;
-                    var _rel = function () { window._applyInFlight = false; };
+                    var _relTimer = null;
+                    var _rel = function () {
+                        if (_relTimer) { clearTimeout(_relTimer); _relTimer = null; }
+                        window._applyInFlight = false;
+                        // This latch also gates the MANUAL Apply buttons and the
+                        // auto-apply flusher, and the flusher parks work in its
+                        // own `_queued` flag while it is held. Releasing without
+                        // poking it left an edit unapplied until the next tray
+                        // mutation, while the pill still claimed auto-push was on.
+                        if (window.AutoApply && window.AutoApply.drain) {
+                            try { window.AutoApply.drain(); } catch (e2) {}
+                        }
+                    };
+                    // A never-settling request must not wedge Apply forever —
+                    // docs/80 fixed exactly this class for the dataset poll and
+                    // the pattern belongs here too. The server side is idempotent,
+                    // so releasing early can at worst allow one redundant pull.
+                    _relTimer = setTimeout(_rel, 20000);
                     try {
-                        var pp = window.htmx.ajax('POST', '/auto-sync/pull', {
+                        // The server cannot see typed-but-uncommitted grid cells
+                        // (a fill-down or pasted column lives only in the DOM
+                        // until Apply), so it would read the working copy as
+                        // clean and pull straight over them. Report them.
+                        var _domDirty = !!document.querySelector(
+                            '.bulk-cell.bulk-dirty, .bulk-cell[data-dirty="1"]');
+                        if (!_domDirty && window.BulkEdit && window.BulkEdit.hasUnsaved) {
+                            try { _domDirty = !!window.BulkEdit.hasUnsaved(); } catch (e3) {}
+                        }
+                        var pp = window.htmx.ajax('POST',
+                            '/auto-sync/pull' + (_domDirty ? '?dom_dirty=1' : ''), {
                             target: '#pending-tray', swap: 'outerHTML',
                         });
                         if (pp && typeof pp.then === 'function') pp.then(_rel, _rel);
@@ -9445,6 +9484,16 @@ window._openFspPopup = (function () {
         if (typeof v === "number" && window._groupDigits) return window._groupDigits(v);
         return String(v);
     }
+    /* An amplitude for an INPUT: never grouped (thousands separators would not
+       parse back) and never the raw product of a float multiply. */
+    function _ampStr(v) {
+        if (typeof v !== "number" || !isFinite(v)) return String(v);
+        var s = v.toPrecision(6);
+        if (s.indexOf("e") < 0 && s.indexOf(".") >= 0) {
+            s = s.replace(/0+$/, "").replace(/\.$/, "");
+        }
+        return s;
+    }
     function ensure() {
         if (overlay) return overlay;
         overlay = document.createElement("div");
@@ -9591,7 +9640,13 @@ window._openFspPopup = (function () {
             var inp = document.createElement("input");
             inp.type = "text";
             inp.className = "fsp-amp-input" + (a.clips ? " fsp-amp-clip" : "");
-            inp.value = String(a.new);
+            // Readable, not raw. `a.new` is amp*factor, so it arrives as
+            // 0.15848931924611134 — which overflowed the field and read as
+            // noise beside a nicely formatted "amplitude now". Amplitudes are
+            // O(0.001..1), so 6 significant figures is far finer than anything
+            // a DAC resolves while still fitting. `a.new` keeps the exact value
+            // for the reset and for the un-edited resend.
+            inp.value = _ampStr(a.new);
             inp.setAttribute("inputmode", "decimal");
             inp.setAttribute("aria-label", "compensated amplitude for "
                 + (a.channel || "") + " " + (a.op || ""));
@@ -9606,10 +9661,10 @@ window._openFspPopup = (function () {
             tr.appendChild(mark);
             var reset = _el("button", "fsp-amp-reset", "↺");
             reset.type = "button";
-            reset.title = "Back to the computed value (" + String(a.new) + ")";
+            reset.title = "Back to the computed value (" + _ampStr(a.new) + ")";
             reset.style.visibility = "hidden";
             reset.addEventListener("click", function () {
-                inp.value = String(a.new);
+                inp.value = _ampStr(a.new);
                 _recount();
                 inp.focus();
             });

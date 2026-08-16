@@ -606,7 +606,25 @@ def _refresh_live_diverged(ctx) -> None:
     if not ctx or ctx.get("type") != "quam" or ctx.get("live_diverged"):
         return
     if _quam_ctx_dirty(ctx):
-        return
+        # docs/120 item 8: an ARMED Auto-Sync pull is the user asking SM to
+        # watch, so the skip is lifted for exactly that case.
+        #
+        # The skip's original reasoning ("the explicit sync/apply paths own
+        # those") was sound while nothing pulled on its own. With auto-pull it
+        # became a hole precisely where the feature was promised: make edits,
+        # qualibrate rewrites the chip, and the flag the pull depends on is
+        # never raised — so "auto replace my modified values", the checkbox
+        # asked for BY NAME, could only ever fire when the divergence happened
+        # before the user started typing.
+        #
+        # Everyone who has not armed pull is untouched, and escalating the flag
+        # is still all this does: it never clears it, never touches change_log
+        # / working_dirty / pending_reapply. The decision about what to do with
+        # a dirty context still belongs to /auto-sync/pull, which refuses
+        # unless "replace" was ticked.
+        sess = ctx.get("auto_apply") or {}
+        if not sess.get("pull"):
+            return
     wc = ctx.get("working_copy")
     if wc is None:
         return
@@ -8307,6 +8325,30 @@ def _trend_series_curated(hm, path: Path, props: list[str]) -> list[dict]:
     return out
 
 
+def _trend_metrics_with_data(hm, path: Path, curated: list[str]) -> set[str]:
+    """Which curated metrics this chip has actually recorded.
+
+    ONE indexed call for all of them — ``extract_property_history`` takes a
+    property list and returns every (qubit, property) bucket, so this costs the
+    same as asking about a single metric and saves opening Trends on three
+    empty boxes.
+    """
+    try:
+        # A small-but-SAFE downsample. This asks only "does this metric have any
+        # numeric point at all", so the cheapest honest answer wins — but it
+        # must not be so small that the LTTB bucket maths degenerates (asking
+        # for 2 used to raise ZeroDivisionError, which this function's own
+        # except swallowed, so the answer was always "nothing" and the caller
+        # silently fell back).
+        rows = hm.extract_property_history(path, list(curated), downsample=8)
+    except Exception:  # noqa: BLE001
+        logger.debug("trend metric probe failed", exc_info=True)
+        return set()
+    return {r["property"] for r in rows
+            if any(isinstance(p.get("value"), (int, float))
+                   for p in (r.get("values") or []))}
+
+
 def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str]) -> list[dict]:
     """Any numeric leaf, via the docs/83 change-point index.
 
@@ -8319,10 +8361,18 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str]) -> list
     out: list[dict] = []
     if len(parts) >= 3 and parts[0] == "qubits":
         tmpl, label = parts[:], ".".join(parts[2:])
+        # ONE connection for the whole fan-out. Per-qubit calls spent their time
+        # opening and closing SQLite rather than querying it (measured 458 ms
+        # for 20 qubits, scaling with qubit count), which is half a second of a
+        # synchronous worker for a page whose whole point is this tier.
+        by_q = {}
         for q in qubits:
             tmpl[1] = q
-            rows = hm.leaf_field_series(path, ".".join(tmpl))
-            pts = [(r[0], r[1]) for r in (rows or []) if isinstance(r[1], (int, float))]
+            by_q[".".join(tmpl)] = q
+        got = hm.leaf_field_series_many(path, list(by_q))
+        for dp, q in by_q.items():
+            pts = [(r[0], r[1]) for r in (got.get(dp) or [])
+                   if isinstance(r[1], (int, float))]
             if pts:
                 out.append({"metric": label, "entity": q, "points": pts})
         return out
@@ -8359,11 +8409,19 @@ def topology_trends():
     # re-injecting the defaults over it would make the last chip un-turn-off-able
     # whenever a parameter path was also being charted.
     if not sel and "metrics" not in request.args and not extra:
-        # A useful default rather than an empty page: the coherence + fidelity
-        # trio a lab looks at first. Metrics with no data still render, saying
-        # so — see the template; silently dropping them would make a chip look
-        # like it has no history at all.
-        sel = ["T1", "T2echo", "gate_fidelity_avg"]
+        # The default has to be metrics this chip ACTUALLY HAS. Preferring the
+        # coherence/fidelity trio looked right and opened empty on the real
+        # 20-qubit chip, where T1/T2/gate_fidelity are null chip-wide while
+        # f_01 and the amplitudes have hundreds of change points: a first visit
+        # that shows three "nothing recorded" boxes reads as a broken page, not
+        # as a chip early in bring-up. So: the preferred order, filtered to what
+        # has data, and only falling back to the preferred order when the chip
+        # has no history at all (where every metric is equally empty and the
+        # slots are what explain that).
+        preferred = ["T1", "T2echo", "gate_fidelity_avg", "f_01",
+                     "x180_amplitude", "readout_amplitude"]
+        have = _trend_metrics_with_data(hm, path, curated)
+        sel = [m for m in preferred if m in have][:3] or preferred[:3]
     sel = [m for m in sel if m in curated][:8]
 
     series = _trend_series_curated(hm, path, sel) if sel else []
@@ -10704,6 +10762,19 @@ def _new_auto_session(*, pull: bool, pull_replace: bool, push: bool) -> dict:
     }
 
 
+@bp.route("/auto-sync/panel")
+def auto_sync_panel():
+    """The Auto-Sync switches, fetched when the pill is clicked.
+
+    Rendered on demand rather than shipped inside the tray: the tray OOB-swaps
+    on every commit, which used to destroy a half-configured popup mid-edit.
+    """
+    return render_template("_auto_sync_panel.html",
+                           auto_sync=_auto_sync_state(),
+                           auto_apply_armable=_auto_apply_armable(),
+                           auto_pull_armable=_auto_pull_armable())
+
+
 @bp.route("/auto-sync/set", methods=["POST"])
 def auto_sync_set():
     """Set the three Auto-Sync switches (docs/120 item 8).
@@ -10729,21 +10800,49 @@ def auto_sync_set():
         ctx.pop("auto_apply", None)
         return _tray_html()
 
-    # Each direction is gated on ITS OWN question; a refusal on one must not
-    # silently swallow the other.
+    # Each direction is gated on ITS OWN question, and a refusal on one must not
+    # swallow the other. The popup opens all-checked, so on a chip that has
+    # ALREADY drifted — the exact moment a user reaches for Auto-Sync — pressing
+    # Save used to arm NOTHING: push is refused while diverged, and refusing the
+    # whole submission took pull down with it. Four extra interactions to get
+    # what one press should have given. Now it arms what it legitimately can and
+    # SAYS what it withheld and why; the user's intent is honoured as far as the
+    # gates allow rather than discarded wholesale.
+    push_ok, push_why = (True, "")
     if want_push:
-        ok, why = _auto_apply_armable(ctx)
-        if not ok:
-            return render_template("_status.html", message=why, level="warning"), 409
+        push_ok, push_why = _auto_apply_armable(ctx)
     if want_pull:
-        ok, why = _auto_pull_armable(ctx)
-        if not ok:
-            return render_template("_status.html", message=why, level="warning"), 409
+        pull_ok, pull_why = _auto_pull_armable(ctx)
+        if not pull_ok:
+            # Pull's gate is the narrow one (a chip, not an archive). If even
+            # that refuses there is nothing to arm in either direction.
+            return render_template("_status.html", message=pull_why,
+                                   level="warning"), 409
+    if not want_pull and not push_ok:
+        return render_template("_status.html", message=push_why,
+                               level="warning"), 409
+
     # "Replace" without "pull" is not a state — it qualifies a pull.
-    ctx["auto_apply"] = _new_auto_session(
-        pull=want_pull, pull_replace=want_pull and want_replace, push=want_push)
+    sess = _new_auto_session(
+        pull=want_pull, pull_replace=want_pull and want_replace,
+        push=want_push and push_ok)
+    # Changing a switch is not starting a new session. Rebuilding it wholesale
+    # discarded `pre_ts` — the docs/117 anchor "Revert last apply" points at —
+    # so unticking one box silently turned "undo this whole session" into "undo
+    # the next edit", with nothing on screen saying so.
+    prev = ctx.get("auto_apply")
+    if prev:
+        for k in ("armed_at", "pre_ts", "last_snap", "flushes"):
+            sess[k] = prev.get(k, sess[k])
+    ctx["auto_apply"] = sess
     resp = make_response(_tray_html())
-    resp.headers["HX-Trigger"] = json.dumps({"autoApplyArmed": True})
+    trig: dict[str, Any] = {"autoApplyArmed": True}
+    if want_push and not push_ok:
+        # Not a failure — a partial grant, named. The pill already shows which
+        # modes are live; this says why the third one is not.
+        trig["showToast"] = ("Auto-Sync armed for pulling. Auto-push is off: "
+                             + push_why)
+    resp.headers["HX-Trigger"] = json.dumps(trig)
     return resp
 
 
@@ -10756,7 +10855,7 @@ def auto_sync_pull():
     the rule cannot be half-implemented in two places.
 
     204 means "nothing done" for every reason -- not armed, not diverged, or
-    DECLINED because the user has unapplied edits and did not tick replace. In
+    DECLINED because the user has unapplied work and did not tick replace. In
     that last case the drift banner is already up (``live_diverged`` is what
     made this due), so refusing is not silent: the user is being asked.
     """
@@ -10770,9 +10869,14 @@ def auto_sync_pull():
     if not ctx.get("live_diverged"):
         return "", 204            # nothing to pull; the common case
 
-    dirty = bool(ctx.get("working_dirty") or (ctx.get("store")
-                                              and ctx["store"].change_log))
-    if dirty and not sess.get("pull_replace"):
+    # The client reports whether the GRID holds typed-but-uncommitted cells.
+    # The server cannot see them: a fill-down or a pasted column lives only in
+    # the DOM until Apply, so `change_log`/`working_dirty` are both clean and
+    # the "no local edits -> pull silently" row would fire and wipe a whole
+    # filled column with no prompt. Treating the client's report as dirt is the
+    # only way this decision can be made honestly.
+    dom_dirty = request.values.get("dom_dirty") in ("1", "true")
+    if (_quam_ctx_dirty(ctx) or dom_dirty) and not sess.get("pull_replace"):
         # THE line docs/87 draws, kept: SM does not choose between the user's
         # work and the live chip. The banner is already showing.
         return "", 204
@@ -10783,19 +10887,60 @@ def auto_sync_pull():
     build_lock = _active_wc_lock(ctx)
     try:
         with build_lock:
+            # RE-CHECK INSIDE THE LOCK. /field/edit takes only store._lock, and
+            # the window between the check above and the write below spans lock
+            # ACQUISITION plus the whole of sync_from_live (two live reads, two
+            # working-folder writes, hashes) -- tens of ms locally, seconds on a
+            # share, and it opens exactly when an experiment just wrote the chip,
+            # i.e. exactly when someone is mid-edit. Without this an edit landing
+            # in that window is destroyed by store.reload() with "replace"
+            # UNCHECKED. Mirrors _reconcile_cached_quam_ctx, which re-checks for
+            # the same reason.
+            if _quam_ctx_dirty(ctx) and not sess.get("pull_replace"):
+                return "", 204
+            # A replace-pull discards work that exists NOWHERE else: the change
+            # log is not journalled (the journal captures on save), and the redo
+            # stack self-invalidates. Snapshot first so "the live chip wins" is
+            # still recoverable from State History -- the manual /state/sync
+            # already does this, and the popup promises revertibility.
+            discarding = _quam_ctx_dirty(ctx) or dom_dirty
+            if discarding:
+                try:
+                    _history().check_and_snapshot(
+                        ctx["path"], "manual", force=True,
+                        project=_scope_for(ctx["path"], ctx))
+                except Exception:      # noqa: BLE001 — never block the pull
+                    logger.warning("pre-pull snapshot failed", exc_info=True)
             working_copy.sync_from_live(wc)
             ctx["_alarm_reason"] = "live-pull"
             _rebuild_after_working_copy_replaced(ctx)
+            # Every other caller of the rebuild pairs it with this. Leaving the
+            # stash behind lets a later "Pull & apply (merge)" replay the very
+            # values the user was told had been replaced -- back onto the chip.
+            _clear_reapply(ctx)
     except (FileNotFoundError, OSError, ValueError):
         # A pull that cannot read live is not a reason to keep retrying every
         # poll: disarm, exactly like the push side's failure branches.
         logger.warning("Auto-sync pull failed", exc_info=True)
+        # sync_from_live may already have advanced the working folder and the
+        # sync point while the in-memory store still holds the OLD content --
+        # an absorbing stale state where a later /save would write the old
+        # content back over the pulled files. Evict so the next access rebuilds
+        # from disk, which is what _reconcile_cached_quam_ctx does here.
+        try:
+            with _quam_cache_lock:
+                for k in list(_quam_cache.keys()):
+                    if _quam_cache.get(k) is ctx:
+                        _quam_cache.pop(k, None)
+                        break
+        except Exception:              # noqa: BLE001 — bookkeeping, never fatal
+            logger.debug("post-failure eviction failed", exc_info=True)
         return _auto_disarm_response(ctx, "", "error", status=204)
 
     resp = make_response(_tray_html())
     resp.headers["HX-Trigger"] = json.dumps({
         "liveDriftChanged": True, "stateRestored": True,
-        "autoSyncPulled": {"replaced": bool(dirty)},
+        "autoSyncPulled": {"replaced": bool(discarding)},
     })
     return resp
 
@@ -11295,7 +11440,19 @@ def _auto_pull_due(ctx: dict | None) -> bool:
         return False
     if (ctx or {}).get("origin", "live") != "live":
         return False
-    return bool((ctx or {}).get("live_diverged"))
+    if not (ctx or {}).get("live_diverged"):
+        return False
+    # Do not advertise a pull the policy will refuse. `live_diverged` never
+    # clears on its own, so a dirty working copy with "replace" unticked used to
+    # make the client POST a 204-ing pull on EVERY 5 s poll, forever — and each
+    # one took `window._applyInFlight`, which also gates the manual Apply
+    # buttons, so they read as dead clicks. The server already knows the answer;
+    # withholding the signal is the fix. (The DOM-only dirt the client reports
+    # is still re-checked at the pull itself — this can only over-offer, never
+    # over-pull.)
+    if _quam_ctx_dirty(ctx) and not sess.get("pull_replace"):
+        return False
+    return True
 
 
 @bp.route("/state/drift")

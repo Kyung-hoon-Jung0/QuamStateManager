@@ -988,11 +988,11 @@ window.ChipStatus.mount = function (opts) {
     var legendEl = document.getElementById('topology-legend');
     if (legendEl) {
         var items = [];
-        var seenChains = {};
-        topo.nodes.forEach(function(n) { if (n.chain) seenChains[n.chain] = chainColors[n.chain] || tCfg.chainFallback; });
-        Object.keys(seenChains).sort().forEach(function(ch) {
-            items.push('<span class="topology-legend-item"><span class="topology-legend-swatch" style="background:' + seenChains[ch] + '"></span>Chain ' + ch + '</span>');
-        });
+        // docs/120 item 11: the per-chain colour swatches are GONE. The card
+        // headers were the only thing ever painted a chain colour, so with the
+        // cards deleted this legend described an encoding that appears nowhere
+        // on the page — worse than a legend you have to memorise, because it
+        // sends the reader looking for something that is not there.
         if (topo.edges.length > 0) {
             items.push('<span class="topology-legend-item"><span class="topology-legend-line" style="background:' + tCfg.edgeFidelityGood + '"></span>CZ \u226595%</span>');
             items.push('<span class="topology-legend-item"><span class="topology-legend-line" style="background:' + tCfg.edgeFidelityWarn + '"></span>CZ \u226585%</span>');
@@ -1766,6 +1766,18 @@ window.ChipStatus.mount = function (opts) {
                 if (e.isIntersecting) _ensureSectionBuilt(e.target.getAttribute('data-topo-section'));
             });
         }, { root: _scrollPane(), rootMargin: '400px 0px 400px 0px' });
+        // Tear it down on nav-away. ChipStatus.mount runs on every /topology
+        // render, so without this each visit stranded an observer holding its
+        // [data-topo-section] subtrees alive — and docs/120 added a 4th section
+        // whose charts carry ~1 MB of data and live Plotly divs. Mirrors the
+        // scroll-spy teardown below; pre-existing, but this change is what made
+        // it expensive.
+        document.body.addEventListener('htmx:beforeSwap', function _ioTeardown(evt) {
+            if (evt.detail && evt.detail.target && evt.detail.target.id === 'table-pane') {
+                try { io.disconnect(); } catch (e) {}
+                document.body.removeEventListener('htmx:beforeSwap', _ioTeardown);
+            }
+        });
         ['distributions', '2qrb', 'metrics', 'trends'].forEach(function(k) {
             var el = document.querySelector('[data-topo-section="' + k + '"]');
             if (el) io.observe(el);
@@ -2171,7 +2183,11 @@ window.ChipStatus.mount = function (opts) {
         var dash = document.querySelector('.topo-dashboard');
         if (!dash || dash._kbdBound) return;
         dash._kbdBound = true;
-        var SEL = '.heatmap-cell, .topo-node-card';
+        // docs/120 item 11: `.topo-node-card` no longer exists, so on the
+        // Topology section this selector matched NOTHING and arrow/Enter
+        // navigation of the chip map silently died — while the tip line under
+        // the map still promised it. The hero's nodes take its place.
+        var SEL = '.heatmap-cell, [data-hero-qubit]';
         function decorate() {
             var cs = dash.querySelectorAll(SEL), seeded = false;
             cs.forEach(function(c) {
@@ -2471,11 +2487,20 @@ window.ChipTrends = (function () {
         charts.forEach(function (c, idx) {
             var host = document.getElementById('topo-trend-' + idx);
             if (!host || !c.series || !c.series.length) return;
+            // A 20-qubit chip with 400 points per series is 8,000 nodes per
+            // chart in Plotly's SVG renderer, and this section auto-loads from
+            // the scroll observer — the user never opted into it. WebGL past a
+            // handful of series, and markers only while they are still
+            // distinguishable; the line is the signal either way.
+            var dense = c.series.length > 8;
+            var longest = c.series.reduce(function (m, s) {
+                return Math.max(m, s.points.length); }, 0);
             var traces = c.series.map(function (s) {
                 return {
                     x: s.points.map(function (p) { return p[0]; }),
                     y: s.points.map(function (p) { return p[1]; }),
-                    mode: 'lines+markers', type: 'scatter', name: s.entity,
+                    mode: longest > 120 ? 'lines' : 'lines+markers',
+                    type: dense ? 'scattergl' : 'scatter', name: s.entity,
                     connectgaps: false, marker: { size: 5 },
                     hovertemplate: '%{fullData.name}<br>%{x}<br>%{y}<extra></extra>',
                 };
@@ -2492,8 +2517,13 @@ window.ChipTrends = (function () {
                          tickfont: { size: 10 }, automargin: true },
                 plot_bgcolor: 'transparent', paper_bgcolor: 'transparent',
             };
-            window._plotlyRender(host, traces, layout, { displayModeBar: false,
-                                                         responsive: true });
+            // Zoom/pan matter MORE here than anywhere else in the app: the
+            // question this page answers is "when did this drift", which needs
+            // a closer look at a region.
+            window._plotlyRender(host, traces, layout, {
+                displayModeBar: 'hover', responsive: true,
+                modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+                displaylogo: false });
         });
     }
     return { toggle: toggle, setPath: setPath, suggest: suggest, render: render };

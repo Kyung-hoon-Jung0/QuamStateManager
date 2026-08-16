@@ -534,10 +534,20 @@ window.TopoGraph = (function () {
       for (var ri = 0; ri < edges.length; ri++) {
         var re = edges[ri];
         if (re == null || re.source == null || re.target == null) continue;
-        var rkey = String(re.source) < String(re.target)
-          ? re.source + "|" + re.target : re.target + "|" + re.source;
+        // Dedup by the PAIR, not by the physical edge. A CR chip carries TWO
+        // qubit_pairs entities for one edge with control/target REVERSED
+        // (cr_semantics.directed_partner), and collapsing them by sorted
+        // endpoints made the map assert a single control end picked by
+        // state.qubit_pairs insertion order — a confident claim that is wrong
+        // half the time. The chevron above still dedups, correctly: a frequency
+        // ordering is symmetric, a role assignment is not.
+        var rkey = re.pair_id != null ? String(re.pair_id)
+          : (String(re.source) < String(re.target)
+             ? re.source + "|" + re.target : re.target + "|" + re.source);
         if (roleDone[rkey]) continue;
         roleDone[rkey] = true;
+        // A self-loop has no two ends to label.
+        if (String(re.source) === String(re.target)) continue;
         var rpa = px(re.source), rpb = px(re.target);
         if (!rpa || !rpb) continue;
         var rux = rpb.x - rpa.x, ruy = rpb.y - rpa.y;
@@ -554,7 +564,11 @@ window.TopoGraph = (function () {
         // the OTHER qubit — the exact opposite of what it means. Perpendicular
         // keeps it unambiguously attached to its own end at any edge length,
         // and on the opposite side from the chevron so the two never collide.
-        var inset = CELL * 0.30, step = roleR * 2.1;
+        // inset must clear the stone, not sit on it. The stones are drawn
+        // AFTER these glyphs and R == CELL*0.30, so an inset of 0.30 put each
+        // role circle's centre exactly on the rim and the opaque stone painted
+        // over roughly a third of it. jsdom cannot see that; a browser can.
+        var inset = CELL * 0.30 + roleR * 1.15, step = roleR * 2.1;
         // A qubit can be the control of one pair and the target of another, so
         // every marker names BOTH the pair and the endpoint it belongs to —
         // otherwise "the C nearest qA1" is an ambiguous question on any chip
@@ -573,7 +587,8 @@ window.TopoGraph = (function () {
                  '" font-size="' + roleFont + '" text-anchor="middle"' +
                  ' dominant-baseline="central">' + letter + "</text>" +
                  "<title>" + (letter === "C" ? "control" : "target") +
-                 " of " + esc(rkey.replace("|", "–")) + "</title></g>";
+                 " of " + esc(re.pair_id != null ? re.pair_id
+                              : rkey.replace("|", "–")) + "</title></g>";
           if (moves) {
             // -n: the chevron sits at +0.16·CELL on the normal, so M takes the
             // other side of the line and the two never overlap.
@@ -707,8 +722,12 @@ window.TopoGraph = (function () {
 
     // docs/120 item 11: the chevrons (and now the C/T/M role markers) are
     // drawn by the SHARED pairGlyphs, so the Chip Status hero and this map
-    // cannot drift apart. Output here is byte-identical to the inline version
-    // this replaced -- component_map_selfcheck pins the geometry.
+    // cannot drift apart. The CHEVRON half is lifted verbatim and its geometry
+    // is unchanged; the role markers are ADDITIVE here (the customer asked for
+    // one convention across SM), so this map's output is deliberately NOT
+    // byte-identical to what it replaced -- component_map_selfcheck was
+    // updated in the same change, restating the docs/92 §2.4 pin at the
+    // invariant it always meant: ids or role letters, and never a number.
     svg += pairGlyphs(nodes, edges, { px: px, cell: CELL, roles: true });
 
     // qubit stones + per-qubit component marks (resonator NE, flux stub S)

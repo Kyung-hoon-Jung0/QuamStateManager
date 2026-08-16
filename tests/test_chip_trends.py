@@ -198,3 +198,61 @@ class TestItIsRegisteredEverywhere:
         # the host is there, but empty — the data arrives via its own request
         assert 'id="topo-trends"' in page
         assert "topo-trends-data" not in page
+
+
+class TestTheReviewFindings:
+    def test_the_default_prefers_metrics_this_chip_actually_has(self, client, tmp_path):
+        """Opening on three metrics that are null chip-wide reads as a broken
+        page, not as a chip early in bring-up. On the real 20-qubit chip T1 /
+        T2echo / gate_fidelity are all null while f_01 and the amplitudes have
+        hundreds of change points."""
+        sp = tmp_path / "quam_state" / "state.json"
+        for step in range(3):
+            doc = json.loads(sp.read_text(encoding="utf-8"))
+            for i, q in enumerate(doc["qubits"]):
+                doc["qubits"][q]["f_01"] = 6.0e9 + i * 1e8 + step * 1e6
+                doc["qubits"][q].pop("T1", None)          # null, like the real chip
+            sp.write_text(json.dumps(doc), encoding="utf-8")
+            client.post("/state/archive", data={"tag": f"v{step}"})
+            time.sleep(1.05)
+        body = client.get("/topology/trends").get_data(as_text=True)
+        charts = _charts(body)
+        assert charts, "a default must be chosen"
+        assert any(c["series"] for c in charts), \
+            "the default opens on something with data, not three empty boxes"
+        assert "T1" not in [c["metric"] for c in charts]
+
+    def test_no_history_still_offers_the_conventional_default(self, client):
+        """With nothing recorded every metric is equally empty, and the slots
+        are what explain that — so the familiar trio is the right answer."""
+        charts = _charts(client.get("/topology/trends").get_data(as_text=True))
+        assert [c["metric"] for c in charts] == ["T1", "T2echo", "gate_fidelity_avg"]
+
+    def test_a_tiny_downsample_does_not_crash(self, client, tmp_path):
+        """LTTB keeps the endpoints and buckets the rest, so it needs three.
+        Below that the divisor went to zero and the whole call raised — a
+        caller asking "does this metric have ANY data" got an exception, and
+        the swallowing except turned it into a silent wrong answer."""
+        from quam_state_manager.web import routes as R
+        _versions(client, tmp_path / "quam_state", n=3)
+        with client.application.test_request_context():
+            hm = R._history()
+            p = tmp_path / "quam_state"
+            for n in (1, 2, 3):
+                rows = hm.extract_property_history(p, ["f_01"], downsample=n)
+                for r in rows:
+                    assert len(r["values"]) <= max(n, 1), (n, len(r["values"]))
+
+    def test_the_leaf_tier_uses_one_connection(self):
+        """Per-path calls each opened and closed their own SQLite connection
+        with fresh PRAGMAs — 20 qubits cost ~460 ms of connect/close, scaling
+        with qubit count rather than with history depth."""
+        from quam_state_manager.web import routes as R
+        src = Path(R.__file__).read_text(encoding="utf-8")
+        i = src.index("def _trend_series_leaf")
+        body = src[i:i + 1800]
+        assert "leaf_field_series_many" in body
+        # the FAN-OUT must be batched; the non-qubit-scoped fallback below it
+        # charts a single path and correctly still uses the singular form
+        fanout = body[:body.index("# Not qubit-scoped")]
+        assert "hm.leaf_field_series(" not in fanout
