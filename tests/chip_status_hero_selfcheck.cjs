@@ -96,18 +96,19 @@ function mount(win, topo, findings) {
   const q4 = hero.querySelector('[data-hero-qubit="qA4"]');
   ok(q4 && q4.getAttribute('class').indexOf('hs-badfit') !== -1, 'physical: unphysical fit wears hs-badfit');
 
-  // edge parity with the card diagram: BOTH surfaces go through _edgePaint,
-  // so the hero's stroke multiset must equal the card SVG's stroke multiset.
+  // Edge colours come from the ONE _edgePaint. This used to be pinned as
+  // "identical to the card diagram"; docs/120 item 11 deleted that diagram, so
+  // the invariant is restated directly against the palette instead of against
+  // a second renderer that no longer exists: a calibrated CZ takes the good
+  // colour, an uncalibrated pair the no-data grey, and nothing else appears.
   const edges = hero.querySelectorAll('.topo-hero-edge');
   ok(edges.length === 2, 'physical: both edges drawn');
   const heroStrokes = Array.prototype.map.call(edges, function (g) {
     return g.querySelector('line').getAttribute('stroke');
   }).sort();
-  const cardStrokes = Array.prototype.map.call(
-    win.document.querySelectorAll('#topo-html-wrap .topo-edges-svg line'),
-    function (l) { return l.getAttribute('stroke'); }).sort();
+  const cardStrokes = ['#08519c', '#bbbbbb'];   // good-CZ, no-data
   ok(JSON.stringify(heroStrokes) === JSON.stringify(cardStrokes),
-     'edge colours IDENTICAL to the card diagram (one _edgePaint) — hero '
+     'edge colours come from the one _edgePaint palette — hero '
      + JSON.stringify(heroStrokes) + ' vs cards ' + JSON.stringify(cardStrokes));
   ok(heroStrokes[0] !== heroStrokes[1],
      'physical: the 97% CZ edge and the no-data edge are visibly different');
@@ -132,9 +133,21 @@ function mount(win, topo, findings) {
   const q1d = hero.querySelector('[data-hero-qubit="qA1"]');
   ok(q1d && q1d.getAttribute('class').indexOf('hs-pass') !== -1, 'diagnostics view: clean qubit wears hs-pass');
 
-  // the card diagram below is still built (hero is additive)
-  ok(win.document.querySelectorAll('#topo-html-wrap .topo-node-card').length === 4,
-     'card diagram still renders all 4 property cards');
+  // docs/120 item 11: there is exactly ONE chip map on this page now. The card
+  // diagram that used to render below the hero is gone — that duplication is
+  // what the customer reported ("the qubit layout appears twice").
+  // The fixture deliberately still provides a #topo-html-wrap host: this is a
+  // hostile control, so the assertion proves the CODE no longer builds cards
+  // rather than merely proving the fixture stopped offering somewhere to put
+  // them. (The template's own removal is pinned in test_topology_hero.py.)
+  ok(win.document.querySelectorAll('.topo-node-card').length === 0,
+     'the card diagram is GONE — one chip map, not two');
+  ok((win.document.getElementById('topo-html-wrap') || { innerHTML: '' }).innerHTML === '',
+     'nothing is rendered into the old card host even when it is present');
+
+  // The qubit detail popup the cards used to OWN survives the deletion — that
+  // is proved on its own timeline in hero_popup_selfcheck.cjs, because it opens
+  // after a hover-intent delay and this file is synchronous.
 
   // single-click -> inspector (after the dbl-click window)
   const target = hero.querySelector('[data-hero-qubit="qA1"]');

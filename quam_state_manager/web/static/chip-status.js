@@ -111,7 +111,15 @@ window.ChipStatus.liveDiff = (function () {
         Object.keys(byEntity).forEach(function (id) {
             var n = byEntity[id];
             var _e = (window.CSS && CSS.escape) ? CSS.escape(id) : id;
-            document.querySelectorAll('[data-qubit="' + _e + '"], [data-pair="' + _e + '"]').forEach(function (el) {
+            // docs/120 item 11: `data-hero-*` joins the selector. These
+            // attributes were the CARD diagram's, so with the cards deleted
+            // this marker would have matched nothing on the page and the
+            // "changed vs live" highlight would have quietly stopped appearing
+            // — a feature lost to a deletion rather than to a decision.
+            document.querySelectorAll(
+                '[data-qubit="' + _e + '"], [data-pair="' + _e + '"], '
+                + '[data-hero-qubit="' + _e + '"], [data-hero-pair="' + _e + '"]'
+            ).forEach(function (el) {
                 var target = el.closest('.topo-node-card') || el;
                 target.classList.add('topo-changed');
                 var base = target.getAttribute('title') || '';
@@ -544,198 +552,30 @@ window.ChipStatus.mount = function (opts) {
     // never a second implementation.
     var _sharedQubitPopup = null;
 
-    var idToIdx = {};
-
-    (function buildTopology() {
-        var wrap = document.getElementById('topo-html-wrap');
-        if (!wrap) return;
-
-        // ── Parse grid positions ─────────────────────────────────────
-        var positions = topo.nodes.map(function(n, i) {
-            var parts = (n.grid_location || '').split(',');
-            idToIdx[n.id] = i;
-            return {
-                col: parts.length === 2 ? parseFloat(parts[0]) : (i % 4),
-                row: parts.length === 2 ? parseFloat(parts[1]) : Math.floor(i / 4)
-            };
-        });
-
-        var minCol = Infinity, maxCol = -Infinity, minRow = Infinity, maxRow = -Infinity;
-        positions.forEach(function(p) {
-            if (p.col < minCol) minCol = p.col;
-            if (p.col > maxCol) maxCol = p.col;
-            if (p.row < minRow) minRow = p.row;
-            if (p.row > maxRow) maxRow = p.row;
-        });
-
-        // ── Layout constants (from UI_CONFIG.plotly.topology.layout) ─
-        var L = UI_CONFIG.plotly.topology.layout;
-        var CARD_W     = L.cardWidth;
-        var ROW_H      = L.rowHeight;
-        var HDR_H      = L.headerHeight;
-        var BODY_PAD   = L.bodyPadding;
-        var MORE_ROW_H = L.moreRowHeight;
-        // Visible card height = primary props + "... more" button only
-        var cardH = HDR_H + PRIMARY_PROPS.length * ROW_H + MORE_ROW_H + BODY_PAD;
-        var SPACING_X = CARD_W + L.gapX;
-        var SPACING_Y = cardH + L.gapY;
-        var PAD = L.padding;
-
-        // Convert grid coords to pixel positions
-        // Flip row axis: QUAM convention has row 0 at the bottom of the chip,
-        // but screen y=0 is at the top, so invert.
-        positions.forEach(function(p) {
-            p.x = (p.col - minCol) * SPACING_X + PAD;
-            p.y = (maxRow - p.row) * SPACING_Y + PAD;
-        });
-
-        var containerW = (maxCol - minCol) * SPACING_X + CARD_W + PAD * 2;
-        var containerH = (maxRow - minRow) * SPACING_Y + cardH + PAD * 2;
-
-        // ── Build SVG edges ──────────────────────────────────────────
-        // Directed (CR) edges: each direction is its own calibration target —
-        // offset the two anti-parallel lines perpendicular to the run so they
-        // never overpaint, and dim pairs outside active_qubit_pair_names.
-        // Control/target orientation is carried by the EDGE LABEL's pointed
-        // shape (below), not a separate arrowhead here — a small in-line
-        // polygon read as too subtle to notice (review feedback), and the
-        // label already needs to encode direction via source→target text.
-        var svgLines = '';
-        topo.edges.forEach(function(e) {
-            var si = idToIdx[e.source], ti = idToIdx[e.target];
-            if (si === undefined || ti === undefined) return;
-            var x1 = positions[si].x + CARD_W / 2;
-            var y1 = positions[si].y + cardH / 2;
-            var x2 = positions[ti].x + CARD_W / 2;
-            var y2 = positions[ti].y + cardH / 2;
-
-            var _ep = _edgePaint(e);
-            var color = _ep.color;
-            var width = _ep.width;
-            var opacity = (e.active === false) ? 0.35 : 1;
-            if (e.directed) {
-                var dx = x2 - x1, dy = y2 - y1;
-                var len = Math.sqrt(dx * dx + dy * dy) || 1;
-                var ux = dx / len, uy = dy / len;
-                // perpendicular offset — travel-direction-relative, so the
-                // reverse pair lands on the opposite side automatically
-                var off = 4;
-                x1 += -uy * off; y1 += ux * off;
-                x2 += -uy * off; y2 += ux * off;
-            }
-            svgLines += '<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" stroke="'+color+'" stroke-width="'+width+'" stroke-linecap="round" opacity="'+opacity+'"/>';
-        });
-
-        // ── Build edge labels ────────────────────────────────────────
-        var edgeLabelsHtml = '';
-        topo.edges.forEach(function(e) {
-            var si = idToIdx[e.source], ti = idToIdx[e.target];
-            if (si === undefined || ti === undefined) return;
-            // Place label at geometric midpoint between the two connected cards.
-            // For horizontal edges this centers in the gapX between the two cards.
-            // For vertical edges this centers in the gapY between the two rows.
-            // CSS transform: translate(-50%,-50%) handles visual centering.
-            var mx = (positions[si].x + positions[ti].x) / 2 + CARD_W / 2;
-            var my = (positions[si].y + positions[ti].y) / 2 + cardH / 2;
-            if (e.directed) {
-                // mirror the line's perpendicular offset (larger, so the two
-                // direction labels of one physical edge don't overlap)
-                var ddx = positions[ti].x - positions[si].x;
-                var ddy = positions[ti].y - positions[si].y;
-                var dlen = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
-                mx += -(ddy / dlen) * 14;
-                my += (ddx / dlen) * 14;
-            }
-
-            var color = _edgePaint(e).color;
-            // Any pair with a resolved control/target orientation gets a
-            // pointed label (clip-path reshapes the target-facing EDGE of the
-            // box into a point — see style.css .topo-edge-label-arrow-*)
-            // instead of a separate arrowhead on the line, which read as too
-            // subtle to notice (review feedback).
-            var hasOrientation = e.directed || (!!e.source && !!e.target);
-            var arrowCls = '';
-            if (hasOrientation) {
-                var ddx = positions[ti].x - positions[si].x;
-                var ddy = positions[ti].y - positions[si].y;
-                // dominant axis decides the pointer direction — chip grids are
-                // overwhelmingly axis-aligned (nearest-neighbor placement), so
-                // a diagonal (non-adjacent) CR/CZ pair just snaps to the
-                // nearest cardinal direction rather than an exact angle (which
-                // would also tip the label's TEXT sideways to stay pointed).
-                arrowCls = Math.abs(ddx) >= Math.abs(ddy)
-                    ? (ddx >= 0 ? ' topo-edge-label-arrow-right' : ' topo-edge-label-arrow-left')
-                    : (ddy >= 0 ? ' topo-edge-label-arrow-down' : ' topo-edge-label-arrow-up');
-            }
-            var label = _esc(e.pair_id);
-            if (hasOrientation) label = _esc(e.source) + '→' + _esc(e.target);
-            if (e.cz_fidelity != null) label += ' (' + (e.cz_fidelity * 100).toFixed(1) + '%)';
-            if (e.best_gate) label += ' ' + _esc(e.best_gate.replace(/^cz_/, ''));
-            if (e.active === false) label += ' · off';
-
-            edgeLabelsHtml += '<div class="topo-edge-label' + arrowCls + '" data-pair="' + _esc(e.pair_id) + '" '
-                + 'style="left:' + mx + 'px;top:' + my + 'px;border-color:' + color + ';color:' + color
-                + (e.active === false ? ';opacity:.45' : '') + '">'
-                + label + '</div>';
-        });
-
-        // ── Build qubit cards ────────────────────────────────────────
-        var cardsHtml = '';
-        topo.nodes.forEach(function(n, i) {
-            var chain = chainColors[n.chain] || tCfg.chainFallback;
-            var left = positions[i].x;
-            var top = positions[i].y;
-
-            cardsHtml += '<div class="topo-node-card" data-qubit="' + _esc(n.id) + '" '
-                + 'style="left:' + left + 'px;top:' + top + 'px;width:' + CARD_W + 'px">';
-            cardsHtml += '<div class="topo-node-header" style="background:' + chain + '">' + _esc(n.id) + '</div>';
-            cardsHtml += '<div class="topo-node-body">';
-
-            // Primary props (always visible)
-            PRIMARY_PROPS.forEach(function(p) {
-                cardsHtml += _propRowHtml(n, p, '\u2014');
-            });
-
-            // "... more" button (opens popup overlay)
-            if (SECONDARY_PROPS.length > 0) {
-                cardsHtml += '<div class="topo-card-more-btn" data-qubit-more="' + n.id + '">'
-                    + '\u2026 more <span style="font-size:1.1em">\u203A</span></div>';
-            }
-
-            cardsHtml += '</div></div>';
-        });
-
-        // ── Assemble ─────────────────────────────────────────────────
-        // Build inner content at natural size, then auto-scale to fit
-        var innerHtml = '<div class="topo-inner" style="width:' + containerW + 'px;height:' + containerH + 'px;position:relative">'
-            + '<svg class="topo-edges-svg" width="' + containerW + '" height="' + containerH + '">'
-            + svgLines + '</svg>' + edgeLabelsHtml + cardsHtml + '</div>';
-        wrap.innerHTML = innerHtml;
-
-        // Auto-fit: scale inner content to fill available width without scrollbar
-        if (L.autoFit !== false) {
-            var availW = wrap.parentElement ? wrap.parentElement.clientWidth - 2 : wrap.clientWidth;
-            if (availW > 0 && containerW > availW) {
-                var scale = availW / containerW;
-                var inner = wrap.querySelector('.topo-inner');
-                inner.style.transformOrigin = 'top left';
-                inner.style.transform = 'scale(' + scale + ')';
-                wrap.style.width = availW + 'px';
-                wrap.style.height = (containerH * scale) + 'px';
-                wrap.style.overflow = 'hidden';
-            } else {
-                wrap.style.width = containerW + 'px';
-                wrap.style.height = containerH + 'px';
-                wrap.style.overflow = 'hidden';
-            }
-        } else {
-            wrap.style.width = containerW + 'px';
-            wrap.style.minHeight = containerH + 'px';
-        }
+    /* ── The qubit detail popup (docs/120 item 11) ────────────────────────
+     *
+     * This used to be the tail of buildTopology, the pre-hero CARD diagram
+     * that rendered a second chip map underneath the hero one. The customer
+     * reported the duplication ("the qubit layout appears twice ... why does
+     * the first one exist?") and preferred the hero, so the cards are gone.
+     *
+     * The popup could NOT go with them. `_sharedQubitPopup` is what the hero
+     * opens on hover, and it was only ever ASSIGNED inside that IIFE — so
+     * deleting the block wholesale would have left it null forever and the
+     * hero's hover popup would have stopped opening with NO error and NO
+     * failing test (bindHover simply guards on it). It lives here now, owning
+     * nothing but itself: the single activePopup, its positioning, its
+     * document-click and htmx:beforeSwap teardown, and openQubitMore.
+     *
+     * `positionPopup` still prefers a `.topo-node-card` ancestor when one
+     * exists and falls back to the element it was handed, which is what makes
+     * it work unchanged for the hero's circular nodes.
+     */
+    (function buildQubitPopup() {
+        if (!topo || !topo.nodes || !topo.nodes.length) return;
 
         // ── Popup management ─────────────────────────────────────────
         var activePopup = null;
-        var topoInner = wrap.querySelector('.topo-inner');
         function closePopup() {
             if (activePopup) { activePopup.remove(); activePopup = null; }
         }
@@ -848,13 +688,7 @@ window.ChipStatus.mount = function (opts) {
                     .catch(function() { if (sparkSlot.parentNode) sparkSlot.remove(); });
             }
         }
-        topo.nodes.forEach(function(n) {
-            var btn = wrap.querySelector('[data-qubit-more="' + n.id + '"]');
-            if (btn) btn.addEventListener('click', function(ev) {
-                ev.stopPropagation();
-                openQubitMore(n, btn, true);     // click the button = pin it open
-            });
-        });
+
 
         // Hand the ONE popup implementation to the hero map (see the bridge
         // declaration above buildTopology) — same singleton, same teardown.
@@ -863,192 +697,6 @@ window.ChipStatus.mount = function (opts) {
             scheduleClose: _scheduleMoreClose,
             cancelClose: function() { clearTimeout(_moreHoverTimer); clearTimeout(_moreLeaveTimer); },
         };
-
-        // ── Click + hover handlers ───────────────────────────────────
-        var _coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
-        topo.nodes.forEach(function(n) {
-            var card = wrap.querySelector('[data-qubit="' + ((window.CSS && CSS.escape) ? CSS.escape(n.id) : n.id) + '"]');
-            if (!card) return;
-            // hover-to-preview the "... more" details (intent-delay in, grace out);
-            // skipped on touch (tap the "... more" button instead).
-            if (!_coarse) {
-                card.addEventListener('mouseenter', function() {
-                    clearTimeout(_moreLeaveTimer);
-                    clearTimeout(_moreHoverTimer);
-                    _moreHoverTimer = setTimeout(function() {
-                        if (activePopup && activePopup._pinned) return;   // don't disturb a pinned popup
-                        var b = wrap.querySelector('[data-qubit-more="' + n.id + '"]');
-                        openQubitMore(n, b || card, false);
-                    }, 260);
-                });
-                card.addEventListener('mouseleave', function() {
-                    clearTimeout(_moreHoverTimer);
-                    _scheduleMoreClose();
-                });
-            }
-            var _clickTime = 0;
-            card.addEventListener('click', function(ev) {
-                if (ev.target.closest('[data-qubit-more]')) return;  // handled by popup
-                var now = Date.now();
-                if (now - _clickTime < 400) {
-                    _clickTime = 0;
-                    showQubitJsonPanel(n.id, rawWiring);
-                } else {
-                    _clickTime = now;
-                    setTimeout(function() {
-                        if (_clickTime !== 0) {
-                            htmx.ajax('GET', '/qubit/' + n.id, {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'});
-                        }
-                    }, 420);
-                }
-            });
-        });
-
-        // ── Pair popup on edge labels ────────────────────────────────
-        topo.edges.forEach(function(e) {
-            var lbl = wrap.querySelector('.topo-edge-label[data-pair="' + ((window.CSS && CSS.escape) ? CSS.escape(e.pair_id) : e.pair_id) + '"]');
-            if (!lbl) return;
-            lbl.addEventListener('click', function(ev) {
-                ev.stopPropagation();
-                closePopup();
-                var popup = document.createElement('div');
-                popup.className = 'topo-pair-popup';
-                var html = '<div class="topo-popup-header"><span>' + e.pair_id + '</span>'
-                    + '<button class="topo-popup-close">\u2715</button></div>';
-
-                // Gate fidelities — grouped one row per CANDIDATE gate (the old
-                // code emitted one row per metric, all labelled with the same gate
-                // name → indistinguishable). The pair's CZ number is the "best of
-                // N" of these; mark the winner (e.best_gate) and give each gate its
-                // own RB-source deep-link.
-                var anyRowLoadId = false;
-                if (e.gate_fidelities && e.gate_fidelities.length > 0) {
-                    var byGate = {}, gateOrder = [];
-                    e.gate_fidelities.forEach(function(gf) {
-                        var g = gf.gate;
-                        if (!byGate[g]) { byGate[g] = {metrics: {}, load_id: null}; gateOrder.push(g); }
-                        var val = (gf.Fidelity != null) ? gf.Fidelity : gf.value;
-                        if (val != null && byGate[g].metrics[gf.metric] == null) byGate[g].metrics[gf.metric] = val;
-                        if (gf.load_id != null) byGate[g].load_id = gf.load_id;
-                    });
-                    var nGates = gateOrder.length;
-                    var title = 'Gate Fidelity' + (nGates > 1 ? ' — best of ' + nGates : '');
-                    // Per-metric recency: when THIS number's own measurement time is
-                    // recorded, show "measured Nd ago" coloured by staleness — the
-                    // honest per-metric signal, not the pair's freshest calibration.
-                    var czAge = (typeof e.cz_fidelity_updated_at === 'number')
-                        ? '<span class="topo-recency ' + _ageClass(e.cz_fidelity_updated_at) + '">measured ' + _ageLabel(e.cz_fidelity_updated_at) + '</span>'
-                        : '';
-                    html += '<div class="topo-popup-section"><div class="topo-popup-section-title">' + title + czAge + '</div>';
-                    gateOrder.forEach(function(g) {
-                        var info = byGate[g];
-                        var isWin = (g === e.best_gate);
-                        var parts = [];
-                        // Headline fidelities only — the compact popup is a "best of
-                        // N" summary; RB fit byproducts (StandardRB_alpha, …) are
-                        // clutter here and live in the full /pair inspector.
-                        var HEADLINE = [['Bell_State','Bell'],['StandardRB','SRB'],['InterleavedRB','IRB']];
-                        HEADLINE.forEach(function(pair) {
-                            if (info.metrics[pair[0]] != null) parts.push(pair[1] + ' ' + (info.metrics[pair[0]]*100).toFixed(1) + '%');
-                        });
-                        // Fallback: a gate with none of the three still shows one number.
-                        if (parts.length === 0) {
-                            Object.keys(info.metrics).forEach(function(mk) {
-                                if (!/_alpha$/.test(mk)) parts.push(mk + ' ' + fmtNum(info.metrics[mk], 4));
-                            });
-                        }
-                        var src = '';
-                        if (info.load_id != null) {
-                            anyRowLoadId = true;
-                            src = ' <a href="/dataset/by-run/' + info.load_id + '" style="font-size:0.85em" title="Open the RB run that produced these numbers">RB #' + info.load_id + ' →</a>';
-                        }
-                        html += '<div class="topo-popup-row' + (isWin ? ' topo-popup-row-win' : '') + '">'
-                            + '<span class="topo-popup-row-label">' + (isWin ? '★ ' : '') + g.replace(/^cz_/, '') + '</span>'
-                            + '<span>' + parts.join(' · ') + src + '</span></div>';
-                    });
-                    html += '</div>';
-                }
-
-                // Gate details (amplitudes, lengths, phase shifts)
-                if (e.gate_details && e.gate_details.length > 0) {
-                    html += '<div class="topo-popup-section"><div class="topo-popup-section-title">Gate Parameters</div>';
-                    e.gate_details.forEach(function(gd) {
-                        var label = gd.name.replace(/^cz_/, '');
-                        var parts = [];
-                        if (gd.amplitude != null) parts.push('amp=' + gd.amplitude.toFixed(4));
-                        if (gd.coupler_amp != null) parts.push('c_amp=' + gd.coupler_amp.toFixed(4));
-                        if (gd.length != null) parts.push('len=' + gd.length);
-                        if (gd.flat_length != null) parts.push('flat=' + gd.flat_length);
-                        if (gd.phase_ctrl != null) parts.push('p\u2081=' + gd.phase_ctrl.toFixed(3));
-                        if (gd.phase_tgt != null) parts.push('p\u2082=' + gd.phase_tgt.toFixed(3));
-                        // CR/ZZ drive levers (query._extract_cr_details rows)
-                        if (gd.drive_amplitude_scaling != null) parts.push('drv\u00d7=' + gd.drive_amplitude_scaling.toFixed(4));
-                        if (gd.drive_phase != null) parts.push('drv\u03c6=' + gd.drive_phase.toFixed(4));
-                        if (gd.cancel_amplitude_scaling != null) parts.push('cnl\u00d7=' + gd.cancel_amplitude_scaling.toFixed(4));
-                        if (gd.cancel_phase != null) parts.push('cnl\u03c6=' + gd.cancel_phase.toFixed(4));
-                        if (gd.qc_correction_phase != null) parts.push('\u03c6c=' + gd.qc_correction_phase.toFixed(3));
-                        if (gd.qt_correction_phase != null) parts.push('\u03c6t=' + gd.qt_correction_phase.toFixed(3));
-                        if (gd.eff_if_mhz != null) parts.push('IF=' + gd.eff_if_mhz + 'MHz');
-                        html += '<div class="topo-popup-row"><span class="topo-popup-row-label">' + label + '</span><span>' + parts.join(', ') + '</span></div>';
-                    });
-                    html += '</div>';
-                }
-
-                // Confusion matrix
-                if (e.confusion_diag || e.confusion_offdiag) {
-                    html += '<div class="topo-popup-section"><div class="topo-popup-section-title">' + e.confusion_size + '\u00d7' + e.confusion_size + ' Confusion Matrix</div>';
-                    if (e.confusion_diag) {
-                        html += '<div class="topo-popup-row"><span class="topo-popup-row-label">diag</span><span>' + e.confusion_diag.map(function(v){return (v*100).toFixed(1)+'%';}).join(', ') + '</span></div>';
-                    }
-                    if (e.confusion_offdiag) {
-                        var maxOff = Math.max.apply(null, e.confusion_offdiag);
-                        var avgOff = e.confusion_offdiag.reduce(function(a,b){return a+b;},0) / e.confusion_offdiag.length;
-                        html += '<div class="topo-popup-row"><span class="topo-popup-row-label">offdiag</span><span>max=' + (maxOff*100).toFixed(1) + '%, avg=' + (avgOff*100).toFixed(1) + '%</span></div>';
-                    }
-                    html += '</div>';
-                }
-
-                // Pair-level parameters
-                var pairParams = [];
-                if (e.detuning != null) pairParams.push(['detuning', fmtNum(e.detuning, 4)]);
-                if (e.coupler_decouple_offset != null) pairParams.push(['decouple', fmtNum(e.coupler_decouple_offset, 4)]);
-                if (e.mutual_flux_bias != null) {
-                    var mfb = Array.isArray(e.mutual_flux_bias) ? e.mutual_flux_bias.map(function(v){return fmtNum(v,3);}).join(', ') : fmtNum(e.mutual_flux_bias, 4);
-                    pairParams.push(['flux_bias', mfb]);
-                }
-                if (pairParams.length > 0) {
-                    html += '<div class="topo-popup-section"><div class="topo-popup-section-title">Pair Parameters</div>';
-                    pairParams.forEach(function(pp) {
-                        html += '<div class="topo-popup-row"><span class="topo-popup-row-label">' + pp[0] + '</span><span>' + pp[1] + '</span></div>';
-                    });
-                    html += '</div>';
-                }
-
-                // Provenance fallback: the per-gate rows above already carry their
-                // own "RB #<id> \u2192" links. Only fall back to an edge-level line when
-                // NO gate row had a load_id \u2014 either the legacy single edge-level
-                // cz_load_id, or (honest-missing) an explicit "not recorded" so a
-                // silent gap never reads as "broken" (same rule as the grey None tiles).
-                if (!anyRowLoadId && e.cz_load_id != null) {
-                    html += '<div class="topo-popup-section" style="text-align:center;padding-top:2px">'
-                        + '<a href="/dataset/by-run/' + e.cz_load_id + '" style="font-size:0.72em">source: RB run #'
-                        + e.cz_load_id + ' \u2192</a></div>';
-                } else if (!anyRowLoadId && e.cz_fidelity != null) {
-                    html += '<div class="topo-popup-section muted" style="text-align:center;padding-top:2px;font-size:0.72em">'
-                        + 'source: RB run not recorded</div>';
-                }
-                // "Open in inspector" link \u2014 id in an escaped data-attr, read back
-                // at click time (not interpolated into the JS string / URL).
-                html += '<div class="topo-popup-section" style="text-align:center;padding-top:4px">'
-                    + '<a href="#" style="font-size:0.72em" data-inspect-id="' + _esc(e.pair_id) + '"'
-                    + ' onclick="event.preventDefault();window._inspectPair(this.getAttribute(\'data-inspect-id\'))">Open in inspector \u2192</a></div>';
-
-                popup.innerHTML = html;
-                popup.querySelector('.topo-popup-close').addEventListener('click', function(ev) { ev.stopPropagation(); closePopup(); });
-                activePopup = popup;
-                positionPopup(popup, lbl);
-            });
-        });
     })();
 
     // ══════════════════════════════════════════════════════════════════
@@ -1143,7 +791,14 @@ window.ChipStatus.mount = function (opts) {
                      title: v == null ? 'no data' : '' };
         }
 
-        var CELL = 96, R = 27;
+        // docs/120 item 11: the hero is now the ONLY chip map on this page, so
+        // it gets the room the card diagram used to take. The cell grew with
+        // it (96 -> 132) — every glyph, the id, the metric value and the new
+        // role markers all scale off CELL, so one number widens the whole map
+        // rather than each piece needing its own bump. The rendered size is
+        // responsive (see .topo-hero-svg): these are the intrinsic dimensions
+        // and the viewBox aspect, which CSS then fits to the pane.
+        var CELL = 132, R = 37;
         var W = Math.max(CELL, Math.round(lay.cols * CELL));
         var H = Math.max(CELL, Math.round(lay.rows * CELL));
         function cx(p) { return (p.col + 0.5) * CELL; }
@@ -1221,6 +876,23 @@ window.ChipStatus.mount = function (opts) {
                      + '<line class="topo-hero-edge-hit"' + coords + ' stroke="transparent" stroke-width="11">'
                      + '</line><title>' + _esc(tt) + '</title></g>';
             });
+            // docs/120 item 11 — the frequency chevrons and the C/T/M role
+            // markers, from the SAME TopoGraph.pairGlyphs the component-page
+            // maps use, so the two surfaces cannot drift into two conventions.
+            // Drawn after the edges and BEFORE the stones: the markers sit on
+            // the line, but a stone always covers its own marker rather than
+            // the reverse.
+            if (TG.pairGlyphs) {
+                svg += TG.pairGlyphs(topo.nodes, topo.edges, {
+                    cell: CELL, roles: true,
+                    px: function (id) {
+                        var p = lay.positions[id];
+                        if (!p) return null;
+                        var o = offsets[id] || { dx: 0, dy: 0 };
+                        return { x: cx(p) + o.dx, y: cy(p) + o.dy };
+                    },
+                });
+            }
             topo.nodes.forEach(function(n) {
                 var p = lay.positions[n.id];
                 if (!p) return;
@@ -1334,23 +1006,12 @@ window.ChipStatus.mount = function (opts) {
     // (single-metric heatmap grid removed; the Overview section carries the
     // headline metrics now — see buildOverviewTiles.)
 
-    // ── Edge label toggle ────────────────────────────────────────────
-    var _edgeLabelsVisible = true;
-    try { var st = localStorage.getItem('quam_topo_edge_labels'); if (st === '0') _edgeLabelsVisible = false; } catch(e) {}
+    // docs/120 item 11: toggleEdgeLabels + its localStorage restore lived
+    // here to show/hide the CARD diagram's `.topo-edge-label` elements. The
+    // hero draws no text on its edges (direction is the C/T/M markers), so
+    // both the function and the checkbox that called it are gone rather than
+    // left as a control that does nothing.
 
-    window.toggleEdgeLabels = function(show) {
-        _edgeLabelsVisible = show;
-        document.querySelectorAll('.topo-edge-label').forEach(function(el) {
-            el.style.display = show ? '' : 'none';
-        });
-        try { localStorage.setItem('quam_topo_edge_labels', show ? '1' : '0'); } catch(e) {}
-    };
-
-    var toggleEl = document.getElementById('topo-labels-toggle');
-    if (!_edgeLabelsVisible) {
-        if (toggleEl) toggleEl.checked = false;
-        toggleEdgeLabels(false);
-    }
 
     // ── JSON panel function ──────────────────────────────────────────
     function showQubitJsonPanel(name, raw) {
@@ -2135,35 +1796,10 @@ window.ChipStatus.mount = function (opts) {
     // Re-fit the topology diagram to the current pane width (no rebuild) — runs
     // on pane/window resize so docking the inspector or dragging the split gutter
     // doesn't leave it stale/clipped.
-    var _lastFitW = 0;
-    window._refitTopology = function() {
-        var wrap = document.getElementById('topo-html-wrap');
-        if (!wrap) return;
-        var inner = wrap.querySelector('.topo-inner');
-        if (!inner) return;
-        var cw = parseFloat(inner.style.width), ch = parseFloat(inner.style.height);
-        if (!cw || !ch) return;
-        var availW = wrap.parentElement ? wrap.parentElement.clientWidth - 2 : wrap.clientWidth;
-        if (availW > 0 && cw > availW) {
-            var s = availW / cw;
-            inner.style.transformOrigin = 'top left';
-            inner.style.transform = 'scale(' + s + ')';
-            wrap.style.width = availW + 'px';
-            wrap.style.height = (ch * s) + 'px';
-        } else {
-            inner.style.transform = '';
-            wrap.style.width = cw + 'px';
-            wrap.style.height = ch + 'px';
-        }
-    };
-    function _maybeRefit() {
-        var wrap = document.getElementById('topo-html-wrap');
-        if (!wrap || !wrap.parentElement) return;
-        var w = wrap.parentElement.clientWidth;
-        if (w === _lastFitW) return;              // width-only guard (no resize loop)
-        _lastFitW = w;
-        window._refitTopology();
-    }
+    // docs/120 item 11: _refitTopology / _maybeRefit lived here to scale the
+    // CARD diagram's .topo-inner down to the pane width. The cards are gone and
+    // the hero is responsive by construction — a viewBox plus `width:100%` in
+    // CSS — so there is no JS re-fit any more, and no resize listener to leak.
 
     // ══════════════════════════════════════════════════════════════════
     // Initialization
@@ -2494,33 +2130,13 @@ window.ChipStatus.mount = function (opts) {
     buildHealthSummary();
     buildOverviewTiles();
 
-    // Phase C: wire the unified dashboard — lazy build on scroll, scroll-spy tab
-    // highlight, and a resize re-fit for the topology diagram.
+    // Phase C: wire the unified dashboard — lazy build on scroll + scroll-spy
+    // tab highlight. The resize re-fit that used to live here went with the card
+    // diagram (docs/120 item 11): the hero scales itself through its viewBox, so
+    // there is no longer a window-resize listener or ResizeObserver to register
+    // — or, as this block existed to guarantee, to tear down on nav-away.
     _setupLazyBuild();
     _setupScrollSpy();
-    (function() {
-        var wrap = document.getElementById('topo-html-wrap');
-        _lastFitW = (wrap && wrap.parentElement) ? wrap.parentElement.clientWidth : 0;
-        // Keep refs so BOTH the window-resize listener and the ResizeObserver are
-        // torn down on nav-away. Without this they were re-added on every mount and
-        // never removed → after N visits a single resize fires N stale handlers →
-        // the progressive "gets sluggish after bouncing menus" stutter. Mirrors the
-        // poll-timer + LayoutController.ro teardown.
-        var _refitRO = null;
-        var _refitResize = _throttle(_maybeRefit, 120);
-        if (window.ResizeObserver && wrap && wrap.parentElement) {
-            try { _refitRO = new ResizeObserver(_throttle(_maybeRefit, 100)); _refitRO.observe(wrap.parentElement); } catch (e) {}
-        }
-        window.addEventListener('resize', _refitResize);
-        function _refitTeardown(evt) {
-            if (evt.detail && evt.detail.target && evt.detail.target.id === 'table-pane') {
-                window.removeEventListener('resize', _refitResize);
-                if (_refitRO) { try { _refitRO.disconnect(); } catch (e) {} }
-                document.body.removeEventListener('htmx:beforeSwap', _refitTeardown);
-            }
-        }
-        document.body.addEventListener('htmx:beforeSwap', _refitTeardown);
-    })();
 
     // A deep-link ?view= (left-nav sub-item or a shared link) scrolls to that
     // section; a bare /topology load stays at the top (topology), by design — we

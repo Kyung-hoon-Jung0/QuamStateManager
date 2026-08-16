@@ -83,19 +83,27 @@
         <button class="outline btn-sm history-toggle-btn" onclick="toggleHistoryPanel()">
             History (<span id="history-count">{{ history_count | default(0) }}</span>)
         </button>
-        <label class="topo-toggle">
-            <input type="checkbox" id="topo-labels-toggle" checked onchange="toggleEdgeLabels(this.checked)">
-            Edge labels
-        </label>
+        {# docs/120 item 11: the "Edge labels" checkbox went with the card
+           diagram it controlled. The hero has no text labels on its edges —
+           direction is the C/T/M markers and the chevrons — so the toggle
+           would have been a control that silently does nothing. #}
     </div>
     {# Hero chip map (docs/92 P1): the at-a-glance SVG map — geometry/mode from
        TopoGraph.layoutFor (physical / labelled-logical / none), node fill = the
        selected metric through the SAME palette + physical gate as the heatmaps.
        Built client-side by ChipStatus.mount's buildHeroMap. #}
+    {# docs/120 item 11 — ONE chip map. A second, card-style diagram used to
+       render directly below this one (`#topo-html-wrap`), left in place when
+       the hero shipped ("cards below untouched", docs/92). The customer
+       reported exactly that: "the qubit layout appears twice ... why does the
+       first one exist?", while preferring this one. The cards are gone; the
+       hero took their space, their frequency chevrons and their control/target
+       information, and — critically — the qubit detail popup they used to own
+       now lives on its own (chip-status.js buildQubitPopup). #}
     <div id="topo-hero" class="topo-hero"></div>
     <div id="topology-legend" class="topology-legend"></div>
-    <p class="topo-hint"><small class="muted">Tip: click a qubit to inspect it &middot; double-click for its wiring JSON &middot; <kbd>Tab</kbd> into the grid, <kbd>&larr;&uarr;&darr;&rarr;</kbd> to move, <kbd>Enter</kbd> to inspect, <kbd>Esc</kbd> to close</small></p>
-    <div class="topo-html-wrap" id="topo-html-wrap"></div>
+    <p class="topo-hint"><small class="muted">Tip: click a qubit to inspect it &middot; double-click for its wiring JSON &middot; hover for its parameters &middot; <kbd>Tab</kbd> into the grid, <kbd>&larr;&uarr;&darr;&rarr;</kbd> to move, <kbd>Enter</kbd> to inspect, <kbd>Esc</kbd> to close<br>
+    <b>C</b> control &middot; <b>T</b> target &middot; <b>M</b> the qubit whose flux moves during the gate &middot; the chevrons point at the <em>lower</em> f&#8320;&#8321; of a pair</small></p>
     <div class="topo-colorscale-note">
         <small>Heatmap: <span id="cs-low" class="cs-swatch">&#9632;</span> low <span id="cs-mid" class="cs-swatch">&#9632;</span> mid <span id="cs-high" class="cs-swatch">&#9632;</span> high</small>
         <select id="palette-selector" class="palette-selector" onchange="switchPalette(this.value)"></select>

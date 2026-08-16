@@ -20,7 +20,11 @@ _ROOT = Path(__file__).resolve().parent.parent
 _SELFCHECK = _ROOT / "tests" / "chip_status_hero_selfcheck.cjs"
 
 
-def _client(tmp_path):
+def _client(tmp_path, moving="__unset__"):
+    # `moving` writes qubit_pairs[..].moving_qubit (docs/120 item 11). It is a
+    # parameter rather than something a test edits afterwards because this
+    # helper REWRITES state.json on every call, so a post-hoc edit would be
+    # silently clobbered by the next _client().
     state = {
         "qubits": {
             "qA1": {"id": "qA1", "grid_location": "0,0", "T1": 2.4e-5},
@@ -35,6 +39,9 @@ def _client(tmp_path):
             },
         },
     }
+    if moving != "__unset__":
+        for _p in state["qubit_pairs"].values():
+            _p["moving_qubit"] = moving
     (tmp_path / "state.json").write_text(json.dumps(state), encoding="utf-8")
     (tmp_path / "wiring.json").write_text(
         json.dumps({"wiring": {"qubits": {}}, "network": {"host": "10.0.0.1"}}),
@@ -45,11 +52,25 @@ def _client(tmp_path):
     return client
 
 
-def test_topology_page_mounts_hero_before_cards(tmp_path):
+def test_topology_page_mounts_exactly_one_chip_map(tmp_path):
+    """docs/120 item 11 — ONE map, and it is the hero.
+
+    This used to assert the hero mounted BEFORE the card diagram, because both
+    rendered. That stacking is precisely what the customer reported ("the qubit
+    layout appears twice ... why does the first one exist?"), so the card host
+    is gone and the assertion is the stronger one: it is not there at all.
+    """
     body = _client(tmp_path).get("/topology").get_data(as_text=True)
     assert 'id="topo-hero"' in body
-    # the hero LEADS the topology section — its mount precedes the card wrap
-    assert body.index('id="topo-hero"') < body.index('id="topo-html-wrap"')
+    assert 'id="topo-html-wrap"' not in body
+    assert "topo-node-card" not in body
+
+
+def test_the_map_explains_its_own_symbols(tmp_path):
+    """C/T/M are new vocabulary; a legend the user has to guess at is not one."""
+    body = _client(tmp_path).get("/topology").get_data(as_text=True)
+    assert "control" in body and "target" in body
+    assert "moving" in body or "moves" in body
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")
@@ -62,3 +83,29 @@ def test_hero_selfcheck_passes():
         pytest.skip("jsdom not installed (run `npm install jsdom`)")
     assert r.returncode == 0, (r.stdout + r.stderr)
     assert "all checks passed" in r.stdout, (r.stdout + r.stderr)
+
+
+# ── docs/120 item 11: the pair information the cards used to carry ────────
+
+def test_topology_edges_carry_the_moving_qubit_role(tmp_path):
+    """`moving_qubit` reaches the map. It is a ROLE ("control"/"target"), never
+    a qubit id -- quam_builder writes it that way and defaults it to the
+    higher-f_01 qubit, so the mover always coincides with C or T."""
+    topo = _client(tmp_path).get("/api/topology").get_json()
+    assert topo["edges"], "fixture must have pairs for this to mean anything"
+    for e in topo["edges"]:
+        assert "moving_qubit" in e
+        assert e["moving_qubit"] in ("control", "target", None)
+
+
+def test_a_declared_role_is_carried_through(tmp_path):
+    topo = _client(tmp_path, moving="target").get("/api/topology").get_json()
+    assert [e["moving_qubit"] for e in topo["edges"]] == ["target"]
+
+
+def test_a_bogus_moving_qubit_is_dropped_not_passed_through(tmp_path):
+    """Anything that is not one of the two roles becomes None. A qubit id here
+    would make the map draw M at a position the value never meant."""
+    topo = _client(tmp_path, moving="qA1").get("/api/topology").get_json()
+    assert topo["edges"], "fixture must have pairs for this to mean anything"
+    assert all(e["moving_qubit"] is None for e in topo["edges"])

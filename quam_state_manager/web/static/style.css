@@ -3398,7 +3398,25 @@ td.col-delta .val-delta { margin-left: 0; }
     background: var(--color-warning-bg); border: 1px solid var(--color-warning-border);
     color: var(--color-warning-text);
 }
-.topo-hero-svg { display: block; }
+/* docs/120 item 11 — the hero is the only chip map now, so it takes the room
+   the card diagram used to. RESPONSIVE rather than JS-refitted: the SVG's own
+   viewBox carries the aspect, width:100% fits the pane, and height:auto follows
+   — which is what let _refitTopology and its resize listener be deleted rather
+   than repointed. The max-height keeps a tall, narrow chip from pushing the
+   sections below off the first screen. */
+.topo-hero-svg { display: block; width: 100%; height: auto;
+    max-height: 70vh; margin-inline: auto; }
+/* C / T / M role markers. Circles read as a distinct LAYER from the stones:
+   filled with the surface colour so the edge beneath does not show through,
+   outlined so they stay legible over a heat-coloured node. */
+.cm-role-dot { fill: var(--pico-card-background-color, #fff);
+    stroke: var(--pico-muted-border-color); stroke-width: 1; }
+/* The mover is the one a reader is usually hunting for — give it the accent
+   rather than another neutral ring. */
+.cm-role-dot-m { stroke: var(--pico-primary); stroke-width: 1.5; }
+.cm-role-txt { fill: var(--pico-muted-color); font-weight: 700;
+    pointer-events: none; user-select: none; }
+.cm-role-m .cm-role-txt { fill: var(--pico-primary); }
 .topo-hero-node { cursor: pointer; }
 .topo-hero-node:focus { outline: none; }
 .topo-hero-stone {
