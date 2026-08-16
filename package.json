@@ -8,5 +8,8 @@
   "devDependencies": {
     "canvas": "^3.2.3",
     "jsdom": "^30.0.1"
+  },
+  "dependencies": {
+    "puppeteer-core": "^25.7.0"
   }
 }
