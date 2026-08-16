@@ -149,3 +149,51 @@
     });
     document.addEventListener('htmx:afterSwap', function () { applyLogState(); });
 })();
+
+/* ── docs/120 item 8: the Auto-Sync popup ────────────────────────────────
+ *
+ * Only the popover mechanics live here. The three switches POST to
+ * /auto-sync/set and every decision that follows -- whether pull is armed,
+ * whether live diverged, whether unapplied edits block a replace -- is made on
+ * the server, so the covenant is stated in exactly one place.
+ */
+window.AutoSync = (function () {
+    function pop() { return document.getElementById('auto-sync-pop'); }
+    function btn() { return document.querySelector('.auto-apply-pill'); }
+
+    function close() {
+        var p = pop(); if (!p) return;
+        p.hidden = true;
+        var b = btn(); if (b) b.setAttribute('aria-expanded', 'false');
+    }
+    function toggle() {
+        var p = pop(); if (!p) return;
+        var opening = p.hidden;
+        p.hidden = !opening;
+        var b = btn(); if (b) b.setAttribute('aria-expanded', opening ? 'true' : 'false');
+        if (opening) {
+            syncNested();
+            setTimeout(function () {
+                document.addEventListener('click', function away(e) {
+                    var pp = pop();
+                    if (!pp || pp.hidden) { document.removeEventListener('click', away); return; }
+                    if (pp.contains(e.target) || (btn() && btn().contains(e.target))) return;
+                    close();
+                    document.removeEventListener('click', away);
+                });
+            }, 0);
+        }
+    }
+    /* "Replace" qualifies a pull rather than being a mode of its own, so it is
+       disabled (and visibly so) when pull is off -- a checkbox that cannot mean
+       anything should not look like it can. */
+    function syncNested() {
+        var pull = document.getElementById('as-pull');
+        var rep = document.getElementById('as-pull-replace');
+        if (!pull || !rep) return;
+        rep.disabled = !pull.checked;
+        var row = rep.closest('.as-row');
+        if (row) row.classList.toggle('as-row-disabled', !pull.checked);
+    }
+    return { toggle: toggle, close: close, syncNested: syncNested };
+})();

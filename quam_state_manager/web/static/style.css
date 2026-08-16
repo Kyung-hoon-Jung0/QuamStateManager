@@ -10622,3 +10622,22 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .sv-exp, .sv-note { font-size: 0.72rem; }
 .sv-row-actions { flex: 0 0 auto; margin-left: auto; }
 .state-versions-empty { font-size: 0.78rem; margin: 0.3rem 0; }
+
+/* ── docs/120 item 8: the Auto-Sync popup ──────────────────────────────── */
+.auto-sync-wrap { position: relative; display: inline-block; }
+.auto-sync-pop { position: absolute; top: calc(100% + 0.35rem); left: 0;
+    z-index: 45; width: 21rem; padding: 0.6rem 0.75rem;
+    background: var(--pico-card-background-color);
+    border: 1px solid var(--pico-muted-border-color); border-radius: 0.4rem;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18); font-size: 0.8rem; }
+.auto-sync-pop[hidden] { display: none; }
+.as-title { display: block; margin-bottom: 0.35rem; }
+.as-row { display: flex; align-items: flex-start; gap: 0.4rem;
+    margin: 0.3rem 0; cursor: pointer; }
+.as-row input { margin: 0.15rem 0 0; flex: 0 0 auto; }
+.as-row small { display: block; line-height: 1.3; }
+/* Nested under its parent because "replace" qualifies a pull. */
+.as-row-sub { margin-left: 1.35rem; }
+.as-row-disabled { opacity: 0.45; }
+.as-note { font-size: 0.72rem; margin: 0.4rem 0 0.5rem; line-height: 1.35; }
+.as-actions { display: flex; gap: 0.4rem; }

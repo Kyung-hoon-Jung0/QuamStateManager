@@ -3000,6 +3000,14 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # mutation_seq hit in docs/110 — real-browser caught both).
         "auto_apply": _auto_apply_state(),
         "auto_apply_armable": _auto_apply_armable(),
+        # The FULL session for the pill. `auto_apply` stays push-only because
+        # the flusher's data-auto-apply beacon reads it; a pull-only session
+        # must not make the client start writing to live.
+        "auto_sync": _auto_sync_state(),
+        # docs/120 item 8: pull is gated on its OWN question, so the pill can
+        # still be offered on a chip where push is refused (a diverged chip is
+        # exactly where pull is wanted).
+        "auto_pull_armable": _auto_pull_armable(),
         "applied_log": _applied_log_rows(),
         # docs/20 v2: first-open "name this chip?" banner payload (None when
         # named / declined / archive / no chip) + declared-but-unreachable
@@ -4755,18 +4763,65 @@ def _pair_bulk_grid(store: QuamStore, modified: dict
 _AUTO_SNAPSHOT_MIN_S = 120.0     # post-apply history snapshots, per session
 
 
-def _auto_apply_state(ctx: dict | None = None) -> dict | None:
-    """The armed session for the active (or given) ctx, else None."""
+# \u2500\u2500 docs/120 item 8 \u2014 Auto-Sync: the covenant amended a second time \u2500\u2500\u2500\u2500\u2500\u2500\u2500
+#
+# The user, on 2026-08-16: "many mature users run VS Code with auto-save on.
+# When qualibrate updates, VS Code always gets the SYNCED file. But SM's
+# original design concept was: never pull/push the source of truth without the
+# user's permission. It's time to drop that. What users want is auto pull/push
+# WHEN THEY ALLOW IT. Push is done; now pull."
+#
+# docs/107 stated the covenant as "any direct live write requires >=1 explicit
+# Apply-to-live press"; docs/117 amended its SCOPE so that one press could
+# authorize a session. This amends the OTHER direction for the first time: a
+# session may also replace the working copy from live without asking again.
+#
+# The floor that did not move, and the reason this is safe to offer: ticking
+# "auto replace" IS the consent. The user said so explicitly -- "if 1-1 is
+# checked, live ALWAYS wins" -- and that is the only configuration in which SM
+# discards work without a question. With it UNCHECKED and local edits present,
+# SM still refuses to choose and raises the banner, which is docs/87's rule
+# ("SM never swaps what you are looking at") intact.
+#
+#   pull  replace  local edits   behaviour
+#   ----  -------  -----------   -------------------------------------------
+#   on    on       either        live wins, silently -- pull and replace
+#   on    off      no            pull silently (a provably clean copy; this is
+#                                today's RECONCILE_SYNCED, unchanged)
+#   on    off      YES           do NOT pull; raise the drift banner and let
+#                                the user choose
+#   off   -        -             byte-identical to today
+#
+# ONE session dict holds all three flags. `_auto_apply_state` reads it only
+# when `push` is on, so every existing push code path -- the tray beacon, the
+# flusher, the applied log, the revert anchor, `_auto_disarm_response` -- is
+# untouched by construction rather than by test.
+
+
+def _auto_sync_state(ctx: dict | None = None) -> dict | None:
+    """The armed Auto-Sync session for the active (or given) ctx, else None."""
     ctx = ctx if ctx is not None else _active_ctx()
     if not ctx or ctx.get("type") != "quam":
         return None
     return ctx.get("auto_apply") or None
 
 
+def _auto_apply_state(ctx: dict | None = None) -> dict | None:
+    """The armed session, but ONLY when it authorizes pushing.
+
+    docs/120 item 8: the session grew pull flags, and every caller of this
+    helper is a push-side concern (the flusher's beacon, the applied log, the
+    revert anchor). A pull-only session must read as "not armed" to all of
+    them, or arming pull alone would start writing to the live chip.
+    """
+    sess = _auto_sync_state(ctx)
+    return sess if (sess and sess.get("push")) else None
+
+
 def _auto_apply_armable(ctx: dict | None = None) -> tuple[bool, str]:
-    """(can arm, why not). Refusals are the ones where arming would be a trap,
-    not a nuisance: nothing to write to, nothing writable, or a chip that has
-    ALREADY diverged (arming into a guaranteed immediate conflict)."""
+    """(can arm PUSH, why not). Refusals are the ones where arming would be a
+    trap, not a nuisance: nothing to write to, nothing writable, or a chip that
+    has ALREADY diverged (arming into a guaranteed immediate conflict)."""
     ctx = ctx if ctx is not None else _active_ctx()
     if not ctx or ctx.get("type") != "quam":
         return False, "No chip is open."
@@ -4776,6 +4831,27 @@ def _auto_apply_armable(ctx: dict | None = None) -> tuple[bool, str]:
         return False, "The live folder is read-only."
     if ctx.get("live_diverged"):
         return False, ("The live chip changed outside SM \u2014 resolve that first.")
+    return True, ""
+
+
+def _auto_pull_armable(ctx: dict | None = None) -> tuple[bool, str]:
+    """(can arm PULL, why not) \u2014 a DIFFERENT question from push.
+
+    Two of push's refusals are backwards here and one is irrelevant:
+
+    * ``live_diverged`` is push's "you would immediately conflict". For pull it
+      is the very condition that makes pulling useful, so refusing on it would
+      disarm the feature exactly when it is wanted.
+    * ``live_readonly_hint`` describes writing TO live. A pull only reads live
+      and writes the working copy, so a read-only folder is no obstacle.
+
+    What remains is the same as push: something to sync, and not an archive.
+    """
+    ctx = ctx if ctx is not None else _active_ctx()
+    if not ctx or ctx.get("type") != "quam":
+        return False, "No chip is open."
+    if (ctx.get("origin") or "live") != "live":
+        return False, "This is a read-only archive."
     return True, ""
 
 
@@ -4846,6 +4922,8 @@ def _render_tray(*, oob: bool) -> str:
         # the server owns it.
         auto_apply=_auto_apply_state(),
         auto_apply_armable=_auto_apply_armable(),
+        auto_sync=_auto_sync_state(),
+        auto_pull_armable=_auto_pull_armable(),
         applied_log=_applied_log_rows(),
         oob=oob,
     )
@@ -10612,21 +10690,130 @@ def _auto_disarm_response(ctx, body: str, reason: str, status: int = 200):
     return resp
 
 
-@bp.route("/auto-apply/arm", methods=["POST"])
-def auto_apply_arm():
-    """Arm the session. THIS press is the consent the covenant asks for —
-    one labelled act, no confirm dialog (docs/104 #1), and the pill it turns
-    on is visible on every page until the user turns it off."""
-    ctx = _active_ctx()
-    ok, why = _auto_apply_armable(ctx)
-    if not ok:
-        return render_template("_status.html", message=why, level="warning"), 409
-    ctx["auto_apply"] = {
+def _new_auto_session(*, pull: bool, pull_replace: bool, push: bool) -> dict:
+    """A fresh Auto-Sync session. NEVER persisted (docs/117): an armed session
+    must not outlive the window that armed it."""
+    return {
         "armed_at": time.time(),
         "pre_ts": None,        # the session's ONE revert anchor (docs/117)
         "last_snap": 0.0,      # post-apply snapshot throttle
         "flushes": 0,
+        "pull": bool(pull),
+        "pull_replace": bool(pull_replace),
+        "push": bool(push),
     }
+
+
+@bp.route("/auto-sync/set", methods=["POST"])
+def auto_sync_set():
+    """Set the three Auto-Sync switches (docs/120 item 8).
+
+    The user's design: the pill opens a popup with checkboxes — auto pull from
+    the live chip, auto replace SM's modified values on that pull, and auto
+    push to the live chip — all on by default, uncheck what you do not want.
+    THIS submission is the consent the covenant asks for; the pill then states
+    the mode on every page until it is turned off.
+
+    Turning everything off clears the session entirely, so "off" is exactly
+    today's behaviour rather than an armed session that happens to do nothing.
+    """
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam":
+        return render_template("_status.html", message="No chip is open.",
+                               level="warning"), 409
+    want_pull = request.values.get("pull") in ("1", "on", "true")
+    want_replace = request.values.get("pull_replace") in ("1", "on", "true")
+    want_push = request.values.get("push") in ("1", "on", "true")
+
+    if not (want_pull or want_push):
+        ctx.pop("auto_apply", None)
+        return _tray_html()
+
+    # Each direction is gated on ITS OWN question; a refusal on one must not
+    # silently swallow the other.
+    if want_push:
+        ok, why = _auto_apply_armable(ctx)
+        if not ok:
+            return render_template("_status.html", message=why, level="warning"), 409
+    if want_pull:
+        ok, why = _auto_pull_armable(ctx)
+        if not ok:
+            return render_template("_status.html", message=why, level="warning"), 409
+    # "Replace" without "pull" is not a state — it qualifies a pull.
+    ctx["auto_apply"] = _new_auto_session(
+        pull=want_pull, pull_replace=want_pull and want_replace, push=want_push)
+    resp = make_response(_tray_html())
+    resp.headers["HX-Trigger"] = json.dumps({"autoApplyArmed": True})
+    return resp
+
+
+@bp.route("/auto-sync/pull", methods=["POST"])
+def auto_sync_pull():
+    """Perform (or decline) one automatic pull. The POLICY lives here.
+
+    The client's only job is to notice that the server said a pull is due and
+    to press this; every branch of the user's table is decided server-side, so
+    the rule cannot be half-implemented in two places.
+
+    204 means "nothing done" for every reason -- not armed, not diverged, or
+    DECLINED because the user has unapplied edits and did not tick replace. In
+    that last case the drift banner is already up (``live_diverged`` is what
+    made this due), so refusing is not silent: the user is being asked.
+    """
+    ctx = _active_ctx()
+    sess = _auto_sync_state(ctx)
+    if not sess or not sess.get("pull"):
+        return "", 204
+    ok, _why = _auto_pull_armable(ctx)
+    if not ok:
+        return "", 204
+    if not ctx.get("live_diverged"):
+        return "", 204            # nothing to pull; the common case
+
+    dirty = bool(ctx.get("working_dirty") or (ctx.get("store")
+                                              and ctx["store"].change_log))
+    if dirty and not sess.get("pull_replace"):
+        # THE line docs/87 draws, kept: SM does not choose between the user's
+        # work and the live chip. The banner is already showing.
+        return "", 204
+
+    wc = ctx.get("working_copy")
+    if wc is None:
+        return "", 204
+    build_lock = _active_wc_lock(ctx)
+    try:
+        with build_lock:
+            working_copy.sync_from_live(wc)
+            ctx["_alarm_reason"] = "live-pull"
+            _rebuild_after_working_copy_replaced(ctx)
+    except (FileNotFoundError, OSError, ValueError):
+        # A pull that cannot read live is not a reason to keep retrying every
+        # poll: disarm, exactly like the push side's failure branches.
+        logger.warning("Auto-sync pull failed", exc_info=True)
+        return _auto_disarm_response(ctx, "", "error", status=204)
+
+    resp = make_response(_tray_html())
+    resp.headers["HX-Trigger"] = json.dumps({
+        "liveDriftChanged": True, "stateRestored": True,
+        "autoSyncPulled": {"replaced": bool(dirty)},
+    })
+    return resp
+
+
+@bp.route("/auto-apply/arm", methods=["POST"])
+def auto_apply_arm():
+    """Arm the session. THIS press is the consent the covenant asks for —
+    one labelled act, no confirm dialog (docs/104 #1), and the pill it turns
+    on is visible on every page until the user turns it off.
+
+    Kept as the PUSH-only entry point (docs/120 item 8 added /auto-sync/set for
+    the three-way choice) so the docs/117 contract and its pins are unchanged.
+    """
+    ctx = _active_ctx()
+    ok, why = _auto_apply_armable(ctx)
+    if not ok:
+        return render_template("_status.html", message=why, level="warning"), 409
+    ctx["auto_apply"] = _new_auto_session(pull=False, pull_replace=False, push=True)
     resp = make_response(_tray_html())
     # Pending edits made BEFORE arming are flushed by the client's first
     # mutation-driven pass; the label said so before the press.
@@ -11091,6 +11278,26 @@ def _reset_baseline_after_apply(ctx) -> None:
         logger.warning("baseline reset after apply-to-live failed", exc_info=True)
 
 
+def _auto_pull_due(ctx: dict | None) -> bool:
+    """Should the client press /auto-sync/pull right now?
+
+    docs/120 item 8 — this rides the EXISTING drift poll rather than adding a
+    poller of its own (docs/110 doctrine). It is deliberately a cheap read of
+    flags already on the ctx: `live_diverged` is maintained by the throttled
+    ground-truth check that runs on render and on /api/topology-mtime, so
+    asking here costs nothing and cannot itself read the live files.
+
+    It answers only "is a pull worth attempting". The POLICY -- whether local
+    edits block it -- is decided in /auto-sync/pull, so it lives in one place.
+    """
+    sess = _auto_sync_state(ctx)
+    if not sess or not sess.get("pull"):
+        return False
+    if (ctx or {}).get("origin", "live") != "live":
+        return False
+    return bool((ctx or {}).get("live_diverged"))
+
+
 @bp.route("/state/drift")
 def state_drift():
     """Cheap poll: how many params the live chip changed since the baseline.
@@ -11100,21 +11307,27 @@ def state_drift():
     Always 200 (even with no chip) so the banner poll never logs errors.
     """
     ctx = _active_ctx()
+    # docs/120 item 8: the Auto-Sync pull signal rides this poll. It is carried
+    # on EVERY branch, including the untracked ones — a chip with no drift
+    # baseline can still have diverged, and dropping the flag there would make
+    # auto-pull work only for chips that happen to be tracked.
+    auto_pull = _auto_pull_due(ctx)
     if not _drift_tracked(ctx):
-        return jsonify(ok=True, tracked=False, count=0)
+        return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull)
     try:
         info = _compute_drift(ctx)
     except Exception:   # noqa: BLE001 — a poll must never 500
         logger.debug("drift compute failed", exc_info=True)
-        return jsonify(ok=True, tracked=True, count=0)
+        return jsonify(ok=True, tracked=True, count=0, auto_pull=auto_pull)
     if info is None:
-        return jsonify(ok=True, tracked=False, count=0)
+        return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull)
     # (docs/87) ``auto_pulled`` used to ride along here as a one-shot so the
     # silent clean auto-pull became a visible toast. The user-facing path no
     # longer pulls without asking, so there is nothing to announce after the
     # fact — the banner asks BEFORE, and names the same count.
     return jsonify({"ok": True, "tracked": True, "count": info["count"],
-                    "baseline_utc": info["baseline_utc"]})
+                    "baseline_utc": info["baseline_utc"],
+                    "auto_pull": auto_pull})
 
 
 @bp.route("/state/drift/view")

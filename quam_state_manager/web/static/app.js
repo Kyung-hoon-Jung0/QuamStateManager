@@ -2662,6 +2662,24 @@ window.applyEditsToLive = function () {
                 // here. It announced a silent auto-pull after the fact; the user-facing
                 // path now ASKS first through the live-diverged banner, which carries
                 // the same count and both directions, so there is nothing to report.
+                // docs/120 item 8 — Auto-Sync's pull rides THIS poll rather
+                // than adding one of its own. The server decides everything:
+                // whether pull is armed, whether live actually diverged, and
+                // whether unapplied edits block it. All the client does is
+                // press the button when told, and share the in-flight latch
+                // with the manual Apply + the auto-apply flusher so a pull can
+                // never interleave with a push.
+                if (d && d.auto_pull && !window._applyInFlight && window.htmx) {
+                    window._applyInFlight = true;
+                    var _rel = function () { window._applyInFlight = false; };
+                    try {
+                        var pp = window.htmx.ajax('POST', '/auto-sync/pull', {
+                            target: '#pending-tray', swap: 'outerHTML',
+                        });
+                        if (pp && typeof pp.then === 'function') pp.then(_rel, _rel);
+                        else _rel();
+                    } catch (e) { _rel(); }
+                }
                 var count = (d && d.ok && d.tracked) ? (d.count || 0) : 0;
                 // Count changed → refresh any embedded panel / open overlay so
                 // the State History page + a viewing user see it accumulate.
