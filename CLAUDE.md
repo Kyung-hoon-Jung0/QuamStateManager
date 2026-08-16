@@ -21,6 +21,8 @@ PYTHONUTF8=1 conda run -n cqt python -m pytest tests/test_pointer_resolver.py -v
 ```bash
 npm install          # jsdom + canvas (canvas is needed by the Plotly-touching ones)
 ```
+`npm run selfcheck` reports three states, deliberately: `(N assertions)` when the file prints its own `ok - ` lines, `(silent style)` when its `ok()` only speaks on failure (35 of 61 — legitimate), and `ok?  … (exit 0 but NO output)` for the one shape that cannot be told apart from asserting nothing. The old output said `(0 assertions)` for every silent file, which read as a number and was indistinguishable from dormancy.
+
 The harnesses run the scripts with `window.eval` and hand Node **individual** globals (`global.window`, `global.document`, …) — jsdom's own script realm is not used. Anything not bridged is missing, and a *guard* that tests `window.X` while *calling* bare `X` then throws instead of degrading: that is exactly how `CSS` went unbridged for so long (`window.CSS` is an object, bare `CSS` is `undefined`), and inside `LiveEditUndo._input`'s `try/catch` the ReferenceError was swallowed into a null lookup with no error anywhere. When adding a harness, bridge every global the code under test reads bare.
 
 **Run web dev server** (use a non-default port — stale dev servers stack up; serve from a Windows env, never WSL — broken loopback forwarding on this machine):
