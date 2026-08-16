@@ -8192,6 +8192,99 @@ def state_history_snapshot():
     return state_history()
 
 
+# ── docs/120 item 10 — the working-state version, from the top bar ────────
+#
+# Customer: "move the bookmark button below Calculator, and in its place show
+# the current state working version id. Since we're adding Auto-Sync, revert
+# back and forth has to be really free. Clicking it lists the version history
+# with WHEN each was updated, checkboxes to pick several -> show just the
+# combined diff -> and let a chosen state be applied to the live chip."
+#
+# Deliberately a thin, reachable surface over machinery that already exists:
+# the snapshots are State History's, the 2-way diff is the docs/84 workbench's
+# front door, an N-way pick is the Compare hub's basket, and applying is
+# /state-history/<ts>/restore-live WITH BOTH its independent force gates. The
+# value added is that it is one click from every page rather than a navigation.
+#
+# The version ID is the snapshot TIMESTAMP. Not store.mutation_seq: that resets
+# on reload, eviction and restart, so it is a liveness pulse, never an identity.
+# Which snapshot is "now" is CONTENT-matched (snapshot_ts_for_current_content),
+# never "the newest" -- after an A->B->A cycle the newest snapshot holds the
+# wrong content, which is the audit-r10 finding that put that helper there.
+
+
+def _state_version_now(ctx: dict | None) -> dict:
+    """What the top-bar chip shows. Never called from a page render.
+
+    Resolving this hashes the live state+wiring pair, so it rides its own lazy
+    endpoint (docs/28: no live reads on a surface that renders on every page).
+    """
+    out: dict[str, Any] = {"ts": None, "count": 0, "unmatched": False}
+    if not ctx or ctx.get("type") != "quam" or not ctx.get("path"):
+        return out
+    hm = _history()
+    try:
+        out["count"] = len(hm.list_snapshots(Path(ctx["path"])))
+    except Exception:  # noqa: BLE001
+        return out
+    try:
+        out["ts"] = hm.snapshot_ts_for_current_content(Path(ctx["path"]))
+    except Exception:  # noqa: BLE001
+        out["ts"] = None
+    # "No snapshot holds exactly this content" is the ORDINARY mid-edit state,
+    # not a fault — say so plainly rather than inventing a nearest match.
+    out["unmatched"] = out["ts"] is None and out["count"] > 0
+    return out
+
+
+@bp.route("/state/version")
+def state_version_chip():
+    """The top-bar version chip (lazy; see _state_version_now)."""
+    ctx = _active_ctx()
+    # Gate on a chip actually being OPEN, not on a display name — the raw ctx
+    # carries no "name" (that is assembled by _ctx for full renders), and using
+    # it here made the chip silently render empty on every page.
+    return render_template("_state_version_chip.html",
+                           ver=_state_version_now(ctx),
+                           has_chip=bool(ctx and ctx.get("type") == "quam"
+                                         and ctx.get("path")))
+
+
+@bp.route("/state/versions")
+def state_versions_panel():
+    """The version list the chip opens: when each was recorded, what produced
+    it, and the two things a user wants from it — compare, and go back."""
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam" or not ctx.get("path"):
+        return render_template("_state_versions.html", rows=[], ver=_state_version_now(None),
+                               chip_key="", archive=True)
+    hm = _history()
+    path = Path(ctx["path"])
+    try:
+        snaps = hm.list_snapshots(path)
+    except Exception:  # noqa: BLE001
+        snaps = []
+    try:
+        chip_key = Path(hm.resolve_chip_dir(path)[0]).name
+    except Exception:  # noqa: BLE001
+        chip_key = ""
+    ver = _state_version_now(ctx)
+    limit = min(_int_arg("limit", 40, minimum=1), 500)
+    rows = [{
+        "ts": m.timestamp,
+        "trigger": m.trigger,
+        "label": m.label,
+        "note": m.note,
+        "pinned": bool(m.pinned),
+        "experiment": m.experiment_name,
+        "run_id": m.run_id,
+        "current": m.timestamp == ver["ts"],
+    } for m in snaps[:limit]]
+    return render_template("_state_versions.html", rows=rows, ver=ver,
+                           chip_key=chip_key, total=len(snaps),
+                           archive=(ctx.get("origin") or "live") != "live")
+
+
 @bp.route("/state/archive", methods=["POST"])
 def state_archive():
     """Bookmark/archive the current chip state with a tag + note (feedback #3).

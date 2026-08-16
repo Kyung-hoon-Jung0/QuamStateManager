@@ -1,0 +1,27 @@
+{# docs/120 item 10 — the working-state version, in the top bar.
+
+   Lazily loaded into #state-version-slot: resolving it hashes the live
+   state+wiring pair, and docs/28 forbids that on a surface rendering on every
+   page. Nothing here is computed by _ctx().
+
+   Three honest states, never a guess:
+     - a matching snapshot -> its timestamp IS the version id
+     - none matches        -> "unsaved", the ordinary mid-edit condition
+     - no chip open        -> render nothing at all
+
+   A chip with NO history still gets the affordance: the panel's empty state is
+   what explains where versions come from, and gating it away would hide the
+   feature from exactly the person who has not met it yet.
+#}
+{% if has_chip %}
+<button type="button" class="state-version-chip{% if ver.unmatched %} state-version-unsaved{% endif %}"
+        hx-get="/state/versions" hx-target="#state-version-panel" hx-swap="innerHTML"
+        onclick="StateVersions.toggle()"
+        aria-haspopup="dialog" aria-expanded="false"
+        title="{% if ver.ts %}The live chip matches this recorded version. Click for the history — compare any two, or go back to one.{% else %}No recorded version holds exactly this content yet (an ordinary state mid-edit). Click for the history.{% endif %}">
+    <span class="state-version-ico" aria-hidden="true">&#9114;</span>
+    {% if ver.ts %}<span class="state-version-id">{{ ver.ts }}</span>
+    {% else %}<span class="state-version-id state-version-none">unsaved</span>{% endif %}
+    {% if ver.count %}<span class="state-version-count">{{ ver.count }}</span>{% endif %}
+</button>
+{% endif %}
