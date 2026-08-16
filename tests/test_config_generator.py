@@ -232,6 +232,59 @@ class TestValidateSpecErrors:
         assert any("qubit" in e for e in errors)
 
 
+class TestQdacBlocksNothingUntilItIsUsed:
+    """An untouched QDAC section failed EVERY build.
+
+    Found by driving the wizard in real Chrome: Auto-allocate, Generate and
+    Re-generate all returned 400 with "qdac.ip_address: required when
+    communication_type is 'Ethernet'" on a chip using no QDAC at all. The
+    wizard always emits a `qdac` key because the section exists in the UI, and
+    'Ethernet' is the default communication_type, so the address check fired
+    for everyone.
+
+    docs/119 states the rule for the capability gate — requested only when
+    `spec.qdac.qubits` is non-empty — and this validator simply never got it.
+    """
+
+    def _spec(self, **extra):
+        base = {
+            "controllers": [{"id": "con1", "fems": [{"slot": 1, "type": "MW-FEM"}]}],
+            "qubits": [{"id": "q1"}], "pairs": [], "gate": "cz_fixed",
+        }
+        base.update(extra)
+        return base
+
+    def _qdac_errors(self, spec):
+        return [e for e in (validate_spec(spec) or []) if "qdac" in str(e).lower()]
+
+    def test_an_untouched_qdac_section_raises_nothing(self):
+        for qdac in ({"qubits": {}, "communication_type": "Ethernet"},
+                     {"qubits": []},
+                     {"qubits": {}}):
+            assert self._qdac_errors(self._spec(qdac=qdac)) == [], qdac
+
+    def test_no_qdac_key_is_unchanged(self):
+        assert self._qdac_errors(self._spec()) == []
+
+    def test_a_qubit_biased_from_the_qdac_still_needs_an_address(self):
+        """The check is not deleted — it is gated. An unreachable instrument is
+        a real error exactly when something depends on it."""
+        errs = self._qdac_errors(self._spec(
+            qdac={"qubits": {"q1": {"channel": 1}}, "communication_type": "Ethernet"}))
+        assert any("ip_address" in e for e in errs), errs
+
+    def test_usb_still_needs_its_device_number_when_used(self):
+        errs = self._qdac_errors(self._spec(
+            qdac={"qubits": {"q1": {"channel": 1}}, "communication_type": "USB"}))
+        assert any("usb_device" in e for e in errs), errs
+
+    def test_a_complete_qdac_spec_raises_no_address_error(self):
+        errs = self._qdac_errors(self._spec(
+            qdac={"qubits": {"q1": {"channel": 1}}, "communication_type": "Ethernet",
+                  "ip_address": "192.168.0.100"}))
+        assert not any("ip_address" in e or "usb_device" in e for e in errs), errs
+
+
 class TestValidateSpecQdac:
     """QDAC-II bias declaration (spec['qdac']) — validate_spec's structural checks."""
 

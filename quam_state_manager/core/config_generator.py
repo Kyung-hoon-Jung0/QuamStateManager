@@ -220,10 +220,24 @@ def validate_spec(spec) -> list[str]:
     # is purely a structural/type check, same spirit as the twpas block above.
     qdac_qubit_ids: set = set()
     qdac = spec.get("qdac")
-    if qdac:
-        if not isinstance(qdac, dict):
-            errors.append("qdac: must be an object")
-            qdac = {}
+    if not isinstance(qdac, dict) and qdac:
+        errors.append("qdac: must be an object")
+        qdac = {}
+    # NOTHING about the instrument is required until a qubit actually USES it.
+    #
+    # docs/119 states the rule for the capability gate — "requested only when
+    # `spec.qdac.qubits` is non-empty" — but this validator never got it, and
+    # the wizard always emits a `qdac` key because the section exists in the UI.
+    # So an untouched QDAC section failed EVERY build with "qdac.ip_address:
+    # required when communication_type is 'Ethernet'" (the default comm type),
+    # blocking Auto-allocate, Generate AND Re-generate on a chip with no QDAC
+    # at all. Confirmed in a real browser: the wizard could not build anything.
+    #
+    # The address checks below stay exactly as they were for a spec that DOES
+    # bias a qubit from the QDAC — that is when an unreachable instrument is a
+    # real error rather than an unused form field.
+    qdac_qubits_declared = (qdac or {}).get("qubits") or {}
+    if qdac and qdac_qubits_declared:
         comm = qdac.get("communication_type", "Ethernet")
         if comm not in ("Ethernet", "USB"):
             errors.append("qdac.communication_type: must be 'Ethernet' or 'USB'")
