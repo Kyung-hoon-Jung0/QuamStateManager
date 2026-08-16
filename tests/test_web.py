@@ -5986,28 +5986,32 @@ class TestDatasetScopedSearch:
         assert "'unknown '" in text or '"unknown "' in text
 
     def test_app_js_wires_help_panel_triggers(self):
-        """app.js delegates focusin + click handlers for the help panel.
+        """app.js delegates click handlers for the help panel.
 
-        Three triggers per spec:
-        - focusin on #dataset-search → open ON FIRST SESSION-FOCUS ONLY
-          (sessionStorage flag), not every focus
-        - click on #ds-search-help-toggle → always open
+        Two triggers per spec (docs/120 item 3):
+        - click on #ds-search-help-toggle → TOGGLES (open if closed, close if
+          open). It used to be open-only, so the same button a user opened the
+          panel with could not put it away.
         - click on #ds-search-help-close → always close
         Plus a click delegate on .ds-help-example for paste-into-search.
+
+        NOTHING auto-opens the panel. The old first-focus-per-session open
+        (sessionStorage flag ``quam_dataset_search_help_shown``) was REMOVED:
+        it fired the moment a user began typing, and in the sidebar — whose
+        copy of the panel renders inline rather than floating — that pushed
+        the experiment tree down out of view.
         """
         app_js = (Path(__file__).resolve().parent.parent
                   / "quam_state_manager" / "web" / "static" / "app.js")
         text = app_js.read_text(encoding="utf-8")
 
-        # First-session flag tracked in sessionStorage so the panel doesn't
-        # nag the user on every refocus.
-        assert "quam_dataset_search_help_shown" in text
-        assert "sessionStorage" in text
+        # The auto-open is GONE — neither help panel may open itself.
+        assert "quam_dataset_search_help_shown" not in text
+        assert "quam_search_help_shown" not in text
 
-        # All three IDs are referenced by handlers.
+        # Both IDs are referenced by handlers.
         assert "'ds-search-help-toggle'" in text or '"ds-search-help-toggle"' in text
         assert "'ds-search-help-close'" in text or '"ds-search-help-close"' in text
-        assert "'dataset-search'" in text or '"dataset-search"' in text
 
         # Click-to-paste — delegated by classname.
         assert "ds-help-example" in text

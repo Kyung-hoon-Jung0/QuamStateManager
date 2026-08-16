@@ -24,7 +24,23 @@
    Projects page. Red = the active project's state_path doesn't exist (its
    runs would fail); amber = SM has a DIFFERENT chip open than the one
    qualibrate writes to; neutral otherwise. #}
-{% if qualibrate_tray is defined and qualibrate_tray %}
+{% if qualibrate_tray is defined and qualibrate_tray and qualibrate_tray.standalone %}
+{# docs/120 item 1 — "sometimes a user just opens an arbitrary state file and
+   wants to handle the FULL state file; it's enough to indicate the user is
+   modifying a specific folder, not a project."
+
+   Editing an unaffiliated folder always worked; SM simply never said so, and
+   an absent badge reads as "not applicable yet", not as "standalone". This
+   chip is purely informational — it is NOT a warning and must never wear a
+   warn/danger colour. It can sit BESIDE the ⚗ badge: qualibrate having an
+   active project while the open chip belongs to none is exactly the case
+   worth naming, and it explains the amber ⚗ (no project, rather than a
+   different one). #}
+<span class="qualibrate-tray-badge tray-standalone-badge"
+      title="This chip is a standalone folder — it is not part of any QUAlibrate project. Everything is editable as usual; only the project association is absent.{% if qualibrate_tray.standalone_path %}&#10;{{ qualibrate_tray.standalone_path }}{% endif %}">
+    <span aria-hidden="true">&#128193;</span>&nbsp;Standalone folder</span>
+{% endif %}
+{% if qualibrate_tray is defined and qualibrate_tray and (qualibrate_tray.project or qualibrate_tray.sm_scope) %}
 {# Badge name = SM's own project scope when present (docs/63), else the
    qualibrate-active project. When both exist and differ, the active project
    is appended muted — informational, never a warn color (colors keep their

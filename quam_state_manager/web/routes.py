@@ -3656,7 +3656,23 @@ def _qualibrate_tray_badge() -> dict | None:
         return None
     ctx = _active_ctx()
     sm_scope = (ctx or {}).get("qualibrate_project")
-    if not st.get("config_exists") or not (st.get("active") or sm_scope):
+    if not st.get("config_exists"):
+        return None
+    # docs\120 item 1: an open chip that belongs to NO project is standalone,
+    # and SM used to say nothing whatsoever about that — this function returned
+    # None, so the slot rendered empty and "you are editing a bare folder" was
+    # indistinguishable from "the badge doesn't apply yet". Editing was never
+    # blocked; only the fact was missing. Gated on a config existing, because
+    # without one "project" is not a concept this user has, so the contrast
+    # the word draws would be meaningless. An archive is excluded: it is not a
+    # folder you are working in, and the status badge already names it.
+    standalone = bool(
+        ctx
+        and ctx.get("type") == "quam"
+        and (ctx.get("origin") or "live") == "live"
+        and not sm_scope
+    )
+    if not (st.get("active") or sm_scope or standalone):
         return None
     match = None
     live = (ctx or {}).get("live_path")
@@ -3668,7 +3684,11 @@ def _qualibrate_tray_badge() -> dict | None:
             # dangling only ever describes the ACTIVE project's state_path —
             # a scope-only badge (no active project) must not read as broken.
             "dangling": bool(st.get("active")) and not st["state_exists"],
-            "match": match, "sm_scope": sm_scope}
+            "match": match, "sm_scope": sm_scope,
+            "standalone": standalone,
+            # The folder itself, so the chip can name what is being edited
+            # rather than just asserting a category.
+            "standalone_path": (ctx or {}).get("live_path") if standalone else None}
 
 
 @bp.route("/api/qualibrate/projects")
