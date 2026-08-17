@@ -14,7 +14,7 @@
 <div class="tree-toolbar">
     <span class="tree-search-icon">&#128269;</span>
     <input type="text" class="tree-search" id="explorer-search" placeholder="Search keys or values…  space = AND, | = OR"
-           oninput="jsonTreeSearch(_activeTreeId(), this.value)" autocomplete="off">
+           oninput="explorerSearch(this.value)" autocomplete="off">
     <div class="tree-depth-group">
         <span class="tree-depth-label">Depth:</span>
         <button class="btn-sm outline" onclick="jsonTreeCollapseAll(_activeTreeId())">0</button>
@@ -43,7 +43,14 @@
 </div>
 
 <div id="explorer-livediff-bar" class="livediff-bar" hidden>
-    <span>Qualibrate changed <b id="livediff-bar-count">0</b> field(s) &mdash; review before&rarr;after, then accept.</span>
+    {# docs/122 item 2: a filter applied over a diff can exclude the very rows
+       the diff is announcing. "changed 3 fields" above an empty tree reads as
+       "qualibrate changed nothing here", so the bar says how many its own
+       search is hiding. Filled by _explorerDiffFilterNote(); hidden when the
+       search box is empty or hides none of them. #}
+    <span>Qualibrate changed <b id="livediff-bar-count">0</b> field(s)<span
+          id="livediff-bar-filtered" class="livediff-filtered" hidden></span>
+          &mdash; review before&rarr;after, then accept.</span>
     <button class="btn-sm" type="button" onclick="explorerAcceptAll()">Accept all</button>
     <button class="btn-sm outline" type="button" onclick="explorerLiveDiff(false)">Exit diff</button>
 </div>

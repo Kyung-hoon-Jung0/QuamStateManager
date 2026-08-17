@@ -3869,7 +3869,46 @@ window.PaneState = (function () {
             });
         }
     }
-    function _captureSoft(root) {
+    /* docs/122 item 2: the SOFT tier used to carry the search TEXT and nothing
+       else, so an /explorer rebuild -- which an armed Auto-Sync pull triggers
+       unattended, measured at ~25 s after a qualibrate write -- still lost the
+       expanded nodes, the state/wiring tab and the scroll position. Those are
+       state the user built by hand; a rebuild that keeps only the text still
+       reads as "it reset itself". */
+    function _captureExplorer() {
+        var st = document.getElementById('explorer-tree-state');
+        var wi = document.getElementById('explorer-tree-wiring');
+        if (!st || !wi) return null;
+        var onState = st.style.display !== 'none';
+        var active = onState ? st : wi;
+        return {
+            tab: onState ? 'state' : 'wiring',
+            expanded: window.jsonTreeExpandedPaths
+                ? window.jsonTreeExpandedPaths(active.id) : [],
+            scroll: active.scrollTop || 0,
+            pane: (pane() || {}).scrollTop || 0,
+        };
+    }
+    function _restoreExplorer(d) {
+        if (!d || !document.getElementById('explorer-tree-state')) return;
+        if (d.tab === 'wiring' && window.switchExplorerTab) {
+            window.switchExplorerTab('wiring');
+        }
+        var id = d.tab === 'wiring' ? 'explorer-tree-wiring' : 'explorer-tree-state';
+        // Expansion FIRST: the search that follows hides rows, it does not
+        // collapse them, so restoring in this order gives the filter the same
+        // tree the user was looking at.
+        if (window.jsonTreeSetExpanded) window.jsonTreeSetExpanded(id, d.expanded || []);
+        // Scroll last and late: jsonTreeSearch is debounced 200 ms, and a scroll
+        // set before it settles lands against a different row count.
+        setTimeout(function () {
+            var el = document.getElementById(id);
+            if (el && d.scroll) el.scrollTop = d.scroll;
+            var p = pane();
+            if (p && d.pane) p.scrollTop = d.pane;
+        }, 260);
+    }
+    function _captureSoft(root, route) {
         var inputs = [];
         var els = root.querySelectorAll('input[type="search"], .tree-search');
         Array.prototype.forEach.call(els, function (el, i) {
@@ -3878,13 +3917,17 @@ window.PaneState = (function () {
             inputs.push({ key: el.id ? ('#' + el.id) : ('@' + i),
                           value: el.value });
         });
-        return { inputs: inputs };
+        var d = { inputs: inputs };
+        if (route === '/explorer') d.explorer = _captureExplorer();
+        return d;
     }
     function _reapplySoft(route) {
         var d = soft[route];
-        if (!d || !d.inputs.length) return;
+        if (!d) return;
         var p = pane();
         if (!p) return;
+        if (d.explorer) _restoreExplorer(d.explorer);
+        if (!d.inputs.length) return;
         var els = p.querySelectorAll('input[type="search"], .tree-search');
         d.inputs.forEach(function (it) {
             var el = null;
@@ -3902,7 +3945,7 @@ window.PaneState = (function () {
     function _park(route) {
         var p = pane();
         if (!p || !p.firstChild) return;
-        if (SOFT.indexOf(route) >= 0) soft[route] = _captureSoft(p);
+        if (SOFT.indexOf(route) >= 0) soft[route] = _captureSoft(p, route);
         if (KEEP.indexOf(route) < 0) return;
         var holder = document.createElement('div');
         while (p.firstChild) holder.appendChild(p.firstChild);
@@ -3968,7 +4011,7 @@ window.PaneState = (function () {
         // park the OUTGOING route (htmx's history snapshot is already taken);
         // a same-route refresh only refreshes the SOFT capture, never parks
         if (inRoute && inRoute !== _cur) _park(_cur);
-        else if (SOFT.indexOf(_cur) >= 0 && pane()) soft[_cur] = _captureSoft(pane());
+        else if (SOFT.indexOf(_cur) >= 0 && pane()) soft[_cur] = _captureSoft(pane(), _cur);
     });
     document.addEventListener('htmx:afterSwap', function (evt) {
         if (!evt.target || evt.target.id !== 'table-pane') return;
@@ -6920,6 +6963,44 @@ window.clearDetailPanelSearch = function(btnEl) {
     window.jsonTreeExpandAll = function(containerId) {
         var c = document.getElementById(containerId);
         if (c) _expandAll(c);
+    };
+
+    /* docs/122 item 2 — expansion is state the user built by hand, and every
+       /explorer rebuild threw it away because nothing anywhere recorded it.
+       Addressed by dot-path, never by DOM index: the rebuilt tree is a
+       different document, and an index would restore the wrong nodes rather
+       than none. Bounded, because a fully expanded 20-qubit chip is ~7,800 rows
+       and a restore that walked all of them would cost more than the rebuild it
+       is repairing. */
+    var _EXPAND_CAP = 1200;
+    window.jsonTreeExpandedPaths = function(containerId) {
+        var c = document.getElementById(containerId);
+        if (!c) return [];
+        var out = [], nodes = c.querySelectorAll('.tree-node[data-path]');
+        for (var i = 0; i < nodes.length && out.length < _EXPAND_CAP; i++) {
+            var t = nodes[i].querySelector(':scope > .tree-row > .tree-toggle');
+            if (t && !t.classList.contains('collapsed')) {
+                out.push(nodes[i].getAttribute('data-path'));
+            }
+        }
+        return out;
+    };
+    window.jsonTreeSetExpanded = function(containerId, paths) {
+        var c = document.getElementById(containerId);
+        if (!c || !paths || !paths.length) return 0;
+        // Shallowest first: a child node does not exist in the DOM until its
+        // parent has been expanded, so depth order is what makes one pass enough.
+        var sorted = paths.slice().sort(function (a, b) {
+            return a.split('.').length - b.split('.').length || (a < b ? -1 : 1);
+        });
+        var n = 0;
+        for (var i = 0; i < sorted.length; i++) {
+            var node = c.querySelector('.tree-node[data-path="' + sorted[i] + '"]');
+            if (!node) continue;
+            var t = node.querySelector(':scope > .tree-row > .tree-toggle');
+            if (t && t.classList.contains('collapsed')) { t.click(); n++; }
+        }
+        return n;
     };
 
     window.jsonTreeSearch = function(containerId, query) {
@@ -13617,6 +13698,60 @@ document.addEventListener('click', function(evt) {
         window.showToast(msg + " Click ⇄ Live diff again to retry.", "warning");
     }
 
+    /* docs/122 item 2 — a re-rendered tree must never leave the search box
+       describing rows that are no longer filtered.
+
+       renderJsonTree deliberately clears `_lastSearchQuery` (it wiped
+       innerHTML), so every caller owns the re-apply — and explorerLiveDiff was
+       the one that did not. Measured on the real 20-qubit chip: with
+       `amplitude` in the box, turning live diff ON took the tree to 189 visible
+       rows of which 189 did NOT match the query, the box still reading
+       `amplitude`; re-typing the same value restored the filter WITHOUT leaving
+       diff mode, which is what proved the search was fine and simply never
+       called. On /workbench this is not even a click: a 3 s poll turns diff on
+       by itself on every qualibrate write (workbench.html:512 ->
+       showLiveDiffInline), so the search died unattended. */
+    function _explorerReapplySearch() {
+        var box = document.getElementById("explorer-search");
+        var q = box && box.value ? box.value : "";
+        if (!q || !window.jsonTreeSearch || !window._activeTreeId) return false;
+        window.jsonTreeSearch(window._activeTreeId(), q);
+        return true;
+    }
+
+    /* Report, never silently hide. A filter applied over a diff can exclude the
+       very rows the diff is announcing, and a bar that says "changed 3 fields"
+       above an empty tree reads as "qualibrate changed nothing here". Runs
+       after jsonTreeSearch's own 200 ms debounce has settled. */
+    function _explorerDiffFilterNote() {
+        setTimeout(function () {
+            var note = document.getElementById("livediff-bar-filtered");
+            if (!note) return;
+            var bar = document.getElementById("explorer-livediff-bar");
+            var box = document.getElementById("explorer-search");
+            if (!bar || bar.hidden || !box || !box.value) { note.hidden = true; return; }
+            var el = document.getElementById(window._activeTreeId());
+            if (!el) { note.hidden = true; return; }
+            var rows = el.querySelectorAll(".tree-row-incoming");
+            var hidden = 0;
+            Array.prototype.forEach.call(rows, function (r) {
+                if (r.offsetParent === null) hidden++;
+            });
+            if (!hidden) { note.hidden = true; return; }
+            note.textContent = " — " + hidden + " of them " +
+                (hidden === 1 ? "is" : "are") + " hidden by your search";
+            note.hidden = false;
+        }, 350);
+    }
+    /* The search box's single entry point: filter, then keep the diff bar's
+       claim honest about what the filter left on screen. */
+    window.explorerSearch = function (value) {
+        if (window.jsonTreeSearch && window._activeTreeId) {
+            window.jsonTreeSearch(window._activeTreeId(), value);
+        }
+        _explorerDiffFilterNote();
+    };
+
     window.explorerLiveDiff = function(on) {
         var stateEl = document.getElementById("explorer-tree-state");
         var wiringEl = document.getElementById("explorer-tree-wiring");
@@ -13667,6 +13802,12 @@ document.addEventListener('click', function(evt) {
                 _autoExpandAndTag("explorer-tree-wiring", _liveDiffWiring);
                 // renderJsonTree wiped innerHTML — re-apply hardware-spec marks.
                 if (window._applyExplorerSpecMarks) window._applyExplorerSpecMarks();
+                // ...and the search, for the same reason (docs/122 item 2).
+                // AFTER the tagging, so the incoming marks exist on the rows the
+                // filter then judges — and so the count below describes what the
+                // user can actually see.
+                _explorerReapplySearch();
+                _explorerDiffFilterNote();
 
                 // Commit the ON state ATOMICALLY — only after the render fully
                 // succeeded, so a render error never leaves a half-applied overlay
