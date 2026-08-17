@@ -11898,10 +11898,23 @@ def state_drift():
     Always 200 (even with no chip) so the banner poll never logs errors.
     """
     ctx = _active_ctx()
-    # docs/120 item 8: the Auto-Sync pull signal rides this poll. It is carried
-    # on EVERY branch, including the untracked ones — a chip with no drift
-    # baseline can still have diverged, and dropping the flag there would make
-    # auto-pull work only for chips that happen to be tracked.
+    # docs/120 item 20: the signal below reads `live_diverged`, and the only
+    # things that REFRESH that flag were a full render and `/api/topology-mtime`
+    # — which only the Chip Status page polls. So a user who armed Auto-Sync and
+    # then stayed on Live State Edit was watched by nothing: measured at 9 polls
+    # over 90 s with `auto_pull:false` throughout while the live chip had really
+    # moved. The poll that asks the question must also be allowed to answer it.
+    #
+    # Cheap by construction: `_refresh_live_diverged` self-throttles to once per
+    # `_LIVE_HASH_RECHECK_S`, returns immediately once the flag is already True,
+    # and (for a dirty context) does nothing at all unless an Auto-Sync pull
+    # session is armed — so an idle chip pays two `os.stat` calls, exactly as
+    # this route did before.
+    _refresh_live_diverged(ctx)
+    # The Auto-Sync pull signal rides this poll. It is carried on EVERY branch,
+    # including the untracked ones — a chip with no drift baseline can still
+    # have diverged, and dropping the flag there would make auto-pull work only
+    # for chips that happen to be tracked.
     auto_pull = _auto_pull_due(ctx)
     if not _drift_tracked(ctx):
         return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull)
@@ -11978,6 +11991,61 @@ def state_baseline_reset():
     return jsonify(ok=True, baseline_utc=ptr["captured_utc"], count=0)
 
 
+def _unseen_edit_refusal(ctx) -> dict | None:
+    """Refuse an apply that would write edits the presser never saw.
+
+    docs/120 item 22. Two SM tabs on one machine share ONE server context, so
+    they share one change log — and a tab's tray only refreshes on its own
+    actions. Reproduced in real Chrome: tab B, opened first and then left alone,
+    showed ``data-change-count="0"`` and "● Synced" while tab A typed an edit;
+    tab B's **Apply to live now** answered ``{"replay":{"applied":1}}`` and put
+    tab A's value on the instrument. The covenant asks for one explicit press
+    per live write, and that press was made against a screen that showed
+    nothing to write.
+
+    The tray already publishes what its user is looking at (``data-change-count``
+    / ``data-seq``, docs/110), so the presser's own view is the consent record:
+    if the server holds MORE pending changes than the view showed, this press
+    cannot have meant them.
+
+    Deliberately count-based rather than seq-based. A seq can run ahead for
+    reasons that harm nobody (a save, another tab merely reloading), and a
+    refusal that fires when the change set is identical would be noise on the
+    one button that must stay trustworthy. Absent parameter ⇒ None ⇒ byte-
+    identical to before, so no caller that has not opted in can be refused.
+    """
+    seen_raw = request.values.get("seen_changes")
+    if seen_raw is None or seen_raw == "":
+        return None
+    # ONE TOKEN NEVER COLLAPSES TWO GATES (docs/41). `force=1` already means
+    # "overwrite live despite a staleness conflict" — a different question,
+    # answered against a different screen. Letting it also wave this through
+    # would mean a user resolving a staleness conflict silently consented to
+    # another window's edits as well.
+    if request.values.get("ack_unseen") == "1":
+        return None                       # the user was asked THIS and said yes
+    store = ctx.get("store")
+    if store is None:
+        return None
+    try:
+        seen = int(seen_raw)
+    except (TypeError, ValueError):
+        return None
+    with store._lock:
+        have = len(store.change_log or [])
+        # ChangeEntry is a dataclass, not a dict.
+        paths = [str(getattr(c, "dot_path", None) or "?")
+                 for c in list(store.change_log or [])[seen:]][:8]
+    if have <= seen:
+        return None
+    return {"status": "unseen_changes", "have": have, "seen": seen,
+            "paths": paths,
+            "message": (
+                f"{have - seen} edit(s) were made in another State Manager "
+                f"window and are not shown on this screen. Applying now would "
+                f"write them to the live chip too.")}
+
+
 @bp.route("/state/sync", methods=["POST"])
 def state_sync():
     """Pull the live state files into the working copy (manual sync).
@@ -12009,6 +12077,10 @@ def state_sync():
         return jsonify({"status": "error",
                         "message": "This chip was opened from a dataset run "
                                    "archive (read-only) — cannot apply to live."}), 409
+    if mode == "apply":
+        _unseen = _unseen_edit_refusal(ctx)
+        if _unseen is not None:
+            return jsonify(_unseen), 409
 
     # docs/65 state-roundtrip: a SAVED/STAGED working copy (working_dirty — a
     # snapshot, a run's state, a revert, or /save'd edits; content that is NOT
@@ -12258,6 +12330,10 @@ def state_apply_to_live():
     blocked = _archive_write_blocked(ctx)   # guard the CAPTURED ctx (TOCTOU)
     if blocked is not None:
         return blocked
+    # docs/120 item 22 — the other door onto the live chip gets the same gate.
+    _unseen = _unseen_edit_refusal(ctx)
+    if _unseen is not None:
+        return jsonify(_unseen), 409
     wc = ctx["working_copy"]
     store = ctx["store"]
     saver = ctx["saver"]

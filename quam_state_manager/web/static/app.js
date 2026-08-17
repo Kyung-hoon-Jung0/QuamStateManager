@@ -2356,7 +2356,7 @@ function _failedPathsSummary(failed) {
     return " Affected: " + shown + ".";
 }
 
-window.doStateSync = function(mode, forced) {
+window.doStateSync = function(mode, forced, ackUnseen) {
     mode = mode || "discard";
     // Double-submit guard: a second click (or a grid ⚡ + tray button double-fire)
     // while one apply/sync is in flight used to queue a second /state/sync that
@@ -2369,13 +2369,52 @@ window.doStateSync = function(mode, forced) {
     // response is handled by the conflict tray + toast, which never needed the
     // modal open.
     window.closeReview();
+    // docs/120 item 22: declare what THIS screen is showing. Two SM windows
+    // share one server-side change log, and a tray only refreshes on its own
+    // actions — so an Apply pressed here can carry edits made in the other
+    // window that were never on this one. Sending the count the user actually
+    // saw is what lets the server tell the difference between "apply my three
+    // edits" and "apply three edits plus one you have never seen".
+    var _seen = (function () {
+        var t = document.getElementById("pending-tray");
+        var v = t && t.getAttribute("data-change-count");
+        return (v === null || v === undefined || v === "") ? null : v;
+    })();
     fetch("/state/sync", {
         method: "POST",
         headers: {"Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
         body: "mode=" + encodeURIComponent(mode) + (forced ? "&force=1" : "")
+              + (ackUnseen ? "&ack_unseen=1" : "")
+              + (_seen !== null ? "&seen_changes=" + encodeURIComponent(_seen) : "")
     })
         .then(function(r) { return r.json(); })
         .then(function(data) {
+            if (data.status === "unseen_changes") {
+                // Never a dead end — name what would go, and let one click
+                // accept it or send the user to review it first.
+                var lines = (data.paths || []).slice(0, 6).join("\n  ");
+                if (window.confirm((data.message || "") + "\n\n  " + lines
+                        + "\n\nApply everything, including those?")) {
+                    setTimeout(function () {
+                        window._applyInFlight = false;
+                        // `ackUnseen`, never `forced`: force=1 answers the
+                        // STALENESS question and must not double as consent to
+                        // another window's edits.
+                        window.doStateSync(mode, false, true);
+                    }, 0);
+                } else {
+                    // Refresh the tray so this screen stops lying, then show it.
+                    if (window.htmx) {
+                        window.htmx.ajax("GET", "/state/tray",
+                                         {target: "#pending-tray", swap: "outerHTML"});
+                    }
+                    if (window.showToast) {
+                        window.showToast("Nothing was applied — the tray now shows "
+                                         + "every pending edit.", "info");
+                    }
+                }
+                return;
+            }
             if (data.status === "needs_confirm") {
                 // docs/65: the working state holds staged/saved content that a
                 // pull would destroy — the server refuses until confirmed. The
@@ -15059,4 +15098,65 @@ window.StateVersions = (function () {
     }
     return { toggle: toggle, close: close, pick: pick, compare: compare,
              more: more };
+})();
+
+/* ── the top bar's REAL height (docs/120 item 23) ─────────────────────────
+ *
+ * `--topbar-height` is used by every `calc(100vh - var(--topbar-height))`
+ * panel, and it declared 48px while the rendered bar — a wrapping <nav> —
+ * measured 201px at 1600 wide, 229 at 1280 and 254 at 1024. So every main
+ * panel was sized 150-200px taller than the space it had, on every page and
+ * at every width, and worse on the narrow windows a laptop actually uses.
+ * That is what pushed the Generate wizard's failure message below the fold
+ * and let content scroll under a sticky bar the layout thought was 48px.
+ *
+ * A stylesheet cannot express "however tall that element turns out to be",
+ * so measure it and publish it. No rule changes; they all just start being
+ * given the truth.
+ *
+ * Two details that matter:
+ *  - `html.topbar-hidden` zeroes the variable in CSS, and an inline style on
+ *    <html> would BEAT that rule (inline wins over a stylesheet). So a hidden
+ *    or absent bar must publish 0 here rather than leave a stale number.
+ *  - writes are gated on an actual change, because this runs from a
+ *    ResizeObserver and re-publishing the same value would loop.
+ */
+window.TopbarHeight = (function () {
+    'use strict';
+    var _last = null;
+    function measure() {
+        var tb = document.querySelector('.topbar');
+        if (!tb || document.documentElement.classList.contains('topbar-hidden')) return 0;
+        var r = tb.getBoundingClientRect();
+        return (r.height > 0 && r.width > 0) ? Math.round(r.height) : 0;
+    }
+    function publish() {
+        var h = measure();
+        if (h === _last) return h;
+        _last = h;
+        document.documentElement.style.setProperty('--topbar-height', h + 'px');
+        return h;
+    }
+    function start() {
+        publish();
+        var tb = document.querySelector('.topbar');
+        if (tb && window.ResizeObserver) {
+            try { new ResizeObserver(function () { publish(); }).observe(tb); }
+            catch (e) { /* older engine — the resize listener below still runs */ }
+        }
+        window.addEventListener('resize', publish);
+        // The bar's contents change with the chip (badges, project chip, the
+        // Auto-Sync pill), and htmx swaps them in without a resize event.
+        // Bound to `document`, not `document.body`: app.js is loaded in <head>
+        // and `document.body` is null there — the existing
+        // `test_app_js_no_top_level_document_body` pin caught exactly that.
+        // htmx events bubble to document, so nothing is lost.
+        document.addEventListener('htmx:afterSwap', function () { publish(); });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', start);
+    } else {
+        start();
+    }
+    return { publish: publish, measure: measure };
 })();

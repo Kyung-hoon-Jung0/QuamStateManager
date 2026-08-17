@@ -27,8 +27,21 @@
     /* ── TOPBAR ───────────────────────────────────────────────────── */
     /* ⚠ --topbar-height is PROTECTED — it is used in calc(100vh - ...)
        for the sidebar and main panel heights. If you change it, the
-       actual rendered bar must match or panels will overflow/gap.      */
-    --topbar-height:         48px;    /* ⚠ PROTECTED — height of the sticky top navigation bar */
+       actual rendered bar must match or panels will overflow/gap.
+
+       docs/120 item 23: it did not match, and had not for a long time. The
+       bar is a wrapping <nav>, so its real height depends on the window —
+       measured on the customer build at 201px @1600, 229 @1280, 254 @1024,
+       against the 48px declared here. Every panel sized `calc(100vh - 48px)`
+       therefore ran ~150-200px past the bottom of the window, which is what
+       put the wizard's failure message below the fold and let content slide
+       under a sticky bar four times taller than the layout believed.
+
+       The literal below is now only the pre-JS fallback: `TopbarHeight` in
+       app.js measures the rendered bar and publishes the truth here on load
+       and on every resize. Keep this value as a sane first paint; do not try
+       to make it "right", because there is no one right number. */
+    --topbar-height:         48px;    /* ⚠ fallback only — app.js publishes the measured height */
     --topbar-pad-v:          0.2rem;  /* top/bottom padding inside the topbar */
     --topbar-pad-h:          0.75rem; /* left/right padding inside the topbar */
     --topbar-right-gap:      0.4rem;  /* gap between items on the right side of the topbar (search, save, settings) */
