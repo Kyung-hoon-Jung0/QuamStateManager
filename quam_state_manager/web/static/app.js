@@ -3889,8 +3889,36 @@ window.PaneState = (function () {
             pane: (pane() || {}).scrollTop || 0,
         };
     }
+    /* A retried scroll restore must never fight the user. Same rule docs/75's
+       InlineCommit already applies to its own restore: a wheel or a PageUp
+       means they are reading somewhere else now, and the pending attempts are
+       abandoned. */
+    var _restoreScrollAborted = false;
+    function _armScrollAbort() {
+        _restoreScrollAborted = false;
+        var off = function () {
+            _restoreScrollAborted = true;
+            window.removeEventListener('wheel', off, true);
+            window.removeEventListener('keydown', onKey, true);
+            window.removeEventListener('touchmove', off, true);
+        };
+        var onKey = function (e) {
+            if (e.key === 'PageUp' || e.key === 'PageDown' || e.key === 'Home'
+                || e.key === 'End') off();
+        };
+        window.addEventListener('wheel', off, true);
+        window.addEventListener('touchmove', off, true);
+        window.addEventListener('keydown', onKey, true);
+        setTimeout(function () {
+            window.removeEventListener('wheel', off, true);
+            window.removeEventListener('keydown', onKey, true);
+            window.removeEventListener('touchmove', off, true);
+        }, 2600);
+    }
+
     function _restoreExplorer(d) {
         if (!d || !document.getElementById('explorer-tree-state')) return;
+        _armScrollAbort();
         if (d.tab === 'wiring' && window.switchExplorerTab) {
             window.switchExplorerTab('wiring');
         }
@@ -3899,14 +3927,31 @@ window.PaneState = (function () {
         // collapse them, so restoring in this order gives the filter the same
         // tree the user was looking at.
         if (window.jsonTreeSetExpanded) window.jsonTreeSetExpanded(id, d.expanded || []);
-        // Scroll last and late: jsonTreeSearch is debounced 200 ms, and a scroll
-        // set before it settles lands against a different row count.
-        setTimeout(function () {
-            var el = document.getElementById(id);
-            if (el && d.scroll) el.scrollTop = d.scroll;
-            var p = pane();
-            if (p && d.pane) p.scrollTop = d.pane;
-        }, 260);
+        /* Scroll is RETRIED, not scheduled once.
+           A single delayed write silently CLAMPS: the search that follows is
+           debounced 200 ms and then hides rows across a 7,800-row tree, so for
+           a while the document is shorter than the offset we are restoring and
+           the browser quietly truncates it. Measured on the real chip: a
+           restore of 420 landed on 119 and looked preserved only because the
+           earlier probe had itself been clamped to the same number at BOTH
+           ends. So: try, check whether it stuck, and try again while the layout
+           is still settling. Stops as soon as it takes (or the attempts run
+           out) — never loops, never fights a user who scrolled meanwhile. */
+        var tries = [260, 700, 1400, 2400];
+        tries.forEach(function (ms, i) {
+            setTimeout(function () {
+                var el = document.getElementById(id);
+                var p = pane();
+                // A scroll the user has since moved themselves is theirs.
+                if (_restoreScrollAborted) return;
+                if (el && d.scroll && Math.abs(el.scrollTop - d.scroll) > 4) {
+                    el.scrollTop = d.scroll;
+                }
+                if (p && d.pane && Math.abs(p.scrollTop - d.pane) > 4) {
+                    p.scrollTop = d.pane;
+                }
+            }, ms);
+        });
     }
     function _captureSoft(root, route) {
         var inputs = [];

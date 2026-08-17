@@ -178,5 +178,23 @@ ok(/route === '\/explorer'/.test(src) && /_captureExplorer\(\)/.test(src),
 ok(/jsonTreeSetExpanded\(id, d\.expanded/.test(src),
    'the restore feeds the recorded paths back through the public helper');
 
+/* docs/122 — the scroll restore is RETRIED, and that is not a nicety.
+   A single delayed write silently CLAMPS: the search that follows is debounced
+   200 ms and then hides rows across a 7,800-row tree, so for a while the
+   document is shorter than the offset being restored and the browser truncates
+   it without a word. Measured in a real browser: a restore of 420 landed on 119
+   and the FIRST verification run reported it as preserved only because that
+   probe had itself been clamped to the same number at both ends. Retried:
+   420 -> 420. */
+ok(/var tries = \[[\d, ]+\]/.test(src), 'the scroll restore declares several attempts');
+const _tries = (src.match(/var tries = \[([\d, ]+)\]/) || [])[1];
+ok(_tries && _tries.split(',').length >= 3,
+   'at least three attempts, spanning past the search debounce (' + _tries + ')');
+ok(/Math\.abs\(el\.scrollTop - d\.scroll\) > 4/.test(src),
+   'each attempt CHECKS whether the previous one stuck instead of re-writing blindly');
+ok(/_restoreScrollAborted/.test(src) && /addEventListener\('wheel', off, true\)/.test(src),
+   'a user who scrolls meanwhile owns the scroll — the retries abandon (docs/75 precedent)');
+ok(/'PageUp'|"PageUp"/.test(src), 'keyboard scrolling counts as the user taking over too');
+
 process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error('FAIL: selfcheck threw: ' + (e && e.stack || e)); process.exit(1); });
