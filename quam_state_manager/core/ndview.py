@@ -539,6 +539,73 @@ def _classify_dim(name: str, size: int, coord: np.ndarray | None,
     return "sweep"
 
 
+# ── axis ordering (docs/122 item 1) ──────────────────────────────────────
+# The Raw-data tab used to disagree with the Interactive tab about which sweep
+# is x, because it chose by ARRAY SIZE while the interactive recipes orient by
+# NAME, following the lab's own plotting modules — and the user confirmed the
+# recipes are right (Interactive uses the qualibrate figure's axis scheme).
+#
+# Measured over 53 executed 2-D runs across 10 families: when the lab's x dim
+# happens to be the LARGER array this agrees 30/30, when it is smaller it agrees
+# 0/20, equal sizes 3/3. Total separation — ndview's x was literally
+# argmax(size) — which is why the transpose looked intermittent to the user.
+#
+# DERIVED, never invented: 27 constraints extracted from the recipes and from
+# the lab's own `x=`/`y=` arguments, topologically sorted with 0 cycles over 21
+# names. It must be EXACT SPELLINGS: grouping variants into physical quantities
+# creates real cycles (`time > detuning` from 19a/21b against
+# `detuning > pulse_duration` from 11b_rabi_chevron; `amp > time` from
+# 23_zz_off_jazz against `time > amplitude` from 2Q_19/31_chevron), and
+# `qubit_flux > coupler_flux` orders two members of one physical group, which a
+# grouped ranking cannot express at all.
+#
+# `probe_flux` was in the derived order and is deliberately ABSENT. It was the
+# one rank placed by name-shape analogy rather than by an observed figure, and
+# on 50a/50b_flux_crosstalk_dc run with a probe the lab REDUCES that axis away
+# (`isel(probe_flux=k)`) instead of plotting it — a rank would have put it on y
+# in place of `detuning`. Leaving it unranked makes that case unchanged from
+# today rather than newly wrong.
+_AXIS_RANK: dict[str, int] = {
+    "amp": 1,                    # 23_zz_off_jazz, 33a leakage, 32b/32c/32d
+    "amp_prefactor": 2,          # 11_power_rabi, 29_power_rabi_ef, 15_readout_power_opt
+    "alpha_prefactor": 3,        # 13_drag
+    "a": 4,                      # 19b/21c reference panel (SM's own figure)
+    "idle_time": 5,              # T1/T2echo/T2star_vs_flux, 12_ramsey, 25_T1
+    "idle_times": 6,             # 17a, 17b — same quantity, plural spelling
+    "time": 7,                   # 19a/19b/20/21b/21c/23, 2Q_19/31_chevron
+    "qubit_flux": 8,             # 18a_coupler_zero_point, 30_cz_iswap
+    "aggressor_flux": 9,         # 50a/50b_flux_crosstalk_dc
+    "flux_bias": 11,             # 02e, 03c, 06, 07, 09, 10, 17a, T1/T2_vs_flux
+    "coupler_flux": 12,          # 17b, 18a, 30_cz_iswap
+    "amplitude": 13,             # 2Q_19/31_chevron, 38/39/39b SNZ
+    "detuning": 14,              # 05, 06, 07, 08, 08b, 09, 10, 02e, 03c, 11b, 14, 50a
+    "readout_frequency": 15,     # 29_power_rabi_ef
+    "pulse_duration": 16,        # 11b_rabi_chevron
+    "t_phi_eff": 17,             # 38/39/39b
+    "number_of_operations": 18,  # 33a/33b/33c, 32b
+    "N": 19,                     # 32c/32d JAZZ-N
+    "nb_of_pulses": 20,          # 11, 13, stark_detuning
+    "frame": 21,                 # 19b, 20, 21c, 22
+    "power": 22,                 # 05, 08b
+}
+
+
+def _order_sweeps(sweeps: list[dict]) -> None:
+    """Order ``sweeps`` in place so ``sweeps[0]`` is the x axis.
+
+    Size order first — that is the legacy rule and it stays the tie-break and
+    the whole rule for anything the ranking does not name. The name ranking is
+    applied ONLY when every sweep in the cube is ranked, so a file the table
+    does not fully cover keeps today's output byte for byte rather than being
+    half-converted on partial evidence. (Measured on the customer archive: of
+    1,805 cubes with a y axis, 1,803 have every sweep ranked and 0 are mixed, so
+    this gate costs nothing on real data — it is armour for the next node type.)
+    """
+    sweeps.sort(key=lambda d: d["size"], reverse=True)
+    if sweeps and all(d["name"] in _AXIS_RANK for d in sweeps):
+        sweeps.sort(key=lambda d: _AXIS_RANK[d["name"]])
+
+
 def _default_view(dims: list[dict]) -> dict:
     """Assign roles: entity→selector, small dims→overlay, sweeps→x/y/sliders,
     repetition dims→averaged away (``reduced``)."""
@@ -569,7 +636,7 @@ def _default_view(dims: list[dict]) -> dict:
                 small_sweeps.append(d)
             else:
                 sweeps.append(d)
-    sweeps.sort(key=lambda d: d["size"], reverse=True)
+    _order_sweeps(sweeps)
     shots.sort(key=lambda d: d["size"], reverse=True)
     if not sweeps and shots:
         if small_sweeps:
