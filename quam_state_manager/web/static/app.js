@@ -6145,6 +6145,17 @@ window.clearDetailPanelSearch = function(btnEl) {
                     _showEditError(valEl, data.error);
                     return;
                 }
+                // docs/120 item 25: the rejection chip has an 8-second life and
+                // was only ever cleared by a NEWER rejection, so after a fix it
+                // sat beside the accepted value still reading "✗ …" — the screen
+                // contradicting itself about the edit the user just made. A
+                // success is the most definitive reason to retire it.
+                (function () {
+                    var _r = valEl.closest ? valEl.closest(".tree-row") : null;
+                    var _e = _r && _r.querySelector(".tree-edit-err");
+                    if (_e) _e.remove();
+                    valEl.classList.remove("tree-val-error");
+                })();
                 // r14 honesty: re-render from the COMMITTED value the server
                 // echoes (the coercer may have kept the old type) — the old
                 // raw-text write-back showed "0.13"-the-string as bare 0.13
@@ -15202,4 +15213,77 @@ window.TopbarHeight = (function () {
         start();
     }
     return { publish: publish, measure: measure };
+})();
+
+/* ── hx-on without eval (docs/120 item 27) ────────────────────────────────
+ *
+ * The app sets its own Content-Security-Policy, and it deliberately does NOT
+ * include 'unsafe-eval'. htmx compiles every `hx-on::…` attribute with
+ * `new Function("event", body)`, so under our own policy that compile throws:
+ * EVERY `hx-on::after-request` in this codebase silently never ran, and the
+ * console carried one CSP violation per page as the only sign.
+ *
+ * Seven handlers were affected, and one of them had already been reported as a
+ * bug by hand: the Auto-Sync popup did not close after Save. That was patched
+ * defensively before the cause was known — this is the cause.
+ *
+ * Verifying it needs care, and two of my probes lied before one held up. A
+ * `new Function` evaluated from a debugger-injected script returns a value
+ * quite happily, so "eval works here" proves nothing about what the page's own
+ * htmx can do. What settled it, and what a future check should repeat: attach
+ * an `hx-on::after-request` that writes into the DOM, fire the request, and
+ * read the DOM back — it stayed unwritten while a CSP `new Function` violation
+ * appeared. After this change the same probe on a `data-after-request` handler
+ * writes, and the violation count on the page goes 1 -> 0.
+ *
+ * The fix keeps every behaviour and removes the eval: a data attribute names
+ * an action, one delegated listener runs it. Greppable, no mini-language, and
+ * a typo'd name fails loudly here rather than silently in a compile nobody
+ * sees.
+ */
+(function () {
+    'use strict';
+    var ACTIONS = {
+        /* the archive form: reset + flash the status line on success */
+        archiveDone: function (el, ev) {
+            var xhr = ev && ev.detail && ev.detail.xhr;
+            if (!xhr || String(xhr.responseText || '').indexOf('archive-ok') < 0) return;
+            if (el.reset) el.reset();
+            var s = document.getElementById('archive-status');
+            if (!s) return;
+            s.classList.remove('archive-flash');
+            void s.offsetWidth;                       // restart the animation
+            s.classList.add('archive-flash');
+            if (window.applyLocalTimes) window.applyLocalTimes(s);
+        },
+        autoSyncClose: function () {
+            if (window.AutoSync && AutoSync.close) AutoSync.close();
+        },
+        dropApplyConflict: function (el, ev) {
+            if (!(ev && ev.detail && ev.detail.successful)) return;
+            var box = el.closest('.ds-apply-conflict');
+            if (box) box.remove();
+        },
+        clearUndo: function () {
+            if (window.LiveEditUndo) LiveEditUndo.clear();
+        },
+        closeReviewAndClearUndo: function () {
+            if (window.closeReview) window.closeReview();
+            if (window.LiveEditUndo) LiveEditUndo.clear();
+        }
+    };
+    document.addEventListener('htmx:afterRequest', function (ev) {
+        var el = ev.target;
+        if (!el || !el.getAttribute) return;
+        var name = el.getAttribute('data-after-request');
+        if (!name) return;
+        var fn = ACTIONS[name];
+        if (!fn) {
+            if (window.console) console.warn('unknown data-after-request:', name);
+            return;
+        }
+        try { fn(el, ev); }
+        catch (e) { if (window.console) console.warn('after-request ' + name, e); }
+    });
+    window.__afterRequestActions = ACTIONS;   // named so a pin can enumerate them
 })();

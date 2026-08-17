@@ -53,12 +53,27 @@ class TestBookmarkMoved:
 
     def test_it_kept_everything_that_made_it_work(self, client):
         """A move, not a rewrite: same route, same target, and the
-        reset-and-flash hook that made a second save visible (C1)."""
+        reset-and-flash hook that made a second save visible (C1).
+
+        docs/120 item 27 moved the hook itself. It used to live in an
+        ``hx-on::after-request`` attribute — which htmx compiles with
+        ``new Function``, blocked by this app's own CSP, so the flash had in
+        fact never run. The behaviour is now a named action in app.js, and this
+        asserts BOTH halves: the element declares it, and something implements
+        it. The old check ("archive-flash" appears in the page) passed happily
+        while the code containing it could not execute.
+        """
+        from pathlib import Path
+        import quam_state_manager
         page = client.get("/").get_data(as_text=True)
         assert 'hx-post="/state/archive"' in page
         assert 'hx-target="#archive-status"' in page
-        assert "archive-flash" in page
+        assert 'data-after-request="archiveDone"' in page
         assert 'name="tag"' in page and 'name="note"' in page
+        app_js = (Path(quam_state_manager.__file__).parent / "web" / "static"
+                  / "app.js").read_text(encoding="utf-8")
+        assert "archiveDone:" in app_js
+        assert "archive-flash" in app_js
 
     def test_the_topbar_slot_is_the_version_now(self, client):
         page = client.get("/").get_data(as_text=True)

@@ -926,6 +926,26 @@
             if (k === '__id__' || hide.has(k)) return;   // checkbox-hidden handled elsewhere
             el.classList.toggle('bulk-search-hidden', !!colSearchHide[k]);
         });
+        // docs/120 item 28 — SEARCHING FOR A COLUMN MUST MAKE IT USABLE, not
+        // just visible. Cold columns (docs/105 virtualization) have their cell
+        // contents detached, and hydration only ever fired on scroll, nav or a
+        // path repaint — never on search. So a user who typed `T1`, narrowed
+        // the grid to exactly that column, and reached for the cell found it
+        // EMPTY and un-editable: the same shape as the report that opened this
+        // campaign. Reproduced on the customer chip after the gate change
+        // widened virtualization to it; latent before that for any chip over
+        // the old 4,000-cell threshold.
+        //
+        // A surviving column is one the user has just asked to look at, so
+        // hydrate it. Gated on a non-empty query: with no search every column
+        // survives, and hydrating them all would simply undo virtualization.
+        if (_virt && q) {
+            visCols.forEach(function (c) {
+                if (!colSearchHide[c.key] && _virt && _virt.cold.has(c.key)) {
+                    _virtHydrateCol(c.key);
+                }
+            });
+        }
         // A new query retires the previous "show them anyway" choice — it was
         // made about those tokens, and silently carrying it forward would make
         // the next search quietly stop filtering rows.

@@ -215,7 +215,7 @@
               hx-swap="outerHTML"
               hx-disabled-elt="this"
               hx-confirm="Apply the working state to the live chip's state.json / wiring.json now?"
-              hx-on::after-request="if(window.LiveEditUndo)LiveEditUndo.clear()"
+              data-after-request="clearUndo"
               title="Push the working state (your saved, not-yet-applied edits) to the live chip.">
         <span aria-hidden="true">&#8593;</span> Apply to live chip</button>
       {% endif %}

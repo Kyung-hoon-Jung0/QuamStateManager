@@ -1036,8 +1036,56 @@ def _run_script_outcome(
     outcome["status"] = parsed.get("status", "error")
     outcome["ok"] = outcome["status"] == "ok"
     if not outcome["ok"]:
-        outcome["error"] = parsed.get("error") or error_fallback
+        outcome["error"] = explain_build_error(
+            parsed.get("error") or error_fallback)
     return outcome
+
+
+#: Build failures a user can actually act on, and what to say instead of the
+#: library's own exception text. docs/120 item 26: the wizard printed
+#: ``NotEnoughChannelsException: <internal message>`` straight through, which
+#: names the allocator's class rather than the user's problem — and the problem
+#: (too few ports for the chip as configured) is one the wizard can be told how
+#: to fix. Keyed on the exception CLASS NAME, which is stable across the message
+#: wording; the original text is always appended so nothing is hidden.
+_BUILD_ERROR_HELP: dict[str, str] = {
+    "NotEnoughChannelsException": (
+        "This environment's instrument list does not have enough channels for "
+        "the chip as configured. Add or enlarge a controller/FEM in step 2, or "
+        "reduce the number of qubits, pairs or lines in step 3–4, then "
+        "re-allocate."
+    ),
+    "ConstraintsTooStrictException": (
+        "The port constraints you pinned cannot all be satisfied at once. "
+        "Relax or clear a pinned port in step 3 and re-allocate."
+    ),
+    "ModuleNotFoundError": (
+        "The selected environment is missing a package this build needs. "
+        "Pick a different environment in step 1, or install the package there "
+        "and press Re-check environment."
+    ),
+    "ImportError": (
+        "The selected environment could not import something this build needs "
+        "— usually a version mismatch in the QM stack. Re-check the "
+        "environment in step 1."
+    ),
+}
+
+
+def explain_build_error(raw: str | None) -> str:
+    """Prefix a known build failure with what the user can do about it.
+
+    The raw text is always kept: a message that hides the original makes the
+    failure unreportable, and these mappings are a convenience, not a claim to
+    have understood every case.
+    """
+    if not raw:
+        return raw or ""
+    cls = str(raw).split(":", 1)[0].strip()
+    help_text = _BUILD_ERROR_HELP.get(cls)
+    if not help_text:
+        return raw
+    return f"{help_text}\n\n(reported as: {raw})"
 
 
 def run_generator(

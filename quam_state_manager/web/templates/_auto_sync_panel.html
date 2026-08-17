@@ -16,7 +16,7 @@
      The submit reached the form un-prevented and was then cancelled by the
      docs/75 document-level armor, so even the native fallback was gone. #}
   <form hx-post="/auto-sync/set" hx-target="#pending-tray" hx-swap="outerHTML"
-        hx-on::after-request="AutoSync.close()">
+        data-after-request="autoSyncClose">
     <strong class="as-title">Auto-Sync</strong>
     <label class="as-row">
       <input type="checkbox" name="pull" value="1" id="as-pull"
@@ -45,7 +45,7 @@
       {% if _as %}
       <button type="button" class="btn-sm outline"
               hx-post="/auto-apply/disarm" hx-target="#pending-tray" hx-swap="outerHTML"
-              hx-on::after-request="AutoSync.close()">Turn off</button>
+              data-after-request="autoSyncClose">Turn off</button>
       {% endif %}
     </div>
   </form>

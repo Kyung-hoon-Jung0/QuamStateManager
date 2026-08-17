@@ -214,3 +214,101 @@ class TestTheTopBarPublishesItsRealHeight:
         assert i != -1
         assert "fallback" in css[i:i + 200].lower(), \
             "the literal must not read as the authority any more"
+
+
+class TestABuildFailureSaysWhatToDo:
+    """docs/120 item 26 — the wizard printed the allocator's own exception text
+    (`NotEnoughChannelsException: …`) straight through. That names the library's
+    class, not the user's problem, and the problem is one the wizard can say how
+    to fix."""
+
+    def test_a_known_failure_gets_an_action(self):
+        from quam_state_manager.core.config_generator import explain_build_error
+        out = explain_build_error(
+            "NotEnoughChannelsException: no free channel for q7:xy")
+        assert "step" in out.lower(), out
+        assert "re-allocate" in out.lower(), out
+
+    def test_the_original_text_is_never_hidden(self):
+        """A message that swallows the original makes the failure unreportable."""
+        from quam_state_manager.core.config_generator import explain_build_error
+        raw = "NotEnoughChannelsException: no free channel for q7:xy"
+        assert raw in explain_build_error(raw)
+
+    def test_an_unknown_failure_is_passed_through_verbatim(self):
+        """These mappings are a convenience, not a claim to understand every
+        case — anything unrecognised must arrive exactly as it was raised."""
+        from quam_state_manager.core.config_generator import explain_build_error
+        raw = "SomeNovelError: the sky fell in"
+        assert explain_build_error(raw) == raw
+
+    def test_empty_stays_empty(self):
+        from quam_state_manager.core.config_generator import explain_build_error
+        assert explain_build_error(None) == ""
+        assert explain_build_error("") == ""
+
+
+class TestHxOnWithoutEval:
+    """docs/120 item 27 — the app sets its own CSP and deliberately omits
+    'unsafe-eval'. htmx compiles every ``hx-on::…`` with
+    ``new Function("event", body)``, so under our own policy that compile threw
+    and EVERY ``hx-on::after-request`` in this codebase silently never ran. One
+    CSP violation per page in the console was the only sign, and one of the
+    seven had already been reported by hand as "the Auto-Sync popup does not
+    close after Save".
+
+    Verifying it needed care, and two probes lied before one held up: a
+    `new Function` evaluated from a debugger-injected script returns a value
+    quite happily, which proves nothing about what the page's own htmx can do.
+    What settled it: attach an ``hx-on::after-request`` that writes into the
+    DOM, fire the request, read the DOM back — it stayed unwritten while a CSP
+    `new Function` violation appeared, and after the change the same probe on a
+    ``data-after-request`` handler writes and the violation count goes 1 -> 0.
+    """
+
+    def _templates(self):
+        from pathlib import Path
+        import quam_state_manager
+        root = Path(quam_state_manager.__file__).parent / "web" / "templates"
+        return {p.name: p.read_text(encoding="utf-8") for p in root.glob("*.html")}
+
+    def _app_js(self):
+        from pathlib import Path
+        import quam_state_manager
+        return (Path(quam_state_manager.__file__).parent / "web" / "static"
+                / "app.js").read_text(encoding="utf-8")
+
+    def test_no_template_uses_hx_on(self):
+        """The attribute cannot work under this app's CSP, so its presence is
+        always a dead handler — not a style preference."""
+        import re
+        offenders = []
+        for name, src in self._templates().items():
+            # Strip Jinja comments first — the templates EXPLAIN why the
+            # attribute is not used, and prose about a rule must not trip it.
+            body = re.sub(r"\{#.*?#\}", "", src, flags=re.S)
+            if re.search(r"hx-on::[\w-]+\s*=", body):
+                offenders.append(name)
+        assert offenders == [], offenders
+
+    def test_the_csp_still_forbids_eval(self):
+        """If someone adds 'unsafe-eval' the test above stops meaning anything,
+        so pin the reason as well as the rule."""
+        from quam_state_manager.web.app import _CSP
+        assert "unsafe-eval" not in _CSP
+
+    def test_every_named_action_exists_in_the_dispatcher(self):
+        """A typo'd name is the one way this arrangement can fail silently."""
+        import re
+        used = set()
+        for s in self._templates().values():
+            used.update(re.findall(r'data-after-request="([^"]+)"', s))
+        assert used, "no template uses the mechanism — did they get reverted?"
+        js = self._app_js()
+        block = js[js.find("__afterRequestActions") - 4000:]
+        for name in sorted(used):
+            assert (name + ":") in block, f"{name} has no handler in app.js"
+
+    def test_the_dispatcher_is_bound_to_document(self):
+        js = self._app_js()
+        assert "document.addEventListener('htmx:afterRequest'" in js

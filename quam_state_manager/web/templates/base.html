@@ -275,7 +275,7 @@
                            the snapshot time, so a 2nd save with the same tag still
                            differs in content (HTMX re-renders) and re-flashes. #}
                         <form hx-post="/state/archive" hx-target="#archive-status" hx-swap="innerHTML"
-                              hx-on::after-request="if(event.detail.xhr.responseText.indexOf('archive-ok')>=0){this.reset();var s=document.getElementById('archive-status');if(s){s.classList.remove('archive-flash');void s.offsetWidth;s.classList.add('archive-flash');if(window.applyLocalTimes)applyLocalTimes(s);}}">
+                              data-after-request="archiveDone">
                             <input type="text" name="tag" class="archive-in" maxlength="120"
                                    placeholder="Tag (e.g. before CZ retune)" autocomplete="off">
                             <textarea name="note" class="archive-note" rows="2" maxlength="2000"

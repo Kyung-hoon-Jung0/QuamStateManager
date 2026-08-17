@@ -19,7 +19,7 @@
         <button type="button" class="btn-sm tray-force-btn"
                 hx-post="/state/apply-to-live?force=1"
                 hx-target="#pending-tray" hx-swap="outerHTML"
-                hx-on::after-request="if (event.detail.successful) this.closest('.ds-apply-conflict').remove()"
+                data-after-request="dropApplyConflict"
                 title="Write run #{{ run_id }}'s staged state over the live chip. What the other program wrote is replaced — reversible with Revert last apply.">
             &#9889; Apply run #{{ run_id }} over live</button>
         <button type="button" class="btn-sm outline"

@@ -39,12 +39,15 @@
          Mirrors the pending-tray working_dirty branch. #}
       <span class="review-sync-saved"{% if unsaved > 0 or not working_dirty %} hidden{% endif %}>
         {% if not _archive %}
-        {# Close the modal only AFTER a sent request (hx-on::after-request) — NOT an
-           eager onclick, which would also close it when the user cancels the hx-confirm. #}
+        {# Close the modal only AFTER a sent request (data-after-request) — NOT an
+           eager onclick, which would also close it when the user cancels the
+           hx-confirm. docs/120 item 27: this used to be an `hx-on::` attribute,
+           which htmx compiles with `new Function` — blocked by this app's own
+           CSP, so the handler never ran and the modal stayed open. #}
         <button class="btn-sync primary" type="button"
                 hx-post="/state/apply-to-live" hx-target="#pending-tray" hx-swap="outerHTML"
                 hx-confirm="Apply the working state to the live chip's state.json / wiring.json now?"
-                hx-on::after-request="closeReview(); if(window.LiveEditUndo)LiveEditUndo.clear()"
+                data-after-request="closeReviewAndClearUndo"
                 title="Push the working state (your saved, not-yet-applied edits) straight to the live chip.">
           &#8593; Apply to live chip</button>
         {% endif %}
