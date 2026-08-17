@@ -14363,6 +14363,17 @@ window.FieldHistory = (function () {
             document.body.appendChild(cellBtn);
         }
     }
+    /* Drop the focused cell's cached metrics WITHOUT hiding the button — the
+       one thing that can change them mid-focus is a UI-scale change, which
+       rescales every cell while the user is still typing in one. */
+    window.__cellBtnInvalidate = function () {
+        if (!cellBtn) return;
+        cellBtn._geom = null;
+        if (cellBtn._input && cellBtn.style.display !== "none") {
+            _cellBtnMeasure();
+            _positionCellBtn();
+        }
+    };
     document.addEventListener("focusin", function (e) {
         var t = e.target;
         if (t && t.classList && t.classList.contains("bulk-cell") &&

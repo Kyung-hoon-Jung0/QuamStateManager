@@ -386,6 +386,11 @@
         // the pinned columns' px insets must follow (deferred so the new
         // metrics are laid out before they are measured).
         if (window.__bulkRepin) setTimeout(window.__bulkRepin, 0);
+        // docs/120 item 24: the value-history button caches the focused cell's
+        // font + geometry so typing costs no layout. Rescaling every cell is
+        // exactly the event that invalidates it, and it can happen WHILE a cell
+        // holds focus — so drop the memo here rather than wait for a re-focus.
+        if (window.__cellBtnInvalidate) window.__cellBtnInvalidate();
         var s = _applyGlobalScale();
         var panel = document.getElementById('bulk-panel'); if (!panel) return;
         panel.style.setProperty('--bulk-fs', s.fs);
