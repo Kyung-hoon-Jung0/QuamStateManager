@@ -312,3 +312,30 @@ class TestHxOnWithoutEval:
     def test_the_dispatcher_is_bound_to_document(self):
         js = self._app_js()
         assert "document.addEventListener('htmx:afterRequest'" in js
+
+
+class TestAnArmedSessionIsNotAskedTheQuestion:
+    """docs/117's auto-apply session presses `/state/apply-to-live` through
+    `htmx.ajax` with the TRAY as source — a div with no inputs — so no
+    `seen_changes` rides along and the docs/120 gate is absent by construction.
+
+    That is the right answer as well as the accidental one: the consent this
+    gate checks is per-press, and an armed session is a user who consented to a
+    SESSION. Asking again on every automatic flush would refuse writes nobody
+    asked to review, and every refusal branch disarms.
+    """
+
+    def test_the_session_writer_sends_no_view_count(self):
+        from pathlib import Path
+        import quam_state_manager
+        js = (Path(quam_state_manager.__file__).parent / "web" / "static"
+              / "auto-apply.js").read_text(encoding="utf-8")
+        assert "seen_changes" not in js
+        assert "/state/apply-to-live" in js
+
+    def test_an_apply_with_no_declared_view_still_writes(self, app_client):
+        """The property the session depends on, stated directly."""
+        _edit(app_client, "qubits.q1.f_01", "6.2e9")
+        r = app_client.post("/state/apply-to-live")
+        assert r.status_code == 200, r.get_data(as_text=True)
+        assert _live(app_client)["qubits"]["q1"]["f_01"] == 6.2e9
