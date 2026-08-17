@@ -1,4 +1,4 @@
-# docs/122 — four customer reports: Phase 0 (measurement)
+# docs/122 — four customer reports: measurement, then the fixes
 
 Reported 2026-08-17, four items:
 
@@ -7,7 +7,7 @@ Reported 2026-08-17, four items:
 3. **Ctrl+Z / Ctrl+Shift+Z** is slow and unstable
 4. the **Topology / Chip Status Trends** figure sometimes breaks
 
-Phase 0 changed no code. Its output is numbers: every claim below was either executed
+Phase 0 changed no code; Phase 1 (below) is the four fixes it licensed. Its output is numbers: every claim below was either executed
 against the real 20-qubit CQT chip in real Chrome, or executed against the real
 839-run customer archive. Where a hypothesis did not survive its measurement it is
 recorded as overturned, including four of my own.
@@ -281,6 +281,49 @@ purge-before-destroy rule.** Trends is where it was reported, not where it is ra
 | rapid Ctrl+Z races and an older response wins | **false** — peak concurrency 1; six of ten presses are dropped before a request exists |
 | the Trends breakage is leaked WebGL contexts | **false** — 8/8 contexts granted after 20 toggles; the charts are SVG |
 | the lab convention is expressible as a physical-quantity ordering | **false** — grouping creates three cycles; only exact spellings sort |
+
+## Phase 1 — what shipped, and what each fix cost
+
+| | commit | before → after, measured on the same chip |
+|---|---|---|
+| 3 · Ctrl+Z | `89f2714` | 10 presses → **4 requests → 10**; one press → **2,418 ms of grid rebuild → none** |
+| 2 · Explorer | `3ab9c31` | diff ON → **189/189 rows fail the query → filter applied**; expansion **lost → 855 kept**; scroll **119→37 → 119→119** |
+| 1 · Axis | `b35f64e` | 650 of 1,805 two-sweep cubes re-oriented to the lab's convention; 14,820 of 15,470 untouched |
+| 4 · Plots | `84bac19` | sidebar collapse **609 in 742, never healed → 1531 = 1531 in 500 ms**; aborted fetch **never recovers → recovers** |
+
+### Three things the implementation found that Phase 0 had not
+
+**A repaint is not a substitute for a rebuild — except where it provably is.**
+The undo response names every path it reverted, so the grid can repaint those
+cells. It cannot express a `created`/`deleted` entry (a restored subtree adds
+columns; an undone creation turns a cell back into "not set") and it cannot
+speak for a path that has no cell. Those two cases keep the rebuild, debounced.
+Two traps inside that: `querySelectorAll`, not `querySelector` — two columns can
+resolve to the same leaf through an alias pointer or a linked shared-port pair,
+and patching only the first leaves the twin showing the undone value; and
+coverage is per **entry**, not per surface — a qubit leaf is legitimately absent
+from the pair grid, so summing each surface's misses would have demanded a full
+rebuild for every ordinary edit, i.e. kept the 2.4 s.
+
+**`.js-plotly-plot` is a class, and it does not always survive.** The first
+version of the resize fix attached a ResizeObserver that fired correctly
+(verified: 2 hits) against **zero** targets: a Trends holder carried
+`_fullLayout`, a populated `.data`, three `svg.main-svg` children and Plotly's
+own `<div class="plot-container plotly">`, while its class attribute was exactly
+`topo-trend-chart`. `PlotHost` selects structurally instead. Then the second
+wall: **`Plotly.Plots.resize` no-ops on these charts** — holder 1531,
+`_fullLayout.width` 1265, `autosize: true`, element displayed, still 1265 after
+`Plots.resize` *and* after `relayout({autosize:true})`. An explicit
+`relayout({width})` moves it, and releasing the width restores autosize. That is
+also why docs/118's helper, which used `Plots.resize`, could not have covered
+this surface even if it had been pointed at it.
+
+**A pin can pin the wrong thing.** `interactive_stability`'s E1 asserted *which
+Plotly entry point* was called rather than which plots move, so a correct fix
+failed it. `ctrlz_selfcheck` asserted the unconditional grid re-GET that was the
+bug. The axis re-apply pin was first written as a `<600`-character distance and
+the real distance is 601; it is now an order contract (after the tagging, before
+the toggle is armed).
 
 ## What is still unknown
 
