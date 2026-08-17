@@ -5665,6 +5665,16 @@ def _parse_for_target(store, target_path: str, raw_value: str):
     """
     from quam_state_manager.core import type_policy as _tp
     from quam_state_manager.core.edit_policy import is_free_form_path
+    # A POINTER IS ALWAYS STRIPPED, whatever the field currently holds.
+    # Surrounding whitespace is never meaningful in a QUAM reference, and a
+    # padded one is not a reference at all: '  #/qubits/q3  ' was stored with
+    # its spaces, so is_pointer() said no afterwards and the link was dead —
+    # HTTP 200, on disk after apply (red team). Hoisted above every branch
+    # because the field being edited may itself already be a pointer, which is
+    # exactly the case that reached disk.
+    _sp = raw_value.strip() if isinstance(raw_value, str) else raw_value
+    if isinstance(_sp, str) and is_pointer(_sp):
+        return _sp
     try:
         current = store.get_value(target_path)
     except Exception:  # noqa: BLE001 — fall through to the normal path
@@ -5687,6 +5697,27 @@ def _parse_for_target(store, target_path: str, raw_value: str):
     # subsumed (its numeric values were already parsed under the old gate too).
     if (isinstance(current, str) and not is_pointer(current)
             and (is_free_form_path(target_path) or not _is_numeric_string(current))):
+        # VERBATIM means "the characters are the value" — it does NOT mean the
+        # three tokens every other write path honours stop existing. Returning
+        # raw_value unconditionally broke them, and the red team caught it:
+        #   'null'    stored the four-character string 'null' (617 leaves on
+        #             this chip could no longer be CLEARED at all)
+        #   '"high"'  stored the quotes too, killing the documented escape hatch
+        #   '  #/q '  stored the padding, so the pointer was no longer a pointer
+        # So the tokens are handled first, exactly as parse_with_expected does,
+        # and only ordinary text falls through untouched.
+        _s = raw_value.strip()
+        if _s.lower() in ("null", "none"):
+            return None
+        if _s.startswith('"'):
+            try:
+                _loaded = json.loads(_s)
+                if isinstance(_loaded, str):
+                    return _loaded
+            except ValueError:
+                pass
+        if is_pointer(_s):
+            return _s          # stripped: a padded pointer is not a pointer
         return raw_value
     policy = getattr(store, "type_policy", None)
     expected = None

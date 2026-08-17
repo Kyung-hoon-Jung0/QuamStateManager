@@ -170,7 +170,17 @@ def pointer_cell_refusal(store: Any, dot_path: str, new_value: Any) -> str | Non
     if not (isinstance(current, str) and is_pointer(current)):
         return None
     if isinstance(new_value, str) and is_pointer(new_value.strip()):
-        return None                     # re-pointing is the ordinary edit here
+        # Re-pointing is the ordinary edit here — but a POINTER-SHAPED string is
+        # not automatically a usable pointer. `#`, `#/`, `#./` and `#../` carry
+        # no target: they satisfy is_pointer() and resolve to nothing, so the
+        # guard waved them through and the link died anyway (red team, 200 OK,
+        # on disk after apply). A reference has to reference something.
+        _p = new_value.strip()
+        if _p.rstrip("/") in ("#", "#.", "#.."):
+            return (f"{_p!r} is not a reference to anything — it has no target. "
+                    f"Enter a full pointer (e.g. {current}), or use the Pulses "
+                    f"page's pointer editor to break the link deliberately.")
+        return None
     try:
         ft = resolve_field_target(store.merged, dot_path)
     except Exception:                   # noqa: BLE001 — best-effort, never blocks

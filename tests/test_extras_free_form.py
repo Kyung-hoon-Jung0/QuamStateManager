@@ -147,3 +147,74 @@ class TestEditingALabel:
         r = self._edit(c, "extras.n_rounds", "5")
         assert r.status_code == 200
         assert r.get_json()["stored_kind"] in ("int", "float")
+
+
+class TestVerbatimDoesNotSwallowTheTokens:
+    """The red team caught this the same day it shipped.
+
+    Widening the verbatim carve-out to every non-numeric string leaf returned
+    `raw_value` unconditionally, which quietly deleted the three tokens every
+    other write path honours:
+
+      'null'   stored the four-character string 'null' — 617 leaves on the real
+               chip could no longer be CLEARED at all
+      '"high"' stored the quotes too, killing the documented escape hatch
+      '  #/q ' stored the padding, so `is_pointer()` said no afterwards and the
+               reference was dead — 200 OK, and on disk after apply
+
+    "The characters are the value" was never meant to mean the vocabulary stops
+    existing. Verbatim applies to ORDINARY TEXT, after the tokens.
+    """
+
+    PATH = "qubits.qA1.extras.operator_note"      # a text leaf holding "12"
+
+    def _edit(self, env, value):
+        return env["client"].post("/field/edit",
+                                  data={"dot_path": self.PATH, "value": value})
+
+    def _peek(self, env):
+        st = (env["app"].config["contexts"]
+              [env["app"].config["active_context"]])["store"]
+        return st.state["qubits"]["qA1"]["extras"]["operator_note"]
+
+    def test_null_still_clears_a_text_leaf(self, env):
+        assert self._edit(env, "null").status_code == 200
+        assert self._peek(env) is None
+
+    def test_the_quoted_escape_hatch_still_works(self, env):
+        assert self._edit(env, '"high"').status_code == 200
+        assert self._peek(env) == "high"
+
+    def test_a_pointer_is_stripped_wherever_it_is_typed(self, env):
+        assert self._edit(env, "  #/qubits/qA1/f_01  ").status_code == 200
+        assert self._peek(env) == "#/qubits/qA1/f_01", (
+            "a padded pointer is not a pointer — the link dies silently")
+
+    def test_ordinary_text_is_still_verbatim(self, env):
+        for typed in ("1,03,2", "007", "amplified", "a b  c"):
+            assert self._edit(env, typed).status_code == 200
+            assert self._peek(env) == typed, typed
+
+
+class TestATargetlessPointerIsRefused:
+    """`#`, `#/`, `#./` satisfy is_pointer() and reference NOTHING, so the
+    re-point escape waved them through and the link died anyway — 200 OK, on
+    disk after apply. A reference has to reference something."""
+
+    PTR = "qubit_pairs.qA2-qA1.extras.cz_branch"
+
+    def test_a_real_repoint_still_works(self, env):
+        c = env["client"]
+        assert c.post("/field/edit", data={"dot_path": self.PTR,
+                                           "value": "#/qubits/qA1"}).status_code == 200
+        r = c.post("/field/edit", data={"dot_path": self.PTR,
+                                        "value": "#/qubits/qA1/f_01"})
+        assert r.status_code == 200
+
+    def test_targetless_pointers_are_refused(self, env):
+        c = env["client"]
+        c.post("/field/edit", data={"dot_path": self.PTR, "value": "#/qubits/qA1"})
+        for bad in ("#", "#/", "#./", "#../"):
+            r = c.post("/field/edit", data={"dot_path": self.PTR, "value": bad})
+            assert r.status_code == 400, f"{bad!r} was accepted"
+            assert "not a reference to anything" in (r.get_json() or {}).get("error", "")
