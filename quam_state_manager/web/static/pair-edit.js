@@ -871,5 +871,42 @@
         return null;
     }
 
+    /* docs/122 item 3 — the pair grid's half of the undo repaint.
+       Same contract as BulkEdit.revertPaths: patch every cell the /undo
+       response named, report what could not be reached, and leave the decision
+       about an authoritative refetch to the caller. There is no cold-column
+       hydration here because the pair grid is not virtualised. */
+    function _revertPaths(entries) {
+        var t = table();
+        if (!t || !entries || !entries.length) return { patched: 0, missing: 0 };
+        var esc = function (k) {
+            return (window.CSS && CSS.escape) ? CSS.escape(k)
+                                              : String(k).replace(/"/g, '\\"');
+        };
+        var patched = 0, missing = 0, rows = [], covered = [];
+        entries.forEach(function (e) {
+            if (!e || !e.dot_path) return;
+            var cs = t.querySelectorAll('.bulk-cell[data-dot-path="' + esc(e.dot_path) + '"]');
+            if (!cs.length) { missing++; return; }
+            covered.push(e.dot_path);
+            var v = e.old_value_str == null ? '' : String(e.old_value_str);
+            Array.prototype.forEach.call(cs, function (c) {
+                if (c.readOnly) return;
+                c.value = v;
+                c.setAttribute('data-orig', v);
+                c.dispatchEvent(new Event('input', { bubbles: true }));
+                _markCellDirty(c);
+                if (c.classList.contains('bulk-cell-linked')) _mirrorLinked(c);
+                var tr = _rowOf(c);
+                if (tr && rows.indexOf(tr) < 0) rows.push(tr);
+                patched++;
+            });
+        });
+        rows.forEach(_refreshRow);
+        if (patched) _refreshGlobal();
+        return { patched: patched, missing: missing, covered: covered };
+    }
+    BulkPairEdit.revertPaths = _revertPaths;
+
     window.BulkPairEdit = BulkPairEdit;
 })();

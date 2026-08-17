@@ -2748,6 +2748,69 @@
         return null;
     }
 
+    /* docs/122 item 3 — repaint the cells an undo actually moved.
+       The /undo response already names every path it reverted AND the value it
+       reverted to, and the grid ignored all of it: `cellsReverted` dispatched
+       `quam:state-changed`, whose only listener re-GETs the whole /bulk.
+       Measured on the real 20-qubit chip: the undo itself is 55 ms and that
+       refetch is 2,418 ms — the same press on /explorer, which has no grid,
+       settles in 56 ms and issues no /bulk at all. So the lag was never the
+       undo.
+
+       querySelectorAll, not querySelector: two columns can resolve to the SAME
+       leaf (an alias pointer, a linked shared-port pair), and patching only the
+       first would leave the twin showing the undone value — the exact silent
+       staleness the refetch existed to prevent.
+
+       The caller decides whether an authoritative refetch still has to follow;
+       this function only reports what it could and could not reach. */
+    function _revertPaths(entries) {
+        var t = table();
+        if (!t || !entries || !entries.length) return { patched: 0, missing: 0 };
+        var sel = function (p) {
+            return t.querySelectorAll('.bulk-cell[data-dot-path="' + _cssEsc(p) + '"]');
+        };
+        // A cold column (docs/105) has no .bulk-cell to land in — the same trap
+        // _consumeEditCarry hit. Hydrate once if any named path is absent.
+        var absent = entries.some(function (e) {
+            return e && e.dot_path && !sel(e.dot_path).length;
+        });
+        if (absent) _virtHydrateAll();
+        var patched = 0, missing = 0, rows = [], covered = [];
+        entries.forEach(function (e) {
+            if (!e || !e.dot_path) return;
+            var cs = sel(e.dot_path);
+            if (!cs.length) { missing++; return; }
+            covered.push(e.dot_path);
+            var v = e.old_value_str == null ? '' : String(e.old_value_str);
+            Array.prototype.forEach.call(cs, function (c) {
+                if (c.readOnly) return;
+                c.value = v;
+                // The server has COMMITTED this value, so it is the new clean
+                // baseline — not an edit. Setting data-orig is what keeps the
+                // cell out of the dirty set and off the Apply-row button.
+                c.setAttribute('data-orig', v);
+                // 'input' is what recomputes the docs/109 physical-units
+                // sub-line; _markCellDirty then settles the class (value ===
+                // data-orig ⇒ clean).
+                c.dispatchEvent(new Event('input', { bubbles: true }));
+                _markCellDirty(c);
+                if (c.classList.contains('bulk-cell-linked')) _mirrorLinked(c);
+                var tr = _rowOf(c);
+                if (tr && rows.indexOf(tr) < 0) rows.push(tr);
+                patched++;
+            });
+        });
+        rows.forEach(_refreshRow);
+        if (patched) _refreshGlobal();
+        // `covered` (not a missing COUNT) is what the caller needs: with both
+        // grids on screen a qubit leaf is legitimately absent from the pair
+        // grid, so summing each surface's misses would demand a full rebuild
+        // for every ordinary edit.
+        return { patched: patched, missing: missing, covered: covered };
+    }
+    BulkEdit.revertPaths = _revertPaths;
+
     // docs/111 test hooks (jsdom selfcheck drives the internals directly)
     BulkEdit._ge = {
         selCells: _selCells, fill: _fillSelection, paste: _pasteColumn,

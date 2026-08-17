@@ -3067,16 +3067,58 @@ document.addEventListener("cellDiscarded", function(evt) {
 // Ctrl+Z undo: the server reverts one user action (a batch/rename undoes as a
 // unit) and fires cellsReverted with every affected path so the visible cells +
 // Explorer nodes roll back in place. Reuses the same _revertCell path as discard.
+/* docs/122 item 3: the grids used to answer EVERY undo with a full /bulk
+   re-GET — 2,418 ms on the real 20-qubit chip against 55 ms for the undo
+   itself, and the same press on a page with no grid settles in 56 ms. But the
+   response already names each reverted path and the value it reverted to, so
+   the grids can repaint exactly those cells.
+
+   The refetch is not simply deleted; it is kept for the two cases the patch
+   provably cannot express:
+     - a CREATE or DELETE was undone. A restored subtree can add columns and an
+       undone creation turns a cell back into "not set" (data-missing) — neither
+       is a value edit, and the response's own created/deleted flags say so.
+     - some named path had no cell to land in even after cold-column hydration.
+       Then we cannot claim the grid is up to date for it, so we don't.
+   Debounced, because a burst of presses should cost ONE rebuild, not N. */
+var _gridResyncTimer = null;
+function _scheduleGridResync(ms) {
+    if (_gridResyncTimer) clearTimeout(_gridResyncTimer);
+    _gridResyncTimer = setTimeout(function () {
+        _gridResyncTimer = null;
+        document.dispatchEvent(new CustomEvent("quam:state-changed"));
+    }, ms == null ? 900 : ms);
+}
+window._scheduleGridResync = _scheduleGridResync;
+
 document.addEventListener("cellsReverted", function(evt) {
     var d = evt.detail || {};
-    (d.entries || []).forEach(function(e) {
+    var entries = d.entries || [];
+    entries.forEach(function(e) {
         _revertCell(e.dot_path, e.old_value_str != null ? e.old_value_str : "");
     });
-    // The Live-State-Edit grids render their own cells (not inspector inputs), so
-    // _revertCell can't roll them back — tell the grids to re-pull from the (now
-    // reverted) working copy so they don't keep showing the undone value. The
-    // listeners no-op off their page and skip when a cell is mid-edit/dirty.
-    document.dispatchEvent(new CustomEvent("quam:state-changed"));
+    // The Live-State-Edit grids render their own cells (not inspector inputs),
+    // so _revertCell can't reach them — repaint by path, then decide.
+    var structural = entries.some(function (e) { return e && (e.created || e.deleted); });
+    var gridOnScreen = !!(document.getElementById('bulk-table')
+                          || document.getElementById('bulk-pair-table'));
+    var uncovered = 0;
+    try {
+        var covered = {};
+        [window.BulkEdit, window.BulkPairEdit].forEach(function (api) {
+            if (!api || !api.revertPaths) return;
+            ((api.revertPaths(entries) || {}).covered || []).forEach(function (p) {
+                covered[p] = 1;
+            });
+        });
+        // Per ENTRY, not per surface: a qubit leaf is legitimately absent from
+        // the pair grid, and counting that as a miss would rebuild the pane for
+        // every ordinary edit — i.e. keep the 2.4 s we just removed.
+        entries.forEach(function (e) {
+            if (e && e.dot_path && !covered[e.dot_path]) uncovered++;
+        });
+    } catch (err) { uncovered = entries.length; }   // never trust a half repaint
+    if (gridOnScreen && (structural || uncovered > 0)) _scheduleGridResync();
     if (d.message && window.showToast) window.showToast(d.message, "success");
     // r16 ⓪-2 (docs/73): flash the reverted item in place, or navigate to
     // its owning surface with the current page's typing stashed + restored.
@@ -4416,6 +4458,54 @@ document.addEventListener("focusout", function(evt) {
 // Ctrl+Z on a typo in an amplitude field skipped the native-undo bail-out and
 // fell through to the app-wide chain — silently restoring a grid cell hidden
 // behind the modal, or POSTing /undo to discard a staged group.
+/* docs/122 item 3 — the server tier is a QUEUE, because presses were being
+   dropped, not raced.
+   Measured on the real 20-qubit chip: ten Ctrl+Z presses all reached the server
+   tier (window._lastUndoTier read 'server' ten times) and produced only FOUR
+   htmx:beforeRequest events, three of which completed. htmx keeps per-source
+   request bookkeeping and discards a second request from #pending-tray while
+   one is in flight, so six presses did nothing and said nothing — which is the
+   "unstable / it goes back and forth" half of the report. Peak concurrency was
+   1 and the tray count never went backwards, so serialisation was never the
+   missing piece; not throwing the presses away is.
+
+   Undo and redo share one queue so an interleaved burst is applied in the order
+   it was typed. The bound is a held key, not a rate limit: past it we stop
+   accepting rather than silently discarding somewhere in the middle. */
+window.UndoQueue = (function () {
+    var MAX = 20;
+    var q = [], busy = false;
+    function pump() {
+        if (busy || !q.length || !window.htmx) return;
+        var path = q.shift();
+        if (!document.getElementById("pending-tray")) { q.length = 0; return; }
+        busy = true;
+        var done = function () { busy = false; pump(); };
+        var r;
+        // A throw here (htmx torn down mid-navigation) must not wedge the queue
+        // for the rest of the session — releasing on the spot is the only
+        // behaviour that cannot strand the presses still waiting behind it.
+        try {
+            r = htmx.ajax("POST", path, {
+                source: "#pending-tray", target: "#pending-tray", swap: "outerHTML",
+            });
+        } catch (e) { done(); return; }
+        if (r && typeof r.then === "function") r.then(done, done);
+        else done();   // no completion signal ⇒ never hold the lock on a guess
+    }
+    return {
+        push: function (path) {
+            if (!window.htmx || !document.getElementById("pending-tray")) return false;
+            if (q.length >= MAX) return false;
+            q.push(path);
+            pump();
+            return true;
+        },
+        depth: function () { return q.length; },
+        busy: function () { return busy; },
+    };
+})();
+
 document.addEventListener("keydown", function(evt) {
     if (!((evt.ctrlKey || evt.metaKey) && (evt.key === "z" || evt.key === "Z")
           && !evt.altKey)) return;
@@ -4435,7 +4525,7 @@ document.addEventListener("keydown", function(evt) {
         if (window.LiveEditUndo && window.LiveEditUndo.tryRedo()) { evt.preventDefault(); return; }
         if (!window.htmx || !document.getElementById("pending-tray")) return;
         evt.preventDefault();
-        htmx.ajax("POST", "/redo", {source: "#pending-tray", target: "#pending-tray", swap: "outerHTML"});
+        window.UndoQueue.push("/redo");
         return;
     }
     // ---- undo chain ----
@@ -4457,7 +4547,7 @@ document.addEventListener("keydown", function(evt) {
     if (!window.htmx || !document.getElementById("pending-tray")) return;
     evt.preventDefault();
     window._lastUndoTier = "server";
-    htmx.ajax("POST", "/undo", {source: "#pending-tray", target: "#pending-tray", swap: "outerHTML"});
+    window.UndoQueue.push("/undo");
 }, true);
 
 function _revertCell(dotPath, oldValueStr) {
@@ -14567,12 +14657,9 @@ window.LiveEditUndo = (function () {
     function trigger() {
         if (window._wizUndo && window._wizUndo.tryUndo()) return;
         if (tryUndo()) return;
-        if (window.htmx && document.getElementById("pending-tray")) {
-            htmx.ajax("POST", "/undo", {
-                source: "#pending-tray", target: "#pending-tray",
-                swap: "outerHTML",
-            });
-        }
+        // Same queue as Ctrl+Z (docs/122 item 3): a fast double-click on the
+        // tray ↶ used to lose its second press exactly like a fast keypress.
+        if (window.UndoQueue) window.UndoQueue.push("/undo");
     }
 
     function _changeCount() {
