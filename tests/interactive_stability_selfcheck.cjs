@@ -113,8 +113,17 @@ check('D3 the corpse markup is gone', corpse.innerHTML === '', corpse.innerHTML.
 
 // ── 5. the resize helper only touches VISIBLE plots (resizing a hidden one is
 //    a no-op that Plotly still pays for) ───────────────────────────────────
+// docs/122 item 4: the pin asserts WHICH PLOTS get resized, not which Plotly
+// entry point does it. Plots.resize is the documented call and it measurably
+// NO-OPS on this app's charts (a holder at clientWidth 1531 with
+// _fullLayout.width 1265 and autosize:true stayed 1265 after it), so the shared
+// helper drives an explicit relayout instead. Record both.
 const resized = [];
-w.Plotly = { Plots: { resize(el) { resized.push(el); } }, purge() {} };
+w.Plotly = {
+    Plots: { resize(el) { resized.push(el); } },
+    relayout(el, upd) { if (upd && upd.width) resized.push(el); return Promise.resolve(); },
+    purge() {},
+};
 const list = w.document.createElement('div');
 list.className = 'ds-interactive-list';
 const shown = w.document.createElement('div'); shown.className = 'js-plotly-plot';
@@ -123,8 +132,38 @@ list.appendChild(shown); list.appendChild(hidden);
 container.appendChild(list);
 Object.defineProperty(shown, 'offsetParent', { get: () => container });
 Object.defineProperty(hidden, 'offsetParent', { get: () => null });
+// jsdom reports clientWidth 0 for everything; the helper must not "resize" a
+// box whose width it cannot read, so give the two under test a real one.
+Object.defineProperty(shown, 'clientWidth', { get: () => 800 });
+Object.defineProperty(hidden, 'clientWidth', { get: () => 800 });
+shown._fullLayout = { width: 600, autosize: true };
+hidden._fullLayout = { width: 600, autosize: true };
 w.resizeInteractiveTiles(container);
 check('E1 a visible plot is resized', resized.indexOf(shown) >= 0);
+// docs/122 item 4 — the shared helper finds graph divs STRUCTURALLY, because
+// '.js-plotly-plot' is a class and it does not always survive: measured on the
+// real chip, a Chip Status Trends holder had _fullLayout, populated .data,
+// three svg.main-svg children and Plotly's own '<div class="plot-container
+// plotly">' while its class attribute was exactly "topo-trend-chart", so a
+// class-only query inside that grid returned ZERO and the first version of the
+// resize fix fired against nothing.
+{
+    const classless = w.document.createElement('div');
+    classless.className = 'i-lost-my-plotly-class';
+    const inner = w.document.createElement('div');
+    inner.className = 'plot-container plotly';
+    classless.appendChild(inner);
+    list.appendChild(classless);
+    Object.defineProperty(classless, 'offsetParent', { get: () => container });
+    Object.defineProperty(classless, 'clientWidth', { get: () => 800 });
+    classless._fullLayout = { width: 600, autosize: true };
+    const before = resized.length;
+    w.resizeInteractiveTiles(container);
+    check('E3 a graph div whose js-plotly-plot class was stripped is still found',
+          resized.slice(before).indexOf(classless) >= 0);
+    check('E4 and it is not counted twice when the class IS present',
+          w.PlotHost.graphDivs(list).filter((e) => e === shown).length === 1);
+}
 check('E2 a hidden plot is not', resized.indexOf(hidden) < 0);
 
 if (failures) { console.error(failures + ' check(s) failed'); process.exit(1); }

@@ -4045,6 +4045,10 @@ window.PaneState = (function () {
     document.addEventListener('htmx:historyRestore', _historyReset);
 
     return {
+        // docs/122 item 4: the global purge-on-swap must not kill plots that are
+        // about to be PARKED alive. Answers for the CURRENT route by default —
+        // that is the one whose DOM is leaving.
+        isKeepRoute: function (route) { return KEEP.indexOf(route || _cur) >= 0; },
         _stash: function () { return stash; },
         _cur: function () { return _cur; },
         _soft: function () { return soft; },
@@ -8680,13 +8684,133 @@ window.setInteractiveCols = function(n, btn) {
  * geometry they were drawn in: squashed, clipped, or with a stranded modebar.
  * `setInteractiveCols` was the ONLY caller of Plots.resize before this.
  */
+/* docs/122 item 4 — ONE place for the three things every Plotly mount needs.
+ *
+ * This bug class keeps being re-fixed per surface: docs/118 fixed resize for the
+ * Interactive tiles, docs/120 fixed a WebGL blank on Chip Status Trends, and
+ * docs/122 arrived at Trends again for the resize half. An inventory of the app
+ * found 15 Plotly mounts, of which 13 handle no CONTAINER resize (Plotly's
+ * `responsive:true` listens to WINDOW resize only — measured on Plotly 2.35.2:
+ * collapsing the sidebar left a 609 px SVG in a 742 px holder and it never
+ * healed in 6 s, while a window resize healed it instantly) and 7 destroy live
+ * plots with innerHTML/outerHTML without purging first, which the app's own rule
+ * (PaneState._purge) forbids.
+ *
+ * So: a helper, plus one global purge-on-swap so the rule is enforced by the
+ * framework rather than remembered at 15 call sites. */
+window.PlotHost = (function () {
+    /* Finding the graph divs is NOT `.js-plotly-plot`.
+       That class is Plotly's own marker and the whole app selects on it — but it
+       does not always survive here. Measured on the real chip: a Chip Status
+       Trends holder carried `_fullLayout`, a populated `.data`, three
+       `svg.main-svg` children and Plotly's own `<div class="plot-container
+       plotly">` — and its class attribute was exactly "topo-trend-chart".
+       `querySelectorAll('.js-plotly-plot')` inside that grid returned ZERO, so
+       the ResizeObserver fired (verified: 2 hits) against nothing at all and the
+       first version of this fix silently did not work.
+       `.plot-container.plotly` is structure Plotly always builds, so its parent
+       is the graph div whether or not the class stuck. Union with the class so
+       nothing that DOES carry it is missed, and de-duplicate. */
+    function _graphDivs(root) {
+        var r = root || document;
+        if (!r.querySelectorAll) return [];
+        var out = [], seen = [];
+        function add(el) {
+            if (!el || seen.indexOf(el) >= 0) return;
+            seen.push(el); out.push(el);
+        }
+        Array.prototype.forEach.call(r.querySelectorAll('.js-plotly-plot'), add);
+        Array.prototype.forEach.call(r.querySelectorAll('.plot-container.plotly'),
+            function (n) { add(n.parentElement); });
+        return out;
+    }
+    /* Plotly.Plots.resize is the documented call for this and it NO-OPS here.
+       Measured on the real chip after collapsing the sidebar: the holder was
+       1531 px wide, `_fullLayout.width` was 1265 with `autosize: true`, the
+       element was displayed — and it was still 1265 after Plots.resize AND
+       after relayout({autosize:true}). An explicit width moves it immediately
+       (1265 -> 1531), and releasing that width straight afterwards puts
+       autosize back so a WINDOW resize still adapts on its own. Chained, not
+       fired back to back: two concurrent relayouts on one div is the race
+       _plotlyRender already had to serialise once. */
+    function resizeWithin(root) {
+        if (typeof Plotly === 'undefined') return 0;
+        var n = 0;
+        _graphDivs(root).forEach(function (el) {
+            if (!el.offsetParent) return;   // hidden — resizing is a no-op
+            var w = el.clientWidth;
+            if (!w) return;
+            var cur = el._fullLayout && el._fullLayout.width;
+            if (cur && Math.abs(cur - w) < 2) return;   // already matched
+            try {
+                var p = Plotly.relayout(el, { width: w });
+                if (p && p.then) {
+                    p.then(function () {
+                        return Plotly.relayout(el, { width: null, autosize: true });
+                    }).catch(function () {});
+                }
+                n++;
+            } catch (e) {}
+        });
+        return n;
+    }
+    /* Watch a CONTAINER, not the window: the geometry changes that break these
+       figures are a sidebar collapse and a split-gutter drag, neither of which
+       is a window resize. Debounced, and idempotent per container. */
+    function observe(container) {
+        if (!container || container._phRo || typeof ResizeObserver === 'undefined') return;
+        var t = null;
+        container._phRo = new ResizeObserver(function () {
+            clearTimeout(t);
+            t = setTimeout(function () { resizeWithin(container); }, 120);
+        });
+        try { container._phRo.observe(container); } catch (e) { container._phRo = null; }
+    }
+    function unobserve(container) {
+        if (container && container._phRo) {
+            try { container._phRo.disconnect(); } catch (e) {}
+            container._phRo = null;
+        }
+    }
+    /* A Plotly node must never die via innerHTML without purge — WebGL contexts
+       and DOM references leak. Safe to call on anything: purging a node that is
+       about to be discarded cannot break it. */
+    function purgeWithin(root) {
+        if (typeof Plotly === 'undefined') return 0;
+        var n = 0;
+        _graphDivs(root).forEach(function (el) {
+            try { Plotly.purge(el); n++; } catch (e) {}
+        });
+        return n;
+    }
+    return { resizeWithin: resizeWithin, observe: observe,
+             unobserve: unobserve, purgeWithin: purgeWithin,
+             graphDivs: _graphDivs };
+})();
+
+/* Enforce the purge rule at the ONE place every destructive swap goes through.
+ * Additive by construction: the nodes are about to be replaced anyway.
+ * The exception is a pane PaneState is about to PARK — those plots are meant to
+ * come back alive, and purging them would hand the user a corpse on return. */
+document.addEventListener('htmx:beforeSwap', function (evt) {
+    var t = evt && evt.target;
+    if (!t || !t.querySelectorAll) return;
+    if (evt.detail && evt.detail.shouldSwap === false) return;
+    if (t.id === 'table-pane' && window.PaneState && window.PaneState.isKeepRoute
+        && window.PaneState.isKeepRoute()) return;
+    window.PlotHost.purgeWithin(t);
+});
+
 window.resizeInteractiveTiles = function(scope) {
-    if (typeof Plotly === 'undefined') return;
+    // Scope preserved exactly (docs/118 pins assert .ds-interactive-list only);
+    // the implementation is now shared.
     var root = scope || document;
-    root.querySelectorAll('.ds-interactive-list .js-plotly-plot').forEach(function(el) {
-        if (!el.offsetParent) return;          // hidden — resizing it is a no-op
-        try { Plotly.Plots.resize(el); } catch (e) {}
-    });
+    if (root.classList && root.classList.contains('ds-interactive-list')) {
+        return void window.PlotHost.resizeWithin(root);
+    }
+    if (!root.querySelectorAll) return;
+    Array.prototype.forEach.call(root.querySelectorAll('.ds-interactive-list'),
+        function (l) { window.PlotHost.resizeWithin(l); });
 };
 
 /**

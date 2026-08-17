@@ -1713,17 +1713,31 @@ window.ChipStatus.mount = function (opts) {
 
     function _ensureSectionBuilt(key) {
         if (!key || _chipSectionBuilt[key]) return;
-        _chipSectionBuilt[key] = true;
-        if (key === 'distributions') renderHistograms();
-        else if (key === '2qrb') build2QRBPanels();
-        else if (key === 'metrics') buildMetricPanels();
+        if (key === 'distributions') { _chipSectionBuilt[key] = true; renderHistograms(); }
+        else if (key === '2qrb') { _chipSectionBuilt[key] = true; build2QRBPanels(); }
+        else if (key === 'metrics') { _chipSectionBuilt[key] = true; buildMetricPanels(); }
         // Trends fetches its own data (the history index is not cheap enough to
         // ride the page render), so building it means asking for it once.
         else if (key === 'trends') {
             var host = document.getElementById('topo-trends');
-            if (host && window.htmx) {
-                htmx.ajax('GET', '/topology/trends',
-                          { target: '#topo-trends', swap: 'outerHTML' });
+            if (!host || !window.htmx) return;
+            /* docs/122 item 4 — the flag used to be set BEFORE the request, so a
+               single failed fetch retired the section for the life of the page:
+               reproduced by aborting the first /topology/trends, after which
+               #topo-trends stayed empty (innerHTML length 0) and scrolling away
+               and back never retried. Mark built only on success; a failure
+               leaves the section eligible for the next intersection. */
+            _chipSectionBuilt[key] = true;
+            var p = htmx.ajax('GET', '/topology/trends',
+                              { source: '#topo-trends', target: '#topo-trends',
+                                swap: 'outerHTML' });
+            if (p && typeof p.then === 'function') {
+                p.then(function () {
+                    if (!document.querySelector('.topo-trend-box')
+                        && !document.querySelector('.topo-trends-controls')) {
+                        _chipSectionBuilt[key] = false;   // nothing arrived — retry later
+                    }
+                }, function () { _chipSectionBuilt[key] = false; });
             }
         }
     }
@@ -2505,10 +2519,34 @@ window.ChipTrends = (function () {
         if (pathEl && pathEl.value.trim()) q += '&path=' + encodeURIComponent(pathEl.value.trim());
         return q;
     }
+    /* docs/122 item 4 — `source` is not optional here.
+       Without it htmx runs the request with elt = document.body and queues it
+       against every other body-sourced request in the app; measured, a metric
+       toggle's /topology/trends was simply NEVER SENT while two /workspace/tree
+       polls held the body queue, and the chips lit with no chart behind them.
+       Sourcing it on the element it targets also gives htmx the per-element
+       bookkeeping that stops a fast second toggle racing the first. */
+    var _reloadSeq = 0;
     function _reload() {
-        if (!window.htmx) return;
-        htmx.ajax('GET', '/topology/trends?' + _params(),
-                  { target: '#topo-trends', swap: 'outerHTML' });
+        if (!window.htmx || !document.getElementById('topo-trends')) return;
+        var mine = ++_reloadSeq;
+        var p = htmx.ajax('GET', '/topology/trends?' + _params(),
+                          { source: '#topo-trends', target: '#topo-trends',
+                            swap: 'outerHTML' });
+        // A late response swaps into a target that no longer exists (htmx
+        // resolves the target eagerly), and its charts are silently lost. If we
+        // are no longer the newest request, or the section went away, re-render
+        // from whatever the DOM now holds rather than leaving empty boxes.
+        var settle = function () {
+            if (mine !== _reloadSeq) return;
+            var host = document.getElementById('topo-trends');
+            if (!host) return;
+            var data = document.getElementById('topo-trends-data');
+            if (data && !host.querySelector('.js-plotly-plot')) {
+                try { render(JSON.parse(data.textContent)); } catch (e) {}
+            }
+        };
+        if (p && typeof p.then === 'function') p.then(settle, settle);
     }
     function toggle(metric) {
         var b = document.querySelector('.topo-trend-chip[data-trend-metric="' + metric + '"]');
@@ -2607,7 +2645,14 @@ window.ChipTrends = (function () {
         // One budget per render pass, spent by the first genuinely dense chart.
         _glBudget = 1;
         charts.forEach(function (c, idx) {
-            var host = document.getElementById('topo-trend-' + idx);
+            // docs/122 item 4: the host id is POSITIONAL, so a response from an
+            // older generation would draw into whatever now sits at that index.
+            // Prefer the box that carries this chart's own metric and fall back
+            // to the index only when the markup predates that attribute.
+            var box = c.metric && document.querySelector(
+                '.topo-trend-box[data-trend-metric="' + String(c.metric).replace(/"/g, '\\"') + '"]');
+            var host = (box && box.querySelector('.topo-trend-chart'))
+                    || document.getElementById('topo-trend-' + idx);
             if (!host || !c.series || !c.series.length) return;
             // WebGL is EARNED BY NODE COUNT, and only while contexts remain.
             //
@@ -2711,6 +2756,17 @@ window.ChipTrends = (function () {
                 setTimeout(function () { _healIfBlank(host, traces, layout, cfg); }, 250);
             }
         });
+        /* docs/122 item 4 — keep the figures matched to their container.
+           Plotly's `responsive:true` listens to WINDOW resize only (verified on
+           2.35.2): collapsing the sidebar left a 609 px SVG in a 742 px holder
+           and it was still 609 px six seconds later, while a window resize
+           healed it instantly. A split-gutter drag is the same story at 56 px.
+           Observed on the grid, so one observer covers every chart in it. */
+        if (window.PlotHost) {
+            var grid = document.querySelector('.topo-trends-grid')
+                    || document.getElementById('topo-trends');
+            if (grid) window.PlotHost.observe(grid);
+        }
     }
     return { toggle: toggle, setPath: setPath, suggest: suggest, render: render };
 })();
