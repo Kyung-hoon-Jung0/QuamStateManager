@@ -14236,13 +14236,18 @@ window.FieldHistory = (function () {
        measured off-DOM (canvas measureText + letter-spacing correction; a
        length×char-width monospace fallback where canvas is unavailable). */
     var _measureCanvas = null;
-    function _cellTextWidth(input) {
+    function _cellTextWidth(input, geom) {
         var value = input.value || "";
-        var cs = null;
-        try { cs = window.getComputedStyle(input); } catch (e) {}
+        // `geom` carries the font already measured for this cell (docs/120 item
+        // 24) — asking the engine again per keystroke is a forced style recalc
+        // for values that cannot have changed since the cell took focus.
+        var cs = geom || null;
+        if (!cs) {
+            try { cs = window.getComputedStyle(input); } catch (e) {}
+        }
         var fontPx = 14;
         if (cs) {
-            var fp = parseFloat(cs.fontSize);
+            var fp = parseFloat(cs.fontSize !== undefined ? cs.fontSize : cs.fontPx);
             if (fp > 0) fontPx = fp;
         }
         if (_measureCanvas === null) {
@@ -14255,8 +14260,8 @@ window.FieldHistory = (function () {
         }
         if (_measureCanvas && cs) {
             try {
-                _measureCanvas.font = (cs.fontWeight || "500") + " " + fontPx
-                    + "px " + (cs.fontFamily || "monospace");
+                _measureCanvas.font = cs.font || ((cs.fontWeight || "500") + " "
+                    + fontPx + "px " + (cs.fontFamily || "monospace"));
                 var w = _measureCanvas.measureText(value).width;
                 var ls = parseFloat(cs.letterSpacing);
                 if (ls > 0 && value.length > 1) w += ls * (value.length - 1);
@@ -14265,19 +14270,53 @@ window.FieldHistory = (function () {
         }
         return value.length * fontPx * 0.62;   // monospace approximation
     }
+    /* docs/120 item 24 — this runs on EVERY keystroke in a grid cell, and it
+       was reading `getComputedStyle` twice (once here, once inside
+       _cellTextWidth) and then `offsetLeft`/`offsetWidth`, which forces a full
+       layout of a 158-column sticky table, before writing `style.left` and
+       toggling a class — i.e. read/write/read alternation, per key.
+
+       Measured with the CPU profiler on the customer's 20-qubit chip: 70.4 ms
+       of self time across ten keystrokes, the dominant app cost of typing by an
+       order of magnitude. (The audit agent had blamed `_refreshGlobal` scanning
+       3,160 nodes twice; that measures 0.9 ms for the same ten keystrokes.)
+
+       None of what it reads CHANGES while a key is pressed — padding, font and
+       the cell's own geometry are fixed for as long as the cell holds focus,
+       which the neighbouring comment already relies on ("the cell never resizes
+       on plain focus"). So measure once when the button arrives at a cell and
+       reuse it; only the text width, measured off-DOM on a canvas, is per-key. */
+    function _cellBtnMeasure() {
+        var b = cellBtn, input = b && b._input;
+        if (!b || !input || !input.isConnected) { if (b) b._geom = null; return; }
+        var padL = 4, cs = null;
+        try { cs = window.getComputedStyle(input); } catch (e) {}
+        if (cs) {
+            var pl = parseFloat(cs.paddingLeft);
+            if (pl >= 0) padL = pl;
+        }
+        b._geom = {
+            padL: padL,
+            left: input.offsetLeft,
+            width: input.offsetWidth,
+            font: cs ? ((cs.fontWeight || "500") + " "
+                        + (parseFloat(cs.fontSize) > 0 ? parseFloat(cs.fontSize) : 14)
+                        + "px " + (cs.fontFamily || "monospace")) : null,
+            fontPx: (cs && parseFloat(cs.fontSize) > 0) ? parseFloat(cs.fontSize) : 14,
+            letterSpacing: cs ? parseFloat(cs.letterSpacing) : NaN,
+        };
+    }
     function _positionCellBtn() {
         var b = cellBtn, input = b && b._input;
         if (!b || !input || !input.isConnected) return;
-        var padL = 4;
-        try {
-            var pl = parseFloat(window.getComputedStyle(input).paddingLeft);
-            if (pl >= 0) padL = pl;
-        } catch (e) {}
-        var want = input.offsetLeft + padL + _cellTextWidth(input) + 4;
-        var max = input.offsetLeft + input.offsetWidth - 20;
+        if (!b._geom) _cellBtnMeasure();
+        var g = b._geom;
+        if (!g) return;
+        var padL = g.padL;
+        var want = g.left + padL + _cellTextWidth(input, g) + 4;
+        var max = g.left + g.width - 20;
         var clamped = want > max;
-        b.style.left = Math.max(input.offsetLeft + 2,
-                                Math.min(want, max)) + "px";
+        b.style.left = Math.max(g.left + 2, Math.min(want, max)) + "px";
         // Only a FULL cell needs the text padded away from the icon — the
         // unclamped icon sits in the input's empty tail (and the cell never
         // resizes on plain focus, restoring the style.css invariant).
@@ -14293,6 +14332,9 @@ window.FieldHistory = (function () {
         b._input = input;
         td.appendChild(b);               // appendChild MOVES the shared button
         b.style.display = "block";
+        // The one place the cell's geometry really can differ: re-measure HERE,
+        // then every keystroke reuses it (docs/120 item 24).
+        _cellBtnMeasure();
         _positionCellBtn();
     }
     function hideCellBtn() {
@@ -14303,6 +14345,7 @@ window.FieldHistory = (function () {
             cellBtn._input.classList.remove("fh-docked");
             cellBtn._input = null;
         }
+        cellBtn._geom = null;            // stale geometry must never be reused
         // Park on <body> so a grid re-render can't destroy the shared button
         // (and the td's search/sort surface stays byte-clean while unfocused).
         if (cellBtn.parentElement && cellBtn.parentElement !== document.body) {
