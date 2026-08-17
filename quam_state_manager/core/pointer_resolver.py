@@ -150,6 +150,67 @@ def is_self_ref(value: Any) -> bool:
     return isinstance(value, str) and value.startswith("#./")
 
 
+def pointer_target_name(
+    root: dict, pointer: str, current_path: tuple[str, ...], *, max_hops: int = 8,
+) -> str | None:
+    """The NAME of the entity a pointer chain finally lands on, or None.
+
+    A pair's ``control``/``target`` is a pointer to a whole qubit *dict*, so
+    every value-rendering surface printed ``[19 items]`` for it — the customer
+    report that opens docs/120: "live edit에서는 control, target이 뭔지 cell에
+    명시가 안됨", forcing a trip to the Json Tree View to learn which qubit a
+    pair couples.
+
+    The resolver hands back the resolved VALUE, which by construction cannot
+    name itself, so this walks the chain ONE HOP AT A TIME and reads the
+    identity off the target instead. Two ways a target can be named, in order:
+
+      1. it carries its own ``id`` (a quam entity always does) — the honest
+         answer, and the one the user recognises;
+      2. failing that, the last segment of the FINAL pointer, but only when
+         that segment is not purely positional — ``#/ports/mw_outputs/con1/1/2``
+         would otherwise render as "2", which is worse than showing the
+         pointer.
+
+    Returns None when nothing nameable is reached, and the caller then keeps
+    whatever it was already showing. Never raises: a display path must not be
+    able to break a page.
+    """
+    if not isinstance(pointer, str) or not pointer.startswith("#"):
+        return None
+    try:
+        cur = pointer
+        path = current_path
+        for _ in range(max_hops):
+            path = _compute_resolved_path(root, cur, path)
+            node: Any = root
+            for seg in path:
+                if isinstance(node, dict) and seg in node:
+                    node = node[seg]
+                elif isinstance(node, list) and seg.lstrip("-").isdigit():
+                    idx = int(seg)
+                    if -len(node) <= idx < len(node):
+                        node = node[idx]
+                    else:
+                        return None
+                else:
+                    return None
+            if isinstance(node, str) and node.startswith("#"):
+                cur = node                      # another pointer — keep walking
+                continue
+            if isinstance(node, dict):
+                ident = node.get("id")
+                if isinstance(ident, str) and ident:
+                    return ident
+            last = path[-1] if path else ""
+            if last and not last.lstrip("-").isdigit():
+                return last
+            return None
+    except Exception:                           # noqa: BLE001 — display only
+        return None
+    return None
+
+
 def _traverse(
     root: Any,
     obj: Any,

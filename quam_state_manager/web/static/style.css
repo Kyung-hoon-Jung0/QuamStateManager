@@ -8765,6 +8765,19 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
     border: 1px solid var(--color-warning-border);
 }
 .bulk-dyncol-hint:hover { background: var(--color-warning-bg); }
+/* docs/120 item 8 — "N more rows — show". Same chip shape as its neighbour but
+   in the accent colour, because this one is not a warning: the search behaved
+   correctly and this is the way out of it. */
+.bulk-valrow-hint {
+    width: auto; margin: 0 0 0 0.3rem; padding: 0 0.55rem; font-size: 0.76em;
+    line-height: 1.7; white-space: nowrap; cursor: pointer; border-radius: 999px;
+    background: transparent; color: var(--pico-primary);
+    border: 1px solid var(--pico-primary);
+}
+.bulk-valrow-hint:hover { background: var(--pico-primary-hover-background, transparent); }
+.bulk-valrow-hint[hidden] { display: none; }
+/* docs/120 item 1 — the entity a container-valued pointer names. */
+.ptr-entity { font-weight: 600; }
 /* Collapsible per-section dynamic groups appended to the Properties menu. */
 .bulk-colvis-dyn { margin: 0; }
 .bulk-colvis-dyn > summary {

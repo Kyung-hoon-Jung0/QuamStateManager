@@ -48,6 +48,16 @@
     // of them AND re-toggling their classes per keystroke froze typing.
     var _searchTimer = null;       // debounce: one applySearch per typing pause
     var _hayCache = null;          // { key, rowMap: WeakMap(row→[hay]), colHay } across keystrokes
+    // docs/120 item 8 — a VALUE token restricts both axes, so the surviving
+    // grid is the intersection: exactly the cells that ALREADY hold that value.
+    // For a filter that is right; for an EDITOR it is a dead end, and it is the
+    // customer's own report — searching `amplified` showed only the qubits
+    // already set to it, so "이거를 사용자가 SM에서 입력을 실제로 할수가없었음".
+    // The search keeps its meaning (silently widening it would break "show me
+    // the qubits whose T1 is 12"); the way out is offered instead, in the same
+    // shape as the neighbouring hidden-column chip.
+    var _valRowsAll = false;       // user asked to keep the rows a value token hid
+    var _valRowsQ = null;          // the query that choice belongs to
     var _lastDirtySig = null;      // ⚏ picker refresh gate: dirty-ID set signature
     var sortKey = null, sortDir = 1;
 
@@ -395,10 +405,51 @@
     //  next to Properties — no JS/persistence needed; closed by default.)
 
     // ── synced top horizontal scrollbar ──────────────────────────────────────
-    function _updateTopScroll() {
-        var tbl = table(), inner = document.getElementById('bulk-scroll-top-inner');
-        if (tbl && inner) inner.style.width = tbl.scrollWidth + 'px';
+    // docs/120 item 19. `tbl.scrollWidth` is a FORCED SYNCHRONOUS LAYOUT, and
+    // its four callers each run it straight after writing classes onto
+    // thousands of cells — so every call re-laid out a 158-column × 20-row
+    // sticky table from scratch. Measured with the CPU profiler on the real
+    // 20-qubit chip: 397 ms of self time inside a single 1,429 ms blocked
+    // frame at mount, the largest app-code cost on the page by 8×. (The audit
+    // agent had blamed `_virtInit`'s layout reads instead; those measure
+    // 0.6 ms for all 158 headers — reads in a row share one layout, it is the
+    // write-then-read alternation that costs.)
+    //
+    // Deferring THIS read alone was measured and did not help: the cost simply
+    // moved to `_updateStickyOffset` (397 ms -> 369 ms there), which proves the
+    // expense is not any one function but the ALTERNATION — the first read
+    // after a write pays for the whole re-layout, whoever it happens to be. So
+    // both geometry reads are coalesced into one rAF that reads first and
+    // writes second, the standard batching order: one forced layout per frame,
+    // shared, instead of one per call site.
+    //
+    // Nothing needs either value synchronously — one sizes a cosmetic scrollbar
+    // proxy, the other a sticky offset that is already re-applied on font and
+    // column changes.
+    // A missing rAF must DEGRADE, not throw: the geometry sync is called from
+    // mount, and an exception there takes the whole grid down. (jsdom harnesses
+    // hand over individual globals — CLAUDE.md's standing warning — and four
+    // selfchecks went red on exactly this.)
+    var _raf = (typeof window !== 'undefined' && window.requestAnimationFrame)
+        ? window.requestAnimationFrame.bind(window)
+        : function (f) { return setTimeout(f, 0); };
+    var _layoutPending = false;
+    function _syncTableGeometry() {
+        if (_layoutPending) return;
+        _layoutPending = true;
+        _raf(function () {
+            _layoutPending = false;
+            var t = table();
+            var inner = document.getElementById('bulk-scroll-top-inner');
+            var grow = t && t.querySelector('.bulk-group-row');
+            // READ both, then WRITE both — never interleave.
+            var w = (t && inner) ? t.scrollWidth : null;
+            var h = grow ? grow.offsetHeight : null;
+            if (w !== null) inner.style.width = w + 'px';
+            if (h !== null) t.style.setProperty('--bulk-grouphead-h', h + 'px');
+        });
     }
+    function _updateTopScroll() { _syncTableGeometry(); }
     function _setupTopScroll() {
         var wrap = document.querySelector('.bulk-table-wrap');
         var top = document.getElementById('bulk-scroll-top');
@@ -431,11 +482,7 @@
     }
     // The 2nd header row (column heads) sticks BELOW the group band, so offset its
     // sticky `top` by the band's measured height (varies with the font scale).
-    function _updateStickyOffset() {
-        var t = table(); if (!t) return;
-        var grow = t.querySelector('.bulk-group-row');
-        if (grow) t.style.setProperty('--bulk-grouphead-h', grow.offsetHeight + 'px');
-    }
+    function _updateStickyOffset() { _syncTableGeometry(); }
 
     // ── Property-Selection menu ──────────────────────────────────────────────
     function _buildColMenu() {
@@ -802,7 +849,11 @@
         // row passes if every group has a member that matches: id tokens match
         // the row id, value tokens match some cell. Column-only tokens don't
         // restrict rows (neutral), exactly as before.
-        function rowVisible(id, rowHaystacks) {
+        // `valNeutral` answers the second question the grid needs: would this
+        // row survive if the VALUE tokens didn't restrict rows? The difference
+        // between the two answers is the number the "show them anyway" chip
+        // reports — and, once the user clicks it, the visibility rule itself.
+        function rowVisible(id, rowHaystacks, valNeutral) {
             for (var g = 0; g < tokGroups.length; g++) {
                 var any = false;
                 for (var i = 0; i < tokGroups[g].length && !any; i++) {
@@ -810,7 +861,8 @@
                     if (ti.isId && !ti.isCol) {
                         any = id.indexOf(ti.tok) >= 0;
                     } else if (ti.isVal) {
-                        any = rowHaystacks.some(function (h) { return h.indexOf(ti.tok) >= 0; });
+                        any = valNeutral
+                            || rowHaystacks.some(function (h) { return h.indexOf(ti.tok) >= 0; });
                     } else {
                         any = true;                       // column token — neutral here
                     }
@@ -874,17 +926,44 @@
             if (k === '__id__' || hide.has(k)) return;   // checkbox-hidden handled elsewhere
             el.classList.toggle('bulk-search-hidden', !!colSearchHide[k]);
         });
+        // A new query retires the previous "show them anyway" choice — it was
+        // made about those tokens, and silently carrying it forward would make
+        // the next search quietly stop filtering rows.
+        if (q !== _valRowsQ) { _valRowsAll = false; _valRowsQ = q; }
+        var _hasVal = tokInfo.some(function (ti) { return ti.isVal; });
+
         // decide row visibility
         var shown = 0;
+        var strandedRows = 0;
         rows.forEach(function (r, i) {
             var id = (r.getAttribute('data-qubit') || '').toLowerCase();
-            var vis = rowVisible(id, rowHay[i]);
+            var vis = rowVisible(id, rowHay[i], _valRowsAll);
             r.classList.toggle('bulk-row-hidden', !vis);
             // the count reflects what's actually on screen: search AND ⚏ Qubits
             if (vis && !r.classList.contains('bulk-qubit-off')) shown++;
+            if (!vis && _hasVal && rowVisible(id, rowHay[i], true)) strandedRows++;
         });
         var cnt = document.getElementById('bulk-search-count');
         if (cnt) cnt.textContent = q ? (shown + ' of ' + rows.length) : '';
+        // The offer only makes sense while a column is still on screen to type
+        // into — with every column filtered away too there is nothing to reach.
+        var _anyCol = visCols.some(function (c) { return !colSearchHide[c.key]; });
+        var vrh = document.getElementById('bulk-valrow-hint');
+        if (vrh) {
+            var _showVrh = strandedRows > 0 && _anyCol;
+            vrh.hidden = !_showVrh && !_valRowsAll;
+            if (_valRowsAll && _hasVal) {
+                vrh.textContent = 'showing all rows ✗';
+                vrh.title = 'Value matches are highlighted; rows without a match '
+                          + 'are shown so you can edit them. Click to filter again.';
+            } else if (_showVrh) {
+                vrh.textContent = strandedRows + ' more row'
+                    + (strandedRows === 1 ? '' : 's') + ' — show';
+                vrh.title = strandedRows + ' qubit' + (strandedRows === 1 ? '' : 's')
+                          + ' have this column but not this value, so the search hid '
+                          + 'them. Click to show them and edit them here.';
+            }
+        }
         // The search ALWAYS scans every column the chip has, including the ones
         // this user hid — a property you can't find is a property that doesn't
         // exist as far as the user is concerned (the r6-item-4 complaint). Two
@@ -1417,7 +1496,22 @@
     // painter that addresses cells by path. Below the threshold nothing
     // changes - small chips are byte-identical, which is also the safety
     // gate every existing test chip rides.
-    var _VIRT_MIN_CELLS = 4000;
+    //
+    // docs/120 item 19 — the gate used to be `total cells >= 4000` and the real
+    // customer chip has 3,160 in this grid, so the mechanism built for exactly
+    // this page DECLINED TO ENGAGE, 840 cells under a threshold that is a proxy
+    // for the thing it cares about. Measured on that chip: with it off the
+    // mount blocks the main thread for 2.46 s; with it on, 1.85 s and the worst
+    // single stall falls from 1,368 ms to 1,016 ms.
+    //
+    // So gate on the BENEFIT instead of a proxy for it: how many cells would
+    // actually go cold. That is already computed below, it needs no new
+    // measurement, and it cannot be wrong about a wide-but-short or a
+    // narrow-but-tall chip the way a bare cell count is. `_VIRT_MIN_CELLS`
+    // stays as a cheap pre-filter so a genuinely small grid never even walks
+    // its headers.
+    var _VIRT_MIN_CELLS = 600;       // pre-filter only — the real gate is below
+    var _VIRT_MIN_COLD = 800;        // cold CELLS that make the detach worth it
     var _VIRT_BUFFER = 1.5;          // hydrate up to 1.5 viewports ahead
     var _virt = null;                // { html:Map, vals:Map, cold:Set, wrap }
     function _virtStyleEl() {
@@ -1444,6 +1538,10 @@
             }
         });
         if (!cold.size) return;
+        // The real gate: enough cells actually go cold to repay detaching them.
+        // (`_rows().length` rather than tds/th, because hidden columns are in
+        // `tds` but contribute no layout worth reclaiming.)
+        if (cold.size * _rows().length < _VIRT_MIN_COLD) return;
         _virt = { html: new Map(), vals: new Map(), cold: cold, wrap: wrap };
         _virtStyleEl().textContent = widths.join('\n');
         Array.prototype.forEach.call(tds, function (td) {
@@ -1939,6 +2037,26 @@
                 var isFill = (ev.ctrlKey || ev.metaKey)
                     && (ev.key === 'd' || ev.key === 'D');
                 if (!isFill && ev.key !== 'Escape') return;
+                // docs/120 item 9: Escape cleared a SELECTION but could not
+                // cancel the edit in progress — the one thing every grid on
+                // earth binds it to. Worse than inert: the typed value stayed
+                // in the box, so the next click away COMMITTED the edit the
+                // user had just tried to abandon. Revert-and-keep-focus, the
+                // spreadsheet contract; the selection branch below is
+                // untouched, so Escape with nothing being typed still clears.
+                if (ev.key === 'Escape') {
+                    var _ae = document.activeElement;
+                    if (_ae && _ae.classList
+                            && _ae.classList.contains('bulk-cell')
+                            && !_ae.readOnly && _isDirty(_ae)) {
+                        ev.preventDefault();
+                        ev.stopPropagation();       // don't also close a popover
+                        _ae.value = _ae.getAttribute('data-orig');
+                        _ae.dispatchEvent(new Event('input', { bubbles: true }));
+                        _ae.select();
+                        return;
+                    }
+                }
                 if (!_selCells().length) return;
                 if (isFill) {
                     ev.preventDefault();
@@ -2321,6 +2439,14 @@
             });
             _rows().forEach(_refreshRow);
             _refreshGlobal();
+        },
+
+        // docs/120 item 8 — the way out of a value search that hid exactly the
+        // rows you meant to type into. A toggle, not a one-way door: the second
+        // click restores the filter, and any change to the query retires it.
+        toggleStrandedRows: function () {
+            _valRowsAll = !_valRowsAll;
+            applySearch();
         },
 
         // Un-hide every column the current search matched — the "N hidden

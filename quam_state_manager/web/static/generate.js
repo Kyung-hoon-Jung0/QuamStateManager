@@ -356,8 +356,14 @@
     // back — or an unexpected pane swap — never loses work. captureDomFields()
     // first flushes any value typed but not yet committed (webview blur race).
     captureDomFields();
-    saveDraft();
+    // docs/120 item 12: saveDraft() ran BEFORE state.step moved, so the draft
+    // always recorded the step the user was LEAVING. Reload anywhere in the
+    // wizard and it reopened one step back — on a long Populate table that is
+    // a page of re-scrolling and a real "did it lose my work?" moment. The
+    // capture above is what the old ordering was protecting (it flushes the
+    // outgoing step's fields); persisting must simply happen after the move.
     state.step = Math.max(1, Math.min(STEP_COUNT, n));
+    saveDraft();
     showMessage(null);
     render();
   }

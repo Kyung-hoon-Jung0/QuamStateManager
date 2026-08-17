@@ -189,6 +189,19 @@ def pointer_cell_refusal(store: Any, dot_path: str, new_value: Any) -> str | Non
         target = _container_at(store.merged, str(ft["resolved_path"]).split("."))
         if not isinstance(target, (dict, list)):
             return None                 # value-mode: unchanged, always
+    elif (isinstance(new_value, str)
+            and new_value.strip().lower() in ("null", "none")
+            and not current.startswith("#./")):
+        # docs/120 item 18: a DANGLING pointer refuses plain text (right) — and
+        # it refused `null` too, which LOCKED the field. The reference is
+        # already broken; removing it is the only repair the grid offers, and
+        # refusing that leaves the user with a cell they can neither fix nor
+        # empty. Narrow on purpose: a pointer that still RESOLVES to a
+        # container keeps the refusal below (clearing it would destroy a
+        # working link, which belongs in the explicit pointer editor), and a
+        # `#./` self-ref is quam's shape for a runtime-computed value, not a
+        # broken one.
+        return None
     return (f"This field is a reference ({current}), not a value. Writing "
             f"{new_value!r} here would replace the link with plain text and "
             f"break it. Enter a pointer (e.g. {current}) to re-point it, or "
@@ -228,10 +241,15 @@ def sibling_type_refusal(store: Any, dot_path: str, new_value: Any) -> str | Non
     except ValueError:
         pass
     try:
-        if store.get_value(dot_path) is not None:
-            return None                  # only a NULL field lacks a type
+        _cur = store.get_value(dot_path)
     except (KeyError, TypeError, ValueError, IndexError):
-        return None
+        # ABSENT, and absent carries no type for exactly the reason null
+        # doesn't. Reading the lookup failure as "no opinion" is what made the
+        # guard unreachable from `/field/create` (docs/120 item 16) — the one
+        # surface where nothing at all contradicts a typo.
+        _cur = None
+    if _cur is not None:
+        return None                      # a field with a value has its own type
 
     segs = dot_path.split(".")
     if len(segs) < 3 or segs[0] not in ("qubits", "qubit_pairs"):
@@ -252,6 +270,20 @@ def sibling_type_refusal(store: Any, dot_path: str, new_value: Any) -> str | Non
             cur = cur[k]
         if cur is None:
             continue
+        # docs/120 item 17: a sibling holding a POINTER used to land in `other`,
+        # and `other == 0` is the unanimity gate — so ONE aliased sibling
+        # disabled this guard for that leaf across the whole chip, permanently
+        # and invisibly. Aliasing is not evidence of a non-numeric type, it is
+        # evidence of deferral: ask what it defers TO. Unresolvable ⇒ no
+        # evidence either way ⇒ skip, never a vote.
+        if isinstance(cur, str) and cur.startswith("#"):
+            try:
+                _res = store.resolve_pointer(cur, (segs[0], ent) + tuple(leaf))
+            except Exception:            # noqa: BLE001 — evidence, not a write
+                continue
+            if _res is None or (isinstance(_res, str) and _res.startswith("#")):
+                continue                 # dangling / self-ref — says nothing
+            cur = _res
         if isinstance(cur, bool):
             other += 1
         elif isinstance(cur, (int, float)):

@@ -81,10 +81,26 @@
         });
         _updateStickyOffset();
     }
+    // docs/120 item 19 — the pair grid's twin of the qubit grid's geometry
+    // sync, and the reason that fix had to be made TWICE. The page carries two
+    // grids; coalescing only the qubit one handed the whole forced-layout bill
+    // straight to this function (measured: 20 ms -> 579 ms, the new hot spot).
+    // A layout read is not owned by whoever calls it, it is owned by whoever
+    // reads FIRST after a write.
+    // Degrades without rAF — see the twin note in bulk-edit.js.
+    var _rafP = (typeof window !== 'undefined' && window.requestAnimationFrame)
+        ? window.requestAnimationFrame.bind(window)
+        : function (f) { return setTimeout(f, 0); };
+    var _stickyPending = false;
     function _updateStickyOffset() {
-        var t = table(); if (!t) return;
-        var grow = t.querySelector('.bulk-group-row');
-        if (grow) t.style.setProperty('--bulk-grouphead-h', grow.offsetHeight + 'px');
+        if (_stickyPending) return;
+        _stickyPending = true;
+        _rafP(function () {
+            _stickyPending = false;
+            var t = table(); if (!t) return;
+            var grow = t.querySelector('.bulk-group-row');
+            if (grow) t.style.setProperty('--bulk-grouphead-h', grow.offsetHeight + 'px');
+        });
     }
 
     // ── Property-Selection menu ──────────────────────────────────────────────

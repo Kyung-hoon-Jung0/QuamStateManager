@@ -59,7 +59,10 @@
                     {% elif p.value is none %}
                         <em class="null-value">not set</em>
                     {% elif p.value is iterable and p.value is not string %}
-                        <small class="muted">[{{ p.value | length }} items]</small>
+                        {# docs/120 item 1 — a pointer to an entity names it. #}
+                        {% if p.ptr_name %}<span class="ptr-entity">{{ p.ptr_name }}</span>
+                        <span class="ptr-inline pointer-badge" title="{{ p.raw }} — resolves to the {{ p.ptr_name }} entity ({{ p.value | length }} fields)">{{ p.raw }}</span>
+                        {% else %}<small class="muted">[{{ p.value | length }} items]</small>{% endif %}
                     {% elif p.value is number and p.value is float and (p.value|abs >= 1e6 or (0 < p.value|abs < 1e-3)) %}
                         {{ "%.6e" | format(p.value) }}
                         {% set _human = p.value | qty(p.key, 'full') %}

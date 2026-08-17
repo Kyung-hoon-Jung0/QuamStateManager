@@ -59,6 +59,10 @@
             <button type="button" class="bulk-dyncol-hint" id="bulk-dyncol-hint" hidden
                     onclick="BulkEdit.showMatchedDynCols()"
                     title="Hidden chip properties match your search — click to enable those columns"></button>
+            {# docs/120 item 8: searching a VALUE hides the rows that don't hold
+               it yet — which are exactly the rows you would type it into. #}
+            <button type="button" class="bulk-valrow-hint" id="bulk-valrow-hint" hidden
+                    onclick="BulkEdit.toggleStrandedRows()"></button>
         </span>
         <span class="bulk-band-warn" id="bulk-band-warn" aria-live="polite" hidden></span>
         <span class="bulk-dirty-count" id="bulk-dirty-count" aria-live="polite"></span>

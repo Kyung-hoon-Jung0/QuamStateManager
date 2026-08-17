@@ -3239,7 +3239,16 @@ window.TypeAlert = (function () {
         }
         inflight = true;
         fetch("/type-alert", { headers: { "HX-Request": "true" } })
-            .then(function (r) { return r.status === 200 ? r.text() : null; })
+            // docs/120 item 21: the 204 branch returned without reading the
+            // body, so Chrome cancelled the response stream and logged
+            // `net::ERR_ABORTED` — on EVERY page, since 204 is the normal
+            // answer. Console noise is not cosmetic here: it is the channel a
+            // real uncaught error has to be noticed in, and this drowned it.
+            // Draining the (empty) body costs nothing and keeps it quiet.
+            .then(function (r) {
+                var st = r.status;
+                return r.text().then(function (t) { return st === 200 ? t : null; });
+            })
             .then(function (html) {
                 inflight = false;
                 if (!html) return;                 // 204: nothing new to say

@@ -96,7 +96,9 @@ from quam_state_manager.core.param_specs import (  # noqa: F401  (re-export shim
     _QUBIT_PROPERTY_MAP,
     _TABLE_PROP_GROUPS,
 )
-from quam_state_manager.core.pointer_resolver import is_pointer, is_self_ref
+from quam_state_manager.core.pointer_resolver import (
+    is_pointer, is_self_ref, pointer_target_name,
+)
 from quam_state_manager.core.pulse_index import PulseIndex
 from quam_state_manager.core.query import QueryEngine
 from quam_state_manager.core.saver import Saver
@@ -3247,6 +3249,7 @@ def _build_qubit_sections(name: str, qubit_data: dict[str, Any], store: QuamStor
             "is_self_ref": self_ref,
             "dangling": dangling,
             "editable": editable,
+            "ptr_name": _ptr_entity_name(store, raw_value, dot_path, resolved_value),
             "_present": present,
         })
 
@@ -3316,6 +3319,30 @@ def _humanize_gate_name(gate_name: str) -> str:
     return " ".join(tok.upper() if tok == "cz" else tok.capitalize() for tok in gate_name.split("_"))
 
 
+def _ptr_entity_name(store: QuamStore, raw_value: Any, dot_path: str | None,
+                     resolved_value: Any) -> str | None:
+    """The entity a container-valued pointer row actually names, or None.
+
+    docs/120 item 1: a pair's ``qubit_control`` is a pointer to a whole qubit
+    dict, so every inspector printed ``[19 items]`` — the row was tagged
+    ``row-pointer`` and the template threw that fact away, leaving the user no
+    way to learn which qubits a pair couples without opening the Json Tree
+    View. That is the customer's report, verbatim.
+
+    Only containers ask this question: a pointer to a scalar already displays
+    the scalar. Returns None when nothing nameable is reached, so the caller
+    falls back to what it showed before.
+    """
+    if not (dot_path and is_pointer(raw_value)
+            and isinstance(resolved_value, (list, dict))):
+        return None
+    try:
+        return pointer_target_name(
+            store.merged, raw_value, tuple(dot_path.split(".")))
+    except Exception:                    # noqa: BLE001 — display must not break
+        return None
+
+
 def _pair_prop(store: QuamStore, key: str, dot_path: str | None,
                resolved_value: Any = None, *, editable: bool | None = None) -> dict:
     """One inspector property row (the shared shape all section builders emit)."""
@@ -3346,6 +3373,7 @@ def _pair_prop(store: QuamStore, key: str, dot_path: str | None,
         # docs/114 (#15): dangling == the resolver handed the pointer back
         "dangling": bool(ptr and not self_ref and resolved_value == raw_value),
         "editable": editable,
+        "ptr_name": _ptr_entity_name(store, raw_value, dot_path, resolved_value),
     }
 
 
@@ -3502,6 +3530,7 @@ def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore)
             "is_self_ref": self_ref,
             "dangling": dangling,
             "editable": editable,
+            "ptr_name": _ptr_entity_name(store, raw_value, dot_path, resolved_value),
         })
 
     # Drop static sections whose every property is absent (None) — so a CR pair
@@ -6841,6 +6870,14 @@ def field_create():
     reason = _crud_policy_reason(modifier.store, dot_path)
     if reason is not None:
         return jsonify(ok=False, error=reason, error_kind="policy"), 400
+    # docs/120 item 16: the sibling-type rule protected the four EDIT surfaces
+    # and not this one, so the same mistyped value the grid refuses could be
+    # created here — and a created key is exactly where a typo has no prior
+    # value to contradict it. (Its twin, the pointer-cell refusal, is
+    # inapplicable by construction: a key being created holds no pointer yet.)
+    _sr = _sibling_type_refusal(modifier.store, dot_path, raw_value)
+    if _sr is not None:
+        return jsonify(ok=False, error=_sr, error_kind="sibling_type"), 400
 
     try:
         if expect_type and expect_type != "infer":

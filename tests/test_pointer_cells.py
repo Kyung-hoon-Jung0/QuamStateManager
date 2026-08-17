@@ -220,21 +220,23 @@ class TestPlainTextNeverBreaksALinkSilently:
         assert edit_policy.pointer_cell_refusal(store, "qubits.q1.f_01", "6.2e9") is None
 
 
-class TestThroughTheRoutes:
-    @pytest.fixture
-    def client(self, tmp_path):
-        folder = tmp_path / "quam_state"
-        folder.mkdir()
-        (folder / "state.json").write_text(json.dumps(_state()), encoding="utf-8")
-        (folder / "wiring.json").write_text(
-            json.dumps({"network": {"host": "1.2.3.4"}, "wiring": {"qubits": {}}}),
-            encoding="utf-8")
-        app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
-        c = app.test_client()
-        c.post("/load", data={"folder": str(folder)})
-        c._app = app
-        return c
+@pytest.fixture
+def client(tmp_path):
+    """Module-level since docs/120 — the later classes drive the same routes."""
+    folder = tmp_path / "quam_state"
+    folder.mkdir()
+    (folder / "state.json").write_text(json.dumps(_state()), encoding="utf-8")
+    (folder / "wiring.json").write_text(
+        json.dumps({"network": {"host": "1.2.3.4"}, "wiring": {"qubits": {}}}),
+        encoding="utf-8")
+    app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+    c = app.test_client()
+    c.post("/load", data={"folder": str(folder)})
+    c._app = app
+    return c
 
+
+class TestThroughTheRoutes:
     def _state_of(self, client):
         app = client._app
         ctx = (app.config.get("contexts") or {}).get(app.config.get("active_context"))
@@ -279,3 +281,139 @@ class TestThroughTheRoutes:
             body = r.get_json() or {}
             assert not body.get("ok") or any(
                 not row.get("ok") for row in (body.get("results") or []))
+
+
+class TestTheInspectorNamesWhatThePointerReaches:
+    """docs/120 item 1 — the report's second half.
+
+    Fixing the GRID left the inspector still answering ``[19 items]`` for
+    ``qubit_control``: the template's container branch ran first and threw away
+    the fact — carried on the row's own ``row-pointer`` class — that this was a
+    reference at all. Counting a target's keys is not naming it, and the user
+    was still sent to the Json Tree View to learn which qubits a pair couples.
+    """
+
+    def test_pointer_to_an_entity_resolves_to_its_name(self, merged):
+        from quam_state_manager.core.pointer_resolver import pointer_target_name
+        got = pointer_target_name(
+            merged, "#/qubits/q1", ("qubit_pairs", "q1-2", "qubit_control"))
+        assert got == "q1"
+
+    def test_a_two_hop_chain_is_followed_to_the_end(self):
+        """A modern quam_builder chip stores the reference through wiring
+        (docs/118) — one hop lands on the literal field name, not the qubit."""
+        from quam_state_manager.core.pointer_resolver import pointer_target_name
+        st = _state()
+        st["wiring"] = {"qubit_pairs": {"q1-2": {"c": {
+            "control_qubit": "#/qubits/q2"}}}}
+        st["qubit_pairs"]["q1-2"]["qubit_control"] = \
+            "#/wiring/qubit_pairs/q1-2/c/control_qubit"
+        merged = QuamStore.from_dicts(st, {}).merged
+        got = pointer_target_name(
+            merged, st["qubit_pairs"]["q1-2"]["qubit_control"],
+            ("qubit_pairs", "q1-2", "qubit_control"))
+        assert got == "q2", "one-hop split would have answered 'control_qubit'"
+
+    def test_a_positional_target_is_not_named(self, merged):
+        """`#/…/con1/1/2` would render as "2", which is worse than the pointer:
+        None means the caller keeps what it was already showing."""
+        from quam_state_manager.core.pointer_resolver import pointer_target_name
+        st = _state()
+        st["ports"] = {"mw_outputs": {"con1": {"1": {"2": {"band": 1}}}}}
+        merged2 = QuamStore.from_dicts(st, {}).merged
+        assert pointer_target_name(
+            merged2, "#/ports/mw_outputs/con1/1/2", ("qubits", "q1", "p")) is None
+
+    def test_nothing_nameable_is_never_invented(self, merged):
+        from quam_state_manager.core.pointer_resolver import pointer_target_name
+        assert pointer_target_name(merged, "#/qubits/qZZ/f_01", ("a", "b")) is None
+        assert pointer_target_name(merged, "not a pointer", ("a", "b")) is None
+        assert pointer_target_name(merged, None, ("a", "b")) is None
+
+    def test_the_pair_inspector_renders_the_name(self, client):
+        body = client.get("/pair/q1-2").get_data(as_text=True)
+        i = body.find("qubit_control</code>")
+        assert i != -1
+        row = body[i:body.find("</tr>", i)]
+        assert "items]" not in row, row
+        assert "q1" in row, row
+
+
+class TestADanglingReferenceCanBeCleared:
+    """docs/120 item 18 — refusing plain text on a dangling pointer is right;
+    refusing ``null`` too LOCKED the field, leaving a broken reference the user
+    could neither repair nor remove."""
+
+    def test_null_clears_a_dangling_pointer(self, client):
+        r = client.post("/field/edit", data={
+            "dot_path": "qubits.q1.xy.broken_ref", "value": "null"})
+        assert r.status_code == 200, r.get_data(as_text=True)
+
+    def test_plain_text_is_still_refused_there(self, client):
+        r = client.post("/field/edit", data={
+            "dot_path": "qubits.q1.xy.broken_ref", "value": "hello"})
+        assert r.status_code == 400
+
+    def test_a_live_container_pointer_still_refuses_null(self, client):
+        """Clearing a WORKING link destroys real structure — that belongs in
+        the explicit pointer editor, not in a grid cell."""
+        r = client.post("/field/edit", data={
+            "dot_path": "qubit_pairs.q1-2.qubit_control", "value": "null"})
+        assert r.status_code == 400, r.get_data(as_text=True)
+
+
+class TestOneAliasedSiblingCannotDisableTheGuard:
+    """docs/120 item 17 — a sibling holding a POINTER counted as `other`, and
+    the unanimity gate is `other == 0`, so ONE aliased qubit silently switched
+    this protection off for that leaf across the whole chip."""
+
+    def _store(self, q3_value):
+        st = _state()
+        st["qubits"]["q1"]["T1"] = 1.2e-5
+        st["qubits"]["q2"]["T1"] = 1.5e-5
+        st["qubits"]["q3"] = {"id": "q3", "T1": q3_value}
+        st["qubits"]["q4"] = {"id": "q4", "T1": None}
+        return QuamStore.from_dicts(st, {})
+
+    def test_a_pointer_sibling_no_longer_votes_other(self):
+        store = self._store("#/qubits/q1/T1")
+        why = edit_policy.sibling_type_refusal(store, "qubits.q4.T1", "abc")
+        assert why is not None and "number" in why
+
+    def test_a_genuinely_non_numeric_sibling_still_abstains(self):
+        store = self._store("very long")
+        assert edit_policy.sibling_type_refusal(store, "qubits.q4.T1", "abc") is None
+
+    def test_a_dangling_alias_is_no_evidence_either_way(self):
+        store = self._store("#/qubits/qZZ/T1")
+        why = edit_policy.sibling_type_refusal(store, "qubits.q4.T1", "abc")
+        assert why is not None, "a broken alias must not vote against the guard"
+
+    def test_field_create_is_guarded_too(self, tmp_path):
+        """The rule protected the four edit surfaces and not creation — which
+        is exactly where a typo has no prior value to contradict it.
+
+        Needs its OWN chip: the shared fixture carries no numeric T1 at all, so
+        there the guard rightly abstains (no evidence ⇒ no opinion) and a pin
+        written against it would have passed while proving nothing.
+        """
+        st = _state()
+        st["qubits"]["q1"]["T1"] = 1.2e-5
+        st["qubits"]["q2"]["T1"] = 1.5e-5
+        st["qubits"]["q3"] = {"id": "q3"}          # the leaf is ABSENT here
+        folder = tmp_path / "quam_state"
+        folder.mkdir()
+        (folder / "state.json").write_text(json.dumps(st), encoding="utf-8")
+        (folder / "wiring.json").write_text(
+            json.dumps({"network": {"host": "1.2.3.4"}}), encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(folder)})
+
+        r = c.post("/field/create", data={"dot_path": "qubits.q3.T1",
+                                          "value": "abc"})
+        assert r.status_code == 400, r.get_data(as_text=True)
+        assert (r.get_json() or {}).get("error_kind") == "sibling_type"
+        # ...and a number still creates normally.
+        assert c.post("/field/create", data={"dot_path": "qubits.q3.T1",
+                                             "value": "1.1e-5"}).status_code == 200
