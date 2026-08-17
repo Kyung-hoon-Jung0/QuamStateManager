@@ -651,3 +651,104 @@ that only the *chart* query triggers; and `run_selfchecks.cjs` prints
 `(0 assertions)` for pins that do run — indistinguishable from the dormant state
 docs/120 was written about. Each is real; none is a false statement or a data
 loss, and each is a separate piece of work.
+
+---
+
+## Round 3 — the MEDIUM/LOW batch (2026-08-17)
+
+Same rule as before: reproduce in a real browser against the real 20-qubit
+customer chip, in the customer's own env, before touching a line. The
+cluster agents from round 2 handed over root causes; **three of those root
+causes were wrong**, and the profiler said so each time. That is recorded here
+because the pattern is the lesson, not the individual items.
+
+### What the profiler overturned
+
+| reported cause | measured cause |
+|---|---|
+| `_virtInit()`'s layout reads block the mount for 2.5 s | those reads cost **0.6 ms** for all 158 headers. The cost is the write→read ALTERNATION, and it moved from `_updateTopScroll` (397 ms) to `_updateStickyOffset` (369 ms) to pair-edit's twin (579 ms) as each was fixed |
+| `_refreshGlobal()` scans 3,160 nodes twice, 10–20 ms per keystroke | **0.9 ms** across ten keystrokes. The real cost was `_positionCellBtn` at **70.4 ms** — two `getComputedStyle` calls and a forced layout of a 158-column table, per key |
+| the sticky top bar swallows clicks on Auto-allocate | `elementFromPoint` says nothing occludes it at step 1 in a 1600×1000 window. But `--topbar-height` **is** a lie — 48px declared vs 201/229/254 measured — which is the real, general defect behind "the failure message is below the fold" |
+
+Reads in a row share one layout; it is the interleaving that costs. A function
+is not guilty because it is on the hot path — it is guilty when the profile says
+so.
+
+### The measurements that decided things
+
+Live State Edit mount, time-to-responsive on the real chip, three runs each,
+median:
+
+| config | TTR | blocked | worst stall |
+|---|---|---|---|
+| before | 3,322 ms | 2,461 ms | 1,368 ms |
+| geometry batching only | 3,178 | 2,440 | **1,969** |
+| virtualization only | 2,758 | 2,003 | 1,332 |
+| both (shipped) | **2,693** | **1,919** | **1,120** |
+
+Batching alone is not a win — it concentrates the same layout into one longer
+frame. It earns its place only on top of virtualization, and that is why the
+table is here rather than a single "6.5× faster mount" number (the mount
+FUNCTION did go 1,003 → 154 ms; the user does not feel a function).
+
+The virtualization gate was `cells >= 4000` and this grid has 3,160 — 840 under
+a threshold that is a proxy for the thing it cares about. It now gates on how
+many cells would actually go **cold**, which is already computed and cannot be
+wrong about a wide-but-short or narrow-but-tall chip.
+
+### The findings with a consequence
+
+- **A window applied an edit its user never saw.** Two tabs share one server
+  context and one change log; a tray only refreshes on its own actions. Tab B,
+  opened first and left alone, showed `data-change-count="0"` and "● Synced"
+  while tab A typed — and tab B's Apply answered `{"replay":{"applied":1}}`.
+  Both live-write doors now refuse when the server holds MORE changes than the
+  presser's screen showed, name the paths, and offer one click to accept.
+  Count-based, not seq-based; absent parameter ⇒ byte-identical; and `force=1`
+  does **not** double as the acknowledgement (it answers the staleness
+  question — one token never collapses two gates).
+- **Every `hx-on::after-request` in the app was dead.** The app's own CSP omits
+  'unsafe-eval'; htmx compiles those attributes with `new Function`. Seven
+  handlers, including `LiveEditUndo.clear()` after an apply. One had already
+  been patched blind earlier in this campaign ("the Auto-Sync popup does not
+  close after Save") — this was why. Replaced by `data-after-request` + a
+  delegated dispatch table.
+- **Auto-Sync's auto-pull could not fire while you stayed on a page** —
+  `live_diverged` was refreshed only by a full render and by
+  `/api/topology-mtime`, which only Chip Status polls. Measured at 9 polls over
+  90 s answering `auto_pull:false` while the drift count beside it said 481.
+- **A dangling pointer locked its field**: refusing plain text is right,
+  refusing `null` too left the user unable to repair or remove a broken
+  reference.
+- **One aliased sibling disabled the sibling-type guard chip-wide** — a pointer
+  counted as `other` and `other == 0` is the unanimity gate. Aliasing is
+  deferral, not evidence.
+- **The guard could never fire on `/field/create`** at all: `get_value` raises on
+  an absent path and that was read as "no opinion". Absent carries no type for
+  the same reason null doesn't.
+- **The pair inspector counted keys instead of naming the qubit** (`[19 items]`)
+  — the second half of the report that opened this campaign.
+- **Searching a value hid exactly the rows you would type it into** — the
+  customer's own words. The search keeps its meaning; the way out is offered.
+
+### A regression I shipped, and what caught it
+
+Lowering the virtualization gate exposed a latent bug: a column found by search
+was **cold**, so its cells were empty and un-editable — the same shape as the
+original report. Hydration fired on scroll, nav and path repaint, never on
+search. Caught by the **roles sweep**, not by any pin: the calibration
+scientist's script simply could not find a cell to type in.
+
+### What did NOT reproduce
+
+Recorded so nobody re-derives them: the no-data stone's qubit name measures
+**8.08:1** against the page background, not the reported 2.45:1; no wizard
+button is occluded at step 1; and the 8-colour colorway cannot be judged on a
+chip with no coherence data, which never draws a 20-trace set.
+
+### Sweeps
+
+**Buttons** — 1,003 buttons pressed across 12 pages. The 25 "no-op" hits are
+class-only toggles (sidebar, Settings popover) that the probe cannot see; the
+one real finding was the CSP violation present on every page. **Roles** — four
+customer roles each complete their task end-to-end with **0 console errors**.
