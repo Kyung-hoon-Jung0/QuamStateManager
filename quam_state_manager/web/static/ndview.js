@@ -353,6 +353,13 @@
         // (a fresh div has no `.on` yet and the handler would be silently lost).
         Promise.resolve(drawn).then(function () {
             attachClick(plotEl, cube, xI, yI);
+            /* docs/122 — follow the container. Plotly's config.responsive covers
+               WINDOW resizes only, and the geometry that moves here is the
+               sidebar collapse and the Split gutter. Observe #ndv-root, not
+               #ndv-plot: the plot div is what we RESIZE, and watching the box we
+               are about to change is how a feedback loop starts. Idempotent —
+               PlotHost.observe returns early if this root is already watched. */
+            if (window.PlotHost) window.PlotHost.observe(root());
         }).catch(function (e) { console.error('ndview click attach failed', e); });
     }
 

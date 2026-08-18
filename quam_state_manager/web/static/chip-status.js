@@ -1057,6 +1057,13 @@ window.ChipStatus.mount = function (opts) {
     ];
 
     function renderHistograms() {
+        /* docs/122 — the histogram grid is `repeat(auto-fill, ...)`, so a
+           sidebar collapse does not merely widen it, it changes the COLUMN
+           COUNT: every chart takes a large step and none of them redrew.
+           Observed once, on the grid, after the charts below are built. */
+        if (window.PlotHost) {
+            window.PlotHost.observe(document.getElementById('topo-histograms'));
+        }
         _histDefs.forEach(function(h) {
             var vals = h.values.filter(function(v){return v!=null && typeof v==='number';});
             var box = document.getElementById(h.boxId);

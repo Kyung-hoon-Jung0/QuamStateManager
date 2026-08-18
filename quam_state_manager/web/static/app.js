@@ -12410,6 +12410,14 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
     })
         .then(function() {
             var plotDiv = document.getElementById('phd-chart');
+            /* docs/122 — one of the two surfaces that draws itself instead of
+               going through _plotlyRender, so no central hook could ever reach
+               it. Its host is `width:100%` inside the main pane: exactly the box
+               a sidebar collapse or a gutter drag changes. Observe the DRAWER,
+               not the chart div. */
+            if (window.PlotHost) {
+                window.PlotHost.observe(document.getElementById('param-history-drawer'));
+            }
             // Click → open the experiment's dataset detail in the same window
             plotDiv.on('plotly_click', function(evt) {
                 if (!evt.points || !evt.points.length) return;
