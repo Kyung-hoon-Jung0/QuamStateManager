@@ -325,6 +325,68 @@ bug. The axis re-apply pin was first written as a `<600`-character distance and
 the real distance is 601; it is now an order contract (after the tagging, before
 the toggle is armed).
 
+## Phase 2 — extending PlotHost, and what the survey refused
+
+Item 4 left `PlotHost.observe` wired at exactly ONE site while 14 other Plotly
+mounts had no container-resize handling. The obvious move — install the observer
+centrally inside `window._plotlyRender`, the app's own render choke point — was
+surveyed and then attacked. **All three attackers refuted it**, each on a
+different axis, each verified in source:
+
+- `_plotlyRender(divId, data, layout, config)` receives only a graph div, so it
+  is not a place where a CONTAINER can be chosen at all — and the right
+  container is surface-specific (`.ds-interactive-plot` for a tile,
+  `#ndv-root` for ndview, `#topo-histograms` for the histogram grid).
+- `/trends` renders **220 charts** for one real experiment on the customer's own
+  data (`11_power_rabi`: 20 qubits × 17 metrics, no cap anywhere).
+- the two-step release `relayout({width:null, autosize:true})` **destroys the
+  caller's explicit height** — `autosize` implies `height: null` in Plotly's
+  implied-edit table.
+- and it would have missed two surfaces outright: `#phd-chart` and `#fh-chart`
+  call `Plotly.newPlot` directly (13 of 15 mounts go through the door, not 15).
+
+### Three defects in what item 4 had already shipped
+
+The survey was run to extend the code and found the code wrong first.
+
+| | |
+|---|---|
+| **height destroyed** | Verified in a browser: after one sidebar collapse the Trends chart's `layout.height` was GONE. It stayed 300 px on screen only because `.topo-trend-chart { min-height: 300px }` happens to equal the 300 the caller asked for — safe **by coincidence**, and the coincidence does not hold on ndview (asks 420, CSS min 200) or the Chip Status bar charts (computed 160–640, no CSS height). Fixed: width only, no release. |
+| **raced the render** | `resizeWithin` called `Plotly.relayout` directly and never touched `el.__plotlyRenderChain` — the per-element chain `_plotlyRender` exists to serialise. Now chained, re-reading `clientWidth` inside the chain. |
+| **leaked an observer per toggle** | `PlotHost.unobserve` shipped with ZERO callers while `ChipTrends._reload` swaps its observed grid with `outerHTML` on every metric toggle, and a ResizeObserver holds a STRONG reference to its target. `unobserveWithin` now runs beside `purgeWithin` at the global `htmx:beforeSwap` hook, off a registry rather than a DOM query. Measured after: 1 observer across six swaps, zero stranded. Also `_graphDivs` used `querySelectorAll` only, which never returns its own context node — so an `outerHTML` swap replacing exactly the graph div was skipped by the purge. |
+
+### Four resize call sites that already existed and did nothing
+
+All four used `Plots.resize` (measured no-op) over `.js-plotly-plot` (the class
+that does not always survive). Routing them through `PlotHost` fixed several
+surfaces with no new observer at all — including **the Split.js gutter drag
+(`base.html`), the app's single most important resize trigger**, and
+`chip-status.js:76`, whose selector was a DESCENDANT match while the chart *is*
+the `.topo-metric-bar-chart` element.
+
+### Newly observed, measured on the real chip
+
+| surface | container | width | height |
+|---|---|---|---|
+| Chip Status histograms | `#topo-histograms` | 636 → 507 in 500 ms | 344 → 344 |
+| Param History drawer | `#param-history-drawer` | 1248 → 1514 in 500 ms | 340 → 340 |
+| ndview Raw Data | `#ndv-root` | 1292 → 1558 in 500 ms | **420 → 420** |
+
+The ndview line is the proof that the height fix mattered: it is the surface the
+survey predicted would collapse to its 200 px CSS floor.
+
+### Deliberately not wired, with the reason
+
+- **Chip Status metric / 2Q-RB bar charts** — the driver is the density slider,
+  which reflows siblings without changing any outer container's box, so an
+  ancestor observer would never fire. They need the density setter to call
+  `resizeWithin`, not an observer.
+- **hero chip map** — pure SVG at `width:100%; height:auto`; CSS already does it.
+- **value-history popover** — `position:fixed` with a JS-set pixel width, so only
+  a window resize moves it and `config.responsive` covers that.
+- **`/trends`** — 220 charts for one experiment. An observer there needs a
+  batching story first.
+
 ## What is still unknown
 
 - the exact cause of the Explorer scroll loss (two candidates: the lost `json-tree`
