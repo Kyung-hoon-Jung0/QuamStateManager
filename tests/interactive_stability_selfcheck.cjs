@@ -118,6 +118,12 @@ check('D3 the corpse markup is gone', corpse.innerHTML === '', corpse.innerHTML.
 // NO-OPS on this app's charts (a holder at clientWidth 1531 with
 // _fullLayout.width 1265 and autosize:true stayed 1265 after it), so the shared
 // helper drives an explicit relayout instead. Record both.
+/* Section 5 runs inside an async main: docs/122 chains the resize through
+   the element's own render chain, so it resolves on a microtask. A browser
+   always has one between a layout change and the next paint; this file has
+   to make one, and top-level await is a syntax error in CJS. */
+(async function main() {
+
 const resized = [];
 w.Plotly = {
     Plots: { resize(el) { resized.push(el); } },
@@ -139,6 +145,12 @@ Object.defineProperty(hidden, 'clientWidth', { get: () => 800 });
 shown._fullLayout = { width: 600, autosize: true };
 hidden._fullLayout = { width: 600, autosize: true };
 w.resizeInteractiveTiles(container);
+// docs/122: the resize is CHAINED through the element's own render chain
+// (a relayout racing an in-flight newPlot is the collision _plotlyRender
+// exists to serialise), so it lands on a microtask. A browser always has
+// one between a layout change and the next assertion; this file has to
+// make one.
+await new Promise((r) => setTimeout(r, 0));
 check('E1 a visible plot is resized', resized.indexOf(shown) >= 0);
 // docs/122 item 4 — the shared helper finds graph divs STRUCTURALLY, because
 // '.js-plotly-plot' is a class and it does not always survive: measured on the
@@ -159,6 +171,7 @@ check('E1 a visible plot is resized', resized.indexOf(shown) >= 0);
     classless._fullLayout = { width: 600, autosize: true };
     const before = resized.length;
     w.resizeInteractiveTiles(container);
+    await new Promise((r) => setTimeout(r, 0));
     check('E3 a graph div whose js-plotly-plot class was stripped is still found',
           resized.slice(before).indexOf(classless) >= 0);
     check('E4 and it is not counted twice when the class IS present',
@@ -166,8 +179,11 @@ check('E1 a visible plot is resized', resized.indexOf(shown) >= 0);
 }
 check('E2 a hidden plot is not', resized.indexOf(hidden) < 0);
 
-if (failures) { console.error(failures + ' check(s) failed'); process.exit(1); }
+})().then(() => {
+  if (failures) { console.error(failures + ' check(s) failed'); process.exit(1); }
 console.log('all checks passed');
 // app.js starts its own pollers under jsdom; exit explicitly so the harness
 // does not wait on an event loop that never drains.
 process.exit(0);
+
+}).catch((e) => { console.error('FAIL  selfcheck threw: ' + (e && e.stack || e)); process.exit(1); });

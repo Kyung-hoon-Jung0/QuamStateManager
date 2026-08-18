@@ -70,10 +70,14 @@ window.ChipStatus.layout = (function () {
         lastNarrow = narrow;
         var d = document.querySelector('.topo-dashboard');
         if (d) d.classList.toggle('is-narrow', narrow);
-        if (window.Plotly) {                   // ONE resize over already-built charts
-            document.querySelectorAll(
-                '.topo-metric-bar-chart .js-plotly-plot, .topo-hist-chart .js-plotly-plot'
-            ).forEach(function (el) { try { Plotly.Plots.resize(el); } catch (e) {} });
+        // docs/122: PlotHost, not Plots.resize + the bare class. The old form
+        // was doubly wrong here — the selector was a DESCENDANT match
+        // ('.topo-metric-bar-chart .js-plotly-plot') while the chart IS the
+        // .topo-metric-bar-chart element, so it selected nothing even when the
+        // class survived.
+        if (window.PlotHost) {
+            document.querySelectorAll('.topo-metric-bar-chart, .topo-hist-chart')
+                .forEach(function (el) { window.PlotHost.resizeWithin(el); });
         }
     }
     function onResize() { clearTimeout(debTimer); debTimer = setTimeout(settle, 150); }

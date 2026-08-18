@@ -8712,11 +8712,15 @@ window.setInteractiveCols = function(n, btn) {
         b.classList.toggle('active', parseInt(b.getAttribute('data-cols'), 10) === n);
     });
     try { localStorage.setItem('quam_interactive_cols', String(n)); } catch (e) {}
-    if (typeof Plotly !== 'undefined') {
-        scope.querySelectorAll('.ds-interactive-list .js-plotly-plot').forEach(function(el) {
-            try { Plotly.Plots.resize(el); } catch (e) {}
-        });
-    }
+    // docs/122: the last raw Plots.resize on this path. A 1<->3 column change is
+    // the biggest width step any tile ever takes, and it went through the call
+    // measured as a no-op, over the class that does not always survive.
+    // requestAnimationFrame because --ds-cols has only just been written: the
+    // grid tracks have not been laid out yet, so reading clientWidth in this
+    // turn would resize every tile to its OLD width.
+    var _rz = function () { window.resizeInteractiveTiles(scope); };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(_rz);
+    else _rz();
 };
 
 /**
@@ -8764,6 +8768,14 @@ window.PlotHost = (function () {
             if (!el || seen.indexOf(el) >= 0) return;
             seen.push(el); out.push(el);
         }
+        // The ROOT ITSELF counts. querySelectorAll never returns its own
+        // context node, and an `outerHTML` swap replaces exactly that node — so
+        // a purge driven off the swap target used to skip the one graph div
+        // most certain to be destroyed.
+        if (r.nodeType === 1 && (r.classList && r.classList.contains('js-plotly-plot')
+                                 || (r.querySelector && r.querySelector(':scope > .plot-container.plotly')))) {
+            add(r);
+        }
         Array.prototype.forEach.call(r.querySelectorAll('.js-plotly-plot'), add);
         Array.prototype.forEach.call(r.querySelectorAll('.plot-container.plotly'),
             function (n) { add(n.parentElement); });
@@ -8773,11 +8785,25 @@ window.PlotHost = (function () {
        Measured on the real chip after collapsing the sidebar: the holder was
        1531 px wide, `_fullLayout.width` was 1265 with `autosize: true`, the
        element was displayed — and it was still 1265 after Plots.resize AND
-       after relayout({autosize:true}). An explicit width moves it immediately
-       (1265 -> 1531), and releasing that width straight afterwards puts
-       autosize back so a WINDOW resize still adapts on its own. Chained, not
-       fired back to back: two concurrent relayouts on one div is the race
-       _plotlyRender already had to serialise once. */
+       after relayout({autosize:true}). An explicit width moves it immediately.
+
+       WIDTH ONLY, and no release back to autosize. The first version followed
+       the width with `relayout({width: null, autosize: true})` to keep Plotly's
+       own responsiveness — but Plotly's implied-edit table makes `autosize`
+       imply `height: null`, so that second call DELETES the caller's explicit
+       layout height. On Chip Status Trends that is invisible, and only because
+       `.topo-trend-chart { min-height: 300px }` (style.css) happens to equal the
+       300 the caller asked for — verified in a browser: the rendered height held
+       at 300 while `layout.height` was gone. It would NOT be invisible on
+       ndview (`height: 420`, CSS min-height 200) or on the Chip Status bar
+       charts (height computed 160–640, no CSS height at all), which is exactly
+       where this was about to be extended. Releasing autosize is also
+       unnecessary: an observer watching the CONTAINER already fires on a window
+       resize, because that is what changes the container.
+
+       Chained through the element's own render chain, not fired beside it: a
+       relayout racing an in-flight newPlot is the collision _plotlyRender was
+       written to serialise. */
     function resizeWithin(root) {
         if (typeof Plotly === 'undefined') return 0;
         var n = 0;
@@ -8788,12 +8814,13 @@ window.PlotHost = (function () {
             var cur = el._fullLayout && el._fullLayout.width;
             if (cur && Math.abs(cur - w) < 2) return;   // already matched
             try {
-                var p = Plotly.relayout(el, { width: w });
-                if (p && p.then) {
-                    p.then(function () {
-                        return Plotly.relayout(el, { width: null, autosize: true });
-                    }).catch(function () {});
-                }
+                var prev = el.__plotlyRenderChain || Promise.resolve();
+                el.__plotlyRenderChain = prev.catch(function () {}).then(function () {
+                    if (!document.body.contains(el) || !el.offsetParent) return null;
+                    var w2 = el.clientWidth;      // re-read: the layout may have moved again
+                    if (!w2) return null;
+                    return Plotly.relayout(el, { width: w2 });
+                }).catch(function () {});
                 n++;
             } catch (e) {}
         });
@@ -8802,20 +8829,65 @@ window.PlotHost = (function () {
     /* Watch a CONTAINER, not the window: the geometry changes that break these
        figures are a sidebar collapse and a split-gutter drag, neither of which
        is a window resize. Debounced, and idempotent per container. */
+    var _observed = [];   // every container we hold an observer on
     function observe(container) {
         if (!container || container._phRo || typeof ResizeObserver === 'undefined') return;
-        var t = null;
-        container._phRo = new ResizeObserver(function () {
+        // SINGLE OWNER per subtree. An ancestor already watching this region
+        // would resize the same divs on the same event, and docs/118's own
+        // interactive container (`_ro`) is exactly such an ancestor. Two
+        // observers driving two strategies at one node is how the Pulses plot
+        // was measurably broken once already.
+        for (var a = container.parentElement; a; a = a.parentElement) {
+            if (a._phRo || a._ro) return;
+        }
+        var t = null, lastW = 0;
+        container._phRo = new ResizeObserver(function (entries) {
+            // WIDTH-only. RO fires on both axes and #table-pane's content height
+            // moves on every banner, tray or toast — a height-only change must
+            // not cost a relayout per chart.
+            var w = 0;
+            try { w = Math.round((entries[0].contentRect || {}).width || 0); } catch (e) {}
+            if (w && Math.abs(w - lastW) < 2) return;
+            lastW = w;
             clearTimeout(t);
             t = setTimeout(function () { resizeWithin(container); }, 120);
         });
-        try { container._phRo.observe(container); } catch (e) { container._phRo = null; }
+        try {
+            container._phRo.observe(container);
+            _observed.push(container);
+        } catch (e) { container._phRo = null; }
     }
     function unobserve(container) {
         if (container && container._phRo) {
             try { container._phRo.disconnect(); } catch (e) {}
             container._phRo = null;
         }
+        var i = _observed.indexOf(container);
+        if (i >= 0) _observed.splice(i, 1);
+    }
+    /* Teardown belongs at the same choke point as the purge, or it never
+       happens: `unobserve` shipped with ZERO callers while ChipTrends._reload
+       swaps its observed grid with outerHTML on EVERY metric toggle, so the app
+       leaked one ResizeObserver — and the detached subtree it strongly
+       references — per toggle. */
+    function unobserveWithin(root) {
+        var r = root || document;
+        var n = 0;
+        // Walk the REGISTRY, not the DOM: a swap target can be #table-pane,
+        // whose subtree on the real chip is tens of thousands of nodes, and
+        // paying a full-tree query per swap to find at most a handful of
+        // observers is the wrong trade. Also sweeps entries whose element has
+        // already been detached by some other path.
+        _observed = _observed.filter(function (el) {
+            var gone = !document.body || !document.body.contains(el);
+            if (gone || r === el || (r.contains && r.contains(el))) {
+                if (el._phRo) { try { el._phRo.disconnect(); } catch (e) {} el._phRo = null; }
+                n++;
+                return false;
+            }
+            return true;
+        });
+        return n;
     }
     /* A Plotly node must never die via innerHTML without purge — WebGL contexts
        and DOM references leak. Safe to call on anything: purging a node that is
@@ -8829,8 +8901,9 @@ window.PlotHost = (function () {
         return n;
     }
     return { resizeWithin: resizeWithin, observe: observe,
-             unobserve: unobserve, purgeWithin: purgeWithin,
-             graphDivs: _graphDivs };
+             unobserve: unobserve, unobserveWithin: unobserveWithin,
+             purgeWithin: purgeWithin, graphDivs: _graphDivs,
+             _observed: function () { return _observed.slice(); } };
 })();
 
 /* Enforce the purge rule at the ONE place every destructive swap goes through.
@@ -8844,6 +8917,9 @@ document.addEventListener('htmx:beforeSwap', function (evt) {
     if (t.id === 'table-pane' && window.PaneState && window.PaneState.isKeepRoute
         && window.PaneState.isKeepRoute()) return;
     window.PlotHost.purgeWithin(t);
+    // ...and release the observers on what is being destroyed, at the same
+    // choke point, or they strand on a detached subtree they keep alive.
+    window.PlotHost.unobserveWithin(t);
 });
 
 window.resizeInteractiveTiles = function(scope) {

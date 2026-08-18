@@ -1227,10 +1227,16 @@
                     /* Split.js resizing the panes does not fire a window
                        resize, so any Plotly chart in the inspector keeps its
                        pre-drag dimensions (axes/legend drift). Re-layout them. */
-                    if (typeof Plotly !== 'undefined') {
-                        document.querySelectorAll('#inspector-pane .js-plotly-plot, #table-pane .js-plotly-plot').forEach(function(el) {
-                            try { Plotly.Plots.resize(el); } catch (e) {}
-                        });
+                    /* docs/122: through PlotHost, not Plots.resize + the bare
+                       class. Both are measurably wrong here — Plots.resize
+                       no-ops on this app's charts, and `.js-plotly-plot` does
+                       not always survive (a Trends holder carried Plotly's own
+                       .plot-container while its class was just its own). This
+                       is the app's most important resize trigger, and it was
+                       doing nothing. */
+                    if (window.PlotHost) {
+                        window.PlotHost.resizeWithin(document.getElementById('inspector-pane'));
+                        window.PlotHost.resizeWithin(document.getElementById('table-pane'));
                     }
                 }
             });
