@@ -8860,7 +8860,38 @@ window.PlotHost = (function () {
                     if (!document.body.contains(el) || !el.offsetParent) return null;
                     var w2 = el.clientWidth;      // re-read: the layout may have moved again
                     if (!w2) return null;
-                    return Plotly.relayout(el, { width: w2 });
+                    /* Snapshot-restore (docs/124 M-1, payload chosen by an
+                       executed 6-candidate × 3-shape probe — docs/125 fix 5).
+                       Plotly 2.35.2's width relayout implies autosize=null AND
+                       pins the OTHER dimension, and Plots.resize — the
+                       responsive:true window handler — permanently rejects
+                       once layout.width && layout.height are both set. So one
+                       bare width touch froze every chart against window
+                       resizes forever (168px-clipped bar charts, executed).
+                       The cure: apply the width, then hand gd.layout back
+                       exactly as the caller wrote it — fullLayout keeps the
+                       correction, layout.width is absent again, the window
+                       path stays alive, and a DECLARED layout.height survives
+                       (which stock Plotly itself loses on window resizes —
+                       the restored state is byte-identical to an untouched
+                       chart's). relayout({autosize:true}) is NOT an
+                       alternative: its implied width:null never deletes an
+                       existing layout.width key in this Plotly. The snapshot
+                       is taken INSIDE the chain so back-to-back touches each
+                       see the restored layout. */
+                    var lay = el.layout || {};
+                    var has = Object.prototype.hasOwnProperty;
+                    var snap = {
+                        width:    has.call(lay, 'width')    ? lay.width    : undefined,
+                        height:   has.call(lay, 'height')   ? lay.height   : undefined,
+                        autosize: has.call(lay, 'autosize') ? lay.autosize : undefined
+                    };
+                    return Plotly.relayout(el, { width: w2 }).then(function () {
+                        var l2 = el.layout || {};
+                        ['width', 'height', 'autosize'].forEach(function (k) {
+                            if (snap[k] === undefined) delete l2[k]; else l2[k] = snap[k];
+                        });
+                    });
                 }).catch(function () {});
                 n++;
             } catch (e) {}
