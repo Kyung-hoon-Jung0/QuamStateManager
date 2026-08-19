@@ -55,6 +55,19 @@
        silently broke those pages on full-page load. The app is served locally,
        so eager JS costs ~nothing. Plotly is the one exception — it's lazy-loaded
        on demand via window.requirePlotly() (see app.js), never eagerly. #}
+    {# docs/124 §1.1 (the settle fix): htmx 2.0.4's attribute settle restores an
+       id-matched element's class/style to the incoming MARKUP values ~20ms after
+       every swap — wiping anything a script set during the swap window. That one
+       mechanism stripped js-plotly-plot off live Trends charts (the docs/123 §4.3
+       mystery), stripped .json-tree so the Explorer scroll regime flipped and the
+       restore clamped to 0, and re-hid both Explorer trees on the wiring tab.
+       Nothing in this app wants class/style settling (no CSS keys on
+       htmx-settling/htmx-added; the dataset row flash is its own mechanism), so
+       it is disarmed at the config level rather than per-surface — every current
+       and future render-during-swap site is covered at once. Must precede the
+       htmx <script> tag: htmx reads this meta once, at load.
+       Pinned by tests/settle_config_selfcheck.cjs. #}
+    <meta name="htmx-config" content='{"attributesToSettle":["width","height"]}'>
     <script src="{{ url_for('static', filename='htmx.min.js') }}"></script>
     <script src="{{ url_for('static', filename='split.min.js') }}"></script>
     {# The one query grammar (space=AND, standalone |=OR) — must precede every
