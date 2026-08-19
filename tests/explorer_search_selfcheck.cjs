@@ -192,7 +192,12 @@ ok(_tries && _tries.split(',').length >= 3,
    'at least three attempts, spanning past the search debounce (' + _tries + ')');
 ok(/Math\.abs\(el\.scrollTop - d\.scroll\) > 4/.test(src),
    'each attempt CHECKS whether the previous one stuck instead of re-writing blindly');
-ok(/_restoreScrollAborted/.test(src) && /addEventListener\('wheel', off, true\)/.test(src),
+// docs/124 M-16 replaced the shared abort boolean with per-restore state + a
+// generation counter; the BEHAVIOR (wheel/keys/scrollbar abort, no zombie
+// resurrection) is executed-pinned in tests/scroll_abort_selfcheck.cjs — this
+// line only keeps the mechanism's presence visible from this file's contract.
+ok(/_armScrollAbort/.test(src) && /_restoreGen/.test(src)
+   && /addEventListener\('wheel', off, true\)/.test(src),
    'a user who scrolls meanwhile owns the scroll — the retries abandon (docs/75 precedent)');
 ok(/'PageUp'|"PageUp"/.test(src), 'keyboard scrolling counts as the user taking over too');
 
