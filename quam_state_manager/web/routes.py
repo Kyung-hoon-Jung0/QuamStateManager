@@ -10057,6 +10057,120 @@ def pulse_env_strip():
     )
 
 
+@bp.route("/pulse/gaussian-cz")
+def pulse_gaussian_cz_form():
+    """The Gaussian-CZ macro builder form (docs/126 ⑦b)."""
+    store = _store()
+    if not store:
+        return render_template("_status.html", message="No state loaded",
+                               level="warning")
+    from quam_state_manager.core import gaussian_cz
+    with store._lock:
+        pairs = gaussian_cz.eligible_pairs(store.merged)
+    return render_template("_pulse_gaussian_cz.html", pairs=pairs)
+
+
+@bp.route("/api/pulse/gaussian-cz", methods=["POST"])
+def api_pulse_gaussian_cz():
+    """Create the Gaussian CZ macro set for one pair (docs/126 ⑦b).
+
+    The customer's ``add_gaussian_cz_macros.py`` workflow: sources amplitude /
+    flat_length from the pair's ``cz_flattop``, writes the two CZGate macros
+    plus the pointer-linked z / coupler operations — six ``create_subtree``
+    calls under ONE change group (one Review bundle, one Ctrl+Z). Existing
+    macros 409 until ``overwrite=1`` (then deleted first, in the SAME group,
+    so one undo restores exactly the prior state). Working copy only; archives
+    refuse (nothing here can write live — docs/107)."""
+    ctx = _active_ctx()
+    store = _store()
+    modifier = _modifier()
+    if not store or not modifier:
+        return render_template("_status.html", message="No state loaded",
+                               level="warning"), 400
+    if ctx and (ctx.get("origin") or "live") != "live":
+        return render_template(
+            "_status.html", level="error",
+            message="This chip is a read-only archive — open the live chip "
+                    "to create macros."), 409
+
+    from quam_state_manager.core import gaussian_cz
+
+    pair_id = request.form.get("pair_id", "").strip()
+
+    def _num(name, default, integer=False):
+        raw = (request.form.get(name) or "").strip()
+        if not raw:
+            return default
+        try:
+            return int(float(raw)) if integer else float(raw)
+        except ValueError:
+            return None
+
+    padding = _num("padding_length", 20, integer=True)
+    q_mhz = _num("qubit_filter_mhz", 20.0)
+    c_mhz = _num("coupler_filter_mhz", 20.0)
+    if padding is None or q_mhz is None or c_mhz is None:
+        return render_template("_status.html", level="error",
+                               message="Padding / filter values must be numbers."), 400
+
+    with store._lock:
+        result = gaussian_cz.plan(store.merged, pair_id,
+                                  padding_length=padding,
+                                  qubit_filter_mhz=q_mhz,
+                                  coupler_filter_mhz=c_mhz)
+        if "error" in result:
+            return render_template("_status.html", message=result["error"],
+                                   level="error"), 400
+        if result["existing"] and request.form.get("overwrite") != "1":
+            body = render_template(
+                "_status.html", level="warning",
+                message=("Already present on this pair: "
+                         + ", ".join(p.split(".")[-1] for p in result["existing"])
+                         + " — create again to replace them (the old subtrees "
+                           "are removed in the same undo group)."))
+            body += ('<button type="button" class="btn-sm" '
+                     'onclick="var f=document.getElementById(\'gcz-form\');'
+                     'var i=document.createElement(\'input\');i.type=\'hidden\';'
+                     'i.name=\'overwrite\';i.value=\'1\';f.appendChild(i);'
+                     'window.htmx&&htmx.trigger(f,\'submit\');">'
+                     'Replace existing</button>')
+            return body, 409
+
+        gid = modifier.new_group_id()
+        done = 0
+        try:
+            for path in result["existing"]:
+                modifier.delete_subtree(path, group_id=gid)
+                done += 1
+            for path, value in result["creates"]:
+                modifier.create_subtree(path, value, group_id=gid)
+                done += 1
+        except Exception as exc:  # noqa: BLE001 — all-or-nothing
+            for _ in range(done):
+                try:
+                    modifier.undo()
+                except Exception:  # noqa: BLE001
+                    break
+            logger.exception("gaussian-cz create failed; rolled back")
+            return render_template(
+                "_status.html", level="error",
+                message=f"Creation failed and was rolled back: {exc}"), 500
+
+    src = result["sources"]
+    msg = render_template(
+        "_status.html", level="success",
+        message=(f"Created cz_gaussian_unipolar + cz_gaussian_bipolar on "
+                 f"{pair_id} (moving qubit {src['moving_qubit']}, amplitude "
+                 f"{src['qubit_amplitude']:.6g}, pulse_length "
+                 f"{src['flat_length']}"
+                 + (", coupler included" if src["has_coupler"] else "")
+                 + ") — staged in the working state; review, then Apply to "
+                   "live."))
+    resp = make_response(msg + "\n" + _tray_oob())
+    resp.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
+    return resp
+
+
 @bp.route("/api/pulse/create", methods=["POST"])
 def api_pulse_create():
     """Create a new pulse on a qubit channel or a pair-gate flux slot."""

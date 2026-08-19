@@ -335,3 +335,41 @@ real chip + the real run archive, 20 checks, console clean); pinned by
    donates the folder half; Enter opens `<folder>:<n>`, a wrong number gets
    the route's honest not-found). Verified round trip on the real archive
    (run #154).
+
+## ⑦b Gaussian CZ macros — the customer's script as one button
+
+**Request (confirmed as option b).** The customer's
+`add_gaussian_cz_macros.py` builds `cz_gaussian_unipolar` +
+`cz_gaussian_bipolar` CZGate macros for a pair from its calibrated
+`cz_flattop`, plus pointer-linked operations on the moving qubit's z line and
+the coupler. They wanted the workflow inside SM.
+
+**What shipped.** `core/gaussian_cz.py` — a PURE planner transcribed from the
+customer's own run of the script on their live chip (pair q19-20): the CZGate
+skeleton, the quam_builder-0.4 field names (`padding_length`), the op labels
+(`<macro>_pulse` / `<macro>_coupler_pulse`), the absolute pointer grammar
+(`#/qubit_pairs/<pid>/macros/<m>/flux_pulse_qubit/<field>`), and the script's
+own guard set as honest refusals (no cz_flattop / no moving_qubit role /
+non-numeric amplitude / a QDAC-biased z with no operations — docs/119).
+Control/target references resolve through the full pointer chain (the docs/118
+two-hop lesson). Surface: a "+ Gaussian CZ…" button on the Pulses page →
+`GET /pulse/gaussian-cz` (eligible-pair picker + padding / per-side filter-MHz
+fields — the customer's own run used 200/50, not the script's single default)
+→ `POST /api/pulse/gaussian-cz`: six `create_subtree`s under ONE change group
+(one Review bundle, one Ctrl+Z — verified: one /undo removes all six),
+existing macros 409 until an explicit Replace (deletes land in the SAME group,
+so one undo restores the prior state exactly), archives refuse, mid-way
+failure rolls back. Working copy only — Apply to live stays the user's press
+(docs/107).
+
+**Verified.** Structural golden vs the customer's chip: every key set, class
+and pointer string byte-equal to what their script wrote — numeric values
+differ only because cz_flattop was recalibrated since, `fidelity`/`extras`
+are calibration-populated after creation, and the bipolar variant's COUPLER
+pulse class was hand-changed to the Square class on the real chip (a physics
+choice recorded in the pin; the builder follows the handed script — a
+per-side class switch is an easy follow-up if wanted). docs/98-grade proof:
+create on a real-chip copy for a macro-less pair → /save → `Quam.load()` in
+the customer env succeeds and the macro's amplitude resolves to cz_flattop's.
+Real Chrome: form lists 30 eligible pairs, creation stages a 6-change Review
+bundle, console clean. **Pinned by** `tests/test_gaussian_cz.py` (12).
