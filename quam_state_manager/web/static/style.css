@@ -3483,12 +3483,10 @@ td.col-delta .val-delta { margin-left: 0; }
    outlined so they stay legible over a heat-coloured node. */
 .cm-role-dot { fill: var(--pico-card-background-color, #fff);
     stroke: var(--pico-muted-border-color); stroke-width: 1; }
-/* The mover is the one a reader is usually hunting for — give it the accent
-   rather than another neutral ring. */
-.cm-role-dot-m { stroke: var(--pico-primary); stroke-width: 1.5; }
+/* M wears the SAME neutral style as C and T — the accent version shouted
+   over the map (user, 2026-08-20: "M이 너무 눈에 띈다"). */
 .cm-role-txt { fill: var(--pico-muted-color); font-weight: 700;
     pointer-events: none; user-select: none; }
-.cm-role-m .cm-role-txt { fill: var(--pico-primary); }
 .topo-hero-node { cursor: pointer; }
 .topo-hero-node:focus { outline: none; }
 .topo-hero-stone {
@@ -8559,8 +8557,13 @@ html.topbar-hidden .chrome-reveal { display: block; }
     width: 520px; height: 420px; min-width: 260px; min-height: 40px;
     display: flex; flex-direction: column;
     background: var(--pico-card-background-color, #fff);
-    border: 1px solid var(--pico-muted-border-color); border-radius: 12px;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.10), 0 12px 32px rgba(0,0,0,0.22);
+    /* Accent-tinted hairline (user, 2026-08-20): the muted border melted
+       into the page and the floating panel had no visible boundary. Soft
+       blue, not full primary — a frame, not a highlight. */
+    border: 1px solid color-mix(in srgb, var(--pico-primary) 55%, var(--pico-muted-border-color));
+    border-radius: 12px;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--pico-primary) 18%, transparent),
+                0 2px 6px rgba(0,0,0,0.10), 0 12px 32px rgba(0,0,0,0.22);
     resize: both; overflow: hidden;
 }
 .float-wiring .fw-head {

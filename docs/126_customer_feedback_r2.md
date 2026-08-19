@@ -595,3 +595,14 @@ chip, both force gates intact) stays named in the title, and the button keeps
 the one error-tinted overwrite style. Pinned by `TestPanelLayout` + the
 updated act-naming pin; long quick-diff values now wrap
 (`overflow-wrap: anywhere`).
+
+### r3 제안 1+2 — M marker style, floating-wiring border
+
+- **M matches C/T** (제안1): the M readout marker wore the accent (blue ring
+  + blue letter) and shouted over the whole map; the two override rules are
+  gone, so M inherits exactly the neutral C/T dot style — verified live:
+  identical computed stroke/fill/text across M and C.
+- **Floating Instrument Wiring border** (제안2): the muted hairline melted
+  into the page. Now an accent-tinted border (55% primary mixed into the
+  muted border color) + an 18%-primary 1px glow ring — a frame, not a
+  highlight; theme-derived, not hardcoded.
