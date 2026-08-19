@@ -2754,6 +2754,17 @@ window.ChipTrends = (function () {
                 displayModeBar: 'hover', responsive: true,
                 modeBarButtonsToRemove: ['lasso2d', 'select2d'],
                 displaylogo: false };
+            // House theme AT RENDER (docs/124 M-6): these charts used to ship
+            // Plotly's light defaults and rely on a later retheme() pass to
+            // recolor them — but the one-shot retheme runs at DOMContentLoaded
+            // +800ms and Trends builds later (lazy observer + fetch), so a
+            // dark-theme user saw #444-on-light charts until the next theme
+            // toggle. houseLayout deep-merges UNDER the overrides above, so
+            // every explicit choice here (tickformat, ranges, transparent
+            // backgrounds) stands.
+            if (window.PlotTheme && window.PlotTheme.houseLayout) {
+                layout = window.PlotTheme.houseLayout(layout);
+            }
             var drawn = window._plotlyRender(host, traces, layout, cfg);
             // Plotly writes the WebGL message asynchronously, after the promise
             // its renderer returns; check on the far side of it, and once more

@@ -46,15 +46,15 @@ const STORE = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
 // Recording fetch stub shaped like the real endpoints _liveFetchJson expects:
 // Response-like with ok/status/text().
 const fetches = [];
+let liveDiffPayload = { live_state: {}, live_wiring: {} };
 function fetchStub(url, opts) {
     fetches.push({ url: String(url), opts: opts || {} });
+    const body = String(url).indexOf('/state/live-diff') === 0
+        ? liveDiffPayload
+        : { ok: true, results: [{ ok: true }], tray_html: '' };
     return Promise.resolve({
         ok: true, status: 200,
-        text: function () {
-            return Promise.resolve(JSON.stringify({
-                ok: true, results: [{ ok: true }], tray_html: '',
-            }));
-        },
+        text: function () { return Promise.resolve(JSON.stringify(body)); },
     });
 }
 global.fetch = fetchStub;
@@ -78,6 +78,14 @@ try {
     console.error('FAIL: app.js did not evaluate under jsdom: ' + e.message);
     process.exit(1);
 }
+
+// This harness runs app.js through Node-realm eval, where a window PROPERTY
+// is not a bare-identifier global (in a browser it is — the global object IS
+// window). explorerLiveDiff's ON branch calls renderJsonTree bare across
+// IIFEs, which resolves fine in production and ReferenceErrors here unless
+// bridged (the CLAUDE.md bridge-every-bare-global rule; the miss is swallowed
+// by the diff path's own catch into a recover toast).
+global.renderJsonTree = window.renderJsonTree;
 
 let fails = 0;
 function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } else { console.log('ok - ' + m); } }
@@ -154,6 +162,59 @@ ok(rejRow.className.indexOf('tree-row-incoming') < 0,
    'clicking reject clears the incoming marker (pre-fix: marker stayed)');
 ok(cnt.textContent !== '2',
    'the diff-bar count is updated by the reject (was "2", now "' + cnt.textContent + '")');
+
+// ── 4. docs/124 M-4/M-5 — diff-mode truth is the DOM, both halves together ──
+// The old closure flag survived pane swaps while the toggle's class did not:
+// a fresh render with diff previously ON produced flag=true/DOM=inactive and
+// the FIRST click ran the OFF branch — a silent dead click. And the
+// zero-pairs no-op flipped only the flag, leaving a stuck-lit toggle its own
+// button could never turn off.
+{
+    const d = window.document;
+    const wireHost = d.createElement('div');
+    wireHost.id = 'explorer-tree-wiring';
+    d.body.appendChild(wireHost);
+    const toggle = d.createElement('button');
+    toggle.id = 'explorer-livediff-toggle';
+    d.body.appendChild(toggle);
+    const bar = d.createElement('div');
+    bar.id = 'explorer-livediff-bar';
+    bar.hidden = true;
+    bar.innerHTML = '<span id="livediff-bar-count"></span>';
+    d.body.appendChild(bar);
+    window._softRefreshLiveSurface = function () {};
+
+    // fresh render (toggle INACTIVE — what _explorer.html always ships):
+    // an argless call must derive ON from the DOM and fetch the diff. With
+    // the old shadow flag stuck true, this exact call ran the OFF branch and
+    // fetched NOTHING — the dead first click.
+    const sHost = d.getElementById('explorer-tree-state');
+    sHost._treeData = { qubits: { q1: { f_01: 1 } } };
+    wireHost._treeData = { a: 1 };
+    liveDiffPayload = { live_state: { qubits: { q1: { f_01: 2 } } },
+                        live_wiring: { a: 1 } };
+    window.showToast = function () {};   // capture-free stub; jsdom has no toast UI
+    const before = fetches.length;
+    window.explorerLiveDiff();
+    await settle();
+    const diffFetches = fetches.slice(before).filter(function (f) {
+        return f.url.indexOf('/state/live-diff') === 0;
+    });
+    ok(diffFetches.length === 1,
+       'M-4: with an inactive toggle, the FIRST argless call goes ON and fetches the diff');
+    ok(toggle.classList.contains('active') && !bar.hidden,
+       'M-4: and the toggle + bar arm together');
+
+    // stuck-lit + zero pairs: the ON path finding nothing must clear BOTH
+    // halves — the old code cleared only the flag and the lit toggle lied.
+    sHost._treeData = { qubits: { q1: { f_01: 2 } } };
+    liveDiffPayload = { live_state: { qubits: { q1: { f_01: 2 } } },
+                        live_wiring: { a: 1 } };
+    window.explorerLiveDiff(true);
+    await settle();
+    ok(!toggle.classList.contains('active') && bar.hidden,
+       'M-5: the zero-pairs branch clears the toggle AND the bar (no stuck-lit liar)');
+}
 
 if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
 console.log('all checks passed');

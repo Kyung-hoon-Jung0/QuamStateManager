@@ -289,6 +289,16 @@ window.getPageSize = function(storageKey, defaultVal) {
  * (the "2nd pulse click → broken plot, but fine after close+reopen" bug).
  * Without it Plotly also leaks WebGL contexts + DOM refs (~2-5MB per swap).
  */
+/* The pinned-run interceptor must speak FIRST (docs/124 M-2): it may cancel
+   the swap to keep the current layout, and every teardown listener below
+   gates on shouldSwap — a later-registered interceptor meant the purge had
+   already blanked the KEPT layout's figures (executed: click the pinned run
+   again -> svg 3->0, unrecoverable, since the same pre-suppression pass also
+   disconnected the lazy-render observer). The function is declared next to
+   the rest of the pin machinery (hoisted — app.js is one top-level script);
+   only the registration lives up here, ahead of the destroyers. */
+document.addEventListener('htmx:beforeSwap', _pinnedRunSwapInterceptor);
+
 document.addEventListener('htmx:beforeSwap', function(evt) {
     if (!evt.detail) return;
     // No swap will happen (htmx drops 4xx/5xx bodies → shouldSwap=false), so the
@@ -525,6 +535,11 @@ window._pruneInteractiveTiles = _pruneInteractiveTiles;
 // so it catches the inspector pane on a dataset switch.
 document.addEventListener('htmx:beforeSwap', function(evt) {
     if (!evt.detail) return;
+    // A cancelled swap keeps its content (the pinned-run same-run click, a
+    // dropped 4xx body) — disconnecting its lazy-render observer would leave
+    // tiles that can never rebuild (docs/124 M-2's second half: data-rendered
+    // still "1", _io dead, tab re-click builds nothing).
+    if (evt.detail.shouldSwap === false) return;
     var scope = evt.detail.target || evt.detail.elt;
     if (!scope || !scope.querySelectorAll) return;
     scope.querySelectorAll('[id$="interactive-container"]').forEach(function(c) {
@@ -4595,9 +4610,44 @@ document.addEventListener("focusout", function(evt) {
    accepting rather than silently discarding somewhere in the middle. */
 window.UndoQueue = (function () {
     var MAX = 20;
-    var q = [], busy = false;
+    var q = [], busy = false, waiting = false;
+    /* The queue's OWN htmx sync source (docs/124 M-11). It must NOT be the
+       tray: htmx 2.0.4's per-element sync (default strategy "last") lives on
+       the SOURCE element, and both the grid ⚡ apply (applyEditsToLive) and
+       the armed auto-apply flush issue from "#pending-tray" — a /undo queued
+       behind their in-flight request was REPLACED in htmx's queuedRequests,
+       the pump's promise resolved instantly, and the lone survivor re-issued
+       against the tray element the apply's own swap had detached, dying on
+       htmx's isConnected guard. Executed on the real chip: 3 presses in an
+       apply window → 0 POST /undo, no toast — the original customer symptom
+       reintroduced through a side door, chronic under an armed auto-apply
+       session (every commit triggers a flush). A body-level element that no
+       response ever swaps has its own sync lane; the events htmx raises from
+       the HX-Trigger header bubble from it to document, where the
+       cellsReverted listener lives. */
+    function src() {
+        var s = document.getElementById("undo-sync-src");
+        if (!s) {
+            s = document.createElement("div");
+            s.id = "undo-sync-src";
+            s.style.display = "none";
+            document.body.appendChild(s);
+        }
+        return s;
+    }
     function pump() {
         if (busy || !q.length || !window.htmx) return;
+        /* An apply (manual ⚡ or an auto-apply flush) is mid-write: HOLD the
+           press, never race it and never drop it. Ordered execution is also
+           the docs/107 model — an undo pressed during an apply lands after
+           it, walking the journal the apply just wrote. */
+        if (window._applyInFlight) {
+            if (!waiting) {
+                waiting = true;
+                setTimeout(function () { waiting = false; pump(); }, 120);
+            }
+            return;
+        }
         var path = q.shift();
         if (!document.getElementById("pending-tray")) { q.length = 0; return; }
         busy = true;
@@ -4608,7 +4658,7 @@ window.UndoQueue = (function () {
         // behaviour that cannot strand the presses still waiting behind it.
         try {
             r = htmx.ajax("POST", path, {
-                source: "#pending-tray", target: "#pending-tray", swap: "outerHTML",
+                source: src(), target: "#pending-tray", swap: "outerHTML",
             });
         } catch (e) { done(); return; }
         if (r && typeof r.then === "function") r.then(done, done);
@@ -11403,7 +11453,9 @@ function _initCompareSplitResizer(pane) {
  * HTMX beforeSwap interceptor: when a run is pinned, intercept the new
  * dataset detail swap and render two-column layout instead.
  */
-document.addEventListener('htmx:beforeSwap', function(evt) {
+// Registered EARLY (see the top-of-file registration, docs/124 M-2): this
+// must set shouldSwap before the purge/unobserve/_io-teardown listeners look.
+function _pinnedRunSwapInterceptor(evt) {
     if (!window._pinnedRunId) return;
     if (!evt.detail || !evt.detail.target) return;
     if (evt.detail.target.id !== 'inspector-pane') return;
@@ -11429,6 +11481,13 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     // Build two-column layout
     var pane = document.getElementById('inspector-pane');
     if (pane) {
+        // Running FIRST means the choke-point purge listeners will see our
+        // shouldSwap=false and skip — so this branch, which replaces the pane
+        // itself, must do its own teardown (same rule as unpinDataset).
+        if (window.PlotHost) {
+            try { window.PlotHost.purgeWithin(pane); } catch (e) {}
+            try { window.PlotHost.unobserveWithin(pane); } catch (e) {}
+        }
         pane.innerHTML = _wrapPinnedLayout(window._pinnedHtml, evt.detail.serverResponse);
         _reviveInteractiveMarkup(pane);     // docs/118: the pinned half is a string
         // innerHTML skips <script> execution + htmx wiring, so without this the
@@ -11454,7 +11513,7 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
         var rightClose = pane.querySelector('.inspector-current-col .inspector-close');
         if (rightClose) rightClose.onclick = _closeCurrentKeepPinned;
     }
-});
+}
 
 // ── Sticky view state: preserves inspector state across ALL navigation ──
 // Works for table rows, bookmark panel, parent/child links — no click capture needed.
@@ -13787,7 +13846,33 @@ document.addEventListener('click', function(evt) {
        lands as a pending working-copy edit; the usual "Apply to live" then
        writes it. GATED by the workbench path-match: only meaningful when SM and
        Qualibrate share the chip (a mismatch shows zero changes). */
-    var _explorerLiveDiffOn = false;
+    /* Diff-mode truth is the DOM, DERIVED — never a shadow variable
+       (docs/124 M-4/M-5). The old closure flag survived every pane swap while
+       the toggle's class did not (_explorer.html always renders it inactive),
+       so any fresh render of /explorer with diff mode on produced flag=true /
+       DOM=inactive — the next click computed !true and ran the OFF branch: a
+       silent dead first click, reachable by three ordinary daily sequences
+       (grid edit → PaneState seq-mismatch → back; a held /state/live-diff
+       response committing against a parked pane; stateRestored's soft
+       refresh). And the zero-pairs no-op flipped only the flag, leaving a
+       stuck-lit toggle whose own button could never turn it off while it
+       toasted "No incoming changes" against a real server divergence. A pane
+       replacement drops the overlay WITH the DOM, so deriving from the DOM is
+       not merely consistent — it is the true state. */
+    function _explorerLiveDiffOn() {
+        var t = document.getElementById("explorer-livediff-toggle");
+        return !!(t && t.classList.contains("active"));
+    }
+    function _setLiveDiffUi(on, remaining) {
+        var t = document.getElementById("explorer-livediff-toggle");
+        if (t) t.classList.toggle("active", !!on);
+        var bar = document.getElementById("explorer-livediff-bar");
+        if (bar) bar.hidden = !on;
+        if (on) {
+            var cnt = document.getElementById("livediff-bar-count");
+            if (cnt) cnt.textContent = remaining;
+        }
+    }
     var _liveDiffState = [];   // [{dot_path, value(live)}] for state.json tree
     var _liveDiffWiring = [];  // ... for wiring.json tree
     var _liveDiffDone = {};    // dot_path -> 1 once accepted/rejected this session
@@ -13977,7 +14062,7 @@ document.addEventListener('click', function(evt) {
     // later "Accept all" can't replay the stale LIVE value over the value the user
     // just typed (field/edit-batch is last-write-wins per path). Idempotent.
     window._explorerNoteInlineEdit = function (dotPath, row) {
-        if (!_explorerLiveDiffOn || !dotPath || _liveDiffDone[dotPath]) return;
+        if (!_explorerLiveDiffOn() || !dotPath || _liveDiffDone[dotPath]) return;
         if (row) _clearIncoming(row);
         _liveDiffDone[dotPath] = 1;
         _bumpLiveDiffCount(-1);
@@ -14089,15 +14174,11 @@ document.addEventListener('click', function(evt) {
         var stateEl = document.getElementById("explorer-tree-state");
         var wiringEl = document.getElementById("explorer-tree-wiring");
         if (!stateEl || !wiringEl) return;
-        if (on === undefined) on = !_explorerLiveDiffOn;
+        if (on === undefined) on = !_explorerLiveDiffOn();
 
         if (!on) {
-            _explorerLiveDiffOn = false;
+            _setLiveDiffUi(false);
             _liveDiffState = []; _liveDiffWiring = []; _liveDiffDone = {}; _liveDiffRemaining = 0;
-            var t0 = document.getElementById("explorer-livediff-toggle");
-            if (t0) t0.classList.remove("active");
-            var b0 = document.getElementById("explorer-livediff-bar");
-            if (b0) b0.hidden = true;
             // Reload the explorer fresh: drops refData AND reflects any accepted
             // edits (the client tree data went stale as we accepted them).
             if (window._softRefreshLiveSurface) window._softRefreshLiveSurface();
@@ -14121,7 +14202,9 @@ document.addEventListener('click', function(evt) {
                 _liveDiffRemaining = _liveDiffState.length + _liveDiffWiring.length;
 
                 if (_liveDiffRemaining === 0) {
-                    _explorerLiveDiffOn = false;
+                    // BOTH halves off (docs/124 M-5): clearing only the flag
+                    // left a lit toggle that lied and could not be turned off.
+                    _setLiveDiffUi(false);
                     window.showToast(
                         "No incoming changes — the working state matches the live chip.", "info");
                     return;
@@ -14145,13 +14228,7 @@ document.addEventListener('click', function(evt) {
                 // Commit the ON state ATOMICALLY — only after the render fully
                 // succeeded, so a render error never leaves a half-applied overlay
                 // with a stuck-on toggle (the old code set on=true BEFORE rendering).
-                _explorerLiveDiffOn = true;
-                var t = document.getElementById("explorer-livediff-toggle");
-                if (t) t.classList.add("active");
-                var cnt = document.getElementById("livediff-bar-count");
-                if (cnt) cnt.textContent = _liveDiffRemaining;
-                var bar = document.getElementById("explorer-livediff-bar");
-                if (bar) bar.hidden = false;
+                _setLiveDiffUi(true, _liveDiffRemaining);
             } catch (err) {
                 window.explorerLiveDiff(false);   // full clean reset — never a half overlay
                 _liveDiffRecover("Could not render the live diff.");

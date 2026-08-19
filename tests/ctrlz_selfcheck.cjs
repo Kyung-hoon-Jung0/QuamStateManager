@@ -102,9 +102,15 @@ pressCtrlZ();
 ok(calls.length === 1, 'Ctrl+Z issues exactly one request');
 ok(calls[0] && calls[0].method === 'POST' && calls[0].url === '/undo',
    'Ctrl+Z posts /undo (got ' + JSON.stringify(calls[0]) + ')');
-ok(calls[0] && calls[0].opts && calls[0].opts.source === '#pending-tray'
+// docs/124 M-11: the SOURCE must be the queue's own element — sourcing from
+// the tray put /undo in the same htmx sync lane as the ⚡ apply and the
+// auto-apply flush, whose in-flight request replaced-and-dropped the press.
+// (This pin used to assert source === '#pending-tray', i.e. the bug's own
+// vector — the docs/123 §8 class, met again.)
+ok(calls[0] && calls[0].opts && calls[0].opts.source
+   && calls[0].opts.source.id === 'undo-sync-src'
    && calls[0].opts.target === '#pending-tray',
-   'undo request is source+target #pending-tray (hx-sync scoped, no body-queue wedge)');
+   'undo request rides the queue\'s own sync lane, targets the tray');
 await settle();
 
 // ── 1b. docs/122 item 3: a BURST is queued, not dropped ────────────────────
@@ -132,6 +138,37 @@ await settle();
     ok(accepted < 40 && accepted >= 20,
        'the queue is bounded and says so (accepted ' + accepted + ' of 40)');
     for (let i = 0; i < 45; i++) await settle();
+}
+
+// ── 1d. docs/124 M-11: the queue has its own sync lane and waits out applies ─
+// htmx 2.0.4's per-element sync (strategy "last") lives on the SOURCE element,
+// and both the grid ⚡ apply and the armed auto-apply flush issue from
+// "#pending-tray" — a /undo sourced there during an apply window was
+// replaced-and-dropped (executed on the real chip: 3 presses inside an apply
+// window → 0 POST /undo, no toast). The queue now issues from its own
+// body-level element, and an in-flight apply HOLDS the press — never a race,
+// never a drop.
+{
+    const n = calls.length;
+    pressCtrlZ();
+    await settle();
+    const c = calls[calls.length - 1];
+    ok(calls.length === n + 1 && c.url === '/undo', 'baseline press issues');
+    const srcEl = c.opts && c.opts.source;
+    ok(!!srcEl && srcEl.id === 'undo-sync-src' && srcEl.isConnected,
+       'M-11: the request is sourced from the queue\'s own element, never the tray');
+    window._applyInFlight = true;
+    const n2 = calls.length;
+    pressCtrlZ();
+    await settle();
+    ok(calls.length === n2, 'M-11: no request while an apply is in flight');
+    ok(window.UndoQueue.depth() === 1, 'M-11: the press is HELD, not dropped');
+    window._applyInFlight = false;
+    await new Promise((r) => setTimeout(r, 350));   // past the 120ms hold retry
+    ok(calls.length === n2 + 1 && calls[calls.length - 1].url === '/undo',
+       'M-11: the held press issues once the apply settles');
+    ok(window.UndoQueue.depth() === 0 && !window.UndoQueue.busy(),
+       'M-11: and the queue drains');
 }
 
 // ── 2. focus inside an input → native undo untouched ───────────────────────
@@ -247,9 +284,10 @@ pressShiftZ();
 ok(calls.length === n0 + 1, 'Ctrl+Shift+Z issues exactly one request');
 ok(calls[n0] && calls[n0].method === 'POST' && calls[n0].url === '/redo',
    'Ctrl+Shift+Z posts /redo (got ' + JSON.stringify(calls[n0]) + ')');
-ok(calls[n0] && calls[n0].opts && calls[n0].opts.source === '#pending-tray'
+ok(calls[n0] && calls[n0].opts && calls[n0].opts.source
+   && calls[n0].opts.source.id === 'undo-sync-src'
    && calls[n0].opts.target === '#pending-tray',
-   'redo request is source+target #pending-tray');
+   'redo request rides the queue\'s own sync lane, targets the tray');
 
 // guard: inside an <input> the browser keeps native redo
 await settle();

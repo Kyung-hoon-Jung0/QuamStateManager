@@ -157,7 +157,9 @@ ok(/_explorerReapplySearch\s*\(/.test(src),
 // shows a query the tree is not honouring).
 const iTag = src.indexOf('_autoExpandAndTag("explorer-tree-state"');
 const iApply = src.indexOf('_explorerReapplySearch()', iTag);
-const iArm = src.indexOf('_explorerLiveDiffOn = true', iTag);
+// docs/124 M-4/M-5: the ON state is committed through _setLiveDiffUi(true, …)
+// now (the DOM is the single source of truth; the old shadow flag is gone).
+const iArm = src.indexOf('_setLiveDiffUi(true', iTag);
 ok(iTag > 0 && iApply > iTag, 'the re-apply runs AFTER the incoming rows are tagged');
 ok(iArm > 0 && iApply < iArm,
    'the re-apply runs BEFORE the toggle is armed — no frame where the box lies');
