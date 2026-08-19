@@ -16248,7 +16248,14 @@ def param_history_backfill():
         }
 
     def _run() -> None:
+        # Also feed the process-wide progress registry (docs/126 r3) so the
+        # brand indicator's /api/progress poll sees the SAME numbers the
+        # backfill status endpoint reports.
+        from quam_state_manager.core.progress import Progress
+        _prog = Progress("Importing snapshots")
+
         def _progress(done: int, total: int) -> None:
+            _prog.step(done=done, total=total)
             with _backfill_lock:
                 _backfill_state[key]["done"] = done
                 _backfill_state[key]["total"] = total
@@ -16265,6 +16272,8 @@ def param_history_backfill():
             logger.exception("Backfill failed")
             with _backfill_lock:
                 _backfill_state[key].update({"status": "error", "error": str(exc)})
+        finally:
+            _prog.finish()
 
     threading.Thread(target=_run, daemon=True).start()
     return jsonify(_backfill_state[key])
@@ -16284,6 +16293,16 @@ def param_history_backfill_status():
 # ======================================================================
 # API: JSON endpoints for programmatic access
 # ======================================================================
+
+
+@bp.route("/api/progress")
+def api_progress():
+    """The newest active long-running operation's real N-of-M count
+    (docs/126 r3). Polled by the brand indicator ONLY while it is visible;
+    an idle app never calls this. Empty object = nothing is reporting —
+    the client then shows elapsed time alone, never an invented count."""
+    from quam_state_manager.core.progress import current as _prog_current
+    return jsonify(_prog_current() or {})
 
 
 @bp.route("/api/qubit/<name>")

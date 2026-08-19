@@ -667,3 +667,23 @@ pinned by the updated `TestDatasetNavR16` (+ ten-step clamp test) and
   Terminal-event dedup via WeakSet (htmx can fire afterRequest AND
   responseError for one xhr; sendAbort under hx-sync replace), reduced-motion
   fallback = solid bar. Pinned by `TestSidebarActiveSync` + `TestNavProgress`.
+
+### r3 follow-up — real counting on the brand indicator ("12/1000 → 24/1000 → …")
+
+The elapsed-seconds counter stays the default, but a loop that KNOWS its
+count now reports it: `core/progress.py` is the opt-in registry (context
+manager; a crashed loop is age-swept so a stale counter can't outlive its
+work; nothing estimates or invents a percentage), `/api/progress` serves the
+newest active op, and NavProgress swaps elapsed time for `done/total`
+whenever one exists — its poll runs ONLY while the indicator is visible, so
+an idle app pays nothing. Two real producers wired: the **leaf-index
+rebuild** (the 1.2–5.4 s parse of every snapshot — `Progress("Rebuilding
+change index", total=len(merged))`) and the **workspace backfill**, whose
+existing `progress_cb` now feeds the registry AND the status endpoint from
+one set of numbers; the param-history poller also pushes the same counts
+straight into the brand via `NavProgress.external` (that phase has no pane
+request in flight, which is exactly when the user is watching). Every
+terminal branch of the poller releases the counter. Verified end-to-end: a
+REAL backfill showed the op in `/api/progress` while running and `{}` after
+finish; the browser rendered `12/1000 → 142/1000` (external) and `371/1154`
+(poll path) and cleaned up on settle. Pinned by `tests/test_progress.py`.

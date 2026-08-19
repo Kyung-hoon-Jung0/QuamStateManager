@@ -7742,32 +7742,60 @@ window.addEventListener("popstate", function() { setTimeout(window.syncSidebarNa
  * when the LAST one settles. A WeakSet dedups the settle events — htmx can
  * fire more than one terminal event for the same xhr (afterRequest +
  * responseError; sendAbort under hx-sync replace). */
-(function () {
-    var count = 0, t0 = 0, showTimer = null, tick = null;
+window.NavProgress = (function () {
+    var count = 0, t0 = 0, showTimer = null, tick = null, poll = null;
     var seen = (typeof WeakSet !== 'undefined') ? new WeakSet() : null;
+    var ext = null;        // {label, done, total} pushed by a background job
+    var srv = null;        // newest /api/progress answer while visible
     function el() { return document.getElementById('nav-progress'); }
     function isPane(evt) {
         var t = evt.detail && evt.detail.target;
         return !!(t && t.id === 'table-pane');
     }
+    function _render() {
+        var p = el(); if (!p) return;
+        var timeEl = p.querySelector('.nav-progress-time');
+        if (!timeEl) return;
+        // real counts beat elapsed time (docs/126 r3 follow-up: "12/1000 →
+        // 24/1000…") — shown ONLY when a loop actually reports them
+        var op = ext || srv;
+        if (op && op.total) {
+            timeEl.textContent = op.done + '/' + op.total;
+            p.title = op.label || '';
+        } else {
+            timeEl.textContent = ((Date.now() - t0) / 1000).toFixed(1) + ' s';
+            p.title = '';
+        }
+    }
     function show() {
         var p = el(); if (!p) return;
         p.hidden = false;
-        var timeEl = p.querySelector('.nav-progress-time');
         clearInterval(tick);
-        tick = setInterval(function () {
-            if (timeEl) timeEl.textContent = ((Date.now() - t0) / 1000).toFixed(1) + ' s';
-        }, 100);
+        tick = setInterval(_render, 100);
+        // while visible, ask the server whether a loop is reporting real
+        // counts — hidden means no polling, so an idle app pays nothing
+        clearInterval(poll);
+        poll = setInterval(function () {
+            fetch('/api/progress').then(function (r) { return r.json(); })
+                .then(function (j) { srv = (j && j.total) ? j : null; })
+                .catch(function () { srv = null; });
+        }, 350);
+        _render();
     }
     function hide() {
         clearTimeout(showTimer); showTimer = null;
         clearInterval(tick); tick = null;
-        var p = el(); if (p) p.hidden = true;
+        clearInterval(poll); poll = null;
+        srv = null;
+        var p = el(); if (p) { p.hidden = true; p.title = ''; }
+    }
+    function maybeHide() {
+        if (count === 0 && !ext) hide();
     }
     document.addEventListener('htmx:beforeRequest', function (evt) {
         if (!isPane(evt)) return;
         count++;
-        if (count === 1) {
+        if (count === 1 && !ext) {
             t0 = Date.now();
             clearTimeout(showTimer);
             showTimer = setTimeout(show, 400);
@@ -7781,12 +7809,27 @@ window.addEventListener("popstate", function() { setTimeout(window.syncSidebarNa
             seen.add(x);
         }
         count = Math.max(0, count - 1);
-        if (count === 0) hide();
+        maybeHide();
     }
     ['htmx:afterRequest', 'htmx:sendAbort', 'htmx:sendError',
      'htmx:responseError', 'htmx:timeout'].forEach(function (n) {
         document.addEventListener(n, settle);
     });
+    return {
+        /* A background job (the param-history backfill poller) pushes its
+           own real counts here — the indicator shows without any pane
+           request in flight, which is exactly the phase the user watches. */
+        external: function (label, done, total) {
+            ext = { label: label, done: done || 0, total: total || 0 };
+            if (!t0) t0 = Date.now();
+            var p = el();
+            if (p && p.hidden) show(); else _render();
+        },
+        externalDone: function () {
+            ext = null;
+            maybeHide();
+        }
+    };
 })();
 
 /* ------------------------------------------------------------------ */
@@ -12910,11 +12953,14 @@ function _paramHistoryPollBackfill() {
                     loader.classList.add('visible');
                     progressLine.textContent = msg;
                 }
+                // the brand indicator counts the same import (docs/126 r3)
+                if (window.NavProgress) NavProgress.external('Importing snapshots', s.done || 0, s.total || 0);
                 setTimeout(_paramHistoryPollBackfill, 800);
             } else if (s.status === 'done') {
                 if (status) status.textContent = 'Imported ' + (s.ingested || 0) + ' snapshots. Reloading…';
                 if (progressLine) progressLine.textContent = '';
                 if (loader) loader.classList.remove('visible');
+                if (window.NavProgress) NavProgress.externalDone();
                 // Mark this chip as "user has imported at least once" so
                 // the auto-incremental backfill on next visit can fire
                 // without surprising a first-time user.
@@ -12938,18 +12984,21 @@ function _paramHistoryPollBackfill() {
                 if (status) status.textContent = 'Error: ' + (s.error || 'unknown');
                 if (progressLine) progressLine.textContent = '';
                 if (loader) loader.classList.remove('visible');
+                if (window.NavProgress) NavProgress.externalDone();
                 // Errors also count as an attempt — don't keep auto-firing.
                 _paramHistoryMarkSessionAttempt();
             } else {
                 // Unknown/unexpected status — treat as terminal so the poll chain
                 // doesn't die silently and let htmx:afterSwap re-fire forever.
                 if (loader) loader.classList.remove('visible');
+                if (window.NavProgress) NavProgress.externalDone();
                 _paramHistoryMarkSessionAttempt();
             }
         })
         .catch(function(err) {
             // Status fetch failed — stop the chain; the attempt is already marked.
             if (loader) loader.classList.remove('visible');
+            if (window.NavProgress) NavProgress.externalDone();
             _paramHistoryMarkSessionAttempt();
             console.warn('param-history backfill status poll failed:', err);
         });
