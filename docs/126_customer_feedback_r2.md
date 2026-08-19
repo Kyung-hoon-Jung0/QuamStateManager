@@ -253,3 +253,43 @@ in the tree appears in Live Edit, `⌁ q2 · z` on the port node, clipboard got
 (owner-map derivation incl. shared ports and broken shapes; route injection).
 Harness note for the future: `jsonTreeSearch` debounces 200 ms — a pin that
 reads the tree earlier measures the pre-search state.
+
+## ⑤ Apply to chip — the identity gate is the only question left
+
+**Report + ruling.** "Apply to chip is awkward — make it just happen in one
+go." Discussed before any code (the user's explicit instruction): *"except
+when it looks like a DIFFERENT chip, just always do it. Don't worry about
+live drift — the user pressing this button already knows the chip moved and
+wants to revert it; that is WHY they are pressing."* This amends, for THIS
+button only, docs/65's "a staged conflict never force-pushes" and docs/116's
+in-place conflict panel. The covenant floor (docs/107/117) did not move — the
+press is still the one explicit act; what changed is that the press now
+answers the staleness question too.
+
+**What shipped.**
+- `_sync_pull_apply_to_live` gained a `force` passthrough (the ⚡ tray path
+  at `/state/apply-to-live` already had its own).
+- `/dataset/<uid>/load-state?apply=1`: the **pending-edit 409 is gone on the
+  apply path** — the working copy is replaced and the result line reports
+  "(Replaced N unsaved edits.)" (docs/86: reported, never silent). The plain
+  **Stage only** path keeps its 409 byte-identically — review-first still
+  reviews.
+- A **staleness drift no longer raises the conflict panel**: the first
+  attempt stays unforced (that failure is what tells us drift existed), the
+  retry forces, and the result line names it — "The live chip HAD changed
+  since it was loaded — those changes were overwritten (the run's state
+  wins)." The docs/116 identical-content carve-out stays the quiet path, so
+  the note appears only when something real was replaced. ↺ Revert last
+  apply is armed either way (asserted in the pin) — reversibility is what
+  licenses all of this.
+- The **identity gate is untouched**: a different/unverifiable chip still
+  409s, still carries `apply=1` through its confirm.
+- `_ds_apply_conflict.html` (docs/116) is deleted — nothing renders it.
+
+**Pinned by** the rewritten `tests/test_dataset_apply_to_chip.py` (10):
+identity-only gate, pending-edits reported not asked (with the stage path's
+409 in the same test as the contrast), drift overwritten + named + revert
+armed, real-difference disclosure vs identical-content quiet, stage-only
+byte-identical, one-call apply. `test_state_roundtrip` + `test_overwrite_live`
++ `state_sync_selfcheck.cjs` green as proof the OTHER surfaces' gates did not
+move.

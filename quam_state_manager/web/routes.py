@@ -12264,13 +12264,16 @@ def state_sync():
     })
 
 
-def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False):
+def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
+                             force=False):
     """Finish a ``mode=apply`` sync: save the re-applied edits to the working
     copy and push them to the live chip. Mirrors ``/state/apply-to-live`` but
     returns JSON so ``doStateSync`` can drive it. On a fresh staleness conflict
     the reapply stash is kept so the user can retry / force / discard.
     ``pulled_other_changes`` (echoed to the client) — the pull absorbed live
-    changes beyond the user's own edits, so the surface needs one refresh."""
+    changes beyond the user's own edits, so the surface needs one refresh.
+    ``force`` (docs/126 ⑤) pushes over a drifted live — callers pass it only
+    when the user's one press already meant exactly that."""
     store = ctx["store"]
     wc = ctx["working_copy"]
     saver = ctx["saver"]
@@ -12325,7 +12328,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False):
 
     try:
         with _active_wc_lock(ctx):
-            working_copy.apply_to_live(wc, force=False)
+            working_copy.apply_to_live(wc, force=force)
     except working_copy.StaleLiveError:
         # The live chip changed again while we merged. Keep the stash and hand
         # back the conflict tray so the user can retry / force / discard.
@@ -17980,10 +17983,17 @@ def dataset_load_state(uid):
     snapshot arms "↺ Revert last apply" exactly like every other apply).
     Covenant-compliant: the button is labeled "Apply to chip", so the press
     IS the one explicit apply act — no confirm dialog (the no-confirm
-    doctrine), and reversibility is what makes one click safe. The identity /
-    pending-edit gates stay (they answer a DIFFERENT question than consent),
-    and a staleness conflict renders the honest conflict tray rather than
-    force-pushing over a live chip that moved.
+    doctrine), and reversibility is what makes one click safe.
+
+    docs/126 ⑤ (user-directed, 2026-08-19): on the apply path the ONLY
+    question still asked is chip identity. The user pressing "Apply to chip"
+    already means "this run's state wins, on the live chip, now" — so a
+    staleness drift is pushed over (unforced first; a conflict retries with
+    force, and the overwrite is NAMED in the result), and unsaved working
+    edits are replaced without a 409 but REPORTED in the result line (docs/86:
+    reported, never silently). Both amend the docs/108/116 behavior for this
+    button; the reviewed paths (plain stage, the sync tray) keep their gates,
+    and ↺ Revert last apply is what licenses the one press.
     """
     resolved = _resolve_run(uid)
     state_path = None
@@ -18044,12 +18054,17 @@ def dataset_load_state(uid):
                 target="#ds-load-state-result",
             ), 409
 
-    # Gate 2 — pending edits (mirrors /state-history/<ts>/stage).
+    # Gate 2 — pending edits (mirrors /state-history/<ts>/stage). docs/126 ⑤:
+    # on the APPLY path this stops asking — the press already means "the run's
+    # state wins" — but what it replaces is COUNTED here and reported in the
+    # result line (never silent). The review path (plain stage) keeps the 409.
     store = ctx["store"]
     with store._lock:
+        replaced_edits = len(store.change_log)
         has_pending = (bool(store.change_log) or bool(ctx.get("pending_reapply"))
                        or bool(ctx.get("working_dirty")))
-    if has_pending and request.values.get("force") != "1":
+    if (has_pending and not apply_req
+            and request.values.get("force") != "1"):
         url = (base_url + "?force=1"
                + ("&force_chip=1" if request.values.get("force_chip") == "1" else "")
                + apply_qs)
@@ -18062,6 +18077,12 @@ def dataset_load_state(uid):
             confirm="Discard your unsaved edits and load this run's state?",
             target="#ds-load-state-result",
         ), 409
+    replaced_note = ""
+    if apply_req and has_pending:
+        replaced_note = (f" (Replaced {replaced_edits} unsaved edit"
+                         f"{'' if replaced_edits == 1 else 's'}.)"
+                         if replaced_edits
+                         else " (Replaced saved-but-unapplied working changes.)")
 
     try:
         state, wiring = safe_io.read_state_wiring(Path(state_path))
@@ -18092,36 +18113,30 @@ def dataset_load_state(uid):
         result = _sync_pull_apply_to_live(ctx, None)
         body = (result[0] if isinstance(result, tuple) else result).get_json()
         status = (body or {}).get("status")
+        drift_note = ""
+        if status == "conflict":
+            # docs/126 ⑤ (user-directed, 2026-08-19, superseding the docs/116
+            # conflict panel here): the live chip moved since it was loaded —
+            # and the user pressing "Apply to chip" already decided the run's
+            # state wins over whatever moved it. Push over the drift, and NAME
+            # the overwrite in the result (docs/86: report, never block —
+            # reversibility via ↺ Revert last apply is what licenses this).
+            # The unforced first attempt is what tells us drift existed at all.
+            result = _sync_pull_apply_to_live(ctx, None, force=True)
+            body = (result[0] if isinstance(result, tuple) else result).get_json()
+            status = (body or {}).get("status")
+            drift_note = (" The live chip HAD changed since it was loaded — "
+                          "those changes were overwritten (the run's state "
+                          "wins).")
         if status == "ok":
             msg = render_template(
                 "_status.html",
-                message=(f"Run #{run_id}'s state is now LIVE on {chip_label}. "
-                         "Reversible — ↺ Revert last apply (top bar) "
-                         "restores the pre-apply state."),
+                message=(f"Run #{run_id}'s state is now LIVE on {chip_label}."
+                         + drift_note + replaced_note
+                         + " Reversible — ↺ Revert last apply (top bar) "
+                           "restores the pre-apply state."),
                 level="success")
             resp = make_response(msg + "\n" + _tray_oob())
-            resp.headers["HX-Trigger"] = "pulses-changed, stateRestored, diagnostics-changed"
-            return resp
-        if status == "conflict":
-            # The live chip moved since it was loaded — the snapshot is STAGED
-            # (safe) and live was NOT written; docs/108 never force-pushes over
-            # a chip that changed under us.
-            #
-            # docs/116: that verdict used to arrive as a one-line warning
-            # pointing at the TOP BAR, and the tray it pointed at asks the
-            # question of a different flow ("choose which side wins" — whose
-            # ↓ option discards the run the user had just chosen). One press
-            # therefore became: read a warning, go find the tray, pick from
-            # choices that misdescribe the situation, then answer a native
-            # confirm. The continuation now renders in #ds-load-state-result
-            # — where the button was — and offers the choice the press meant.
-            # The tray still swaps OOB so the two surfaces cannot disagree.
-            tray = (body.get("tray_html") or "").replace(
-                '<div id="pending-tray"',
-                '<div id="pending-tray" hx-swap-oob="outerHTML"', 1)
-            msg = render_template("_ds_apply_conflict.html",
-                                  run_id=run_id, chip_label=chip_label)
-            resp = make_response(msg + "\n" + tray)
             resp.headers["HX-Trigger"] = "pulses-changed, stateRestored, diagnostics-changed"
             return resp
         # error — the staging succeeded; say exactly how far things got.
