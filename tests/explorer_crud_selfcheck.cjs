@@ -97,11 +97,22 @@ function nodeAt(container, p) {
     const leaf = nodeAt(c, 'qubits.qA1.f_01');
     hover(win, leaf);
     ok(!!leaf.querySelector('.tree-act-type'), 'C1: leaf row has ⚙');
+    // docs/126 ④ amended: EVERY row now carries the ⧉ copy action (customer
+    // request) — identity keys and list elements get copy and NOTHING else
+    // (no add / type / delete, unchanged).
     const idLeaf = nodeAt(c, 'qubits.qA1.id');
     hover(win, idLeaf);
-    ok(!idLeaf.querySelector('.tree-act-btn'), 'C1: identity key gets no actions');
+    ok(!!idLeaf.querySelector('.tree-act-copy'), 'C1: identity key gets the ⧉ copy');
+    ok(!idLeaf.querySelector('.tree-act-del') && !idLeaf.querySelector('.tree-act-type')
+       && !idLeaf.querySelector('.tree-act-add'),
+       'C1: identity key gets nothing destructive');
     const el = nodeAt(c, 'qubits.qA1.confusion_matrix.0.0');
-    if (el) { hover(win, el); ok(!el.querySelector('.tree-act-btn'), 'C1: list element gets no actions'); }
+    if (el) {
+      hover(win, el);
+      ok(!!el.querySelector('.tree-act-copy'), 'C1: list element gets the ⧉ copy');
+      ok(!el.querySelector('.tree-act-del') && !el.querySelector('.tree-act-add'),
+         'C1: list element gets nothing destructive');
+    }
     const top = nodeAt(c, 'qubits');
     hover(win, top);
     ok(!top.querySelector(':scope > .tree-row > .tree-row-actions .tree-act-del'),
