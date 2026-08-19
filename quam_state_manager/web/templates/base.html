@@ -105,7 +105,16 @@
                 {# docs/126: ☰ cycles sidebar → +topbar → restore all. #}
                 <li><button class="sidebar-toggle" onclick="cycleChrome()"
                         title="Collapse the sidebar, then the top bar — click the floating ☰ to bring everything back">☰</button></li>
-                <li><a href="/" class="app-title-link" title="Projects landing"><strong class="app-title">QUAM State Manager</strong></a></li>
+                {# docs/126 r3 — while a main-pane load runs past 400 ms, the
+                   brand becomes a blue progress bar + elapsed counter (an
+                   HONEST indeterminate sweep — no invented percentage), so a
+                   heavy first open (Param History on a big chip) shows how
+                   long you have actually been waiting. NavProgress (app.js)
+                   drives it off htmx's own request events; pointer-events
+                   none keeps the link clickable. #}
+                <li><a href="/" class="app-title-link" title="Projects landing"><strong class="app-title">QUAM State Manager</strong><span
+                        id="nav-progress" class="nav-progress" hidden aria-hidden="true"><span
+                        class="nav-progress-bar"></span><span class="nav-progress-time">0.0 s</span></span></a></li>
                 {# Workbench: a standalone co-display shell that puts Qualibrate
                    (iframe) beside this app. Full-page route, so a plain link
                    (not hx-get); opens in a new tab. #}

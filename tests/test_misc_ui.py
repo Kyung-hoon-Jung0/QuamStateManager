@@ -81,6 +81,62 @@ class TestTimeBasisNote:
         assert "acquisition-PC local" in detail
 
 
+class TestSidebarActiveSync:
+    """docs/126 r3: three independent active-setters used to fight — the
+    htmx:pushedIntoHistory handler compared query-carrying hrefs against the
+    bare path (subnav links never toggled; same-href parent+child both lit),
+    chipNavView's manual push/replaceState fired no htmx history event (the
+    OLD menu's active never cleared), and chip-status's _setActiveTab only
+    touched its own group. One canonical sync now re-derives the active set
+    from the URL on every navigation path."""
+
+    def test_one_canonical_sync_wired_into_every_nav_path(self):
+        js = _read("quam_state_manager/web/static/app.js")
+        assert "window.syncSidebarNavActive = function" in js
+        i = js.index("window.syncSidebarNavActive = function")
+        block = js[i:i + 4000]
+        # clears everything first, prefers the child on same-href twins
+        assert 'classList.remove("active")' in block
+        assert "nav-subitems" in block
+        # wired into all three navigation paths
+        assert 'addEventListener("htmx:pushedIntoHistory", window.syncSidebarNavActive)' in js
+        assert 'addEventListener("htmx:replacedInHistory", window.syncSidebarNavActive)' in js
+        assert '"popstate"' in js
+        # chipNavView (manual history writes) calls it on BOTH branches
+        j = js.index("window.chipNavView")
+        cnv = js[j:j + 1600]
+        assert cnv.count("syncSidebarNavActive") >= 2
+        # the old broken matcher (first path segment vs query-carrying href)
+        # must be gone
+        assert 'split("/")[0] || "home"' not in js
+
+
+class TestNavProgress:
+    """docs/126 r3 제안: a heavy first open (Param History on a big chip) gave
+    no sign of life. The brand area becomes a blue indeterminate sweep + an
+    elapsed-seconds counter after a 400 ms grace — honest by construction
+    (the server reports no progress, so no percentage is invented)."""
+
+    def test_brand_carries_the_indicator(self):
+        h = _read("quam_state_manager/web/templates/base.html")
+        assert 'id="nav-progress"' in h
+        i = h.index('class="app-title-link"')
+        assert 'id="nav-progress"' in h[i:i + 900], "must overlay the brand"
+
+    def test_module_grace_and_dedup(self):
+        js = _read("quam_state_manager/web/static/app.js")
+        assert "setTimeout(show, 400)" in js          # fast navs never flash
+        assert "WeakSet" in js                        # dup terminal events ignored
+        assert "'htmx:sendAbort'" in js               # hx-sync replace settles too
+
+    def test_css_sweep_and_reduced_motion(self):
+        css = _read("quam_state_manager/web/static/style.css")
+        assert "nav-progress-sweep" in css
+        assert "tabular-nums" in css                  # the counter must not jitter
+        i = css.index(".nav-progress-bar::after")
+        assert "prefers-reduced-motion" in css[i:i + 900]
+
+
 class TestRunJump:
     def test_the_jump_lives_on_the_vs_prev_bar_not_the_header(self):
         """docs/126 r3: the ⑥-era header jump was a DUPLICATE — the original

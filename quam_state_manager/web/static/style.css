@@ -10990,3 +10990,26 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
     color: var(--text-muted); flex: 0 0 auto; line-height: 1;
 }
 .nav-sub-row .nav-print:hover { color: var(--accent); }
+
+/* docs/126 r3 — the brand-area loading indicator (NavProgress, app.js).
+   Overlays the app title while a #table-pane request runs past 400 ms:
+   an indeterminate blue sweep + a tabular-nums elapsed counter. Honest by
+   construction — the server reports no progress, so no percentage is
+   invented; what the user asked to see is that time IS passing. */
+.app-title-link { position: relative; display: inline-block; }
+.nav-progress { position: absolute; inset: 0; display: flex; align-items: center;
+    gap: 0.5rem; padding: 0 0.15rem; pointer-events: none;
+    background: var(--pico-card-background-color, var(--pico-background-color)); }
+.nav-progress[hidden] { display: none; }
+.nav-progress-bar { flex: 1 1 auto; height: 6px; border-radius: 3px;
+    position: relative; overflow: hidden;
+    background: color-mix(in srgb, var(--pico-primary) 22%, transparent); }
+.nav-progress-bar::after { content: ""; position: absolute; top: 0; bottom: 0;
+    width: 38%; border-radius: 3px;
+    background: linear-gradient(90deg, var(--pico-primary), #4db8ff);
+    animation: nav-progress-sweep 1.1s ease-in-out infinite; }
+@keyframes nav-progress-sweep { 0% { left: -38%; } 100% { left: 100%; } }
+.nav-progress-time { flex: 0 0 auto; font-size: 0.72rem; font-weight: 700;
+    color: var(--pico-primary); font-variant-numeric: tabular-nums;
+    min-width: 3.4em; text-align: right; }
+@media (prefers-reduced-motion: reduce) { .nav-progress-bar::after { animation: none; width: 100%; left: 0; } }

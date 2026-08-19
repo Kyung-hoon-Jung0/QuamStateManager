@@ -1420,10 +1420,12 @@ window.chipNavView = function(view, ev) {
     if (typeof window.setChipStatusView === 'function' && document.querySelector('.topo-subnav')) {
         window.setChipStatusView(view, null, true);   // scroll to the chosen section
         try { history.replaceState(null, '', '/topology?view=' + view); } catch (e) {}
+        if (window.syncSidebarNavActive) window.syncSidebarNavActive();
     } else if (window.htmx) {
         window.htmx.ajax('GET', '/topology?view=' + view,
                          { target: '#table-pane', swap: 'innerHTML' }).then(function() {
             try { history.pushState(null, '', '/topology?view=' + view); } catch (e) {}
+            if (window.syncSidebarNavActive) window.syncSidebarNavActive();
         });
     } else {
         window.location.href = '/topology?view=' + view;
@@ -7695,13 +7697,97 @@ window.clearDetailPanelSearch = function(btnEl) {
     };
 })();
 
-document.addEventListener("htmx:pushedIntoHistory", function() {
-    var path = window.location.pathname.replace(/^\//, "").split("/")[0] || "home";
-    document.querySelectorAll(".sidebar-nav a").forEach(function(a) {
-        var href = a.getAttribute("href").replace(/^\//, "");
-        a.classList.toggle("active", href === path);
+/* ONE canonical sidebar-active sync (docs/126 r3). Three independent setters
+ * used to fight: this handler (which compared hrefs WITH their query string
+ * against the bare path, so subnav links never toggled and same-href
+ * parent+child both lit), chipNavView's manual push/replaceState (which fires
+ * no htmx history event, so nothing ever CLEARED the previous menu), and
+ * chip-status's _setActiveTab (its own group only). Every navigation now
+ * clears everything and re-derives the active set from the URL. */
+window.syncSidebarNavActive = function() {
+    var path = window.location.pathname;
+    var view = null;
+    try { view = new URLSearchParams(window.location.search).get("view"); } catch (e) {}
+    var matches = [];
+    document.querySelectorAll(".sidebar-nav a[href]").forEach(function(a) {
+        a.classList.remove("active");
+        var href = a.getAttribute("href") || "";
+        var q = href.indexOf("?");
+        var hPath = q < 0 ? href : href.slice(0, q);
+        if (hPath !== path) return;
+        var hView = null;
+        if (q >= 0) { try { hView = new URLSearchParams(href.slice(q)).get("view"); } catch (e) {} }
+        // a view-scoped link matches its own view; bare /topology means the
+        // page's first section (the spy moves the subnav highlight later)
+        if (hView && view && hView !== view) return;
+        if (hView && !view && hView !== "topology") return;
+        matches.push({ a: a, href: href, sub: !!a.closest(".nav-subitems") });
     });
-});
+    // same-href parent+child (Chip Components + Qubits are both /qubits):
+    // the child owns the highlight — base.html: "Parent deliberately carries
+    // no active class". Distinct hrefs (Chip Status + its ?view= child) keep
+    // both, matching the server's own full-load render.
+    matches.forEach(function(m) {
+        var twin = matches.some(function(o) { return o !== m && o.href === m.href && o.sub; });
+        if (!(m.sub === false && twin)) m.a.classList.add("active");
+    });
+};
+document.addEventListener("htmx:pushedIntoHistory", window.syncSidebarNavActive);
+document.addEventListener("htmx:replacedInHistory", window.syncSidebarNavActive);
+window.addEventListener("popstate", function() { setTimeout(window.syncSidebarNavActive, 0); });
+
+/* NavProgress (docs/126 r3) — the brand-area loading indicator. Counts
+ * in-flight #table-pane requests via htmx's own events; shows after 400 ms
+ * (fast navigations never flash) with an elapsed-seconds counter, and hides
+ * when the LAST one settles. A WeakSet dedups the settle events — htmx can
+ * fire more than one terminal event for the same xhr (afterRequest +
+ * responseError; sendAbort under hx-sync replace). */
+(function () {
+    var count = 0, t0 = 0, showTimer = null, tick = null;
+    var seen = (typeof WeakSet !== 'undefined') ? new WeakSet() : null;
+    function el() { return document.getElementById('nav-progress'); }
+    function isPane(evt) {
+        var t = evt.detail && evt.detail.target;
+        return !!(t && t.id === 'table-pane');
+    }
+    function show() {
+        var p = el(); if (!p) return;
+        p.hidden = false;
+        var timeEl = p.querySelector('.nav-progress-time');
+        clearInterval(tick);
+        tick = setInterval(function () {
+            if (timeEl) timeEl.textContent = ((Date.now() - t0) / 1000).toFixed(1) + ' s';
+        }, 100);
+    }
+    function hide() {
+        clearTimeout(showTimer); showTimer = null;
+        clearInterval(tick); tick = null;
+        var p = el(); if (p) p.hidden = true;
+    }
+    document.addEventListener('htmx:beforeRequest', function (evt) {
+        if (!isPane(evt)) return;
+        count++;
+        if (count === 1) {
+            t0 = Date.now();
+            clearTimeout(showTimer);
+            showTimer = setTimeout(show, 400);
+        }
+    });
+    function settle(evt) {
+        if (!isPane(evt)) return;
+        var x = evt.detail && evt.detail.xhr;
+        if (seen && x) {
+            if (seen.has(x)) return;
+            seen.add(x);
+        }
+        count = Math.max(0, count - 1);
+        if (count === 0) hide();
+    }
+    ['htmx:afterRequest', 'htmx:sendAbort', 'htmx:sendError',
+     'htmx:responseError', 'htmx:timeout'].forEach(function (n) {
+        document.addEventListener(n, settle);
+    });
+})();
 
 /* ------------------------------------------------------------------ */
 /* Instrument Wiring Diagram                                           */
@@ -12360,10 +12446,8 @@ document.addEventListener('htmx:afterSwap', function(evt) {
         } else {
             // Fallback: no inspector pane → navigate to Datasets
             htmx.ajax('GET', '/datasets', {target: '#table-pane', swap: 'innerHTML'}).then(function() {
-                document.querySelectorAll('.sidebar-nav a').forEach(function(a) {
-                    a.classList.toggle('active', a.getAttribute('href') === '/datasets');
-                });
                 history.pushState({}, '', '/datasets');
+                if (window.syncSidebarNavActive) window.syncSidebarNavActive();
                 window._dsOpenAtTop = true;
                 htmx.ajax('GET', '/dataset/' + runId, {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'});
             });

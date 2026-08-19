@@ -642,3 +642,28 @@ pinned by the updated `TestDatasetNavR16` (+ ten-step clamp test) and
   `.nav-sub-row`), the anchor goes transparent, and the icons inherit the
   inverse color with no box of their own. Measured live: row bg
   rgb(1,114,173), icons inside, ⧉ background transparent.
+
+### r3 심플 버그 + 제안 — sidebar duplicate activation, brand-area progress
+
+- **Duplicate activation**: three independent active-setters fought — the
+  `htmx:pushedIntoHistory` handler compared query-carrying hrefs against the
+  bare first path segment (Chip Status' `?view=` subnav links never toggled,
+  and the same-href Chip Components parent + Qubits child BOTH lit), while
+  `chipNavView`'s manual push/replaceState fires no htmx history event at all
+  (nothing ever CLEARED the previous menu — the reported Qubits+Topology,
+  Trends+Pulses, Param History+Trends states). ONE canonical
+  `syncSidebarNavActive()` now clears everything and re-derives the active
+  set from the URL (path + `view` param; same-href twins go to the CHILD per
+  base.html's own rule; Chip Status parent + its view child both light,
+  matching the server's full-load render), wired into pushedIntoHistory /
+  replacedInHistory / popstate / both chipNavView branches / the datasets
+  fallback. Real-browser verified across the exact reported sequences.
+- **NavProgress** (제안): a heavy first open (Param History on a big chip)
+  gave no sign of life. After a 400 ms grace the brand area becomes a blue
+  indeterminate sweep + an elapsed-seconds counter (tabular-nums, 100 ms
+  tick), hiding when the last #table-pane request settles. Honest by
+  construction: the server reports no progress, so no percentage is invented
+  — what the user asked to see is that time IS passing, and how much.
+  Terminal-event dedup via WeakSet (htmx can fire afterRequest AND
+  responseError for one xhr; sendAbort under hx-sync replace), reduced-motion
+  fallback = solid bar. Pinned by `TestSidebarActiveSync` + `TestNavProgress`.
