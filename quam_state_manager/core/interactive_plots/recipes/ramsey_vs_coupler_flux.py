@@ -2,8 +2,14 @@
 
 Two tiles per pair, mirroring the lab's own two figures:
 
-* **Fringes** — the raw Ramsey ``state`` heatmap over (coupler flux × idle
-  time), flux on x (the lab's convention for every flux sweep, docs/78 §4.1).
+* **Fringes** — the raw Ramsey ``state`` heatmap over (idle time × coupler
+  flux), **idle time on x** — the lab's own figure for this family
+  (``calibration_utils/ramsey_vs_coupler_flux/plotting.py``: xarray default,
+  xlabel "Idle time (ns)"), matching the sibling 17a recipe and ndview's
+  docs/122 axis rank. The first version shipped flux-on-x citing "the lab's
+  convention for every flux sweep" — false for this family, and it rendered
+  the Interactive tile transposed against BOTH the Raw-Data tab and the lab's
+  static PNG beside it (docs/124 M-12; the red team's executed inversion).
 * **Qubit frequency vs coupler flux** — the extracted per-flux qubit
   frequency (``ds_fit.qubit_frequency``), with the 17b branch-resolution
   context (``…_above``/``…_below`` dotted) and its detected crossings marked.
@@ -90,18 +96,19 @@ def _fringes(bundle, key, tname):
     idle = np.asarray(raw["coords"].get("idle_times", []), dtype=float)
     z, dims = pslice(raw, "state", pidx)
     z = np.asarray(z, dtype=float)
-    # heatmap z is [y][x] = [idle][flux]; the cube ships (flux, idle) or the
-    # transpose depending on generation — orient by the NAMED dims.
-    if dims and dims[0] == "coupler_flux" and z.ndim == 2:
+    # heatmap z is [y][x] = [flux][idle] (idle on x — the lab's orientation,
+    # docs/124 M-12); the cube ships (flux, idle) or the transpose depending
+    # on generation — orient by the NAMED dims.
+    if dims and dims[0] == "idle_times" and z.ndim == 2:
         z = z.T
-    if z.ndim != 2 or z.shape != (idle.size, flux.size):
+    if z.ndim != 2 or z.shape != (flux.size, idle.size):
         return FigureSpec(key=key, title="Ramsey fringes vs coupler flux",
                           available=False,
                           reason=f"unexpected cube shape {z.shape} for "
-                                 f"{idle.size} idle times x {flux.size} flux points")
-    data = [pb.heatmap(flux, idle, z, colorbar_title="state", robust=True)]
-    layout = {"xaxis": {"title": {"text": "coupler flux amplitude [V]"}},
-              "yaxis": {"title": {"text": "idle time [ns]"}},
+                                 f"{flux.size} flux points x {idle.size} idle times")
+    data = [pb.heatmap(idle, flux, z, colorbar_title="state", robust=True)]
+    layout = {"xaxis": {"title": {"text": "idle time [ns]"}},
+              "yaxis": {"title": {"text": "coupler flux amplitude [V]"}},
               "margin": {"l": 60, "r": 30, "t": 50, "b": 50}}
     return FigureSpec(key=key, title="Ramsey fringes vs coupler flux",
                       kind="2d", figure={"data": data, "layout": layout},

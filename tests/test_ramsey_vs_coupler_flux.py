@@ -19,6 +19,11 @@ _CANDIDATES = [
     (_ROOT / "dataset" / "AS_10TQ9TC", "#*17b_ramsey_vs_coupler_flux*"),
     (_ROOT / "Novera9Q", "#*21a_ramsey_vs_coupler_flux*"),
     (_ROOT / "Novera9Q", "#*10b_ramsey_vs_coupler_flux*"),
+    # date-dir layout (<root>/<date>/#N_...) — the CQT archive shape the
+    # docs/124 M-12 inversion was executed on (run #490 of 2026-08-14)
+    (_ROOT, "#*17b_ramsey_vs_coupler_flux*"),
+    (_ROOT, "#*21a_ramsey_vs_coupler_flux*"),
+    (_ROOT, "#*10b_ramsey_vs_coupler_flux*"),
 ]
 
 
@@ -115,10 +120,21 @@ class TestRealRunGoldens:
                 # doctrine: relative flux axis + bookkeeping-only node
                 # update => view-only, never a staged write
                 assert fig.clickable is None, (folder.name, t.key)
-            # fringes is a heatmap whose grid matches the coords exactly
+            # fringes is a heatmap whose grid matches the coords exactly,
+            # oriented IDLE ON X — the lab's own figure for this family and
+            # ndview's docs/122 rank. The first version of this pin froze the
+            # opposite orientation in place, which is how the Interactive tile
+            # shipped transposed against BOTH the Raw-Data tab and the lab's
+            # static PNG beside it (docs/124 M-12: a green pin on each side,
+            # no pin across them — the cross-surface assert below closes that).
             fr = r.build(b, tiles[0].key)
             hm = fr.figure["data"][0]
             n_flux = len(b.raw["coords"]["coupler_flux"])
             n_idle = len(b.raw["coords"]["idle_times"])
-            assert len(hm["x"]) == n_flux and len(hm["y"]) == n_idle
-            assert len(hm["z"]) == n_idle and len(hm["z"][0]) == n_flux
+            assert len(hm["x"]) == n_idle and len(hm["y"]) == n_flux
+            assert len(hm["z"]) == n_flux and len(hm["z"][0]) == n_idle
+            # cross-surface: ndview's axis rank must agree (idle before flux
+            # means idle takes x there too — the two tabs render the same run
+            # the same way, which is customer report docs/122 #1's whole ask)
+            from quam_state_manager.core.ndview import _AXIS_RANK
+            assert _AXIS_RANK["idle_times"] < _AXIS_RANK["coupler_flux"]
