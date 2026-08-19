@@ -214,7 +214,83 @@ function part4() {
     ok(a.querySelector('circle').hasAttribute('stroke-dasharray'),
        'coincident: shared-cell members wear the dashed ring');
   }
-  finish();
+  part5();
+}
+
+/* docs/126 ② — the metric patches drive the map: frequency patches, EDGE
+ * metrics (2Q Bell / 2Q RB printed ON the edges, stones neutral), the 2×
+ * default zoom with working controls, the fat edge hit area, and the pair
+ * hover popup. */
+function part5() {
+  const win = makeWorld();
+  const topo = {
+    nodes: [
+      { id: 'q1', grid_location: '0,0', T1: 1e-5, f_01: 4.8e9, readout_frequency: 7.2e9 },
+      { id: 'q2', grid_location: '1,0', T1: 2e-5, f_01: 5.1e9, readout_frequency: 7.3e9 },
+      { id: 'q3', grid_location: '0,1', T1: 3e-5, f_01: 4.9e9 },
+    ],
+    edges: [
+      { pair_id: 'q1-2', source: 'q1', target: 'q2', has_cz: true, cz_fidelity: 0.97,
+        gate_kind: 'cz', directed: false, active: null, best_gate: 'cz_flattop',
+        gate_fidelities: [{ gate: 'cz_flattop', metric: 'StandardRB', value: 0.951 }],
+        detuning: 2.5e8, has_coupler: true, coupler_decouple_offset: 0.012 },
+      { pair_id: 'q1-3', source: 'q1', target: 'q3', has_cz: true, cz_fidelity: null,
+        gate_kind: 'cz', directed: false, active: null, best_gate: null },
+    ],
+  };
+  mount(win, topo, []);
+  const hero = win.document.getElementById('topo-hero');
+  const doc = win.document;
+
+  const fbtn = hero.querySelector('[data-hero-metric="f_01"]');
+  ok(!!fbtn, 'freq: Qubit freq patch offered');
+  ok(fbtn && fbtn.className.indexOf('active') !== -1, 'freq: f_01 is the default metric');
+  ok(!!hero.querySelector('[data-hero-metric="readout_frequency"]'),
+     'freq: Readout freq patch offered');
+  const q1n = hero.querySelector('[data-hero-qubit="q1"]');
+  ok(q1n && /4\.8000 GHz/.test(q1n.textContent), 'freq: node shows its GHz value on the map');
+
+  let svg = hero.querySelector('svg.topo-hero-svg');
+  ok(svg && (svg.getAttribute('style') || '').indexOf('width:200%') !== -1,
+     'zoom: default is 2x the pane fit (docs/126 "~2x bigger")');
+  hero.querySelector('[data-hero-zoom="in"]').click();
+  svg = hero.querySelector('svg.topo-hero-svg');
+  ok(svg && (svg.getAttribute('style') || '').indexOf('width:225%') !== -1, 'zoom: + steps up');
+  ok(win.localStorage.getItem('quam_topo_hero_zoom') === '2.25', 'zoom persists');
+  hero.querySelector('[data-hero-zoom="fit"]').click();
+  svg = hero.querySelector('svg.topo-hero-svg');
+  ok(svg && (svg.getAttribute('style') || '').indexOf('width:100%') !== -1,
+     'zoom: Fit returns to the pane fit');
+
+  const eb = hero.querySelector('[data-hero-metric="rb2q_standard"]');
+  ok(!!eb, 'edge metric: 2Q RB patch offered');
+  ok(!!hero.querySelector('[data-hero-metric="cz_fidelity"]'), 'edge metric: 2Q Bell patch offered');
+  eb.click();
+  const evals = hero.querySelectorAll('.topo-hero-eval');
+  ok(evals.length === 1, '2Q RB: exactly the measured edge prints a value (got '
+     + evals.length + ')');
+  ok(evals[0] && /95\.1/.test(evals[0].textContent), '2Q RB: the printed value is the best StandardRB');
+  ok(hero.querySelectorAll('.topo-hero-node-neutral').length === 3,
+     'edge mode: stones go neutral (edges carry the numbers)');
+  ok(hero.querySelectorAll('.topo-hero-val').length === 0, 'edge mode: no stale node values');
+  ok(win.localStorage.getItem('quam_topo_hero_metric') === 'rb2q_standard', 'edge metric persists');
+  const legend = hero.querySelector('.topo-hero-legend');
+  ok(legend && !!legend.querySelector('.topo-hero-lg-grad'), 'edge mode: gradient legend renders');
+
+  const hit = hero.querySelector('.topo-hero-edge-hit');
+  ok(hit && hit.getAttribute('stroke-width') === '22',
+     'edges carry a fat (22) hit area — the customer could not click the old 11');
+
+  const eg = hero.querySelector('[data-hero-pair="q1-2"]');
+  eg.dispatchEvent(new win.Event('mouseenter'));
+  setTimeout(function () {
+    const pop = doc.querySelector('.topo-pair-popup');
+    ok(!!pop, 'pair hover opens the pair popup');
+    ok(pop && /q1-2/.test(pop.textContent), 'pair popup names the pair');
+    ok(pop && /95\.10%/.test(pop.textContent), 'pair popup lists the per-gate RB fidelity');
+    ok(pop && /detuning/.test(pop.textContent), 'pair popup lists the parameters section');
+    finish();
+  }, 400);
 }
 
 function finish() {

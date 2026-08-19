@@ -188,7 +188,12 @@ class TestItIsRegisteredEverywhere:
     def test_the_tab_spec_and_lazy_build(self):
         js = self._src("quam_state_manager/web/static/chip-status.js")
         assert "trends:       { build: 'trends'" in js
-        assert "'distributions', '2qrb', 'metrics', 'trends'" in js
+        assert "'2qrb', 'metrics', 'trends'" in js
+        # docs/126 ②: every spec-driven chart (metric panels, 2Q RB) rides the
+        # house theme at the ONE render choke point — the specs never set a
+        # font color, so dark mode drew axis labels in Plotly's default gray.
+        idx = js.index("function _renderChartSpecsProgressively")
+        assert "PlotTheme.houseLayout" in js[idx:idx + 2500]
 
     def test_it_is_lazy_never_on_the_page_render(self, client, tmp_path):
         """It reads the history index; a chip with hundreds of snapshots must

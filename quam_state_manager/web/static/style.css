@@ -197,9 +197,6 @@
     --topo-heatmap-value-size:  1.25em; /* value inside heatmap cell */
 
     /* -- Histogram section -- */
-    --topo-hist-height:         344px;  /* height of each histogram chart */
-    --topo-hist-min-width:      438px;  /* min width of each histogram box */
-    --topo-hist-title-size:     1.29em; /* histogram box title (e.g. "Gate Fidelity Distribution") */
 
     /* -- Per-metric detail panels (Section 5 & 6) -- */
     --topo-panel-cell-size:     132px;  /* width/height of metric panel grid cells */
@@ -3416,8 +3413,34 @@ td.col-delta .val-delta { margin-left: 0; }
     color: var(--pico-primary-inverse); font-weight: 600;
 }
 .topo-hero-mbtn.active .metric-label { color: inherit; }
+/* pair-metric patches read as edges: a subtle link glyph before the label */
+.topo-hero-mbtn-edge::before { content: '↔ '; opacity: .7; }
+.topo-hero-zoomctl { margin-left: auto; display: inline-flex; gap: .25rem; align-items: center; }
+.topo-hero-zbtn {
+    /* width/margin: Pico's global button rules are width:100% + a bottom
+       margin — without the override the three controls render as full-row
+       bars (caught by the real-browser probe). */
+    width: auto; margin: 0;
+    font-size: .78em; line-height: 1.3; padding: .14rem .5rem; cursor: pointer;
+    border: 1px solid var(--pico-muted-border-color); border-radius: 6px;
+    background: transparent; color: var(--pico-muted-color);
+}
+.topo-hero-zbtn:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
+/* docs/126 ②: the value printed ON an edge when a 2Q metric is selected —
+   halo (paint-order stroke) instead of a pill, so no width estimation and it
+   stays readable over the coloured line in both themes. */
+.topo-hero-eval {
+    font-size: 15px; font-weight: 700; text-anchor: middle; pointer-events: none;
+    fill: var(--pico-color); paint-order: stroke;
+    stroke: var(--pico-card-background-color, #fff); stroke-width: 5px;
+    stroke-linejoin: round;
+}
+.topo-hero-node-neutral .topo-hero-id { fill: var(--pico-muted-color); font-size: 13px; }
 .topo-hero-map { position: relative; }
-.topo-hero-scroll { overflow-x: auto; }
+/* docs/126 ②: the container owns the overflow on BOTH axes — the map renders
+   at zoom × pane width (default 2×) and scrolls inside this box, so a big or
+   tall chip never buries the sections below. */
+.topo-hero-scroll { overflow: auto; max-height: 82vh; }
 .topo-hero-note {
     position: absolute; top: 6px; left: 6px; z-index: 2; pointer-events: none;
     font-size: .78em; font-weight: 600; padding: .15rem .55rem; border-radius: 4px;
@@ -3430,8 +3453,11 @@ td.col-delta .val-delta { margin-left: 0; }
    — which is what let _refitTopology and its resize listener be deleted rather
    than repointed. The max-height keeps a tall, narrow chip from pushing the
    sections below off the first screen. */
+/* Sized by the inline zoom style (width: N%, docs/126 ②); the old 70vh
+   max-height letterboxed the drawing smaller than the pane — the container
+   above scrolls instead. */
 .topo-hero-svg { display: block; width: 100%; height: auto;
-    max-height: 70vh; margin-inline: auto; }
+    max-width: none; margin-inline: auto; }
 /* C / T / M role markers. Circles read as a distinct LAYER from the stones:
    filled with the surface colour so the edge beneath does not show through,
    outlined so they stay legible over a heat-coloured node. */
@@ -3671,49 +3697,54 @@ td.col-delta .val-delta { margin-left: 0; }
     user-select: none;
 }
 .topo-card-more-btn:hover { color: var(--pico-primary); }
-.topo-card-popup {
+/* docs/126 ② — modernized popup chrome (customer feedback: same info, less
+   dated): soft 14px radius, layered shadow, translucent blurred surface, and
+   theme-aware hairline borders (the old rgba(0,0,0,…) borders vanished on
+   dark). Both popups share the language. */
+.topo-card-popup, .topo-pair-popup {
     position: absolute; z-index: 100;
-    background: var(--pico-card-background-color, #fff);
-    border: 1px solid rgba(0,0,0,0.15);
-    box-shadow: 0 4px 16px rgba(0,0,0,0.22);
-    border-radius: 6px; padding: 4px 0;
-    min-width: 190px;
+    background: color-mix(in srgb, var(--pico-card-background-color, #fff) 88%, transparent);
+    -webkit-backdrop-filter: blur(10px) saturate(1.15);
+    backdrop-filter: blur(10px) saturate(1.15);
+    border: 1px solid var(--pico-muted-border-color);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.10), 0 12px 32px rgba(0,0,0,0.18);
+    border-radius: 14px;
     animation: topo-popup-in 0.15s ease-out;
 }
-.topo-card-popup .topo-popup-header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 2px 8px 4px; font-size: var(--topo-popup-header-size); font-weight: 600;
-    border-bottom: 1px solid rgba(0,0,0,0.08);
+.topo-card-popup { padding: 6px 2px; min-width: 200px; }
+.topo-card-popup .topo-prop-row { padding: 0 8px; }
+.topo-pair-popup { padding: 8px 2px; min-width: 240px; max-width: 340px; }
+.topo-card-popup .topo-popup-header, .topo-pair-popup .topo-popup-header {
+    display: flex; align-items: center; justify-content: space-between; gap: .5rem;
+    padding: 2px 12px 6px; font-weight: 600;
+    border-bottom: 1px solid var(--pico-muted-border-color);
 }
-.topo-card-popup .topo-popup-close {
-    background: none; border: none; cursor: pointer;
-    font-size: 1.1em; color: var(--pico-muted-color); padding: 0 2px;
+.topo-card-popup .topo-popup-header { font-size: var(--topo-popup-header-size); }
+.topo-pair-popup .topo-popup-header { font-size: var(--topo-popup-pair-header-size); font-weight: 700; }
+.topo-card-popup .topo-popup-close, .topo-pair-popup .topo-popup-close {
+    background: none; border: none; cursor: pointer; line-height: 1;
+    font-size: 1em; color: var(--pico-muted-color);
+    width: 24px; height: 24px; border-radius: 50%; padding: 0;
 }
-.topo-pair-popup {
-    position: absolute; z-index: 100;
-    background: var(--pico-card-background-color, #fff);
-    border: 1px solid rgba(0,0,0,0.15);
-    box-shadow: 0 4px 16px rgba(0,0,0,0.22);
-    border-radius: 6px; padding: 6px 0;
-    min-width: 220px; max-width: 320px;
-    animation: topo-popup-in 0.15s ease-out;
+.topo-card-popup .topo-popup-close:hover, .topo-pair-popup .topo-popup-close:hover {
+    background: var(--pico-muted-border-color); color: var(--pico-color);
 }
-.topo-pair-popup .topo-popup-header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 2px 8px 4px; font-size: var(--topo-popup-pair-header-size); font-weight: 700;
-    border-bottom: 1px solid rgba(0,0,0,0.08);
+/* gate-kind chip in the pair header (CZ / CR / off) */
+.topo-popup-kind {
+    font-size: .62em; font-weight: 700; letter-spacing: .04em; vertical-align: middle;
+    padding: .08rem .4rem; border-radius: 999px; margin-left: .1rem;
+    background: var(--pico-primary); color: var(--pico-primary-inverse);
 }
-.topo-pair-popup .topo-popup-close {
-    background: none; border: none; cursor: pointer;
-    font-size: 1.1em; color: var(--pico-muted-color); padding: 0 2px;
-}
+.topo-popup-kind.topo-popup-off { background: var(--pico-muted-color); }
 .topo-pair-popup .topo-popup-section {
-    padding: 3px 8px; font-size: var(--topo-popup-section-size); line-height: 1.5;
+    padding: 4px 12px; font-size: var(--topo-popup-section-size); line-height: 1.55;
 }
 .topo-pair-popup .topo-popup-section-title {
-    font-weight: 600; font-size: var(--topo-popup-section-title-size); color: var(--pico-muted-color);
-    margin-top: 4px; border-top: 1px solid rgba(0,0,0,0.06); padding-top: 3px;
+    font-weight: 700; font-size: calc(var(--topo-popup-section-title-size) * 0.82);
+    text-transform: uppercase; letter-spacing: .06em; color: var(--pico-muted-color);
+    margin-top: 4px; padding-top: 5px; border-top: 1px solid var(--pico-muted-border-color);
 }
+.topo-pair-popup .topo-popup-section:first-of-type .topo-popup-section-title { border-top: none; margin-top: 0; }
 .topo-pair-popup .topo-popup-row {
     display: flex; justify-content: space-between; gap: 8px; font-family: monospace;
 }
@@ -4031,17 +4062,6 @@ a.topo-health-tile:hover { background: var(--pico-card-sectioning-background-col
 }
 
 /* ── Distribution histograms ──────────────────────────────────────── */
-.topo-histograms {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--topo-hist-min-width), 1fr));
-    gap: 0.75rem;
-}
-.topo-hist-box {
-    border: 1px solid var(--pico-muted-border-color); border-radius: 6px;
-    overflow: hidden; background: var(--pico-card-background-color, var(--pico-background-color));
-}
-.topo-hist-title { font-size: var(--topo-hist-title-size); font-weight: 600; padding: 0.4rem 0.6rem 0; }
-.topo-hist-chart { height: var(--topo-hist-height); }
-
 /* ── Metric detail panels (Section 5) ─────────────────────────────── */
 .topo-metric-panel-row {
     display: flex; align-items: flex-start; gap: 1rem; flex-wrap: wrap;

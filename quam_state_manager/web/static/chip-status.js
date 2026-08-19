@@ -89,7 +89,7 @@ window.ChipStatus.layout = (function () {
         // .topo-metric-bar-chart element, so it selected nothing even when the
         // class survived.
         if (window.PlotHost) {
-            document.querySelectorAll('.topo-metric-bar-chart, .topo-hist-chart')
+            document.querySelectorAll('.topo-metric-bar-chart')
                 .forEach(function (el) { window.PlotHost.resizeWithin(el); });
         }
     }
@@ -708,10 +708,85 @@ window.ChipStatus.mount = function (opts) {
         }
 
 
+        // ── Pair detail popup (docs/126 ②) ───────────────────────────
+        // Same singleton + positioning + teardown as the qubit popup; the
+        // pair flavor renders the edge payload the topology already carries
+        // (2Q fidelities per gate, detuning, coupler offsets, roles).
+        function openPairPopup(e, anchorEl, pinned) {
+            closePopup();
+            var popup = document.createElement('div');
+            popup.className = 'topo-pair-popup';
+            function pct(v) { return (v * 100).toFixed(2) + '%'; }
+            function row(label, val, win) {
+                return '<div class="topo-popup-row' + (win ? ' topo-popup-row-win' : '') + '">'
+                     + '<span class="topo-popup-row-label">' + label + '</span>'
+                     + '<span>' + val + '</span></div>';
+            }
+            var kind = e.gate_kind === 'cr' ? 'CR' : (e.gate_kind === 'cz' ? 'CZ' : '');
+            var html = '<div class="topo-popup-header"><span>' + _esc(e.pair_id)
+                + (kind ? ' <span class="topo-popup-kind">' + kind + '</span>' : '')
+                + (e.active === false ? ' <span class="topo-popup-kind topo-popup-off">off</span>' : '')
+                + '</span><button class="topo-popup-close">✕</button></div>';
+
+            var fidRows = '';
+            (e.gate_fidelities || []).forEach(function(gf) {
+                var v = typeof gf.value === 'number' ? gf.value
+                      : typeof gf.average_gate_fidelity === 'number' ? gf.average_gate_fidelity : null;
+                if (v == null) return;
+                fidRows += row(_esc(gf.gate) + ' · ' + _esc(gf.metric), pct(v),
+                               e.best_gate && gf.gate === e.best_gate);
+            });
+            if (!fidRows && e.cz_fidelity != null) fidRows = row('2Q fidelity', pct(e.cz_fidelity));
+            if (fidRows) {
+                html += '<div class="topo-popup-section">'
+                     + '<div class="topo-popup-section-title">Gate fidelity</div>' + fidRows;
+                if (typeof e.cz_fidelity_updated_at === 'number') {
+                    html += '<div class="topo-popup-recency"><span class="topo-recency '
+                         + _ageClass(e.cz_fidelity_updated_at) + '">measured '
+                         + _ageLabel(e.cz_fidelity_updated_at) + '</span></div>';
+                }
+                html += '</div>';
+            }
+
+            var parRows = '';
+            if (typeof e.detuning === 'number') parRows += row('detuning', fmt(e.detuning, 'MHz'));
+            if (typeof e.mutual_flux_bias === 'number') parRows += row('mutual flux bias', e.mutual_flux_bias);
+            if (e.has_coupler && typeof e.coupler_decouple_offset === 'number') {
+                parRows += row('coupler decouple offset', e.coupler_decouple_offset.toFixed(4) + ' V');
+            }
+            if (e.moving_qubit) {
+                parRows += row('moving qubit (M)', e.moving_qubit === 'control'
+                               ? 'control — ' + _esc(e.source) : 'target — ' + _esc(e.target));
+            }
+            if (e.confusion_size) {
+                parRows += row('confusion', e.confusion_size + '×' + e.confusion_size
+                               + (e.confusion_diag ? ' (diag ' + e.confusion_diag.map(function(d) {
+                                     return (d * 100).toFixed(1) + '%'; }).join(' / ') + ')' : ''));
+            }
+            if (parRows) {
+                html += '<div class="topo-popup-section">'
+                     + '<div class="topo-popup-section-title">Parameters</div>' + parRows + '</div>';
+            }
+            if (!fidRows && !parRows) {
+                html += '<div class="topo-popup-section muted">no recorded pair data</div>';
+            }
+
+            popup.innerHTML = html;
+            popup.querySelector('.topo-popup-close').addEventListener('click', function(ev) {
+                ev.stopPropagation(); closePopup();
+            });
+            popup._pinned = !!pinned;
+            popup.addEventListener('mouseenter', function() { clearTimeout(_moreLeaveTimer); });
+            popup.addEventListener('mouseleave', _scheduleMoreClose);
+            activePopup = popup;
+            positionPopup(popup, anchorEl);
+        }
+
         // Hand the ONE popup implementation to the hero map (see the bridge
         // declaration above buildTopology) — same singleton, same teardown.
         _sharedQubitPopup = {
             open: openQubitMore,
+            openPair: openPairPopup,
             scheduleClose: _scheduleMoreClose,
             cancelClose: function() { clearTimeout(_moreHoverTimer); clearTimeout(_moreLeaveTimer); },
         };
@@ -740,14 +815,52 @@ window.ChipStatus.mount = function (opts) {
         }
 
         var HERO_KEY = 'quam_topo_hero_metric';
+        var ZOOM_KEY = 'quam_topo_hero_zoom';
+        // docs/126 ② — the metric patches ARE the map's controls: clicking one
+        // paints the value inside every stone (or, for a 2Q metric, ON every
+        // edge) immediately, no scrolling. Frequencies join the row, and 2Q
+        // metrics become first-class EDGE metrics (scope:'edge').
         var METRICS = [
-            { key: 'T1',                  fmtFn: function(v) { return fmt(v, 'us'); } },
-            { key: 'T2echo',              fmtFn: function(v) { return fmt(v, 'us'); } },
+            { key: 'f_01',                label: 'Qubit freq',
+              fmtFn: function(v) { return fmt(v, 'GHz'); } },
+            { key: 'readout_frequency',   label: 'Readout freq',
+              fmtFn: function(v) { return fmt(v, 'GHz'); } },
             { key: 'gate_fidelity_avg',   fmtFn: function(v) { return fmtPct(v, 2) + '%'; } },
             { key: 'assignment_fidelity', fmtFn: function(v) { return fmtPct(v, 2) + '%'; } },
+            { key: 'T1',                  fmtFn: function(v) { return fmt(v, 'us'); } },
+            { key: 'T2echo',              fmtFn: function(v) { return fmt(v, 'us'); } },
         ].filter(function(m) {
             return topo.nodes.some(function(n) { return _mv(n, m.key) != null; });
         });
+
+        // Per-edge best value for a named 2Q RB metric (the same per-pair-best
+        // + physical (0,1] gate buildOverviewTiles' collect2Q applies).
+        function edgeBest2Q(e, match) {
+            if (!e.gate_fidelities) return null;
+            var best = null;
+            e.gate_fidelities.forEach(function(gf) {
+                if (!match(gf.metric)) return;
+                var v = typeof gf.value === 'number' ? gf.value
+                      : typeof gf.average_gate_fidelity === 'number'
+                          ? gf.average_gate_fidelity : null;
+                if (v != null && v > 0 && v <= 1 && (best == null || v > best)) best = v;
+            });
+            return best;
+        }
+        var EDGE_METRICS = [
+            { key: 'cz_fidelity', scope: 'edge', label: '2Q Bell (CZ)',
+              fmtFn: function(v) { return fmtPct(v, 1) + '%'; },
+              valFn: function(e) { return _mv(e, 'cz_fidelity'); } },
+            { key: 'rb2q_standard', scope: 'edge', label: '2Q RB',
+              fmtFn: function(v) { return fmtPct(v, 1) + '%'; },
+              valFn: function(e) { return edgeBest2Q(e, function(m) { return m === 'StandardRB'; }); } },
+            { key: 'rb2q_interleaved', scope: 'edge', label: '2Q IRB',
+              fmtFn: function(v) { return fmtPct(v, 1) + '%'; },
+              valFn: function(e) { return edgeBest2Q(e, function(m) { return m === 'InterleavedRB' || m === 'IRB'; }); } },
+        ].filter(function(m) {
+            return topo.edges.some(function(e) { return m.valFn(e) != null; });
+        });
+        METRICS = METRICS.concat(EDGE_METRICS);
         if (topo.nodes.some(function(n) { return n.last_calibrated != null; })) {
             METRICS.push({ key: 'last_calibrated', mode: 'age', label: 'Last calibrated' });
         }
@@ -756,6 +869,17 @@ window.ChipStatus.mount = function (opts) {
         var current = null;
         try { current = localStorage.getItem(HERO_KEY); } catch (e) {}
         if (!METRICS.some(function(m) { return m.key === current; })) current = METRICS[0].key;
+
+        // Map zoom — a multiplier over the pane-fit width (docs/126 ②: "make
+        // the whole topology ~2× bigger"). 1 = fit-to-pane. The scroll
+        // container owns the overflow, so a zoomed or tall map scrolls INSIDE
+        // the section instead of pushing the page around. The default is
+        // resolved on first render (needs the map's W/H + the pane width).
+        var zoom = null;
+        try {
+            var zRaw = parseFloat(localStorage.getItem(ZOOM_KEY));
+            if (zRaw >= 1 && zRaw <= 4) zoom = zRaw;
+        } catch (e) {}
 
         // Per-qubit open findings, attributed by jump_path (same address
         // grammar as liveDiff's _entityOf). Pair findings are out of scope
@@ -792,14 +916,14 @@ window.ChipStatus.mount = function (opts) {
             }
             if (m.mode === 'age') {
                 var ms = n.last_calibrated;
-                if (ms == null) return { fill: dCfg.nullCellColor, fg: '#666', text: '—',
-                                         title: 'no calibration timestamps' };
+                if (ms == null) return { fill: dCfg.nullCellColor, fg: 'var(--pico-muted-color)',
+                                         text: '—', title: 'no calibration timestamps' };
                 var ac = _ageClass(ms);
-                if (!ac) return { fill: dCfg.nullCellColor, fg: '#666', text: '—', title: '' };
+                if (!ac) return { fill: dCfg.nullCellColor, fg: 'var(--pico-muted-color)', text: '—', title: '' };
                 return { cls: 'hs-' + ac, text: _ageLabel(ms), title: 'last calibrated ' + _ageLabel(ms) };
             }
             if (_badFit(n, m.key)) {
-                return { fill: dCfg.nullCellColor, fg: '#666', cls: 'hs-badfit',
+                return { fill: dCfg.nullCellColor, fg: 'var(--pico-muted-color)', cls: 'hs-badfit',
                          text: m.fmtFn(n.metrics[m.key].raw),
                          title: 'unphysical (likely a failed fit) — excluded from stats & colour' };
             }
@@ -834,9 +958,23 @@ window.ChipStatus.mount = function (opts) {
             });
         })();
 
+        function _edgeAgg(m) {
+            return computeAggregates(topo.edges.map(function(e) { return m.valFn(e); }));
+        }
+
         function legendHtml(key) {
             var m = _metric(key);
             var out = '<div class="topo-hero-legend">';
+            if (m.scope === 'edge') {
+                var eagg = _edgeAgg(m);
+                var estops = dCfg.colorScale;
+                out += '<span class="topo-hero-lg-item">' + (eagg.min != null ? m.fmtFn(eagg.min) : '')
+                     + '<span class="topo-hero-lg-grad" style="background:linear-gradient(90deg,' + estops.join(',') + ')"></span>'
+                     + (eagg.max != null ? m.fmtFn(eagg.max) : '') + '</span>'
+                     + '<span class="topo-hero-lg-item"><span class="topo-hero-lg-swatch" style="background:'
+                     + dCfg.nullCellColor + '"></span>no data</span>';
+                return out + '</div>';
+            }
             if (m.mode === 'diag' || m.mode === 'age') {
                 out += '<span class="topo-hero-lg-item"><span class="topo-hero-lg-swatch hs-pass"></span>ok</span>'
                      + '<span class="topo-hero-lg-item"><span class="topo-hero-lg-swatch hs-warn"></span>'
@@ -861,14 +999,42 @@ window.ChipStatus.mount = function (opts) {
         }
 
         function render() {
+            if (zoom == null) {
+                // Default = 2× what the OLD render showed. Pre-docs/126 the
+                // map was fit-to-pane AND letterboxed by a 70vh max-height,
+                // so "twice as big" doubles min(fit, cap) — a chip whose
+                // height the cap squeezed needs LESS than 2× pane width to
+                // honor it (measured on the real 20Q chip: 1.35× ⇒ exactly
+                // 2× the old on-screen cell). Unmeasurable layout (jsdom,
+                // display:none) falls back to a plain 2× pane.
+                zoom = 2;
+                try {
+                    var _pw = host.clientWidth || 0, _vh = window.innerHeight || 0;
+                    if (_pw > 0 && _vh > 0 && H > 0) {
+                        zoom = Math.min(4, Math.max(
+                            1, 2 * Math.min(1, 0.7 * _vh * W / (H * _pw))));
+                    }
+                } catch (e) {}
+            }
             var bar = '<div class="topo-hero-bar" role="tablist" aria-label="Chip map metric">';
             METRICS.forEach(function(m) {
                 bar += '<button type="button" role="tab" aria-selected="' + (m.key === current) + '"'
-                     + ' class="topo-hero-mbtn' + (m.key === current ? ' active' : '') + '"'
+                     + ' class="topo-hero-mbtn' + (m.key === current ? ' active' : '')
+                     + (m.scope === 'edge' ? ' topo-hero-mbtn-edge' : '') + '"'
                      + ' data-hero-metric="' + _esc(m.key) + '">'
                      + (m.label ? _esc(m.label) : labelHtml(m.key, true)) + '</button>';
             });
-            bar += '</div>';
+            // no role="group": Pico styles [role=group] as a full-width
+            // button bar (width:100% + flex:1 children) — real-browser caught.
+            bar += '<span class="topo-hero-zoomctl" aria-label="Map size">'
+                 + '<button type="button" class="topo-hero-zbtn" data-hero-zoom="out" title="Smaller">&minus;</button>'
+                 + '<button type="button" class="topo-hero-zbtn" data-hero-zoom="in" title="Bigger">+</button>'
+                 + '<button type="button" class="topo-hero-zbtn" data-hero-zoom="fit" title="Fit to pane">Fit</button>'
+                 + '</span></div>';
+
+            var mCur = _metric(current);
+            var edgeMode = mCur.scope === 'edge';
+            var eagg = edgeMode ? _edgeAgg(mCur) : null;
 
             var svg = '';
             topo.edges.forEach(function(e) {
@@ -876,23 +1042,54 @@ window.ChipStatus.mount = function (opts) {
                 if (!a || !b) return;
                 var oA = offsets[e.source] || { dx: 0, dy: 0 }, oB = offsets[e.target] || { dx: 0, dy: 0 };
                 var x1 = cx(a) + oA.dx, y1 = cy(a) + oA.dy, x2 = cx(b) + oB.dx, y2 = cy(b) + oB.dy;
+                var pdx = 0, pdy = 0;   // unit perpendicular (label offset)
+                {
+                    var ddx = x2 - x1, ddy = y2 - y1, LL = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
+                    pdx = -ddy / LL; pdy = ddx / LL;
+                }
                 if (e.directed) {
                     // anti-parallel offset so BOTH directions of a CR pair show
-                    var dx = x2 - x1, dy = y2 - y1, L = Math.sqrt(dx * dx + dy * dy) || 1;
-                    var off = 5;
-                    x1 += -dy / L * off; y1 += dx / L * off;
-                    x2 += -dy / L * off; y2 += dx / L * off;
+                    var off = 6;
+                    x1 += pdx * off; y1 += pdy * off;
+                    x2 += pdx * off; y2 += pdy * off;
                 }
-                var ep = _edgePaint(e);
+                // docs/126 ②: an EDGE metric paints the edges the way a node
+                // metric paints the stones — chip-relative palette + a value
+                // printed ON the edge; a node metric keeps the fidelity
+                // good/warn/bad paint (thicker than before — the customer
+                // could barely click the old 3px lines).
+                var stroke, width, evTxt = null;
+                if (edgeMode) {
+                    var ev = mCur.valFn(e);
+                    if (ev != null && eagg.count >= 1) {
+                        var t = eagg.count < 2 ? 0.5
+                              : (ev - eagg.min) / ((eagg.max - eagg.min) || 1);
+                        stroke = interpolateColor(t, dCfg.colorScale);
+                        width = 9;
+                        evTxt = mCur.fmtFn(ev);
+                    } else {
+                        stroke = dCfg.nullCellColor; width = 5;
+                    }
+                } else {
+                    var ep = _edgePaint(e);
+                    stroke = ep.color; width = ep.width + 3;
+                }
                 var tt = e.pair_id + (e.cz_fidelity != null ? ' — ' + (e.cz_fidelity * 100).toFixed(1) + '%' : '')
                        + (e.active === false ? ' · off' : '');
                 var coords = ' x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"';
+                var mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
                 svg += '<g class="topo-hero-edge" data-hero-pair="' + _esc(e.pair_id) + '"'
                      + (e.active === false ? ' opacity="0.35"' : '') + '>'
-                     + '<line' + coords + ' stroke="' + ep.color + '" stroke-width="' + (ep.width + 0.5)
+                     + '<line' + coords + ' stroke="' + stroke + '" stroke-width="' + width
                      + '" stroke-linecap="round"/>'
-                     + '<line class="topo-hero-edge-hit"' + coords + ' stroke="transparent" stroke-width="11">'
-                     + '</line><title>' + _esc(tt) + '</title></g>';
+                     + '<line class="topo-hero-edge-hit"' + coords + ' stroke="transparent" stroke-width="22">'
+                     + '</line>'
+                     + (evTxt != null
+                        ? '<text class="topo-hero-eval" x="' + (mx + pdx * (e.directed ? 15 : 0))
+                          + '" y="' + (my + pdy * (e.directed ? 15 : 0) + 4) + '">'
+                          + _esc(evTxt) + '</text>'
+                        : '')
+                     + '<title>' + _esc(tt) + '</title></g>';
             });
             // docs/120 item 11 — the frequency chevrons and the C/T/M role
             // markers, from the SAME TopoGraph.pairGlyphs the component-page
@@ -915,6 +1112,17 @@ window.ChipStatus.mount = function (opts) {
                 var p = lay.positions[n.id];
                 if (!p) return;
                 var o = offsets[n.id] || { dx: 0, dy: 0 };
+                if (edgeMode) {
+                    // The edges carry the numbers — stones go neutral so the
+                    // painted edges read as the subject, not the background.
+                    svg += '<g class="topo-hero-node topo-hero-node-neutral" data-hero-qubit="' + _esc(n.id)
+                         + '" transform="translate(' + (cx(p) + o.dx) + ',' + (cy(p) + o.dy) + ')" tabindex="0">'
+                         + '<circle class="topo-hero-stone" r="' + R + '"'
+                         + (o.shared ? ' stroke-dasharray="3 2"' : '') + '></circle>'
+                         + '<text class="topo-hero-id" y="4">' + _esc(n.id) + '</text>'
+                         + '</g>';
+                    return;
+                }
                 var pt = nodePaint(n, current);
                 svg += '<g class="topo-hero-node' + (pt.cls ? ' ' + pt.cls : '') + '" data-hero-qubit="' + _esc(n.id)
                      + '" transform="translate(' + (cx(p) + o.dx) + ',' + (cy(p) + o.dy) + ')" tabindex="0">'
@@ -931,10 +1139,14 @@ window.ChipStatus.mount = function (opts) {
 
             var note = lay.mode === 'logical'
                 ? '<div class="topo-hero-note">' + _esc(TG.LOGICAL_LAYOUT_NOTE) + '</div>' : '';
+            // Zoom: percentage of the scroll pane's width (1 = the old fit).
+            // The container scrolls both axes, so a big map never buries the
+            // sections below (docs/126 ② — "~2× bigger" is the default).
             host.innerHTML = bar
                 + '<div class="topo-hero-map">' + note
                 + '<div class="topo-hero-scroll"><svg class="topo-hero-svg" width="' + W + '" height="' + H
-                + '" viewBox="0 0 ' + W + ' ' + H + '">' + svg + '</svg></div></div>'
+                + '" viewBox="0 0 ' + W + ' ' + H + '"'
+                + ' style="width:' + Math.round(zoom * 100) + '%">' + svg + '</svg></div></div>'
                 + legendHtml(current);
             bindHover();
         }
@@ -946,6 +1158,15 @@ window.ChipStatus.mount = function (opts) {
         if (!host._heroBound) {
             host._heroBound = true;
             host.addEventListener('click', function(ev) {
+                var zb = ev.target.closest && ev.target.closest('[data-hero-zoom]');
+                if (zb) {
+                    var act = zb.getAttribute('data-hero-zoom');
+                    zoom = act === 'fit' ? 1
+                         : Math.min(4, Math.max(1, zoom + (act === 'in' ? 0.25 : -0.25)));
+                    try { localStorage.setItem(ZOOM_KEY, String(zoom)); } catch (e) {}
+                    render();
+                    return;
+                }
                 var mb = ev.target.closest && ev.target.closest('[data-hero-metric]');
                 if (mb) {
                     current = mb.getAttribute('data-hero-metric');
@@ -989,6 +1210,24 @@ window.ChipStatus.mount = function (opts) {
                     _heroHoverTimer = setTimeout(function() {
                         var n = nodesById[g.getAttribute('data-hero-qubit')];
                         if (n) _sharedQubitPopup.open(n, g, false);
+                    }, 260);
+                });
+                g.addEventListener('mouseleave', function() {
+                    clearTimeout(_heroHoverTimer);
+                    if (_sharedQubitPopup) _sharedQubitPopup.scheduleClose();
+                });
+            });
+            // docs/126 ②: pairs hover too — same singleton popup, pair flavor.
+            var edgesById = {};
+            topo.edges.forEach(function(e) { edgesById[e.pair_id] = e; });
+            host.querySelectorAll('[data-hero-pair]').forEach(function(g) {
+                g.addEventListener('mouseenter', function() {
+                    if (!_sharedQubitPopup || !_sharedQubitPopup.openPair) return;
+                    _sharedQubitPopup.cancelClose();
+                    clearTimeout(_heroHoverTimer);
+                    _heroHoverTimer = setTimeout(function() {
+                        var e = edgesById[g.getAttribute('data-hero-pair')];
+                        if (e) _sharedQubitPopup.openPair(e, g, false);
                     }, 260);
                 });
                 g.addEventListener('mouseleave', function() {
@@ -1051,55 +1290,8 @@ window.ChipStatus.mount = function (opts) {
     // buildOverviewTiles renders the rich headline instead. The colorscale/palette
     // selectors still apply to the per-metric panel grids via their data-heat-t.)
 
-    // ══════════════════════════════════════════════════════════════════
-    // Section 4: Distribution Histograms
-    // ══════════════════════════════════════════════════════════════════
-
-    // Distribution histogram definitions (colors assigned from bar palette)
-    // Histograms read the gated value (_mv) too \u2014 an unphysical fit never adds a
-    // phantom bar at \u2212473\u00b5s.
-    var _histDefs = [
-        {id:'hist-gate-fidelity', boxId:'hist-box-gate-fidelity', metricKey:'gate_fidelity_avg',
-         values: topo.nodes.map(function(n){return _mv(n,'gate_fidelity_avg');}), stopIdx:3, xaxis:'Fidelity'},
-        {id:'hist-t1', boxId:'hist-box-t1', metricKey:'T1',
-         values: topo.nodes.map(function(n){var v=_mv(n,'T1');return v!=null?v*1e6:null;}), stopIdx:2, xaxis:'T1 (\u00b5s)'},
-        {id:'hist-cz-fidelity', boxId:'hist-box-cz-fidelity', metricKey:'cz_fidelity',
-         values: topo.edges.map(function(e){return _mv(e,'cz_fidelity');}), stopIdx:4, xaxis:'CZ Fidelity'},
-        {id:'hist-f01', boxId:'hist-box-f01', metricKey:'f_01',
-         values: topo.nodes.map(function(n){var v=_mv(n,'f_01');return v!=null?v/1e9:null;}), stopIdx:1, xaxis:'f_01 (GHz)'}
-    ];
-
-    function renderHistograms() {
-        /* docs/122 — the histogram grid is `repeat(auto-fill, ...)`, so a
-           sidebar collapse does not merely widen it, it changes the COLUMN
-           COUNT: every chart takes a large step and none of them redrew.
-           Observed once, on the grid, after the charts below are built. */
-        if (window.PlotHost) {
-            window.PlotHost.observe(document.getElementById('topo-histograms'));
-        }
-        _histDefs.forEach(function(h) {
-            var vals = h.values.filter(function(v){return v!=null && typeof v==='number';});
-            var box = document.getElementById(h.boxId);
-            if (vals.length === 0) { if (box) box.style.display = 'none'; return; }
-            var color = _barColorScale[Math.min(h.stopIdx, _barColorScale.length - 1)];
-            // Plotly titles are plain strings (no HTML) → append the good-direction
-            // glyph only; the hover blurb lives on the HTML surfaces, not here.
-            var ar = h.metricKey ? arrow(h.metricKey) : '';
-            var axisTitle = h.xaxis + (ar ? '  ' + ar : '');
-            _plotlyRender(h.id, [{
-                x: vals, type: 'histogram',
-                nbinsx: Math.min(20, Math.max(8, Math.ceil(vals.length/2))),
-                marker: {color: color, line: {color:'#fff', width:1}}
-            }], {
-                margin:{l:45,r:15,t:10,b:35},
-                xaxis:{title:{text:axisTitle,font:{size:11}},tickfont:{size:10}},
-                yaxis:{title:{text:'Count',font:{size:11}},tickfont:{size:10}},
-                plot_bgcolor:'transparent', paper_bgcolor:'transparent', bargap:0.08
-            }, {responsive:true, displayModeBar:false});
-        });
-    }
-    // renderHistograms() is invoked lazily by setChipStatusView (the
-    // Distributions view), not eagerly — keeps the default view Plotly-free.
+    // (docs/126 ②: the Distributions section was removed on customer request —
+    // the histograms duplicated what the map + per-metric panels already show.)
 
     // ══════════════════════════════════════════════════════════════════
     // Shared: Pre-compute grid layout from topology positions
@@ -1154,6 +1346,14 @@ window.ChipStatus.mount = function (opts) {
                 var el = document.getElementById(s.chartId);
                 if (!el) continue;
                 var layout = s.computeLayout ? s.computeLayout(el, s.layout) : s.layout;
+                // docs/126 ②: every spec chart rides the house theme — the
+                // specs set sizes/margins but never a font COLOR, so dark mode
+                // rendered every axis label in Plotly's default gray (the
+                // customer: "cannot read the axis numbers at all"). houseLayout
+                // deep-merges UNDER the spec's own overrides.
+                if (window.PlotTheme && window.PlotTheme.houseLayout) {
+                    layout = window.PlotTheme.houseLayout(layout);
+                }
                 _plotlyRender(el, s.data, layout, s.config);
             }
             if (i < specs.length) {
@@ -1705,7 +1905,6 @@ window.ChipStatus.mount = function (opts) {
         _currentBarPaletteName = paletteName;
         try { localStorage.setItem('quam_bar_palette', paletteName); } catch(e) {}
         recolorBarCharts();
-        if (_chipSectionBuilt.distributions) renderHistograms();
         updateLegendSwatches();
     };
 
@@ -1723,7 +1922,6 @@ window.ChipStatus.mount = function (opts) {
     var TAB_SPEC = {
         topology:     { build: null,           sel: '#sec-topology' },
         overview:     { build: null,           sel: '[data-topo-section="overview"]' },
-        distributions:{ build: 'distributions', sel: '[data-topo-section="distributions"]' },
         gate:         { build: '2qrb',          sel: '[data-topo-section="2qrb"]' },
         fidelity:     { build: 'metrics',       sel: '#topo-metric-panels [data-group="fidelity"]' },
         coherence:    { build: 'metrics',       sel: '#topo-metric-panels [data-group="coherence"]' },
@@ -1737,7 +1935,6 @@ window.ChipStatus.mount = function (opts) {
 
     function _ensureSectionBuilt(key) {
         if (!key || _chipSectionBuilt[key]) return;
-        if (key === 'distributions') { _chipSectionBuilt[key] = true; renderHistograms(); }
         else if (key === '2qrb') { _chipSectionBuilt[key] = true; build2QRBPanels(); }
         else if (key === 'metrics') { _chipSectionBuilt[key] = true; buildMetricPanels(); }
         // Trends fetches its own data (the history index is not cheap enough to
@@ -1805,7 +2002,7 @@ window.ChipStatus.mount = function (opts) {
     // Lazy build: materialise a heavy section as it approaches the viewport.
     function _setupLazyBuild() {
         if (!window.IntersectionObserver) {       // fallback: build everything now
-            ['distributions', '2qrb', 'metrics', 'trends'].forEach(_ensureSectionBuilt); return;
+            ['2qrb', 'metrics', 'trends'].forEach(_ensureSectionBuilt); return;
         }
         var io = new IntersectionObserver(function(entries) {
             entries.forEach(function(e) {
@@ -1824,7 +2021,7 @@ window.ChipStatus.mount = function (opts) {
                 document.body.removeEventListener('htmx:beforeSwap', _ioTeardown);
             }
         });
-        ['distributions', '2qrb', 'metrics', 'trends'].forEach(function(k) {
+        ['2qrb', 'metrics', 'trends'].forEach(function(k) {
             var el = document.querySelector('[data-topo-section="' + k + '"]');
             if (el) io.observe(el);
         });

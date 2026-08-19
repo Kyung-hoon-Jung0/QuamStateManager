@@ -1574,20 +1574,21 @@ class TestSidebarFeatures:
 
     def test_chip_status_left_nav_subviews(self):
         """Chip Status exposes its sections as sub-items in the LEFT sidebar
-        (mirrored from the in-page scroll-spy jump bar), Topology leading. Phase C
-        replaced the orphan "Full View" with "Distributions".
+        (mirrored from the in-page scroll-spy jump bar), Topology leading.
+        Distributions was removed on customer request (docs/126 ②).
         """
         base = (Path(__file__).resolve().parent.parent
                 / "quam_state_manager" / "web" / "templates" / "base.html")
         text = base.read_text(encoding="utf-8")
         assert 'id="chip-status-subnav"' in text, "left-nav Chip Status sub-items missing"
-        # 9 sections, each wired to chipNavView(), in top-to-bottom scroll order.
-        # Trends joined in docs/120 items 5+9 (all qubits on one plot per metric).
-        assert text.count("chipNavView(") == 9
+        # 8 sections, each wired to chipNavView(), in top-to-bottom scroll order.
+        # Trends joined in docs/120 items 5+9; Distributions left in docs/126 ②.
+        assert text.count("chipNavView(") == 8
         assert "view=full" not in text, "Full View was removed in the Phase C scroll dashboard"
+        assert "view=distributions" not in text, "Distributions was removed (docs/126 ②)"
         assert "view=trends" in text
-        assert text.index("view=topology") < text.index("view=overview") < text.index("view=distributions"), (
-            "Topology should lead, then Overview, then Distributions."
+        assert text.index("view=topology") < text.index("view=overview") < text.index("view=gate"), (
+            "Topology should lead, then Overview, then Gate."
         )
         # Trends reads history rather than the loaded chip, so it sits last —
         # after the live-state sections, not among them.
@@ -6055,7 +6056,10 @@ class TestDatasetScopedSearch:
         app_js = (Path(__file__).resolve().parent.parent
                   / "quam_state_manager" / "web" / "static" / "app.js")
         text = app_js.read_text(encoding="utf-8")
-        assert "var el = evt.detail.target || evt.detail.elt;" in text, (
+        # Pin the CONTRACT (target-first fallback), not the variable name —
+        # docs/125 round 3 renamed el -> scope inside _plotSwapTeardown and the
+        # old spelling made this a stale source-shape pin (docs/123 §8 class).
+        assert "evt.detail.target || evt.detail.elt" in text, (
             "the beforeSwap Plotly purge must target the swap container "
             "(evt.detail.target), not the trigger element (evt.detail.elt)."
         )

@@ -46,8 +46,6 @@
             onclick="setChipStatusView('topology', this, true)" title="Jump to the chip topology diagram">Topology</button>
     <button type="button" class="topo-subnav-btn" role="tab" data-view="overview"
             onclick="setChipStatusView('overview', this, true)" title="Jump to the per-metric overview">Overview</button>
-    <button type="button" class="topo-subnav-btn" role="tab" data-view="distributions"
-            onclick="setChipStatusView('distributions', this, true)" title="Jump to the distribution histograms">Distributions</button>
     <button type="button" class="topo-subnav-btn" role="tab" data-view="gate"
             onclick="setChipStatusView('gate', this, true)" title="Jump to the 2Q gate fidelity (RB)">Gate (2Q)</button>
     <button type="button" class="topo-subnav-btn" role="tab" data-view="fidelity"
@@ -123,31 +121,6 @@
 <div class="topo-section" data-topo-section="overview">
     <h3 class="topo-section-title">Overview</h3>
     <div class="topo-summary-cards" id="topo-overview-tiles"></div>
-</div>
-
-<!-- ═══════════════════════════════════════════════════════════════════
-     Section 4: Distribution Histograms
-     ═══════════════════════════════════════════════════════════════════ -->
-<div class="topo-section" data-topo-section="distributions">
-    <h3 class="topo-section-title">Distributions</h3>
-    <div class="topo-histograms" id="topo-histograms">
-        <div class="topo-hist-box" id="hist-box-gate-fidelity">
-            <div class="topo-hist-title">Gate Fidelity</div>
-            <div class="topo-hist-chart" id="hist-gate-fidelity"></div>
-        </div>
-        <div class="topo-hist-box" id="hist-box-t1">
-            <div class="topo-hist-title">T1</div>
-            <div class="topo-hist-chart" id="hist-t1"></div>
-        </div>
-        <div class="topo-hist-box" id="hist-box-cz-fidelity">
-            <div class="topo-hist-title">CZ Fidelity</div>
-            <div class="topo-hist-chart" id="hist-cz-fidelity"></div>
-        </div>
-        <div class="topo-hist-box" id="hist-box-f01">
-            <div class="topo-hist-title">f_01 Frequency</div>
-            <div class="topo-hist-chart" id="hist-f01"></div>
-        </div>
-    </div>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════

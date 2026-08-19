@@ -8134,7 +8134,7 @@ def wiring_view():
     # bare /topology from the main "Chip Status" item) → client default, which is
     # the topology-diagram-only view.
     # Phase C scroll-spy sections (+ "full" kept for old bookmarks → topology).
-    _CHIP_VIEWS = {"topology", "overview", "distributions", "gate", "fidelity",
+    _CHIP_VIEWS = {"topology", "overview", "gate", "fidelity",
                    "coherence", "frequencies", "calibration", "trends", "full"}
     chip_view = request.args.get("view", "").strip().lower()
     if chip_view not in _CHIP_VIEWS:

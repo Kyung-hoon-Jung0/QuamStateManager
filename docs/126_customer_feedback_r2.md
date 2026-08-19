@@ -103,3 +103,71 @@ deliberate qclass exception.
 (`qubit_pairs.q1-2.macros.cz_bipolar.flux_pulse_qubit`) resolves `exact` and
 synthesizes 124 net-zero samples. 457 pulse-suite tests + 154 golden tests +
 `pulses_create/commit` selfchecks green.
+
+## ② Topology — the metric patches drive the map
+
+**Report.** "Users want to press a patch (T1, T2echo, Qubit freq, Readout
+freq, 1Q RB, 2Q RB…) and see the numbers appear inside the circles on the
+MAIN topology immediately — not by scrolling down. Make the whole map ~2×
+bigger; the pair edges are too small to even click; pairs should have a hover
+panel too; the qubit panel's info is right but the styling is dated; dark
+mode's axis labels are unreadable; delete Distributions."
+
+**What shipped (all real-browser verified on the 20Q chip, 22 checks, 0
+console errors — `tests/browser/_rt_cfb2_topo.cjs`, screenshots in
+`_shots/cfb2-*`):**
+
+- **Patch row**: `f_01` ("Qubit freq") and `readout_frequency` ("Readout
+  freq") join the hero metric bar, and 2Q metrics become first-class **edge
+  metrics** (`scope:'edge'`, ↔-prefixed): `cz_fidelity` ("2Q Bell") +
+  per-edge-best `StandardRB`/`InterleavedRB` derived from the edges' own
+  `gate_fidelities` with the same (0,1] physical gate as the Overview tiles —
+  offered only when some edge has data (the real chip derives 2Q RB + 2Q IRB).
+  Clicking any patch repaints the map in place; nothing scrolls.
+- **Edge-metric mode**: edges are painted through the SAME chip-relative
+  palette as the stones (per-render edge aggregate + `interpolateColor`),
+  the value is printed ON the edge (`.topo-hero-eval`, paint-order-stroke
+  halo — no pill-width estimation, readable over the colored line in both
+  themes), stones go neutral (id only) so the edges read as the subject, and
+  the legend switches to the edge gradient. Directed CR pairs offset their
+  labels ±15 along the perpendicular.
+- **Size**: the 70vh svg max-height letterbox is gone — `.topo-hero-scroll`
+  owns overflow on both axes (max-height 82vh). The map renders at
+  `zoom × pane width` with compact − / + / Fit controls (persisted,
+  `quam_topo_hero_zoom`); the **default is computed as 2× what the old render
+  actually showed** — `2·min(1, 0.7·vh·W/(H·paneW))`, because the old size
+  was min(fit, 70vh-cap), so a tall chip needs LESS than 2× pane width to
+  double (measured on the real chip: computed 1.084 ⇒ on-screen cell exactly
+  2.0× the old; jsdom/unmeasurable falls back to a plain 2× pane). Two traps
+  the real browser caught: Pico styles `[role=group]` as a full-width button
+  bar (the zoom controls rendered as three 426px bars — role dropped) and
+  Pico's global `button {width:100%}` (explicit `width:auto`).
+- **Edges clickable**: node-metric-mode stroke +3 (5/6 vs the old 2.5/3.5),
+  edge-metric-mode 9, and the invisible hit line 11 → **22**.
+- **Pair hover popup** (`.topo-pair-popup`, reviving CSS that had been
+  orphaned since the card diagram left in docs/120): per-gate 2Q fidelities
+  (best-gate highlighted, measured-when recency chip), detuning, mutual flux
+  bias, coupler decouple offset, moving-qubit role, confusion diag — same
+  singleton/positioning/teardown as the qubit popup, exposed as
+  `_sharedQubitPopup.openPair`.
+- **Modernized popup chrome** (both popups, info untouched): 14px radius,
+  layered shadow, translucent blurred surface (`color-mix` + backdrop-filter),
+  theme-aware hairline borders (the old `rgba(0,0,0,…)` borders vanished on
+  dark), round ghost close button, uppercase section titles, CZ/CR kind chip.
+- **Dark mode**: the spec-driven charts (metric panels, 2Q RB) never set a
+  font COLOR, so every axis label rendered Plotly's default gray —
+  `_renderChartSpecsProgressively` now routes every layout through
+  `PlotTheme.houseLayout` (deep-merged UNDER the spec's own sizes); verified
+  619/619 dark-mode axis text nodes at `--plot-axis-text`. The hero's
+  hardcoded `#666` null-cell text became `var(--pico-muted-color)`.
+- **Distributions deleted** end to end: section + subnav + sidebar li +
+  `_CHIP_VIEWS` + `_histDefs`/`renderHistograms` + observer selector + CSS.
+
+**Pinned by** `chip_status_hero_selfcheck.cjs` part5 (freq patches + default,
+zoom incl. persistence + jsdom fallback, edge-metric rendering + neutral
+stones + persistence, 22 hit area, pair popup content) and the updated
+`test_web.py` / `test_chip_trends.py` pins (8 subnav tabs, no distributions,
+houseLayout at the spec choke point). One stale docs/125-era pin fixed along
+the way: `test_beforeswap_plotly_purge_targets_swap_container` pinned the
+variable NAME (`el`) the round-3 refactor renamed to `scope` — it now pins
+the contract (docs/123 §8 class).
