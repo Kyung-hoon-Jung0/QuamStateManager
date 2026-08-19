@@ -394,7 +394,8 @@ class TestExtrasDataFolderPairing:
         assert len(ctx["extras_data_dangling"]) == 1
         html = c.get("/qubits").data.decode()
         assert "cnb-dangling" in html
-        assert "isn't reachable" in html
+        # docs/126 r3: reworded concise — "Data folder not reachable: <path>"
+        assert "Data folder not reachable" in html
 
     def test_archive_ctx_never_adopts_unit(self, tmp_path):
         from quam_state_manager.web.app import create_app

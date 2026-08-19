@@ -8140,7 +8140,6 @@ def comparison_table():
 # ======================================================================
 
 
-@bp.route("/wiring")
 @bp.route("/chip-status/report")
 def chip_status_report():
     """docs/126 #21 — the printable chip report (customer request).
@@ -8183,6 +8182,7 @@ def chip_status_report():
     )
 
 
+@bp.route("/wiring")
 @bp.route("/topology")
 def wiring_view():
     engine = _engine()
