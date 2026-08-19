@@ -590,7 +590,8 @@ _AXIS_RANK: dict[str, int] = {
 }
 
 
-def _order_sweeps(sweeps: list[dict]) -> None:
+def _order_sweeps(sweeps: list[dict],
+                  all_sweeps: list[dict] | None = None) -> None:
     """Order ``sweeps`` in place so ``sweeps[0]`` is the x axis.
 
     Size order first — that is the legacy rule and it stays the tie-break and
@@ -600,9 +601,17 @@ def _order_sweeps(sweeps: list[dict]) -> None:
     half-converted on partial evidence. (Measured on the customer archive: of
     1,805 cubes with a y axis, 1,803 have every sweep ranked and 0 are mixed, so
     this gate costs nothing on real data — it is armour for the next node type.)
+
+    ``all_sweeps`` is the gate population: EVERY sweep dim in the cube,
+    including short ones diverted to the overlay bucket. The gate used to see
+    only the x/y candidates, so an unranked sweep that happened to be short
+    slipped past it and the cube was rank-ordered on partial evidence — the
+    exact case the docstring above promises cannot happen (docs/124, the
+    ndview minor). Callers with no diverted sweeps may omit it.
     """
     sweeps.sort(key=lambda d: d["size"], reverse=True)
-    if sweeps and all(d["name"] in _AXIS_RANK for d in sweeps):
+    gate = all_sweeps if all_sweeps is not None else sweeps
+    if sweeps and gate and all(d["name"] in _AXIS_RANK for d in gate):
         sweeps.sort(key=lambda d: _AXIS_RANK[d["name"]])
 
 
@@ -636,7 +645,7 @@ def _default_view(dims: list[dict]) -> dict:
                 small_sweeps.append(d)
             else:
                 sweeps.append(d)
-    _order_sweeps(sweeps)
+    _order_sweeps(sweeps, sweeps + small_sweeps)
     shots.sort(key=lambda d: d["size"], reverse=True)
     if not sweeps and shots:
         if small_sweeps:

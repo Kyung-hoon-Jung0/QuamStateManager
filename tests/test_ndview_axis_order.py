@@ -104,6 +104,29 @@ class TestIncompleteEvidenceChangesNothing:
         v2 = ndview._default_view([_dim("detuning", 400), _dim("something_new", 10)])
         assert v2["x"] == "detuning"
 
+    def test_unranked_sweep_in_the_overlay_bucket_still_blocks_the_ranking(self):
+        """The gate population is EVERY sweep in the cube, not just the x/y
+        candidates (docs/124, the ndview minor): an unranked sweep that
+        happens to be short enough for the overlay bucket used to slip past
+        the gate, and the cube was rank-ordered on exactly the partial
+        evidence the docstring promises cannot decide anything. Archive
+        impact is bounded by the measured 1,803-of-1,805 full coverage."""
+        # mystery_axis (size 3 <= _OVERLAY_MAX) diverts to overlay; both x/y
+        # candidates are ranked — but the CUBE is not fully covered, so the
+        # legacy size order must stand (detuning=150 largest -> x).
+        v = ndview._default_view([_dim("flux_bias", 40), _dim("detuning", 150),
+                                  _dim("mystery_axis", 3)])
+        assert "mystery_axis" in v["overlay"]
+        assert v["x"] == "detuning"
+        assert v["y"] == "flux_bias"
+        # control: the same cube with the short sweep RANKED applies the rank
+        # (flux_bias 11 < detuning 14 -> flux on x), proving the block above
+        # came from the unranked name, not from the overlay diversion itself.
+        v2 = ndview._default_view([_dim("flux_bias", 40), _dim("detuning", 150),
+                                   _dim("amp", 3)])
+        assert v2["x"] == "flux_bias"
+        assert v2["y"] == "detuning"
+
     def test_order_sweeps_is_stable_for_equal_ranks_absent(self):
         """A single sweep is unambiguous whether ranked or not."""
         for name in ("flux_bias", "totally_unknown"):
