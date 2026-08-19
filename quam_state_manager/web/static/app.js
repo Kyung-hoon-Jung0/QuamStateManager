@@ -14645,7 +14645,24 @@ window.FieldHistory = (function () {
         // small twin): change points as a step line, trigger-colored markers.
         var mount = p.querySelector("#fh-chart");
         var dataEl = p.querySelector("#fh-chart-data");
-        if (!mount || !dataEl || !window.Plotly) return;
+        if (!mount || !dataEl) return;
+        if (!window.Plotly) {
+            // Plotly is lazy-loaded, and this popover's home surfaces (the
+            // qubit/pair inspectors, the bulk grids) mount no other chart — so
+            // on a fresh page load the library is simply not there yet, and
+            // bailing made the docs/20 mini-trend dead on arrival exactly
+            // where it lives (docs/124 M-18). Load it, then render whatever
+            // the panel holds by then; renderChart re-queries its own mounts,
+            // so a panel that moved on to another path renders that one, and
+            // a closed panel (display:none, never detached) renders hidden —
+            // harmless, correct on reopen.
+            if (window.requirePlotly) {
+                window.requirePlotly().then(function () {
+                    if (p.isConnected) renderChart(p);
+                }).catch(function () {});
+            }
+            return;
+        }
         var pts;
         try { pts = JSON.parse(dataEl.textContent || "[]"); }
         catch (e) { return; }

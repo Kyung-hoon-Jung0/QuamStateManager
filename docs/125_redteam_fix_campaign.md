@@ -117,3 +117,31 @@ level, where the pre-fix behavior produces nothing: ✓ issues exactly one
 buttons are removed (that removal is why the row must be captured before the
 click — the first draft read `.parentElement` of a detached button); ✗ clears
 the incoming marker and updates the bar count. Suite: **64/64 selfchecks.**
+
+---
+
+## Fix 3 — the value-history mini trend renders where it lives (docs/124 M-18)
+
+**Finding closed:** M-18 (major, pre-existing). `FieldHistory.renderChart`
+bailed on `!window.Plotly` — a synchronous return, unlike every other mount,
+which goes through the lazy loader. Plotly is lazy-loaded and the popover's
+home surfaces (the qubit/pair inspectors, the bulk grids) mount no other
+chart, so on any fresh page load the docs/20 mini trend was dead on arrival:
+panel opens, table renders, mount + data in the DOM, no chart, no error — it
+only ever appeared if the user had visited a plotting surface earlier in the
+same tab session, which read as intermittent.
+
+**The change:** the bail becomes `window.requirePlotly().then(render again)`
+(panel-connected re-check; the panel is never detached, only hidden, and
+renderChart re-queries its own mounts, so a panel that moved on to another
+path renders that one — correct either way).
+
+**Pin:** `tests/fh_chart_selfcheck.cjs` (5 checks) — real `FieldHistory.open`
+against a stubbed `/field/history` response with NO Plotly present: the
+loader is asked, the chart renders into `#fh-chart` when the library lands,
+and the already-loaded control adds no loader round-trip. Two harness traps
+recorded in the file, both the CLAUDE.md bridge-every-bare-global class: this
+harness runs app.js through Node-realm eval, so bare `getComputedStyle` and
+bare `Plotly` resolve via Node's `global`, and both misses were SWALLOWED by
+FieldHistory's fetch `.catch` — the panel showed "Could not load history."
+with nothing wrong on the wire. Suite: **65/65 selfchecks.**
