@@ -1148,15 +1148,27 @@ class TestCreateEnvAware:
 
     def test_roster_adds_env_class_and_verdicts(self, loaded_client,
                                                 modern_roster):
+        # The roster-only group rides a synthetic lab class since docs/126 ⑦a
+        # promoted CosineBipolarPulse into the static catalog (which is itself
+        # pinned here: env-verified, NOT env_only, creatable as a regular
+        # Flux/Bipolar entry).
+        import copy as _copy
         from quam_state_manager.core import pulse_catalog as pc
-        pc.apply_env_overlay(modern_roster)
+        roster = _copy.deepcopy(modern_roster)
+        rec = _copy.deepcopy(roster["CosineBipolarPulse"])
+        rec["canonical"] = "otherlab.custom.pulses.LabWigglePulse"
+        rec["homes"] = ["otherlab.custom.pulses"]
+        roster["LabWigglePulse"] = rec
+        pc.apply_env_overlay(roster)
         html = loaded_client.get("/pulse/new").data.decode()
         assert "From environment" in html
-        assert ">CosineBipolarPulse</option>" in html
+        assert ">LabWigglePulse</option>" in html
         cat = json.loads(html.split('id="pulse-catalog-data"'
                                     ' type="application/json">')[1]
                          .split("</script>")[0])
-        assert cat["CosineBipolarPulse"]["env_only"] is True
+        assert cat["LabWigglePulse"]["env_only"] is True
+        assert cat["LabWigglePulse"]["verify"] == "env"
+        assert cat["CosineBipolarPulse"].get("env_only") is not True
         assert cat["CosineBipolarPulse"]["verify"] == "env"
         assert cat["SquarePulse"]["verify"] == "env"
         # the one creatable catalog class the modern roster does NOT ship

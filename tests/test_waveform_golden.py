@@ -30,6 +30,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 from waveform_matrix import CASES  # noqa: E402
 
 GOLDEN_PATH = Path(__file__).parent / "golden" / "waveform_golden.json"
+# Classes that postdate the legacy golden's env (quam 0.5.0a3) live in their
+# own file, generated from the modern cqt env (quam 0.6.0 / quam_builder 0.4):
+#   <cqt>/python quam_state_manager/generator/run_waveform_golden.py \
+#       --out tests/golden --out-name waveform_golden_qb04.json \
+#       --only-keys CosineBipolarPulse
+GOLDEN_QB04_PATH = Path(__file__).parent / "golden" / "waveform_golden_qb04.json"
 LabC_PYTHON = Path("<qm-env>/python")
 
 RTOL = 1e-9
@@ -43,7 +49,12 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def golden() -> dict:
-    return json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
+    """Legacy golden + the qb04 file, cases merged (ids never overlap)."""
+    data = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
+    if GOLDEN_QB04_PATH.exists():
+        qb = json.loads(GOLDEN_QB04_PATH.read_text(encoding="utf-8"))
+        data["cases"].update(qb.get("cases") or {})
+    return data
 
 
 def _materialized_params(case: dict, golden_entry: dict) -> dict:
@@ -175,8 +186,11 @@ def test_live_regeneration_matches_committed(tmp_path):
         return subprocess.run(["wslpath", "-w", str(path)], capture_output=True,
                               text=True, encoding="utf-8", check=True).stdout.strip()
 
+    # --skip-keys: the legacy env predates the qb04-only classes (their golden
+    # is waveform_golden_qb04.json, generated from the modern env instead).
     proc = subprocess.run(
-        [str(LabC_PYTHON), _win(script), "--out", _win(tmp_path)],
+        [str(LabC_PYTHON), _win(script), "--out", _win(tmp_path),
+         "--skip-keys", "CosineBipolarPulse"],
         capture_output=True, text=True, encoding="utf-8", timeout=300)
     assert proc.returncode == 0, proc.stderr
 

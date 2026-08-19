@@ -115,9 +115,22 @@ def _adapt_params(cls, params: dict) -> dict:
     return out
 
 
-def run(out_dir: Path) -> int:
+def run(out_dir: Path, *, only_keys: set[str] | None = None,
+        skip_keys: set[str] | None = None,
+        out_name: str = "waveform_golden.json") -> int:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
     from waveform_matrix import CASES  # noqa: E402
+
+    # Generation filters (docs/126 ⑦a): classes that postdate one stack
+    # generation live in their own golden file, generated from the env that
+    # HAS them (CosineBipolarPulse → waveform_golden_qb04.json from the cqt
+    # env), while the legacy file stays byte-untouched — so --only-keys
+    # selects the new classes here and --skip-keys excludes them from a
+    # legacy-env regeneration.
+    if only_keys:
+        CASES = [c for c in CASES if c["key"] in only_keys]
+    if skip_keys:
+        CASES = [c for c in CASES if c["key"] not in skip_keys]
 
     import quam
 
@@ -173,7 +186,7 @@ def run(out_dir: Path) -> int:
         result["cases"][case_id] = entry
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "waveform_golden.json"
+    out_path = out_dir / out_name
     out_path.write_text(json.dumps(result, indent=1), encoding="utf-8")
     print(f"wrote {out_path} ({len(result['cases'])} cases)")
 
@@ -188,9 +201,18 @@ def run(out_dir: Path) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True,
-                        help="output directory for waveform_golden.json")
+                        help="output directory for the golden file")
+    parser.add_argument("--out-name", default="waveform_golden.json",
+                        help="output filename (default waveform_golden.json)")
+    parser.add_argument("--only-keys", default="",
+                        help="comma-separated pulse-class keys to include")
+    parser.add_argument("--skip-keys", default="",
+                        help="comma-separated pulse-class keys to exclude")
     args = parser.parse_args()
-    return run(Path(args.out))
+    only = {k for k in args.only_keys.split(",") if k} or None
+    skip = {k for k in args.skip_keys.split(",") if k} or None
+    return run(Path(args.out), only_keys=only, skip_keys=skip,
+               out_name=args.out_name)
 
 
 if __name__ == "__main__":

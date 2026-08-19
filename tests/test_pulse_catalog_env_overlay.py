@@ -80,6 +80,21 @@ def _with_extra_home(roster: dict, leaf: str, home: str) -> dict:
     return r
 
 
+_LAB_HOME = "otherlab.custom.pulses"
+
+
+def _with_roster_only(roster: dict) -> dict:
+    """Roster + a genuinely uncataloged class (docs/126 ⑦a moved the real
+    example, CosineBipolarPulse, INTO the catalog — so the roster-only paths
+    are exercised with a synthetic lab class cloned from its record)."""
+    r = copy.deepcopy(roster)
+    rec = copy.deepcopy(r["CosineBipolarPulse"])
+    rec["canonical"] = _LAB_HOME + ".LabWigglePulse"
+    rec["homes"] = [_LAB_HOME]
+    r["LabWigglePulse"] = rec
+    return r
+
+
 def _chip(*classes: str) -> dict:
     ops = {
         f"op{i}": {"__class__": c, "amplitude": 0.1, "length": 40}
@@ -138,13 +153,15 @@ class TestResolveEnv:
         assert spec is PULSE_CATALOG["SNZPulse"] and how == "leaf"
 
     def test_env_requires_catalog_spec(self, modern_roster):
-        # The modern roster genuinely knows CosineBipolarPulse (no
-        # underscore) at the arch home, but the catalog has no spec for that
-        # leaf — the env step must not invent one.
-        qclass = _ARCH + ".CosineBipolarPulse"
-        assert modern_roster["CosineBipolarPulse"]["homes"] == [_ARCH]
-        apply_env_overlay(modern_roster)
-        assert resolve_qclass(qclass) == (None, None)
+        # A roster-known but UNCATALOGED leaf — the env step must not invent
+        # a spec. (CosineBipolarPulse used to be the real example; docs/126
+        # ⑦a promoted it, so the pin rides a synthetic lab class and the
+        # promotion itself is pinned alongside: the real class now resolves
+        # "exact" with no overlay at all.)
+        assert resolve_qclass(_ARCH + ".CosineBipolarPulse") == (
+            PULSE_CATALOG["CosineBipolarPulse"], "exact")
+        apply_env_overlay(_with_roster_only(modern_roster))
+        assert resolve_qclass(_LAB_HOME + ".LabWigglePulse") == (None, None)
 
     def test_alias_and_bare_key_paths_untouched(self, modern_roster):
         apply_env_overlay(modern_roster)
@@ -260,22 +277,33 @@ class TestSynthSchemaKnown:
         assert "recognized by the selected environment" in p["error"]
         assert "preview unavailable" in p["error"]
 
-    def test_real_roster_cosine_bipolar_no_underscore(self, modern_roster):
-        # Genuine real-fixture case: the modern env ships CosineBipolarPulse
-        # (no underscore) which the catalog has no spec for at all.
+    def test_real_cosine_bipolar_promoted_to_catalog(self, modern_roster):
+        # docs/126 ⑦a: the modern env's CosineBipolarPulse is a first-class
+        # catalog citizen — full synth with NO overlay (it used to be the
+        # "unrecognized + schema_known" example; that path now rides the
+        # synthetic LabWigglePulse below).
         qclass = _ARCH + ".CosineBipolarPulse"
+        p = ws.synthesize(qclass, {"length": 124, "amplitude": 0.1,
+                                   "flat_length": 100})
+        assert p["ok"] and p["length"] == 124 and len(p["i"]) == 124
+        # missing params fail at the PARAM level, never "unrecognized"
+        p2 = ws.synthesize(qclass, {})
+        assert not p2["ok"] and "unrecognized" not in p2["error"]
+
+    def test_roster_only_class_schema_known(self, modern_roster):
+        qclass = _LAB_HOME + ".LabWigglePulse"
         p = ws.synthesize(qclass, {})
         assert not p["ok"] and "schema_known" not in p
-        apply_env_overlay(modern_roster)
+        apply_env_overlay(_with_roster_only(modern_roster))
         p = ws.synthesize(qclass, {})
         assert p["schema_known"] is True
-        assert "'CosineBipolarPulse'" in p["error"]
+        assert "'LabWigglePulse'" in p["error"]
         assert "recognized by the selected environment" in p["error"]
 
     def test_synth_for_operation_unknown_class(self, tmp_path, modern_roster):
         state = {"qubits": {"qA1": {"xy": {"operations": {
             "mystery": {"length": 10, "amplitude": 0.1,
-                        "__class__": _ARCH + ".CosineBipolarPulse"},
+                        "__class__": _LAB_HOME + ".LabWigglePulse"},
         }}}}}
         wiring = {"wiring": {}, "network": {"host": "10.1.1.1",
                                             "cluster_name": "test"}}
@@ -288,7 +316,7 @@ class TestSynthSchemaKnown:
         p = ws.synth_for_operation(store, path)
         assert not p["ok"] and "schema_known" not in p
         assert "unrecognized pulse class" in p["error"]
-        apply_env_overlay(modern_roster)
+        apply_env_overlay(_with_roster_only(modern_roster))
         p = ws.synth_for_operation(store, path)
         assert not p["ok"] and p["schema_known"] is True
         assert "recognized by the selected environment" in p["error"]
@@ -415,11 +443,16 @@ class TestNoOverlayByteIdentical:
 # ---------------------------------------------------------------------------
 
 class TestEnvCreatableSpecs:
-    def test_modern_roster_yields_exactly_cosine_bipolar(self, modern_roster):
-        specs = pc.env_creatable_specs(modern_roster)
-        assert sorted(specs) == ["CosineBipolarPulse"]
-        s = specs["CosineBipolarPulse"]
-        assert s.qclass == modern_roster["CosineBipolarPulse"]["canonical"]
+    def test_modern_roster_yields_exactly_the_uncataloged(self, modern_roster):
+        # docs/126 ⑦a promotion pin: every class the modern roster ships is
+        # now cataloged — nothing left to synthesize...
+        assert pc.env_creatable_specs(modern_roster) == {}
+        # ...and a genuinely uncataloged roster class still synthesizes a
+        # full creatable spec (the docs/71 §2 contract, on the same fields).
+        specs = pc.env_creatable_specs(_with_roster_only(modern_roster))
+        assert sorted(specs) == ["LabWigglePulse"]
+        s = specs["LabWigglePulse"]
+        assert s.qclass == _LAB_HOME + ".LabWigglePulse"
         assert s.creatable and s.group == "From environment"
         # the modern class carries an EXPLICIT required length + flat_length
         # (a DIFFERENT contract from the legacy _CosineBipolarPulse — this is
@@ -449,9 +482,9 @@ class TestEnvCreatableSpecs:
     def test_no_roster_is_empty_and_memo_clears_on_swap(self, modern_roster):
         pc.apply_env_overlay(None)
         assert pc.env_creatable_specs() == {}
-        pc.apply_env_overlay(modern_roster)
+        pc.apply_env_overlay(_with_roster_only(modern_roster))
         first = pc.env_creatable_specs()
-        assert "CosineBipolarPulse" in first
+        assert "LabWigglePulse" in first
         pc.apply_env_overlay(None)
         assert pc.env_creatable_specs() == {}
 

@@ -361,6 +361,27 @@ _SPECS: tuple[PulseSpec, ...] = (
         group="Flux / Bipolar", doc="Net-zero bipolar smoothed by a Gaussian filter",
     ),
     PulseSpec(
+        # quam_builder >= 0.4 class with NO quam-era home (it never lived in
+        # quam.components.pulses) — the qclass IS the quam_builder arch path,
+        # so nothing is ever written at a home no stack can import (docs/98).
+        # NOT the deprecated _CosineBipolarPulse: explicit total length, no
+        # smoothing/padding fields, rise/switch/fall thirds split (docs/126 ⑦a).
+        key="CosineBipolarPulse",
+        qclass=("quam_builder.architecture.superconducting.components.pulses."
+                "CosineBipolarPulse"),
+        label="Cosine bipolar",
+        iq="optional", readout=False, channels=("z",),
+        params=(
+            _p("length", "Length", "int", 124, unit="ns", required=True),
+            _p("amplitude", "Amplitude", "float", 0.05, unit="V", required=True),
+            _p("flat_length", "Flat length", "int", 100, unit="ns", required=True,
+               doc="Total flat region; must be even (split into + and - halves)"),
+            _AXIS_ANGLE_OPT, _ID, _DIGITAL_MARKER,
+        ),
+        group="Flux / Bipolar",
+        doc="Net-zero bipolar: cosine rise, + flat, cosine switch, - flat, fall",
+    ),
+    PulseSpec(
         key="WaveformPulse", qclass=_QC + "WaveformPulse",
         label="Arbitrary waveform",
         iq="optional", readout=False, channels=("xy", "z", "resonator"),
@@ -517,7 +538,8 @@ def env_creatable_specs(roster: dict | None = None) -> dict[str, PulseSpec]:
     """Synthesized creatable specs for roster-ONLY pulse classes (r15, docs/71 §2).
 
     The selected env can define pulse classes the static catalog has never
-    transcribed (e.g. quam_builder 0.4.0's ``CosineBipolarPulse``). Users must
+    transcribed (e.g. a lab's own custom pulse class; quam_builder 0.4.0's
+    ``CosineBipolarPulse`` lived here until docs/126 ⑦a promoted it). Users must
     be able to CREATE those — the roster's dataclass-field dump carries enough
     for a correct form and a correct write, so each such leaf becomes a
     synthesized frozen :class:`PulseSpec`:

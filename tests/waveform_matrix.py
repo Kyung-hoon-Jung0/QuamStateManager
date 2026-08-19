@@ -158,6 +158,27 @@ CASES = [
     _c("wfp_iq", "WaveformPulse", waveform_I=[0.0, 0.1, 0.2, 0.1],
        waveform_Q=[0.0, -0.05, 0.0, 0.05]),
 
+    # ---- CosineBipolarPulse (quam_builder >= 0.4 — NOT the deprecated
+    #      _CosineBipolarPulse: different fields — explicit total ``length``,
+    #      no smoothing/padding — and a different edge split: the remaining
+    #      length divides into rise/switch/fall THIRDS. Golden lives in
+    #      ``waveform_golden_qb04.json`` (cqt env; the legacy golden's env
+    #      predates the class). docs/126 ⑦a. ----
+    _c("cosbip_new_basic", "CosineBipolarPulse", length=124, amplitude=0.1,
+       flat_length=100),                       # the customer chip's exact shape
+    _c("cosbip_new_rem0", "CosineBipolarPulse", length=100, amplitude=0.05,
+       flat_length=100),                       # remaining 0 → no edges
+    _c("cosbip_new_rem1", "CosineBipolarPulse", length=110, amplitude=0.05,
+       flat_length=100),                       # remaining 10 → 3/4/3
+    _c("cosbip_new_rem2", "CosineBipolarPulse", length=111, amplitude=-0.2,
+       flat_length=100),                       # remaining 11 → 4/3/4
+    _c("cosbip_new_axis", "CosineBipolarPulse", length=60, amplitude=0.1,
+       flat_length=40, axis_angle=PI / 2),
+    _c("cosbip_new_odd_flat", "CosineBipolarPulse", length=100, amplitude=0.05,
+       flat_length=99, raises=True),
+    _c("cosbip_new_flat_gt_len", "CosineBipolarPulse", length=80,
+       amplitude=0.05, flat_length=100, raises=True),
+
     # ---- deprecated classes (present in real chip states) ----
     _c("ftgauss_dep_basic", "_FlatTopGaussianPulse", amplitude=0.05,
        flat_length=100, smoothing_length=20),
