@@ -886,12 +886,27 @@
         var patched = 0, missing = 0, rows = [], covered = [];
         entries.forEach(function (e) {
             if (!e || !e.dot_path) return;
-            var cs = t.querySelectorAll('.bulk-cell[data-dot-path="' + esc(e.dot_path) + '"]');
+            // BOTH attributes (docs/124 C-2/M-8, same as BulkEdit): the server
+            // names RESOLVED paths; the alias twins (coupler.operations.* over
+            // macros.*) carry them in data-resolved — matching both repaints
+            // value AND data-orig on the twin, so the phantom-dirty cell that
+            // vetoed every later rebuild cannot arise.
+            var q = esc(e.dot_path);
+            var cs = t.querySelectorAll('.bulk-cell[data-dot-path="' + q + '"]'
+                + ', .bulk-cell[data-resolved="' + q + '"]');
             if (!cs.length) { missing++; return; }
-            covered.push(e.dot_path);
-            var v = e.old_value_str == null ? '' : String(e.old_value_str);
+            // group_digits display string first (docs/124 M-9), and coverage
+            // is only claimed when the repaint can honestly stand in for a
+            // fresh render (docs/124 M-10 + readOnly) — see BulkEdit.
+            var v = e.old_value_disp != null ? String(e.old_value_disp)
+                : (e.old_value_str == null ? '' : String(e.old_value_str));
+            var wrote = 0;
+            var honest = e.old_kind !== 'pointer';
             Array.prototype.forEach.call(cs, function (c) {
                 if (c.readOnly) return;
+                var isStr = c.hasAttribute('data-str-numeric')
+                    || c.classList.contains('bulk-cell-str');
+                if ((e.old_kind === 'str_numeric') !== isStr) honest = false;
                 c.value = v;
                 c.setAttribute('data-orig', v);
                 c.dispatchEvent(new Event('input', { bubbles: true }));
@@ -900,7 +915,9 @@
                 var tr = _rowOf(c);
                 if (tr && rows.indexOf(tr) < 0) rows.push(tr);
                 patched++;
+                wrote++;
             });
+            if (wrote && honest) covered.push(e.dot_path);
         });
         rows.forEach(_refreshRow);
         if (patched) _refreshGlobal();

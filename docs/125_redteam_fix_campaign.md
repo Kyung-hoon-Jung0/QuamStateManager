@@ -145,3 +145,149 @@ harness runs app.js through Node-realm eval, so bare `getComputedStyle` and
 bare `Plotly` resolve via Node's `global`, and both misses were SWALLOWED by
 FieldHistory's fetch `.catch` — the panel showed "Could not load history."
 with nothing wrong on the wire. Suite: **65/65 selfchecks.**
+
+---
+
+## Fix 4 — scroll-restore abort: per-restore state, every scroll input (docs/124 M-16/M-17)
+
+**Findings closed:** M-16 (shared abort flag resurrection) and M-17 (abort
+blind to scrollbar interaction and ArrowUp/ArrowDown/Space). The settle fix
+(fix 1) already removed the STRUCTURAL restore failure; these two were the
+remaining defects in the retry mechanism itself.
+
+**The change:** `_armScrollAbort` returns a per-restore `{aborted}` state and
+`_restoreExplorer` stamps a generation (`_restoreGen`); a retry writes only
+when its own state is un-aborted AND its generation is current — so arming
+restore B can never resurrect restore A's timers (the executed four-yank
+ping-pong), and a superseded restore's timers never write even without a user
+scroll. The abort's event set gains `ArrowUp/ArrowDown/Space` (skipped while
+typing in an input — arrows in the search box are typing) and `mousedown` on
+the scroller element itself — Chrome hands a scrollbar track click or thumb
+drag to the page as exactly that and nothing else — plus middle-click
+autoscroll. **Deliberately NOT a raw `scroll` listener**: the browser fires
+the same event when it CLAMPS `scrollTop` while the filter settles, which
+would read as a user scroll and abort the very restore the retries exist for.
+
+**Pin:** `tests/scroll_abort_selfcheck.cjs` (9 checks) — real app.js driven
+through real `htmx:beforeSwap/afterSwap` events with a scrollTop write
+ledger: baseline restore lands; wheel abort; **zero zombie writes of A's
+stale target after B arms**; B completes; ArrowDown aborts while ArrowDown
+*inside an input* does not; mousedown on the scroller aborts while mousedown
+on a row does not; listener hygiene (wheel/touchmove delta zero; mousedown
+pinned as no-growth because another app.js path lazily registers one
+unrelated window singleton). One stale source-shape pin in
+`explorer_search_selfcheck.cjs` (grepping for the old variable name) was
+updated to the new mechanism — the docs/123 §8 pin class, met again.
+Suite: **66/66 → 67/67 selfchecks** (with fix 5's new pin).
+
+---
+
+## Fix 5 — resizeWithin: snapshot-restore (docs/124 M-1, the campaign's own regression)
+
+**Finding closed:** M-1 (major). Plotly 2.35.2's width relayout implies
+`autosize=null` AND pins the other dimension, and `Plots.resize` — the
+`responsive:true` window handler — permanently rejects once `layout.width &&
+layout.height` are both set. One `resizeWithin` touch therefore killed a
+chart's window-resize adaptation forever (executed: 168 px clipped off all six
+`/topology` metric bar charts after an is-narrow crossing + shrink).
+`c4df8c7` introduced it by making a dead call real — the dead call had been
+accidentally protective.
+
+**Method — measure before choosing:** a design-probe agent measured SIX
+candidate payloads × THREE chart shapes (declared-height / fully-auto /
+CSS-height holder) in real Chrome against the bundled Plotly, then acceptance-
+tested the winner by runtime patch on the real `/topology`
+(`tests/browser/_shots/fix4_lab.json`, `fix4_accept.json`). Winner: **P2
+snapshot-restore** — snapshot `gd.layout`'s `{width,height,autosize}` inside
+the render chain, `relayout({width})`, restore the three keys with no redraw.
+`fullLayout` keeps the correction; `gd.layout` returns **byte-identical to
+what the caller wrote**, so the window path behaves exactly as on an untouched
+chart and a DECLARED `layout.height` survives (stock Plotly itself loses that
+key on ordinary window resizes — the restore is strictly better). Rejected
+with executed evidence: P3 (two relayouts — still freezes declared-height
+charts, i.e. the `/topology` bars themselves), P5 (`height:null` destroys the
+declared key — §5.2's class), P4 (`Plots.resize` after clearing keys — works
+but rewrites the caller's layout). Key 2.35.2 gotcha recorded:
+`relayout({autosize:true})`'s implied `width:null` **never deletes** an
+existing `layout.width` key — only `Plots.resize`'s own `delete` does.
+
+**Overturned along the way:** docs/122's "`Plots.resize` is a no-op on these
+charts" did not reproduce in the probe's lab — resize recomputes from the
+CONTAINER and is 100 ms debounced, so the old synchronous measurement read as
+a no-op. The container-observer architecture stands regardless (nothing fires
+resize on a container-only change), but the §6 evidence row is corrected.
+
+**Verified, shipped code, no patching** (second agent, port 5365): the M-1
+repro heals end-to-end — s2's 578 px holders hold **578 px** SVGs (was 746,
+168 clipped), extra resize events and regrow track, heights `flh=520` at
+every step, `layout.width` absent at every step; Trends-toggle and ndview
+canaries green (settle fix and resize fix compose); zero console errors.
+
+**Pin:** `tests/plothost_selfcheck.cjs` (11 checks) — the contract against a
+2.35.2-faithful fake whose width relayout performs the implied edits exactly:
+the three shapes' layouts return byte-identical, the `<2px` idempotence gate,
+repeated touches, and the §8 pin-gap (`_graphDivs` includes its own root
+node) closed while here.
+
+---
+
+## Fix 6 — the undo repaint cluster (docs/124 C-2 / M-8 / M-9 / M-10)
+
+**Findings closed:** C-2 (critical — alias cells permanently stale after
+Ctrl+Z), M-8 (phantom-dirty pair twins that also vetoed every later rebuild),
+M-9 (`%.6e` repaint truncation becoming the next edit's baseline), M-10
+(type-changing reverts silently losing the docs/56 stored-as-text
+decorations), plus the readOnly-only coverage gap (diff-review minor).
+
+**Server half:** `_revert_entry_payload` (routes.py) is now the ONE builder
+for every cellsReverted/cellDiscarded entry — six hand-built sites had
+already drifted once, which is how M-9 shipped. Each entry adds
+`old_value_disp` (the grids' own lossless `group_digits` string — pinned:
+`4,333,001,234.5678`, not `4.333001e+09`) and `old_kind`
+(pointer/str_numeric/str/bool/num/null/other; bool before num — Python bools
+ARE ints). `old_value_str` keeps the inspector-input format unchanged.
+
+**Client half (both grids):** `revertPaths` matches
+`data-dot-path` OR `data-resolved` — the apply path's own idiom — so the
+alias cells the server's resolved paths name (every x180/x90 amp column on
+the real chip; the pair grid's operations-over-macros twins) repaint value
+AND baseline; prefers `old_value_disp`; and **coverage became a promise**:
+an entry counts covered only when at least one writable cell was repainted
+AND the repaint can stand in for a fresh render — a pointer revert, a
+str-numeric decoration flip, or a readOnly-only match now report uncovered,
+so the caller's existing debounced rebuild repaints honestly (the value
+itself still updates immediately).
+
+**Pins:** `tests/test_revert_payload.py` (17) for the server shape;
+`tests/undo_repaint_selfcheck.cjs` (13) driving the REAL bulk-edit.js +
+pair-edit.js: the C-2 alias repaint + coverage, M-9 lossless value AND
+baseline, M-10's three coverage verdicts, readOnly refusal, M-8 twin heal
+with zero dirty cells. Suite: **68/68 selfchecks**, grid pytest drivers
+green (90 passed).
+
+---
+
+## Fix 7 — the 17b family's Interactive tile matches the lab (docs/124 M-12)
+
+**Finding closed:** M-12 (major, executed inversion inside shipped code).
+`recipes/ramsey_vs_coupler_flux.py` put flux on x citing "the lab's
+convention for every flux sweep" — false for this family: the lab's own
+plotting puts **idle time on x** (xarray default, xlabel "Idle time (ns)"),
+as does the sibling 17a recipe and ndview's docs/122 rank. The Interactive
+fringes tile therefore rendered transposed against BOTH the Raw-Data tab and
+the lab's static PNG in the same menu — customer report #1's exact shape
+surviving inside the campaign's own fix, deterministic for all three
+generations (17b/21a/10b). And both wrong halves were green-pinned: the
+recipe test froze the deviant orientation and no pin spanned the two
+surfaces.
+
+**The change:** the fringes heatmap orients idle-on-x / flux-on-y (dims
+matched by NAME, both cube generations), the docstring's false claim is
+corrected in place, the test pins the lab's orientation, and a
+**cross-surface assert** ties the recipe to `_AXIS_RANK["idle_times"] <
+_AXIS_RANK["coupler_flux"]` — the two tabs can never silently disagree on
+this family again. The real-archive golden's candidate list gained the CQT
+date-dir layout (`<root>/<date>/#N_…`) and the golden re-ran green against
+the real run the red team's inversion was executed on (#490, 2026-08-14).
+The `_freq` curve tile (frequency vs flux) is untouched — a 1-D curve over
+flux is its own convention and was never in dispute.

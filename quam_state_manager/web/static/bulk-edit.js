@@ -2768,7 +2768,20 @@
         var t = table();
         if (!t || !entries || !entries.length) return { patched: 0, missing: 0 };
         var sel = function (p) {
-            return t.querySelectorAll('.bulk-cell[data-dot-path="' + _cssEsc(p) + '"]');
+            // BOTH attributes (docs/124 C-2): /undo names RESOLVED paths while
+            // a pointer-alias cell carries its alias in data-dot-path and the
+            // resolved leaf in data-resolved — on the real chip that is every
+            // x180/x90 amp column. Matching the alias axis only left those
+            // cells permanently stale and clean-marked after Ctrl+Z, with the
+            // hydrated dyn column absorbing the repaint and reporting the
+            // entry covered. The apply path always matched by data-resolved
+            // (_syncAppliedAcrossTable); the undo repaint now does too — and
+            // the union also lands on alias TWINS (two cells, one leaf), so
+            // both get value AND data-orig and the phantom-dirty twin (M-8)
+            // cannot arise.
+            var q = _cssEsc(p);
+            return t.querySelectorAll('.bulk-cell[data-dot-path="' + q + '"]'
+                + ', .bulk-cell[data-resolved="' + q + '"]');
         };
         // A cold column (docs/105) has no .bulk-cell to land in — the same trap
         // _consumeEditCarry hit. Hydrate once if any named path is absent.
@@ -2781,10 +2794,28 @@
             if (!e || !e.dot_path) return;
             var cs = sel(e.dot_path);
             if (!cs.length) { missing++; return; }
-            covered.push(e.dot_path);
-            var v = e.old_value_str == null ? '' : String(e.old_value_str);
+            // The grids render group_digits; the server ships that exact
+            // string as old_value_disp (docs/124 M-9 — writing _fmt_val's
+            // 7-sig-fig form here showed a truncated value AND made it the
+            // clean baseline the next edit committed from).
+            var v = e.old_value_disp != null ? String(e.old_value_disp)
+                : (e.old_value_str == null ? '' : String(e.old_value_str));
+            // Coverage is a PROMISE that the cell now looks exactly as a fresh
+            // server render would. Three cases where a value write cannot keep
+            // it (docs/124 M-10 + the readonly gap): a pointer must render as
+            // a link, not a value; the docs/56 stored-as-text decorations
+            // (quote spans, amber, tooltip) are server-rendered and must
+            // appear/disappear with the type; and a path whose every match is
+            // readOnly was not repainted at all. Uncovered ⇒ the caller's
+            // debounced rebuild repaints honestly (values below still update
+            // so the number on screen is right immediately).
+            var wrote = 0;
+            var honest = e.old_kind !== 'pointer';
             Array.prototype.forEach.call(cs, function (c) {
                 if (c.readOnly) return;
+                var isStr = c.hasAttribute('data-str-numeric')
+                    || c.classList.contains('bulk-cell-str');
+                if ((e.old_kind === 'str_numeric') !== isStr) honest = false;
                 c.value = v;
                 // The server has COMMITTED this value, so it is the new clean
                 // baseline — not an edit. Setting data-orig is what keeps the
@@ -2799,7 +2830,9 @@
                 var tr = _rowOf(c);
                 if (tr && rows.indexOf(tr) < 0) rows.push(tr);
                 patched++;
+                wrote++;
             });
+            if (wrote && honest) covered.push(e.dot_path);
         });
         rows.forEach(_refreshRow);
         if (patched) _refreshGlobal();
