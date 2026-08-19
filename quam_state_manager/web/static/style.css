@@ -8423,7 +8423,7 @@ button.diag-badge { cursor: pointer; }
    ~17 chips, which would push the search box off a laptop screen if it shared
    a row, and it wraps to a horizontal scroll rather than growing the toolbar
    downward while the user works. */
-.bulk-chipbar { display: flex; align-items: center; gap: 0.3rem;
+.bulk-chipbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem;
     margin: 0.1rem 0 0.35rem; }
 .bulk-chip-scroll { display: flex; align-items: center; gap: 0.25rem;
     overflow-x: auto; scrollbar-width: thin; padding-bottom: 2px; min-width: 0; }
@@ -8454,10 +8454,23 @@ button.diag-badge { cursor: pointer; }
 .bulk-chip-mode:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
 .bulk-chip-mode.chip-mode-or { border-color: var(--pico-primary);
     color: var(--pico-primary); }
-.bulk-chip-offer { flex: 0 0 auto; display: inline-flex; align-items: center;
+/* docs/126 ③: the no-match notice used to sit at the RIGHT END of the chip
+   row where nobody saw it — it is now a full-width centered band. It stays a
+   child of the chipbar so the delegated yes/no click handling is untouched. */
+.bulk-chip-offer { flex: 1 1 100%; display: flex; align-items: center; justify-content: center;
+    padding: .3rem .6rem; border-radius: 8px; font-weight: 600;
+    background: var(--color-warning-bg); border: 1px solid var(--color-warning-border);
+    color: var(--color-warning-text);
     gap: 0.25rem; font-size: 0.72rem;
     color: var(--color-warning-text, var(--pico-muted-color)); }
 .bulk-chip-offer[hidden] { display: none; }
+/* docs/126 ③ custom patches */
+.bulk-chip-custom { border-style: dashed; }
+.bulk-chip-x { margin-left: .3rem; opacity: .6; font-weight: 700; cursor: pointer; }
+.bulk-chip-x:hover { opacity: 1; color: var(--color-error-text); }
+.bulk-chip-add { border-style: dashed; font-weight: 700; min-width: 1.7em; }
+.bulk-chip-add-input { width: 9em; margin: 0; padding: .1rem .4rem; font-size: .8em;
+    height: auto; border-radius: 999px; }
 .bulk-chip-offer-yes, .bulk-chip-offer-no { margin: 0; width: auto;
     padding: 0.02rem 0.4rem; border-radius: 0.25rem; font-size: 0.72rem;
     border: 1px solid var(--color-warning-border, var(--pico-muted-border-color));

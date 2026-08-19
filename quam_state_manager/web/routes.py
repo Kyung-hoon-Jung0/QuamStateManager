@@ -332,7 +332,7 @@ def _bulk_column_groups(columns: list[dict]) -> list[dict[str, Any]]:
 # construction on any chip and never offers a term that matches nothing.
 _BULK_CHIP_TERMS: tuple[tuple[str, str], ...] = (
     ("freq", "Freq"),
-    ("xy", "XY"),
+    ("xy", "Qubit"),      # docs/126 ③: the lab calls the drive line "qubit", not "xy"
     ("readout", "Readout"),
     ("resonator", "Resonator"),
     ("flux", "Flux"),

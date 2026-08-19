@@ -306,6 +306,101 @@
             if (i >= 0) active.splice(i, 1); else active.push(term);
             _write();
         }
+        /* docs/126 ③ — user-defined patches ("decouple", "joint", …): saved
+           per browser, injected beside the server chips, filtered through the
+           exact same toggle/_write path. The server chips stay authoritative
+           for coverage; these are the lab's own vocabulary on top. */
+        var CUSTOM_KEY = 'quam_bulk_custom_chips';
+        function _customTerms() {
+            try {
+                var a = JSON.parse(localStorage.getItem(CUSTOM_KEY) || '[]');
+                return Array.isArray(a) ? a.filter(function (t) {
+                    return typeof t === 'string' && /^[^\s|]{1,40}$/.test(t);
+                }) : [];
+            } catch (e) { return []; }
+        }
+        function _saveCustom(list) {
+            try { localStorage.setItem(CUSTOM_KEY, JSON.stringify(list)); } catch (e) {}
+        }
+        function _injectCustom(b) {
+            var scroll = b.querySelector('.bulk-chip-scroll'); if (!scroll) return;
+            Array.prototype.slice.call(scroll.querySelectorAll(
+                '.bulk-chip-custom, .bulk-chip-add, .bulk-chip-add-input'
+            )).forEach(function (n) { n.parentNode.removeChild(n); });
+            var server = Array.prototype.slice.call(scroll.querySelectorAll('.bulk-chip'))
+                .map(function (x) { return x.getAttribute('data-chip-term'); });
+            _customTerms().forEach(function (t) {
+                if (server.indexOf(t) >= 0) return;   // the server already offers it
+                var btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'bulk-chip bulk-chip-custom';
+                btn.setAttribute('data-chip-term', t);
+                btn.setAttribute('aria-pressed', 'false');
+                btn.title = 'your saved filter patch — × removes it';
+                btn.textContent = t;
+                var x = document.createElement('span');
+                x.className = 'bulk-chip-x';
+                x.textContent = '×';
+                btn.appendChild(x);
+                scroll.appendChild(btn);
+            });
+            var add = document.createElement('button');
+            add.type = 'button';
+            add.className = 'bulk-chip bulk-chip-add';
+            add.title = 'Save your own filter word as a patch (e.g. "decouple", "joint")';
+            add.textContent = '+';
+            scroll.appendChild(add);
+        }
+        function _remount() {
+            var b = bar(); if (!b) return;
+            _injectCustom(b);
+            terms = Array.prototype.slice.call(
+                b.querySelectorAll('.bulk-chip:not(.bulk-chip-add)')
+            ).map(function (x) { return x.getAttribute('data-chip-term'); })
+             .filter(Boolean);
+            _paint();
+        }
+        function _openAdd() {
+            var b = bar(); var scroll = b && b.querySelector('.bulk-chip-scroll');
+            if (!scroll || scroll.querySelector('.bulk-chip-add-input')) return;
+            var inp = document.createElement('input');
+            inp.className = 'bulk-chip-add-input';
+            inp.placeholder = 'new patch…';
+            inp.setAttribute('aria-label', 'New filter patch');
+            scroll.insertBefore(inp, scroll.querySelector('.bulk-chip-add'));
+            inp.focus();
+            function commit() {
+                var t = inp.value.trim().toLowerCase();
+                if (inp.parentNode) inp.parentNode.removeChild(inp);
+                if (!/^[^\s|]{1,40}$/.test(t)) return;   // one token, no pipes
+                var cur = _customTerms();
+                if (cur.indexOf(t) < 0 && terms.indexOf(t) < 0) {
+                    cur.push(t); _saveCustom(cur);
+                }
+                _remount();
+                if (terms.indexOf(t) >= 0 && active.indexOf(t) < 0) active.push(t);
+                _write();
+            }
+            inp.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter') { e.preventDefault(); commit(); }
+                else if (e.key === 'Escape') {
+                    if (inp.parentNode) inp.parentNode.removeChild(inp);
+                }
+            });
+            inp.addEventListener('blur', function () {
+                setTimeout(function () { if (inp.parentNode) commit(); }, 120);
+            });
+        }
+        function _removeCustom(term) {
+            _saveCustom(_customTerms().filter(function (x) { return x !== term; }));
+            var i = active.indexOf(term);
+            if (i >= 0) active.splice(i, 1);
+            // _write BEFORE _remount: once the term leaves `terms`,
+            // _freeTokens would keep the word as user-typed text and the
+            // filter would silently stay on (caught by selfcheck F9).
+            _write();
+            _remount();
+        }
         function setMode(next) {
             mode = next === 'or' ? 'or' : 'and';
             try { localStorage.setItem(MODE_KEY, mode); } catch (e) {}
@@ -329,15 +424,22 @@
         }
         function mount() {
             var b = bar(); if (!b) return;
-            terms = Array.prototype.slice.call(b.querySelectorAll('.bulk-chip'))
-                .map(function (x) { return x.getAttribute('data-chip-term'); });
+            _injectCustom(b);   // docs/126 ③ — before terms are read
+            terms = Array.prototype.slice.call(
+                b.querySelectorAll('.bulk-chip:not(.bulk-chip-add)')
+            ).map(function (x) { return x.getAttribute('data-chip-term'); })
+             .filter(Boolean);
             mode = _readMode();
             if (b._chipWired) { syncFromQuery(); _paint(); return; }
             b._chipWired = true;
             b.addEventListener('click', function (e) {
                 var t = e.target;
                 if (!t || !t.classList) return;
-                if (t.classList.contains('bulk-chip')) {
+                if (t.classList.contains('bulk-chip-x')) {
+                    _removeCustom(t.parentNode.getAttribute('data-chip-term'));
+                } else if (t.classList.contains('bulk-chip-add')) {
+                    _openAdd();
+                } else if (t.classList.contains('bulk-chip')) {
                     toggle(t.getAttribute('data-chip-term'));
                 } else if (t.id === 'bulk-chip-mode') {
                     setMode(mode === 'and' ? 'or' : 'and');
@@ -926,11 +1028,26 @@
         // decide column visibility (search layer, on top of checkbox layer)
         var colSearchHide = {};
         visCols.forEach(function (c) { colSearchHide[c.key] = !colVisible(c.key, colHay[c.key] || []); });
-        t.querySelectorAll('th.bulk-col-head, td[data-col-key]').forEach(function (el) {
+        // docs/126 ③ perf: the class stays on the ~460 THs (the count/offer/
+        // reveal machinery reads it there), but the ~9,000 TDs are hidden by
+        // ONE generated stylesheet instead of a classList.toggle each — the
+        // per-td invalidation was most of the (program) style-recalc block in
+        // the 1.2–1.6 s patch press the customer reported. Tab/arrow cell
+        // navigation consults _searchHiddenKeys instead of the td class.
+        _searchHiddenKeys = {};
+        t.querySelectorAll('th.bulk-col-head').forEach(function (el) {
             var k = el.getAttribute('data-col-key');
             if (k === '__id__' || hide.has(k)) return;   // checkbox-hidden handled elsewhere
             el.classList.toggle('bulk-search-hidden', !!colSearchHide[k]);
         });
+        var _hideSels = [];
+        Object.keys(colSearchHide).forEach(function (k) {
+            if (!colSearchHide[k] || k === '__id__' || hide.has(k)) return;
+            _searchHiddenKeys[k] = 1;
+            _hideSels.push('#bulk-table td[data-col-key="' + _cssEsc(k) + '"]');
+        });
+        _searchHideStyleEl().textContent = _hideSels.length
+            ? _hideSels.join(',\n') + ' { display: none !important; }' : '';
         // docs/120 item 28 — SEARCHING FOR A COLUMN MUST MAKE IT USABLE, not
         // just visible. Cold columns (docs/105 virtualization) have their cell
         // contents detached, and hydration only ever fired on scroll, nav or a
@@ -945,11 +1062,11 @@
         // hydrate it. Gated on a non-empty query: with no search every column
         // survives, and hydrating them all would simply undo virtualization.
         if (_virt && q) {
+            var _due = [];
             visCols.forEach(function (c) {
-                if (!colSearchHide[c.key] && _virt && _virt.cold.has(c.key)) {
-                    _virtHydrateCol(c.key);
-                }
+                if (!colSearchHide[c.key] && _virt.cold.has(c.key)) _due.push(c.key);
             });
+            _virtHydrateCols(_due);   // one batch — never a scan per column
         }
         // A new query retires the previous "show them anyway" choice — it was
         // made about those tokens, and silently carrying it forward would make
@@ -1544,6 +1661,14 @@
         if (!el) { el = document.createElement('style'); el.id = 'bulk-virt-width-style'; document.head.appendChild(el); }
         return el;
     }
+    // docs/126 ③: search-hidden QUBIT-grid columns, as one stylesheet (tds)
+    // + a key set (cell navigation) — see the applySearch note.
+    var _searchHiddenKeys = {};
+    function _searchHideStyleEl() {
+        var el = document.getElementById('bulk-search-hide-style');
+        if (!el) { el = document.createElement('style'); el.id = 'bulk-search-hide-style'; document.head.appendChild(el); }
+        return el;
+    }
     function _cssEsc(k) { return (window.CSS && CSS.escape) ? CSS.escape(k) : String(k).replace(/"/g, '\\"'); }
     function _virtInit() {
         _virt = null;
@@ -1583,11 +1708,23 @@
             wrap.addEventListener('scroll', _virtOnScroll, { passive: true });
         }
     }
-    function _virtHydrateCol(key) {
-        if (!_virt || !_virt.cold.has(key)) return;
-        _virt.cold.delete(key);
+    function _virtHydrateCols(keys) {
+        if (!_virt || !keys || !keys.length) return;
+        var due = keys.filter(function (k) { return _virt.cold.has(k); });
+        if (!due.length) return;
         var t = table(); if (!t) { _virt = null; return; }
-        t.querySelectorAll('td[data-col-key="' + _cssEsc(key) + '"]').forEach(function (td) {
+        // ONE cold-cell scan + ONE PhysAmp pass for the whole batch. The old
+        // per-column path (a full-table querySelectorAll AND a whole-table
+        // PhysAmp.applyAll per column) is what made a broad patch press cost
+        // 1.2–1.6 s on the real 20Q chip — clicking "Qubit" survives ~100
+        // cold columns, so the table was scanned ~200 times per click
+        // (docs/126 ③, CDP-profiled: 253 ms querySelectorAll + 740 ms style
+        // recalc from the interleaved writes).
+        var set = {};
+        due.forEach(function (k) { set[k] = 1; _virt.cold.delete(k); });
+        t.querySelectorAll('td.bulk-td-cold').forEach(function (td) {
+            var k = td.getAttribute('data-col-key');
+            if (!k || !set[k]) return;
             var h = _virt.html.get(td);
             if (h != null) { td.innerHTML = h; _virt.html.delete(td); _virt.vals.delete(td); }
             td.classList.remove('bulk-td-cold');
@@ -1599,6 +1736,7 @@
         // the re-inserted text would be stale; reformat on arrival.
         if (window.PhysAmp) window.PhysAmp.applyAll(t);
     }
+    function _virtHydrateCol(key) { _virtHydrateCols([key]); }
     function _virtEnsureTd(td) {
         if (_virt && td) {
             var k = td.getAttribute('data-col-key');
@@ -1607,7 +1745,7 @@
     }
     function _virtHydrateAll() {
         if (!_virt) return;
-        Array.from(_virt.cold).forEach(_virtHydrateCol);
+        _virtHydrateCols(Array.from(_virt.cold));
     }
     var _virtScrollPending = false;
     function _virtOnScroll() {
@@ -1625,7 +1763,7 @@
                 var k = h.getAttribute('data-col-key');
                 if (_virt && _virt.cold.has(k) && h.offsetLeft < edge) due.push(k);
             });
-            due.forEach(_virtHydrateCol);
+            _virtHydrateCols(due);
         });
     }
 
@@ -2715,7 +2853,9 @@
             return null;
         }
         if (dc) {
-            var tds = Array.prototype.slice.call(tr.querySelectorAll('.bulk-td:not(.bulk-col-hidden):not(.bulk-search-hidden)'));
+            var tds = Array.prototype.slice.call(
+                tr.querySelectorAll('.bulk-td:not(.bulk-col-hidden):not(.bulk-search-hidden)')
+            ).filter(function (x) { return !_searchHiddenKeys[x.getAttribute('data-col-key')]; });
             for (var ci = tds.indexOf(td) + dc; ci >= 0 && ci < tds.length; ci += dc) {
                 var nc0 = _editableIn(tds[ci]);
                 if (nc0) return nc0;
@@ -2732,14 +2872,16 @@
         var td = cell.closest('td');
         var tr = cell.closest('tr');
         var sel = '.bulk-td:not(.bulk-col-hidden):not(.bulk-search-hidden)';
-        var tds = Array.prototype.slice.call(tr.querySelectorAll(sel));
+        var tds = Array.prototype.slice.call(tr.querySelectorAll(sel))
+            .filter(function (x) { return !_searchHiddenKeys[x.getAttribute('data-col-key')]; });
         for (var i = tds.indexOf(td) + dc; i >= 0 && i < tds.length; i += dc) {
             var c = _editableIn(tds[i]);
             if (c) return c;
         }
         var rows = _navRows();
         for (var ri = rows.indexOf(tr) + dc; ri >= 0 && ri < rows.length; ri += dc) {
-            var ntds = Array.prototype.slice.call(rows[ri].querySelectorAll(sel));
+            var ntds = Array.prototype.slice.call(rows[ri].querySelectorAll(sel))
+                .filter(function (x) { return !_searchHiddenKeys[x.getAttribute('data-col-key')]; });
             for (var j = dc > 0 ? 0 : ntds.length - 1; j >= 0 && j < ntds.length; j += dc) {
                 var nc = _editableIn(ntds[j]);
                 if (nc) return nc;

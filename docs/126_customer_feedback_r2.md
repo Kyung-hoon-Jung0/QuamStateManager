@@ -171,3 +171,48 @@ houseLayout at the spec choke point). One stale docs/125-era pin fixed along
 the way: `test_beforeswap_plotly_purge_targets_swap_container` pinned the
 variable NAME (`el`) the round-3 refactor renamed to `scope` — it now pins
 the contract (docs/123 §8 class).
+
+## ③ Live Edit — patches renamed, honest no-match, custom patches, faster press
+
+**Reports.** "The Qubit-freq/amp patch is labelled `xy` — call it `qubit`";
+"selecting XY then readout shows `No match` off at the right where nobody
+sees it — put it front and center"; "(dangerous) pressing a patch and pressing
+it again takes far too long"; "let users register their OWN patches — e.g.
+`decouple`, or just `joint` for joint_offset — this would be really useful".
+
+- **Label**: `_BULK_CHIP_TERMS`'s `("xy", "XY")` → `("xy", "Qubit")` (the term
+  stays `xy` — it is what matches the section haystacks).
+- **No-match band**: `#bulk-chip-offer` stays a child of the chipbar (the
+  delegated yes/no click handling is untouched) but renders as a full-width
+  CENTERED warning band (`flex: 1 1 100%` on a now-wrapping chipbar, warning
+  palette) instead of the old right-corner note. Real-browser: 1282/1282 px
+  wide, centered.
+- **Custom patches** (`ChipBar` additions): a dashed `+` chip opens an inline
+  input; the term is saved to `localStorage["quam_bulk_custom_chips"]`,
+  injected as a dashed chip beside the server chips on every mount, and flows
+  through the exact same `toggle/_write` path (so it filters BOTH grids and
+  survives reloads); × removes it. One real bug caught by the pin work:
+  `_removeCustom` must rewrite the search box BEFORE the term leaves `terms`,
+  else `_freeTokens` keeps the word as user-typed text and the filter
+  silently stays on (selfcheck F9).
+- **Press latency**, CDP-profiled on the real chip (450-col qubit grid + 111
+  pair): the shipped path did a full-table `querySelectorAll` AND a
+  whole-table `PhysAmp.applyAll` PER COLD COLUMN it hydrated — pressing
+  "Qubit" survives ~100 cold columns ⇒ ~200 full-table scans per press
+  (measured 253 ms in querySelectorAll alone, 1.4–1.6 s wall). Two fixes:
+  `_virtHydrateCols(keys)` batches the whole set into ONE cold-cell scan +
+  ONE PhysAmp pass (all four hydration call sites route through it), and the
+  search layer's ~9,000 per-td `classList.toggle` became ONE generated
+  stylesheet (`#bulk-search-hide-style`; the ~460 THs keep the class — the
+  count/offer/reveal machinery reads it there; cell Tab/arrow navigation
+  consults the new `_searchHiddenKeys` set). Measured after: ON 1.6 s →
+  0.9–1.1 s, OFF ~0.25 s. The residual is one full auto-layout of a
+  460-column table — recorded as the structural limit (a fixed-layout /
+  virtualized-table redesign, docs/104 class), not silently ignored.
+
+**Verified** by `tests/browser/_rt_cfb2_chips.cjs` (real Chrome, real chip,
+ALL OK: label, centered band geometry, add→filter→persist→reload→remove,
+console clean). **Pinned by** `bulk_search_selfcheck.cjs` §F (F1–F9: inject,
+inline add, active+box+store, filters like any chip, ONE-stylesheet td
+hiding with THs keeping the class, × removal restores everything) and the
+existing A–E pins green as the no-regression proof.

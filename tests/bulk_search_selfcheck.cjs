@@ -48,6 +48,16 @@ const HTML = '<!doctype html><html><body><div id="bulk-panel">' +
   '<button id="bulk-dyncol-hint" hidden></button>' +
   '<span id="bulk-dirty-count"></span>' +
   '<button id="bulk-apply-all"></button><button id="bulk-reset"></button>' +
+  '<div class="bulk-chipbar" id="bulk-chipbar">' +
+  '<button type="button" class="bulk-chip-mode" id="bulk-chip-mode" data-mode="and">AND</button>' +
+  '<span class="bulk-chip-scroll">' +
+  '<button type="button" class="bulk-chip" data-chip-term="t1" aria-pressed="false">T1</button>' +
+  '</span>' +
+  '<span class="bulk-chip-offer" id="bulk-chip-offer" hidden>' +
+  '<span class="bulk-chip-offer-text">No matches — try OR?</span>' +
+  '<button type="button" class="bulk-chip-offer-yes" id="bulk-chip-offer-yes">Yes</button>' +
+  '<button type="button" class="bulk-chip-offer-no" id="bulk-chip-offer-no">No</button>' +
+  '</span></div>' +
   '<div class="bulk-table-wrap"><table id="bulk-table"><thead>' +
   '<tr class="bulk-group-row"><th class="bulk-corner" data-col-key="__id__">qubit<span class="bulk-sort-caret"></span></th></tr>' +
   '<tr class="bulk-head-row">' +
@@ -137,6 +147,51 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
         visibleRows().length === 3, visibleRows().join(','));
   type('');
   await sleep(300);
+
+  // F. docs/126 ③ — custom patches + stylesheet-based td hiding.
+  type('');
+  await sleep(300);
+  const barEl = w.document.getElementById('bulk-chipbar');
+  check('F1 the + patch button is injected',
+        !!barEl.querySelector('.bulk-chip-add'));
+
+  // add a custom patch through the real add flow
+  barEl.querySelector('.bulk-chip-add').dispatchEvent(
+    new w.Event('click', { bubbles: true }));
+  const addInp = barEl.querySelector('.bulk-chip-add-input');
+  check('F2 + opens the inline input', !!addInp);
+  addInp.value = 'cz';
+  addInp.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await sleep(300);
+  const czChip = barEl.querySelector('.bulk-chip-custom[data-chip-term="cz"]');
+  check('F3 the custom patch chip exists and is active',
+        !!czChip && czChip.classList.contains('active'));
+  check('F4 it landed in the search box', /(^|[ ])cz([ ]|$)/.test(search.value),
+        'value=' + JSON.stringify(search.value));
+  check('F5 persisted to localStorage',
+        /"cz"/.test(w.localStorage.getItem('quam_bulk_custom_chips') || ''));
+  check('F6 and it filters like any chip (cz_amp column survives)',
+        !w.document.querySelector('th[data-col-key="cz_amp"]').classList.contains('bulk-search-hidden')
+        && w.document.querySelector('th[data-col-key="f_01"]').classList.contains('bulk-search-hidden'));
+
+  // stylesheet-based td hiding (docs/126 ③ perf): tds carry NO class; the
+  // generated sheet hides them, and cell nav keys off _searchHiddenKeys.
+  const styleEl = w.document.getElementById('bulk-search-hide-style');
+  check('F7 hidden columns ride ONE stylesheet, not per-td classes',
+        !!styleEl && styleEl.textContent.indexOf('td[data-col-key="f_01"]') >= 0
+        && !w.document.querySelector('td[data-col-key="f_01"]').classList.contains('bulk-search-hidden'));
+
+  // × removes the custom patch and its store entry
+  czChip.querySelector('.bulk-chip-x').dispatchEvent(
+    new w.Event('click', { bubbles: true }));
+  await sleep(300);
+  check('F8 × removes the patch from the bar and the store',
+        !barEl.querySelector('.bulk-chip-custom[data-chip-term="cz"]')
+        && !/"cz"/.test(w.localStorage.getItem('quam_bulk_custom_chips') || ''));
+  check('F9 removal also clears the filter (all columns back)',
+        !w.document.querySelector('th[data-col-key="f_01"]').classList.contains('bulk-search-hidden'),
+        'value=' + JSON.stringify(search.value)
+        + ' style=' + JSON.stringify((w.document.getElementById('bulk-search-hide-style') || {}).textContent));
 
   if (failures) { console.error(failures + ' check(s) failed'); process.exit(1); }
   console.log('all checks passed');
