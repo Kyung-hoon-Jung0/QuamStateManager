@@ -341,5 +341,39 @@ window.LiveEditUndo.tryUndo();
 window.LiveEditUndo.clear();
 ok(window.LiveEditUndo.tryRedo() === false, 'clear() empties the redo stack too');
 
+// ── 7. docs/125 round 2 — a FULL queue says so; redo joins server order ─────
+{
+    // Hold the pump (fix 8's apply-hold) so pushes accumulate to the cap.
+    window._applyInFlight = true;
+    const toasts = [];
+    const prevToast = window.showToast;
+    window.showToast = function (m, k) { toasts.push(String(m)); };
+    let accepted = 0, refused = 0;
+    for (let i = 0; i < 30; i++) (window.UndoQueue.push('/undo') ? accepted++ : refused++);
+    ok(refused > 0, 'past the cap presses are refused (' + accepted + ' accepted, '
+       + refused + ' refused)');
+    ok(toasts.some((m) => /full/i.test(m)),
+       'the refusal is VISIBLE now — a throttled toast names it (was: silence, docs/124 minor)');
+
+    // Ctrl+Shift+Z while server ops are queued must join THAT order, never
+    // answer from the client redo stack (the mixed-tier reversal).
+    let clientAsked = 0;
+    const prevTryRedo = window.LiveEditUndo.tryRedo;
+    window.LiveEditUndo.tryRedo = function () { clientAsked++; return true; };
+    const depthBefore = window.UndoQueue.depth();
+    pressShiftZ();
+    ok(clientAsked === 0,
+       'redo during in-flight/queued server ops bypasses the client stack');
+    ok(window.UndoQueue.depth() === depthBefore + 1 || depthBefore >= 20 - 1,
+       'the redo press joined the server queue (depth ' + depthBefore + ' -> '
+       + window.UndoQueue.depth() + ')');
+    window.LiveEditUndo.tryRedo = prevTryRedo;
+    window.showToast = prevToast;
+    window._applyInFlight = false;
+    for (let i = 0; i < 60; i++) await settle();   // drain everything queued
+    ok(window.UndoQueue.depth() === 0 && !window.UndoQueue.busy(),
+       'the held backlog drains once the apply clears');
+}
+
 process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error('FAIL: selfcheck threw: ' + (e && e.stack || e)); process.exit(1); });

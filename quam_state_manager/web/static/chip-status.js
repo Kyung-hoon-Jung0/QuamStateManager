@@ -20,11 +20,24 @@ window.ChipStatus.density = (function () {
         try { s = parseFloat(localStorage.getItem(KEY)); } catch (e) {}
         return (isFinite(s) && s > 0) ? clamp(s) : 1;
     }
+    var _rsT = null;
     function apply(s) {
         var d = document.querySelector('.topo-dashboard');
         if (!d) return;
         s = clamp(s);
         d.style.setProperty('--topo-density-scale', s);
+        // The metric bar charts are the one Chip Status surface no observer
+        // can serve: this slider reflows SIBLINGS without moving any outer
+        // container's box (docs/123 §7). The setter is therefore the resize
+        // trigger — debounced (the slider fires per pixel), and safe to call
+        // since docs/125 fix 5: resizeWithin hands each chart's layout back
+        // untouched, so the window-resize path stays alive.
+        clearTimeout(_rsT);
+        _rsT = setTimeout(function () {
+            if (window.PlotHost) {
+                try { window.PlotHost.resizeWithin(d); } catch (e) {}
+            }
+        }, 150);
         var sl = document.getElementById('topo-density-slider');
         if (sl && parseFloat(sl.value) !== s) sl.value = s;
         var preds = document.querySelectorAll('.density-preset');
@@ -2553,7 +2566,22 @@ window.ChipTrends = (function () {
             var host = document.getElementById('topo-trends');
             if (!host) return;
             var data = document.getElementById('topo-trends-data');
-            if (data && !host.querySelector('.js-plotly-plot')) {
+            if (!data) return;
+            // Chain-presence, not class sniffing (docs/124 minor): the
+            // fragment's inline script renders through the ASYNC chain, so at
+            // settle time the class/svg may simply not exist yet — the old
+            // '.js-plotly-plot' sniff double-rendered every toggle (and the
+            // class itself was proven strippable, docs/124 §1.1). The render
+            // entry sets __plotlyRenderChain SYNCHRONOUSLY at call time, so
+            // its presence on any chart host is the deterministic "a render
+            // is already owed" signal; the fallback fires only when the
+            // inline script genuinely never ran (the late-response case this
+            // fallback exists for).
+            var started = false;
+            host.querySelectorAll('.topo-trend-chart').forEach(function (el) {
+                if (el.__plotlyRenderChain || el._fullLayout) started = true;
+            });
+            if (!started) {
                 try { render(JSON.parse(data.textContent)); } catch (e) {}
             }
         };

@@ -289,6 +289,18 @@ window.getPageSize = function(storageKey, defaultVal) {
  * (the "2nd pulse click → broken plot, but fine after close+reopen" bug).
  * Without it Plotly also leaks WebGL contexts + DOM refs (~2-5MB per swap).
  */
+/* htmx history restore replaces the BODY outside every swap hook — the one
+   destructive path the beforeSwap choke point cannot see (docs/124 minor).
+   By the time htmx:historyRestore fires the outgoing nodes are gone, so the
+   reachable cleanup is the observer registry sweep (unobserveWithin's
+   gone-sweep semantics); Plotly's own responsive handlers on the dropped
+   graph divs are NOT reachable post-restore — recorded, not hidden. All
+   charts in this app are SVG (docs/122 measured), so the residue is
+   plain-memory until GC pressure, not WebGL contexts. */
+document.addEventListener('htmx:historyRestore', function () {
+    if (window.PlotHost) { try { window.PlotHost.unobserveWithin(document); } catch (e) {} }
+});
+
 /* The pinned-run interceptor must speak FIRST (docs/124 M-2): it may cancel
    the swap to keep the current layout, and every teardown listener below
    gates on shouldSwap — a later-registered interceptor meant the purge had
@@ -4610,7 +4622,7 @@ document.addEventListener("focusout", function(evt) {
    accepting rather than silently discarding somewhere in the middle. */
 window.UndoQueue = (function () {
     var MAX = 20;
-    var q = [], busy = false, waiting = false;
+    var q = [], busy = false, waiting = false, _fullToastAt = 0;
     /* The queue's OWN htmx sync source (docs/124 M-11). It must NOT be the
        tray: htmx 2.0.4's per-element sync (default strategy "last") lives on
        the SOURCE element, and both the grid ⚡ apply (applyEditsToLive) and
@@ -4661,13 +4673,41 @@ window.UndoQueue = (function () {
                 source: src(), target: "#pending-tray", swap: "outerHTML",
             });
         } catch (e) { done(); return; }
-        if (r && typeof r.then === "function") r.then(done, done);
-        else done();   // no completion signal ⇒ never hold the lock on a guess
+        /* A /undo that never settles used to hold `busy` FOREVER — every
+           later press queued silently behind it for the rest of the session
+           (docs/124 minor: no timeout at any layer). Releasing busy alone
+           would just queue the next request behind the wedged one inside
+           htmx's own sync lane, so a timeout gives up HONESTLY: drop the
+           queue, say so. A response that still lands later swaps the tray
+           normally — nothing is corrupted, the user just pressed again. */
+        var guard = setTimeout(function () {
+            if (!busy) return;
+            busy = false;
+            q.length = 0;
+            if (window.showToast) window.showToast(
+                "Undo is not responding — the press was abandoned. "
+                + "Check the server and try again.", "error");
+        }, 20000);
+        var settle = function () { clearTimeout(guard); done(); };
+        if (r && typeof r.then === "function") r.then(settle, settle);
+        else settle();   // no completion signal ⇒ never hold the lock on a guess
     }
     return {
         push: function (path) {
             if (!window.htmx || !document.getElementById("pending-tray")) return false;
-            if (q.length >= MAX) return false;
+            if (q.length >= MAX) {
+                // The refusal used to be COMPLETELY invisible — preventDefault
+                // had already fired and the return value was discarded, the
+                // same silence the queue was built to end (docs/124 minor).
+                // Throttled: a held key reaches this ~30x/s.
+                var now = Date.now();
+                if (now - _fullToastAt > 1500 && window.showToast) {
+                    _fullToastAt = now;
+                    window.showToast("Undo queue is full (" + MAX
+                        + " pending) — release the key.", "warning");
+                }
+                return false;
+            }
             q.push(path);
             pump();
             return true;
@@ -4693,6 +4733,16 @@ document.addEventListener("keydown", function(evt) {
         // says whether the wizard is actually on screen (real-browser catch).
         if (window._wizUndo && window._wizUndo.mounted
             && window._wizUndo.mounted()) { evt.preventDefault(); return; }
+        // Server ops in flight or queued: redo must join THAT order, not
+        // answer from the client stack first — Ctrl+Shift+Z during an
+        // in-flight server undo used to re-apply an older client action
+        // instead of redoing the press it chased (docs/124 minor).
+        if (window.UndoQueue && (window.UndoQueue.busy() || window.UndoQueue.depth() > 0)
+            && window.htmx && document.getElementById("pending-tray")) {
+            evt.preventDefault();
+            window.UndoQueue.push("/redo");
+            return;
+        }
         if (window.LiveEditUndo && window.LiveEditUndo.tryRedo()) { evt.preventDefault(); return; }
         if (!window.htmx || !document.getElementById("pending-tray")) return;
         evt.preventDefault();
@@ -12292,6 +12342,11 @@ function renderParamHistorySparklines() {
 function paramHistoryOpenDrawer(qubit, prop) {
     var drawer = document.getElementById('param-history-drawer');
     if (!drawer) return;
+    // A live #phd-chart rendered with responsive:true holds a window-resize
+    // handler that references the graph div — innerHTML without purge leaks
+    // the whole detached subtree per open (docs/124, the popover/drawer
+    // minor). Purge through the choke point this drawer used to bypass.
+    if (window.PlotHost) { try { window.PlotHost.purgeWithin(drawer); } catch (e) {} }
     drawer.style.display = 'block';
     drawer.innerHTML = '<p class="muted" style="padding:1rem">Loading…</p>';
     var url = '/param-history/expand?qubit=' + encodeURIComponent(qubit)
@@ -12318,6 +12373,10 @@ function paramHistoryOpenDrawer(qubit, prop) {
 function paramHistoryCloseDrawer() {
     var drawer = document.getElementById('param-history-drawer');
     if (!drawer) return;
+    if (window.PlotHost) {
+        try { window.PlotHost.purgeWithin(drawer); } catch (e) {}
+        try { window.PlotHost.unobserveWithin(drawer); } catch (e) {}
+    }
     drawer.style.display = 'none';
     drawer.innerHTML = '';
 }
@@ -12438,6 +12497,9 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
         return typeof p.value === 'number' && isFinite(p.value);
     });
     if (!pts.length) {
+        if (window.PlotHost) {
+            try { window.PlotHost.purgeWithin(document.getElementById('phd-chart')); } catch (e) {}
+        }
         document.getElementById('phd-chart').innerHTML =
             '<p class="muted" style="text-align:center;padding:2rem">No numeric values.</p>';
         return;
@@ -14738,6 +14800,26 @@ window.FieldHistory = (function () {
         document.addEventListener("keydown", function (e) {
             if (e.key === "Escape" && panel.style.display !== "none") close();
         });
+        // Singleton (ensurePanel runs once): a window shrink used to strand
+        // the position:fixed panel fully off-screen — config.responsive
+        // covers only the PLOT (docs/124, the popover minor). Re-clamp into
+        // the viewport while visible.
+        window.addEventListener("resize", function () {
+            if (!panel || panel.style.display === "none") return;
+            var w = Math.min(500, window.innerWidth - 16);
+            panel.style.width = w + "px";
+            var r = panel.getBoundingClientRect();
+            var left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8));
+            // Clamp by the panel's own HEIGHT, not a fixed top margin — the
+            // first version guaranteed only the top edge and left the bottom
+            // overhanging by up to the panel height (measured 270px worst
+            // case, 10.6px in the realistic one). Floored at 8: a panel
+            // taller than the viewport top-aligns, which is the best honest
+            // outcome.
+            var top = Math.max(8, Math.min(r.top, window.innerHeight - r.height - 8));
+            panel.style.left = left + "px";
+            panel.style.top = top + "px";
+        });
         return panel;
     }
 
@@ -14762,6 +14844,11 @@ window.FieldHistory = (function () {
         if (!path) return;
         applyInput = input || null;
         var p = ensurePanel();
+        // The previous open's #fh-chart (responsive:true) holds a window
+        // resize handler referencing the graph div — innerHTML without purge
+        // leaked one handler + one detached Plotly subtree PER OPEN
+        // (docs/124, the popover minor).
+        if (window.PlotHost) { try { window.PlotHost.purgeWithin(p); } catch (e) {} }
         p.innerHTML = '<p class="fh-empty">Loading history…</p>';
         position(anchor);
         fetch("/field/history?path=" + encodeURIComponent(path))

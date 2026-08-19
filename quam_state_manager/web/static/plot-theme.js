@@ -101,7 +101,15 @@
     function retheme() {
         if (!window.Plotly) return;
         var L = houseLayout({});
-        document.querySelectorAll('.js-plotly-plot').forEach(function (el) {
+        // STRUCTURAL selection (docs/124 M-6/§4.3): '.js-plotly-plot' is a
+        // class and was proven strippable — a chart that lost it silently
+        // never rethemed. PlotHost.graphDivs finds graph divs by what they
+        // ARE (fullLayout / .plot-container child / root itself); the bare
+        // class stays only as the no-PlotHost fallback.
+        var divs = (window.PlotHost && window.PlotHost.graphDivs)
+            ? window.PlotHost.graphDivs(document)
+            : document.querySelectorAll('.js-plotly-plot');
+        Array.prototype.forEach.call(divs, function (el) {
             try {
                 window.Plotly.relayout(el, {
                     paper_bgcolor: L.paper_bgcolor, plot_bgcolor: L.plot_bgcolor,

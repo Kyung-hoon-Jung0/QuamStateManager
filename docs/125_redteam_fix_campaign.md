@@ -365,3 +365,52 @@ cannot happen. `_order_sweeps` now takes the gate population explicitly
 (`sweeps + small_sweeps`). Archive impact bounded by the measured
 1,803-of-1,805 full coverage. Pin includes a ranked-short control proving
 the block comes from the unranked NAME, not from the overlay diversion.
+
+---
+
+## Round 2 — the surviving minors, plus docs/123 §7's bar charts
+
+Seven small fixes in one batch (docs/124 minors + one docs/123 §7 leftover),
+each browser-verified on the real chip (probes `_rt_fix8_{a,b,b2,c,d}_*.cjs`,
+zero console errors across every run):
+
+- **retheme selects structurally** — `plot-theme.js` rides
+  `PlotHost.graphDivs` (bare class only as the no-PlotHost fallback); pinned
+  in `plothost_selfcheck` with a class-stripped chart.
+- **The Param History drawer purges before it destroys** — open/close/no-data
+  all purge through the choke point they used to bypass (a `responsive:true`
+  chart's window handler kept the detached subtree alive per open). Verified:
+  exactly one purge per replacement, target still connected and live.
+- **The value-history popover**: purge-per-reopen (leak measured healed —
+  resize-listener count 3,3,3,3,3 across five opens; pre-fix would be
+  3..7) and a singleton re-clamp on window resize. The verification caught
+  the FIRST clamp guaranteeing only the top edge (bottom overhang up to the
+  panel height, 270 px worst / 10.6 px realistic) — it now clamps by the
+  panel's own height, floored at 8.
+- **htmx history restore** gets the reachable half of a purge: the observer
+  registry sweep on `htmx:historyRestore`. Plotly's own responsive handlers
+  on the dropped graph divs are NOT reachable after the body swap — recorded
+  in the comment, not hidden; all charts are SVG so the residue is plain
+  memory, not WebGL contexts.
+- **The undo queue finishes its honesty story**: a full queue toasts
+  (throttled — a held key hits it ~30/s); a `/undo` that never settles gives
+  up after 20 s with the queue dropped and an error toast instead of
+  wedging the tier for the session; and Ctrl+Shift+Z while server ops are
+  in flight/queued joins the server queue instead of answering from the
+  client redo stack (the mixed-tier reversal). Pinned in `ctrlz_selfcheck`
+  §7.
+- **ChipTrends never double-renders a toggle** — `_reload`'s settle fallback
+  gates on `__plotlyRenderChain` presence (set synchronously at render call)
+  instead of sniffing the strippable class. Verified: exactly one render per
+  chart per toggle (pre-fix: two), and the fallback stays alive for the
+  late-response case it exists for.
+- **The density slider drives `resizeWithin(.topo-dashboard)`** (debounced
+  150 ms) — the docs/123 §7 wiring, safe since fix 5. The verification
+  returned a first-class negative on the §7 PREMISE: on this chip the
+  slider cannot change a bar-chart holder's width at ANY geometry (5
+  viewports × 3 densities measured — `flex: 0 1 350px` + `flex-wrap` wraps
+  instead of shrinking; only the grid reflows). What the wiring provably
+  does: heals a desynced chart (injected 250 px → 350 == holder), preserves
+  heights (M-1 contract), and leaves window-resize adaptation alive
+  (350 → 698 tracked on all six). The trigger is correct armor even though
+  the reflow the plan assumed does not occur on this CSS.

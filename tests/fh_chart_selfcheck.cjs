@@ -99,7 +99,13 @@ let requireCalls = 0;
 window.requirePlotly = function () {
     requireCalls++;
     const fake = {
-        newPlot: function (el) { newPlots.push(el); return Promise.resolve(); },
+        // real Plotly adds the class at render — the purge pin relies on the
+        // mount being discoverable the way a real chart is
+        newPlot: function (el) {
+            newPlots.push(el);
+            if (el && el.classList) el.classList.add('js-plotly-plot');
+            return Promise.resolve();
+        },
         react: function () { return Promise.resolve(); },
         purge: function () {},
         relayout: function () { return Promise.resolve(); },
@@ -130,6 +136,21 @@ window.FieldHistory.open(anchor, 'qubits.q1.T1', null);
 await settle();
 ok(requireCalls === 0, 'with Plotly already loaded, requirePlotly is not asked again');
 ok(newPlots.length === 1, 'and the chart still renders (' + newPlots.length + ')');
+
+// A further open PURGES the previous chart before innerHTML destroys it
+// (docs/125 round 2 — a responsive:true chart's window handler kept the
+// detached subtree alive, one leak per open). The fake's newPlot marks the
+// mount as a graph div so PlotHost.purgeWithin can find it structurally.
+const purges = [];
+window.Plotly.purge = function (el) { purges.push(el); };
+const firstChart = newPlots[0];
+firstChart._fullLayout = { width: 400 };
+firstChart.data = [{}];
+window.FieldHistory.open(anchor, 'qubits.q1.f_01', null);
+await settle();
+ok(purges.indexOf(firstChart) >= 0,
+   'reopening the popover purges the previous chart before replacing it (' +
+   purges.length + ' purged)');
 
 if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
 console.log('all checks passed');

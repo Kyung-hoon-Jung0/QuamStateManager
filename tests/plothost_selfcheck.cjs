@@ -170,6 +170,25 @@ await flush();
 ok(n === 1 && rootSelf._fullLayout.width === 555,
    '_graphDivs includes its own root node (an outerHTML swap can replace exactly the graph div)');
 
+// ── retheme selects STRUCTURALLY (docs/124 M-6 / docs/125 round 2) ────────
+// plot-theme.js used to iterate '.js-plotly-plot' only, so a chart whose
+// class was stripped silently never rethemed. It now rides PlotHost.graphDivs.
+{
+    const themeSrc = fs.readFileSync(
+        path.join(__dirname, '..', 'quam_state_manager', 'web', 'static', 'plot-theme.js'),
+        'utf8');
+    window.eval(themeSrc);
+    const stripped = mkChart({}, { width: 400, height: 200 }, 400);
+    stripped.className = 'i-lost-my-class';           // the shipped corpse shape
+    const inner = window.document.createElement('div');
+    inner.className = 'plot-container plotly';        // Plotly's own child
+    stripped.appendChild(inner);
+    const before = relayouts.length;
+    window.PlotTheme.retheme();
+    ok(relayouts.slice(before).some((r) => r.el === stripped),
+       'retheme reaches a class-stripped chart (structural graphDivs, not the bare class)');
+}
+
 if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
 console.log('all checks passed');
 process.exit(0);
