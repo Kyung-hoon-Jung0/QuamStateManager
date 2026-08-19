@@ -639,6 +639,16 @@ def synthesize(qclass_or_key: str, params: dict[str, Any], *,
         return _mark_schema_known(_payload_error(
             f"no synthesizer for pulse class {qclass_or_key!r}"), qclass_or_key)
 
+    if spec.key == "Pulse":
+        # Digital-marker-only (bare quam Pulse): quam returns waveform None,
+        # so an analog preview would be an invention — recognized, honestly
+        # empty, never the "unrecognized" scare (docs/126 follow-up).
+        payload = _payload_error(
+            "digital marker only — this pulse has no analog waveform",
+            spec_key="Pulse", class_match=how)
+        payload["digital_only"] = True
+        return payload
+
     warnings: list[str] = []
     param_errors: dict[str, str] = {}
     resolved: dict[str, Any] = {}

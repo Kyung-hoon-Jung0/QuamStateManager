@@ -373,3 +373,34 @@ create on a real-chip copy for a macro-less pair → /save → `Quam.load()` in
 the customer env succeeds and the macro's amplitude resolves to cz_flattop's.
 Real Chrome: form lists 30 eligible pairs, creation stages a 6-change Review
 bundle, console clean. **Pinned by** `tests/test_gaussian_cz.py` (12).
+
+## Follow-up: the CQT XEB run #2560 compatibility check + bare `Pulse`
+
+**Ask.** "This run's pulses look different from what I expected — verify it
+is REALLY compatible with SM": `CQT/data/2026-08-19/#2560_38_two_qubit_xeb_192702/quam_state`.
+
+**Verdict: fully compatible, and structurally IDENTICAL to the chip you have
+been working with.** Diffed against the PJ_10082026 copy: 7,757 leaves vs
+7,757, **zero** structural differences (629 pulse/gate nodes — none added,
+removed, or class-changed), and only **23 numeric leaves** moved — 15 inside
+`q19-20`'s macros and 8 port filter values, i.e. ordinary recalibration
+between 08-14 and 08-19. Battery: all 8 pulse classes resolve (7 exact +
+CosineBipolarPulse via today's ⑦a), QuamStore loads with 0 pointer warnings,
+all 11 SM pages render 200 with 0 unrecognized banners / 0 error toasts, and
+the definitive test — `Quam.load()` + `machine.generate_config()` in the
+customer env, in memory, read-only — succeeds (90 elements / 354 pulses /
+526 waveforms, the 11 QDAC trigger pulses included).
+
+**The one thing SM said wrongly, now fixed.** The chip carries 11 bare
+`quam.components.pulses.Pulse` at `z.opx_trigger_out.operations.trigger` —
+the QDAC trigger markers (docs/119). quam's own `waveform_function()` returns
+**None** for the bare class (verified in the customer env): it is a
+digital-marker-only pulse, fully loadable, fully config-generatable. SM's
+catalog had no entry, so anywhere it surfaced it wore the "Unrecognized pulse
+class" scare. Now: a catalog spec (`label="Digital marker only"`, never
+creatable) and a synth answer that says the truth — `digital_only: True`,
+"digital marker only — this pulse has no analog waveform" — instead of
+inventing a flat line or crying unrecognized. (The Pulses table deliberately
+still lists waveform pulses only — 524 rows; the trigger markers are wiring
+plumbing. Listing them is an easy follow-up if wanted.) Pinned by
+`tests/test_gaussian_cz.py::TestBarePulseRecognized` + the catalog-shape pin.

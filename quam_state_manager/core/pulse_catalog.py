@@ -153,6 +153,24 @@ _QC = "quam.components.pulses."
 
 _SPECS: tuple[PulseSpec, ...] = (
     PulseSpec(
+        # The bare quam Pulse is a DIGITAL-MARKER-ONLY pulse: quam's own
+        # waveform_function returns None for it (verified in the customer
+        # env), and real chips use it for e.g. the QDAC trigger lines
+        # (docs/119 — `z.opx_trigger_out.operations.trigger`, 11 on the CQT
+        # chip). Recognizing it stops the "Unrecognized pulse class" banner
+        # from branding a legitimate marker pulse; there is no analog preview
+        # because there is no analog waveform (docs/126 follow-up).
+        key="Pulse", qclass=_QC + "Pulse", label="Digital marker only",
+        iq="optional", readout=False, channels=(),
+        params=(
+            _p("length", "Length", "int", 100, unit="ns", required=True),
+            _p("digital_marker", "Digital marker", "str", "ON", synth=False),
+            _ID,
+        ),
+        creatable=False,
+        group="Control", doc="Bare quam Pulse — digital marker, no analog waveform",
+    ),
+    PulseSpec(
         key="SquarePulse", qclass=_QC + "SquarePulse", label="Square",
         iq="optional", readout=False, channels=("xy", "z", "resonator"),
         params=(_LENGTH, _AMPLITUDE, _AXIS_ANGLE_OPT, _ID, _DIGITAL_MARKER),

@@ -19,6 +19,7 @@ _QC = "quam.components.pulses."
 class TestCatalogShape:
     def test_all_expected_classes_present(self):
         expected = {
+            "Pulse",       # digital-marker-only (docs/126: the QDAC trigger pulses)
             "SquarePulse", "SquareReadoutPulse", "GaussianPulse",
             "DragGaussianPulse", "DragCosinePulse",
             "FlatTopGaussianPulse", "FlatTopCosinePulse", "FlatTopTanhPulse",
