@@ -1,44 +1,59 @@
 <!DOCTYPE html>
 {# docs/126 #21 — the printable chip report. STANDALONE by design: no base.html,
-   no topbar/sidebar, forced light theme (a report commits to one look — and it
-   is what a printer produces anyway). The map is the SAME ComponentMap drawing
-   the component pages use (it fetches /api/topology itself); the tables are
-   read-only renderings of the same QueryEngine rows those pages show, all
-   entities, unpaginated. The toolbar's Download serializes the CURRENT DOM
-   (SVG already drawn) with the stylesheet inlined, so the saved file is fully
-   self-contained. #}
-<html lang="en" data-theme="light">
+   no topbar/sidebar. Forced DARK theme (r3 feedback): the report shows exactly
+   what users see in SM — the light-forced first cut washed the map out — and
+   print-color-adjust makes the printer keep the dark background instead of
+   stripping it (which would leave light text on white paper). The map is the
+   SAME ComponentMap drawing the component pages use (it fetches /api/topology
+   itself); the tables are read-only renderings of the same QueryEngine rows
+   those pages show, all entities, unpaginated. The toolbar's Download
+   serializes the CURRENT DOM (SVG already drawn) with the stylesheet inlined,
+   so the saved file is fully self-contained. #}
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="utf-8">
     <link rel="icon" type="image/svg+xml"
           href="{{ url_for('static', filename='favicon.svg') }}">
     <title>Chip report — {{ chip_name or 'no chip' }}</title>
+    {# BOTH sheets, same order as base.html — the --pico-* base tokens live
+       in pico.min.css; without it the dark background token resolved to
+       nothing and the body rendered transparent-on-white. #}
+    <link rel="stylesheet" href="{{ url_for('static', filename='pico.min.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <style>
-        /* report-local layout — everything scoped so the shared stylesheet
-           stays untouched */
+        /* report-local layout — theme TOKENS, not hardcoded colors, so the
+           page (and the downloaded copy, which inlines the stylesheet under
+           the same data-theme="dark") renders exactly like SM's own dark
+           surfaces. Everything scoped so the shared stylesheet stays
+           untouched. */
         body.chip-report { max-width: 1080px; margin: 0 auto; padding: 1.2rem 1.6rem 3rem;
-                           background: #fff; color: #1a1d23; }
+                           background: var(--pico-background-color);
+                           color: var(--pico-color); }
         .chip-report h1 { font-size: 1.5rem; margin: 0.2rem 0 0.1rem; }
         .chip-report h2 { font-size: 1.12rem; margin: 1.6rem 0 0.5rem;
-                          border-bottom: 2px solid #d5d9e0; padding-bottom: 0.25rem; }
-        .chip-report .rep-meta { color: #5a6270; font-size: 0.85rem; margin: 0 0 0.8rem; }
+                          border-bottom: 2px solid var(--pico-muted-border-color);
+                          padding-bottom: 0.25rem; }
+        .chip-report .rep-meta { color: var(--pico-muted-color); font-size: 0.85rem; margin: 0 0 0.8rem; }
         .chip-report .rep-meta code { font-size: 0.82rem; }
         .chip-report table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
-        .chip-report th, .chip-report td { border: 1px solid #d5d9e0;
+        .chip-report th, .chip-report td { border: 1px solid var(--pico-muted-border-color);
                           padding: 0.28rem 0.5rem; text-align: left; }
-        .chip-report th { background: #eef1f5; font-weight: 600; }
-        .chip-report tr:nth-child(even) td { background: #f7f8fa; }
-        .chip-report .rep-off { color: #98a1b3; }
+        .chip-report th { background: var(--pico-card-background-color); font-weight: 600; }
+        .chip-report tr:nth-child(even) td {
+                          background: color-mix(in srgb, var(--pico-card-background-color) 55%, transparent); }
+        .chip-report .rep-off { color: var(--pico-muted-color); }
         .chip-report .rep-toolbar { display: flex; gap: 0.5rem; align-items: center;
                           justify-content: flex-end; margin: 0 0 0.4rem; }
         .chip-report .rep-toolbar button { width: auto; padding: 0.3rem 0.9rem;
                           font-size: 0.85rem; margin: 0; }
-        .chip-report .cmap { border: 1px solid #d5d9e0; border-radius: 8px;
-                          padding: 0.4rem 0.7rem; background: #fff; }
-        .chip-report .rep-note { color: #5a6270; font-size: 0.78rem; }
+        .chip-report .cmap { border: 1px solid var(--pico-muted-border-color); border-radius: 8px;
+                          padding: 0.4rem 0.7rem; background: var(--pico-card-background-color); }
+        .chip-report .rep-note { color: var(--pico-muted-color); font-size: 0.78rem; }
         @media print {
             .no-print { display: none !important; }
+            /* keep the dark ink — the browser's default background-stripping
+               would print light text on white paper */
+            body.chip-report { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
             .chip-report h2 { break-after: avoid; }
             .chip-report table { break-inside: auto; }
             .chip-report tr { break-inside: avoid; }
@@ -203,9 +218,12 @@
         }
         function buildStandalone() {
             return whenDrawn().then(function () {
-                return fetch('{{ url_for('static', filename='style.css') }}')
-                    .then(function (r) { return r.ok ? r.text() : ''; })
-                    .catch(function () { return ''; });
+                var urls = ['{{ url_for('static', filename='pico.min.css') }}',
+                            '{{ url_for('static', filename='style.css') }}'];
+                return Promise.all(urls.map(function (u) {
+                    return fetch(u).then(function (r) { return r.ok ? r.text() : ''; })
+                                   .catch(function () { return ''; });
+                })).then(function (parts) { return parts.join('\n'); });
             }).then(function (css) {
                 var doc = document.documentElement.cloneNode(true);
                 doc.querySelectorAll('script').forEach(function (el) { el.remove(); });

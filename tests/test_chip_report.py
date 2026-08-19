@@ -1,7 +1,8 @@
 """The printable chip report (docs/126 #21, customer request).
 
 A printer icon beside "Chip Status" in the sidebar opens ``/chip-status/report``
-— a STANDALONE page (no app chrome, forced light theme) with the component-map
+— a STANDALONE page (no app chrome, forced dark theme — what users see in SM,
+r3 feedback) with the component-map
 drawing and read-only, unpaginated tables of all five component views. Its
 toolbar offers Print and a self-contained .html download (the client serializes
 the DOM after the map draws, inlining the stylesheet).
@@ -68,10 +69,12 @@ class TestSidebarAffordance:
 
 
 class TestReportContent:
-    def test_standalone_light_and_chromeless(self, client):
+    def test_standalone_dark_and_chromeless(self, client):
         b = client.get("/chip-status/report").get_data(as_text=True)
-        # standalone: its own <html>, forced light, no app chrome
-        assert 'data-theme="light"' in b
+        # standalone: its own <html>, forced DARK (r3: the report shows what
+        # users see in SM; print-color-adjust keeps the ink), no app chrome
+        assert 'data-theme="dark"' in b
+        assert "print-color-adjust: exact" in b
         assert "sidebar" not in b and "topbar" not in b
         assert 'id="pending-tray"' not in b
 

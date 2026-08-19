@@ -625,3 +625,20 @@ class, so the run box rendered 213 px wide until the selector went two-class.
 Verified on the real 154-run archive (`«` 153→143, typed 120, 9999 fallback);
 pinned by the updated `TestDatasetNavR16` (+ ten-step clamp test) and
 `TestRunJump` (header carries NO jump box).
+
+### r3 스타일 3종 — dark report, whole-row active highlight
+
+- **The report is DARK now** (user: "SM에서 경험하는 그대로"): the light-forced
+  first cut washed the map out — and the REAL defect underneath was that the
+  report never linked `pico.min.css`, so every `--pico-*` base token was
+  undefined and the body rendered transparent. Both sheets link in base.html's
+  order, the report-local styles are tokens (not hardcoded colors), the
+  download inlines BOTH sheets, and `print-color-adjust: exact` keeps the dark
+  ink at the printer (the browser's default background-stripping would print
+  light text on white paper).
+- **Active rows paint to the edge**: Instrument Wiring's ⧉ and Chip Status'
+  🖨/▾ sit OUTSIDE the anchor, so the blue active pill stopped mid-row.
+  `:has(> a.active)` paints the whole row (`li.nav-floatable` /
+  `.nav-sub-row`), the anchor goes transparent, and the icons inherit the
+  inverse color with no box of their own. Measured live: row bg
+  rgb(1,114,173), icons inside, ⧉ background transparent.

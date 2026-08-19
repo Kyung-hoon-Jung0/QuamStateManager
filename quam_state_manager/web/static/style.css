@@ -1434,6 +1434,21 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
 .sidebar-nav a { display: block; padding: var(--sidebar-nav-link-pad-v) var(--sidebar-nav-link-pad-h); border-radius: 4px; text-decoration: none; }
 .sidebar-nav a:hover { background: var(--pico-muted-border-color); }
 .sidebar-nav a.active { background: var(--pico-primary-background); color: var(--pico-primary-inverse); font-weight: 600; }
+/* docs/126 r3: rows that carry a trailing icon (Instrument Wiring's ⧉, Chip
+   Status' 🖨/▾) paint the WHOLE row when active — the icon sits OUTSIDE the
+   anchor, so the pill used to stop mid-row and look cut. The anchor goes
+   transparent (the row owns the color) and the icons inherit the inverse. */
+.sidebar-nav li.nav-floatable:has(> a.active),
+.sidebar-nav .nav-sub-row:has(> a.active) {
+    background: var(--pico-primary-background); border-radius: 4px;
+}
+.sidebar-nav li.nav-floatable:has(> a.active) > a.active,
+.sidebar-nav .nav-sub-row:has(> a.active) > a.active { background: transparent; }
+.sidebar-nav li.nav-floatable:has(> a.active) .nav-float-btn,
+.sidebar-nav .nav-sub-row:has(> a.active) .nav-print,
+.sidebar-nav .nav-sub-row:has(> a.active) .nav-sub-toggle {
+    color: var(--pico-primary-inverse); background: transparent;
+}
 hr.sidebar-section-divider { margin: 0.6rem 0; border-color: var(--pico-muted-border-color); opacity: 0.5; }
 
 /* Tree entries */
