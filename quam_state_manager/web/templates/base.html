@@ -582,10 +582,20 @@
                            so the HTMX filter, poll re-fetch, pill chips, and ?-help all
                            keep working. Placeholder kept short so the resting box is one
                            line; full scoped syntax lives in the ? panel. #}
+                        {# docs/126 #20 (search lag/stall): trigger on `input` (keyup
+                           missed mouse paste/cut) and hx-sync this:replace — each new
+                           keystroke ABORTS the in-flight request instead of htmx's
+                           default queue-last, which stacked 200-500 ms responses on a
+                           2,600-run archive (clear-to-empty is the slowest render, so
+                           clear-then-retype felt dead for ~a second). The tree poller's
+                           refetch joins THIS sync group (source: this element), so a
+                           version-bump refetch can never land after a newer keystroke
+                           and freeze the tree on a stale query. #}
                         <textarea rows="1" placeholder="Filter experiments…"
                                   id="sidebar-filter-input" aria-label="Filter experiments"
                                   class="search-help-input" data-search-help="sidebar-search-help"
-                                  hx-get="/workspace/tree" hx-trigger="keyup changed delay:200ms"
+                                  hx-get="/workspace/tree" hx-trigger="input changed delay:250ms"
+                                  hx-sync="this:replace"
                                   hx-target="#sidebar-tree" name="name" autocomplete="off"
                                   oninput="renderFilterTags(this, document.getElementById('filter-tags')); autoGrowNote(this);"></textarea>
                         <button type="button" class="ds-search-help-btn search-help-toggle"
@@ -676,15 +686,31 @@
                     var _pollN = 0;
                     function refetchTree(v) {
                         var f = document.getElementById('sidebar-filter-input');
-                        return htmx.ajax('GET', '/workspace/tree', {
+                        // docs/126 #20: issue through the FILTER element so this
+                        // refetch shares its hx-sync group — whichever request is
+                        // issued last (poll or keystroke) aborts the other, so the
+                        // last response always matches the latest intent. Without
+                        // this, a version-bump refetch racing a keystroke could
+                        // land LAST and pin the tree on a stale query (a lab with
+                        // a live run bumps the version on most polls).
+                        var opts = {
                             target: '#sidebar-tree', swap: 'innerHTML',
                             values: { name: (f && f.value) || '' }
-                        }).then(function(){ if (typeof v !== 'undefined') lastV = v; })
+                        };
+                        if (f) opts.source = f;
+                        return htmx.ajax('GET', '/workspace/tree', opts)
+                          .then(function(){ if (typeof v !== 'undefined') lastV = v; })
                           .catch(function(){});
                     }
                     function poll() {
                         // In-flight guard + visibility gating (audit B24).
                         if (_treePolling || document.hidden) return;
+                        // docs/126 #20: never swap a 200+ KB tree under someone
+                        // mid-search — defer the whole tick while the filter box
+                        // is focused. lastV does not advance, so the next idle
+                        // tick performs the catch-up render.
+                        var _fi = document.getElementById('sidebar-filter-input');
+                        if (_fi && document.activeElement === _fi) return;
                         _treePolling = true;
                         _pollN++;
                         // 10 s abort (r13 audit D5): a hung socket used to pin

@@ -5429,7 +5429,8 @@ window.renderFilterTags = function(inputEl, containerEl) {
                 inputEl.value = parts.join(" ");
                 if (window.autoGrowNote) autoGrowNote(inputEl);  // shrink back as pills go
                 renderFilterTags(inputEl, containerEl);
-                htmx.trigger(inputEl, "keyup");
+                // 'input', matching the box's hx-trigger (docs/126 #20).
+                htmx.trigger(inputEl, "input");
             };
             pill.appendChild(btn);
             containerEl.appendChild(pill);

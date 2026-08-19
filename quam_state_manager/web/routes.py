@@ -13393,18 +13393,43 @@ def _filter_tree(tree: dict, text: str) -> dict:
     return result
 
 
-def _tree_render_ctx(tree: dict) -> dict:
+# docs/126 #20 — per-workspace memo for the UNFILTERED nested render model.
+# build_nested_tree over a 2,600-run root costs ~200 ms and the sidebar filter
+# re-renders the whole tree on every keystroke; the unfiltered build (the
+# clear-the-box case, which is also the slowest) only changes when the
+# workspace version does. WeakKey so a discarded Workspace frees its cache.
+import weakref
+_NESTED_MEMO: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
+def _tree_render_ctx(tree: dict, ws=None) -> dict:
     """Template context for _sidebar_tree.html: the flat tree (root iteration,
     empty checks) + the per-root NESTED render model (r13 hierarchy — real
     folder levels between root and runs, newest-first) + the per-root
-    discovery-cap flag (docs/105 #9 — a truncated walk must say so)."""
+    discovery-cap flag (docs/105 #9 — a truncated walk must say so).
+
+    Pass ``ws`` ONLY when ``tree`` is the workspace's own unfiltered tree —
+    the nested build is then memoized against ``ws.version``. Filtered trees
+    must never pass it (their entry subsets vary per query).
+    """
     from quam_state_manager.core.scanner import (build_nested_tree,
                                                  root_scan_truncated)
+    memo = None
+    if ws is not None and tree is ws.tree:
+        memo = _NESTED_MEMO.setdefault(ws, {})
+        if memo.get("v") != ws.version:
+            memo.clear()
+            memo["v"] = ws.version
     nested = {}
     truncated = {}
     for root_path, groups in (tree or {}).items():
-        entries = [e for g in groups for e in g.entries]
-        nested[root_path] = build_nested_tree(Path(root_path), entries)
+        if memo is not None and root_path in memo:
+            nested[root_path] = memo[root_path]
+        else:
+            entries = [e for g in groups for e in g.entries]
+            nested[root_path] = build_nested_tree(Path(root_path), entries)
+            if memo is not None:
+                memo[root_path] = nested[root_path]
         truncated[root_path] = root_scan_truncated(root_path)
     return {"tree": tree or {}, "nested": nested, "tree_truncated": truncated}
 
@@ -13428,7 +13453,7 @@ def workspace_add():
     _dataset_candidates_cache.pop(id(current_app._get_current_object()), None)
     _save_workspace_roots()
 
-    return render_template("_sidebar_tree.html", **_tree_render_ctx(ws.tree),
+    return render_template("_sidebar_tree.html", **_tree_render_ctx(ws.tree, ws=ws),
                            message=f"Added {len(entries)} experiment(s)")
 
 
@@ -13472,7 +13497,15 @@ def workspace_remove():
                 ),
                 level="warning",
             )
-    return render_template("_sidebar_tree.html", **_tree_render_ctx(ws.tree))
+    return render_template("_sidebar_tree.html", **_tree_render_ctx(ws.tree, ws=ws))
+
+
+# docs/126 #20 — the unfiltered tree HTML, memoized per workspace version.
+# _sidebar_tree.html renders from pure context (tree/nested/truncated only, no
+# request or session state), so the empty-filter response — the SLOWEST render
+# and the one every clear-the-box keystroke requests — is a cache lookup until
+# the workspace actually changes.
+_TREE_HTML_MEMO: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 
 @bp.route("/workspace/tree")
@@ -13487,8 +13520,14 @@ def workspace_tree():
                                **_tree_render_ctx(_filter_tree(ws.tree, name_filter)),
                                name_filter=name_filter)
 
-    return render_template("_sidebar_tree.html",
-                           **_tree_render_ctx(ws.tree if ws else {}))
+    memo = _TREE_HTML_MEMO.get(ws) if ws else None
+    if memo and memo[0] == ws.version:
+        return memo[1]
+    html = render_template("_sidebar_tree.html",
+                           **_tree_render_ctx(ws.tree if ws else {}, ws=ws))
+    if ws:
+        _TREE_HTML_MEMO[ws] = (ws.version, html)
+    return html
 
 
 @bp.route("/workspace/tree/group")
@@ -13563,7 +13602,8 @@ def workspace_refresh():
     tree = ws.tree if ws else {}
     if name_filter:
         tree = _filter_tree(tree, name_filter)
-    return render_template("_sidebar_tree.html", **_tree_render_ctx(tree))
+    return render_template("_sidebar_tree.html",
+                           **_tree_render_ctx(tree, ws=ws if not name_filter else None))
 
 
 @bp.route("/workspace/select", methods=["POST"])

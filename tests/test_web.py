@@ -6274,6 +6274,76 @@ class TestRound13SidebarSearchBox:
         assert "autoGrowNote(inputEl)" in js
 
 
+class TestSidebarSearchLagFix:
+    """docs/126 #20 — the filter box lagged and sometimes froze on a stale
+    query. Three causes, three pins:
+      * htmx's same-element default is queue-LAST, so keystrokes stacked
+        behind 200-500 ms responses (clear-to-empty is the slowest render) —
+        hx-sync this:replace aborts the in-flight request instead;
+      * the version-gated poller's refetch ran in a DIFFERENT sync group, so
+        during a live run (version bumps on most polls) a stale refetch could
+        land after a newer keystroke and pin the tree on the wrong query —
+        it now issues through the filter element (one sync group; the last
+        issued request is the only one that can render) and defers entirely
+        while the user is typing in the box;
+      * `keyup` missed mouse paste/cut — `input` doesn't.
+    Plus the server memos: the nested render model per workspace version and
+    the whole unfiltered HTML (~350 ms and 263 KB per keystroke on a real
+    2,600-run archive; the memoized clear-the-box response measured 1 ms)."""
+
+    def _read(self, *parts):
+        base = Path(__file__).resolve().parent.parent / "quam_state_manager"
+        return base.joinpath(*parts).read_text(encoding="utf-8")
+
+    def test_filter_aborts_in_flight_and_hears_paste(self):
+        base = self._read("web", "templates", "base.html")
+        i = base.index('id="sidebar-filter-input"')
+        opening = base[base.rfind("<", 0, i):base.index(">", i)]
+        assert 'hx-sync="this:replace"' in opening
+        assert 'hx-trigger="input changed' in opening
+        assert "keyup" not in opening
+
+    def test_poll_refetch_shares_the_sync_group_and_yields_to_typing(self):
+        base = self._read("web", "templates", "base.html")
+        i = base.index("function refetchTree")
+        block = base[i:base.index("function poll", i)]
+        assert "opts.source = f" in block, "refetch must issue through the filter element"
+        j = base.index("function poll(")
+        pblock = base[j:j + 1200]
+        assert "document.activeElement === _fi" in pblock,             "a 200+ KB swap must never land under someone mid-search"
+
+    def test_pill_remove_triggers_the_input_trigger(self):
+        js = self._read("web", "static", "app.js")
+        i = js.index("window.renderFilterTags")
+        block = js[i:i + 1600]
+        assert 'htmx.trigger(inputEl, "input")' in block
+        assert '"keyup"' not in block
+
+    @staticmethod
+    def _seed_run(root: Path, date: str, name: str) -> None:
+        qs = root / date / name / "quam_state"
+        qs.mkdir(parents=True)
+        (qs / "state.json").write_text('{"qubits": {}}', encoding="utf-8")
+        (qs / "wiring.json").write_text('{"wiring": {}}', encoding="utf-8")
+
+    def test_unfiltered_tree_html_is_memoized_per_version(self, tmp_path):
+        root = tmp_path / "root"
+        self._seed_run(root, "2026-06-01", "#1_resonator_spectroscopy_010000")
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+        c = app.test_client()
+        c.post("/workspace/add", data={"folder": str(root)})
+        a = c.get("/workspace/tree").data.decode()
+        b = c.get("/workspace/tree").data.decode()
+        assert a == b and "resonator_spectroscopy" in a
+        # a workspace change must invalidate — never serve yesterday's tree
+        self._seed_run(root, "2026-06-02", "#2_power_rabi_020000")
+        fresh = c.get("/workspace/tree").data.decode()
+        assert "power_rabi" in fresh
+        # and the filtered path never serves the unfiltered memo
+        filt = c.get("/workspace/tree?name=power_rabi").data.decode()
+        assert "power_rabi" in filt and "resonator_spectroscopy" not in filt
+
+
 class TestRound14SidebarPolish:
     """Round 14: filter box taller (? not clipped) + lower; ?-help panel moved out
     of .ds-search-wrap so the button no longer overlaps the open panel; scroll-past-end

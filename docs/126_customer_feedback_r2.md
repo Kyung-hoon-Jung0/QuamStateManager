@@ -499,3 +499,43 @@ the statistics; with no threshold for the metric, a practical floor
 implementations (`chip-status.js` `outlierScorer` + `core/report_card.py`
 `_outliers`) and verified on the real chip: q4 unflagged; genuinely-below-spec
 values (83 % assignment, 29 µs T2echo) still listed.
+
+## #20 The sidebar experiment filter lagged, and sometimes froze on a stale query
+
+Reported as: type → clear → retype in the dataset LEFT-panel search "lags or
+stops responding entirely, very often". Measured on the customer's real
+2,655-run archive: every keystroke request cost 200–500 ms server-side and up
+to 263 KB of HTML — and the SLOWEST render is the empty query, which is
+exactly what the "clear" keystroke requests. Three independent defects:
+
+1. **htmx queue-last stacking.** The box had no `hx-sync`, and htmx 2.0.4's
+   same-element default queues the newest request BEHIND the in-flight one —
+   so clear-then-retype waited for the full-tree render before the filtered
+   one even started (~1 s of dead box). Now `hx-sync="this:replace"`: a new
+   keystroke ABORTS the in-flight request.
+2. **The poller refetch raced in a different sync group.** The version-gated
+   tree poll re-fetches with the current filter — from `htmx.ajax` with no
+   source element, i.e. OUTSIDE the textarea's sync group. During a live run
+   the workspace version bumps on most polls, so a refetch issued mid-typing
+   could land AFTER the newer keystroke response and pin the tree on a stale
+   query with nothing left to correct it — the "stops entirely". The refetch
+   now issues **through the filter element** (`source: f` — one sync group,
+   so the last-issued request is the only one that can render) and the poll
+   tick defers entirely while the box is focused (a 200+ KB DOM swap must
+   never land under someone mid-search; `lastV` holds, the next idle tick
+   catches up).
+3. **`keyup` missed mouse paste/cut** — the trigger is now `input changed
+   delay:250ms`, and the filter-pill ✕ fires a synthetic `input` to match.
+
+Server side, two memos (both keyed on the workspace's own `version`, which
+every tree mutation already bumps): `_tree_render_ctx` reuses the per-root
+`build_nested_tree` model (~200 ms of the 350), and `workspace_tree` caches
+the whole UNFILTERED response (the template renders from pure context — no
+request/session state). Measured after: clear-the-box **1 ms** (was 350–500);
+filtered queries 25–237 ms proportional to matches, with abort making only
+the final one visible. Filtered trees never touch either memo.
+
+Real-browser verified on the live archive (`_rt_cfb2_sidebar_search.cjs`):
+rapid type-clear-retype converges in ~1 s including the typing itself; a
+stale refetch injected mid-typing cannot land last. Pinned by
+`tests/test_web.py::TestSidebarSearchLagFix`.
