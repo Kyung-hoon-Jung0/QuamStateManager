@@ -324,7 +324,7 @@ window.ChipStatus.mount = function (opts) {
         var m = Math.floor(n / 2);
         return n % 2 ? sorted[m] : (sorted[m - 1] + sorted[m]) / 2;
     }
-    function outlierScorer(arr) {
+    function outlierScorer(arr, opts) {
         var clean = arr.filter(function(v) { return typeof v === 'number' && isFinite(v); });
         if (clean.length < 5) return null;   // too few points for a robust call
         var sorted = clean.slice().sort(function(a, b) { return a - b; });
@@ -343,7 +343,22 @@ window.ChipStatus.mount = function (opts) {
                 if (typeof v !== 'number' || !isFinite(v)) return null;
                 return Math.abs(v - med) / (1.4826 * mad);
             },
-            isOutlier: function(v) { var s = this.score(v); return s != null && s >= _OUTLIER_K; }
+            isOutlier: function(v) {
+                var s = this.score(v);
+                if (s == null || s < _OUTLIER_K) return false;
+                // docs/126 (customer report): a value that PASSES its spec is
+                // never an outlier. On a tight chip the MAD collapses — every
+                // 1Q fidelity within 99.85–99.92% put a 99.67% qubit at
+                // 16.8× MAD, flagging an excellent result ("over
+                // calculation"). No spec for the metric ⇒ a practical floor:
+                // the deviation must be ≥1% of |median| to be worth a mark.
+                if (opts && opts.verdict) {
+                    var vr = opts.verdict(v);
+                    if (vr === 'pass') return false;
+                    if (vr != null) return true;   // warn/fail + statistical
+                }
+                return med !== 0 && Math.abs(v - med) >= 0.01 * Math.abs(med);
+            }
         };
     }
 
@@ -833,13 +848,16 @@ window.ChipStatus.mount = function (opts) {
             return topo.nodes.some(function(n) { return _mv(n, m.key) != null; });
         });
 
-        // Per-edge best value for a named 2Q RB metric (the same per-pair-best
-        // + physical (0,1] gate buildOverviewTiles' collect2Q applies).
-        function edgeBest2Q(e, match) {
+        // Per-edge value for a named 2Q RB metric (the same per-pair-best +
+        // physical (0,1] gate buildOverviewTiles' collect2Q applies). docs/126:
+        // RB numbers exist PER GATE (cz_flattop's RB vs cz_gaussian_bipolar's
+        // …), so the caller can pin one gate — 'best' keeps the old best-of.
+        function edgeBest2Q(e, match, gate) {
             if (!e.gate_fidelities) return null;
             var best = null;
             e.gate_fidelities.forEach(function(gf) {
                 if (!match(gf.metric)) return;
+                if (gate && gate !== 'best' && gf.gate !== gate) return;
                 var v = typeof gf.value === 'number' ? gf.value
                       : typeof gf.average_gate_fidelity === 'number'
                           ? gf.average_gate_fidelity : null;
@@ -847,16 +865,30 @@ window.ChipStatus.mount = function (opts) {
             });
             return best;
         }
+        function gatesFor2Q(match) {
+            var names = {};
+            topo.edges.forEach(function(e) {
+                (e.gate_fidelities || []).forEach(function(gf) {
+                    if (match(gf.metric) && gf.gate) names[gf.gate] = 1;
+                });
+            });
+            return Object.keys(names).sort();
+        }
+        var GATE_KEY = 'quam_topo_hero_gate';
+        var heroGate = 'best';
+        try { heroGate = localStorage.getItem(GATE_KEY) || 'best'; } catch (e) {}
         var EDGE_METRICS = [
             { key: 'cz_fidelity', scope: 'edge', label: '2Q Bell (CZ)',
               fmtFn: function(v) { return fmtPct(v, 1) + '%'; },
               valFn: function(e) { return _mv(e, 'cz_fidelity'); } },
-            { key: 'rb2q_standard', scope: 'edge', label: '2Q RB',
+            { key: 'rb2q_standard', scope: 'edge', label: '2Q RB', perGate: true,
+              match: function(m) { return m === 'StandardRB'; },
               fmtFn: function(v) { return fmtPct(v, 1) + '%'; },
-              valFn: function(e) { return edgeBest2Q(e, function(m) { return m === 'StandardRB'; }); } },
-            { key: 'rb2q_interleaved', scope: 'edge', label: '2Q IRB',
+              valFn: function(e) { return edgeBest2Q(e, function(m) { return m === 'StandardRB'; }, heroGate); } },
+            { key: 'rb2q_interleaved', scope: 'edge', label: '2Q IRB', perGate: true,
+              match: function(m) { return m === 'InterleavedRB' || m === 'IRB'; },
               fmtFn: function(v) { return fmtPct(v, 1) + '%'; },
-              valFn: function(e) { return edgeBest2Q(e, function(m) { return m === 'InterleavedRB' || m === 'IRB'; }); } },
+              valFn: function(e) { return edgeBest2Q(e, function(m) { return m === 'InterleavedRB' || m === 'IRB'; }, heroGate); } },
         ].filter(function(m) {
             return topo.edges.some(function(e) { return m.valFn(e) != null; });
         });
@@ -878,8 +910,15 @@ window.ChipStatus.mount = function (opts) {
         var zoom = null;
         try {
             var zRaw = parseFloat(localStorage.getItem(ZOOM_KEY));
-            if (zRaw >= 1 && zRaw <= 4) zoom = zRaw;
+            if (zRaw >= 0.5 && zRaw <= 4) zoom = zRaw;
         } catch (e) {}
+        // docs/126: compact mode trades stone/marker footprint for TEXT — the
+        // small-monitor answer. Fonts grow relative to the cell (CSS on
+        // .hero-compact) so a zoomed-out whole-chip view keeps readable
+        // numbers; the half-overlapped role markers free the edge middles.
+        var COMPACT_KEY = 'quam_topo_hero_compact';
+        var compactMode = false;
+        try { compactMode = localStorage.getItem(COMPACT_KEY) === '1'; } catch (e) {}
 
         // Per-qubit open findings, attributed by jump_path (same address
         // grammar as liveDiff's _entityOf). Pair findings are out of scope
@@ -940,7 +979,7 @@ window.ChipStatus.mount = function (opts) {
         // rather than each piece needing its own bump. The rendered size is
         // responsive (see .topo-hero-svg): these are the intrinsic dimensions
         // and the viewBox aspect, which CSS then fits to the pane.
-        var CELL = 132, R = 37;
+        var CELL = 132;
         var W = Math.max(CELL, Math.round(lay.cols * CELL));
         var H = Math.max(CELL, Math.round(lay.rows * CELL));
         function cx(p) { return (p.col + 0.5) * CELL; }
@@ -999,20 +1038,19 @@ window.ChipStatus.mount = function (opts) {
         }
 
         function render() {
+            var mCurPre = _metric(current);
             if (zoom == null) {
-                // Default = 2× what the OLD render showed. Pre-docs/126 the
-                // map was fit-to-pane AND letterboxed by a 70vh max-height,
-                // so "twice as big" doubles min(fit, cap) — a chip whose
-                // height the cap squeezed needs LESS than 2× pane width to
-                // honor it (measured on the real 20Q chip: 1.35× ⇒ exactly
-                // 2× the old on-screen cell). Unmeasurable layout (jsdom,
-                // display:none) falls back to a plain 2× pane.
-                zoom = 2;
+                // Default ≈ 1.7× what the OLD render showed (the customer
+                // dialed the initial 2× back a notch). Pre-docs/126 the map
+                // was fit-to-pane AND letterboxed by a 70vh max-height, so
+                // the factor multiplies min(fit, cap). Unmeasurable layout
+                // (jsdom, display:none) falls back to a plain 1.7× pane.
+                zoom = 1.7;
                 try {
                     var _pw = host.clientWidth || 0, _vh = window.innerHeight || 0;
                     if (_pw > 0 && _vh > 0 && H > 0) {
                         zoom = Math.min(4, Math.max(
-                            1, 2 * Math.min(1, 0.7 * _vh * W / (H * _pw))));
+                            0.9, 1.7 * Math.min(1, 0.7 * _vh * W / (H * _pw))));
                     }
                 } catch (e) {}
             }
@@ -1028,15 +1066,39 @@ window.ChipStatus.mount = function (opts) {
             // button bar (width:100% + flex:1 children) — real-browser caught.
             bar += '<span class="topo-hero-zoomctl" aria-label="Map size">'
                  + '<button type="button" class="topo-hero-zbtn" data-hero-zoom="out" title="Smaller">&minus;</button>'
+                 + '<input type="range" class="topo-hero-zslider" min="0.5" max="4" step="0.05"'
+                 + ' value="' + zoom.toFixed(2) + '" aria-label="Map size" title="Map size">'
                  + '<button type="button" class="topo-hero-zbtn" data-hero-zoom="in" title="Bigger">+</button>'
-                 + '<button type="button" class="topo-hero-zbtn" data-hero-zoom="fit" title="Fit to pane">Fit</button>'
+                 + '<button type="button" class="topo-hero-zbtn" data-hero-zoom="fit" title="Fit the pane width">Fit</button>'
+                 + '<button type="button" class="topo-hero-zbtn topo-hero-compact-btn'
+                 + (compactMode ? ' active' : '') + '" data-hero-compact="1"'
+                 + ' title="Compact — smaller stones and markers, bigger numbers (fits a small monitor)"'
+                 + ' aria-pressed="' + compactMode + '">Aa</button>'
                  + '</span></div>';
+            // docs/126: RB numbers exist per GATE — a second row picks which
+            // pulse variant's number the edges show ('best' = the old best-of).
+            if (mCurPre && mCurPre.perGate) {
+                var gnames = gatesFor2Q(mCurPre.match);
+                if (gnames.length > 1) {
+                    bar += '<div class="topo-hero-gatebar" role="tablist" aria-label="Gate variant">'
+                         + '<span class="muted topo-hero-gatelabel">pulse:</span>';
+                    ['best'].concat(gnames).forEach(function(g) {
+                        var on = (heroGate === g) || (g === 'best' && gnames.indexOf(heroGate) < 0);
+                        bar += '<button type="button" class="topo-hero-mbtn topo-hero-gbtn'
+                             + (on ? ' active' : '') + '" data-hero-gate="' + _esc(g) + '">'
+                             + _esc(g) + '</button>';
+                    });
+                    bar += '</div>';
+                }
+            }
 
-            var mCur = _metric(current);
+            var mCur = mCurPre;
             var edgeMode = mCur.scope === 'edge';
             var eagg = edgeMode ? _edgeAgg(mCur) : null;
 
             var svg = '';
+            var evalSvg = '';
+            var R = compactMode ? 33 : 37;   // docs/126 compact: smaller stones
             topo.edges.forEach(function(e) {
                 var a = lay.positions[e.source], b = lay.positions[e.target];
                 if (!a || !b) return;
@@ -1083,23 +1145,25 @@ window.ChipStatus.mount = function (opts) {
                      + '<line' + coords + ' stroke="' + stroke + '" stroke-width="' + width
                      + '" stroke-linecap="round"/>'
                      + '<line class="topo-hero-edge-hit"' + coords + ' stroke="transparent" stroke-width="22">'
-                     + '</line>'
-                     + (evTxt != null
-                        ? '<text class="topo-hero-eval" x="' + (mx + pdx * (e.directed ? 15 : 0))
-                          + '" y="' + (my + pdy * (e.directed ? 15 : 0) + 4) + '">'
-                          + _esc(evTxt) + '</text>'
-                        : '')
-                     + '<title>' + _esc(tt) + '</title></g>';
+                     + '</line><title>' + _esc(tt) + '</title></g>';
+                // docs/126: the value draws in a TOP layer, after the stones
+                // and the role markers — on the real chip the C/T circles sat
+                // exactly on the midpoint and covered every printed number.
+                if (evTxt != null) {
+                    evalSvg += '<text class="topo-hero-eval" x="' + (mx + pdx * (e.directed ? 15 : 0))
+                        + '" y="' + (my + pdy * (e.directed ? 15 : 0) + 4) + '">'
+                        + _esc(evTxt) + '</text>';
+                }
             });
-            // docs/120 item 11 — the frequency chevrons and the C/T/M role
-            // markers, from the SAME TopoGraph.pairGlyphs the component-page
-            // maps use, so the two surfaces cannot drift into two conventions.
-            // Drawn after the edges and BEFORE the stones: the markers sit on
-            // the line, but a stone always covers its own marker rather than
-            // the reverse.
+            // docs/120 item 11 → amended by docs/126: the C/T/M markers now
+            // draw AFTER the stones (compactRoles centres them ON the rim —
+            // half-overlapping the stone, smaller — so the edge middle stays
+            // free for the metric value; same shared TopoGraph.pairGlyphs,
+            // so the component maps keep their own classic placement).
+            var glyphSvg = '';
             if (TG.pairGlyphs) {
-                svg += TG.pairGlyphs(topo.nodes, topo.edges, {
-                    cell: CELL, roles: true,
+                glyphSvg = TG.pairGlyphs(topo.nodes, topo.edges, {
+                    cell: CELL, roles: true, compactRoles: true,
                     px: function (id) {
                         var p = lay.positions[id];
                         if (!p) return null;
@@ -1144,9 +1208,11 @@ window.ChipStatus.mount = function (opts) {
             // sections below (docs/126 ② — "~2× bigger" is the default).
             host.innerHTML = bar
                 + '<div class="topo-hero-map">' + note
-                + '<div class="topo-hero-scroll"><svg class="topo-hero-svg" width="' + W + '" height="' + H
+                + '<div class="topo-hero-scroll"><svg class="topo-hero-svg'
+                + (compactMode ? ' hero-compact' : '') + '" width="' + W + '" height="' + H
                 + '" viewBox="0 0 ' + W + ' ' + H + '"'
-                + ' style="width:' + Math.round(zoom * 100) + '%">' + svg + '</svg></div></div>'
+                + ' style="width:' + Math.round(zoom * 100) + '%">'
+                + svg + glyphSvg + evalSvg + '</svg></div></div>'
                 + legendHtml(current);
             bindHover();
         }
@@ -1157,13 +1223,41 @@ window.ChipStatus.mount = function (opts) {
         var _heroClickTime = 0, _heroClickId = null;
         if (!host._heroBound) {
             host._heroBound = true;
+            // Zoom only changes the svg's CSS width — applied in place, no
+            // rebuild (a full re-render mid-slider-drag would destroy the
+            // slider under the pointer).
+            function _applyZoom(z) {
+                zoom = Math.min(4, Math.max(0.5, z));
+                try { localStorage.setItem(ZOOM_KEY, String(zoom)); } catch (e) {}
+                var el = host.querySelector('svg.topo-hero-svg');
+                if (el) el.style.width = Math.round(zoom * 100) + '%';
+                var sl = host.querySelector('.topo-hero-zslider');
+                if (sl && document.activeElement !== sl) sl.value = zoom.toFixed(2);
+            }
+            host.addEventListener('input', function(ev) {
+                if (ev.target && ev.target.classList
+                        && ev.target.classList.contains('topo-hero-zslider')) {
+                    _applyZoom(parseFloat(ev.target.value));
+                }
+            });
             host.addEventListener('click', function(ev) {
                 var zb = ev.target.closest && ev.target.closest('[data-hero-zoom]');
                 if (zb) {
                     var act = zb.getAttribute('data-hero-zoom');
-                    zoom = act === 'fit' ? 1
-                         : Math.min(4, Math.max(1, zoom + (act === 'in' ? 0.25 : -0.25)));
-                    try { localStorage.setItem(ZOOM_KEY, String(zoom)); } catch (e) {}
+                    _applyZoom(act === 'fit' ? 1 : zoom + (act === 'in' ? 0.25 : -0.25));
+                    return;
+                }
+                var cb = ev.target.closest && ev.target.closest('[data-hero-compact]');
+                if (cb) {
+                    compactMode = !compactMode;
+                    try { localStorage.setItem(COMPACT_KEY, compactMode ? '1' : '0'); } catch (e) {}
+                    render();
+                    return;
+                }
+                var gb = ev.target.closest && ev.target.closest('[data-hero-gate]');
+                if (gb) {
+                    heroGate = gb.getAttribute('data-hero-gate') || 'best';
+                    try { localStorage.setItem(GATE_KEY, heroGate); } catch (e) {}
                     render();
                     return;
                 }
@@ -1448,7 +1542,10 @@ window.ChipStatus.mount = function (opts) {
                 if (agg.count === 0) return;
 
                 var range = agg.max - agg.min || 1;
-                var scorer = outlierScorer(_physCz);   // robust MAD outlier flag (this gate)
+                var scorer = outlierScorer(_physCz, {   // robust MAD flag (this gate),
+                    // spec-gated: an in-spec fidelity is never branded
+                    verdict: function(v) { return _verdict(v, thresholds['cz_fidelity']); },
+                });
                 var gateLabel = _esc(gateName.replace(/^cz_/, ''));   // only ever rendered as HTML
                 var secId = 'rb-' + rbType + '-' + gateName.replace(/[^a-zA-Z0-9]/g, '-');
                 var chartId = secId + '-chart';
@@ -1657,7 +1754,9 @@ window.ChipStatus.mount = function (opts) {
             // separate bad-fit signal. Unbounded metrics (frequencies, amplitudes)
             // have no such gate; every finite value participates, which is correct
             // (there's no "unphysical" frequency). Null when <5 pts / no spread.
-            var scorer = outlierScorer(vals);
+            var scorer = outlierScorer(vals, {
+                verdict: function(v) { return _verdict(v, thresholds[def.key]); },
+            });
 
             var sectionHtml = '<div class="topo-section" data-group="' + def.group + '" id="' + secId + '">';
             // Keep the curated title text (it carries the unit suffix) but pull the

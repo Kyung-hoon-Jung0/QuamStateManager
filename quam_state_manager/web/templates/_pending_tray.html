@@ -1,3 +1,4 @@
+{% from '_icons.html' import icon_bolt %}
 {% from '_delta_macros.html' import delta_chip %}
 <div id="pending-tray"
      class="pending-tray{% if not active_name and change_count == 0 and not working_dirty and not (qualibrate_tray is defined and qualibrate_tray) %} tray-empty{% endif %}"
@@ -115,7 +116,7 @@
 <button type="button" class="auto-apply-pill auto-apply-on"
         onclick="AutoSync.toggle(this)" aria-haspopup="dialog" aria-expanded="false"
         title="Auto-Sync is ON. Click to change what it does, or turn it off.">
-  &#9889; Auto-Sync
+  {{ icon_bolt(13) }} Auto-Sync
   <b>{% if _as.pull and _as.push %}both{% elif _as.push %}push{% else %}pull{% endif %}</b>
   {%- if _as.pull and not _as.pull_replace %} <span class="aa-hint">(asks before replacing)</span>{% endif %}
   {%- if _as.flushes %} <span class="aa-count">{{ _as.flushes }}</span>{% endif %}
@@ -124,12 +125,12 @@
 <button type="button" class="auto-apply-pill auto-apply-off"
         onclick="AutoSync.toggle(this)" aria-haspopup="dialog" aria-expanded="false"
         title="Turn on Auto-Sync: keep SM and the live chip in step without pressing anything.">
-  &#9889; Auto-Sync
+  {{ icon_bolt(13) }} Auto-Sync
   {%- if change_count > 0 %} <span class="aa-hint">({{ change_count }} pending)</span>{% endif %}
 </button>
 {% elif auto_apply_armable %}
 <span class="auto-apply-pill auto-apply-blocked" title="{{ auto_apply_armable[1] }}">
-  &#9889; Auto-Sync</span>
+  {{ icon_bolt(13) }} Auto-Sync</span>
 {% endif %}
 
 </span>

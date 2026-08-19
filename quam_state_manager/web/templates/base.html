@@ -102,7 +102,9 @@
     <header class="topbar">
         <nav>
             <ul>
-                <li><button class="sidebar-toggle" onclick="toggleSidebar()" title="Toggle sidebar">☰</button></li>
+                {# docs/126: ☰ cycles sidebar → +topbar → restore all. #}
+                <li><button class="sidebar-toggle" onclick="cycleChrome()"
+                        title="Collapse the sidebar, then the top bar — click the floating ☰ to bring everything back">☰</button></li>
                 <li><a href="/" class="app-title-link" title="Projects landing"><strong class="app-title">QUAM State Manager</strong></a></li>
                 {# Workbench: a standalone co-display shell that puts Qualibrate
                    (iframe) beside this app. Full-page route, so a plain link
@@ -213,6 +215,11 @@
        only when <html> carries .topbar-hidden (see style.css). #}
     <button type="button" class="topbar-reveal" onclick="toggleTopbar()"
             title="Show top bar" aria-label="Show top bar">&#9662;</button>
+    {# docs/126: the floating ☰ (visible only with the top bar hidden) restores
+       BOTH the top bar and the sidebar in one click — the third leg of the
+       hamburger cycle. #}
+    <button type="button" class="chrome-reveal" onclick="cycleChrome()"
+            title="Restore the top bar and sidebar" aria-label="Restore the top bar and sidebar">☰</button>
     {# Out-of-band live-change banner. ONE base-level slot on every full page,
        OUTSIDE #table-pane so HTMX pane navigation never drops an active
        warning. The /explorer partial (what a chip load swaps in) carries an
@@ -259,6 +266,13 @@
                so they read as tools rather than as two more destinations.
                Settings first, per the user's call. #}
             <div class="sidebar-tools" role="group" aria-label="Tools">
+                {# docs/126: Help leads the tools (Help → Settings → Calculator,
+                   per the user) and wears the same row styling as its siblings
+                   — its old tail position + odd class was the complaint. #}
+                <a href="/help" hx-get="/help" hx-target="#table-pane"
+                   hx-sync="#table-pane:replace" hx-push-url="true"
+                   class="sidebar-tool sidebar-tool-btn" title="Help — the working-copy model, the feature tour, shortcuts">
+                    {{ icon_help() }}<span class="sidebar-tool-label">Help</span></a>
                 <button type="button" class="sidebar-tool settings-btn"
                         onclick="toggleSettings(this)"
                         title="Settings — font size, UI scale, theme, layout">
@@ -303,12 +317,6 @@
                         </form>
                     </div>
                 </details>
-                {# docs/115 (#14): the manual is one click from EVERY page —
-                   it used to live only on the landing, one swap from gone. #}
-                <a href="/help" hx-get="/help" hx-target="#table-pane"
-                   hx-sync="#table-pane:replace" hx-push-url="true"
-                   class="sidebar-tool-btn" title="Help — the working-copy model, the feature tour, shortcuts">
-                    {{ icon_help() }}<span class="sidebar-tool-label">Help</span></a>
             </div>
             <hr class="sidebar-section-divider sidebar-tools-divider">
             <nav class="sidebar-nav">

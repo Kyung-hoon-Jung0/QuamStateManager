@@ -232,7 +232,10 @@ function part5() {
     edges: [
       { pair_id: 'q1-2', source: 'q1', target: 'q2', has_cz: true, cz_fidelity: 0.97,
         gate_kind: 'cz', directed: false, active: null, best_gate: 'cz_flattop',
-        gate_fidelities: [{ gate: 'cz_flattop', metric: 'StandardRB', value: 0.951 }],
+        gate_fidelities: [
+          { gate: 'cz_flattop', metric: 'StandardRB', value: 0.951 },
+          { gate: 'cz_gaussian_bipolar', metric: 'StandardRB', value: 0.902 },
+        ],
         detuning: 2.5e8, has_coupler: true, coupler_decouple_offset: 0.012 },
       { pair_id: 'q1-3', source: 'q1', target: 'q3', has_cz: true, cz_fidelity: null,
         gate_kind: 'cz', directed: false, active: null, best_gate: null },
@@ -250,17 +253,29 @@ function part5() {
   const q1n = hero.querySelector('[data-hero-qubit="q1"]');
   ok(q1n && /4\.8000 GHz/.test(q1n.textContent), 'freq: node shows its GHz value on the map');
 
-  let svg = hero.querySelector('svg.topo-hero-svg');
-  ok(svg && (svg.getAttribute('style') || '').indexOf('width:200%') !== -1,
-     'zoom: default is 2x the pane fit (docs/126 "~2x bigger")');
+  const svg = hero.querySelector('svg.topo-hero-svg');
+  ok(svg && (svg.getAttribute('style') || '').indexOf('width:170%') !== -1,
+     'zoom: default is 1.7x the old render (customer dialed 2x back)');
   hero.querySelector('[data-hero-zoom="in"]').click();
-  svg = hero.querySelector('svg.topo-hero-svg');
-  ok(svg && (svg.getAttribute('style') || '').indexOf('width:225%') !== -1, 'zoom: + steps up');
-  ok(win.localStorage.getItem('quam_topo_hero_zoom') === '2.25', 'zoom persists');
+  // zoom now applies IN PLACE (a rebuild would destroy the slider mid-drag)
+  ok(svg.style.width === '195%', 'zoom: + steps up in place (' + svg.style.width + ')');
+  ok(Math.abs(parseFloat(win.localStorage.getItem('quam_topo_hero_zoom')) - 1.95) < 1e-9,
+     'zoom persists');
   hero.querySelector('[data-hero-zoom="fit"]').click();
-  svg = hero.querySelector('svg.topo-hero-svg');
-  ok(svg && (svg.getAttribute('style') || '').indexOf('width:100%') !== -1,
-     'zoom: Fit returns to the pane fit');
+  ok(svg.style.width === '100%', 'zoom: Fit returns to the pane fit');
+  ok(!!hero.querySelector('.topo-hero-zslider'), 'zoom: the slider renders');
+
+  // docs/126 compact mode: smaller stones, hero-compact class for the bigger
+  // relative fonts; persisted.
+  hero.querySelector('[data-hero-compact]').click();
+  const csvg = hero.querySelector('svg.topo-hero-svg');
+  ok(csvg.classList.contains('hero-compact'), 'compact: class applied');
+  ok(csvg.querySelector('.topo-hero-stone').getAttribute('r') === '33',
+     'compact: stones shrink to r=33');
+  ok(win.localStorage.getItem('quam_topo_hero_compact') === '1', 'compact persists');
+  hero.querySelector('[data-hero-compact]').click();
+  ok(hero.querySelector('svg.topo-hero-svg .topo-hero-stone').getAttribute('r') === '37',
+     'compact: toggling back restores r=37');
 
   const eb = hero.querySelector('[data-hero-metric="rb2q_standard"]');
   ok(!!eb, 'edge metric: 2Q RB patch offered');
@@ -270,6 +285,24 @@ function part5() {
   ok(evals.length === 1, '2Q RB: exactly the measured edge prints a value (got '
      + evals.length + ')');
   ok(evals[0] && /95\.1/.test(evals[0].textContent), '2Q RB: the printed value is the best StandardRB');
+  // docs/126: the value text draws AFTER the role markers (they used to cover
+  // it dead-center on the real chip), and the markers half-overlap the stones
+  const role = hero.querySelector('.cm-role circle');
+  ok(role && (evals[0].compareDocumentPosition(role) & 2) !== 0,
+     'edge values draw ON TOP of the C/T/M markers');
+  // per-gate toggle: two gates ship StandardRB → the pulse bar renders,
+  // picking the second gate switches the printed number
+  const gbar = hero.querySelector('.topo-hero-gatebar');
+  ok(!!gbar, 'per-gate bar renders when >1 gate carries the metric');
+  const gbtn = hero.querySelector('[data-hero-gate="cz_gaussian_bipolar"]');
+  ok(!!gbtn, 'the gate variant is offered by name');
+  gbtn.click();
+  const evals2 = hero.querySelectorAll('.topo-hero-eval');
+  ok(evals2[0] && /90\.2/.test(evals2[0].textContent),
+     'picking a gate shows THAT gate variant RB (' + (evals2[0] && evals2[0].textContent) + ')');
+  ok(win.localStorage.getItem('quam_topo_hero_gate') === 'cz_gaussian_bipolar',
+     'the gate choice persists');
+  hero.querySelector('[data-hero-gate="best"]').click();
   ok(hero.querySelectorAll('.topo-hero-node-neutral').length === 3,
      'edge mode: stones go neutral (edges carry the numbers)');
   ok(hero.querySelectorAll('.topo-hero-val').length === 0, 'edge mode: no stale node values');

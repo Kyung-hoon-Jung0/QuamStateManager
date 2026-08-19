@@ -404,3 +404,98 @@ inventing a flat line or crying unrecognized. (The Pulses table deliberately
 still lists waveform pulses only — 524 rows; the trigger markers are wiring
 plumbing. Listing them is an easy follow-up if wanted.) Pinned by
 `tests/test_gaussian_cz.py::TestBarePulseRecognized` + the catalog-shape pin.
+
+## Round 3 — Auto-Sync polish, Versions, topology markers, chrome, honest outliers
+
+The second feedback session on the round-1/2 work, all items discussed and
+confirmed before any code. Verified end-to-end in a real browser
+(`_rt_cfb2_topo2.cjs`, `_rt_cfb2_asv.cjs` — both ALL OK on the 20Q chip).
+
+### r3-0 Auto-Sync is visible, anchored, and modern
+
+- The pill's ⚡ was an emoji, which CSS cannot recolor — replaced by an inline
+  SVG bolt (`icon_bolt` macro in `_icons.html`, currentColor). OFF = muted
+  gray; ON = `#f59e0b` orange bolt with a drop-shadow glow **and** an orange
+  pill border (`.auto-apply-on`, `!important` over the warning-palette base)
+  so the armed state is unmistakable at a glance.
+- The panel used to open at the window's LEFT edge: `#auto-sync-pop-host` is
+  an unpositioned span, so the absolutely-positioned popup resolved against
+  the page. `AutoSync._place()` now positions it `fixed` under the pill's own
+  rect, clamped to the viewport (probe: pop left 1039 vs pill 1039).
+- Restyle ("촌스럽다"): compact buttons, blur backdrop, `…and replace` drawn
+  as a genuinely subordinate row — 1.9rem indent plus a 2px `::before` tree elbow, so
+  the subordination is visible, not just whitespace — and full color-inversion
+  on row hover (`.as-row:hover` swaps `--pico-color`/`--pico-background-color`).
+
+### r3-1 The Versions button says a word, and answers the question itself
+
+- The chip's label was the raw snapshot token (`20260819_114833_6782`) — "정보가
+  아닌 것이 버튼의 이름". Label is now the word **Versions** + count; the exact
+  id moved to the tooltip ("The live chip is on recorded version <ts>") and the
+  panel rows. `unrecorded` renders only when history EXISTS and live matches
+  none of it (with zero versions there is nothing to call unrecorded).
+- The panel now leads with the **quick diff**: `state_versions_panel` runs
+  `hm.diff_snapshots` over the two newest rows and, at ≤50 changes, renders the
+  full `path | old → new` table through the one docs/76 `delta_chip` — the
+  question users bring ("what just changed?") answered with zero picking. >50
+  changes states the count and defers to the kept tick-two → Compare flow.
+  One version → no block (a comparison against nothing would be a lie).
+  Deliberately NO per-row ✕ (user retracted it: reverting values is the Review
+  tray's job; a second surface doing it would blur the covenant).
+- **Realtime during Auto-Sync**: while a session is armed, every flush ends in
+  a tray swap (docs/117), so StateVersions rides `htmx:afterSwap` on the tray,
+  debounced 900 ms, refetching `/state/versions` with ticked rows preserved.
+  Real-browser bug this exposed: the listener sat on `document.body` — but
+  app.js executes from `<head>` where body is null, and the throw killed the
+  WHOLE IIFE (`StateVersions is not defined`; toggle dead). Moved to
+  `document` (htmx events bubble there); pinned with a source assertion since
+  jsdom evals app.js with a body present and can never see this class.
+
+### r3-2 Help · Settings · Calculator
+
+Help moved to the FIRST slot of the sidebar tools (user's order), same
+`sidebar-tool` row style as its siblings.
+
+### r3-3 Topology: the numbers beat the markers, and gates are toggleable
+
+- 2Q IRB values were covered by the C/T/M role markers at the edge midpoint.
+  Markers now half-overlap the stones (inset `CELL*0.30`, radius
+  `max(3.6, CELL*0.062)`) and the metric values (`evalSvg`) are drawn LAST —
+  top layer, pinned by DOM order in both the selfcheck and the browser probe.
+- Per-gate (pulse-variant) toggle: when a 2Q metric has entries under more
+  than one gate name, a sub-row (`.topo-hero-gatebar`) lists `best` + each
+  real gate (`cz_flattop`, `cz_gaussian_bipolar`, …); `edgeBest2Q` filters the
+  edge evaluation to the chosen gate, persisted under `quam_topo_hero_gate`.
+
+### r3-4 Chrome: hamburger 3-state, sticky band, banner ✕
+
+- Hamburger `cycleChrome()`: click 1 collapses the sidebar; click 2 hides the
+  topbar too, leaving a floating ☰ (`.chrome-reveal`); clicking that restores
+  everything. Probe-verified all three transitions.
+- The sticky topology subnav floated over a 12.6 px see-through strip: sticky
+  inside a padded scroll container pins at the padding edge while overflow
+  clips at the padding box. Fix = negative `top` by the pane's own padding +
+  compensating padding inside the bar. Measured after: 0.0 px.
+- Every status toast carries a working ✕ (`.toast-x`); the recurring green
+  "data folder" banner got concise wording and a session-scoped dismiss
+  (`sessionStorage` keyed on the banner's content signature).
+
+### r3-5 Small screens: zoom + compact
+
+Hero map zoom is a slider driving the SVG width **in place** (never a rebuild
+mid-drag), default dialed back to 1.7× (was 2×) and auto-fit-clamped;
+compact mode (`hero-compact`) shrinks stones 37→33 and grows the value font to
+13 px — relatively bigger numbers on a smaller map, per the ask.
+
+### r3-6 Outlier over-calculation (user: "이건 명백한 over calculation이야")
+
+q4's 99.67 % RB was flagged "outlier 16.8× MAD" among 99.85–99.92 % siblings:
+on a tight distribution MAD collapses toward 0 and the modified z-score
+explodes — a value INSIDE spec was being marked deviant for being 0.2 %
+different. The rule everywhere is now **spec first**: a value the chip-health
+threshold judges `pass` is never an outlier; a warn/fail value still flags on
+the statistics; with no threshold for the metric, a practical floor
+(|v−median| ≥ 1 % of |median|) keeps micro-deviations quiet. Applied in BOTH
+implementations (`chip-status.js` `outlierScorer` + `core/report_card.py`
+`_outliers`) and verified on the real chip: q4 unflagged; genuinely-below-spec
+values (83 % assignment, 29 µs T2echo) still listed.

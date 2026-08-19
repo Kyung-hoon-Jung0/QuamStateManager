@@ -1658,6 +1658,25 @@ window.toggleSidebar = function() {
     } catch(e) {}
 };
 
+/* docs/126: the ☰ cycles THREE states (customer request) —
+   0 everything shown → 1 sidebar collapsed → 2 top bar hidden too (only a
+   small floating ☰ remains, fixed top-left) → back to 0. Any state the user
+   reached by the individual toggles still cycles sensibly from wherever it
+   is, and both legs persist through the toggles' own localStorage keys. */
+window.cycleChrome = function() {
+    var layout = document.querySelector(".app-layout");
+    var sbCollapsed = !!(layout && layout.classList.contains("sidebar-collapsed"));
+    var tbHidden = document.documentElement.classList.contains("topbar-hidden");
+    if (!sbCollapsed) {
+        window.toggleSidebar();                       // 0 → 1
+    } else if (!tbHidden) {
+        window.toggleTopbar();                        // 1 → 2
+    } else {
+        window.toggleTopbar();                        // 2 → 0
+        window.toggleSidebar();
+    }
+};
+
 /**
  * Global toggle that hides the top title bar to reclaim vertical space. The class
  * lives on <html> (NOT .app-layout) because the .topbar sits OUTSIDE .app-layout;
@@ -15939,6 +15958,40 @@ window.StateVersions = (function () {
             }, 0);
         }
     }
+    /* docs/126: while the panel is OPEN and an Auto-Sync session is armed,
+       applies keep landing — the quick "since the previous version" table
+       must follow them. The tray swaps on every flush, so ride that (the
+       docs/117 observation: every commit path ends in a tray swap), debounced;
+       ticked rows survive the refresh exactly like more() preserves them. */
+    var _svLiveTimer = null;
+    // on document, not document.body: app.js runs from <head>, where body is
+    // still null — and a throw here would take the whole IIFE (toggle incl.)
+    // down with it. htmx events bubble to document anyway.
+    document.addEventListener('htmx:afterSwap', function (evt) {
+        var p = panel();
+        if (!p || p.hidden) return;
+        if (!document.querySelector('.auto-apply-pill.auto-apply-on')) return;
+        var t = evt.detail && evt.detail.target;
+        var isTray = t && (t.id === 'pending-tray'
+            || (t.querySelector && t.querySelector('#pending-tray')));
+        if (!isTray) return;
+        clearTimeout(_svLiveTimer);
+        _svLiveTimer = setTimeout(function () {
+            var pp = panel();
+            if (!pp || pp.hidden || !window.htmx) return;
+            var keep = _checked();
+            htmx.ajax('GET', '/state/versions',
+                      { target: '#state-version-panel', swap: 'innerHTML' })
+                .then(function () {
+                    keep.forEach(function (ts) {
+                        var el = document.querySelector(
+                            '#state-version-panel .sv-check[value="' + ts + '"]');
+                        if (el) el.checked = true;
+                    });
+                    pick();
+                });
+        }, 900);
+    });
     function _checked() {
         return Array.prototype.slice
             .call(document.querySelectorAll('#state-version-panel .sv-check:checked'))

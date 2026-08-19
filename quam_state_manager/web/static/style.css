@@ -3331,10 +3331,15 @@ td.col-delta .val-delta { margin-left: 0; }
 .topo-subnav {
     /* Phase C: sticky scroll-spy jump bar — pins to the top of #table-pane and
        stays across every section. The opaque background hides content scrolling
-       underneath. */
-    position: sticky; top: 0; z-index: 20;
+       underneath. docs/126 item 4: top must be NEGATIVE the pane's own
+       padding — sticky pins at the scrollport's PADDING edge, and overflow
+       clips at the padding box, so content stayed visible in that strip and
+       scrolled past "behind" the bar (measured 12.6px on the real chip). The
+       negative top parks the bar flush at the border edge and its background
+       covers the strip. */
+    position: sticky; top: calc(-1 * var(--table-pane-pad-v)); z-index: 20;
     display: flex; flex-wrap: wrap; gap: 0.3rem;
-    margin: 0; padding: 0.45rem 0 0.5rem 0;
+    margin: 0; padding: calc(0.45rem + var(--table-pane-pad-v)) 0 0.5rem 0;
     border-bottom: 1px solid var(--pico-muted-border-color);
     background: var(--pico-background-color);
 }
@@ -3425,6 +3430,22 @@ td.col-delta .val-delta { margin-left: 0; }
     background: transparent; color: var(--pico-muted-color);
 }
 .topo-hero-zbtn:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
+.topo-hero-zbtn.active { background: var(--pico-primary); color: var(--pico-primary-inverse);
+    border-color: var(--pico-primary); }
+.topo-hero-zslider { width: 110px; margin: 0; padding: 0; height: auto; }
+/* docs/126 — the per-gate (pulse-variant) picker under the metric row */
+.topo-hero-gatebar { display: flex; gap: .3rem; align-items: center; flex-wrap: wrap;
+    flex-basis: 100%; margin-top: .25rem; }
+.topo-hero-gatelabel { font-size: .74em; }
+.topo-hero-gbtn { font-family: var(--pico-font-family-monospace, ui-monospace, monospace);
+    font-size: .72em; }
+/* docs/126 compact mode: the stones/markers shrink (see buildHeroMap), and the
+   TEXT grows relative to the cell — a zoomed-out whole-chip view on a small
+   monitor keeps readable numbers. */
+.topo-hero-svg.hero-compact .topo-hero-id { font-size: 14px; }
+.topo-hero-svg.hero-compact .topo-hero-val { font-size: 13px; }
+.topo-hero-svg.hero-compact .topo-hero-eval { font-size: 19px; }
+.topo-hero-svg.hero-compact .cm-role-txt { font-weight: 800; }
 /* docs/126 ②: the value printed ON an edge when a 2Q metric is selected —
    halo (paint-order stroke) instead of a pill, so no width estimation and it
    stays readable over the coloured line in both themes. */
@@ -8480,6 +8501,49 @@ button.diag-badge { cursor: pointer; }
     border: 1px solid var(--pico-muted-border-color); color: var(--pico-muted-color);
 }
 .tree-act-copy { font-weight: 600; }
+/* docs/126 — the Versions panel's "since the previous version" quick table */
+.sv-quick { margin: .3rem 0 .5rem; padding: .4rem .5rem; border-radius: 9px;
+    border: 1px solid var(--pico-muted-border-color);
+    background: var(--pico-card-background-color, transparent); }
+.sv-quick-head { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap;
+    font-size: .78rem; margin-bottom: .25rem; }
+.sv-quick-table { width: 100%; margin: 0; font-size: .74rem; }
+.sv-quick-table td { padding: .1rem .3rem; border: none; vertical-align: top; }
+.sv-q-path code { font-size: .95em; word-break: break-all; }
+.sv-q-vals { white-space: nowrap; text-align: right; }
+.sv-q-old { color: var(--pico-muted-color); text-decoration: line-through; }
+.sv-q-add { color: var(--color-success-text); }
+.sv-q-del { color: var(--color-error-text); }
+.sv-quick-big { font-size: .76rem; margin: .1rem 0 0; }
+/* docs/126 — the floating ☰ (chrome cycle, leg 3). Slightly inset from the
+   corner, opaque, above sticky page bars. */
+.chrome-reveal {
+    display: none; position: fixed; top: 6px; left: 6px; z-index: 120;
+    width: 30px; height: 30px; margin: 0; padding: 0; line-height: 1;
+    border: 1px solid var(--pico-muted-border-color); border-radius: 8px;
+    background: var(--pico-card-background-color, #fff);
+    /* --pico-contrast, never --pico-color: Pico rescopes the latter to white
+       on <button>, which is invisible on this card in light theme. */
+    color: var(--pico-contrast);
+    cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.25);
+}
+html.topbar-hidden .chrome-reveal { display: block; }
+.chrome-reveal:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
+/* docs/126 — dismiss affordances on toasts + the data-folder banner */
+.toast { position: relative; padding-right: 2rem; }
+.toast .toast-x {
+    position: absolute; top: .3rem; right: .35rem; width: 22px; height: 22px;
+    margin: 0; padding: 0; background: none; border: none; border-radius: 50%;
+    cursor: pointer; line-height: 1; font-size: 1em; color: inherit; opacity: .65;
+}
+.toast .toast-x:hover { opacity: 1; background: rgba(128,128,128,.25); }
+.chip-name-banner { position: relative; padding-right: 2.1rem; }
+.cnb-x {
+    position: absolute; top: .3rem; right: .35rem; width: 22px; height: 22px;
+    margin: 0; padding: 0; background: none; border: none; border-radius: 50%;
+    cursor: pointer; line-height: 1; font-size: 1.05em; color: inherit; opacity: .6;
+}
+.cnb-x:hover { opacity: 1; background: rgba(128,128,128,.25); }
 /* docs/126 ⑥ — floating Instrument Wiring panel */
 .nav-floatable { display: flex; align-items: center; }
 .nav-floatable > a { flex: 1 1 auto; min-width: 0; }
@@ -10671,6 +10735,12 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
     font-size: .8em; line-height: 1.5; cursor: pointer; white-space: nowrap;
 }
 .auto-apply-pill:hover { color: var(--text-primary); border-color: var(--accent); }
+/* docs/126: the bolt is an SVG (currentColor) so ON/OFF can actually differ —
+   the ⚡ emoji ignored CSS color. OFF = gray; ON = bright orange, border too. */
+.auto-apply-pill .icon-bolt { color: var(--pico-muted-color); }
+.auto-apply-on { border-color: #f59e0b !important; }
+.auto-apply-on .icon-bolt { color: #f59e0b;
+    filter: drop-shadow(0 0 3px rgba(245, 158, 11, .55)); }
 .auto-apply-off .aa-hint { color: var(--text-muted); font-size: .92em; }
 .auto-apply-blocked { cursor: not-allowed; opacity: .45; }
 .auto-apply-on {
@@ -10782,22 +10852,41 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 
 /* ── docs/120 item 8: the Auto-Sync popup ──────────────────────────────── */
 .auto-sync-wrap { position: relative; display: inline-block; }
-.auto-sync-pop { position: absolute; top: calc(100% + 0.35rem); left: 0;
-    z-index: 45; width: 21rem; padding: 0.6rem 0.75rem;
-    background: var(--pico-card-background-color);
-    border: 1px solid var(--pico-muted-border-color); border-radius: 0.4rem;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18); font-size: 0.8rem; }
+/* docs/126 restyle: JS pins it under the pill (fixed, clamped) — the old
+   absolute left:0 anchored to a far ancestor and opened at the window's left
+   edge. Modern chrome = the topology-popup language (radius, blur, hairline);
+   each option is a bordered ROW that inverts on hover, and the sub-option
+   wears a tree elbow so its subordination is unmistakable. */
+.auto-sync-pop { position: fixed; z-index: 120; width: 22rem;
+    padding: 0.65rem 0.7rem;
+    background: color-mix(in srgb, var(--pico-card-background-color, #fff) 90%, transparent);
+    -webkit-backdrop-filter: blur(10px) saturate(1.15);
+    backdrop-filter: blur(10px) saturate(1.15);
+    border: 1px solid var(--pico-muted-border-color); border-radius: 14px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.10), 0 12px 32px rgba(0,0,0,0.22);
+    font-size: 0.8rem; }
 .auto-sync-pop[hidden] { display: none; }
-.as-title { display: block; margin-bottom: 0.35rem; }
-.as-row { display: flex; align-items: flex-start; gap: 0.4rem;
-    margin: 0.3rem 0; cursor: pointer; }
-.as-row input { margin: 0.15rem 0 0; flex: 0 0 auto; }
+.as-title { display: block; margin-bottom: 0.45rem; font-size: 0.9rem; }
+.as-row { display: flex; align-items: flex-start; gap: 0.5rem;
+    margin: 0.25rem 0; cursor: pointer; padding: 0.4rem 0.5rem;
+    border: 1px solid var(--pico-muted-border-color); border-radius: 9px;
+    transition: background 0.12s, color 0.12s; }
+.as-row:hover { background: var(--pico-color); color: var(--pico-background-color); }
+.as-row:hover .muted, .as-row:hover small { color: inherit; opacity: 0.75; }
+.as-row input { margin: 0.15rem 0 0; flex: 0 0 auto; width: auto; }
 .as-row small { display: block; line-height: 1.3; }
-/* Nested under its parent because "replace" qualifies a pull. */
-.as-row-sub { margin-left: 1.35rem; }
+/* Nested under its parent because "replace" qualifies a pull — the elbow
+   makes the subordination visible, not just an indent. */
+.as-row-sub { margin-left: 1.9rem; position: relative; }
+.as-row-sub::before { content: ""; position: absolute; left: -1.15rem;
+    top: -0.35rem; width: 0.8rem; height: 1.15rem;
+    border-left: 2px solid var(--pico-muted-border-color);
+    border-bottom: 2px solid var(--pico-muted-border-color);
+    border-bottom-left-radius: 6px; }
 .as-row-disabled { opacity: 0.45; }
-.as-note { font-size: 0.72rem; margin: 0.4rem 0 0.5rem; line-height: 1.35; }
-.as-actions { display: flex; gap: 0.4rem; }
+.as-note { font-size: 0.72rem; margin: 0.45rem 0 0.5rem; line-height: 1.35; }
+.as-actions { display: flex; gap: 0.4rem; justify-content: flex-end; }
+.as-actions .btn-sm { width: auto; margin: 0; padding: 0.2rem 0.8rem; }
 
 /* ── docs/120 items 5+9: chip-wide Trends ──────────────────────────────────
    The customer asked for this to be "BIG, NICE, MODERN and FANCY" — it is the

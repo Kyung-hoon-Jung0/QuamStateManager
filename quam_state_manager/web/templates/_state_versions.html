@@ -1,3 +1,4 @@
+{% from '_delta_macros.html' import delta_chip %}
 {# docs/120 item 10 — the version list the top-bar chip opens.
 
    Customer: "clicking it lists the version history with WHEN each was updated,
@@ -32,6 +33,38 @@
         hx-target="#table-pane" hx-push-url="true" onclick="StateVersions.close()">State History</a>.
     </p>
     {% else %}
+
+    {# docs/126 — "what just changed?" answers itself: newest vs previous,
+       shown as a table when it is small enough to read at a glance (≤50).
+       Auto-Sync sessions refresh this live (StateVersions rides the tray
+       swaps). The tick-two + Compare flow below still covers ANY pairing. #}
+    {% if quick %}
+    <div class="sv-quick">
+        <div class="sv-quick-head">
+            <b>Since the previous version</b>
+            <span class="muted">{{ quick.a_ts | ts_local }} → {{ quick.b_ts | ts_local }} ·
+                {{ quick.n }} change{{ '' if quick.n == 1 else 's' }}</span>
+        </div>
+        {% if quick.entries %}
+        <table class="sv-quick-table">
+            {% for e in quick.entries %}
+            <tr>
+                <td class="sv-q-path"><code>{{ e.dot_path }}</code></td>
+                <td class="sv-q-vals">
+                    {% if e.change_type == 'added' %}<span class="sv-q-add">+ {{ e.new_value }}</span>
+                    {% elif e.change_type == 'removed' %}<span class="sv-q-del">− {{ e.old_value }}</span>
+                    {% else %}<span class="sv-q-old">{{ e.old_value }}</span> → <b>{{ e.new_value }}</b>
+                    {{ delta_chip(e.old_value, e.new_value) }}{% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </table>
+        {% elif quick.n %}
+        <p class="muted sv-quick-big">{{ quick.n }} values differ — too many for
+            a glance; tick the two versions below and Compare for the full view.</p>
+        {% endif %}
+    </div>
+    {% endif %}
 
     <div class="state-versions-actions">
         <button type="button" class="btn-sm outline" id="sv-compare" disabled

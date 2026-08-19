@@ -27,10 +27,13 @@
         hx-get="/state/versions" hx-target="#state-version-panel" hx-swap="innerHTML"
         onclick="StateVersions.toggle()"
         aria-haspopup="dialog" aria-expanded="false"
-        title="{% if ver.ts %}The live chip is on this recorded version.{% else %}No recorded version holds exactly the live chip's content (an out-of-band write or an applied edit puts it here).{% endif %}{% if ver.dirty %} State Manager holds edits that are not in it yet — apply them and a new version is recorded.{% endif %} Click for the history — compare any two, or go back to one.">
+        title="{% if ver.ts %}The live chip is on recorded version {{ ver.ts }}.{% else %}No recorded version holds exactly the live chip's content (an out-of-band write or an applied edit puts it here).{% endif %}{% if ver.dirty %} State Manager holds edits that are not in it yet — apply them and a new version is recorded.{% endif %} Click for the history — compare any two, or go back to one.">
+    {# docs/126: the label is a WORD, not the snapshot token — the raw
+       `20260819_114833_6782` carried no information a user can read. The
+       exact version id still lives in the tooltip and in the panel rows. #}
     <span class="state-version-ico" aria-hidden="true">&#9114;</span>
-    {% if ver.ts %}<span class="state-version-id">{{ ver.ts }}</span>
-    {% else %}<span class="state-version-id state-version-none">unrecorded</span>{% endif %}
+    <span class="state-version-id">Versions</span>
+    {% if not ver.ts and ver.count %}<span class="state-version-none">unrecorded</span>{% endif %}
     {% if ver.dirty %}<span class="state-version-edits" aria-label="unapplied edits">+</span>{% endif %}
     {% if ver.count %}<span class="state-version-count">{{ ver.count }}</span>{% endif %}
 </button>

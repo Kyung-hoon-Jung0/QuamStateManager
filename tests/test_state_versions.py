@@ -103,10 +103,13 @@ class TestVersionChip:
         empty state is what explains where versions come from."""
         body = client.get("/state/version").get_data(as_text=True)
         assert "state-version-chip" in body
-        # "unrecorded", not "unsaved": the chip hashes the LIVE pair, so this
-        # state is reached by an out-of-band write as readily as by an edit and
-        # must not name a culprit it did not observe (review finding 4).
-        assert "unrecorded" in body
+        # docs/126: the label is the WORD "Versions" — the raw snapshot token
+        # carried nothing a user can read (the id lives in the tooltip and the
+        # panel). With zero versions there is nothing to call "unrecorded";
+        # the badge appears only when history exists and live matches none of
+        # it. "unsaved" stays banned (review finding 4: never name a culprit).
+        assert ">Versions<" in body
+        assert "unrecorded" not in body
         assert "unsaved" not in body
 
     def test_nothing_at_all_without_a_chip(self, tmp_path):
@@ -117,10 +120,11 @@ class TestVersionChip:
     def test_after_a_snapshot_it_names_that_version(self, client):
         client.post("/state/archive", data={"tag": "t", "note": "n"})
         body = client.get("/state/version").get_data(as_text=True)
-        m = re.search(r'class="state-version-id"[^>]*>([^<]+)<', body)
+        # docs/126: the version id moved to the TOOLTIP — the button label is
+        # the word, the id is detail on demand.
+        m = re.search(r"The live chip is on recorded version (\d{8}_\d{6}\S*)", body)
         assert m, body
-        ts = m.group(1).strip()
-        assert re.match(r"^\d{8}_\d{6}", ts), ts
+        assert ">Versions<" in body
 
     def test_the_id_is_content_matched_not_newest(self, client):
         """After A -> B -> A the NEWEST snapshot holds B, so "newest" would name
@@ -250,15 +254,15 @@ class TestReviewFindings:
         dirty = client.get("/state/version").get_data(as_text=True)
         assert "state-version-dirty" in dirty
         assert "state-version-edits" in dirty
-        # the version id itself is still shown -- it is still true, just no
-        # longer the whole truth
-        assert re.search(r'class="state-version-id"[^>]*>\d{8}_', dirty)
+        # the version id itself is still shown (in the tooltip since docs/126)
+        # -- it is still true, just no longer the whole truth
+        assert re.search(r"recorded version \d{8}_", dirty)
         assert "not in it yet" in dirty
 
     def test_the_tooltip_never_calls_the_live_id_the_working_state(self, client):
         client.post("/state/archive", data={"tag": "t"})
         body = client.get("/state/version").get_data(as_text=True)
-        assert "The live chip is on this recorded version" in body
+        assert "The live chip is on recorded version" in body
 
 
 class TestTheAuditsHonestyFindings:
@@ -312,3 +316,46 @@ class TestTheManualStatesTheCurrentCovenant:
         body = client.get("/").get_data(as_text=True)
         assert "Auto-Sync" in body
         assert "edits here never touch the instrument" not in body
+
+
+class TestQuickDiff:
+    """docs/126 round 3: the panel leads with the before -> after table against
+    the PREVIOUS version, immediately -- the tick-two-then-Compare dance stays
+    for arbitrary pairs, but the question users actually bring ("what just
+    changed?") is answered without any picking. Rendered only when it fits
+    (<= 50 rows); a bigger drift states its count and defers to Compare."""
+
+    def test_two_versions_show_the_diff_without_any_picking(self, client):
+        client.post("/state/archive", data={"tag": "a"})
+        client.post("/field/edit", data={"dot_path": "qubits.q1.f_01", "value": "6.2e9"})
+        client.post("/state/apply-to-live")
+        body = client.get("/state/versions").get_data(as_text=True)
+        assert "sv-quick" in body
+        assert "qubits.q1.f_01" in body
+        # old AND new, through the one docs/76 delta implementation
+        assert "sv-q-old" in body and "val-delta" in body
+
+    def test_a_single_version_renders_no_quick_block(self, client):
+        """One row has no "previous" -- inventing a comparison against nothing
+        would be a lie, so the block simply is not there."""
+        client.post("/state/archive", data={"tag": "only"})
+        body = client.get("/state/versions").get_data(as_text=True)
+        assert "sv-quick" not in body
+
+    def test_the_realtime_refresh_is_wired_and_load_order_safe(self):
+        """While an Auto-Sync session is armed, flushes keep landing and the
+        open panel follows them (the user's ask). The listener must sit on
+        `document`, never `document.body`: app.js executes from <head> where
+        body is still null, and the throw took the WHOLE IIFE down --
+        StateVersions.toggle() itself stopped existing. Found in a real
+        browser; jsdom evals app.js with a body present and cannot see it."""
+        from pathlib import Path
+        import quam_state_manager
+        src = (Path(quam_state_manager.__file__).parent / "web" / "static"
+               / "app.js").read_text(encoding="utf-8")
+        i = src.index("window.StateVersions")
+        block = src[i:i + 4000]
+        assert "document.addEventListener('htmx:afterSwap'" in block
+        assert "document.body.addEventListener" not in block
+        assert "auto-apply-on" in block        # armed sessions only
+        assert "'/state/versions'" in block    # what it refetches

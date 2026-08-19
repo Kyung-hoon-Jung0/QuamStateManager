@@ -2989,8 +2989,7 @@ def chip_data_folder_set():
         _maybe_data_folder_suggest(ctx)
         body = render_template(
             "_status.html", level="success",
-            message=("Data folder cleared from the working state — Save + "
-                     "Apply to live makes it permanent"
+            message=("Data folder cleared — Apply to live makes it permanent"
                      if had else "No data folder was declared — nothing to clear"))
         resp = make_response(body + _tray_oob())
         resp.headers["HX-Trigger"] = "pulses-changed"
@@ -9021,9 +9020,23 @@ def state_versions_panel():
         "run_id": m.run_id,
         "current": m.timestamp == ver["ts"],
     } for m in snaps[:limit]]
+    # docs/126: the ordinary question at this button is "what just changed?",
+    # and answering it used to cost tick-two + Compare. When the newest two
+    # versions differ by ≤ 50 leaves the panel now shows the table IMMEDIATELY
+    # (key | old → new, the docs/76 Δ); bigger diffs state their size and
+    # point at Compare. The tick-two flow stays for any other pairing.
+    quick = None
+    if len(rows) >= 2:
+        try:
+            entries = hm.diff_snapshots(path, rows[1]["ts"], rows[0]["ts"])
+            quick = {"a_ts": rows[1]["ts"], "b_ts": rows[0]["ts"],
+                     "n": len(entries),
+                     "entries": entries if 0 < len(entries) <= 50 else None}
+        except Exception:  # noqa: BLE001 — the list must render regardless
+            quick = None
     return render_template("_state_versions.html", rows=rows, ver=ver,
                            chip_key=chip_key, total=len(snaps),
-                           cap=_STATE_VERSIONS_CAP,
+                           cap=_STATE_VERSIONS_CAP, quick=quick,
                            archive=(ctx.get("origin") or "live") != "live")
 
 

@@ -528,8 +528,15 @@ window.TopoGraph = (function () {
      * describe one pair with one control end.
      */
     if (opts.roles) {
-      var roleR = Math.max(4.5, CELL * 0.085);
-      var roleFont = Math.round(Math.max(7, CELL * 0.115) * 10) / 10;
+      // docs/126 (customer): compactRoles pulls each marker HALF ONTO its
+      // stone (centre on the rim) and shrinks it — freeing the edge middle
+      // for the metric value the hero prints there. The component map keeps
+      // the classic outside placement (its drawings are pinned byte-identical
+      // across modes), so this is opt-in.
+      var compact = !!opts.compactRoles;
+      var roleR = compact ? Math.max(3.6, CELL * 0.062)
+                          : Math.max(4.5, CELL * 0.085);
+      var roleFont = Math.round(Math.max(6, CELL * (compact ? 0.085 : 0.115)) * 10) / 10;
       var roleDone = {};
       for (var ri = 0; ri < edges.length; ri++) {
         var re = edges[ri];
@@ -568,7 +575,9 @@ window.TopoGraph = (function () {
         // AFTER these glyphs and R == CELL*0.30, so an inset of 0.30 put each
         // role circle's centre exactly on the rim and the opaque stone painted
         // over roughly a third of it. jsdom cannot see that; a browser can.
-        var inset = CELL * 0.30 + roleR * 1.15, step = roleR * 2.1;
+        var inset = compact ? CELL * 0.30            // centre ON the rim
+                            : CELL * 0.30 + roleR * 1.15;
+        var step = roleR * 2.1;
         // A qubit can be the control of one pair and the target of another, so
         // every marker names BOTH the pair and the endpoint it belongs to —
         // otherwise "the C nearest qA1" is an ambiguous question on any chip

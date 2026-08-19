@@ -71,14 +71,17 @@
   </form>
 </div>
 {% elif extras_data_dangling %}
+{# docs/126: concise wording + a session ✕ — the unreachable path is often a
+   permanent fact of viewing another machine's chip, and the full lecture
+   re-appeared on every page with no way to put it away. The ✕ hides it for
+   THIS browser session only (a new dangling value shows it again). #}
 <div id="chip-name-banner" class="chip-name-banner cnb-dangling" role="region"
-     aria-label="Data folder not reachable">
+     aria-label="Data folder not reachable"
+     data-banner-sig="dangle:{{ extras_data_dangling | join(',') }}">
   <span class="cnb-text">
-    This chip declares a data folder that isn't reachable from here:
+    Data folder not reachable:
     {% for raw in extras_data_dangling %}<code>{{ raw }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
-    (<code>extras.data_folder</code> — paths from another machine/OS are
-    bridged automatically when possible). Fix it here:
-    {% if extras_data_dangling | length > 1 %}<span class="cnb-note">setting a folder replaces all {{ extras_data_dangling | length }} declared values.</span>{% endif %}
+    <span class="cnb-note">(<code>extras.data_folder</code>{% if extras_data_dangling | length > 1 %} — setting one folder replaces all {{ extras_data_dangling | length }}{% endif %})</span>
   </span>
   <form class="cnb-form cnb-df-form" hx-post="/chip-data-folder/set"
         hx-target="#chip-name-banner" hx-swap="outerHTML">
@@ -100,7 +103,19 @@
             hx-confirm="Remove extras.data_folder from the working state?"
             title="Remove the declared data folder">Clear</button>
   </form>
+  <button type="button" class="cnb-x" aria-label="Hide for this session"
+          title="Hide this notice for this browser session"
+          onclick="try{sessionStorage.setItem('quam_banner_hide', this.closest('[data-banner-sig]').getAttribute('data-banner-sig'));}catch(e){}; this.closest('#chip-name-banner').remove();">&times;</button>
 </div>
+<script>(function(){
+  try {
+    var b = document.getElementById('chip-name-banner');
+    if (b && b.getAttribute('data-banner-sig')
+          && sessionStorage.getItem('quam_banner_hide') === b.getAttribute('data-banner-sig')) {
+      b.remove();
+    }
+  } catch (e) {}
+})();</script>
 {% elif data_folder_suggest %}
 <div id="chip-name-banner" class="chip-name-banner cnb-suggest" role="region"
      aria-label="Data folder suggestion">

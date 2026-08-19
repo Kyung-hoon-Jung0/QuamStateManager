@@ -189,7 +189,25 @@ window.AutoSync = (function () {
         if (!window.htmx) return;
         window.htmx.ajax('GET', '/auto-sync/panel',
                          { target: '#auto-sync-pop-host', swap: 'innerHTML' })
-            .then(function () { syncNested(); _bindAway(); });
+            .then(function () { _place(); syncNested(); _bindAway(); });
+    }
+    /* docs/126: the host span sits unpositioned in the topbar nav, so the
+       old absolute pop anchored to some far ancestor and opened at the LEFT
+       EDGE of the window (customer screenshot). Anchor it under the pill in
+       viewport coordinates, clamped on-screen (docs/89 pattern). */
+    function _place() {
+        var p = pop(), b = btn();
+        if (!p) return;
+        p.style.position = 'fixed';
+        var w = p.offsetWidth || 336, hpx = p.offsetHeight || 200;
+        var r = b ? b.getBoundingClientRect()
+                  : { left: window.innerWidth / 2 - w / 2, bottom: 60, top: 40 };
+        var left = Math.min(Math.max(8, r.left), window.innerWidth - w - 8);
+        var top = r.bottom + 6;
+        if (top + hpx > window.innerHeight - 8) top = Math.max(8, r.top - hpx - 6);
+        p.style.left = Math.round(left) + 'px';
+        p.style.top = Math.round(top) + 'px';
+        p.style.right = 'auto'; p.style.bottom = 'auto';
     }
     function _bindAway() {
         setTimeout(function () {

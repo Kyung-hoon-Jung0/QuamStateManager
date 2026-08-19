@@ -33,9 +33,18 @@ def _median(xs: list[float]):
     return s[m] if n % 2 else (s[m - 1] + s[m]) / 2
 
 
-def _outliers(entities: list[dict], key: str) -> list[tuple[str, float, float]]:
+def _outliers(entities: list[dict], key: str,
+              th: dict | None = None) -> list[tuple[str, float, float]]:
     """Robust MAD outliers (modified z ≥ 3.5) over the gated values — same method
-    as the dashboard. Returns [(id, value, score)]; empty when <5 pts / no spread."""
+    as the dashboard. Returns [(id, value, score)]; empty when <5 pts / no spread.
+
+    docs/126 (customer report): a value that PASSES its spec threshold is never
+    an outlier. On a tight chip the MAD collapses — every 1Q fidelity within
+    99.85–99.92% put a 99.67% qubit at 16.8× MAD, branding an excellent result
+    — statistically unusual, physically fine ("over calculation"). With no
+    threshold for the metric, a practical floor applies instead: the deviation
+    must be at least 1% of |median| to be worth a flag.
+    """
     vals = [(_gated(e, key), e.get("id") or e.get("pair_id")) for e in entities]
     clean = [(v, i) for (v, i) in vals if isinstance(v, (int, float))]
     if len(clean) < 5:
@@ -47,8 +56,14 @@ def _outliers(entities: list[dict], key: str) -> list[tuple[str, float, float]]:
     out = []
     for v, i in clean:
         score = abs(v - med) / (1.4826 * mad)
-        if score >= _OUTLIER_K:
-            out.append((i, v, score))
+        if score < _OUTLIER_K:
+            continue
+        if th is not None:
+            if chip_health.verdict(v, th) == "pass":
+                continue          # in spec — never an outlier
+        elif not (med and abs(v - med) >= 0.01 * abs(med)):
+            continue              # no spec: below the practical floor
+        out.append((i, v, score))
     return sorted(out, key=lambda t: -t[2])
 
 
@@ -106,9 +121,9 @@ def build_report(engine, *, chip_name: str, generated_at: datetime | None = None
 
     outliers = []
     for m in _NODE_VERDICT_METRICS + ["f_01"]:
-        for (i, v, sc) in _outliers(nodes, m):
+        for (i, v, sc) in _outliers(nodes, m, th.get(m)):
             outliers.append({"id": i, "metric": m, "value": v, "score": round(sc, 1)})
-    for (i, v, sc) in _outliers(edges, "cz_fidelity"):
+    for (i, v, sc) in _outliers(edges, "cz_fidelity", th.get("cz_fidelity")):
         outliers.append({"id": i, "metric": "cz_fidelity", "value": v, "score": round(sc, 1)})
 
     diag = diag_findings or []

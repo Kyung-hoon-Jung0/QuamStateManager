@@ -1363,7 +1363,10 @@ class TestSidebarFeatures:
     def test_sidebar_toggle_button(self, loaded_client):
         html = loaded_client.get("/qubits").data.decode()
         assert "sidebar-toggle" in html
-        assert "toggleSidebar" in html
+        # docs/126 r3: the hamburger cycles chrome (sidebar -> +topbar with a
+        # floating restore button) instead of a plain sidebar toggle.
+        assert "cycleChrome" in html
+        assert "chrome-reveal" in html
 
     def test_sidebar_tree_polling(self, loaded_client):
         html = loaded_client.get("/qubits").data.decode()

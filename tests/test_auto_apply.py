@@ -100,6 +100,10 @@ class TestArming:
             html = c.get(url).data.decode()
             assert 'data-auto-apply="1"' in html, url
             assert "auto-apply-pill" in html, url
+            # docs/126 r3: the bolt is an SVG (CSS-recolorable: gray OFF,
+            # orange ON), never the emoji, which no stylesheet can tint.
+            assert "icon-bolt" in html, url
+            assert "⚡" not in html, url
 
     def test_archive_can_never_arm(self, env):
         ctx = _ctx(env)
