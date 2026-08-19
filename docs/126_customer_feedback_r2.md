@@ -568,3 +568,15 @@ currentColor — the docs/89 emoji rule) in the existing `.nav-sub-row`,
 Verified in a real browser on the 20Q QDAC chip (`_rt_cfb2_report.cjs`:
 160 map marks, 20 unpaginated rows, 30 pairs, standalone output pinned
 script-free/inlined/SVG-baked). Pinned by `tests/test_chip_report.py`.
+
+### r3 bug 1 — the Auto-Sync toggles looked dead
+
+Report: pressing a switch in the popup changed nothing on screen. It DID
+toggle (measured checked true→false in a real browser) — but the restyle's
+`.as-row input { width: auto }`, written to dodge the global
+`input{width:100%}`, collapsed the `appearance:none` checkbox to a **4px
+sliver** whose checked and unchecked states were the same blue bar (the
+border stays accent-colored in both). Fix: an explicit 1.1rem square, so
+Pico's own `:checked` checkmark renders — checked = filled box with a check,
+unchecked = empty box, measured 23×23px live. Pinned by
+`test_the_panel_checkboxes_have_real_dimensions`.

@@ -10873,7 +10873,13 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
     transition: background 0.12s, color 0.12s; }
 .as-row:hover { background: var(--pico-color); color: var(--pico-background-color); }
 .as-row:hover .muted, .as-row:hover small { color: inherit; opacity: 0.75; }
-.as-row input { margin: 0.15rem 0 0; flex: 0 0 auto; width: auto; }
+/* An explicit SQUARE, not width:auto: Pico strips native rendering
+   (appearance:none) and the global input{width:100%} fight collapsed the
+   box to a 4px sliver — checked and unchecked were the same blue bar, so
+   the popup looked dead (bug report). With real dimensions Pico's own
+   :checked checkmark renders and the toggle is visible again. */
+.as-row input { margin: 0.1rem 0 0; flex: 0 0 auto;
+    width: 1.1rem; height: 1.1rem; }
 .as-row small { display: block; line-height: 1.3; }
 /* Nested under its parent because "replace" qualifies a pull — the elbow
    makes the subordination visible, not just an indent. */
