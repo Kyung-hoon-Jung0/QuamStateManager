@@ -661,10 +661,15 @@
                     <button type="button" class="tree-density-btn" id="exp-density-compact"
                             onclick="setExpListCompact(true)" aria-pressed="false"
                             title="Compact — one truncated line per entry">&#9638;</button>
+                    {# docs/126 r3: pressing this gave NO feedback for the whole
+                       (up to 20 s, docs/105) rescan. htmx stamps .htmx-request
+                       on the button while the POST is in flight — the glyph
+                       spins accent-colored and re-clicks are ignored; CSS only. #}
                     <button class="btn-workspace-refresh" type="button"
                             hx-post="/workspace/refresh" hx-target="#sidebar-tree"
                             hx-include="#sidebar-filter-input"
-                            title="Refresh folder list" aria-label="Refresh folder list">&#8635;</button>
+                            title="Refresh folder list" aria-label="Refresh folder list"><span
+                            class="ws-refresh-ico" aria-hidden="true">&#8635;</span></button>
                 </div>
                 <div id="sidebar-tree"
                      hx-get="/workspace/tree" hx-trigger="load"

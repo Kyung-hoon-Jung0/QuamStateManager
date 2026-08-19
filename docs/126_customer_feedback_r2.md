@@ -687,3 +687,14 @@ terminal branch of the poller releases the counter. Verified end-to-end: a
 REAL backfill showed the op in `/api/progress` while running and `{}` after
 finish; the browser rendered `12/1000 → 142/1000` (external) and `371/1154`
 (poll path) and cleaned up on settle. Pinned by `tests/test_progress.py`.
+
+### r3 — the workspace Refresh button shows it is working
+
+Pressing ↻ gave no feedback for the whole rescan (bounded at 20 s by
+docs/105) — pressed-or-not was indistinguishable. htmx already stamps
+`.htmx-request` on the trigger for the in-flight window, so this is CSS
+only: the glyph (now a rotatable span) spins accent-colored, duplicate
+clicks are ignored (`pointer-events: none`), and reduced-motion gets an
+opacity pulse instead. Verified live mid-rescan: htmx-request present,
+accent color, animation running, rest state restored on swap. Pinned in
+`TestSidebarFeatures::test_refresh_button_shows_in_flight_state`.

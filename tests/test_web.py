@@ -1368,6 +1368,23 @@ class TestSidebarFeatures:
         assert "cycleChrome" in html
         assert "chrome-reveal" in html
 
+    def test_refresh_button_shows_in_flight_state(self, loaded_client):
+        """docs/126 r3: pressing Refresh gave no feedback for the whole rescan
+        (up to 20 s). htmx stamps .htmx-request on the trigger — the glyph
+        must be a rotatable element and the CSS must animate + block
+        re-clicks on that class."""
+        html = loaded_client.get("/qubits").data.decode()
+        assert 'class="ws-refresh-ico"' in html
+        from pathlib import Path
+        import quam_state_manager
+        css = (Path(quam_state_manager.__file__).parent / "web" / "static"
+               / "style.css").read_text(encoding="utf-8")
+        i = css.index(".btn-workspace-refresh.htmx-request")
+        block = css[i:i + 600]
+        assert "pointer-events: none" in block
+        assert "ws-refresh-spin" in css
+        assert "prefers-reduced-motion" in css[i:i + 900]
+
     def test_sidebar_tree_polling(self, loaded_client):
         html = loaded_client.get("/qubits").data.decode()
         # Polling interval is now set dynamically via JS from UI_CONFIG.autoRefreshInterval
