@@ -216,3 +216,40 @@ console clean). **Pinned by** `bulk_search_selfcheck.cjs` §F (F1–F9: inject,
 inline add, active+box+store, filters like any chip, ONE-stylesheet td
 hiding with THs keeping the class, × removal restores everything) and the
 existing A–E pins green as the no-regression proof.
+
+## ④ Json Tree View — patches, port owners, ⧉ copy
+
+**Reports.** "Bring the patch idea to the Json Tree View too"; "mark which
+qubit / flux / coupler each port belongs to (visible, simple)"; "on key hover
+only edit and delete appear with an empty gap between — put a copy symbol
+there that copies key + value".
+
+- **Patches** (`window.ExplorerChips`): a chip row under the tree toolbar —
+  curated terms rendered ONLY when they occur in this chip's documents (one
+  lowercase JSON.stringify haystack; honesty rule carried over from Live
+  Edit), plus the user's custom patches from the SAME
+  `quam_bulk_custom_chips` store Live Edit writes — "decouple" registered on
+  either surface serves both — with the same +/× add/remove flow. Click
+  toggles the term in `#explorer-search` (space = AND, the docs/96 grammar)
+  through `window.explorerSearch`; hand-typing a patch's word lights its chip.
+- **Port owners**: `routes._port_owner_map` walks the wiring document's
+  channel dicts (`wiring.qubits/qubit_pairs/twpas .<ent>.<role>.*`) and maps
+  every `#/ports/...` pointer to `"<ent> · <role>"` (c→coupler, rr→readout,
+  qt→trigger; shared ports list every owner). `/explorer` injects it as
+  `window._treePortOwners` and `renderJsonTree` hangs a muted `⌁ q2 · z`
+  chip on any container node whose dot path is in the map — 69 ports labeled
+  on the real chip, zero invented (an unshaped wiring entry yields nothing).
+- **⧉ copy**: `_buildRowActions` now gives EVERY hovered row (list elements
+  and `__class__`/`id` rows included — they used to get no actions at all) a
+  ⧉ button that puts `"<key>": <JSON value>` on the system clipboard
+  (navigator.clipboard with an execCommand fallback, ✓/✗ feedback). Distinct
+  from the in-app paste buffer (`_treeCopyKey`), which keeps its dblclick.
+
+**Verified** by `tests/browser/_rt_cfb2_tree.cjs` (real Chrome, real chip,
+ALL OK: chips honest + filter 1,875 rows hidden/2,212 highlighted, patch saved
+in the tree appears in Live Edit, `⌁ q2 · z` on the port node, clipboard got
+`"octaves": {}`, console clean). **Pinned by**
+`tests/explorer_chips_selfcheck.cjs` (19 checks) + `tests/test_explorer_features.py`
+(owner-map derivation incl. shared ports and broken shapes; route injection).
+Harness note for the future: `jsonTreeSearch` debounces 200 ms — a pin that
+reads the tree earlier measures the pre-search state.

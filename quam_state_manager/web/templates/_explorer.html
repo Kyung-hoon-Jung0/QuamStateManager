@@ -42,6 +42,11 @@
     </span>
 </div>
 
+{# docs/126 ④: quick patches for the tree — curated terms that actually occur
+   in this chip's documents + the user's own saved patches (SHARED with Live
+   Edit's store). Click → the term joins the search box. #}
+<div class="bulk-chipbar explorer-chipbar" id="explorer-chipbar"></div>
+
 <div id="explorer-livediff-bar" class="livediff-bar" hidden>
     {# docs/122 item 2: a filter applied over a diff can exclude the very rows
        the diff is announcing. "changed 3 fields" above an empty tree reads as
@@ -63,9 +68,15 @@
     var stateData = {{ state_json | script_json }};
     var wiringData = {{ wiring_json | script_json }};
 
+    // docs/126 ④: which qubit/coupler/readout line owns each port — rendered
+    // as a chip beside the port nodes by renderJsonTree.
+    window._treePortOwners = {{ port_owners | default('null') | script_json }};
+
     renderJsonTree("explorer-tree-state", stateData, { defaultDepth: 1, crud: true });
     renderJsonTree("explorer-tree-wiring", wiringData, { defaultDepth: 1, crud: true });
     if (window.explorerApplyScale) window.explorerApplyScale();   // persisted size
+
+    if (window.ExplorerChips) ExplorerChips.mount("explorer-chipbar", [stateData, wiringData]);
 
     window._activeTreeId = function() {
         var stateEl = document.getElementById("explorer-tree-state");

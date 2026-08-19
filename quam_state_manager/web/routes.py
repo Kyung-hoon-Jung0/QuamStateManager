@@ -4395,6 +4395,40 @@ def load():
 # ======================================================================
 
 
+def _port_owner_map(wiring_root: dict | None) -> dict[str, str]:
+    """Dot-path under ``ports.*`` → short owner label (docs/126 ④).
+
+    Pure walk of the wiring document: every channel dict under
+    ``wiring.qubits.<q>.<role>`` / ``wiring.qubit_pairs.<p>.<role>`` /
+    ``wiring.twpas.<t>.<role>`` whose leaves are ``#/ports/...`` pointers
+    names that port's owner — the Json Tree renders it beside the port node
+    ("q2 · z", "q1-2 · coupler") so a reader never has to chase the pointer
+    web backwards by hand. Shared ports list every owner; anything unshaped
+    is skipped (a broken wiring entry yields no label, never a crash).
+    """
+    out: dict[str, list[str]] = {}
+    wiring = (wiring_root or {}).get("wiring") or {}
+    role_names = {"c": "coupler", "rr": "readout", "qt": "trigger"}
+    for section in ("qubits", "qubit_pairs", "twpas"):
+        entities = wiring.get(section)
+        if not isinstance(entities, dict):
+            continue
+        for ent, roles in entities.items():
+            if not isinstance(roles, dict):
+                continue
+            for role, chan in roles.items():
+                if not isinstance(chan, dict):
+                    continue
+                label = f"{ent} · {role_names.get(role, role)}"
+                for ref in chan.values():
+                    if isinstance(ref, str) and ref.startswith("#/ports/"):
+                        dot = ref[2:].replace("/", ".")
+                        owners = out.setdefault(dot, [])
+                        if label not in owners:
+                            owners.append(label)
+    return {k: " + ".join(v) for k, v in out.items()}
+
+
 @bp.route("/explorer")
 def explorer():
     store = _store()
@@ -4408,6 +4442,7 @@ def explorer():
         **_ctx(page="explorer"),
         state_json=state_json,
         wiring_json=wiring_json,
+        port_owners=json.dumps(_port_owner_map(store.wiring)),
     )
 
 

@@ -8471,6 +8471,15 @@ button.diag-badge { cursor: pointer; }
 .bulk-chip-add { border-style: dashed; font-weight: 700; min-width: 1.7em; }
 .bulk-chip-add-input { width: 9em; margin: 0; padding: .1rem .4rem; font-size: .8em;
     height: auto; border-radius: 999px; }
+/* docs/126 ④ — the tree's patch row + port-owner chips */
+.explorer-chipbar { margin: .3rem 0 .35rem; }
+.tree-owner-chip {
+    margin-left: .55rem; font-size: .72em; font-weight: 600; white-space: nowrap;
+    padding: .05rem .45rem; border-radius: 999px; vertical-align: middle;
+    background: var(--pico-card-background-color, transparent);
+    border: 1px solid var(--pico-muted-border-color); color: var(--pico-muted-color);
+}
+.tree-act-copy { font-weight: 600; }
 .bulk-chip-offer-yes, .bulk-chip-offer-no { margin: 0; width: auto;
     padding: 0.02rem 0.4rem; border-radius: 0.25rem; font-size: 0.72rem;
     border: 1px solid var(--color-warning-border, var(--pico-muted-border-color));

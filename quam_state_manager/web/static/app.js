@@ -5842,6 +5842,17 @@ window.clearDetailPanelSearch = function(btnEl) {
                 row.appendChild(jsonBtn);
             }
 
+            // docs/126 ④: name the port's owner right on the node ("q2 · z",
+            // "q1-2 · coupler") — the map is server-derived from the wiring
+            // pointers and injected by the explorer page (absent elsewhere).
+            if (window._treePortOwners && window._treePortOwners[path]) {
+                var ownEl = document.createElement("span");
+                ownEl.className = "tree-owner-chip";
+                ownEl.textContent = "⌁ " + window._treePortOwners[path];
+                ownEl.title = "This port is wired to " + window._treePortOwners[path];
+                row.appendChild(ownEl);
+            }
+
             // Lazy children container — populated on first expand
             var children = document.createElement("div");
             children.className = "tree-children";
@@ -6831,6 +6842,39 @@ window.clearDetailPanelSearch = function(btnEl) {
         return b;
     }
 
+    function _copyClipboardFallback(txt) {
+        try {
+            var ta = document.createElement("textarea");
+            ta.value = txt; ta.style.position = "fixed"; ta.style.opacity = "0";
+            document.body.appendChild(ta); ta.select();
+            var ok = document.execCommand("copy");
+            ta.remove(); return ok;
+        } catch (e) { return false; }
+    }
+
+    /* docs/126 ④ — copy this row (key + value, as a JSON snippet) to the
+       system clipboard. Distinct from the in-app paste buffer (_treeCopyKey):
+       this hands the text to the OS for pasting anywhere. */
+    function _copyKeyValue(node, btn) {
+        var m = node._meta, v = node._value, txt;
+        try {
+            txt = (m && m.key != null && m.key !== "")
+                ? JSON.stringify(String(m.key)) + ": " + JSON.stringify(v, null, 2)
+                : JSON.stringify(v, null, 2);
+        } catch (e) { txt = String(v); }
+        function done(okFlag) {
+            if (!btn) return;
+            var old = btn.textContent;
+            btn.textContent = okFlag ? "✓" : "✗";
+            setTimeout(function () { btn.textContent = old; }, 800);
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(txt).then(
+                function () { done(true); },
+                function () { done(_copyClipboardFallback(txt)); });
+        } else { done(_copyClipboardFallback(txt)); }
+    }
+
     function _buildRowActions(container, node, row) {
         var m = node._meta, v = node._value;
         var parent = _parentInfo(node);
@@ -6841,19 +6885,27 @@ window.clearDetailPanelSearch = function(btnEl) {
         var inList = Array.isArray(parent.value);
         var topLevel = m.depth === 0;
         var identity = m.key === "__class__" || m.key === "id";
-        if (inList || identity) return;      // elements/identity: value-edit only
 
-        if (isDict) {
-            span.appendChild(_mkBtn("＋", "Add a key under " + (m.key || "root"),
-                "tree-act-add", function () { _openAddKey(container, node); }));
-        }
-        if (!isDict && !isArr) {
-            span.appendChild(_mkBtn("⚙", "Expected type of " + m.key,
-                "tree-act-type", function (b) { _openTypePicker(node, row, b); }));
-        }
-        if (!topLevel) {
-            span.appendChild(_mkBtn("✕", "Delete " + m.key,
-                "tree-act-del", function () { _confirmDelete(container, node, row, span); }));
+        // docs/126 ④: EVERY row copies (key + value as JSON) — the customer
+        // pointed at the empty gap between the hover actions and asked for it.
+        span.appendChild(_mkBtn("⧉",
+            "Copy " + (m.key != null && m.key !== "" ? '"' + m.key + '" and its value' : "this value")
+            + " as JSON",
+            "tree-act-copy", function (b) { _copyKeyValue(node, b); }));
+
+        if (!inList && !identity) {          // elements/identity: value-edit + copy only
+            if (isDict) {
+                span.appendChild(_mkBtn("＋", "Add a key under " + (m.key || "root"),
+                    "tree-act-add", function () { _openAddKey(container, node); }));
+            }
+            if (!isDict && !isArr) {
+                span.appendChild(_mkBtn("⚙", "Expected type of " + m.key,
+                    "tree-act-type", function (b) { _openTypePicker(node, row, b); }));
+            }
+            if (!topLevel) {
+                span.appendChild(_mkBtn("✕", "Delete " + m.key,
+                    "tree-act-del", function () { _confirmDelete(container, node, row, span); }));
+            }
         }
         if (span.children.length) row.appendChild(span);
     }
@@ -16063,4 +16115,157 @@ window.TopbarHeight = (function () {
         catch (e) { if (window.console) console.warn('after-request ' + name, e); }
     });
     window.__afterRequestActions = ACTIONS;   // named so a pin can enumerate them
+})();
+
+/* ── docs/126 ④: Json Tree quick patches ──────────────────────────────────
+   The Live-Edit patch idea, on the tree: curated terms that actually OCCUR in
+   this chip's documents (honesty — never a chip that matches nothing) + the
+   user's own saved patches, from the SAME store Live Edit writes
+   (quam_bulk_custom_chips — "decouple" registered once serves both surfaces).
+   Click → the term joins/leaves #explorer-search (space = AND, the tree
+   grammar) and the tree filters through window.explorerSearch. */
+window.ExplorerChips = (function () {
+    var CUSTOM_KEY = 'quam_bulk_custom_chips';
+    var CURATED = [
+        ['freq', 'Freq'], ['readout', 'Readout'], ['resonator', 'Resonator'],
+        ['flux', 'Flux'], ['coupler', 'Coupler'], ['amp', 'Amp'],
+        ['power', 'Power'], ['length', 'Length'], ['delay', 'Delay'],
+        ['offset', 'Offset'], ['filter', 'Filter'], ['phase', 'Phase'],
+        ['port', 'Port'],
+    ];
+    function _custom() {
+        try {
+            var a = JSON.parse(localStorage.getItem(CUSTOM_KEY) || '[]');
+            return Array.isArray(a) ? a.filter(function (t) {
+                return typeof t === 'string' && /^[^\s|]{1,40}$/.test(t);
+            }) : [];
+        } catch (e) { return []; }
+    }
+    function _saveCustom(list) {
+        try { localStorage.setItem(CUSTOM_KEY, JSON.stringify(list)); } catch (e) {}
+    }
+    function _input() { return document.getElementById('explorer-search'); }
+    function _tokens() {
+        var el = _input();
+        return el ? el.value.trim().split(/\s+/).filter(Boolean) : [];
+    }
+    function _apply(value) {
+        var el = _input(); if (!el) return;
+        el.value = value;
+        if (window.explorerSearch) window.explorerSearch(value);
+    }
+    function _toggle(bar, term) {
+        var toks = _tokens();
+        var i = toks.map(function (t) { return t.toLowerCase(); }).indexOf(term);
+        if (i >= 0) toks.splice(i, 1); else toks.push(term);
+        _apply(toks.join(' '));
+        _paint(bar);
+    }
+    function _paint(bar) {
+        var lit = {};
+        _tokens().forEach(function (t) { lit[t.toLowerCase()] = 1; });
+        bar.querySelectorAll('.bulk-chip[data-chip-term]').forEach(function (b) {
+            var on = !!lit[b.getAttribute('data-chip-term')];
+            b.classList.toggle('active', on);
+            b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+    }
+    function _render(bar, hay) {
+        bar.innerHTML = '';
+        var seen = {};
+        CURATED.forEach(function (c) {
+            if (hay.indexOf(c[0]) < 0) return;   // term occurs nowhere on this chip
+            seen[c[0]] = 1;
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'bulk-chip';
+            b.setAttribute('data-chip-term', c[0]);
+            b.setAttribute('aria-pressed', 'false');
+            b.textContent = c[1];
+            bar.appendChild(b);
+        });
+        _custom().forEach(function (t) {
+            if (seen[t]) return;
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'bulk-chip bulk-chip-custom';
+            b.setAttribute('data-chip-term', t);
+            b.setAttribute('aria-pressed', 'false');
+            b.title = 'your saved filter patch — × removes it';
+            b.textContent = t;
+            var x = document.createElement('span');
+            x.className = 'bulk-chip-x';
+            x.textContent = '×';
+            b.appendChild(x);
+            bar.appendChild(b);
+        });
+        var add = document.createElement('button');
+        add.type = 'button';
+        add.className = 'bulk-chip bulk-chip-add';
+        add.title = 'Save your own filter word as a patch (shared with Live Edit)';
+        add.textContent = '+';
+        bar.appendChild(add);
+    }
+    function mount(barId, docsArr) {
+        var bar = document.getElementById(barId);
+        if (!bar) return;
+        var hay = '';
+        try { hay = JSON.stringify(docsArr).toLowerCase(); } catch (e) {}
+        bar._hay = hay;
+        _render(bar, hay);
+        _paint(bar);
+        if (!bar._chipWired) {
+            bar._chipWired = true;
+            bar.addEventListener('click', function (e) {
+                var t = e.target;
+                if (!t || !t.classList) return;
+                if (t.classList.contains('bulk-chip-x')) {
+                    var term = t.parentNode.getAttribute('data-chip-term');
+                    _saveCustom(_custom().filter(function (x) { return x !== term; }));
+                    var toks = _tokens().filter(function (tk) { return tk.toLowerCase() !== term; });
+                    _apply(toks.join(' '));
+                    _render(bar, bar._hay || '');
+                    _paint(bar);
+                } else if (t.classList.contains('bulk-chip-add')) {
+                    if (bar.querySelector('.bulk-chip-add-input')) return;
+                    var inp = document.createElement('input');
+                    inp.className = 'bulk-chip-add-input';
+                    inp.placeholder = 'new patch…';
+                    inp.setAttribute('aria-label', 'New filter patch');
+                    bar.insertBefore(inp, t);
+                    inp.focus();
+                    var commit = function () {
+                        var v = inp.value.trim().toLowerCase();
+                        if (inp.parentNode) inp.parentNode.removeChild(inp);
+                        if (!/^[^\s|]{1,40}$/.test(v)) return;
+                        var cur = _custom();
+                        if (cur.indexOf(v) < 0) { cur.push(v); _saveCustom(cur); }
+                        _render(bar, bar._hay || '');
+                        var toks = _tokens();
+                        if (toks.map(function (x) { return x.toLowerCase(); }).indexOf(v) < 0) toks.push(v);
+                        _apply(toks.join(' '));
+                        _paint(bar);
+                    };
+                    inp.addEventListener('keydown', function (ke) {
+                        if (ke.key === 'Enter') { ke.preventDefault(); commit(); }
+                        else if (ke.key === 'Escape') {
+                            if (inp.parentNode) inp.parentNode.removeChild(inp);
+                        }
+                    });
+                    inp.addEventListener('blur', function () {
+                        setTimeout(function () { if (inp.parentNode) commit(); }, 120);
+                    });
+                } else if (t.classList.contains('bulk-chip')) {
+                    _toggle(bar, t.getAttribute('data-chip-term'));
+                }
+            });
+            // hand-typing a patch's word lights its chip
+            var el = _input();
+            if (el && !el._chipPaint) {
+                el._chipPaint = true;
+                el.addEventListener('input', function () { _paint(bar); });
+            }
+        }
+    }
+    return { mount: mount };
 })();
