@@ -311,21 +311,12 @@ document.addEventListener('htmx:historyRestore', function () {
    only the registration lives up here, ahead of the destroyers. */
 document.addEventListener('htmx:beforeSwap', _pinnedRunSwapInterceptor);
 
-document.addEventListener('htmx:beforeSwap', function(evt) {
-    if (!evt.detail) return;
-    // No swap will happen (htmx drops 4xx/5xx bodies → shouldSwap=false), so the
-    // container keeps its current content — purging its live plots here would
-    // blank them with nothing to replace them (a failed inspector-pane load used
-    // to wipe the visible figures). Only tear down when the swap is real.
-    if (evt.detail.shouldSwap === false) return;
-    if (typeof Plotly === 'undefined') return;
-    var el = evt.detail.target || evt.detail.elt;   // the container being replaced
-    if (!el || !el.querySelectorAll) return;
-    var plots = el.querySelectorAll('.js-plotly-plot');
-    for (var i = 0; i < plots.length; i++) {
-        try { Plotly.purge(plots[i]); } catch(e) {}
-    }
-});
+/* (docs/125 round 3) The docs/110-era bare-class purge listener that lived
+   here was REMOVED: the PlotHost choke point (registered further down) purges
+   strictly more (structural graphDivs ⊇ the class), releases observers at the
+   same moment, and honors the PaneState keep-route carve-out this one never
+   did — two doors with different rules was itself a docs/124 finding, and the
+   pinned-run blanking was purged TWICE through them. One door now. */
 
 /* /config/regenerate returns its error banner with a 4xx/5xx status; htmx 2.x
    drops error-response bodies by default (responseHandling), so the banner
@@ -3889,7 +3880,13 @@ window.PaneState = (function () {
 
     function _purge(root) {
         // The app-wide rule: a Plotly node must never die via innerHTML
-        // without purge (WebGL contexts + DOM refs leak).
+        // without purge (WebGL contexts + DOM refs leak). Structural lookup
+        // (docs/124 §4.3 — the class does not always survive); bare class
+        // only if PlotHost is somehow absent.
+        if (window.PlotHost) {
+            try { window.PlotHost.purgeWithin(root); } catch (e) {}
+            return;
+        }
         if (window.Plotly && root.querySelectorAll) {
             root.querySelectorAll('.js-plotly-plot').forEach(function (n) {
                 try { window.Plotly.purge(n); } catch (e) {}
@@ -4150,6 +4147,20 @@ window.PaneState = (function () {
         // about to be PARKED alive. Answers for the CURRENT route by default —
         // that is the one whose DOM is leaving.
         isKeepRoute: function (route) { return KEEP.indexOf(route || _cur) >= 0; },
+        // docs/124 (the parked-observer minor): PlotHost's registry sweep must
+        // not treat a parked-but-returning subtree as dead DOM — its observers
+        // survive detach/re-attach (a ResizeObserver keeps its observation and
+        // re-fires with the new size, verified in real Chrome), so sweeping
+        // them handed the restored pane back with zero live observers and
+        // nothing re-observing. Latent while KEEP=['/explorer'] holds no
+        // plots; armed the moment KEEP grows.
+        holdsDetached: function (el) {
+            for (var k in stash) {
+                var h = stash[k] && stash[k].holder;
+                if (h && (h === el || (h.contains && h.contains(el)))) return true;
+            }
+            return false;
+        },
         _stash: function () { return stash; },
         _cur: function () { return _cur; },
         _soft: function () { return soft; },
@@ -9052,6 +9063,11 @@ window.PlotHost = (function () {
         // already been detached by some other path.
         _observed = _observed.filter(function (el) {
             var gone = !document.body || !document.body.contains(el);
+            // Detached-but-PARKED is not dead: PaneState will re-attach that
+            // subtree and its observations resume on their own (docs/124, the
+            // parked-observer minor).
+            if (gone && window.PaneState && window.PaneState.holdsDetached
+                && window.PaneState.holdsDetached(el)) gone = false;
             if (gone || r === el || (r.contains && r.contains(el))) {
                 if (el._phRo) { try { el._phRo.disconnect(); } catch (e) {} el._phRo = null; }
                 n++;
@@ -9082,7 +9098,7 @@ window.PlotHost = (function () {
  * Additive by construction: the nodes are about to be replaced anyway.
  * The exception is a pane PaneState is about to PARK — those plots are meant to
  * come back alive, and purging them would hand the user a corpse on return. */
-document.addEventListener('htmx:beforeSwap', function (evt) {
+function _plotSwapTeardown(evt) {
     var t = evt && evt.target;
     if (!t || !t.querySelectorAll) return;
     if (evt.detail && evt.detail.shouldSwap === false) return;
@@ -9092,7 +9108,11 @@ document.addEventListener('htmx:beforeSwap', function (evt) {
     // ...and release the observers on what is being destroyed, at the same
     // choke point, or they strand on a detached subtree they keep alive.
     window.PlotHost.unobserveWithin(t);
-});
+}
+document.addEventListener('htmx:beforeSwap', _plotSwapTeardown);
+// OOB swaps fire their OWN event and used to bypass the door entirely
+// (docs/124 note) — same rules, same handler.
+document.addEventListener('htmx:oobBeforeSwap', _plotSwapTeardown);
 
 window.resizeInteractiveTiles = function(scope) {
     // Scope preserved exactly (docs/118 pins assert .ds-interactive-list only);
@@ -11379,8 +11399,10 @@ window.unpinDataset = function() {
         // dangling <defs>/clip-paths corrupt the next plot (clipped/invisible axes)
         // and ~2-5MB of WebGL/DOM leaks per unpin. These are plain calls, so the
         // htmx:beforeSwap purge handler never runs.
-        if (window.Plotly) pane.querySelectorAll('.js-plotly-plot')
-            .forEach(function (p) { try { Plotly.purge(p); } catch (e) {} });
+        if (window.PlotHost) {
+            try { window.PlotHost.purgeWithin(pane); } catch (e) {}
+            try { window.PlotHost.unobserveWithin(pane); } catch (e) {}
+        }
         pane.innerHTML = currentCol.innerHTML;
         _reviveInteractiveMarkup(pane);     // docs/118: the plots above are gone
         _activatePinnedPane(pane);
@@ -11405,8 +11427,10 @@ function _closeCurrentKeepPinned() {
     window._pinnedRunId = null;
     window._pinnedHtml = null;
     // Purge live plots before innerHTML nukes them (see unpinDataset).
-    if (window.Plotly) pane.querySelectorAll('.js-plotly-plot')
-        .forEach(function (p) { try { Plotly.purge(p); } catch (e) {} });
+    if (window.PlotHost) {
+        try { window.PlotHost.purgeWithin(pane); } catch (e) {}
+        try { window.PlotHost.unobserveWithin(pane); } catch (e) {}
+    }
     pane.innerHTML = tmp.innerHTML;
     _reviveInteractiveMarkup(pane);         // docs/118
     _activatePinnedPane(pane);

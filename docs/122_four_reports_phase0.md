@@ -287,7 +287,7 @@ purge-before-destroy rule.** Trends is where it was reported, not where it is ra
 | | commit | before → after, measured on the same chip |
 |---|---|---|
 | 3 · Ctrl+Z | `89f2714` | 10 presses → **4 requests → 10**; one press → **2,418 ms of grid rebuild → none** |
-| 2 · Explorer | `3ab9c31` | diff ON → **189/189 rows fail the query → filter applied**; expansion **lost → 855 kept**; scroll **119→37 → 119→119** |
+| 2 · Explorer | `3ab9c31` | diff ON → **189/189 rows fail the query → filter applied**; expansion **lost → 855 kept**; scroll: ~~119→119~~ **retracted** — that probe asked for 600 and was clamped to 119 at BOTH ends, so it proved nothing (docs/123 §5.3); the honest measurement is the later 420→420 (`1d26600`), itself superseded by docs/124 M-13/M-14 — the 420→420 was measured in the post-settle-strip scroll regime, and the real fix is the settle disarm (docs/125 fix 1: 6000→6000 in one write) |
 | 1 · Axis | `b35f64e` | 650 of 1,805 two-sweep cubes re-oriented to the lab's convention; 14,820 of 15,470 untouched |
 | 4 · Plots | `84bac19` | sidebar collapse **609 in 742, never healed → 1531 = 1531 in 500 ms**; aborted fetch **never recovers → recovers** |
 

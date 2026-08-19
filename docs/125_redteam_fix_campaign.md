@@ -414,3 +414,50 @@ zero console errors across every run):
   heights (M-1 contract), and leaves window-resize adaptation alive
   (350 → 698 tracked on all six). The trigger is correct armor even though
   the reflow the plan assumed does not occur on this CSS.
+
+---
+
+## Round 3 — the last improvables before customer delivery
+
+Five items, browser-verified on the real chip + the real 2026-08-14 archive
+(probes `_rt_fix9_{a,a2,b,c}_*.cjs`; zero console errors in every session):
+
+- **/trends renders lazily and follows its container** (docs/123 §7's last
+  leftover, the one item that "needed a batching story"). The fragment's
+  eager loop rendered every series before the page settled — a real
+  `11_power_rabi` here is **300 series** (15 runs × 20 qubits). Now: the
+  first 12 render eagerly, the rest through the app's own
+  IntersectionObserver idiom (600 px look-ahead; IO sees through the
+  #table-pane clip), and the metric-trends section is PlotHost-observed —
+  affordable BECAUSE lazy: resizeWithin finds charts structurally, so the
+  cost follows what the user actually rendered. Measured: **12 of 300** at
+  settle, each rendered exactly once through a full scroll (17/17 calls),
+  settle-to-interactive **945 ms vs 7,557 ms** rendering all (8×);
+  container-only resize tracks width exactly (1292→1558) with heights held.
+  The verification's control experiment attributed the one apparent failure
+  (window-resize height snap 220→250) to a PRE-EXISTING pair — stock Plotly
+  responsive autosize + `style.css:3317` using the 250 px full-chart var on
+  the mini holders — and that one-line CSS mismatch is fixed with it.
+- **One purge door, literally.** The docs/110-era bare-class beforeSwap
+  purge listener is REMOVED (the choke point purges strictly more, releases
+  observers at the same moment, and honors the keep-route carve-out the old
+  one never did — two doors with different rules was itself a docs/124
+  finding, and the pinned-run blanking used to purge TWICE through them);
+  unpin / close-current-keep-pinned / PaneState's own stash purge route
+  through PlotHost; and `htmx:oobBeforeSwap` — which used to bypass the door
+  entirely — now runs the same handler. Verified 20/20: pin/unpin flows
+  purge exactly once through the door, an OOB tray swap purges nothing, and
+  the /pulses second-click bug the removed listener was born on stays fixed.
+- **Parked panes keep their observers** (the docs/124 latent minor):
+  `PaneState.holdsDetached()` + the registry sweep treating parked-but-
+  returning DOM as alive. Verified 13/13 with the sweep PROVABLY running
+  (count=1): marker + registry survive the routine swap that used to
+  destroy them, and the restored chart follows its holder (1292→846,
+  height held).
+- **docs/122's credibility debt paid**: the retracted "scroll 119→119"
+  measurement now carries its retraction and the honest lineage (420→420
+  was itself measured in the post-settle-strip regime; the settle disarm is
+  the real fix).
+- **Environment hygiene**: the stale non-editable `quam-state-manager 0.9.7`
+  snapshot that SHADOWED the worktree in `cqt`'s site-packages (the trap the
+  red team walked into) is uninstalled; repo-root imports re-verified.

@@ -3314,7 +3314,12 @@ td.col-delta .val-delta { margin-left: 0; }
 
 /* Trend charts */
 .trend-chart-container { margin-bottom: 1rem; }
-.trend-mini-chart { height: var(--trend-chart-height); margin-bottom: 0.5rem; }
+/* --trends-mini-height, NOT --trend-chart-height: the mini charts' layout
+   declares 220 (UI_CONFIG.plotly.trendsMini.height) and the wrong 250px var
+   here is exactly the 30px the charts SNAPPED by on any window resize —
+   Plotly's responsive autosize recomputes height from this holder (found by
+   the docs/125 round-3 verification's control experiment; pre-existing). */
+.trend-mini-chart { height: var(--trends-mini-height); margin-bottom: 0.5rem; }
 .trend-legend { font-size: 0.85em; }
 .trend-legend td, .trend-legend th { padding: 0.25rem 0.6rem; }
 .trend-legend code { font-size: 0.85em; word-break: break-all; }

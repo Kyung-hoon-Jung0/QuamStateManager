@@ -83,9 +83,22 @@
     var runs = trend.runs;
     var xLabels = runs.map(function(r) { return '#' + r.run_id; });
 
-    trend.series.forEach(function(s, idx) {
+    /* docs/125 round 3 (docs/123 §7's last leftover): a real 20-qubit
+       power_rabi produces 220 series here, and the old eager loop rendered
+       every one before the page settled — which is also why no container
+       observer could be afforded. Charts now render LAZILY through the app's
+       own IntersectionObserver idiom (the Interactive tiles'): the first
+       screenful immediately, the rest as they scroll into view (IO computes
+       visibility through the #table-pane clip, so a nested scroller is
+       fine). That bound is what makes container-resize affordable too:
+       PlotHost.resizeWithin finds charts STRUCTURALLY, so it touches only
+       the ones that exist. */
+    var EAGER = 12;
+    function renderOne(idx) {
+        var s = trend.series[idx];
         var el = document.getElementById('trend-chart-' + idx);
-        if (!el) return;
+        if (!el || el._trendRendered || !s) return;
+        el._trendRendered = true;
 
         var trace = {
             x: xLabels,
@@ -118,7 +131,29 @@
 
         _plotlyRender(el, statTraces.concat([trace]), layout,
                       { responsive: true, displayModeBar: false });
-    });
+    }
+
+    for (var i = 0; i < Math.min(EAGER, trend.series.length); i++) renderOne(i);
+    if (trend.series.length > EAGER && typeof IntersectionObserver !== 'undefined') {
+        var io = new IntersectionObserver(function (entries) {
+            entries.forEach(function (en) {
+                if (!en.isIntersecting) return;
+                io.unobserve(en.target);
+                renderOne(parseInt(en.target.getAttribute('data-trend-idx'), 10));
+            });
+        }, { rootMargin: '600px 0px' });
+        for (var j = EAGER; j < trend.series.length; j++) {
+            var box = document.getElementById('trend-chart-' + j);
+            if (box) { box.setAttribute('data-trend-idx', String(j)); io.observe(box); }
+        }
+    } else {
+        for (var k = EAGER; k < trend.series.length; k++) renderOne(k);
+    }
+    // The charts follow their container (docs/122): one observer on the
+    // metric-trends section; unobserveWithin's choke-point sweep reclaims it
+    // when the pane swaps away.
+    var sec = document.querySelector('.trends-section');
+    if (sec && window.PlotHost) window.PlotHost.observe(sec);
 })();
 </script>
 
