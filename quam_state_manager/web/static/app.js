@@ -5823,7 +5823,11 @@ window.clearDetailPanelSearch = function(btnEl) {
                     acc.textContent = "✓";
                     acc.title = "Accept Qualibrate's value into the working state";
                     (function(p, rv, el, rw) {
-                        acc.onclick = function(e) { e.stopPropagation(); _acceptLiveValue(p, rv, el, rw); };
+                        // window.-qualified: the handlers live in the live-diff
+                        // IIFE, not this one — a bare call is a ReferenceError
+                        // at click time and the accept is silently lost
+                        // (docs/124 C-1; same cross-IIFE class as _deepEqual).
+                        acc.onclick = function(e) { e.stopPropagation(); window._acceptLiveValue(p, rv, el, rw); };
                     })(path, refValue, valEl, row);
                     row.appendChild(acc);
                     var rej = document.createElement("button");
@@ -5832,7 +5836,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                     rej.textContent = "✗";
                     rej.title = "Keep your value (dismiss this incoming change)";
                     (function(rw, p) {
-                        rej.onclick = function(e) { e.stopPropagation(); _rejectLiveValue(rw, p); };
+                        rej.onclick = function(e) { e.stopPropagation(); window._rejectLiveValue(rw, p); };
                     })(row, path);
                     row.appendChild(rej);
                 }
@@ -6945,6 +6949,14 @@ window.clearDetailPanelSearch = function(btnEl) {
             if (e.key === "Escape") panel.remove();
         });
     }
+
+    // The live-diff IIFE's ✓-accept handler repaints a value element this
+    // renderer built, and must format it the way this renderer would — its
+    // bare `_formatValue` call was a ReferenceError that fired AFTER the edit
+    // landed, killing the pending mark / count / tray swap while the value was
+    // already staged (docs/124 C-1, second layer — found by the pin the first
+    // layer's fix added).
+    window._formatValue = _formatValue;
 
     window.renderJsonTree = function(containerId, data, options) {
         var container = document.getElementById(containerId);
@@ -13866,8 +13878,8 @@ document.addEventListener('click', function(evt) {
                     + (res.transient ? " — try again" : ""), "warning");
                 return;
             }
-            valEl.textContent = _formatValue(liveValue);
-            valEl.dataset.editVal = (typeof liveValue === "string") ? liveValue : _formatValue(liveValue);
+            valEl.textContent = window._formatValue(liveValue);
+            valEl.dataset.editVal = (typeof liveValue === "string") ? liveValue : window._formatValue(liveValue);
             _clearIncoming(row);
             row.classList.add("tree-row-pending");
             _liveDiffDone[dotPath] = 1;
@@ -13889,6 +13901,14 @@ document.addEventListener('click', function(evt) {
     // Test hooks (jsdom selfchecks pin the dot-form path grammar through these).
     window._collectDiffPairs = _collectDiffPairs;
     window._ancestorPaths = _ancestorPaths;
+    // NOT test hooks: the tree renderer (a different IIFE) wires the per-row
+    // ✓/✗ buttons to these. They close over this IIFE's state (_liveDiffDone,
+    // the remaining-count, _liveFetchJson), so unlike _deepEqual above they
+    // cannot be copied into the caller's scope — they must be exported. Bare
+    // cross-IIFE calls threw ReferenceError on every click and the accept was
+    // silently LOST while the user believed it staged (docs/124 C-1).
+    window._acceptLiveValue = _acceptLiveValue;
+    window._rejectLiveValue = _rejectLiveValue;
 
     // The tree's own inline value-editor (_makeValueEditable, a different scope)
     // calls this after the user types a new value into a field that is part of

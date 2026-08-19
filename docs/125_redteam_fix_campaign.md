@@ -79,3 +79,41 @@ trigger, because ChipTrends never applies the house theme at initial render
 after build), not a settle issue. plot-theme.js's bare-class selection (fix
 direction: `PlotHost.graphDivs`) also remains, now mostly defanged since
 classes survive.
+
+---
+
+## Fix 2 — the Live-diff ✓/✗ buttons work, both layers (docs/124 C-1)
+
+**Finding closed:** C-1 (critical, pre-existing on main). The tree renderer
+wires the per-row ✓ Accept / ✗ Reject to `_acceptLiveValue`/`_rejectLiveValue`
+— locals of the live-diff IIFE, invisible from the renderer's IIFE — so every
+click threw ReferenceError and ✓ Accept was a **silent no-op**: the user
+believed Qualibrate's value was staged, applied to live, and the value they
+explicitly accepted never reached the hardware.
+
+**The change:** the two handlers are exported on `window` (they close over the
+live-diff IIFE's state — `_liveDiffDone`, the remaining count, the retrying
+fetch — so unlike the `_deepEqual` precedent they cannot be copied into the
+caller's scope; export is the correct inverse), and the renderer's onclick
+closures call the `window.`-qualified names.
+
+**The pin found a SECOND layer of the same defect before it ever shipped:**
+with the calls fixed, clicking ✓ staged the edit and then threw again —
+`_acceptLiveValue` itself calls `_formatValue`, a local of the *renderer*
+IIFE. The request fired, but the pending mark, the incoming-marker clear, the
+`_liveDiffDone` entry, the tray swap and the bar-count decrement were all
+dead code after the throw — an accept that LOOKED ignored while it had
+already staged. `_formatValue` is now exported beside `renderJsonTree` (one
+definition, one formatter — the value element being repainted is the
+renderer's own DOM) and the handler calls it qualified. `_swapPendingTray`
+was audited too: top-level script scope, reachable from every IIFE, no change
+needed.
+
+**Pin:** `tests/livediff_buttons_selfcheck.cjs` (12 checks) — real app.js
+under jsdom, real `renderJsonTree` in livediff mode, expansion driven by
+clicking the real toggles (children are lazy). Asserts at the observable
+level, where the pre-fix behavior produces nothing: ✓ issues exactly one
+`/field/edit-batch` with the row's dot_path, the row turns pending, the
+buttons are removed (that removal is why the row must be captured before the
+click — the first draft read `.parentElement` of a detached button); ✗ clears
+the incoming marker and updates the bar count. Suite: **64/64 selfchecks.**
