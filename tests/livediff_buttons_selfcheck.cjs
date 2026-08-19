@@ -205,6 +205,35 @@ ok(cnt.textContent !== '2',
     ok(toggle.classList.contains('active') && !bar.hidden,
        'M-4: and the toggle + bar arm together');
 
+    // The search SURVIVES the diff rebuild, behaviorally (closes the
+    // claim-audit pin gap: explorer_search_selfcheck pins this call site at
+    // the source level only — gutting the helper's body kept it green). The
+    // overlay render above rebuilt both trees; with a query armed, the
+    // re-apply must actually filter the rebuilt rows.
+    const box = d.createElement('input');
+    box.id = 'explorer-search';
+    box.className = 'tree-search';
+    box.value = 'T1';
+    d.body.appendChild(box);
+    // _activeTreeId is defined by _explorer.html's inline fragment script
+    // (line ~70), not by app.js — mirror its state-tab answer here.
+    window._activeTreeId = function () { return 'explorer-tree-state'; };
+    window.explorerSearch('T1');
+    sHost._treeData = { qubits: { q1: { f_01: 1, T1: 30 } } };
+    liveDiffPayload = { live_state: { qubits: { q1: { f_01: 2, T1: 30 } } },
+                        live_wiring: { a: 1 } };
+    window.explorerLiveDiff(true);
+    await settle();
+    ok(toggle.classList.contains('active'),
+       're-apply precondition: the overlay armed with a query set');
+    // jsonTreeSearch applies behind its own 200 ms debounce — assert after it.
+    await new Promise((r) => setTimeout(r, 350));
+    ok(sHost.querySelectorAll('.tree-search-hidden').length > 0,
+       'the search is RE-APPLIED over the rebuilt tree (non-matching rows hidden), not just remembered');
+    window.explorerSearch('');
+    window.explorerLiveDiff(false);
+    await settle();
+
     // stuck-lit + zero pairs: the ON path finding nothing must clear BOTH
     // halves — the old code cleared only the flag and the lit toggle lied.
     sHost._treeData = { qubits: { q1: { f_01: 2 } } };

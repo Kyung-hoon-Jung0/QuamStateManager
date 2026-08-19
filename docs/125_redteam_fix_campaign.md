@@ -291,3 +291,77 @@ date-dir layout (`<root>/<date>/#N_…`) and the golden re-ran green against
 the real run the red team's inversion was executed on (#490, 2026-08-14).
 The `_freq` curve tile (frequency vs flux) is untouched — a 1-D curve over
 flux is its own convention and was never in dispute.
+
+---
+
+## Fixes 8–11 — the four-major batch (docs/124 M-11 / M-4+M-5 / M-2 / M-6)
+
+One commit (app.js hosts three of the four), each verified in real Chrome on
+the real chip by an independent agent (all four PASS, zero console errors
+across every probe; probes `tests/browser/_rt_fix7_{a,b,c,d}_*.cjs`).
+
+**Fix 8 — M-11, the undo queue's own sync lane.** `UndoQueue` issued `/undo`
+with `source: "#pending-tray"` — the same htmx per-element sync lane
+(strategy "last") the grid ⚡ apply and the armed auto-apply flush use, so a
+press queued behind their in-flight request was replaced-and-dropped and the
+lone survivor re-issued against the tray element the apply's swap had
+detached (executed pre-fix: 3 presses in an apply window → 0 requests). The
+queue now issues from its own body-level `#undo-sync-src`, and an in-flight
+apply (`window._applyInFlight`) HOLDS the press — ordered execution is also
+the docs/107 model. Verified both ways: held window → 0 requests +
+`depth()==3`, release → 3 in order; natural 2.5 s apply window → same, with
+the tray ending at the 3 journal-staged `jrn:` inverses (docs/107 semantics,
+expected). Two ctrlz pins that asserted `source === '#pending-tray'` — the
+bug's own vector — were updated (§8's pin class again).
+
+**Fix 9 — M-4/M-5, diff-mode truth is the DOM.** The closure flag survived
+every pane swap while the toggle's class did not, so a fresh render with
+diff previously ON produced flag=true/DOM=inactive — a silent dead first
+click, reproduced through three ordinary sequences — and the zero-pairs
+branch flipped only the flag, leaving a stuck-lit toggle that toasted "No
+incoming changes" against a real divergence and could not be turned off by
+its own button. `_explorerLiveDiffOn` is now a DOM derivation and
+`_setLiveDiffUi` sets both halves everywhere, including zero-pairs. Verified:
+the PaneState seq-mismatch producer arms on the FIRST click
+(`/state/live-diff` fired, deadClick:false), and the stuck-lit sequence
+unlights toggle + hides bar with the honest toast. Recorded observation (not
+a regression): zero-pairs leaves the PRIOR overlay's amber row marks until
+the next render.
+
+**Fix 10 — M-2, the pinned-run interceptor speaks first.** It now registers
+BEFORE the purge/teardown listeners (hoisted function; only the registration
+moved), so its `shouldSwap=false` is visible to them; the `_io` teardown
+listener gained the shouldSwap gate it never had (it also fired on failed
+swaps); and the two-column build branch purges the pane itself, since the
+choke point now correctly skips. Verified on the real run: pin → same-run
+re-click keeps svgs 3→3 (pre-fix 3→0 unrecoverable) with `_io` alive, and a
+different-run click still builds the two-column layout with both columns
+rendering.
+
+**Fix 11 — M-6 first paint.** ChipTrends renders through
+`PlotTheme.houseLayout` (deep-merged UNDER its own overrides), so dark-theme
+users get house colors at the FIRST paint instead of Plotly light defaults
+held hostage to a retheme that only a theme toggle triggered. Verified:
+fresh dark `/topology` → font `#d0d5de`, grid `rgba(140,150,165,0.18)` on
+all three trend charts with no toggle; both toggle directions still track.
+
+**Pins:** ctrlz_selfcheck +6 (own-lane + hold/release), livediff_buttons +4
+(M-4 first-click arm, M-5 both-halves-off) **+1 behavioral re-apply pin**
+closing the claim-audit gap (explorer_search's source-shape-only pin —
+gutting the helper used to stay green; now the rebuilt tree must actually
+hide non-matching rows). Two harness rules recorded in the files: Node-realm
+eval does not expose window properties as bare globals (`renderJsonTree`
+bridged), and `_activeTreeId` belongs to `_explorer.html`'s fragment script,
+not app.js.
+
+---
+
+## Fix 12 — the ndview rank gate sees every sweep (docs/124 ndview minor)
+
+The full-coverage armor gated on the x/y candidates only; an unranked sweep
+short enough for the overlay bucket slipped past and the cube was
+rank-ordered on partial evidence — exactly what the docstring promises
+cannot happen. `_order_sweeps` now takes the gate population explicitly
+(`sweeps + small_sweeps`). Archive impact bounded by the measured
+1,803-of-1,805 full coverage. Pin includes a ranked-short control proving
+the block comes from the unranked NAME, not from the overlay diversion.
