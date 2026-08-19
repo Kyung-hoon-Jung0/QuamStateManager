@@ -290,7 +290,10 @@ class TestTheAuditsHonestyFindings:
         body = client.get("/state/versions").get_data(as_text=True)
         assert "restore-live" in body
         assert "live-diverged-overwrite" in body, "not the shared overwrite style"
-        assert "overwrite live" in body, "the button must name the act"
+        # Label concise per the user (2026-08-20, "Pull to Live"); the ACT —
+        # overwriting the live chip — stays named in the button's title.
+        assert "Pull to Live" in body
+        assert "Overwrite the LIVE chip" in body, "the title must name the act"
 
     def test_the_gates_are_untouched_by_the_restyle(self, client):
         """Style and wording only — the two independent force tokens still
@@ -316,6 +319,34 @@ class TestTheManualStatesTheCurrentCovenant:
         body = client.get("/").get_data(as_text=True)
         assert "Auto-Sync" in body
         assert "edits here never touch the instrument" not in body
+
+
+class TestPanelLayout:
+    """docs/126 r3 bug 2: the version rows rendered HORIZONTALLY with a
+    scrollbar, and a chip far enough right pushed the panel past the viewport
+    edge. Cause #1: the panel lives inside the topbar <nav>, and Pico's
+    `nav ul { display:flex }` reaches nested lists — the list must declare
+    display:block itself. Cause #2: CSS-anchored left:0 with a 46rem width —
+    StateVersions clamps the open panel back into the viewport."""
+
+    def _static(self, name):
+        from pathlib import Path
+        import quam_state_manager
+        return (Path(quam_state_manager.__file__).parent / "web" / "static"
+                / name).read_text(encoding="utf-8")
+
+    def test_the_list_defeats_picos_nav_flex(self):
+        css = self._static("style.css")
+        i = css.index(".state-versions-list")
+        block = css[i:css.index("}", i)]
+        assert "display: block" in block
+
+    def test_the_open_panel_is_clamped_to_the_viewport(self):
+        js = self._static("app.js")
+        i = js.index("window.StateVersions")
+        block = js[i:i + 5000]
+        assert "_clampToViewport" in block
+        assert "innerWidth" in block
 
 
 class TestQuickDiff:

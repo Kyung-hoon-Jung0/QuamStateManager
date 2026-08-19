@@ -107,7 +107,11 @@
                         hx-post="/state-history/{{ r.ts }}/restore-live"
                         hx-target="#table-pane" hx-swap="innerHTML"
                         onclick="StateVersions.close()"
-                        title="Overwrite the LIVE chip with this version. Unsaved edits and a wiring-topology mismatch each ask first, and the current live state is snapshotted so this is reversible.">&#8593; Put live back <span class="sync-btn-sub">&mdash; overwrite live</span></button>
+                        {# Label concise per the user (2026-08-20): the ACT —
+                           overwriting the live chip — stays named in the
+                           title, and the button keeps the one error-tinted
+                           overwrite style (docs/86/97). #}
+                        title="Overwrite the LIVE chip with this version. Unsaved edits and a wiring-topology mismatch each ask first, and the current live state is snapshotted so this is reversible.">&#8593; Pull to Live</button>
                 {% endif %}
             </span>
         </li>

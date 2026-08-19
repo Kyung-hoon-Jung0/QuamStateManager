@@ -8508,7 +8508,8 @@ button.diag-badge { cursor: pointer; }
 .sv-quick-head { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap;
     font-size: .78rem; margin-bottom: .25rem; }
 .sv-quick-table { width: 100%; margin: 0; font-size: .74rem; }
-.sv-quick-table td { padding: .1rem .3rem; border: none; vertical-align: top; }
+.sv-quick-table td { padding: .1rem .3rem; border: none; vertical-align: top;
+    overflow-wrap: anywhere; }
 .sv-q-path code { font-size: .95em; word-break: break-all; }
 .sv-q-vals { white-space: nowrap; text-align: right; }
 .sv-q-old { color: var(--pico-muted-color); text-decoration: line-through; }
@@ -10826,7 +10827,10 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .state-versions-actions { display: flex; align-items: center; gap: 0.5rem;
     margin-bottom: 0.35rem; }
 .sv-hint { font-size: 0.72rem; }
-.state-versions-list { list-style: none; margin: 0; padding: 0; }
+/* display:block explicitly — the panel lives inside the topbar <nav>, and
+   Pico's `nav ul { display:flex }` reaches nested lists, which laid the
+   version rows out HORIZONTALLY with a scrollbar (bug report). */
+.state-versions-list { list-style: none; margin: 0; padding: 0; display: block; }
 .state-version-row { display: flex; align-items: baseline; gap: 0.5rem;
     padding: 0.2rem 0.25rem; border-radius: 0.25rem; }
 .state-version-row:hover { background: var(--pico-card-sectioning-background-color, transparent); }

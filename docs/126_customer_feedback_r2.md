@@ -580,3 +580,18 @@ border stays accent-colored in both). Fix: an explicit 1.1rem square, so
 Pico's own `:checked` checkmark renders — checked = filled box with a check,
 unchecked = empty box, measured 23×23px live. Pinned by
 `test_the_panel_checkboxes_have_real_dimensions`.
+
+### r3 bug 2 — the Versions panel rendered sideways and ran off-screen
+
+Two causes, both measured live: the panel lives inside the topbar `<nav>`,
+and Pico's `nav ul { display:flex }` reaches nested lists — the version rows
+flowed HORIZONTALLY with a scrollbar (`.state-versions-list` now declares
+`display: block` itself); and the CSS anchor (`left: 0`, 46rem wide) pushed
+the panel 526 px past the viewport when the chip sits right of center —
+`StateVersions._clampToViewport` nudges the open panel back inside (measured
+right edge 2126→1592 on a 1600 px window). Plus, per the user: the restore
+button label shortened to **↑ Pull to Live** — the act (overwriting the live
+chip, both force gates intact) stays named in the title, and the button keeps
+the one error-tinted overwrite style. Pinned by `TestPanelLayout` + the
+updated act-naming pin; long quick-diff values now wrap
+(`overflow-wrap: anywhere`).

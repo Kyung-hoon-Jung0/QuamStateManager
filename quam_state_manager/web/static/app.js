@@ -15942,6 +15942,17 @@ window.StateVersions = (function () {
         p.hidden = true;
         var c = chip(); if (c) c.setAttribute('aria-expanded', 'false');
     }
+    function _clampToViewport(p) {
+        // The panel is CSS-anchored left:0 under its topbar chip; a chip far
+        // enough right pushes the 46rem panel past the viewport edge (bug
+        // report: "the panel is cut off on the right"). Nudge it back in.
+        p.style.left = '';
+        var r = p.getBoundingClientRect();
+        var over = r.right - (window.innerWidth - 8);
+        if (over > 0) p.style.left = (p.offsetLeft - over) + 'px';
+        r = p.getBoundingClientRect();
+        if (r.left < 8) p.style.left = (p.offsetLeft + (8 - r.left)) + 'px';
+    }
     function toggle() {
         var p = panel(); if (!p) return;
         // htmx fills the panel from the same click; only visibility is ours.
@@ -15949,6 +15960,7 @@ window.StateVersions = (function () {
         p.hidden = !opening;
         var c = chip(); if (c) c.setAttribute('aria-expanded', opening ? 'true' : 'false');
         if (opening) {
+            requestAnimationFrame(function () { _clampToViewport(p); });
             setTimeout(function () {
                 document.addEventListener('click', function away(e) {
                     if (p.hidden) { document.removeEventListener('click', away); return; }
