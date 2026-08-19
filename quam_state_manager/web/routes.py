@@ -8141,6 +8141,48 @@ def comparison_table():
 
 
 @bp.route("/wiring")
+@bp.route("/chip-status/report")
+def chip_status_report():
+    """docs/126 #21 — the printable chip report (customer request).
+
+    A STANDALONE page (no app chrome): header, the component-map drawing, and
+    read-only tables of all five component views, unpaginated. Served for
+    viewing/printing; its own toolbar offers a self-contained .html download
+    (the client serializes the DOM after the map has drawn, inlining the
+    stylesheet, so the file opens anywhere with the SVG baked in). Data comes
+    from the same QueryEngine the live pages use — nothing is recomputed or
+    approximated for the report."""
+    engine = _engine()
+    store = _store()
+    if not engine or not store:
+        return render_template("chip_report.html", has_chip=False)
+
+    path = _active_path()
+    qubits = engine.list_qubits()
+    pairs = []
+    for pair_name in store.qubit_pair_names:
+        try:
+            pairs.append(engine.get_pair(pair_name))
+        except KeyError:
+            continue
+        except Exception as exc:  # noqa: BLE001 — same degrade as /pairs
+            logger.warning("report get_pair(%r) failed: %s", pair_name, exc)
+            pairs.append({"id": pair_name, "is_active": True,
+                          "_error": f"{type(exc).__name__}: {exc}"})
+    return render_template(
+        "chip_report.html",
+        has_chip=True,
+        chip_name=_chip_display_name(path) if path else "chip",
+        folder=str(path or ""),
+        generated=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        qubits=qubits,
+        pairs=pairs,
+        resonators=[q for q in qubits if q.get("has_resonator")],
+        flux=[q for q in qubits if q.get("has_z")],
+        couplers=[p for p in pairs if p.get("has_coupler")],
+    )
+
+
 @bp.route("/topology")
 def wiring_view():
     engine = _engine()

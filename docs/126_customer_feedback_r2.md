@@ -539,3 +539,32 @@ Real-browser verified on the live archive (`_rt_cfb2_sidebar_search.cjs`):
 rapid type-clear-retype converges in ~1 s including the typing itself; a
 stale refetch injected mid-typing cannot land last. Pinned by
 `tests/test_web.py::TestSidebarSearchLagFix`.
+
+## #21 The printable chip report (printer icon beside Chip Status)
+
+Customer request: a small printer icon to the right of **Chip Status** in the
+sidebar that generates an HTML with the qubit components and topology.
+
+`GET /chip-status/report` is a STANDALONE page — no app chrome, forced light
+theme (a report commits to one look; it is what a printer produces anyway):
+header (chip name, generated-at, source folder, counts), the component-map
+drawing, and read-only unpaginated tables of all five component views. Nothing
+is recomputed for the report — the map is the SAME ComponentMap machinery the
+component pages mount (it fetches `/api/topology`; the mount shape is pinned),
+and the tables render the same QueryEngine rows with the same `qty`/`phys_amp`
+formatting, including the honest text-value quoting and the degraded
+unreadable-pair row. A chip with no OPX flux / no couplers states that in
+words, never a bare heading.
+
+The toolbar offers **Print** (`window.print()` + `@media print` rules) and
+**Download HTML**: `ChipReport.buildStandalone()` waits for the map SVG, clones
+the document, strips every `<script>` and the now-dead download button (Print
+keeps its inline onclick), inlines the stylesheet, and hands back ONE
+self-contained document — measured 645 KB with the drawn 20Q topology baked
+in, openable anywhere. The sidebar affordance is `icon_printer` (SVG,
+currentColor — the docs/89 emoji rule) in the existing `.nav-sub-row`,
+`target="_blank"`. No chip open → a friendly page, not an error.
+
+Verified in a real browser on the 20Q QDAC chip (`_rt_cfb2_report.cjs`:
+160 map marks, 20 unpaginated rows, 30 pairs, standalone output pinned
+script-free/inlined/SVG-baked). Pinned by `tests/test_chip_report.py`.

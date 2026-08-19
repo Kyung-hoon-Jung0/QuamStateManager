@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+{# docs/126 #21 — the printable chip report. STANDALONE by design: no base.html,
+   no topbar/sidebar, forced light theme (a report commits to one look — and it
+   is what a printer produces anyway). The map is the SAME ComponentMap drawing
+   the component pages use (it fetches /api/topology itself); the tables are
+   read-only renderings of the same QueryEngine rows those pages show, all
+   entities, unpaginated. The toolbar's Download serializes the CURRENT DOM
+   (SVG already drawn) with the stylesheet inlined, so the saved file is fully
+   self-contained. #}
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="utf-8">
+    <link rel="icon" type="image/svg+xml"
+          href="{{ url_for('static', filename='favicon.svg') }}">
+    <title>Chip report — {{ chip_name or 'no chip' }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        /* report-local layout — everything scoped so the shared stylesheet
+           stays untouched */
+        body.chip-report { max-width: 1080px; margin: 0 auto; padding: 1.2rem 1.6rem 3rem;
+                           background: #fff; color: #1a1d23; }
+        .chip-report h1 { font-size: 1.5rem; margin: 0.2rem 0 0.1rem; }
+        .chip-report h2 { font-size: 1.12rem; margin: 1.6rem 0 0.5rem;
+                          border-bottom: 2px solid #d5d9e0; padding-bottom: 0.25rem; }
+        .chip-report .rep-meta { color: #5a6270; font-size: 0.85rem; margin: 0 0 0.8rem; }
+        .chip-report .rep-meta code { font-size: 0.82rem; }
+        .chip-report table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+        .chip-report th, .chip-report td { border: 1px solid #d5d9e0;
+                          padding: 0.28rem 0.5rem; text-align: left; }
+        .chip-report th { background: #eef1f5; font-weight: 600; }
+        .chip-report tr:nth-child(even) td { background: #f7f8fa; }
+        .chip-report .rep-off { color: #98a1b3; }
+        .chip-report .rep-toolbar { display: flex; gap: 0.5rem; align-items: center;
+                          justify-content: flex-end; margin: 0 0 0.4rem; }
+        .chip-report .rep-toolbar button { width: auto; padding: 0.3rem 0.9rem;
+                          font-size: 0.85rem; margin: 0; }
+        .chip-report .cmap { border: 1px solid #d5d9e0; border-radius: 8px;
+                          padding: 0.4rem 0.7rem; background: #fff; }
+        .chip-report .rep-note { color: #5a6270; font-size: 0.78rem; }
+        @media print {
+            .no-print { display: none !important; }
+            .chip-report h2 { break-after: avoid; }
+            .chip-report table { break-inside: auto; }
+            .chip-report tr { break-inside: avoid; }
+            .chip-report .cmap { border: none; }
+        }
+    </style>
+</head>
+<body class="chip-report">
+{% if not has_chip %}
+    <h1>Chip report</h1>
+    <p class="rep-meta">No chip is open in State Manager — open a state folder,
+       then press the printer icon beside <b>Chip Status</b> again.</p>
+{% else %}
+    <div class="rep-toolbar no-print">
+        <span class="rep-note">The download is a single self-contained .html
+              (map included) you can attach or archive.</span>
+        <button type="button" onclick="window.print()">Print</button>
+        <button type="button" id="rep-download">Download HTML</button>
+    </div>
+    <h1>{{ chip_name }}</h1>
+    <p class="rep-meta">Generated {{ generated }} by QUAM State Manager
+       &middot; source <code>{{ folder }}</code><br>
+       {{ qubits | length }} qubits &middot; {{ pairs | length }} pairs
+       &middot; {{ couplers | length }} couplers</p>
+
+    <h2>Topology</h2>
+    {# the exact mount shape _component_map.html uses — ComponentMap draws the
+       stones / pair edges / CR arrows / coupler dots / resonator marks / flux
+       stubs / feedline buses from /api/topology #}
+    <details class="cmap" id="component-map" data-highlight="" data-cell="120" data-chain="" open>
+        <summary class="cmap-summary no-print">Chip layout</summary>
+        <div class="cmap-body"><p class="muted" style="margin:0">Loading chip layout&hellip;</p></div>
+    </details>
+
+    <h2>Qubits ({{ qubits | length }})</h2>
+    <table>
+        <thead><tr><th>ID</th><th>Active</th><th>f_01 (GHz)</th><th>T1 (&micro;s)</th>
+            <th>T2ramsey (&micro;s)</th><th>Readout amp</th><th>P(RO) (dBm)</th>
+            <th>Gate fidelity</th><th>Grid</th></tr></thead>
+        <tbody>
+        {% for q in qubits %}
+        <tr>
+            <td><strong>{{ q.id }}</strong></td>
+            <td>{% if q.is_active %}&#10003;{% else %}<span class="rep-off">off</span>{% endif %}</td>
+            <td>{{ q.f_01 | qty('f_01') }}</td>
+            <td>{{ q.T1 | qty('T1') }}</td>
+            <td>{{ q.T2ramsey | qty('T2ramsey') }}</td>
+            <td>{% if q.readout_amplitude is none %}-{% elif q.readout_amplitude is number %}{{ "%.4f" | format(q.readout_amplitude) }}{% else %}&quot;{{ q.readout_amplitude }}&quot;{% endif %}</td>
+            {% set _ph = ('qubits.' ~ q.id ~ '.resonator.operations.readout.amplitude') | phys_amp(q.readout_amplitude) %}
+            <td>{% if _ph and _ph.kind == 'mw' %}{{ _ph.text }}{% else %}-{% endif %}</td>
+            <td>{% if q.gate_fidelity_avg is none %}-{% elif q.gate_fidelity_avg is number %}{{ "%.4f" | format(q.gate_fidelity_avg) }}{% else %}&quot;{{ q.gate_fidelity_avg }}&quot;{% endif %}</td>
+            <td>{{ q.grid_location or '-' }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+    <h2>Qubit pairs ({{ pairs | length }})</h2>
+    <table>
+        <thead><tr><th>Pair</th><th>Control</th><th>Target</th><th>Active</th>
+            <th>2Q fidelity</th></tr></thead>
+        <tbody>
+        {% for p in pairs %}
+        {% if p.get('_error') %}
+        <tr><td><strong>{{ p.id }}</strong></td>
+            <td colspan="4">&#9888; unreadable pair &mdash; {{ p._error }}</td></tr>
+        {% else %}
+        <tr>
+            <td><strong>{{ p.id }}</strong></td>
+            <td>{{ p.qubit_control or '-' }}</td>
+            <td>{{ p.qubit_target or '-' }}</td>
+            <td>{% if p.is_active %}&#10003;{% else %}<span class="rep-off">off</span>{% endif %}</td>
+            <td>{% if p.get('pair_fidelity') is none %}-{% elif p.pair_fidelity is number %}{{ "%.4f" | format(p.pair_fidelity) }}{% else %}&quot;{{ p.pair_fidelity }}&quot;{% endif %}</td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+        </tbody>
+    </table>
+
+    <h2>Resonators ({{ resonators | length }})</h2>
+    <table>
+        <thead><tr><th>ID</th><th>Active</th><th>Readout freq (GHz)</th><th>Amplitude</th>
+            <th>Length (ns)</th><th>Time of flight (ns)</th></tr></thead>
+        <tbody>
+        {% for q in resonators %}
+        <tr>
+            <td><strong>{{ q.id }}</strong></td>
+            <td>{% if q.is_active %}&#10003;{% else %}<span class="rep-off">off</span>{% endif %}</td>
+            <td>{{ q.readout_frequency | qty('readout_frequency') }}</td>
+            <td>{% if q.readout_amplitude is none %}-{% elif q.readout_amplitude is number %}{{ "%.4f" | format(q.readout_amplitude) }}{% else %}&quot;{{ q.readout_amplitude }}&quot;{% endif %}</td>
+            <td>{{ q.readout_length if q.readout_length is not none else '-' }}</td>
+            <td>{{ q.time_of_flight | qty('time_of_flight') }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+    <h2>Flux lines ({{ flux | length }})</h2>
+    {% if flux %}
+    <table>
+        <thead><tr><th>ID</th><th>Active</th><th>Joint offset (V)</th>
+            <th>Independent offset (V)</th><th>Flux point</th></tr></thead>
+        <tbody>
+        {% for q in flux %}
+        <tr>
+            <td><strong>{{ q.id }}</strong></td>
+            <td>{% if q.is_active %}&#10003;{% else %}<span class="rep-off">off</span>{% endif %}</td>
+            <td>{{ q.z_joint_offset | qty('z_joint_offset') }}</td>
+            <td>{{ q.z_independent_offset | qty('z_independent_offset') }}</td>
+            <td>{{ q.z_flux_point or '-' }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="rep-note">No qubit on this chip has an OPX flux line.</p>
+    {% endif %}
+
+    <h2>Couplers ({{ couplers | length }})</h2>
+    {% if couplers %}
+    <table>
+        <thead><tr><th>Pair</th><th>Control</th><th>Target</th><th>Active</th>
+            <th>Decouple offset (V)</th><th>Interaction offset (V)</th></tr></thead>
+        <tbody>
+        {% for p in couplers %}
+        <tr>
+            <td><strong>{{ p.id }}</strong></td>
+            <td>{{ p.qubit_control or '-' }}</td>
+            <td>{{ p.qubit_target or '-' }}</td>
+            <td>{% if p.is_active %}&#10003;{% else %}<span class="rep-off">off</span>{% endif %}</td>
+            <td>{{ p.coupler_decouple_offset | qty('coupler_decouple_offset') }}</td>
+            <td>{{ p.coupler_interaction_offset | qty('coupler_interaction_offset') }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="rep-note">No pair on this chip has a tunable coupler.</p>
+    {% endif %}
+
+    <script src="{{ url_for('static', filename='topo-graph.js') }}"></script>
+    <script src="{{ url_for('static', filename='component-map.js') }}"></script>
+    <script>
+    (function () {
+        if (window.ComponentMap) {
+            ComponentMap.mount(document.getElementById('component-map'));
+        }
+        /* Self-contained download: wait for the map SVG, clone the document,
+           strip scripts + the download affordance (dead in a saved file; the
+           Print button keeps its inline onclick), inline the stylesheet, and
+           hand back one HTML string. Exposed so the browser selfcheck can pin
+           the output without driving a real download. */
+        function whenDrawn(timeoutMs) {
+            return new Promise(function (res) {
+                var t0 = Date.now();
+                (function tick() {
+                    if (document.querySelector('#component-map svg')
+                        || Date.now() - t0 > (timeoutMs || 6000)) return res();
+                    setTimeout(tick, 120);
+                })();
+            });
+        }
+        function buildStandalone() {
+            return whenDrawn().then(function () {
+                return fetch('{{ url_for('static', filename='style.css') }}')
+                    .then(function (r) { return r.ok ? r.text() : ''; })
+                    .catch(function () { return ''; });
+            }).then(function (css) {
+                var doc = document.documentElement.cloneNode(true);
+                doc.querySelectorAll('script').forEach(function (el) { el.remove(); });
+                var dl = doc.querySelector('#rep-download');
+                if (dl) dl.remove();
+                doc.querySelectorAll('link[rel="stylesheet"]').forEach(function (el) { el.remove(); });
+                if (css) {
+                    var st = document.createElement('style');
+                    st.textContent = css;
+                    doc.querySelector('head').appendChild(st);
+                }
+                return '<!DOCTYPE html>\n' + doc.outerHTML;
+            });
+        }
+        window.ChipReport = { buildStandalone: buildStandalone };
+        var btn = document.getElementById('rep-download');
+        if (btn) btn.addEventListener('click', function () {
+            btn.disabled = true;
+            buildStandalone().then(function (html) {
+                var blob = new Blob([html], { type: 'text/html' });
+                var a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = 'chip_report_{{ (chip_name or "chip") | replace(" ", "_") }}_{{ generated | replace(" ", "_") | replace(":", "") }}.html';
+                document.body.appendChild(a);
+                a.click();
+                setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+            }).finally(function () { btn.disabled = false; });
+        });
+    })();
+    </script>
+{% endif %}
+</body>
+</html>

@@ -10946,3 +10946,11 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .bulk-td-pointer input.bulk-cell { font-family: var(--pico-font-family-monospace, ui-monospace, monospace);
     font-size: 0.92em; }
 .bulk-ptr-dangling { color: var(--color-warning, #b8860b); }
+
+/* docs/126 #21 — the Chip Status printable-report affordance in the sidebar.
+   Muted beside the link; accent on hover, like its .nav-sub-toggle neighbour. */
+.nav-sub-row .nav-print {
+    display: inline-flex; align-items: center; padding: 0 0.25rem;
+    color: var(--text-muted); flex: 0 0 auto; line-height: 1;
+}
+.nav-sub-row .nav-print:hover { color: var(--accent); }

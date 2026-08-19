@@ -1,4 +1,4 @@
-{% from '_icons.html' import icon_gear, icon_calculator, icon_help %}
+{% from '_icons.html' import icon_gear, icon_calculator, icon_help, icon_printer %}
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
@@ -446,6 +446,11 @@
                         <div class="nav-sub-row">
                             <a href="/topology" hx-get="/topology" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
                                {% if page == 'topology' %}class="active"{% endif %}>Chip Status</a>
+                            {# docs/126 #21 — printable report: components + topology as one
+                               standalone page (new tab; Print / self-contained download). #}
+                            <a class="nav-print" href="/chip-status/report" target="_blank"
+                               title="Printable chip report — components + topology"
+                               aria-label="Open printable chip report">{{ icon_printer(13) }}</a>
                             <button type="button" class="nav-sub-toggle" aria-expanded="true"
                                     aria-controls="chip-status-subnav" aria-label="Toggle Chip Status sections"
                                     onclick="toggleChipStatusSub(this)">&#9662;</button>
