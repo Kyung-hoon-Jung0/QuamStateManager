@@ -43,10 +43,20 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from quam_state_manager.core.pointer_resolver import is_self_ref
+from quam_state_manager.core.pointer_resolver import is_pointer, is_self_ref
 
 # Identity / non-editable structural keys — never become columns.
 _SKIP_KEYS = {"__class__", "id", "digital_marker"}
+
+# Channel-level port pointer keys — expanded into port leaf columns instead of
+# surfacing the raw wiring pointer string (mirrors ``qubit_columns._IO_KEYS``).
+# The coupler / CR / ZZ channel's wired port carries the flux line's filter
+# taps (``exponential_filter``, ``high_pass_filter``, …); on a QDAC-biased
+# chip (docs/119) the coupler is the ONLY entity that reaches an OPX flux
+# port, so without this expansion those leaves existed on no grid and the
+# search could not find them at all (docs/126 item ①).
+_IO_KEYS = ("opx_output", "opx_input")
+_IO_SHORT = {"opx_output": "out", "opx_input": "in"}
 
 # Leaf names that are "headline" (visible on first paint) within their band.
 # Everything else is reachable via the Properties menu / band caret.
@@ -177,13 +187,50 @@ def _leaf(pair_id: str, real_segs: list[str], tmpl_segs: list[str], value: Any) 
     }
 
 
+def _port_leaves(pair_id: str, real_segs: list[str], tmpl_segs: list[str],
+                 merged: dict, leaves: list[dict]) -> None:
+    """Enumerate a wired port's scalar + list leaves through the pointer chain.
+
+    Mirrors ``qubit_columns._port_leaves`` (docs/94): the channel's
+    ``opx_output``/``opx_input`` wiring POINTER is not itself a column; the
+    resolved port dict's scalar + list leaves become
+    ``qubit_pairs.{pair}.<chan>.<io>.<leaf>`` alias columns, riding the same
+    state→wiring→ports.* resolution as the qubit grid's port columns (cells
+    build through ``_build_bulk_cell`` / ``_list_pair_cell`` unchanged, and
+    list leaves stay editable via the shared ✎ JSON editor).
+    """
+    from quam_state_manager.core.pointer_path import (
+        _walk as _walk_abs, resolve_field_target)
+    try:
+        ft = resolve_field_target(
+            merged, "qubit_pairs." + pair_id + "." + ".".join(real_segs))
+    except Exception:  # noqa: BLE001 — a broken wiring pointer yields no columns
+        return
+    if not ft.get("resolvable"):
+        return
+    # resolved_value is scalar-nulled for containers — fetch the real port dict.
+    found, port = _walk_abs(merged, (ft.get("resolved_path") or "").split("."))
+    if not found or not isinstance(port, dict):
+        return
+    io = tmpl_segs[-1]
+    for k, v in port.items():
+        if k in _SKIP_KEYS or isinstance(v, dict):
+            continue          # nested dicts (multi-DUC upconverters) never become columns
+        lf = _leaf(pair_id, real_segs + [k], tmpl_segs + [k], v)
+        lf["label"] = _IO_SHORT.get(io, io) + " · " + k
+        leaves.append(lf)
+
+
 def _walk_pair(pair_id: str, node: Any, real_segs: list[str],
-               tmpl_segs: list[str], leaves: list[dict]) -> None:
+               tmpl_segs: list[str], leaves: list[dict],
+               merged: dict | None = None) -> None:
     """Recurse one pair object, appending leaf descriptors.
 
     Guards ``None`` / non-dict at every level (real data has explicit nulls for
     ``coupler`` / ``cross_resonance`` / ``spectator_qubits`` / ``confusion``).
-    An empty dict yields nothing (no settable leaf).
+    An empty dict yields nothing (no settable leaf). With ``merged`` given, an
+    ``opx_output``/``opx_input`` pointer expands into its port's leaf columns
+    (without it — legacy/test callers — behavior is byte-identical).
     """
     if not isinstance(node, dict):
         return
@@ -194,9 +241,13 @@ def _walk_pair(pair_id: str, node: Any, real_segs: list[str],
         tk = _strip_pair_suffix(k, pair_id) if parent == "operations" else k
         r2 = real_segs + [k]
         t2 = tmpl_segs + [tk]
+        if (merged is not None and k in _IO_KEYS
+                and is_pointer(v) and not is_self_ref(v)):
+            _port_leaves(pair_id, r2, t2, merged, leaves)
+            continue
         if isinstance(v, dict):
             if v:
-                _walk_pair(pair_id, v, r2, t2, leaves)
+                _walk_pair(pair_id, v, r2, t2, leaves, merged)
             continue          # empty dict → no leaf
         leaves.append(_leaf(pair_id, r2, t2, v))
 
@@ -236,12 +287,13 @@ def derive_pair_columns(store) -> tuple[list[dict], dict[str, dict[str, tuple]]]
     entry (→ blank cell).
     """
     with store._lock:
-        pairs = store.merged.get("qubit_pairs") or {}
+        merged = store.merged
+        pairs = merged.get("qubit_pairs") or {}
         pair_ids = list(store.qubit_pair_names)
         per_pair: dict[str, list[dict]] = {}
         for pid in pair_ids:
             leaves: list[dict] = []
-            _walk_pair(pid, pairs.get(pid) or {}, [], [], leaves)
+            _walk_pair(pid, pairs.get(pid) or {}, [], [], leaves, merged)
             per_pair[pid] = leaves
 
     cols: dict[str, dict] = {}

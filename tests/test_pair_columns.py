@@ -323,3 +323,104 @@ def test_real_chips_no_crash(chip):
         for (path, mode) in pm.values():
             assert path.startswith("qubit_pairs.")
             assert mode in ("edit", "runtime", "list")
+
+
+# ── docs/126 item ①: coupler/CR channel port-chain expansion ──────────────────
+#
+# On a QDAC-biased chip (docs/119) the qubits' z lines are external DC and the
+# COUPLER is the only entity wired to an OPX flux port — so the port's filter
+# leaves (exponential_filter, high_pass_filter, …) were reachable from NO grid
+# and the Live-Edit search could not find them at all, while the Json Tree
+# could (the customer's SUPER CRITICAL report). The pair grid now mirrors
+# qubit_columns' _IO_KEYS expansion: the opx_output/opx_input POINTER is not a
+# column; the resolved port dict's scalar + list leaves are.
+
+def _state_qdac_coupler_port() -> dict:
+    def pair(pid, port_ref, exp_filter):
+        return {
+            "id": pid, "__class__": "Pair", "detuning": 1e6, "confusion": None,
+            "coupler": {
+                "id": "c_" + pid, "__class__": "TunableCoupler",
+                "decouple_offset": 0.01,
+                "opx_output": "#/wiring/qubit_pairs/" + pid + "/c/opx_output",
+                "operations": {"const": {"amplitude": 0.5, "length": 100}},
+            },
+            "macros": {},
+            "_exp": exp_filter,   # stripped below — fixture bookkeeping only
+        }
+
+    state = {
+        "qubit_pairs": {
+            "q1-2": pair("q1-2", "5/2", [[-0.013, 1280.5], [-0.05, 30.4]]),
+            "q3-4": pair("q3-4", "5/3", None),
+        },
+        "wiring": {"qubit_pairs": {
+            "q1-2": {"c": {"opx_output": "#/ports/analog_outputs/con1/5/2"}},
+            "q3-4": {"c": {"opx_output": "#/ports/analog_outputs/con1/5/3"}},
+        }},
+        "ports": {"analog_outputs": {"con1": {"5": {
+            "2": {
+                "__class__": "quam.components.ports.analog_outputs.LFFEMAnalogOutputPort",
+                "controller_id": "con1", "fem_id": 5, "port_id": 2,
+                "offset": None,                       # all-null across ports → dropped
+                "exponential_filter": [[-0.013, 1280.5], [-0.05, 30.4]],
+                "exponential_dc_gain": 0.98,
+                "output_mode": "amplified",
+                "upconverters": {"1": {"lo": 1e9}},   # nested dict → never a column
+            },
+            "3": {
+                "__class__": "quam.components.ports.analog_outputs.LFFEMAnalogOutputPort",
+                "controller_id": "con1", "fem_id": 5, "port_id": 3,
+                "offset": None,
+                "exponential_filter": None,           # null on THIS pair only
+                "exponential_dc_gain": 0.97,
+                "output_mode": "amplified",
+            },
+        }}}},
+    }
+    for p in state["qubit_pairs"].values():
+        p.pop("_exp")
+    return state
+
+
+class TestCouplerPortChain:
+    def test_port_leaves_become_columns(self):
+        cols, path_map = _derive(_state_qdac_coupler_port())
+        by = _by_key(cols)
+        k = "coupler__coupler_opx_output_exponential_filter"
+        assert k in by, sorted(by)
+        assert by[k]["section"] == "Coupler"
+        assert by[k]["label"] == "out · exponential_filter"
+        assert "coupler__coupler_opx_output_exponential_dc_gain" in by
+        assert "coupler__coupler_opx_output_output_mode" in by
+
+    def test_pointer_itself_is_not_a_column(self):
+        cols, _ = _derive(_state_qdac_coupler_port())
+        assert not any(c["key"].endswith("coupler_opx_output") for c in cols)
+
+    def test_all_null_port_leaf_dropped_and_nested_dict_skipped(self):
+        cols, _ = _derive(_state_qdac_coupler_port())
+        keys = {c["key"] for c in cols}
+        assert "coupler__coupler_opx_output_offset" not in keys
+        assert not any("upconverters" in k for k in keys)
+
+    def test_path_map_addresses_the_alias_with_per_pair_kind(self):
+        _, path_map = _derive(_state_qdac_coupler_port())
+        k = "coupler__coupler_opx_output_exponential_filter"
+        # list-valued pair → "list" (▦ badge + shared ✎ JSON editor)
+        assert path_map["q1-2"][k] == (
+            "qubit_pairs.q1-2.coupler.opx_output.exponential_filter", "list")
+        # null-valued pair → scalar edit (same semantics as the qubit grid)
+        assert path_map["q3-4"][k] == (
+            "qubit_pairs.q3-4.coupler.opx_output.exponential_filter", "edit")
+
+    def test_dangling_wiring_pointer_yields_no_port_columns_no_crash(self):
+        state = _state_qdac_coupler_port()
+        state["wiring"]["qubit_pairs"]["q1-2"]["c"]["opx_output"] = \
+            "#/ports/analog_outputs/con1/9/9"
+        state["wiring"]["qubit_pairs"]["q3-4"]["c"]["opx_output"] = \
+            "#/ports/analog_outputs/con1/9/9"
+        cols, _ = _derive(state)
+        assert not any("opx_output" in c["key"] for c in cols)
+        # the rest of the coupler band is untouched
+        assert any(c["key"].endswith("decouple_offset") for c in cols)
