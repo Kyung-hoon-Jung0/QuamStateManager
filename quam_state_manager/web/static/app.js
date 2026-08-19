@@ -3892,33 +3892,59 @@ window.PaneState = (function () {
     /* A retried scroll restore must never fight the user. Same rule docs/75's
        InlineCommit already applies to its own restore: a wheel or a PageUp
        means they are reading somewhere else now, and the pending attempts are
-       abandoned. */
-    var _restoreScrollAborted = false;
+       abandoned.
+       Two hard-won rules (docs/124 M-16/M-17):
+       - the abort state is PER RESTORE, and a new restore SUPERSEDES every
+         older one's timers via a generation counter. One shared boolean let
+         arming restore B reset the flag and resurrect restore A's
+         already-aborted retries, which yanked the user to A's stale target
+         (executed: four ping-pong yanks over 2 s).
+       - Chrome gives scrollbar interaction no wheel/keydown at all — a track
+         click or thumb drag targets the SCROLLER ELEMENT itself, never a row
+         — and ArrowUp/ArrowDown/Space scroll too; all were invisible to the
+         old listener set and yanked back by the next retry. A raw 'scroll'
+         listener is deliberately NOT the fix: while the filter settles the
+         browser CLAMPS scrollTop and fires the same event, which would read
+         as a user scroll and abort the very restore the retries exist for. */
+    var _restoreGen = 0;
     function _armScrollAbort() {
-        _restoreScrollAborted = false;
-        var off = function () {
-            _restoreScrollAborted = true;
+        var state = { aborted: false };
+        function typing(e) {
+            var t = e.target;
+            return !!(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA'
+                            || t.isContentEditable));
+        }
+        function off() { state.aborted = true; cleanup(); }
+        function onKey(e) {
+            if (typing(e)) return;   // arrows inside the search box are typing
+            if (e.key === 'PageUp' || e.key === 'PageDown' || e.key === 'Home'
+                || e.key === 'End' || e.key === 'ArrowUp' || e.key === 'ArrowDown'
+                || e.key === ' ') off();
+        }
+        function onDown(e) {
+            if (e.button === 1) { off(); return; }   // middle-click autoscroll
+            var t = e.target;
+            if (t && ((t.classList && t.classList.contains('json-tree'))
+                      || t.id === 'table-pane')) off();
+        }
+        function cleanup() {
             window.removeEventListener('wheel', off, true);
             window.removeEventListener('keydown', onKey, true);
             window.removeEventListener('touchmove', off, true);
-        };
-        var onKey = function (e) {
-            if (e.key === 'PageUp' || e.key === 'PageDown' || e.key === 'Home'
-                || e.key === 'End') off();
-        };
+            window.removeEventListener('mousedown', onDown, true);
+        }
         window.addEventListener('wheel', off, true);
         window.addEventListener('touchmove', off, true);
         window.addEventListener('keydown', onKey, true);
-        setTimeout(function () {
-            window.removeEventListener('wheel', off, true);
-            window.removeEventListener('keydown', onKey, true);
-            window.removeEventListener('touchmove', off, true);
-        }, 2600);
+        window.addEventListener('mousedown', onDown, true);
+        setTimeout(cleanup, 2600);
+        return state;
     }
 
     function _restoreExplorer(d) {
         if (!d || !document.getElementById('explorer-tree-state')) return;
-        _armScrollAbort();
+        var gen = ++_restoreGen;
+        var abort = _armScrollAbort();
         if (d.tab === 'wiring' && window.switchExplorerTab) {
             window.switchExplorerTab('wiring');
         }
@@ -3942,8 +3968,11 @@ window.PaneState = (function () {
             setTimeout(function () {
                 var el = document.getElementById(id);
                 var p = pane();
-                // A scroll the user has since moved themselves is theirs.
-                if (_restoreScrollAborted) return;
+                // A scroll the user has since moved themselves is theirs —
+                // and a NEWER restore owns the pane now (generation check:
+                // a superseded restore's timers must never write its stale
+                // target, aborted or not).
+                if (abort.aborted || gen !== _restoreGen) return;
                 if (el && d.scroll && Math.abs(el.scrollTop - d.scroll) > 4) {
                     el.scrollTop = d.scroll;
                 }
