@@ -9106,6 +9106,27 @@ def instrument_view():
     )
 
 
+@bp.route("/api/instrument/data")
+def instrument_data():
+    """The wiring-diagram payload as JSON (docs/126 ⑥ — the floating panel).
+
+    The float panel renders the SAME diagram (`renderInstrumentWiring`) from
+    the same engine data as `/instrument`, but lives outside the main pane —
+    so it needs the data without the page. Read-only; errors are returned
+    honestly rather than as an empty rack (the /instrument doctrine)."""
+    engine = _engine()
+    if not engine:
+        return jsonify({"error": "no chip loaded"}), 200
+    try:
+        instrument = engine.get_instrument_wiring()
+    except Exception as exc:  # noqa: BLE001 — same honesty rule as /instrument
+        logger.exception("Failed to build instrument wiring data (float)")
+        return jsonify({"error": str(exc) or exc.__class__.__name__}), 200
+    store = _store()
+    return jsonify({"instrument": instrument,
+                    "wiring": (store.wiring if store else {}) or {}})
+
+
 # ----------------------------------------------------------------------
 # Drag-drop preview (read-only) + wiring compare
 #

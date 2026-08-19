@@ -1804,10 +1804,33 @@ window.dsNavRun = function(dir) {
         if (entries[i].getAttribute('data-uid') === curUid) { idx = i; break; }
     }
     if (idx === -1) { serverNeighbor(); return; }   // open run not in the tree
-    var next = entries[idx + dir];
+    // docs/126 ⑥: dir may be ±10 (the fast buttons). A big step past the end
+    // CLAMPS to the end entry (the server neighbor walk is single-step only);
+    // a single step past the end keeps the server fallback.
+    var tgt = idx + dir;
+    if (Math.abs(dir) > 1) tgt = Math.max(0, Math.min(entries.length - 1, tgt));
+    if (tgt === idx) return;
+    var next = entries[tgt];
     if (!next) { serverNeighbor(); return; }        // tree end — folder may have more
     next.scrollIntoView({block: 'nearest'});
     next.click();
+};
+
+/* docs/126 ⑥ — direct run-number jump. The uid grammar is <folder_key>:<id>,
+ * so the open run's own uid donates the folder half; a wrong number renders
+ * the route's honest "not found" in the same pane. */
+window.dsJumpRun = function(inp) {
+    var n = parseInt((inp && inp.value || '').replace(/[^0-9]/g, ''), 10);
+    if (!isFinite(n)) return;
+    var root = document.getElementById('ds-detail-root');
+    var curUid = root ? root.getAttribute('data-uid') : null;
+    if (!curUid || curUid.lastIndexOf(':') < 0 || !window.htmx) return;
+    var uid = curUid.slice(0, curUid.lastIndexOf(':') + 1) + n;
+    var hasInspector = !!document.getElementById('inspector-pane');
+    var target = hasInspector ? '#inspector-pane' : '#table-pane';
+    _dsMarkSlowLoad(target, n);
+    htmx.ajax('GET', '/dataset/' + uid, {source: target, target: target, swap: 'innerHTML'});
+    inp.value = '';
 };
 
 // Enter/Space open a keyboard-focused tree run entry (they're tabindex=0 now).
@@ -16268,4 +16291,137 @@ window.ExplorerChips = (function () {
         }
     }
     return { mount: mount };
+})();
+
+/* ── docs/126 ⑥: the floating Instrument Wiring panel ─────────────────────
+   The customer wants a port picture ALWAYS in view while working elsewhere —
+   today the diagram only exists as the main pane. The ⧉ beside the sidebar
+   item opens this body-level panel: the SAME renderInstrumentWiring drawing
+   fed by /api/instrument/data, draggable by its header, collapsible to the
+   header bar, resizable (CSS resize), position/size/collapse persisted.
+   Read-only by design — hover details land in the panel's own footer strip
+   (the cursor popup and the JSON drill-down belong to the main page). */
+window.FloatWiring = (function () {
+    var KEY = 'quam_float_wiring';
+    function _geo() {
+        try { return JSON.parse(localStorage.getItem(KEY) || '{}') || {}; }
+        catch (e) { return {}; }
+    }
+    function _save(patch) {
+        var g = _geo();
+        Object.keys(patch).forEach(function (k) { g[k] = patch[k]; });
+        try { localStorage.setItem(KEY, JSON.stringify(g)); } catch (e) {}
+    }
+    function panel() { return document.getElementById('float-wiring'); }
+
+    function refresh() {
+        var host = document.getElementById('float-wiring-diagram');
+        if (!host) return;
+        host.innerHTML = '<p class="muted" style="padding:.6rem">loading…</p>';
+        fetch('/api/instrument/data', { cache: 'no-store' })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                var h = document.getElementById('float-wiring-diagram');
+                if (!h) return;
+                if (!d || d.error) {
+                    h.innerHTML = '';
+                    var pe = document.createElement('p');
+                    pe.className = 'muted'; pe.style.padding = '.6rem';
+                    pe.textContent = 'Wiring unavailable: ' + ((d && d.error) || 'no data');
+                    h.appendChild(pe);
+                    return;
+                }
+                window.renderInstrumentWiring('float-wiring-diagram',
+                    d.instrument, d.wiring, {
+                        onPortHover: function (a) {
+                            var f = document.getElementById('float-wiring-status');
+                            if (!f) return;
+                            f.textContent = a
+                                ? (a.label || '') + (a.role ? ' · ' + a.role : '')
+                                : '';
+                        },
+                    });
+            })
+            .catch(function () {
+                var h = document.getElementById('float-wiring-diagram');
+                if (h) h.innerHTML = '<p class="muted" style="padding:.6rem">Could not load the wiring data.</p>';
+            });
+    }
+
+    function _applyCollapsed(p, on) {
+        p.classList.toggle('fw-collapsed', !!on);
+        var b = p.querySelector('.fw-collapse');
+        if (b) { b.textContent = on ? '▸' : '▾'; b.title = on ? 'Expand' : 'Collapse to the title bar'; }
+    }
+
+    function open() {
+        if (panel()) return;
+        var p = document.createElement('div');
+        p.id = 'float-wiring';
+        p.className = 'float-wiring';
+        p.innerHTML =
+            '<div class="fw-head">'
+            + '<span class="fw-title">Instrument Wiring</span>'
+            + '<span id="float-wiring-status" class="fw-status muted"></span>'
+            + '<button type="button" class="fw-btn fw-refresh" title="Reload from the open chip">↻</button>'
+            + '<button type="button" class="fw-btn fw-collapse" title="Collapse to the title bar">▾</button>'
+            + '<button type="button" class="fw-btn fw-close" title="Close">✕</button>'
+            + '</div>'
+            + '<div class="fw-body"><div id="float-wiring-diagram"></div></div>';
+        document.body.appendChild(p);
+        var g = _geo();
+        if (typeof g.x === 'number' && typeof g.y === 'number') {
+            p.style.left = Math.max(0, Math.min(g.x, window.innerWidth - 120)) + 'px';
+            p.style.top = Math.max(0, Math.min(g.y, window.innerHeight - 60)) + 'px';
+            p.style.right = 'auto'; p.style.bottom = 'auto';
+        }
+        if (typeof g.w === 'number') p.style.width = g.w + 'px';
+        if (typeof g.h === 'number') p.style.height = g.h + 'px';
+        _applyCollapsed(p, !!g.collapsed);
+
+        p.querySelector('.fw-close').onclick = function () { p.remove(); };
+        p.querySelector('.fw-refresh').onclick = refresh;
+        p.querySelector('.fw-collapse').onclick = function () {
+            var on = !p.classList.contains('fw-collapsed');
+            _applyCollapsed(p, on);
+            _save({ collapsed: on });
+        };
+        // drag by the header (buttons excluded)
+        var head = p.querySelector('.fw-head');
+        head.addEventListener('pointerdown', function (e) {
+            if (e.target.closest && e.target.closest('.fw-btn')) return;
+            var r = p.getBoundingClientRect();
+            var dx = e.clientX - r.left, dy = e.clientY - r.top;
+            function mv(ev) {
+                p.style.left = Math.max(0, ev.clientX - dx) + 'px';
+                p.style.top = Math.max(0, ev.clientY - dy) + 'px';
+                p.style.right = 'auto'; p.style.bottom = 'auto';
+            }
+            function up(ev) {
+                document.removeEventListener('pointermove', mv);
+                document.removeEventListener('pointerup', up);
+                var r2 = p.getBoundingClientRect();
+                _save({ x: r2.left, y: r2.top });
+            }
+            document.addEventListener('pointermove', mv);
+            document.addEventListener('pointerup', up);
+            e.preventDefault();
+        });
+        // persist a CSS resize (the handle fires no event — sample on pointerup)
+        p.addEventListener('pointerup', function () {
+            var r = p.getBoundingClientRect();
+            if (r.width > 80 && r.height > 40) _save({ w: r.width, h: r.height });
+        });
+        refresh();
+    }
+
+    function toggle() {
+        var p = panel();
+        if (p) p.remove(); else open();
+    }
+
+    // a wholesale working-copy replacement (chip switch, stage, pull) can
+    // change the wiring the panel shows — refresh it in place
+    document.addEventListener('stateRestored', function () { if (panel()) refresh(); });
+    return { toggle: toggle, open: open, refresh: refresh };
 })();

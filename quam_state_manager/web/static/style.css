@@ -1036,12 +1036,11 @@ html.topbar-hidden .topbar-reveal { display: block; }
 .calc-popover.calc-floating { position: fixed; right: auto; top: auto; margin-top: 0; }
 .calc-title { font-size: 0.85rem; font-weight: 700; }
 .calc-header-tools { display: flex; gap: 0.15rem; cursor: default; }
-.calc-pin, .calc-close {
+.calc-close {
     background: none; border: none; cursor: pointer; padding: 0.1rem 0.3rem;
     color: var(--pico-muted-color); border-radius: 4px; font-size: 0.95rem; line-height: 1;
 }
-.calc-pin:hover, .calc-close:hover { background: var(--pico-muted-border-color); color: var(--pico-contrast); }
-.calc-pin[aria-pressed="true"] { color: var(--pico-primary); }
+.calc-close:hover { background: var(--pico-muted-border-color); color: var(--pico-contrast); }
 
 .calc-body { padding: 0.1rem 0.55rem; }
 /* B2: clear per-section separation — hairline top divider + a bold, full-contrast,
@@ -8077,6 +8076,7 @@ tr.gen-pop-row-linked > td {
     background: rgba(0,0,0,0.02);
 }
 .cmd-palette-hint kbd {
+    color: var(--pico-color);   /* same inverted-kbd trap as .help-sc-grid kbd */
     background: var(--pico-muted-border-color, rgba(0,0,0,0.08));
     border-radius: 3px; padding: 1px 5px; margin: 0 0.15em;
     font-size: 0.75em; font-family: monospace;
@@ -8480,6 +8480,44 @@ button.diag-badge { cursor: pointer; }
     border: 1px solid var(--pico-muted-border-color); color: var(--pico-muted-color);
 }
 .tree-act-copy { font-weight: 600; }
+/* docs/126 ⑥ — floating Instrument Wiring panel */
+.nav-floatable { display: flex; align-items: center; }
+.nav-floatable > a { flex: 1 1 auto; min-width: 0; }
+.nav-float-btn {
+    flex: 0 0 auto; width: auto; margin: 0 .2rem 0 0; padding: 0 .3rem;
+    background: transparent; border: none; cursor: pointer; line-height: 1.2;
+    color: var(--pico-muted-color); font-size: .95em; border-radius: 4px;
+}
+.nav-float-btn:hover { color: var(--pico-primary); background: var(--pico-muted-border-color); }
+.float-wiring {
+    position: fixed; right: 18px; bottom: 18px; z-index: 96;
+    width: 520px; height: 420px; min-width: 260px; min-height: 40px;
+    display: flex; flex-direction: column;
+    background: var(--pico-card-background-color, #fff);
+    border: 1px solid var(--pico-muted-border-color); border-radius: 12px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.10), 0 12px 32px rgba(0,0,0,0.22);
+    resize: both; overflow: hidden;
+}
+.float-wiring .fw-head {
+    display: flex; align-items: center; gap: .4rem; cursor: grab;
+    padding: .3rem .55rem; border-bottom: 1px solid var(--pico-muted-border-color);
+    user-select: none; flex: 0 0 auto;
+}
+.float-wiring .fw-title { font-weight: 700; font-size: .85em; white-space: nowrap; }
+.float-wiring .fw-status { flex: 1 1 auto; min-width: 0; font-size: .75em;
+    font-family: var(--font-mono, monospace); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; text-align: right; }
+.float-wiring .fw-btn { flex: 0 0 auto; width: 24px; height: 24px; margin: 0; padding: 0;
+    background: none; border: none; border-radius: 50%; cursor: pointer;
+    color: var(--pico-muted-color); font-size: .85em; line-height: 1; }
+.float-wiring .fw-btn:hover { background: var(--pico-muted-border-color); color: var(--pico-color); }
+.float-wiring .fw-body { flex: 1 1 auto; overflow: auto; }
+.float-wiring.fw-collapsed { height: auto !important; min-height: 0; resize: none; }
+.float-wiring.fw-collapsed .fw-body { display: none; }
+
+/* docs/126 ⑥ — the run-number jump box between the nav arrows */
+.inspector-run-jump { width: 3.6em; margin: 0; padding: .05rem .3rem; height: auto;
+    font-size: .8em; text-align: center; border-radius: 6px; }
 .bulk-chip-offer-yes, .bulk-chip-offer-no { margin: 0; width: auto;
     padding: 0.02rem 0.4rem; border-radius: 0.25rem; font-size: 0.72rem;
     border: 1px solid var(--color-warning-border, var(--pico-muted-border-color));
@@ -8644,7 +8682,10 @@ a.sidebar-tool-btn { text-decoration: none; color: inherit; }
 .help-shortcuts { margin-top: 1.5rem; }
 .help-sc-grid { display: grid; grid-template-columns: max-content 1fr; gap: .3rem 1rem; align-items: baseline; }
 .help-sc-group { grid-column: 1 / -1; font-weight: 700; font-size: .82em; opacity: .65; text-transform: uppercase; letter-spacing: .04em; margin-top: .6rem; }
-.help-sc-grid kbd { font-family: var(--font-mono, monospace); font-size: .82em; background: var(--pico-background-color); border: 1px solid var(--pico-muted-border-color); border-radius: 4px; padding: .05rem .35rem; }
+/* color is load-bearing: Pico's kbd is INVERTED (text = background token), so a
+   background-only override leaves page-background text on a page-background chip
+   — invisible in both themes (docs/126 ⑥, customer report). */
+.help-sc-grid kbd { font-family: var(--font-mono, monospace); font-size: .82em; color: var(--pico-color); background: var(--pico-background-color); border: 1px solid var(--pico-muted-border-color); border-radius: 4px; padding: .05rem .35rem; }
 /* docs/111 (#11): selection · fill-down · pinning */
 .bulk-td.bulk-sel { outline: 2px solid var(--pico-primary); outline-offset: -2px; background: color-mix(in srgb, var(--pico-primary) 12%, transparent); }
 /* the ANCHOR is the cell whose value Ctrl+D propagates — it must not look
@@ -8670,7 +8711,7 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 .kb-sheet-rows { display: grid; grid-template-columns: max-content 1fr; gap: .25rem .9rem; align-items: baseline; }
 .kb-sheet-group { grid-column: 1 / -1; font-weight: 700; font-size: .82em; opacity: .65; text-transform: uppercase; letter-spacing: .04em; margin-top: .45rem; }
 .kb-sheet-row { display: contents; }
-.kb-sheet kbd { font-family: var(--font-mono, monospace); font-size: .82em; background: var(--pico-background-color); border: 1px solid var(--pico-muted-border-color); border-radius: 4px; padding: .05rem .35rem; white-space: nowrap; }
+.kb-sheet kbd { font-family: var(--font-mono, monospace); font-size: .82em; color: var(--pico-color); background: var(--pico-background-color); border: 1px solid var(--pico-muted-border-color); border-radius: 4px; padding: .05rem .35rem; white-space: nowrap; }
 .kb-sheet-hint { margin: .6rem 0 .3rem; font-size: .78em; }
 .kb-sheet-close { margin-top: .2rem; }
 

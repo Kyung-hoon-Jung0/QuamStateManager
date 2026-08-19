@@ -232,7 +232,7 @@
                         <span class="outcome-badge {% if run.status == 'finished' %}outcome-ok{% else %}outcome-fail{% endif %}">{{ run.status }}</span>
                     </td></tr>
                 <tr><td class="col-prop"><code>qubits</code></td><td class="col-val">{{ (run.qubit_pairs if run.qubit_pairs else run.qubits) | join(', ') if (run.qubit_pairs or run.qubits) else 'N/A' }}</td></tr>
-                <tr><td class="col-prop"><code>date</code></td><td class="col-val">{{ run.date }} {{ run.time }}</td></tr>
+                <tr><td class="col-prop"><code>date</code></td><td class="col-val" title="As the acquisition PC wrote it (its local clock) — SM does not convert time zones">{{ run.date }} {{ run.time }} <small class="muted">(acquisition-PC local)</small></td></tr>
                 {% if run.duration_s %}
                 <tr><td class="col-prop"><code>duration</code></td><td class="col-val">{{ "%.1f" | format(run.duration_s) }}s</td></tr>
                 {% endif %}

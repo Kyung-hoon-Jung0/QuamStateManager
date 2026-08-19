@@ -21,10 +21,19 @@
         {# Up/down run navigation — walks the sidebar tree's run entries in
            the order the user SEES them (r13: newest-first, so ↑ = newer,
            ↓ = older — spatial motion stays honest). Keyboard: [ and ]. #}
+        {# docs/126 ⑥: 10-step jumps + a direct run-number box — stepping a
+           long experiment series one click at a time was the complaint. #}
+        <button class="inspector-nav-btn" onclick="dsNavRun(-10)"
+                title="10 newer runs" aria-label="10 newer runs">&#8648;</button>
         <button class="inspector-nav-btn" onclick="dsNavRun(-1)"
                 title="Newer run  [" aria-label="Newer run">&#8593;</button>
+        <input class="inspector-run-jump" id="ds-run-jump" inputmode="numeric"
+               placeholder="#" title="Go to run # (Enter)" aria-label="Go to run number"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();dsJumpRun(this);}">
         <button class="inspector-nav-btn" onclick="dsNavRun(1)"
                 title="Older run  ]" aria-label="Older run">&#8595;</button>
+        <button class="inspector-nav-btn" onclick="dsNavRun(10)"
+                title="10 older runs" aria-label="10 older runs">&#8650;</button>
         <button class="inspector-vsprev" onclick="dsComparePrev(this)"
                 title="Compare with the previous run of this experiment"
                 aria-label="Compare with the previous run of the same experiment">vs prev</button>

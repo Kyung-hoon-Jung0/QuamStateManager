@@ -307,18 +307,15 @@
     function _calcOutside(e) {
         var pop = document.getElementById('calc-popover');
         if (!pop || pop.classList.contains('calc-hidden')) return;
-        if (pop.dataset.pinned === '1') return;          // pinned: ignore outside clicks
+        // A DRAGGED calculator is an implicit "keep it around" (docs/126 ⑥ —
+        // the explicit pin button was removed as unrecognisable; dragging is
+        // the gesture that actually communicated the intent).
+        if (pop.classList.contains('calc-floating')) return;
         if (pop.contains(e.target) || (e.target.closest && e.target.closest('.calc-btn'))) return;
         window.toggleCalc();
     }
-    window.calcTogglePin = function () {
-        var pop = document.getElementById('calc-popover');
-        var pin = document.getElementById('calc-pin');
-        if (!pop) return;
-        var on = pop.dataset.pinned === '1';
-        pop.dataset.pinned = on ? '0' : '1';
-        if (pin) pin.setAttribute('aria-pressed', on ? 'false' : 'true');
-    };
+    // (docs/126 ⑥: the pin button was removed on customer request — nobody
+    // recognised it and dragging already keeps the calculator around.)
 
     // ── wiring ──────────────────────────────────────────────────────────────────
     function wire() {

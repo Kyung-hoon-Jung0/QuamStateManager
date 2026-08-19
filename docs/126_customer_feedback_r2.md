@@ -293,3 +293,45 @@ armed, real-difference disclosure vs identical-content quiet, stage-only
 byte-identical, one-call apply. `test_state_roundtrip` + `test_overwrite_live`
 + `state_sync_selfcheck.cjs` green as proof the OTHER surfaces' gates did not
 move.
+
+## ⑥ Small items — six fixes, real-browser verified in one probe
+
+All six verified together in `tests/browser/_rt_cfb2_misc.cjs` (real Chrome,
+real chip + the real run archive, 20 checks, console clean); pinned by
+`tests/test_misc_ui.py`.
+
+1. **Floating Instrument Wiring** (`window.FloatWiring` + the ⧉ button beside
+   the sidebar item): a body-level panel rendering the SAME
+   `renderInstrumentWiring` rack from the new read-only
+   `GET /api/instrument/data` (honest error payloads, never an empty rack).
+   Draggable by its header, collapsible to the title bar, CSS-resizable —
+   position/size/collapse persisted (`quam_float_wiring`); hover details land
+   in the panel's own footer strip via the renderer's existing `onPortHover`
+   hook (the cursor popup + JSON drill-down stay with the main page, whose
+   `_showInstrumentJsonPanel` already no-ops without its mounts). Survives
+   htmx pane navigation (verified: 242 ports drawn on /bulk, hover
+   "q1.rr · rr", drag+collapse persisted). Refreshes itself on
+   `stateRestored` (chip switch / stage / pull).
+2. **Calculator pin removed** (customer: meaningless): button, handler and
+   CSS gone. The intent it served moved to the gesture that actually
+   communicated it — a DRAGGED (`.calc-floating`) calculator now ignores
+   outside clicks; an undragged one closes as before.
+3. **Keycap contrast**: Pico renders `kbd` INVERTED (background = text token),
+   so the app's background-only overrides left page-background text on a
+   page-background chip — invisible in BOTH themes, exactly the report.
+   `.help-sc-grid kbd`, `.kb-sheet kbd` and `.cmd-palette-hint kbd` now set
+   `color: var(--pico-color)` (verified: light 55,60,68 on white; dark
+   208,213,222 on 19,23,31).
+4. **Time basis named**: SM shows run timestamps verbatim from the run
+   folders — the acquisition PC's local clock — and never converts. The
+   Datasets header now says so (`🕐 acquisition-PC local time` + tooltip) and
+   the detail page's date row carries the same note.
+5. **New-runs pill dismissal**: Escape or a click anywhere else dismisses the
+   "N new runs ↑" announcement (acknowledge-only — the held rows still land
+   on the next idle flush; nothing lost, just no longer announced).
+6. **Run navigation at speed**: the dataset header gains ⇈/⇊ 10-step buttons
+   (`dsNavRun(±10)`, clamped at the list ends — the server neighbor walk
+   stays single-step) and a run-number box (`dsJumpRun`: the open run's uid
+   donates the folder half; Enter opens `<folder>:<n>`, a wrong number gets
+   the route's honest not-found). Verified round trip on the real archive
+   (run #154).
