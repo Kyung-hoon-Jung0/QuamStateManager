@@ -5156,6 +5156,49 @@ def _fmt_val(v) -> str:
     return str(v)
 
 
+def _revert_entry_payload(dot_path, value, *, created=False, deleted=False,
+                          source_file="state") -> dict:
+    """ONE shape for every cellsReverted/cellDiscarded entry (docs/124 M-9/M-10).
+
+    Five emit sites (undo, journal-staged undo, both redo branches, discard-all,
+    plus the per-change ✕) used to build this dict by hand, and all five shipped
+    only ``_fmt_val`` — ``%.6e``, 7 sig figs — which the grids then wrote into
+    cells whose own rendering is the LOSSLESS ``group_digits``: the on-screen
+    value was wrong by the sub-kHz tail after every undo, and because the same
+    string became ``data-orig`` (the clean baseline), a user re-editing from
+    that cell committed the truncation. So:
+
+    - ``old_value_str``  — the inspector-input format (``_fmt_val``), unchanged;
+      the qubit/pair detail inputs render values this way.
+    - ``old_value_disp`` — the grids' own lossless ``_bulk_display`` string;
+      ``BulkEdit/BulkPairEdit.revertPaths`` prefer it for value AND baseline.
+    - ``old_kind``       — what the value IS (pointer / str_numeric / str /
+      bool / num / null / other), so the repaint can refuse to claim coverage
+      when the cell's server-rendered decorations (docs/56 quote spans, amber,
+      pointer links) no longer match and the debounced rebuild must repaint
+      them honestly. bool is checked before num — Python bools ARE ints.
+    """
+    if value is None:
+        kind = "null"
+    elif isinstance(value, str):
+        kind = ("pointer" if value.startswith("#")
+                else "str_numeric" if _is_numeric_string(value) else "str")
+    elif isinstance(value, bool):
+        kind = "bool"
+    elif isinstance(value, (int, float)):
+        kind = "num"
+    else:
+        kind = "other"
+    return {
+        "dot_path": dot_path,
+        "old_value_str": _fmt_val(value),
+        "old_value_disp": _bulk_display(value),
+        "old_kind": kind,
+        "created": bool(created), "deleted": bool(deleted),
+        "source_file": source_file,
+    }
+
+
 def _modified_map() -> dict[str, Any]:
     """Build dot_path -> original old_value map from the change log.
 
@@ -10757,9 +10800,8 @@ def undo():
             # then-undo design would race a concurrent commit), so the
             # navigate-to-owner decision rides these fields.
             "entries": [
-                {"dot_path": e.dot_path, "old_value_str": _fmt_val(e.old_value),
-                 "created": e.created, "deleted": e.deleted,
-                 "source_file": e.source_file}
+                _revert_entry_payload(e.dot_path, e.old_value, created=e.created,
+                                      deleted=e.deleted, source_file=e.source_file)
                 for e in entries
             ],
         },
@@ -10868,9 +10910,10 @@ def _undo_journal_step(ctx):
         "cellsReverted": {
             "message": message,
             "entries": [
-                {"dot_path": u["path"], "old_value_str": _fmt_val(u.get("old")),
-                 "created": bool(u.get("created")), "deleted": bool(u.get("deleted")),
-                 "source_file": u.get("source_file", "state")}
+                _revert_entry_payload(u["path"], u.get("old"),
+                                      created=bool(u.get("created")),
+                                      deleted=bool(u.get("deleted")),
+                                      source_file=u.get("source_file", "state"))
                 for u in uents
             ],
         },
@@ -10921,9 +10964,8 @@ def redo():
         message = (f"Redone: un-staged {n} change(s) ({anchor.dot_path} …)"
                    if n > 1 else f"Redone: un-staged {anchor.dot_path}")
         return _redo_response(message, [
-            {"dot_path": e.dot_path, "old_value_str": _fmt_val(e.old_value),
-             "created": e.created, "deleted": e.deleted,
-             "source_file": e.source_file}
+            _revert_entry_payload(e.dot_path, e.old_value, created=e.created,
+                                  deleted=e.deleted, source_file=e.source_file)
             for e in entries
         ])
 
@@ -10983,9 +11025,10 @@ def redo():
     # create restored it (deleted=True in undo-speak), a re-applied delete
     # removed it (created=True) — the exact inversion of the frame's flags.
     return _redo_response(message, [
-        {"dot_path": fe["path"], "old_value_str": _fmt_val(fe["new"]),
-         "created": bool(fe["deleted"]), "deleted": bool(fe["created"]),
-         "source_file": fe.get("source_file", "state")}
+        _revert_entry_payload(fe["path"], fe["new"],
+                              created=bool(fe["deleted"]),
+                              deleted=bool(fe["created"]),
+                              source_file=fe.get("source_file", "state"))
         for fe in reversed(fents)   # newest-first, like /undo's payload
     ])
 
@@ -11047,10 +11090,9 @@ def discard():
 
     resp = make_response(_tray_html())
     resp.headers["HX-Trigger"] = json.dumps({
-        "cellDiscarded": {
-            "dot_path": entry.dot_path,
-            "old_value_str": _fmt_val(entry.old_value),
-        },
+        "cellDiscarded": _revert_entry_payload(
+            entry.dot_path, entry.old_value, created=entry.created,
+            deleted=entry.deleted, source_file=entry.source_file),
         # open Pulses surfaces re-fetch their rows (no-op elsewhere)
         "pulses-changed": True,
         # refresh the diagnostics tray badge + error banner
@@ -11105,9 +11147,8 @@ def discard_all():
             "message": (f"Discarded all: {total} change(s) — "
                         "Ctrl+Shift+Z restores them one by one"),
             "entries": [
-                {"dot_path": e.dot_path, "old_value_str": _fmt_val(e.old_value),
-                 "created": e.created, "deleted": e.deleted,
-                 "source_file": e.source_file}
+                _revert_entry_payload(e.dot_path, e.old_value, created=e.created,
+                                      deleted=e.deleted, source_file=e.source_file)
                 for g in groups for e in g
             ],
         },
