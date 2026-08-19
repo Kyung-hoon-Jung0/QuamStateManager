@@ -7109,9 +7109,10 @@ class TestDatasetNavR16:
         c, root = ws_client
         html = c.get(f"/dataset/{self._uid(c, root, 2)}/prev-state-diff").data.decode()
         import re
+        # docs/126 r3: 4 stepper buttons now — <<10, older, newer, 10>>
         btns = re.findall(r"<button[^>]*loadPrevDiff[^>]*>", html)
-        assert len(btns) == 2, html[:400]
-        assert "disabled" not in btns[1], btns[1]   # newer ENABLED, targets #3
+        assert len(btns) == 4, html[:400]
+        assert "disabled" not in btns[2], btns[2]   # newer ENABLED, targets #3
 
     def test_stepper_skips_self_diff(self, ws_client):
         c, root = ws_client
@@ -7120,8 +7121,62 @@ class TestDatasetNavR16:
         # from vs=#1 the "newer" step must skip #2 (self) and offer #3
         import re
         btns = re.findall(r"<button[^>]*loadPrevDiff[^>]*>", html)
-        assert len(btns) == 2
-        assert ", 3," in btns[1]
+        assert len(btns) == 4
+        assert ", 3," in btns[2]
+
+    def test_bar_carries_the_run_id_input(self, ws_client):
+        """docs/126 r3: the comparison target is TYPEABLE, in place — the
+        original request's home (the header's duplicate copy was removed)."""
+        c, root = ws_client
+        html = c.get(f"/dataset/{self._uid(c, root, 2)}/prev-state-diff").data.decode()
+        assert "prevdiff-vs-input" in html
+        assert 'value="1"' in html            # prefilled with the current vs
+        assert "prevDiffJump" in html
+
+    def test_typed_run_id_compares_against_it(self, ws_client):
+        c, root = ws_client
+        html = c.get(
+            f"/dataset/{self._uid(c, root, 3)}/prev-state-diff?vs=1").data.decode()
+        assert 'value="1"' in html
+        assert "#3" in html                   # the pair is named
+
+    def test_unknown_run_id_falls_back_and_says_so(self, ws_client):
+        """A typed number that has no saved state must not blank the surface —
+        the route falls back to the default comparison and names the miss."""
+        c, root = ws_client
+        html = c.get(
+            f"/dataset/{self._uid(c, root, 3)}/prev-state-diff?vs=999").data.decode()
+        assert "Run #999 has no saved state" in html
+        assert 'value="2"' in html            # fell back to the previous run
+
+    def test_ten_step_skips_clamp_to_the_ends(self, tmp_path):
+        """« jumps 10 comparison hops; fewer than 10 available lands on the
+        farthest reachable run rather than going dead."""
+        import json as _json
+        root = tmp_path / "data"
+        for rid in range(1, 14):
+            run = root / "2026-08-01" / f"#{rid}_exp_1200{rid:02d}"
+            (run / "quam_state").mkdir(parents=True)
+            (run / "quam_state" / "state.json").write_text(
+                _json.dumps({"qubits": {"q1": {"f_01": 5e9 + rid}}}), encoding="utf-8")
+            (run / "quam_state" / "wiring.json").write_text(
+                _json.dumps({"wiring": {}, "network": {}}), encoding="utf-8")
+            (run / "node.json").write_text(_json.dumps(
+                {"id": rid, "metadata": {"name": "exp"},
+                 "parameters": {"model": {}}}), encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "inst"))
+        c = app.test_client()
+        c.post("/workspace/add", data={"folder": str(root)})
+        html = c.get(f"/dataset/{self._uid(c, root, 13)}/prev-state-diff").data.decode()
+        import re
+        btns = re.findall(r"<button[^>]*loadPrevDiff[^>]*>", html)
+        assert len(btns) == 4
+        assert ", 2," in btns[0]              # vs=#12, ten hops back -> #2
+        assert "disabled" in btns[3]          # nothing newer than #12 but self
+        # from a mid comparison, << clamps to the oldest run
+        html = c.get(f"/dataset/{self._uid(c, root, 13)}/prev-state-diff?vs=5").data.decode()
+        btns = re.findall(r"<button[^>]*loadPrevDiff[^>]*>", html)
+        assert ", 1," in btns[0]              # clamped to #1, not dead
 
     def test_neighbor_endpoint_both_directions(self, ws_client):
         c, root = ws_client

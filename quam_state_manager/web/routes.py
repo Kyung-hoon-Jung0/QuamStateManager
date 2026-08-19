@@ -18136,6 +18136,7 @@ def dataset_prev_state_diff(uid):
                                error="This run has no saved state to compare.")
 
     vs = request.args.get("vs", type=int)
+    vs_requested = vs is not None
     if vs is None:
         vs = ds.get_previous_run_id(run_id)
     compact = request.args.get("compact") == "1"
@@ -18144,6 +18145,15 @@ def dataset_prev_state_diff(uid):
                                prev_run_id=None, compact=compact)
 
     prev_path = ds.get_quam_state_path(vs)
+    vs_note = None
+    if not prev_path and vs_requested:
+        # docs/126 r3: the bar takes a TYPED run id now. A number that does
+        # not exist (or carries no state) must not blank the surface — fall
+        # back to the default comparison and SAY so.
+        vs_note = (f"Run #{vs} has no saved state in this folder — "
+                   "showing the previous run instead.")
+        vs = ds.get_previous_run_id(run_id)
+        prev_path = ds.get_quam_state_path(vs) if vs is not None else None
     if not prev_path:
         return render_template("_dataset_prev_diff.html", run_id=run_id, uid=uid,
                                prev_run_id=None, compact=compact)
@@ -18164,9 +18174,29 @@ def dataset_prev_state_diff(uid):
     if older == run_id:
         older = ds.get_previous_run_id(run_id)
 
+    def _step10(start, step_fn):
+        """The comparison id ten state-carrying hops away (docs/126 r3 —
+        the ±10 skip lives HERE, on the vs-prev bar, not the header).
+        Clamps to the farthest reachable run; None only when even one hop
+        is impossible."""
+        cur, landed = start, None
+        for _ in range(10):
+            nxt = step_fn(cur)
+            if nxt == run_id:               # never the self-diff
+                nxt = step_fn(run_id)
+            if nxt is None:
+                break
+            landed = cur = nxt
+        return landed
+
+    older10 = _step10(vs, ds.get_previous_run_id)
+    newer10 = _step10(vs, ds.get_next_run_id)
+
     return render_template("_dataset_prev_diff.html", run_id=run_id, uid=uid,
                            prev_run_id=vs, entries=entries, summary=summary,
-                           older=older, newer=newer, compact=compact,
+                           older=older, newer=newer,
+                           older10=older10, newer10=newer10, vs_note=vs_note,
+                           compact=compact,
                            limit=(8 if compact else 300))
 
 

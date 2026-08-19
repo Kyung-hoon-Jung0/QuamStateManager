@@ -606,3 +606,22 @@ updated act-naming pin; long quick-diff values now wrap
   into the page. Now an accent-tinted border (55% primary mixed into the
   muted border color) + an 18%-primary 1px glow ring — a frame, not a
   highlight; theme-derived, not hardcoded.
+
+### r3 버그 3 — the run jump belongs on the vs-prev bar (the ⑥ header copy was a misread)
+
+The ⑥-era header jump box + ⇈⇊ duplicated a feature the request had always
+meant for the EXISTING Prev State comparison bar (`‹ older #154 vs #153
+newer ›`). Consolidated: the header keeps single-step ↑/↓ only, and the bar
+gains **« ten hops back · ‹ older · #154 vs #[typeable run id] · newer › ·
+» ten hops forward**. Ten hops are computed server-side along the same
+state-carrying candidate walk older/newer already use (self-diff skipped,
+clamped to the farthest reachable run — never dead when fewer than ten
+remain). Typing a number compares straight against it; a number with no
+saved state falls back to the default comparison AND says so
+(`Run #9999 has no saved state in this folder — showing the previous run
+instead.`) rather than blanking the pane. One Pico trap re-hit and pinned in
+the comment: `input:not([type=checkbox],…)` carries (0,1,1) and beats a lone
+class, so the run box rendered 213 px wide until the selector went two-class.
+Verified on the real 154-run archive (`«` 153→143, typed 120, 9999 fallback);
+pinned by the updated `TestDatasetNavR16` (+ ten-step clamp test) and
+`TestRunJump` (header carries NO jump box).

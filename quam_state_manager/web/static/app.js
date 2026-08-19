@@ -1835,21 +1835,14 @@ window.dsNavRun = function(dir) {
     next.click();
 };
 
-/* docs/126 ⑥ — direct run-number jump. The uid grammar is <folder_key>:<id>,
- * so the open run's own uid donates the folder half; a wrong number renders
- * the route's honest "not found" in the same pane. */
-window.dsJumpRun = function(inp) {
+/* docs/126 r3: the run-number jump lives on the Prev State comparison bar
+ * (its original home per the request) — typing a number compares the open
+ * run against exactly that run. A number with no saved state renders the
+ * route's honest fallback note in the same pane. */
+window.prevDiffJump = function(inp, uid, compact) {
     var n = parseInt((inp && inp.value || '').replace(/[^0-9]/g, ''), 10);
     if (!isFinite(n)) return;
-    var root = document.getElementById('ds-detail-root');
-    var curUid = root ? root.getAttribute('data-uid') : null;
-    if (!curUid || curUid.lastIndexOf(':') < 0 || !window.htmx) return;
-    var uid = curUid.slice(0, curUid.lastIndexOf(':') + 1) + n;
-    var hasInspector = !!document.getElementById('inspector-pane');
-    var target = hasInspector ? '#inspector-pane' : '#table-pane';
-    _dsMarkSlowLoad(target, n);
-    htmx.ajax('GET', '/dataset/' + uid, {source: target, target: target, swap: 'innerHTML'});
-    inp.value = '';
+    window.loadPrevDiff(inp, uid, n, compact);
 };
 
 // Enter/Space open a keyboard-focused tree run entry (they're tabindex=0 now).

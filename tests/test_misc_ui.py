@@ -82,14 +82,21 @@ class TestTimeBasisNote:
 
 
 class TestRunJump:
-    def test_header_carries_jump_and_fast_steps(self):
+    def test_the_jump_lives_on_the_vs_prev_bar_not_the_header(self):
+        """docs/126 r3: the ⑥-era header jump was a DUPLICATE — the original
+        request wanted the run-number box and the ±10 skips on the existing
+        Prev State comparison bar. The header keeps single-step nav only."""
         h = _read("quam_state_manager/web/templates/_inspector_header.html")
-        assert 'id="ds-run-jump"' in h
-        assert "dsNavRun(-10)" in h and "dsNavRun(10)" in h
+        assert 'id="ds-run-jump"' not in h
+        assert "dsNavRun(-10)" not in h and "dsNavRun(10)" not in h
+        assert "dsNavRun(-1)" in h and "dsNavRun(1)" in h   # single-step stays
+        bar = _read("quam_state_manager/web/templates/_dataset_prev_diff.html")
+        assert "prevdiff-vs-input" in bar
+        assert "prevDiffJump" in bar
+        assert "older10" in bar and "newer10" in bar
         js = _read("quam_state_manager/web/static/app.js")
-        assert "window.dsJumpRun" in js
-        # big steps clamp to the list ends instead of the single-step fallback
-        assert "Math.abs(dir) > 1" in js
+        assert "window.prevDiffJump" in js
+        assert "window.dsJumpRun" not in js
 
 
 class TestPillDismiss:

@@ -8583,9 +8583,17 @@ html.topbar-hidden .chrome-reveal { display: block; }
 .float-wiring.fw-collapsed { height: auto !important; min-height: 0; resize: none; }
 .float-wiring.fw-collapsed .fw-body { display: none; }
 
-/* docs/126 ⑥ — the run-number jump box between the nav arrows */
-.inspector-run-jump { width: 3.6em; margin: 0; padding: .05rem .3rem; height: auto;
-    font-size: .8em; text-align: center; border-radius: 6px; }
+/* docs/126 r3 — the run-number box + ±10 skips live on the Prev State
+   comparison bar (the request's real home; the header copy was removed). */
+.prevdiff-vs-pick { display: inline-flex; align-items: baseline; gap: 0.05em; }
+/* two-class selector on purpose: Pico's `input:not([type=checkbox],...)`
+   carries (0,1,1) and beats a lone class — the box rendered 213px wide. */
+.prevdiff-stepper .prevdiff-vs-input { width: 3.9em; margin: 0;
+    padding: .05rem .3rem; height: auto;
+    font-size: .95em; font-weight: 700; text-align: center; border-radius: 6px;
+    display: inline-block; }
+.prevdiff-skip { font-size: 1.05em; }
+.prevdiff-note { font-size: .74rem; margin: .15rem 0 0; }
 .bulk-chip-offer-yes, .bulk-chip-offer-no { margin: 0; width: auto;
     padding: 0.02rem 0.4rem; border-radius: 0.25rem; font-size: 0.72rem;
     border: 1px solid var(--color-warning-border, var(--pico-muted-border-color));
