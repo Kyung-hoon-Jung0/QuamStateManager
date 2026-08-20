@@ -1402,7 +1402,7 @@ class TestSidebarFeatures:
         # round 4: rotation is rAF-DRIVEN (immune to frozen CSS animations)
         # and the shape is the half-filled disc, whose sweep reads as motion
         assert "requestAnimationFrame" in jblock
-        assert "25D0" in jblock                     # the half-filled disc
+        assert "◐" in jblock                  # the half-filled disc
         assert "cancelAnimationFrame" in jblock     # and it is always released
 
     def test_sidebar_tree_polling(self, loaded_client):
