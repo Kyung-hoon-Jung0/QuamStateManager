@@ -28,6 +28,13 @@
   names big), feedline sub-circles keep 7px, every label fits its circle,
   and the iw-port drag-drop DOM contract survives.
 
+- tests/instrument_digital_selfcheck.cjs — the DIG sub-column (docs/126
+  follow-up): digital trigger ports render per FEM (8 physical slots, slate
+  role color, shared-port multi-circles), never merge into the analog
+  columns, the hover popup shows marker/line/delay, and a chip with no
+  digital wiring keeps the pre-digital layout byte-identically (svg width
+  pinned 208 vs 274).
+
 Skips without node + jsdom.
 """
 import shutil
@@ -63,6 +70,11 @@ def test_generate_dragghost_selfcheck_passes():
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")
 def test_wiring_portlabel_selfcheck_passes():
     _run("wiring_portlabel_selfcheck.cjs")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")
+def test_instrument_digital_selfcheck_passes():
+    _run("instrument_digital_selfcheck.cjs")
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")

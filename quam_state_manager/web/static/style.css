@@ -226,6 +226,7 @@
     --role-twpa-pump-color: #e74c3c;   /* TWPA pump           — red      */
     --role-twpa-ro-color:   #a93226;   /* TWPA readout        — dark red */
     --role-twpa-in-color:   #d63384;   /* TWPA input          — magenta  */
+    --role-digital-color:   #54617a;   /* Digital output / trigger — slate */
 
     /* ── TRENDS — CHART CONTAINERS ───────────────────────────────── */
     /* ⚠ Both values must stay in sync with UI_CONFIG in app.js       */
@@ -2922,6 +2923,7 @@ input.edit-input {
 .role-badge.twpa_pump { background: var(--role-twpa-pump-color); color: #fff; }
 .role-badge.twpa_ro   { background: var(--role-twpa-ro-color); color: #fff; }
 .role-badge.twpa_in   { background: var(--role-twpa-in-color); color: #fff; }
+.role-badge.digital   { background: var(--role-digital-color); color: #fff; }
 .port-popup-body {
     display: grid; grid-template-columns: auto 1fr;
     gap: 0.08rem 0.55rem;

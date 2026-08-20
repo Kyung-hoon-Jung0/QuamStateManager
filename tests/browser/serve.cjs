@@ -25,8 +25,11 @@ const PORT = arg('port', '8811');
 const TAG = arg('tag', 'run');
 const REPO = path.join(__dirname, '..', '..');
 const PY = 'D:\\miniconda3\\envs\\cqt\\python.exe';
-const CHIP = 'D:\\work\\Customer_Codes\\CQT\\CS_installations\\qualibration_graphs'
-           + '\\superconducting\\quam_state';
+// --chip overrides the default real-chip folder (a verification may need a
+// specific snapshot generation, e.g. the shared-trigger-port one).
+const CHIP = arg('chip',
+  'D:\\work\\Customer_Codes\\CQT\\CS_installations\\qualibration_graphs'
+  + '\\superconducting\\quam_state');
 
 // REFUSE to start on a port something else already holds. Without this the
 // readiness probe below is satisfied by the STALE server — it GETs "/" on the
@@ -68,8 +71,15 @@ fs.mkdirSync(inst, { recursive: true });
 const code = [
   'import sys, threading, time, urllib.request, urllib.parse',
   'sys.path.insert(0, r"' + REPO + '")',
-  'import quam_state_manager',
-  'assert "statemanager-cfb" in quam_state_manager.__file__, quam_state_manager.__file__',
+  // The assert exists to prove the served code is THIS repo's — a stale
+  // import from another checkout would silently verify the wrong build. It
+  // used to hardcode one worktree's name, which broke the harness from any
+  // other checkout; anchoring on the repo the script itself lives in is the
+  // actual invariant.
+  'import os, quam_state_manager',
+  '_repo = os.path.normcase(os.path.normpath(r"' + REPO + '"))',
+  '_mod = os.path.normcase(os.path.normpath(quam_state_manager.__file__))',
+  'assert _mod.startswith(_repo + os.sep), quam_state_manager.__file__',
   'from quam_state_manager.web.app import create_app',
   'app = create_app(instance_path=r"' + inst + '")',
   'def _load():',

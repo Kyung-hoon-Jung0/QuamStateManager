@@ -494,3 +494,13 @@ gone; every toast has a ✕; the hamburger cycles sidebar → topbar → floatin
 preview), the customer's Gaussian-CZ macro script is one Pulses-page button,
 and a bare digital-marker `Pulse` (QDAC trigger) is recognized instead of
 "Unrecognized".
+
+**Digital triggers on Instrument Wiring** (post-release addition, 2026-08-20).
+The rack diagram now collects and draws digital output ports: a DIG sub-column
+per FEM (8 physical slots) with the QDAC trigger lines — read from both the
+state channel (`…digital_outputs.<marker>.opx_output`, two-hop pointers
+followed) and the wiring-level `qt.digital_output`, deduplicated to one entry
+per physical line — shared ports show every qubit on them, the hover popup
+shows marker/channel/delay/buffer/shareable/inverted, and a chip with no
+digital wiring renders byte-identically to before. Same drawing in the
+floating wiring panel and the drag-drop preview.

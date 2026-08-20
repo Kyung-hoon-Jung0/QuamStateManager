@@ -152,6 +152,7 @@ var UI_CONFIG = {
         twpa_pump: '#e74c3c',   /* TWPA pump           — red      */
         twpa_ro:   '#a93226',   /* TWPA readout        — dark red */
         twpa_in:   '#d63384',   /* TWPA input          — magenta  */
+        digital:   '#54617a',   /* Digital output / trigger — slate */
         fallback:  '#999999',   /* any unrecognised role — gray   */
     },
 
@@ -7907,9 +7908,10 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
 
     var roleColors = UI_CONFIG.roleColors;
 
-    // Each FEM: output sub-column (left) + input sub-column (right)
-    var outSubW = 82, inSubW = 66, femGap = 16;
-    var femW = outSubW + inSubW;
+    // Each FEM: output sub-column (left) + input sub-column (right), plus a
+    // DIG sub-column when the chip wires any digital output (QDAC triggers,
+    // readout markers) — femW is per-controller, computed below.
+    var outSubW = 82, inSubW = 66, digSubW = 66, femGap = 16;
     var rowH = 56, circleR = 21;
     var marginLeft = 40, marginTop = 58, marginBottom = 40;
 
@@ -7942,9 +7944,29 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
         var femIds = Object.keys(fems).sort(function(a, b) { return parseInt(a) - parseInt(b); });
         if (!femIds.length) return;
 
+        // DIG sub-column: only when this controller wires >=1 digital output.
+        // A chip with none renders byte-identically to the pre-digital layout.
+        var hasDigital = femIds.some(function(fid) {
+            return Object.keys(fems[fid].digital_ports || {}).length > 0;
+        });
+        var maxDig = 0;
+        if (hasDigital) {
+            femIds.forEach(function(fid) {
+                Object.keys(fems[fid].digital_ports || {}).forEach(function(p) {
+                    var n = parseInt(p);
+                    if (isFinite(n)) maxDig = Math.max(maxDig, n);
+                });
+            });
+        }
+        var femW = outSubW + inSubW + (hasDigital ? digSubW : 0);
+        // Both FEM flavors physically carry 8 digital outputs (QM FEM guide),
+        // so a visible DIG column shows all 8 slots — grid rows grow to fit.
+        var nDig = hasDigital ? Math.max(8, maxDig) : 0;
+        var rows = Math.max(maxOutPort, nDig);
+
         var totalFemW = femIds.length * femW + Math.max(0, femIds.length - 1) * femGap;
         var svgW = marginLeft + totalFemW + 20;
-        var svgH = marginTop + maxOutPort * rowH + marginBottom;
+        var svgH = marginTop + rows * rowH + marginBottom;
 
         var svg = _svgEl('svg');
         svg.setAttribute('width', svgW);
@@ -7960,13 +7982,13 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
         var bg = _svgEl('rect');
         _svgAttrs(bg, {
             x: marginLeft, y: marginTop - 16,
-            width: totalFemW, height: maxOutPort * rowH + 16,
+            width: totalFemW, height: rows * rowH + 16,
             fill: iw.gridBg, stroke: iw.gridBorder, rx: 4
         });
         svg.appendChild(bg);
 
         // Row number labels on the left margin
-        for (var rn = 1; rn <= maxOutPort; rn++) {
+        for (var rn = 1; rn <= rows; rn++) {
             svg.appendChild(_svgText(
                 marginLeft - 6, marginTop + (rn - 1) * rowH + rowH / 2 + 4,
                 rn, 10, '400', iw.rowLabelColor, 'end'
@@ -7981,13 +8003,14 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
             var femX  = marginLeft + colIdx * (femW + femGap);
             var outCx = femX + outSubW / 2;
             var inCx  = femX + outSubW + inSubW / 2;
+            var digCx = femX + outSubW + inSubW + digSubW / 2;
 
             // Solid separator between FEMs
             if (colIdx > 0) {
                 var sep = _svgEl('line');
                 _svgAttrs(sep, {
                     x1: femX - femGap / 2, y1: marginTop - 16,
-                    x2: femX - femGap / 2, y2: marginTop - 16 + maxOutPort * rowH + 16,
+                    x2: femX - femGap / 2, y2: marginTop - 16 + rows * rowH + 16,
                     stroke: iw.separatorColor, 'stroke-width': 2
                 });
                 svg.appendChild(sep);
@@ -7997,7 +8020,7 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
             var subSep = _svgEl('line');
             _svgAttrs(subSep, {
                 x1: femX + outSubW, y1: marginTop - 16,
-                x2: femX + outSubW, y2: marginTop - 16 + maxOutPort * rowH + 16,
+                x2: femX + outSubW, y2: marginTop - 16 + rows * rowH + 16,
                 stroke: iw.subSeparatorColor, 'stroke-width': 1, 'stroke-dasharray': '4,4'
             });
             svg.appendChild(subSep);
@@ -8006,6 +8029,18 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
             svg.appendChild(_svgText(outCx, marginTop - 4, 'OUT', 8, '700', iw.subLabelColor, 'middle'));
             svg.appendChild(_svgText(inCx,  marginTop - 4, 'IN',  8, '700', iw.subLabelColor, 'middle'));
 
+            if (hasDigital) {
+                // Dashed separator between IN and DIG + the DIG header
+                var digSep = _svgEl('line');
+                _svgAttrs(digSep, {
+                    x1: femX + outSubW + inSubW, y1: marginTop - 16,
+                    x2: femX + outSubW + inSubW, y2: marginTop - 16 + rows * rowH + 16,
+                    stroke: iw.subSeparatorColor, 'stroke-width': 1, 'stroke-dasharray': '4,4'
+                });
+                svg.appendChild(digSep);
+                svg.appendChild(_svgText(digCx, marginTop - 4, 'DIG', 8, '700', iw.subLabelColor, 'middle'));
+            }
+
             // FEM label at bottom
             svg.appendChild(_svgText(
                 femX + femW / 2, svgH - 8,
@@ -8013,10 +8048,26 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
             ));
 
             // Output port rows
-            for (var portNum = 1; portNum <= maxOutPort; portNum++) {
+            for (var portNum = 1; portNum <= rows; portNum++) {
                 var py = marginTop + (portNum - 1) * rowH + rowH / 2;
                 _renderPortCell(svg, outCx, py, circleR, roleColors, outPorts[String(portNum)] || [], rawWiring,
                                 {con: ctrlName, slot: femId, port: portNum, io: 'output'}, editable, onPortHover);
+            }
+
+            // Digital output rows (all 8 physical slots; smaller circles)
+            if (hasDigital) {
+                var digPorts = femData.digital_ports || {};
+                for (var dn = 1; dn <= rows; dn++) {
+                    var dpy = marginTop + (dn - 1) * rowH + rowH / 2;
+                    if (dn <= nDig) {
+                        _renderPortCell(svg, digCx, dpy, 13, roleColors, digPorts[String(dn)] || [], rawWiring,
+                                        {con: ctrlName, slot: femId, port: dn, io: 'digital'}, editable, onPortHover);
+                    } else {
+                        var ddot = _svgEl('circle');
+                        _svgAttrs(ddot, {cx: digCx, cy: dpy, r: 5, fill: iw.emptyPortFill, stroke: iw.emptyPortStroke, 'stroke-width': 1});
+                        svg.appendChild(ddot);
+                    }
+                }
             }
 
             // Physical input port positions depend on FEM type:
@@ -8025,13 +8076,13 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
             var inputRowMap = {};  // display_row → input_port_number
             if (femData.type === 'mw-fem') {
                 inputRowMap[1] = 1;
-                inputRowMap[maxOutPort] = 2;
+                inputRowMap[rows] = 2;
             } else {
-                inputRowMap[maxOutPort - 1] = 1;
-                inputRowMap[maxOutPort] = 2;
+                inputRowMap[rows - 1] = 1;
+                inputRowMap[rows] = 2;
             }
             var inR = Math.round(circleR * 0.82);
-            for (var pn = 1; pn <= maxOutPort; pn++) {
+            for (var pn = 1; pn <= rows; pn++) {
                 var ipy = marginTop + (pn - 1) * rowH + rowH / 2;
                 var portNumAtRow = inputRowMap[pn];
                 if (portNumAtRow !== undefined) {
@@ -8314,6 +8365,14 @@ function _getPopupFields(a) {
     ];
     if (r === 'twpa_in') return [
         {key: 'RO freq',    value: _fmtVal(a.rf_frequency, 'GHz')},
+    ];
+    if (r === 'digital') return [
+        {key: 'marker',     value: a.marker},
+        {key: 'line',       value: a.source || null},
+        {key: 'delay',      value: _fmtVal(a.delay, 'ns')},
+        {key: 'buffer',     value: _fmtVal(a.buffer, 'ns')},
+        {key: 'shareable',  value: a.shareable == null ? null : String(a.shareable)},
+        {key: 'inverted',   value: a.inverted == null ? null : String(a.inverted)},
     ];
     return [];
 }
