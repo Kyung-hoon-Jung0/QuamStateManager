@@ -767,3 +767,53 @@ sidebar — so it now refreshes only the staleness bookkeeping, and the
 Refresh POST serves the memoized HTML. End-to-end through the real route:
 **3.5–4 s → 0.72–0.84 s** on the 2,655-run archive (the remainder is the
 0.45 s scan + HTTP).
+
+## #22 Digital trigger ports on Instrument Wiring (customer question, 2026-08-20)
+
+The customer asked whether Instrument Wiring shows their digital triggers. It
+did not — and could not: `get_instrument_wiring` collected only the analog
+channel roles (xy / rr / rr_in / z / coupler / cr / twpa), so the 11 QDAC
+trigger lines their chip really wires (`wiring.qubits.<q>.qt.digital_output`
+→ `#/ports/digital_outputs/con1/4|5/…`, referenced from the state channel
+`z.opx_trigger_out.digital_outputs.trigger`) appeared on no rack drawing and
+in no honesty counter (`refs_seen` never even saw them).
+
+**Collection** (`core/query.py`): two carrier shapes, one connection.
+① A depth-limited scan of every entity's state subtree for non-empty
+`digital_outputs` maps (quam's Channel base field — QDAC triggers, readout
+markers, any lab's digital line), following ABSOLUTE pointer chains hop by
+hop until `#/ports/…` (`_follow_port_ref`; the real chip's refs are two-hop
+`#/wiring/…` → `#/ports/…`), carrying the DigitalOutputChannel metadata
+(marker, carrying channel, delay, buffer, shareable, inverted).
+② The wiring-level `qt.digital_output` line (docs/119) as a fallback for a
+chip whose state channel degraded away. ② is skipped when ① already placed
+the same (element, port) — every real QDAC chip has both, and double-listing
+one physical line would misread as two triggers. Digital assignments land in
+their own `digital_ports` bucket per FEM because digital port numbers OVERLAP
+the analog ones (both count 1..8): a shared bucket would fold digital port 1
+into analog output 1. A FEM seen only through digital refs is typed the
+honest `"fem"` — LF vs MW is unknowable from a digital ref alone. Relative
+or dead-end refs count seen-not-placed, never crash, never invent a cell.
+
+**Rendering** (`app.js renderInstrumentWiring`): a controller with ≥1 digital
+assignment grows a third DIG sub-column per FEM (all 8 physical slots — both
+FEM flavors carry 8 digital outputs, per the QM FEM guide), smaller circles
+in a new slate `digital` role color, shared ports through the existing
+multi-circle cell (the customer's older snapshot shares one port across
+three qubits — q1/q9/q17 on con1/4/1, `shareable: true`). The hover popup
+shows marker / carrying channel / delay / buffer / shareable / inverted.
+A chip with no digital wiring renders **byte-identically** to the
+pre-digital layout (svg width pinned 208 vs 274 in the selfcheck) — the
+gate reads exactly the additive `digital_ports: {}` payload shape. The
+floating wiring panel and the drag-drop preview ride the same builder +
+renderer and got the column for free.
+
+Verified: 14 unit tests (`tests/test_instrument_digital.py`, incl. a
+skip-gated real-chip test asserting all 11 triggers place with refs_seen ==
+refs_placed), 19-assertion jsdom selfcheck
+(`tests/instrument_digital_selfcheck.cjs`), and a real-Chrome probe against
+a private copy of the customer's shared-port snapshot: DIG columns on all 8
+FEMs, 64 digital cells, q1/q9/q17 on one port, DIGITAL popup with the slate
+badge, floating panel identical, zero console errors. `serve.cjs` also lost
+its hardcoded worktree-name assert (it now anchors on the repo it lives in)
+and gained `--chip`, which is what made the probe runnable from any checkout.

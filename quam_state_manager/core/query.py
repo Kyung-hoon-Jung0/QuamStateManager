@@ -935,19 +935,104 @@ class QueryEngine:
                     "rf_frequency": _resolve(self.store, spec_state.get("f_01"), ("twpas", twpa_name, "spectroscopy", "f_01")),
                 })
 
+        # ── Digital outputs (docs/126 follow-up: "does the diagram show the
+        # trigger lines?") ─ two shapes carry them, describing the SAME
+        # physical connection when both are present:
+        #   ① any channel dict in state with a non-empty ``digital_outputs``
+        #     map (quam's Channel base field — the QDAC trigger lives at
+        #     z.opx_trigger_out.digital_outputs.trigger; a readout marker
+        #     would live at resonator.digital_outputs.<name>). Its opx_output
+        #     is usually a TWO-hop pointer:
+        #     #/wiring/qubits/q1/qt/digital_output → #/ports/digital_outputs/…
+        #   ② the wiring-level ``qt.digital_output`` line docs/119 writes —
+        #     kept as a fallback so a chip whose state channel degraded away
+        #     still shows the trigger the wiring claims.
+        # ② is skipped when ① already placed the same (element, port).
+        placed_digital: set[tuple[str, tuple]] = set()
+
+        def add_digital(element: str, marker: str, source: str, ref: str,
+                        ch_entry: dict) -> None:
+            final = _follow_port_ref(root, ref) or ref
+            parsed = _parse_port_ref(final)
+            if parsed is not None and (element, parsed) in placed_digital:
+                return
+            add_assignment(final, "digital", element, {
+                "label": f"{element}.{marker}",
+                "marker": marker,
+                "source": source,
+                "delay": ch_entry.get("delay"),
+                "buffer": ch_entry.get("buffer"),
+                "shareable": ch_entry.get("shareable"),
+                "inverted": ch_entry.get("inverted"),
+            })
+            if parsed is not None:
+                placed_digital.add((element, parsed))
+
+        def scan_digital(element: str, node: Any, path: str, depth: int = 0) -> None:
+            # Depth-limited walk of an entity's state subtree for channels
+            # carrying digital_outputs. ``operations`` subtrees are skipped —
+            # pulses carry ``digital_marker`` (a pulse property), never a port.
+            if depth > 6 or not isinstance(node, dict):
+                return
+            douts = node.get("digital_outputs")
+            if isinstance(douts, dict):
+                for marker, entry in douts.items():
+                    if not isinstance(entry, dict):
+                        continue
+                    ref = entry.get("opx_output")
+                    if isinstance(ref, str) and ref:
+                        add_digital(element, str(marker), path, ref, entry)
+            for k, v in node.items():
+                if k in ("operations", "digital_outputs") or not isinstance(v, dict):
+                    continue
+                scan_digital(element, v, f"{path}.{k}" if path else str(k), depth + 1)
+
+        for coll in ("qubits", "qubit_pairs", "twpas"):
+            for ename, edict in (root.get(coll) or {}).items():
+                if isinstance(edict, dict):
+                    scan_digital(ename, edict, "")
+
+        for qname, qw in wiring_qubits.items():
+            qt_ref = _get_nested(qw, "qt", "digital_output")
+            if isinstance(qt_ref, str) and qt_ref:
+                parsed = _parse_port_ref(qt_ref)
+                if parsed is not None and (qname, parsed) in placed_digital:
+                    continue
+                add_assignment(qt_ref, "digital", qname, {
+                    "label": f"{qname}.trigger",
+                    "marker": "trigger",
+                    "source": "qt",
+                    "delay": None,
+                    "buffer": None,
+                    "shareable": None,
+                    "inverted": None,
+                })
+                if parsed is not None:
+                    placed_digital.add((qname, parsed))
+
         # Group into controller → FEM structure, separating output and input ports
         controllers: dict[str, Any] = {}
         for (ctrl, fem, port, port_type), assignments in port_assignments.items():
             if ctrl not in controllers:
                 controllers[ctrl] = {}
             if fem not in controllers[ctrl]:
-                fem_type = "mw-fem" if "mw" in port_type else "lf-fem"
-                controllers[ctrl][fem] = {"type": fem_type, "output_ports": {}, "input_ports": {}}
+                controllers[ctrl][fem] = {"type": None, "output_ports": {},
+                                          "input_ports": {}, "digital_ports": {}}
+            fem_entry = controllers[ctrl][fem]
+            if "digital" in port_type:
+                # Digital port numbers overlap the analog ones (both count
+                # 1..8 on a FEM) — a shared bucket would merge digital port 1
+                # into analog output 1, so they get their own.
+                fem_entry["digital_ports"][port] = assignments
+                continue
+            # Only an analog port can name the FEM flavor; a digital-only FEM
+            # stays the honest "fem" (resolved at assembly below).
+            fem_entry["type"] = "mw-fem" if "mw" in port_type else "lf-fem"
             is_input = "input" in port_type
             if is_input:
-                controllers[ctrl][fem]["input_ports"][port] = assignments
+                fem_entry["input_ports"][port] = assignments
             else:
-                controllers[ctrl][fem]["output_ports"][port] = assignments
+                fem_entry["output_ports"][port] = assignments
 
         # Numeric-first, then lexical: a single odd/legacy FEM or port id (e.g. a
         # non-digit string from a hand-edited wiring) must not raise int() and blank
@@ -959,20 +1044,27 @@ class QueryEngine:
         result = {}
         for ctrl, fems in controllers.items():
             max_output_port = 0
+            max_digital_port = 0
             sorted_fems = {}
             for fem_id in sorted(fems.keys(), key=_id_key):
                 fem_data = fems[fem_id]
                 out_ports = fem_data["output_ports"]
                 in_ports = fem_data["input_ports"]
+                dig_ports = fem_data["digital_ports"]
                 for p in out_ports:
                     if str(p).isdigit():
                         max_output_port = max(max_output_port, int(p))
+                for p in dig_ports:
+                    if str(p).isdigit():
+                        max_digital_port = max(max_digital_port, int(p))
                 sorted_fems[fem_id] = {
-                    "type": fem_data["type"],
+                    "type": fem_data["type"] or "fem",
                     "output_ports": {p: out_ports[p] for p in sorted(out_ports.keys(), key=_id_key)},
                     "input_ports": {p: in_ports[p] for p in sorted(in_ports.keys(), key=_id_key)},
+                    "digital_ports": {p: dig_ports[p] for p in sorted(dig_ports.keys(), key=_id_key)},
                 }
-            result[ctrl] = {"fems": sorted_fems, "max_output_port": max_output_port}
+            result[ctrl] = {"fems": sorted_fems, "max_output_port": max_output_port,
+                            "max_digital_port": max_digital_port}
 
         # Octave RF path uses opx_output_I/Q + frequency_converter_up rather than a
         # single opx_output, which we don't collect — detect it so the UI can say the
@@ -1322,6 +1414,31 @@ def _parse_port_ref(ref_str: str) -> tuple[str, str, str, str] | None:
         parts = ref_str.split("/")
         if len(parts) >= 3:
             return "analog_outputs", "con1", parts[1], parts[2]
+    return None
+
+
+def _follow_port_ref(root: dict, ref_str: str, max_hops: int = 4) -> str | None:
+    """Follow ABSOLUTE pointer hops until the ref lands under ``#/ports/``.
+
+    A channel-level digital ref is usually two-hop —
+    ``#/wiring/qubits/q1/qt/digital_output`` → ``#/ports/digital_outputs/con1/4/1``
+    — and ``_parse_port_ref`` only reads the final ``#/ports/...`` spelling.
+    Returns that final string, or None when the chain dead-ends, is relative
+    (``#../``/``#./`` — no anchor to walk from here), or loops past max_hops.
+    """
+    cur: Any = ref_str
+    for _ in range(max_hops):
+        if not isinstance(cur, str) or not cur.startswith("#/"):
+            return None
+        if cur.startswith("#/ports/"):
+            return cur
+        obj: Any = root
+        try:
+            for seg in cur[2:].split("/"):
+                obj = obj[seg]
+        except (KeyError, TypeError, IndexError):
+            return None
+        cur = obj
     return None
 
 
