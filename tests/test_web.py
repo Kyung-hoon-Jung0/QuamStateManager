@@ -1395,10 +1395,15 @@ class TestSidebarFeatures:
         j = css.index(".btn-workspace-refresh.ws-done::after")
         assert '"✓"' in css[j:j + 200] or "✓" in css[j:j + 200]
         js = (static / "app.js").read_text(encoding="utf-8")
-        k = js.index("btn-workspace-refresh")
-        jblock = js[k - 200:k + 1600]
+        k = js.index("function _wsSpin")
+        jblock = js[k:k + 2600]
         assert "700" in jblock                      # the minimum visible window
         assert "ws-done" in jblock
+        # round 4: rotation is rAF-DRIVEN (immune to frozen CSS animations)
+        # and the shape is the half-filled disc, whose sweep reads as motion
+        assert "requestAnimationFrame" in jblock
+        assert "25D0" in jblock                     # the half-filled disc
+        assert "cancelAnimationFrame" in jblock     # and it is always released
 
     def test_sidebar_tree_polling(self, loaded_client):
         html = loaded_client.get("/qubits").data.decode()

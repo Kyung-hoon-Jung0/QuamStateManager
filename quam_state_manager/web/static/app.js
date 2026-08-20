@@ -7738,18 +7738,42 @@ window.syncSidebarNavActive = function() {
  * a spin that lasts at least 700 ms (or the real request, whichever is
  * longer), then flashes a ✓ for a second. A press is now always seen. */
 (function () {
+    /* Round 4 (user: the ring still does not READ as moving): rotation is now
+       driven by rAF in JS — immune to any environment that freezes CSS
+       animations — and the rotating shape is a HALF-FILLED disc, whose sweep
+       is unmistakable at any size (a quadrant ring at 13px was not). */
+    function _wsSpin(b, on) {
+        var ico = b.querySelector('.ws-refresh-ico');
+        if (!ico) return;
+        if (on) {
+            if (b._wsRaf) return;
+            ico.textContent = '◐';                 // the half-filled disc
+            var step = function (ts) {
+                ico.style.transform = 'rotate(' + ((ts / 2) % 360) + 'deg)';
+                b._wsRaf = requestAnimationFrame(step);
+            };
+            b._wsRaf = requestAnimationFrame(step);
+        } else {
+            if (b._wsRaf) cancelAnimationFrame(b._wsRaf);
+            b._wsRaf = null;
+            ico.style.transform = '';
+            ico.textContent = '↻';                 // the resting glyph
+        }
+    }
     document.addEventListener('click', function (e) {
         var b = e.target && e.target.closest && e.target.closest('.btn-workspace-refresh');
         if (!b) return;
         b.classList.remove('ws-done');
         b.classList.add('ws-kick');
         b._wsT0 = Date.now();
+        _wsSpin(b, true);
     });
     document.addEventListener('htmx:afterRequest', function (evt) {
         var b = evt.detail && evt.detail.elt;
         if (!b || !b.classList || !b.classList.contains('btn-workspace-refresh')) return;
         var wait = Math.max(0, 700 - (Date.now() - (b._wsT0 || 0)));
         setTimeout(function () {
+            _wsSpin(b, false);
             b.classList.remove('ws-kick');
             b.classList.add('ws-done');
             setTimeout(function () { b.classList.remove('ws-done'); }, 1100);

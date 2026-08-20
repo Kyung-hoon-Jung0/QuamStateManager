@@ -716,3 +716,12 @@ the fallback was a faint pulse. The in-flight state now hides the glyph and
 draws a REAL ring spinner (one lit quadrant orbiting a 13px ring) — kept
 under reduced motion too, just slower, because a spinner that exists but
 cannot be seen is the exact bug being fixed. CSS-only change.
+
+**Round 4 (user: the ring still doesn't READ as moving)**: rotation is now
+driven by requestAnimationFrame in JS — immune to any environment that
+freezes CSS animations — and the rotating shape is **◐, a half-filled
+disc**, whose sweeping fill is unmistakable motion at any size (a 13px
+quadrant ring was not). The glyph and transform restore before the ✓; the
+CSS ring survives only as the no-JS `.htmx-request:not(.ws-kick)` fallback.
+Probe measures the angle ADVANCING between real frames (5°→106° over
+200 ms).

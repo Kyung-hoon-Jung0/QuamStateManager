@@ -11030,10 +11030,14 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
    exact bug being fixed; it just turns slower there. */
 .btn-workspace-refresh.htmx-request, .btn-workspace-refresh.ws-kick {
     pointer-events: none; }
-.btn-workspace-refresh.htmx-request .ws-refresh-ico,
-.btn-workspace-refresh.ws-kick .ws-refresh-ico { visibility: hidden; }
-.btn-workspace-refresh.htmx-request::after,
-.btn-workspace-refresh.ws-kick::after {
+/* Round 4: while pressed, JS swaps the glyph for a half-filled disc and
+   rotates it with rAF (see app.js) — the CSS here only colors it. The ring
+   ::after survives ONLY for .htmx-request WITHOUT .ws-kick, the no-JS
+   fallback path. */
+.btn-workspace-refresh.ws-kick .ws-refresh-ico {
+    color: var(--pico-primary); font-size: 1.05em; }
+.btn-workspace-refresh.htmx-request:not(.ws-kick) .ws-refresh-ico { visibility: hidden; }
+.btn-workspace-refresh.htmx-request:not(.ws-kick)::after {
     content: ""; position: absolute; inset: 0; margin: auto;
     width: 13px; height: 13px; border-radius: 50%;
     border: 2px solid color-mix(in srgb, var(--pico-primary) 28%, transparent);
@@ -11046,7 +11050,6 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
     inset: 0; display: flex; align-items: center; justify-content: center;
     font-weight: 700; }
 @media (prefers-reduced-motion: reduce) {
-    .btn-workspace-refresh.htmx-request::after,
-    .btn-workspace-refresh.ws-kick::after {
+    .btn-workspace-refresh.htmx-request:not(.ws-kick)::after {
         animation-duration: 1.4s; }
 }
