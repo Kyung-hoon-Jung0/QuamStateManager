@@ -759,3 +759,11 @@ measured on `D:\work\Customer_Codes\CQT\data`:
 
 Steady-state refresh measured 441-449 ms (was 3.7 s); the remaining cost is
 pure pathlib bookkeeping, not I/O.
+
+**No-op rescans keep their version**: a rescan that changed nothing returns
+the very same entry objects, and publishing that as a new version would
+invalidate the tree-HTML memo and make every poller refetch a byte-identical
+sidebar — so it now refreshes only the staleness bookkeeping, and the
+Refresh POST serves the memoized HTML. End-to-end through the real route:
+**3.5–4 s → 0.72–0.84 s** on the 2,655-run archive (the remainder is the
+0.45 s scan + HTTP).

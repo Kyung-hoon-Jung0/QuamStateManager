@@ -366,9 +366,23 @@ class Workspace:
                 e.qs_resolved = e.quam_state_path.resolve()
             return e.qs_resolved
 
+        # An incremental rescan that changed NOTHING returns the very same
+        # entry objects in the same order. Publishing it as a new version
+        # would invalidate the tree HTML memo and make every poller refetch
+        # a byte-identical sidebar — so a no-op rescan refreshes only the
+        # staleness bookkeeping (docs/126 r3: this is what turns the
+        # Refresh round-trip from ~1.1 s into the ~0.45 s scan itself).
+        unchanged_scan = (len(entries) == len(old_entries)
+                          and all(a is b for a, b in zip(entries, old_entries)))
         with self._lock:
             if self._find_registered_root(registered) is None:
                 return entries                         # removed mid-scan — discard
+            if unchanged_scan and key in self.tree:
+                self._scan_spines[key] = spine
+                self._scan_probes[key] = probe
+                logger.info("Rescanned %s: unchanged (%d quam_state folders)",
+                            registered, len(entries))
+                return entries
             old_paths = set()
             for group in self.tree.get(key, []):
                 for e in group.entries:

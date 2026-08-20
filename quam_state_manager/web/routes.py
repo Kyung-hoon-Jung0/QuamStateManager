@@ -13644,8 +13644,19 @@ def workspace_refresh():
     tree = ws.tree if ws else {}
     if name_filter:
         tree = _filter_tree(tree, name_filter)
-    return render_template("_sidebar_tree.html",
-                           **_tree_render_ctx(tree, ws=ws if not name_filter else None))
+        return render_template("_sidebar_tree.html",
+                               **_tree_render_ctx(tree))
+    # docs/126 r3: a no-change rescan keeps the version, so the memoized
+    # unfiltered HTML is still valid — the Refresh round-trip pays only the
+    # scan itself, not a 450 KB re-render of an identical tree.
+    memo = _TREE_HTML_MEMO.get(ws) if ws else None
+    if memo and memo[0] == ws.version:
+        return memo[1]
+    html = render_template("_sidebar_tree.html",
+                           **_tree_render_ctx(tree, ws=ws))
+    if ws:
+        _TREE_HTML_MEMO[ws] = (ws.version, html)
+    return html
 
 
 @bp.route("/workspace/select", methods=["POST"])
