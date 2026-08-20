@@ -1382,9 +1382,14 @@ class TestSidebarFeatures:
         static = Path(quam_state_manager.__file__).parent / "web" / "static"
         css = (static / "style.css").read_text(encoding="utf-8")
         i = css.index(".btn-workspace-refresh.htmx-request")
-        block = css[i:i + 900]
+        block = css[i:i + 1400]
         assert "pointer-events: none" in block
         assert ".ws-kick" in block                 # press-armed, not just in-flight
+        # round 3: rotating the near-circular glyph is imperceptible — the
+        # in-flight state must swap it for a REAL ring spinner
+        assert "visibility: hidden" in block
+        assert "border-radius: 50%" in block
+        assert "border-top-color" in block
         assert "ws-refresh-spin" in css
         assert ".btn-workspace-refresh.ws-done" in css
         j = css.index(".btn-workspace-refresh.ws-done::after")

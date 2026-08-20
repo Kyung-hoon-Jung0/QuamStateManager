@@ -11021,11 +11021,24 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
    request if longer), then .ws-done flashes a ✓ — a press is ALWAYS seen. */
 .btn-workspace-refresh { position: relative; }
 .btn-workspace-refresh .ws-refresh-ico { display: inline-block; line-height: 1; }
+/* Round 3 (user: "체크표시가 뜰 때까지 아무런 표시가 없다"): rotating the ↻
+   GLYPH is imperceptible — it is nearly circular, so spinning it about its
+   own center moves only the tiny arrowhead. The in-flight state now swaps it
+   for a real ring spinner (one lit quadrant orbiting), unmistakable at 14px.
+   Deliberately kept under reduced motion too — the user explicitly asked for
+   continuous rotation, and a spinner that exists but cannot be seen is the
+   exact bug being fixed; it just turns slower there. */
 .btn-workspace-refresh.htmx-request, .btn-workspace-refresh.ws-kick {
-    color: var(--pico-primary); pointer-events: none; }
+    pointer-events: none; }
 .btn-workspace-refresh.htmx-request .ws-refresh-ico,
-.btn-workspace-refresh.ws-kick .ws-refresh-ico {
-    animation: ws-refresh-spin 0.7s linear infinite; }
+.btn-workspace-refresh.ws-kick .ws-refresh-ico { visibility: hidden; }
+.btn-workspace-refresh.htmx-request::after,
+.btn-workspace-refresh.ws-kick::after {
+    content: ""; position: absolute; inset: 0; margin: auto;
+    width: 13px; height: 13px; border-radius: 50%;
+    border: 2px solid color-mix(in srgb, var(--pico-primary) 28%, transparent);
+    border-top-color: var(--pico-primary);
+    animation: ws-refresh-spin 0.6s linear infinite; }
 @keyframes ws-refresh-spin { to { transform: rotate(360deg); } }
 .btn-workspace-refresh.ws-done { color: var(--color-success, #2e9e5b); }
 .btn-workspace-refresh.ws-done .ws-refresh-ico { visibility: hidden; }
@@ -11033,8 +11046,7 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
     inset: 0; display: flex; align-items: center; justify-content: center;
     font-weight: 700; }
 @media (prefers-reduced-motion: reduce) {
-    .btn-workspace-refresh.htmx-request .ws-refresh-ico,
-    .btn-workspace-refresh.ws-kick .ws-refresh-ico {
-        animation: ws-refresh-pulse 0.9s ease-in-out infinite; }
-    @keyframes ws-refresh-pulse { 50% { opacity: 0.35; } }
+    .btn-workspace-refresh.htmx-request::after,
+    .btn-workspace-refresh.ws-kick::after {
+        animation-duration: 1.4s; }
 }

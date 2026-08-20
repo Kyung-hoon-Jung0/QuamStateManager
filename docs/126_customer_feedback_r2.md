@@ -708,3 +708,11 @@ probe; the user's 69-run folder didn't. Now the PRESS arms the spin
 longer — and completion flashes a ✓ (`.ws-done`, 1.1 s). A press is always
 seen regardless of rescan speed. Probe updated to click on a fast path and
 assert the hold + the checkmark.
+
+**Round 3 (user: the ✓ appears but NOTHING moves until then)**: rotating the
+↻ glyph is imperceptible — the character is nearly circular, so spinning it
+about its own center moves only the tiny arrowhead; and under reduced motion
+the fallback was a faint pulse. The in-flight state now hides the glyph and
+draws a REAL ring spinner (one lit quadrant orbiting a 13px ring) — kept
+under reduced motion too, just slower, because a spinner that exists but
+cannot be seen is the exact bug being fixed. CSS-only change.
