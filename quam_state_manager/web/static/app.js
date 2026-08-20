@@ -3855,6 +3855,7 @@ window.PhysAmp = (function () {
 window.smModalOpen = function () {
     if (document.querySelector('dialog[open]')) return true;
     var sel = '.ch-overlay, #state-review-overlay, #live-drift-overlay,'
+            + ' #version-diff-overlay,'
             + ' #plot-apply-popup, #new-run-popup, #cmd-palette, #kb-cheatsheet,'
             + ' .modal';
     var els = document.querySelectorAll(sel);
@@ -16163,9 +16164,11 @@ window.ColumnHistory = (function () {
  *
  * This module is only the popover mechanics and the selection maths. Every
  * ACTION delegates to a surface that already exists and is already gated:
- * two ticks open the docs/84 diff workbench, three or more open the Compare
- * hub basket, and "Go back" posts the same restore-live route State History
- * uses, with both of its independent force gates intact.
+ * two ticks open the docs/84 diff workbench, three or more open the
+ * differences-only column table (/diff/versions, docs/128 — the Compare hub
+ * stays a link there for the hard cases), and "Go back" posts the same
+ * restore-live route State History uses, with both of its independent force
+ * gates intact.
  */
 window.StateVersions = (function () {
     function panel() { return document.getElementById('state-version-panel'); }
@@ -16178,7 +16181,7 @@ window.StateVersions = (function () {
     }
     function _clampToViewport(p) {
         // The panel is CSS-anchored left:0 under its topbar chip; a chip far
-        // enough right pushes the 46rem panel past the viewport edge (bug
+        // enough right pushes the 36rem panel past the viewport edge (bug
         // report: "the panel is cut off on the right"). Nudge it back in.
         p.style.left = '';
         var r = p.getBoundingClientRect();
@@ -16199,6 +16202,15 @@ window.StateVersions = (function () {
                 document.addEventListener('click', function away(e) {
                     if (p.hidden) { document.removeEventListener('click', away); return; }
                     if (p.contains(e.target) || (chip() && chip().contains(e.target))) return;
+                    // The per-row Diff overlay stacks ABOVE the list;
+                    // interacting with it must not dismiss the panel
+                    // underneath — closing the diff should land the user
+                    // back on the row they were judging. Deliberately OUR
+                    // overlay only: the sync-review / live-drift overlays
+                    // keep their pre-docs/128 behavior (a click there still
+                    // dismisses the panel, whose content their actions can
+                    // stale).
+                    if (e.target.closest && e.target.closest('#version-diff-overlay')) return;
                     close();
                     document.removeEventListener('click', away);
                 });
@@ -16275,7 +16287,7 @@ window.StateVersions = (function () {
             hint.textContent = n === 0 ? 'Tick two versions to see what changed.'
                 : n === 1 ? 'Tick one more.'
                 : n === 2 ? 'Opens the diff of these two.'
-                : 'Opens all ' + n + ' in the Compare hub.';
+                : 'Lists what differs across all ' + n + '.';
         }
     }
     function compare(chipKey) {
@@ -16290,9 +16302,15 @@ window.StateVersions = (function () {
                 + '&ts_b=' + encodeURIComponent(sel[1])
                 + (chipKey ? '&chip_key=' + encodeURIComponent(chipKey) : '');
         } else {
-            url = '/compare-hub?' + sel.map(function (ts) {
-                return 'src=' + encodeURIComponent('hist:' + chipKey + '/' + ts);
-            }).join('&');
+            // docs/128 (customer): 3+ used to open the Compare hub — a
+            // configuration surface. What the user wants at this button is
+            // the ANSWER: only the differing keys, one column per version,
+            // immediately. The hub stays a link on that page for the hard
+            // cases (entity mapping across devices).
+            url = '/diff/versions?' + sel.map(function (ts) {
+                return 'ts=' + encodeURIComponent(ts);
+            }).join('&')
+                + (chipKey ? '&chip_key=' + encodeURIComponent(chipKey) : '');
         }
         close();
         if (window.htmx) {
@@ -16302,8 +16320,53 @@ window.StateVersions = (function () {
             window.location.href = url;
         }
     }
+    /* ── the per-row Diff (docs/128) ─────────────────────────────────────
+       "What does this version hold against now?" used to cost tick-two +
+       Compare — a navigation. Each row's Diff opens THIS version vs the
+       current working state in the same overlay shell + Δ language the sync
+       review modal uses (docs/76/86), read-only, with none of its write
+       actions. The versions panel stays open underneath (the click-away
+       guard in toggle()), so closing the diff lands back on the row —
+       where the ↑ Pull to Live decision is now an informed one. */
+    function _diffOverlay() { return document.getElementById('version-diff-overlay'); }
+    // Monotonic request token — the docs/122 stale-response class: a slow
+    // cold-snapshot diff must never repaint over a newer row's (or a closed
+    // overlay's) content. Same pattern as _navSeq / the plothost gens.
+    var _diffGen = 0;
+    function closeDiff() {
+        _diffGen++;
+        var o = _diffOverlay(); if (!o) return;
+        o.style.display = 'none';
+        if (o._releaseTrap) { o._releaseTrap(); o._releaseTrap = null; }
+    }
+    function diff(ts, chipKey) {
+        var o = _diffOverlay();
+        var host = document.getElementById('version-diff-host');
+        if (!o || !host) return;
+        var gen = ++_diffGen;
+        host.innerHTML = '<p class="muted" style="padding:1.5rem">Comparing…</p>';
+        o.style.display = 'flex';
+        o._releaseTrap = window.trapFocus(o, closeDiff);
+        // chip_key rides along so a press racing a chip switch in another
+        // window gets the honest "open that chip first" refusal instead of
+        // an answer from the wrong chip's history (docs/120: two windows
+        // share one server context).
+        fetch('/state/versions/' + encodeURIComponent(ts) + '/diff'
+              + (chipKey ? '?chip_key=' + encodeURIComponent(chipKey) : ''))
+            .then(function (r) { return r.text(); })
+            .then(function (html) {
+                if (gen !== _diffGen) return;
+                host.innerHTML = html;
+                if (window.htmx) htmx.process(host);
+            })
+            .catch(function () {
+                if (gen !== _diffGen) return;
+                host.innerHTML = '<p class="muted" style="padding:1.5rem">'
+                    + 'Could not compute the diff.</p>';
+            });
+    }
     return { toggle: toggle, close: close, pick: pick, compare: compare,
-             more: more };
+             more: more, diff: diff, closeDiff: closeDiff };
 })();
 
 /* ── the top bar's REAL height (docs/120 item 23) ─────────────────────────

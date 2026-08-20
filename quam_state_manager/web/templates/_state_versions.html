@@ -7,8 +7,11 @@
 
    Everything here delegates to machinery that already exists and is already
    gated; this surface exists to make it reachable in one click from any page:
+     - Diff        -> /state/versions/<ts>/diff, this version vs NOW in the
+                      review-overlay shell (docs/128) — read-only
      - 2 selected  -> /diff/snapshots, the docs/84 workbench front door
-     - 3+ selected -> the Compare hub basket (hist: ref tokens)
+     - 3+ selected -> /diff/versions, differences-only columns (docs/128;
+                      the Compare hub stays a link there)
      - "Put live back" -> /state-history/<ts>/restore-live, WITH both of its
                       independent force gates intact (unsaved edits, wiring
                       topology). They are not weakened for being one click
@@ -94,6 +97,14 @@
                 {% if r.note %}<span class="sv-note muted">{{ r.note }}</span>{% endif %}
             </span>
             <span class="sv-row-actions">
+                {# Read-only preview FIRST (docs/128, customer): what this
+                   version holds against NOW, one click, nothing written —
+                   so the write button beside it is an informed act instead
+                   of a leap. Offered on every row, archives included
+                   (comparing is always safe where restoring is not). #}
+                <button type="button" class="btn-xs outline sv-diff"
+                        onclick="StateVersions.diff('{{ r.ts }}', '{{ chip_key }}')"
+                        title="Compare this version with the current working state — read-only, nothing is written.">Diff</button>
                 {% if not archive and not r.current %}
                 {# The same route State History uses, gates and all — but it
                    WRITES THE LIVE CHIP, and docs/86/97 established one visual

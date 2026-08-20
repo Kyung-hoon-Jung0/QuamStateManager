@@ -77,6 +77,7 @@ from quam_state_manager.core.experiment_data import ExperimentContext, load_expe
 from quam_state_manager.core.history import (
     DEFAULT_TRACKED_PROPERTIES,
     HistoryManager,
+    _HIST_TS_RE,
     chip_name_for,
 )
 from quam_state_manager.core.loader import QuamStore
@@ -8945,7 +8946,9 @@ def topology_trends_paths():
 #
 # Deliberately a thin, reachable surface over machinery that already exists:
 # the snapshots are State History's, the 2-way diff is the docs/84 workbench's
-# front door, an N-way pick is the Compare hub's basket, and applying is
+# front door, an N-way pick is the differences-only column table
+# (/diff/versions, docs/128 — the Compare hub stays its "Advanced" link), a
+# row's Diff is diff_current in the review-overlay shell, and applying is
 # /state-history/<ts>/restore-live WITH BOTH its independent force gates. The
 # value added is that it is one click from every page rather than a navigation.
 #
@@ -9080,6 +9083,68 @@ def state_versions_panel():
                            chip_key=chip_key, total=len(snaps),
                            cap=_STATE_VERSIONS_CAP, quick=quick,
                            archive=(ctx.get("origin") or "live") != "live")
+
+
+@bp.route("/state/versions/<timestamp>/diff")
+def state_version_diff(timestamp: str):
+    """The Versions panel's per-row Diff button (customer, 2026-08-21).
+
+    "What does this version hold against now?" used to cost tick-two +
+    Compare — a navigation — while the quick-diff covered only the newest
+    pair. This answers it for ANY row, read-only, in the same overlay shell
+    and Δ language the sync review modal uses (docs/76/86): the recorded
+    version on the left, the CURRENT working state on the right. Same
+    DiffEntry pipeline as /state/review; ``diff_current`` runs against the
+    in-memory store, so the live files are never opened (docs/28). Nothing
+    on this path writes — the row's Pull to Live stays the one gated write.
+    """
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam" or not ctx.get("path"):
+        return render_template("_status.html", message="No state loaded",
+                               level="warning")
+    # Reject pre-join — the same shape gate load_snapshot enforces. The ts
+    # lands in a path join, and a ``..\..``-shaped segment escapes the
+    # history root on Windows where backslash is a separator.
+    if not isinstance(timestamp, str) or not _HIST_TS_RE.match(timestamp):
+        return render_template("_status.html", message="Not a snapshot id.",
+                               level="error"), 404
+    hm = _history()
+    path = Path(ctx["path"])
+    try:
+        chip_key = Path(hm.resolve_chip_dir(path)[0]).name
+    except Exception:  # noqa: BLE001
+        chip_key = ""
+    # Two SM windows share one server context (docs/120): a press racing a
+    # chip switch in the other window must be refused honestly, never
+    # answered from the wrong chip's history. Same gate as /diff/versions.
+    asked_chip = (request.args.get("chip_key") or "").strip()
+    if asked_chip and chip_key and asked_chip != chip_key:
+        return render_template(
+            "_status.html", level="warning",
+            message=f"This version belongs to chip '{asked_chip}' but "
+                    f"'{chip_key}' is open — open that chip first.")
+    try:
+        entries = hm.diff_current(path, timestamp, current_store=ctx.get("store"))
+    except Exception as exc:  # noqa: BLE001 — a missing snapshot must explain, not 500
+        return render_template("_status.html",
+                               message=f"Diff failed: {exc}", level="error")
+    # Whether the ROW this overlay describes actually offers ↑ Pull to Live
+    # (the panel hides it on archives and on the current version) — so the
+    # overlay never instructs the user to press a button that is not there.
+    archive = (ctx.get("origin") or "live") != "live"
+    offers_pull = (not archive
+                   and timestamp != _state_version_now(ctx)["ts"])
+    return render_template(
+        "_version_diff.html",
+        entries=entries[:300],
+        summary=Differ.summary(entries),
+        total=len(entries),
+        ts=timestamp,
+        chip_key=chip_key,
+        path_str=str(path),
+        dirty=_quam_ctx_dirty(ctx),
+        offers_pull=offers_pull,
+    )
 
 
 @bp.route("/state/archive", methods=["POST"])
@@ -13216,6 +13281,90 @@ def diff_snapshots():
     a, b = sorted((ts_a, ts_b))
     return _hub_redirect(
         f"/diff?a=hist:{quote(chip)}/{quote(a)}&b=hist:{quote(chip)}/{quote(b)}")
+
+
+# A page swaps whole; the row axis is where an N-way diff can explode.
+# Real same-chip snapshot triples differ in a handful of leaves; a
+# cross-months pick can reach thousands, and the rows a user reads are the
+# first screenful (same reasoning as _DIFF_LIST_PAGE).
+_VERSION_COMPARE_ROW_CAP = 1000
+# More than 8 value columns stops being a readable table on any laptop.
+_VERSION_COMPARE_COL_CAP = 8
+
+
+@bp.route("/diff/versions")
+def diff_versions():
+    """N ticked versions → the differences-only column table (docs/128).
+
+    Customer (2026-08-21): pressing Compare on N picks must IMMEDIATELY list
+    only the keys whose values differ — one column per version — not land on
+    a configuration surface, and never spend rows on values that agree
+    ("comparison is meaningful in the differences"). Two picks keep going to
+    the /diff workbench (Δ-ranked, tree view); this is where 3+ land, though
+    it accepts any N ≥ 2. The Compare hub stays reachable from this page for
+    the hard cases (entity mapping across devices) — behind a link, not in
+    the way.
+    """
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam" or not ctx.get("path"):
+        return _hub_redirect("/diff")
+    hm = _history()
+    path = Path(ctx["path"])
+    try:
+        chip_key = Path(hm.resolve_chip_dir(path)[0]).name
+    except Exception:      # noqa: BLE001
+        chip_key = ""
+    # A shared/bookmarked link names its chip; comparing it against a
+    # DIFFERENT open chip's history would silently answer about the wrong
+    # device — refuse honestly instead.
+    def _fail(msg: str, level: str = "error"):
+        # The Compare press pushes this URL into browser history, so F5 /
+        # bookmark / shared-link reloads are full-page GETs — an error must
+        # arrive WITH the page chrome there, never as a bare toast fragment
+        # that strands the user with only browser Back.
+        template = ("_version_compare.html" if _is_htmx()
+                    else "version_compare.html")
+        return render_template(
+            template, **_ctx(page="diff", error=msg, cols=[], rows=[],
+                             total=0, dropped_cols=0, chip_key=chip_key,
+                             hub_url="/compare-hub"))
+
+    asked_chip = (request.args.get("chip_key") or "").strip()
+    if asked_chip and chip_key and asked_chip != chip_key:
+        return _fail(f"This comparison names chip '{asked_chip}' but "
+                     f"'{chip_key}' is open — open that chip first.")
+    ts_list = sorted({t.strip() for t in request.args.getlist("ts")
+                      if t.strip() and _HIST_TS_RE.match(t.strip())})
+    if len(ts_list) < 2:
+        return _hub_redirect("/diff")
+    dropped_cols = 0
+    if len(ts_list) > _VERSION_COMPARE_COL_CAP:
+        # Newest picks win — sorted() left the list oldest → newest.
+        dropped_cols = len(ts_list) - _VERSION_COMPARE_COL_CAP
+        ts_list = ts_list[-_VERSION_COMPARE_COL_CAP:]
+    try:
+        stores = [hm.load_snapshot(path, ts) for ts in ts_list]
+        rows = Differ().diff_n(stores)
+    except Exception as exc:      # noqa: BLE001 — a pruned snapshot must explain, not 500
+        return _fail(f"Compare failed: {exc}")
+    try:
+        meta_by_ts = {m.timestamp: m for m in hm.list_snapshots(path)}
+    except Exception:      # noqa: BLE001
+        meta_by_ts = {}
+    cols = [{
+        "ts": ts,
+        "trigger": getattr(meta_by_ts.get(ts), "trigger", "") or "",
+        "label": getattr(meta_by_ts.get(ts), "label", "") or "",
+    } for ts in ts_list]
+    hub_url = "/compare-hub?" + urlencode(
+        [("src", f"hist:{chip_key}/{ts}") for ts in ts_list])
+    template = ("_version_compare.html" if _is_htmx()
+                else "version_compare.html")
+    return render_template(
+        template,
+        **_ctx(page="diff", cols=cols, rows=rows[:_VERSION_COMPARE_ROW_CAP],
+               total=len(rows), dropped_cols=dropped_cols,
+               chip_key=chip_key, hub_url=hub_url))
 
 
 @bp.route("/diff/runs")

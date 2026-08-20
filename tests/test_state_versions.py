@@ -390,3 +390,360 @@ class TestQuickDiff:
         assert "document.body.addEventListener" not in block
         assert "auto-apply-on" in block        # armed sessions only
         assert "'/state/versions'" in block    # what it refetches
+
+
+def _app_js_stateversions_block() -> str:
+    import quam_state_manager
+    src = (Path(quam_state_manager.__file__).parent / "web" / "static"
+           / "app.js").read_text(encoding="utf-8")
+    i = src.index("window.StateVersions")
+    return src[i:i + 14000]
+
+
+class TestVersionDiff:
+    """Customer (2026-08-21): the list showed WHEN each version landed, but
+    WHAT it holds against now cost tick-two + Compare — a navigation. Each
+    row now carries a read-only Diff button opening this-version-vs-NOW in
+    the same overlay shell and Δ language the sync review modal uses
+    (docs/76/86), fed by the diff_current pipeline that already existed —
+    nothing on this path writes; Pull to Live stays the one gated write."""
+
+    def test_every_row_offers_diff_left_of_pull_to_live(self, client, tmp_path):
+        client.post("/state/archive", data={"tag": "first"})
+        live = tmp_path / "quam_state" / "state.json"
+        doc = json.loads(live.read_text(encoding="utf-8"))
+        doc["qubits"]["q1"]["f_01"] = 6.3e9
+        live.write_text(json.dumps(doc), encoding="utf-8")
+        client.post("/state/archive", data={"tag": "second"})
+        body = client.get("/state/versions").get_data(as_text=True)
+        rows = body.split('<li class="state-version-row')[1:]
+        assert len(rows) == 2
+        # every row, current included — comparing is always safe
+        assert all("sv-diff" in r for r in rows)
+        # and on the row that also offers the write, the read comes first
+        restore_rows = [r for r in rows if "sv-restore" in r]
+        assert restore_rows and all(
+            r.index("sv-diff") < r.index("sv-restore") for r in restore_rows)
+
+    def test_an_archive_still_offers_diff(self, client):
+        """Read-only compare is offered exactly where restore-live is not."""
+        client.post("/state/archive", data={"tag": "t"})
+        ctx = (client.application.config.get("contexts") or {}).get(
+            client.application.config.get("active_context"))
+        ctx["origin"] = "dataset_archive"
+        body = client.get("/state/versions").get_data(as_text=True)
+        assert "sv-diff" in body
+        assert "/restore-live" not in body
+
+    def test_the_endpoint_shows_version_then_now_in_the_review_language(
+            self, client):
+        client.post("/state/archive", data={"tag": "a"})
+        body = client.get("/state/versions").get_data(as_text=True)
+        ts = re.search(r'sv-check" value="(\d{8}_\d{6}\S*?)"', body).group(1)
+        client.post("/field/edit",
+                    data={"dot_path": "qubits.q1.f_01", "value": "6.2e9"})
+        diff = client.get(f"/state/versions/{ts}/diff").get_data(as_text=True)
+        assert "review-row" in diff            # the review modal's row language
+        assert "qubits.q1.f_01" in diff
+        # forward in time: the version's value, THEN now's (docs/76)
+        assert diff.index("6,100,000,000.0") < diff.index("6,200,000,000.0")
+        assert "val-delta" in diff             # the one Δ implementation
+        # HONESTY: "now" is the working state, which holds an unapplied edit
+        assert "not yet applied" in diff
+        # read-only: none of the sync modal's write actions ride along
+        assert "doStateSync" not in diff
+        assert "/state/apply-to-live" not in diff
+
+    def test_no_differences_is_stated_plainly(self, client):
+        client.post("/state/archive", data={"tag": "t"})
+        body = client.get("/state/versions").get_data(as_text=True)
+        ts = re.search(r'sv-check" value="(\d{8}_\d{6}\S*?)"', body).group(1)
+        diff = client.get(f"/state/versions/{ts}/diff").get_data(as_text=True)
+        assert "No differences" in diff
+        assert "review-row" not in diff
+
+    def test_a_malformed_ts_is_refused_before_the_path_join(self, client):
+        """The ts lands in a path join; a ``..\\..``-shaped segment escapes
+        the history root on Windows. Same shape gate as load_snapshot."""
+        r = client.get("/state/versions/hello/diff")
+        assert r.status_code == 404
+        assert "Not a snapshot id" in r.get_data(as_text=True)
+        r = client.get("/state/versions/..\\..\\x/diff")
+        assert r.status_code in (404, 308)     # rejected or not even routed
+        if r.status_code == 404:
+            assert "Not a snapshot id" in r.get_data(as_text=True)
+
+    def test_it_never_500s_without_a_chip(self, tmp_path):
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i4"))
+        r = app.test_client().get("/state/versions/20250101_000000/diff")
+        assert r.status_code == 200
+        assert "No state loaded" in r.get_data(as_text=True)
+
+    def test_the_full_view_link_uses_the_workbench_grammar(self, client):
+        """The escape hatch is the docs/84 workbench with the SAME
+        hist:/working: ref tokens the tick-two flow uses — no third grammar."""
+        client.post("/state/archive", data={"tag": "t"})
+        body = client.get("/state/versions").get_data(as_text=True)
+        ts = re.search(r'sv-check" value="(\d{8}_\d{6}\S*?)"', body).group(1)
+        diff = client.get(f"/state/versions/{ts}/diff").get_data(as_text=True)
+        assert "/diff?a=hist%3A" in diff
+        assert "working%3A" in diff
+        assert 'hx-target="#table-pane"' in diff
+
+    def test_the_cap_and_the_gate_are_in_the_source(self):
+        """Honesty pins: entries are capped with a visible count, the ts is
+        shape-gated pre-join, and the diff runs against the in-memory store
+        (never the live files, docs/28)."""
+        from quam_state_manager.web import routes as R
+        src = Path(R.__file__).read_text(encoding="utf-8")
+        i = src.index("def state_version_diff")
+        block = src[i:src.index("@bp.route", i)]
+        assert "[:300]" in block
+        assert "_HIST_TS_RE" in block
+        assert "diff_current" in block and "current_store" in block
+        import quam_state_manager
+        tpl = (Path(quam_state_manager.__file__).parent / "web" / "templates"
+               / "_version_diff.html").read_text(encoding="utf-8")
+        assert "showing" in tpl
+
+    def test_the_overlay_shell_and_js_are_wired(self, client):
+        """The overlay reuses the review shell classes (docs/86 language);
+        the JS opens it with a focus trap and the panel's click-away guard
+        ignores clicks inside it — closing the diff lands back on the row."""
+        page = client.get("/").get_data(as_text=True)
+        m = re.search(r'<div id="version-diff-overlay"[^>]*>', page)
+        assert m and "state-review-overlay" in m.group(0)
+        assert 'id="version-diff-host"' in page
+        block = _app_js_stateversions_block()
+        assert "closeDiff" in block
+        assert "encodeURIComponent(ts) + '/diff'" in block
+        assert "trapFocus" in block
+        # the away guard names OUR overlay only — the sync-review/live-drift
+        # overlays keep their pre-docs/128 dismiss behavior
+        assert "closest('#version-diff-overlay')" in block
+        assert "closest('.state-review-overlay')" not in block
+        # stale-response token (the docs/122 class): a slow cold-snapshot
+        # diff must never repaint over a newer row's or a closed overlay's
+        # content
+        assert "_diffGen" in block
+        assert "diff: diff" in block and "closeDiff: closeDiff" in block
+
+    def test_global_shortcuts_are_gated_while_the_diff_is_open(self):
+        """window.smModalOpen is the app-wide 'is a modal up' oracle
+        (visibility-tested by id); without the new overlay in its selector,
+        j/k/Enter run-navigation and the '?' cheat sheet keep firing BEHIND
+        the modal — Enter would swap #table-pane underneath it."""
+        import quam_state_manager
+        src = (Path(quam_state_manager.__file__).parent / "web" / "static"
+               / "app.js").read_text(encoding="utf-8")
+        i = src.index("window.smModalOpen = function")
+        block = src[i:i + 1200]
+        assert "#version-diff-overlay" in block
+
+    def test_a_press_racing_a_chip_switch_is_refused_honestly(self, client):
+        """Two SM windows share one server context (docs/120): the button
+        ships its chip_key and a mismatch is refused — never answered from
+        the wrong chip's history, never an internals-leaking 'Diff failed'."""
+        client.post("/state/archive", data={"tag": "t"})
+        body = client.get("/state/versions").get_data(as_text=True)
+        ts = re.search(r'sv-check" value="(\d{8}_\d{6}\S*?)"', body).group(1)
+        # the panel's button forwards the key
+        assert f"StateVersions.diff('{ts}', '" in body
+        b = client.get(
+            f"/state/versions/{ts}/diff?chip_key=__someone_elses_chip__"
+        ).get_data(as_text=True)
+        assert "open that chip first" in b
+        assert "review-row" not in b
+
+    def test_the_pull_note_appears_only_where_the_button_does(
+            self, client, tmp_path):
+        """The overlay must never instruct a press the panel deliberately
+        withholds: the ↑ Pull to Live sentence is gated off on the current
+        version's row and on archives (where the button does not render)."""
+        live = tmp_path / "quam_state" / "state.json"
+        client.post("/state/archive", data={"tag": "v0"})
+        for f in (6.3e9, 6.5e9):
+            doc = json.loads(live.read_text(encoding="utf-8"))
+            doc["qubits"]["q1"]["f_01"] = f
+            live.write_text(json.dumps(doc), encoding="utf-8")
+            client.post("/state/archive", data={"tag": f"v{f}"})
+        body = client.get("/state/versions").get_data(as_text=True)
+        ts = sorted(re.findall(r'sv-check" value="(\d{8}_\d{6}\S*?)"', body))
+        mid, cur = ts[1], ts[2]     # mid: differs from working, not current
+        d_mid = client.get(f"/state/versions/{mid}/diff").get_data(as_text=True)
+        assert "review-row" in d_mid           # a real, non-empty diff
+        assert "Pull to Live" in d_mid         # the row DOES offer the button
+        d_cur = client.get(f"/state/versions/{cur}/diff").get_data(as_text=True)
+        assert "review-row" in d_cur           # non-empty too (stale working)
+        assert "Pull to Live" not in d_cur     # but this row has no button
+        ctx = (client.application.config.get("contexts") or {}).get(
+            client.application.config.get("active_context"))
+        ctx["origin"] = "dataset_archive"
+        d_arch = client.get(f"/state/versions/{mid}/diff").get_data(as_text=True)
+        assert "Pull to Live" not in d_arch    # archives offer it nowhere
+
+
+class TestVersionsCompareNway:
+    """Customer (2026-08-21): pressing Compare on N picks must IMMEDIATELY
+    list only the keys whose values differ — one column per version — not
+    land on the Compare hub's configuration surface, and never spend rows on
+    values that agree. Comparison is meaningful in the differences."""
+
+    def _three_versions(self, client, tmp_path):
+        live = tmp_path / "quam_state" / "state.json"
+        client.post("/state/archive", data={"tag": "v0"})
+        for f in (6.3e9, 6.5e9):
+            doc = json.loads(live.read_text(encoding="utf-8"))
+            doc["qubits"]["q1"]["f_01"] = f
+            live.write_text(json.dumps(doc), encoding="utf-8")
+            client.post("/state/archive", data={"tag": f"v{f}"})
+        body = client.get("/state/versions").get_data(as_text=True)
+        return re.findall(r'sv-check" value="(\d{8}_\d{6}\S*?)"', body)
+
+    def test_three_picks_list_only_what_differs_as_columns(
+            self, client, tmp_path):
+        ts = self._three_versions(client, tmp_path)
+        assert len(ts) == 3
+        q = "&".join(f"ts={t}" for t in ts)
+        body = client.get(f"/diff/versions?{q}").get_data(as_text=True)
+        assert "vc-table" in body
+        assert "qubits.q1.f_01" in body
+        # columns oldest → newest, forward in time (docs/76)
+        i0 = body.index("6,100,000,000.0")
+        i1 = body.index("6,300,000,000.0")
+        i2 = body.index("6,500,000,000.0")
+        assert i0 < i1 < i2
+        # DIFFERENCES ONLY: leaves that agree across all three never render
+        assert "qubits.q1.id" not in body
+        assert "network.host" not in body
+        # the moved cells are marked by diff_n's own verdict (docs/118: one
+        # rule for the row and the cell), with the docs/76 Δ chip
+        assert "vc-changed" in body
+        assert "val-delta" in body
+
+    def test_the_hub_stays_reachable_but_out_of_the_way(
+            self, client, tmp_path):
+        ts = self._three_versions(client, tmp_path)
+        q = "&".join(f"ts={t}" for t in ts)
+        body = client.get(f"/diff/versions?{q}").get_data(as_text=True)
+        assert "/compare-hub?" in body         # the advanced link
+        assert body.count("src=hist") >= 3 or "src=hist%3A" in body
+
+    def test_fewer_than_two_valid_picks_redirect_to_the_workbench(
+            self, client, tmp_path):
+        ts = self._three_versions(client, tmp_path)
+        assert client.get(f"/diff/versions?ts={ts[0]}").status_code == 302
+        # malformed ts values are shape-gated out BEFORE any path join
+        assert client.get("/diff/versions?ts=hello&ts=..\\x").status_code == 302
+
+    def test_a_missing_snapshot_explains_instead_of_500ing(
+            self, client, tmp_path):
+        ts = self._three_versions(client, tmp_path)
+        r = client.get(f"/diff/versions?ts={ts[0]}&ts=20990101_000000")
+        assert r.status_code == 200
+        assert "Compare failed" in r.get_data(as_text=True)
+
+    def test_a_link_naming_another_chip_is_refused_honestly(
+            self, client, tmp_path):
+        """A shared URL names its chip; answering from a DIFFERENT open
+        chip's history would be silently wrong."""
+        ts = self._three_versions(client, tmp_path)
+        q = "&".join(f"ts={t}" for t in ts)
+        body = client.get(
+            f"/diff/versions?{q}&chip_key=__someone_elses_chip__"
+        ).get_data(as_text=True)
+        assert "open that chip first" in body
+        assert "vc-table" not in body
+
+    def test_errors_arrive_with_page_chrome_on_a_full_page_get(
+            self, client, tmp_path):
+        """Compare pushes this URL into browser history, so F5/bookmark/
+        shared-link reloads are full-page GETs — an error must arrive WITH
+        the chrome, never as a bare toast fragment that strands the user
+        with only browser Back."""
+        ts = self._three_versions(client, tmp_path)
+        full = client.get(
+            f"/diff/versions?ts={ts[0]}&ts=20990101_000000"
+        ).get_data(as_text=True)
+        assert "Compare failed" in full
+        assert "<html" in full                 # the page shell came along
+        part = client.get(
+            f"/diff/versions?ts={ts[0]}&ts=20990101_000000",
+            headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert "Compare failed" in part
+        assert "<html" not in part             # the swap gets the partial
+
+    def test_a_stored_null_is_named_not_blank(self, client, tmp_path):
+        """groupdigits(None) is '' — a stored null used to render as a fully
+        blank cell, hiding the very difference the row exists to show and
+        indistinguishable from an empty string. It now says `null`,
+        distinct from the en-dash of an ABSENT leaf."""
+        live = tmp_path / "quam_state" / "state.json"
+        client.post("/state/archive", data={"tag": "v0"})
+        doc = json.loads(live.read_text(encoding="utf-8"))
+        doc["qubits"]["q1"]["f_01"] = None
+        live.write_text(json.dumps(doc), encoding="utf-8")
+        client.post("/state/archive", data={"tag": "v1"})
+        body = client.get("/state/versions").get_data(as_text=True)
+        q = "&".join(
+            f"ts={t}" for t in
+            re.findall(r'sv-check" value="(\d{8}_\d{6}\S*?)"', body))
+        page = client.get(f"/diff/versions?{q}").get_data(as_text=True)
+        assert "qubits.q1.f_01" in page
+        assert "vc-null" in page and ">null<" in page
+
+    def test_the_compare_button_lands_here_not_on_the_hub(self):
+        block = _app_js_stateversions_block()
+        assert "'/diff/versions?'" in block
+        assert "'/compare-hub?'" not in block
+        # the hint no longer promises the hub
+        assert "Lists what differs across all" in block
+
+    def test_diff_n_is_every_leaf_and_one_equality_rule(self):
+        """The engine walks EVERY leaf (state + wiring — multi_diff only
+        walks curated qubit properties) and its per-cell `changed` verdict
+        uses the same equality as the row verdict (docs/118)."""
+        from quam_state_manager.core.differ import Differ
+        a = ({"qubits": {"q1": {"f_01": 6.1e9, "id": "q1"}}},
+             {"network": {"host": "h"}})
+        b = ({"qubits": {"q1": {"f_01": 6.3e9, "id": "q1"}}},
+             {"network": {"host": "h"}})
+        c = ({"qubits": {"q1": {"f_01": 6.3e9, "id": "q1", "extra": 1}}},
+             {"network": {"host": "h"}})
+        rows = Differ().diff_n([a, b, c])
+        by_path = {r["dot_path"]: r for r in rows}
+        assert set(by_path) == {"qubits.q1.f_01", "qubits.q1.extra"}
+        f = by_path["qubits.q1.f_01"]
+        assert f["values"] == [6.1e9, 6.3e9, 6.3e9]
+        assert f["changed"] == [False, True, False]
+        e = by_path["qubits.q1.extra"]
+        assert e["present"] == [False, False, True]
+        assert e["changed"] == [False, False, True]
+        # agreeing leaves never make a row — comparison lives in differences
+        assert "qubits.q1.id" not in by_path
+        assert "network.host" not in by_path
+
+
+class TestCompactRows:
+    """Customer (2026-08-21): the gap between the date column and the row
+    actions was most of the panel — 46rem of width for ~26rem of content.
+    The panel is narrower and the actions are a tight cluster, so a row
+    reads as one line instead of two far-apart columns."""
+
+    def _css(self):
+        import quam_state_manager
+        return (Path(quam_state_manager.__file__).parent / "web" / "static"
+                / "style.css").read_text(encoding="utf-8")
+
+    def test_the_panel_is_narrower(self):
+        css = self._css()
+        i = css.index(".state-version-panel {")
+        block = css[i:css.index("}", i)]
+        assert "36rem" in block
+        assert "46rem" not in block
+
+    def test_the_actions_are_a_tight_cluster(self):
+        css = self._css()
+        i = css.index(".sv-row-actions")
+        block = css[i:css.index("}", i)]
+        assert "display: flex" in block and "gap" in block

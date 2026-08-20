@@ -10840,8 +10840,11 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
    the whole truth. */
 .state-version-edits { font-weight: 700; line-height: 1;
     color: var(--color-warning, var(--pico-primary)); }
+/* docs/128 (customer): 46rem wide for ~26rem of row content put most of the
+   panel's width into the gap between the date column and the right-aligned
+   actions. 36rem keeps the quick-diff table readable and the rows compact. */
 .state-version-panel { position: absolute; top: calc(100% + 0.35rem); left: 0;
-    z-index: 40; width: min(46rem, 92vw); max-height: 70vh; overflow-y: auto;
+    z-index: 40; width: min(36rem, 92vw); max-height: 70vh; overflow-y: auto;
     background: var(--pico-card-background-color);
     border: 1px solid var(--pico-muted-border-color); border-radius: 0.4rem;
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18); padding: 0.6rem 0.8rem;
@@ -10875,12 +10878,50 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .sv-now { font-size: 0.66rem; color: var(--pico-primary); }
 .sv-label { font-weight: 600; }
 .sv-exp, .sv-note { font-size: 0.72rem; }
-.sv-row-actions { flex: 0 0 auto; margin-left: auto; }
+.sv-row-actions { flex: 0 0 auto; margin-left: auto;
+    display: flex; align-items: center; gap: 0.3rem; }
+/* The version-diff overlay's "now" side — the counterpart of .review-old.
+   The review modal's now-side is an editable input; this one is read-only
+   text, emphasized like the quick-diff table's <b> new value. */
+.review-now { font-weight: 600; }
 .state-versions-empty { font-size: 0.78rem; margin: 0.3rem 0; }
 .state-versions-more { display: flex; align-items: center; gap: 0.4rem;
     flex-wrap: wrap; padding: 0.35rem 0.1rem 0.1rem;
     border-top: 1px solid var(--pico-muted-border-color); margin-top: 0.25rem; }
 .sv-cap-note { font-size: 0.72rem; }
+
+/* ── docs/128: /diff/versions — N versions, differences only ─────────────
+   One row per differing dot-path, one column per version (oldest → newest).
+   A cell wears .vc-changed exactly when diff_n's own `changed` verdict says
+   it moved from the column before it — same tokens as the run-comparison
+   .cell-diff so "this cell moved" reads identically app-wide. */
+.version-compare { padding: 0.5rem 0.75rem; }
+.vc-head { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap;
+    margin-bottom: 0.4rem; }
+.vc-actions { margin-left: auto; }
+.vc-note, .vc-empty { font-size: 0.8rem; margin: 0.25rem 0; }
+/* The table can be wide (8 columns) and long — it scrolls inside its own
+   container, never the page body. */
+.vc-scroll { overflow-x: auto; max-width: 100%; }
+.vc-table { width: auto; margin: 0; font-size: 0.78rem; border-collapse: collapse; }
+.vc-table th, .vc-table td { padding: 0.25rem 0.55rem; vertical-align: top;
+    border-bottom: 1px solid var(--pico-muted-border-color); text-align: left; }
+.vc-table thead th { position: sticky; top: 0; z-index: 1;
+    background: var(--pico-card-background-color);
+    border-bottom: 2px solid var(--pico-muted-border-color); }
+.vc-col-time { display: block; font-weight: 600; white-space: nowrap; }
+.vc-col-meta { display: block; }
+.vc-col-label { font-size: 0.7rem; font-weight: 600; }
+.vc-col-ts { display: block; font-family: var(--font-mono); font-size: 0.66rem;
+    opacity: 0.55; }
+.vc-key-col { max-width: 26rem; overflow-wrap: anywhere; }
+.vc-val { white-space: nowrap; }
+.vc-delta { display: block; }
+.vc-changed { background: var(--diff-cell-bg);
+    border-left: 3px solid var(--diff-cell-border); }
+/* A STORED null is a value, distinct from the en-dash of an absent leaf. */
+.vc-null { font-style: italic; opacity: 0.65; }
+.vc-error { color: var(--color-error-text); font-size: 0.85rem; }
 
 /* ── docs/120 item 8: the Auto-Sync popup ──────────────────────────────── */
 .auto-sync-wrap { position: relative; display: inline-block; }
