@@ -1369,21 +1369,31 @@ class TestSidebarFeatures:
         assert "chrome-reveal" in html
 
     def test_refresh_button_shows_in_flight_state(self, loaded_client):
-        """docs/126 r3: pressing Refresh gave no feedback for the whole rescan
-        (up to 20 s). htmx stamps .htmx-request on the trigger — the glyph
-        must be a rotatable element and the CSS must animate + block
-        re-clicks on that class."""
+        """docs/126 r3, two rounds: pressing Refresh gave no feedback. Round 1
+        gated a spin on htmx's .htmx-request — invisible on a SMALL workspace
+        whose rescan settles in milliseconds (the user's re-report). Round 2:
+        app.js arms .ws-kick on the press for AT LEAST 700 ms (or the real
+        request if longer), then .ws-done flashes a checkmark — a press is
+        always seen regardless of rescan speed."""
         html = loaded_client.get("/qubits").data.decode()
         assert 'class="ws-refresh-ico"' in html
         from pathlib import Path
         import quam_state_manager
-        css = (Path(quam_state_manager.__file__).parent / "web" / "static"
-               / "style.css").read_text(encoding="utf-8")
+        static = Path(quam_state_manager.__file__).parent / "web" / "static"
+        css = (static / "style.css").read_text(encoding="utf-8")
         i = css.index(".btn-workspace-refresh.htmx-request")
-        block = css[i:i + 600]
+        block = css[i:i + 900]
         assert "pointer-events: none" in block
+        assert ".ws-kick" in block                 # press-armed, not just in-flight
         assert "ws-refresh-spin" in css
-        assert "prefers-reduced-motion" in css[i:i + 900]
+        assert ".btn-workspace-refresh.ws-done" in css
+        j = css.index(".btn-workspace-refresh.ws-done::after")
+        assert '"✓"' in css[j:j + 200] or "✓" in css[j:j + 200]
+        js = (static / "app.js").read_text(encoding="utf-8")
+        k = js.index("btn-workspace-refresh")
+        jblock = js[k - 200:k + 1600]
+        assert "700" in jblock                      # the minimum visible window
+        assert "ws-done" in jblock
 
     def test_sidebar_tree_polling(self, loaded_client):
         html = loaded_client.get("/qubits").data.decode()

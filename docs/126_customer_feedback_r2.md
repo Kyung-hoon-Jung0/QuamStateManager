@@ -698,3 +698,13 @@ clicks are ignored (`pointer-events: none`), and reduced-motion gets an
 opacity pulse instead. Verified live mid-rescan: htmx-request present,
 accent color, animation running, rest state restored on swap. Pinned in
 `TestSidebarFeatures::test_refresh_button_shows_in_flight_state`.
+
+**Round 2 (user re-report: "여전히 안되는데")**: the CSS-only version gated
+the spin on `.htmx-request` alone — correct, and invisible: on a small
+workspace the rescan settles in MILLISECONDS, so the animation got one or
+two frames. The verification chip's 2,655-run root made it look fine in the
+probe; the user's 69-run folder didn't. Now the PRESS arms the spin
+(`.ws-kick`, app.js) for at least 700 ms — or the real request, whichever is
+longer — and completion flashes a ✓ (`.ws-done`, 1.1 s). A press is always
+seen regardless of rescan speed. Probe updated to click on a fast path and
+assert the hold + the checkmark.

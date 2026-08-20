@@ -7732,6 +7732,31 @@ window.syncSidebarNavActive = function() {
         if (!(m.sub === false && twin)) m.a.classList.add("active");
     });
 };
+/* Workspace Refresh feedback (docs/126 r3, second round): the CSS-only
+ * .htmx-request spin is invisible on a SMALL workspace — the rescan settles
+ * in milliseconds, one or two frames of animation. So the press itself arms
+ * a spin that lasts at least 700 ms (or the real request, whichever is
+ * longer), then flashes a ✓ for a second. A press is now always seen. */
+(function () {
+    document.addEventListener('click', function (e) {
+        var b = e.target && e.target.closest && e.target.closest('.btn-workspace-refresh');
+        if (!b) return;
+        b.classList.remove('ws-done');
+        b.classList.add('ws-kick');
+        b._wsT0 = Date.now();
+    });
+    document.addEventListener('htmx:afterRequest', function (evt) {
+        var b = evt.detail && evt.detail.elt;
+        if (!b || !b.classList || !b.classList.contains('btn-workspace-refresh')) return;
+        var wait = Math.max(0, 700 - (Date.now() - (b._wsT0 || 0)));
+        setTimeout(function () {
+            b.classList.remove('ws-kick');
+            b.classList.add('ws-done');
+            setTimeout(function () { b.classList.remove('ws-done'); }, 1100);
+        }, wait);
+    });
+})();
+
 document.addEventListener("htmx:pushedIntoHistory", window.syncSidebarNavActive);
 document.addEventListener("htmx:replacedInHistory", window.syncSidebarNavActive);
 window.addEventListener("popstate", function() { setTimeout(window.syncSidebarNavActive, 0); });
