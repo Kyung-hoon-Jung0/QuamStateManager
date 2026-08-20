@@ -443,3 +443,54 @@ defects on the other, plus the two reports:
   listed with nothing highlighted, and a fit that failed in BOTH runs showed
   `nan | nan` in amber. One rule now, with the tolerance every sibling surface
   already had. `/compare`'s "Exact" preset keeps meaning exact
+
+## v0.9.8 (2026-08-20)
+
+Customer feedback round on a real 20-qubit QDAC-biased chip (docs/119,
+docs/126 — three feedback rounds, every item verified in a real browser
+against the customer's own archive).
+
+**QDAC-II bias in the Generate Config wizard.** Chips that flux-bias qubits
+from an external QDAC-II build natively: per-qubit QDAC assignment in the
+wizard, trigger wiring on an isolated Connectivity, degrade-only (a missing
+customer module costs the feature, never the build). Verified end-to-end on a
+real 20Q mixed chip.
+
+**Search finds the coupler.** On a QDAC chip the coupler is the only entity
+on an OPX flux port, and its port-chain fields (`exponential_filter`, …) were
+on NO grid — the pair grid now expands port chains exactly like the qubit
+grid, so Live State Edit search covers every field the chip has.
+
+**Chip Status carries the numbers.** Frequency/2Q metrics render on the map
+itself (per-edge best RB/Bell, per-gate pulse-variant toggle), C/T/M markers
+half-overlap the stones instead of covering the values, zoom slider + compact
+mode for small monitors, and a printable **chip report** (printer icon beside
+Chip Status): the component map + all five component tables as one dark,
+self-contained HTML you can print or download.
+
+**A value in spec is never an "outlier".** The report card flagged a 99.67%
+RB as "16.8× MAD" among 99.85–99.92 siblings — MAD collapses on tight
+distributions. Both outlier implementations now ask the spec verdict first.
+
+**Versions, one click.** The top-bar chip is labeled *Versions*, opens
+vertically, leads with the diff against the previous version (≤50 rows shown
+in place), refreshes live during an Auto-Sync session, and each row's restore
+is one concise error-tinted *Pull to Live* button (both force gates intact).
+
+**Apply to chip asks one question.** The dataset State tab's apply now gates
+on chip identity ONLY (user-directed): drift is overwritten and named,
+pending edits are replaced and reported, ↺ Revert last apply stays armed.
+
+**Everyday polish.** Auto-Sync panel anchored under its bolt (gray off /
+orange on, working checkboxes); sidebar search no longer lags or freezes on
+retype (hx-sync + one sync group + server memos — clear-the-box measured
+350 ms → 1 ms); workspace Refresh is incremental (3.5–4 s → 0.7–0.8 s on a
+2,655-run archive) with a visible spinner and a ✓; the brand shows a progress
+bar with real N/M counts where a loop reports them; run-number jump + ±10
+skips live on the Prev State comparison bar; duplicate sidebar highlights are
+gone; every toast has a ✕; the hamburger cycles sidebar → topbar → floating ☰.
+
+**New pulses.** `CosineBipolarPulse` is first-class (catalog + bit-exact
+preview), the customer's Gaussian-CZ macro script is one Pulses-page button,
+and a bare digital-marker `Pulse` (QDAC trigger) is recognized instead of
+"Unrecognized".
