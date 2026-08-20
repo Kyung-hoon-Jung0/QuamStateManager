@@ -80,9 +80,21 @@ def resolve_edit_path(store: Any, dot_path: str) -> str:
             return target
         return dot_path
     # Navigable as-is. Follow a leaf-pointer to its literal target (value-mode).
+    #
+    # ONLY to a literal. The promise quoted above — "the generic edit surfaces
+    # render these as the resolved NUMBER" — is the whole justification for
+    # redirecting the write, and it does not hold when the pointer reaches a
+    # CONTAINER. `qubit_pairs.q1-2.qubit_control = "#/qubits/q1"` resolved to
+    # `qubits.q1`, so a write aimed at the cell was aimed at the entire qubit
+    # object; only the type judge ("Expected dict, got str") stood between a
+    # typed qubit name and a chip whose q1 became a string (docs/121). A
+    # container target means the cell IS the pointer, so the pointer is what the
+    # write must land on.
     if isinstance(current, str) and is_pointer(current):
         ft = resolve_field_target(store.merged, dot_path)
-        if ft["resolvable"] and ft["resolved_path"] != dot_path:
+        if (ft["resolvable"] and ft["resolved_path"] != dot_path
+                and not isinstance(_container_at(
+                    store.merged, str(ft["resolved_path"]).split(".")), (dict, list))):
             return ft["resolved_path"]
     return dot_path
 
@@ -129,6 +141,165 @@ def leaf_is_absent(store: Any, dot_path: str) -> bool:
     parent, leaf = dot_path.rsplit(".", 1)
     container = _container_at(store.merged, parent.split("."))
     return isinstance(container, dict) and leaf not in container
+
+
+def pointer_cell_refusal(store: Any, dot_path: str, new_value: Any) -> str | None:
+    """Why a pointer-valued cell refuses *new_value*, or None to proceed.
+
+    docs/121. The grids now SHOW the pointer whenever there is no scalar behind
+    it (``qubit_control = "#/qubits/q1"``, a dangling ``LO_frequency``), which
+    is what the customer asked for — but showing an editable pointer without
+    this guard is worse than showing nothing. Measured on the real chip: typing
+    ``q3`` stored the literal ``"q3"``, and typing ``6.1e9`` over a dangling
+    pointer stored the STRING ``"6100000000.0"``. Both succeeded, both silent,
+    and the first is a ``Quam.load()`` failure the user would meet days later.
+
+    The refusal is narrow by construction: it fires ONLY where the cell has no
+    scalar behind the pointer. A pointer that reaches a real number keeps
+    value-mode untouched — typing a number there writes the number at the
+    target, which is the long-standing promise and is not this function's
+    business. Breaking a link on purpose stays possible; it just has to be
+    said out loud, on the Pulses page's explicit 3-mode editor.
+    """
+    from quam_state_manager.core.pointer_path import resolve_field_target
+    from quam_state_manager.core.pointer_resolver import is_pointer
+    try:
+        current = store.get_value(dot_path)
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None
+    if not (isinstance(current, str) and is_pointer(current)):
+        return None
+    if isinstance(new_value, str) and is_pointer(new_value.strip()):
+        # Re-pointing is the ordinary edit here — but a POINTER-SHAPED string is
+        # not automatically a usable pointer. `#`, `#/`, `#./` and `#../` carry
+        # no target: they satisfy is_pointer() and resolve to nothing, so the
+        # guard waved them through and the link died anyway (red team, 200 OK,
+        # on disk after apply). A reference has to reference something.
+        _p = new_value.strip()
+        if _p.rstrip("/") in ("#", "#.", "#.."):
+            return (f"{_p!r} is not a reference to anything — it has no target. "
+                    f"Enter a full pointer (e.g. {current}), or use the Pulses "
+                    f"page's pointer editor to break the link deliberately.")
+        return None
+    try:
+        ft = resolve_field_target(store.merged, dot_path)
+    except Exception:                   # noqa: BLE001 — best-effort, never blocks
+        return None
+    if ft.get("resolvable") and ft.get("resolved_path") != dot_path:
+        target = _container_at(store.merged, str(ft["resolved_path"]).split("."))
+        if not isinstance(target, (dict, list)):
+            return None                 # value-mode: unchanged, always
+    elif (isinstance(new_value, str)
+            and new_value.strip().lower() in ("null", "none")
+            and not current.startswith("#./")):
+        # docs/120 item 18: a DANGLING pointer refuses plain text (right) — and
+        # it refused `null` too, which LOCKED the field. The reference is
+        # already broken; removing it is the only repair the grid offers, and
+        # refusing that leaves the user with a cell they can neither fix nor
+        # empty. Narrow on purpose: a pointer that still RESOLVES to a
+        # container keeps the refusal below (clearing it would destroy a
+        # working link, which belongs in the explicit pointer editor), and a
+        # `#./` self-ref is quam's shape for a runtime-computed value, not a
+        # broken one.
+        return None
+    return (f"This field is a reference ({current}), not a value. Writing "
+            f"{new_value!r} here would replace the link with plain text and "
+            f"break it. Enter a pointer (e.g. {current}) to re-point it, or "
+            f"use the Pulses page's pointer editor to break the link "
+            f"deliberately.")
+
+
+def sibling_type_refusal(store: Any, dot_path: str, new_value: Any) -> str | None:
+    """Why a NULL field refuses prose, using the chip's own evidence, or None.
+
+    A field holding ``null`` carries no type, so with no env schema attached SM
+    had nothing to judge against and `qubits.q18.T1 <- "abc"` was stored as a
+    string, HTTP 200, no warning. The next `Quam.load()` gets a str where a
+    float belongs, and every consumer of T1 breaks.
+
+    But the chip is not silent about it: the SAME leaf on the sibling entities
+    usually holds real numbers. That is data-derived evidence, not an invented
+    schema — so the refusal only fires when the chip itself demonstrates the
+    type, and says which qubits it read. On a chip in early bring-up where the
+    leaf is null everywhere (the real customer chip), there is nothing to infer
+    and behaviour is byte-identical to before: SM does not know, so it does not
+    pretend to.
+
+    Narrow by construction: only a currently-NULL leaf, only when the typed text
+    is not itself a number / pointer / null token, and only under an entity
+    collection (`qubits.<id>.…`, `qubit_pairs.<id>.…`).
+    """
+    from quam_state_manager.core.pointer_resolver import is_pointer
+    if not isinstance(new_value, str):
+        return None                      # already parsed to a real type
+    s_new = new_value.strip()
+    if not s_new or is_pointer(s_new) or s_new.lower() in ("null", "none"):
+        return None
+    try:
+        float(s_new)
+        return None                      # a number is never the problem
+    except ValueError:
+        pass
+    try:
+        _cur = store.get_value(dot_path)
+    except (KeyError, TypeError, ValueError, IndexError):
+        # ABSENT, and absent carries no type for exactly the reason null
+        # doesn't. Reading the lookup failure as "no opinion" is what made the
+        # guard unreachable from `/field/create` (docs/120 item 16) — the one
+        # surface where nothing at all contradicts a typo.
+        _cur = None
+    if _cur is not None:
+        return None                      # a field with a value has its own type
+
+    segs = dot_path.split(".")
+    if len(segs) < 3 or segs[0] not in ("qubits", "qubit_pairs"):
+        return None
+    coll = (store.merged or {}).get(segs[0])
+    if not isinstance(coll, dict):
+        return None
+    leaf, me = segs[2:], segs[1]
+    numeric, other, witnesses = 0, 0, []
+    for ent, node in coll.items():
+        if ent == me:
+            continue
+        cur = node
+        for k in leaf:
+            if not isinstance(cur, dict) or k not in cur:
+                cur = None
+                break
+            cur = cur[k]
+        if cur is None:
+            continue
+        # docs/120 item 17: a sibling holding a POINTER used to land in `other`,
+        # and `other == 0` is the unanimity gate — so ONE aliased sibling
+        # disabled this guard for that leaf across the whole chip, permanently
+        # and invisibly. Aliasing is not evidence of a non-numeric type, it is
+        # evidence of deferral: ask what it defers TO. Unresolvable ⇒ no
+        # evidence either way ⇒ skip, never a vote.
+        if isinstance(cur, str) and cur.startswith("#"):
+            try:
+                _res = store.resolve_pointer(cur, (segs[0], ent) + tuple(leaf))
+            except Exception:            # noqa: BLE001 — evidence, not a write
+                continue
+            if _res is None or (isinstance(_res, str) and _res.startswith("#")):
+                continue                 # dangling / self-ref — says nothing
+            cur = _res
+        if isinstance(cur, bool):
+            other += 1
+        elif isinstance(cur, (int, float)):
+            numeric += 1
+            if len(witnesses) < 3:
+                witnesses.append(ent)
+        else:
+            other += 1
+    # Unanimous, and enough of them to mean something.
+    if numeric >= 2 and other == 0:
+        return (f"{'.'.join(leaf)} is a number on this chip "
+                f"({numeric} other {segs[0].rstrip('s')}s, e.g. "
+                f"{', '.join(witnesses)}), and {new_value!r} is not one. "
+                f"This field is empty, so its type comes from the rest of the "
+                f"chip. Type a number, or clear it with 'null'.")
+    return None
 
 
 def _container_at(merged: Any, segs: list[str]) -> Any:

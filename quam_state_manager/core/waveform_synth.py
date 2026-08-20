@@ -397,6 +397,63 @@ def _flattop_gaussian_deprecated(p):
     return _axis_rotate_envelope(waveform, p.get("axis_angle"))
 
 
+def _cosine_bipolar(p):
+    """quam_builder >= 0.4 ``CosineBipolarPulse.waveform_function`` transcribed.
+
+    NOT the deprecated ``_CosineBipolarPulse``: this class takes an explicit
+    total ``length`` (no smoothing/padding fields) and splits the non-flat
+    remainder into rise/switch/fall THIRDS (extra 1 sample → the switch,
+    extra 2 → rise+fall). Golden-pinned bit-for-bit against the cqt env
+    (``tests/golden/waveform_golden_qb04.json``, docs/126 ⑦a).
+    """
+    def halfcos(n: int):
+        if n <= 0:
+            return np.array([])
+        t = np.arange(n) / n
+        return 0.5 * (1 - np.cos(np.pi * t))
+
+    def cos_switch(n: int):
+        if n <= 0:
+            return np.array([])
+        k = np.arange(n, dtype=float)
+        theta = (k + 0.5) * np.pi / n
+        return np.cos(theta)
+
+    length = int(p["length"])
+    flat = int(p["flat_length"])
+
+    if flat > length:
+        raise ValueError(
+            f"CosineBipolarPulse.flat_length={flat} cannot exceed total length={length}."
+        )
+    if flat % 2 != 0:
+        raise ValueError(
+            f"CosineBipolarPulse.flat_length={flat} must be even to split equally "
+            "into + and - halves."
+        )
+
+    remaining = length - flat
+    if remaining == 0:
+        rise_len = switch_len = fall_len = 0
+    else:
+        base = remaining // 3
+        extra = remaining % 3
+        rise_len = base + (1 if extra == 2 else 0)
+        switch_len = base + (extra if extra == 1 else 0)
+        fall_len = base + (1 if extra == 2 else 0)
+
+    amplitude = float(p["amplitude"])
+    waveform = np.concatenate([
+        amplitude * halfcos(rise_len),
+        amplitude * np.ones(flat // 2),
+        amplitude * cos_switch(switch_len),
+        -amplitude * np.ones(flat // 2),
+        -amplitude * halfcos(fall_len)[::-1],
+    ])
+    waveform = _axis_rotate_envelope(waveform, p.get("axis_angle"))
+    return waveform.tolist()
+
+
 def _cosine_bipolar_deprecated(p):
     def halfcos(n: int):
         if n <= 0:
@@ -473,6 +530,7 @@ _RAW_FUNCS: dict[str, Callable[[dict], Any]] = {
     "SNZPulse": _snz,
     "GaussianFilteredSquarePulse": _gaussian_filtered_factory(bipolar=False),
     "GaussianFilteredSymmetricBipolarPulse": _gaussian_filtered_factory(bipolar=True),
+    "CosineBipolarPulse": _cosine_bipolar,
     "WaveformPulse": _waveform_passthrough,
     "_FlatTopGaussianPulse": _flattop_gaussian_deprecated,
     "_CosineBipolarPulse": _cosine_bipolar_deprecated,
@@ -580,6 +638,16 @@ def synthesize(qclass_or_key: str, params: dict[str, Any], *,
     if spec is None:
         return _mark_schema_known(_payload_error(
             f"no synthesizer for pulse class {qclass_or_key!r}"), qclass_or_key)
+
+    if spec.key == "Pulse":
+        # Digital-marker-only (bare quam Pulse): quam returns waveform None,
+        # so an analog preview would be an invention — recognized, honestly
+        # empty, never the "unrecognized" scare (docs/126 follow-up).
+        payload = _payload_error(
+            "digital marker only — this pulse has no analog waveform",
+            spec_key="Pulse", class_match=how)
+        payload["digital_only"] = True
+        return payload
 
     warnings: list[str] = []
     param_errors: dict[str, str] = {}

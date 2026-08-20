@@ -17,7 +17,13 @@ SM never edits your instrument's files behind your back. Three objects, one rule
 **The rule:** the live chip is written **only** when you press **Apply to live**
 — one explicit press, never a dialog-chain, never behind your back. And that
 press is reversible: SM snapshots the pre-apply live first, so **↺ Revert last
-apply** is always there. Everything else (typing, filling, pasting, undo, redo,
+apply** is always there.
+
+**Auto-Sync** (off by default) lets you grant that standing, in either
+direction: auto-push edits to the chip, auto-pull when something outside SM
+changes it, or both. It is one visible pill that states which modes are on.
+Pulling can discard unapplied edits, so it only does that when you tick
+*replace* — otherwise SM refuses and asks, exactly as it does today. Everything else (typing, filling, pasting, undo, redo,
 staging a snapshot, loading a run's state) stages into the working state, listed
 in the Review tray.
 

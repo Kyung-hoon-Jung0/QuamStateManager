@@ -1363,7 +1363,47 @@ class TestSidebarFeatures:
     def test_sidebar_toggle_button(self, loaded_client):
         html = loaded_client.get("/qubits").data.decode()
         assert "sidebar-toggle" in html
-        assert "toggleSidebar" in html
+        # docs/126 r3: the hamburger cycles chrome (sidebar -> +topbar with a
+        # floating restore button) instead of a plain sidebar toggle.
+        assert "cycleChrome" in html
+        assert "chrome-reveal" in html
+
+    def test_refresh_button_shows_in_flight_state(self, loaded_client):
+        """docs/126 r3, two rounds: pressing Refresh gave no feedback. Round 1
+        gated a spin on htmx's .htmx-request — invisible on a SMALL workspace
+        whose rescan settles in milliseconds (the user's re-report). Round 2:
+        app.js arms .ws-kick on the press for AT LEAST 700 ms (or the real
+        request if longer), then .ws-done flashes a checkmark — a press is
+        always seen regardless of rescan speed."""
+        html = loaded_client.get("/qubits").data.decode()
+        assert 'class="ws-refresh-ico"' in html
+        from pathlib import Path
+        import quam_state_manager
+        static = Path(quam_state_manager.__file__).parent / "web" / "static"
+        css = (static / "style.css").read_text(encoding="utf-8")
+        i = css.index(".btn-workspace-refresh.htmx-request")
+        block = css[i:i + 1400]
+        assert "pointer-events: none" in block
+        assert ".ws-kick" in block                 # press-armed, not just in-flight
+        # round 3: rotating the near-circular glyph is imperceptible — the
+        # in-flight state must swap it for a REAL ring spinner
+        assert "visibility: hidden" in block
+        assert "border-radius: 50%" in block
+        assert "border-top-color" in block
+        assert "ws-refresh-spin" in css
+        assert ".btn-workspace-refresh.ws-done" in css
+        j = css.index(".btn-workspace-refresh.ws-done::after")
+        assert '"✓"' in css[j:j + 200] or "✓" in css[j:j + 200]
+        js = (static / "app.js").read_text(encoding="utf-8")
+        k = js.index("function _wsSpin")
+        jblock = js[k:k + 2600]
+        assert "700" in jblock                      # the minimum visible window
+        assert "ws-done" in jblock
+        # round 4: rotation is rAF-DRIVEN (immune to frozen CSS animations)
+        # and the shape is the half-filled disc, whose sweep reads as motion
+        assert "requestAnimationFrame" in jblock
+        assert "◐" in jblock                  # the half-filled disc
+        assert "cancelAnimationFrame" in jblock     # and it is always released
 
     def test_sidebar_tree_polling(self, loaded_client):
         html = loaded_client.get("/qubits").data.decode()
@@ -1574,19 +1614,25 @@ class TestSidebarFeatures:
 
     def test_chip_status_left_nav_subviews(self):
         """Chip Status exposes its sections as sub-items in the LEFT sidebar
-        (mirrored from the in-page scroll-spy jump bar), Topology leading. Phase C
-        replaced the orphan "Full View" with "Distributions".
+        (mirrored from the in-page scroll-spy jump bar), Topology leading.
+        Distributions was removed on customer request (docs/126 ②).
         """
         base = (Path(__file__).resolve().parent.parent
                 / "quam_state_manager" / "web" / "templates" / "base.html")
         text = base.read_text(encoding="utf-8")
         assert 'id="chip-status-subnav"' in text, "left-nav Chip Status sub-items missing"
         # 8 sections, each wired to chipNavView(), in top-to-bottom scroll order.
+        # Trends joined in docs/120 items 5+9; Distributions left in docs/126 ②.
         assert text.count("chipNavView(") == 8
         assert "view=full" not in text, "Full View was removed in the Phase C scroll dashboard"
-        assert text.index("view=topology") < text.index("view=overview") < text.index("view=distributions"), (
-            "Topology should lead, then Overview, then Distributions."
+        assert "view=distributions" not in text, "Distributions was removed (docs/126 ②)"
+        assert "view=trends" in text
+        assert text.index("view=topology") < text.index("view=overview") < text.index("view=gate"), (
+            "Topology should lead, then Overview, then Gate."
         )
+        # Trends reads history rather than the loaded chip, so it sits last —
+        # after the live-state sections, not among them.
+        assert text.index("view=calibration") < text.index("view=trends")
 
     def test_core_scripts_not_deferred(self):
         """app.js (UI_CONFIG) and dataset-virtual.js (DatasetVirtual) must load
@@ -5986,28 +6032,32 @@ class TestDatasetScopedSearch:
         assert "'unknown '" in text or '"unknown "' in text
 
     def test_app_js_wires_help_panel_triggers(self):
-        """app.js delegates focusin + click handlers for the help panel.
+        """app.js delegates click handlers for the help panel.
 
-        Three triggers per spec:
-        - focusin on #dataset-search → open ON FIRST SESSION-FOCUS ONLY
-          (sessionStorage flag), not every focus
-        - click on #ds-search-help-toggle → always open
+        Two triggers per spec (docs/120 item 3):
+        - click on #ds-search-help-toggle → TOGGLES (open if closed, close if
+          open). It used to be open-only, so the same button a user opened the
+          panel with could not put it away.
         - click on #ds-search-help-close → always close
         Plus a click delegate on .ds-help-example for paste-into-search.
+
+        NOTHING auto-opens the panel. The old first-focus-per-session open
+        (sessionStorage flag ``quam_dataset_search_help_shown``) was REMOVED:
+        it fired the moment a user began typing, and in the sidebar — whose
+        copy of the panel renders inline rather than floating — that pushed
+        the experiment tree down out of view.
         """
         app_js = (Path(__file__).resolve().parent.parent
                   / "quam_state_manager" / "web" / "static" / "app.js")
         text = app_js.read_text(encoding="utf-8")
 
-        # First-session flag tracked in sessionStorage so the panel doesn't
-        # nag the user on every refocus.
-        assert "quam_dataset_search_help_shown" in text
-        assert "sessionStorage" in text
+        # The auto-open is GONE — neither help panel may open itself.
+        assert "quam_dataset_search_help_shown" not in text
+        assert "quam_search_help_shown" not in text
 
-        # All three IDs are referenced by handlers.
+        # Both IDs are referenced by handlers.
         assert "'ds-search-help-toggle'" in text or '"ds-search-help-toggle"' in text
         assert "'ds-search-help-close'" in text or '"ds-search-help-close"' in text
-        assert "'dataset-search'" in text or '"dataset-search"' in text
 
         # Click-to-paste — delegated by classname.
         assert "ds-help-example" in text
@@ -6046,7 +6096,10 @@ class TestDatasetScopedSearch:
         app_js = (Path(__file__).resolve().parent.parent
                   / "quam_state_manager" / "web" / "static" / "app.js")
         text = app_js.read_text(encoding="utf-8")
-        assert "var el = evt.detail.target || evt.detail.elt;" in text, (
+        # Pin the CONTRACT (target-first fallback), not the variable name —
+        # docs/125 round 3 renamed el -> scope inside _plotSwapTeardown and the
+        # old spelling made this a stale source-shape pin (docs/123 §8 class).
+        assert "evt.detail.target || evt.detail.elt" in text, (
             "the beforeSwap Plotly purge must target the swap container "
             "(evt.detail.target), not the trigger element (evt.detail.elt)."
         )
@@ -6256,6 +6309,76 @@ class TestRound13SidebarSearchBox:
         assert "id === 'sidebar-filter-input'" in js and "e.key === 'Enter'" in js
         # Pill-remove path re-shrinks the box.
         assert "autoGrowNote(inputEl)" in js
+
+
+class TestSidebarSearchLagFix:
+    """docs/126 #20 — the filter box lagged and sometimes froze on a stale
+    query. Three causes, three pins:
+      * htmx's same-element default is queue-LAST, so keystrokes stacked
+        behind 200-500 ms responses (clear-to-empty is the slowest render) —
+        hx-sync this:replace aborts the in-flight request instead;
+      * the version-gated poller's refetch ran in a DIFFERENT sync group, so
+        during a live run (version bumps on most polls) a stale refetch could
+        land after a newer keystroke and pin the tree on the wrong query —
+        it now issues through the filter element (one sync group; the last
+        issued request is the only one that can render) and defers entirely
+        while the user is typing in the box;
+      * `keyup` missed mouse paste/cut — `input` doesn't.
+    Plus the server memos: the nested render model per workspace version and
+    the whole unfiltered HTML (~350 ms and 263 KB per keystroke on a real
+    2,600-run archive; the memoized clear-the-box response measured 1 ms)."""
+
+    def _read(self, *parts):
+        base = Path(__file__).resolve().parent.parent / "quam_state_manager"
+        return base.joinpath(*parts).read_text(encoding="utf-8")
+
+    def test_filter_aborts_in_flight_and_hears_paste(self):
+        base = self._read("web", "templates", "base.html")
+        i = base.index('id="sidebar-filter-input"')
+        opening = base[base.rfind("<", 0, i):base.index(">", i)]
+        assert 'hx-sync="this:replace"' in opening
+        assert 'hx-trigger="input changed' in opening
+        assert "keyup" not in opening
+
+    def test_poll_refetch_shares_the_sync_group_and_yields_to_typing(self):
+        base = self._read("web", "templates", "base.html")
+        i = base.index("function refetchTree")
+        block = base[i:base.index("function poll", i)]
+        assert "opts.source = f" in block, "refetch must issue through the filter element"
+        j = base.index("function poll(")
+        pblock = base[j:j + 1200]
+        assert "document.activeElement === _fi" in pblock,             "a 200+ KB swap must never land under someone mid-search"
+
+    def test_pill_remove_triggers_the_input_trigger(self):
+        js = self._read("web", "static", "app.js")
+        i = js.index("window.renderFilterTags")
+        block = js[i:i + 1600]
+        assert 'htmx.trigger(inputEl, "input")' in block
+        assert '"keyup"' not in block
+
+    @staticmethod
+    def _seed_run(root: Path, date: str, name: str) -> None:
+        qs = root / date / name / "quam_state"
+        qs.mkdir(parents=True)
+        (qs / "state.json").write_text('{"qubits": {}}', encoding="utf-8")
+        (qs / "wiring.json").write_text('{"wiring": {}}', encoding="utf-8")
+
+    def test_unfiltered_tree_html_is_memoized_per_version(self, tmp_path):
+        root = tmp_path / "root"
+        self._seed_run(root, "2026-06-01", "#1_resonator_spectroscopy_010000")
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+        c = app.test_client()
+        c.post("/workspace/add", data={"folder": str(root)})
+        a = c.get("/workspace/tree").data.decode()
+        b = c.get("/workspace/tree").data.decode()
+        assert a == b and "resonator_spectroscopy" in a
+        # a workspace change must invalidate — never serve yesterday's tree
+        self._seed_run(root, "2026-06-02", "#2_power_rabi_020000")
+        fresh = c.get("/workspace/tree").data.decode()
+        assert "power_rabi" in fresh
+        # and the filtered path never serves the unfiltered memo
+        filt = c.get("/workspace/tree?name=power_rabi").data.decode()
+        assert "power_rabi" in filt and "resonator_spectroscopy" not in filt
 
 
 class TestRound14SidebarPolish:
@@ -7023,9 +7146,10 @@ class TestDatasetNavR16:
         c, root = ws_client
         html = c.get(f"/dataset/{self._uid(c, root, 2)}/prev-state-diff").data.decode()
         import re
+        # docs/126 r3: 4 stepper buttons now — <<10, older, newer, 10>>
         btns = re.findall(r"<button[^>]*loadPrevDiff[^>]*>", html)
-        assert len(btns) == 2, html[:400]
-        assert "disabled" not in btns[1], btns[1]   # newer ENABLED, targets #3
+        assert len(btns) == 4, html[:400]
+        assert "disabled" not in btns[2], btns[2]   # newer ENABLED, targets #3
 
     def test_stepper_skips_self_diff(self, ws_client):
         c, root = ws_client
@@ -7034,8 +7158,62 @@ class TestDatasetNavR16:
         # from vs=#1 the "newer" step must skip #2 (self) and offer #3
         import re
         btns = re.findall(r"<button[^>]*loadPrevDiff[^>]*>", html)
-        assert len(btns) == 2
-        assert ", 3," in btns[1]
+        assert len(btns) == 4
+        assert ", 3," in btns[2]
+
+    def test_bar_carries_the_run_id_input(self, ws_client):
+        """docs/126 r3: the comparison target is TYPEABLE, in place — the
+        original request's home (the header's duplicate copy was removed)."""
+        c, root = ws_client
+        html = c.get(f"/dataset/{self._uid(c, root, 2)}/prev-state-diff").data.decode()
+        assert "prevdiff-vs-input" in html
+        assert 'value="1"' in html            # prefilled with the current vs
+        assert "prevDiffJump" in html
+
+    def test_typed_run_id_compares_against_it(self, ws_client):
+        c, root = ws_client
+        html = c.get(
+            f"/dataset/{self._uid(c, root, 3)}/prev-state-diff?vs=1").data.decode()
+        assert 'value="1"' in html
+        assert "#3" in html                   # the pair is named
+
+    def test_unknown_run_id_falls_back_and_says_so(self, ws_client):
+        """A typed number that has no saved state must not blank the surface —
+        the route falls back to the default comparison and names the miss."""
+        c, root = ws_client
+        html = c.get(
+            f"/dataset/{self._uid(c, root, 3)}/prev-state-diff?vs=999").data.decode()
+        assert "Run #999 has no saved state" in html
+        assert 'value="2"' in html            # fell back to the previous run
+
+    def test_ten_step_skips_clamp_to_the_ends(self, tmp_path):
+        """« jumps 10 comparison hops; fewer than 10 available lands on the
+        farthest reachable run rather than going dead."""
+        import json as _json
+        root = tmp_path / "data"
+        for rid in range(1, 14):
+            run = root / "2026-08-01" / f"#{rid}_exp_1200{rid:02d}"
+            (run / "quam_state").mkdir(parents=True)
+            (run / "quam_state" / "state.json").write_text(
+                _json.dumps({"qubits": {"q1": {"f_01": 5e9 + rid}}}), encoding="utf-8")
+            (run / "quam_state" / "wiring.json").write_text(
+                _json.dumps({"wiring": {}, "network": {}}), encoding="utf-8")
+            (run / "node.json").write_text(_json.dumps(
+                {"id": rid, "metadata": {"name": "exp"},
+                 "parameters": {"model": {}}}), encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "inst"))
+        c = app.test_client()
+        c.post("/workspace/add", data={"folder": str(root)})
+        html = c.get(f"/dataset/{self._uid(c, root, 13)}/prev-state-diff").data.decode()
+        import re
+        btns = re.findall(r"<button[^>]*loadPrevDiff[^>]*>", html)
+        assert len(btns) == 4
+        assert ", 2," in btns[0]              # vs=#12, ten hops back -> #2
+        assert "disabled" in btns[3]          # nothing newer than #12 but self
+        # from a mid comparison, << clamps to the oldest run
+        html = c.get(f"/dataset/{self._uid(c, root, 13)}/prev-state-diff?vs=5").data.decode()
+        btns = re.findall(r"<button[^>]*loadPrevDiff[^>]*>", html)
+        assert ", 1," in btns[0]              # clamped to #1, not dead
 
     def test_neighbor_endpoint_both_directions(self, ws_client):
         c, root = ws_client
@@ -7204,3 +7382,60 @@ class TestSidebarRunIdSearchR16:
         conds = _parse_tree_query("rabi")
         assert _entry_matches(self._entry(780, "power_rabi"), conds)
         assert not _entry_matches(self._entry(780, "t1"), conds)
+
+
+class TestTheReviewDrawerFillsOnAFullPageLoad:
+    """The review surface — the whole point of the working-copy model — was
+    EMPTY on every full page load while the badge beside it said "N unsaved
+    changes".
+
+    `base.html` includes `_pending_tray.html` directly, so a full page render
+    takes the tray's context from `_ctx()`, not from `_render_tray`. `_ctx()`
+    supplied `change_count` but not `changes`, so the drawer's
+    `{% for c in changes %}` iterated an Undefined and rendered zero rows. The
+    next edit's OOB swap refilled it, which is why it looked intermittent.
+
+    This is the docs/110 / docs/117 trap for the third time — both renderers
+    must stamp every field the template reads — so it is pinned as a rule,
+    not just as this field.
+    """
+
+    def test_ctx_supplies_every_field_render_tray_does(self):
+        """Byte-for-byte the load-bearing invariant: anything the OOB renderer
+        passes to the tray template, the full-page renderer must pass too."""
+        import re as _re
+        from pathlib import Path as _P
+        from quam_state_manager.web import routes as R
+        src = _P(R.__file__).read_text(encoding="utf-8")
+        i = src.index('"_pending_tray.html",')
+        tray_kwargs = set(_re.findall(r"^\s*(\w+)=", src[i:i + 1200], _re.M))
+        j = src.index("def _ctx(")
+        ctx_keys = set(_re.findall(r'"(\w+)":', src[j:j + 8000]))
+        missing = {k for k in ("changes", "change_count", "working_dirty")
+                   if k in tray_kwargs and k not in ctx_keys}
+        assert not missing, f"_ctx() does not stamp {missing} — the full-page tray will lie"
+
+    def test_ctx_hands_the_template_the_real_change_log(self, loaded_client):
+        """Not just the key — the rows. The drawer loops over these."""
+        from quam_state_manager.web import routes as R
+        app = loaded_client.application
+        # find a real leaf on this fixture and edit it through the real route
+        mod = None
+        for name in (app.config.get("contexts") or {}):
+            mod = (app.config["contexts"][name] or {}).get("modifier")
+            if mod:
+                break
+        assert mod is not None, "no modifier on the loaded context"
+        leaf = next(iter(mod.store.state.get("qubits", {})), None)
+        assert leaf, "fixture has no qubits"
+        r = loaded_client.post("/field/edit",
+                               data={"dot_path": f"qubits.{leaf}.f_01",
+                                     "value": "6.25e9"})
+        assert r.status_code == 200, r.get_data(as_text=True)[:200]
+
+        with app.test_request_context("/"):
+            ctx = R._ctx()
+        assert "changes" in ctx, "the drawer would render zero rows"
+        # the count the badge shows and the rows the drawer loops over are the
+        # SAME fact — that they disagreed is the whole bug
+        assert len(ctx["changes"]) == ctx["change_count"] >= 1

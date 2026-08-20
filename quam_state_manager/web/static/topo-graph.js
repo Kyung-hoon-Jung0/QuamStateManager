@@ -430,6 +430,193 @@ window.TopoGraph = (function () {
   //            svg root gets class cm-hl-<highlight>; CSS owns the dimming.
   // Returns {mode, highlightEntity(kind, id, on)} — the map↔table hover hook
   // ('qubit'|'pair' + entity id -> .cm-hot on the matching [data-cm] group).
+  /* ── Per-pair endpoint glyphs, shared by BOTH maps (docs/120 item 11) ──
+   *
+   * These used to live inside renderLayout, so only the component-page maps
+   * had them. The Chip Status hero draws its own SVG and therefore had no
+   * frequency chevrons at all — and the customer asked for ONE convention
+   * across SM ("qubit components 페이지에서도 마찬가지인데"), so the drawing
+   * moved out here and both callers use it. The chevron half is lifted
+   * verbatim; the component map's output is byte-identical (pinned).
+   *
+   *   nodes/edges  the topology model
+   *   px(id)       -> {x, y} in the caller's own coordinate space
+   *   cell         the caller's cell size; every offset scales off it, so the
+   *                glyphs stay proportional whatever the map's zoom is
+   *   roles        opt-in C/T/M markers (below)
+   */
+  function pairGlyphs(nodes, edges, opts) {
+    opts = opts || {};
+    var px = opts.px, CELL = opts.cell || 64;
+    var svg = "";
+    nodes = nodes || []; edges = edges || [];
+
+    // Frequency-inequality chevrons (docs/93 F5): ONE glyph per PHYSICAL pair
+    // (CR chips carry both directions as separate edges — deduped by the
+    // sorted endpoint key), offset perpendicular off the midpoint so it never
+    // sits on a coupler dot or CR arrow. The apex points at the LOWER-f_01
+    // qubit — the glyph IS the inequality sign between the endpoints, read
+    // from either side (lo < hi / hi > lo). Honesty gates: BOTH endpoints
+    // numeric and |Δ| >= 1 MHz, else nothing; the exact Δ lives in the
+    // tooltip, never as drawn text (docs/91 §2.4). Top-level, not inside a
+    // direction's group: the glyph describes the PAIR, so one inactive CR
+    // direction must not dim it.
+    var fById = {};
+    for (var fbi = 0; fbi < nodes.length; fbi++) {
+      var fv = nodes[fbi].f_01;
+      if (typeof fv === "number" && isFinite(fv)) fById[nodes[fbi].id] = fv;
+    }
+    function fmtDf(hz) {
+      return hz >= 1e9 ? (hz / 1e9).toFixed(2) + " GHz" : (hz / 1e6).toFixed(1) + " MHz";
+    }
+    var chevW = Math.round(Math.max(1.6, CELL * 0.028) * 10) / 10;
+    var chevDone = {};
+    for (var ci = 0; ci < edges.length; ci++) {
+      var ce = edges[ci];
+      if (ce == null || ce.source == null || ce.target == null) continue;
+      var cpa = px(ce.source), cpb = px(ce.target);
+      if (!cpa || !cpb) continue;
+      var ckey = String(ce.source) < String(ce.target)
+        ? ce.source + "|" + ce.target : ce.target + "|" + ce.source;
+      if (chevDone[ckey]) continue;
+      chevDone[ckey] = true;
+      var fS = fById[ce.source], fT = fById[ce.target];
+      if (fS == null || fT == null) continue;
+      var dF = fS - fT;
+      if (Math.abs(dF) < 1e6) continue;
+      var loPt = dF > 0 ? cpb : cpa, hiPt = dF > 0 ? cpa : cpb;
+      var hiId = dF > 0 ? ce.source : ce.target;
+      var loId = dF > 0 ? ce.target : ce.source;
+      var cux = hiPt.x - loPt.x, cuy = hiPt.y - loPt.y;
+      var cul = Math.sqrt(cux * cux + cuy * cuy) || 1;
+      cux /= cul; cuy /= cul;
+      var cnx = -cuy, cny = cux;
+      var cmx = (loPt.x + hiPt.x) / 2 + cnx * CELL * 0.16;
+      var cmy = (loPt.y + hiPt.y) / 2 + cny * CELL * 0.16;
+      var arm = CELL * 0.10, half = CELL * 0.075, gap = CELL * 0.09;
+      var chev = "";
+      for (var cg = 0; cg < 2; cg++) {
+        // both apexes point toward the LOWER end (-u); arms open toward the higher
+        var apX = cmx + cux * (cg === 0 ? -gap / 2 : gap / 2);
+        var apY = cmy + cuy * (cg === 0 ? -gap / 2 : gap / 2);
+        chev += '<polyline class="cm-freqchev" stroke-width="' + chevW + '" points="' +
+                (apX + cux * arm + cnx * half) + "," + (apY + cuy * arm + cny * half) + " " +
+                apX + "," + apY + " " +
+                (apX + cux * arm - cnx * half) + "," + (apY + cuy * arm - cny * half) + '"/>';
+      }
+      svg += '<g class="cm-freq" data-cm-freq="' + esc(ckey) + '">' + chev +
+             "<title>Δf_01: " + esc(hiId) + " +" + fmtDf(Math.abs(dF)) + " vs " + esc(loId) +
+             "</title></g>";
+    }
+
+    /* C / T / M role markers (docs/120 item 11).
+     *
+     * The customer's convention, verbatim: "the arrow direction encodes the
+     * f_01 inequality, and C / T / M appear as small circular symbols beside
+     * each qubit at the end of the arrow it belongs to — so control, target,
+     * moving qubit and the frequency ordering are all readable at a glance."
+     *
+     * M is never a THIRD position. `moving_qubit` is a role string
+     * ("control"/"target"), so the mover always coincides with C or T, and it
+     * is drawn as a second small circle stacked just past that end's role
+     * circle. On a chip that records no role, no M is drawn — the frequencies
+     * are NOT used to infer one, because quam_builder's default (the higher
+     * f_01 moves) is exactly what an override would contradict, and a guess
+     * would hide the disagreement worth seeing.
+     *
+     * Deduped per physical pair like the chevrons: a CR chip's two directions
+     * describe one pair with one control end.
+     */
+    if (opts.roles) {
+      // docs/126 (customer): compactRoles pulls each marker HALF ONTO its
+      // stone (centre on the rim) and shrinks it — freeing the edge middle
+      // for the metric value the hero prints there. The component map keeps
+      // the classic outside placement (its drawings are pinned byte-identical
+      // across modes), so this is opt-in.
+      var compact = !!opts.compactRoles;
+      var roleR = compact ? Math.max(3.6, CELL * 0.062)
+                          : Math.max(4.5, CELL * 0.085);
+      var roleFont = Math.round(Math.max(6, CELL * (compact ? 0.085 : 0.115)) * 10) / 10;
+      var roleDone = {};
+      for (var ri = 0; ri < edges.length; ri++) {
+        var re = edges[ri];
+        if (re == null || re.source == null || re.target == null) continue;
+        // Dedup by the PAIR, not by the physical edge. A CR chip carries TWO
+        // qubit_pairs entities for one edge with control/target REVERSED
+        // (cr_semantics.directed_partner), and collapsing them by sorted
+        // endpoints made the map assert a single control end picked by
+        // state.qubit_pairs insertion order — a confident claim that is wrong
+        // half the time. The chevron above still dedups, correctly: a frequency
+        // ordering is symmetric, a role assignment is not.
+        var rkey = re.pair_id != null ? String(re.pair_id)
+          : (String(re.source) < String(re.target)
+             ? re.source + "|" + re.target : re.target + "|" + re.source);
+        if (roleDone[rkey]) continue;
+        roleDone[rkey] = true;
+        // A self-loop has no two ends to label.
+        if (String(re.source) === String(re.target)) continue;
+        var rpa = px(re.source), rpb = px(re.target);
+        if (!rpa || !rpb) continue;
+        var rux = rpb.x - rpa.x, ruy = rpb.y - rpa.y;
+        var rul = Math.sqrt(rux * rux + ruy * ruy) || 1;
+        rux /= rul; ruy /= rul;
+        var rnx = -ruy, rny = rux;          // perpendicular
+        var mv = re.moving_qubit;   // "control" | "target" | null
+        // Walk in from each stone ALONG the edge, so the marker sits beside its
+        // qubit at the end of the arrow it belongs to. M then stacks
+        // PERPENDICULAR to its own role marker rather than further along the
+        // line: walking it along the edge put it past the midpoint on a
+        // one-cell pair (inset 0.34·CELL from each end leaves less room
+        // between the markers than the step consumed), so M ended up nearer
+        // the OTHER qubit — the exact opposite of what it means. Perpendicular
+        // keeps it unambiguously attached to its own end at any edge length,
+        // and on the opposite side from the chevron so the two never collide.
+        // inset must clear the stone, not sit on it. The stones are drawn
+        // AFTER these glyphs and R == CELL*0.30, so an inset of 0.30 put each
+        // role circle's centre exactly on the rim and the opaque stone painted
+        // over roughly a third of it. jsdom cannot see that; a browser can.
+        var inset = compact ? CELL * 0.30            // centre ON the rim
+                            : CELL * 0.30 + roleR * 1.15;
+        var step = roleR * 2.1;
+        // A qubit can be the control of one pair and the target of another, so
+        // every marker names BOTH the pair and the endpoint it belongs to —
+        // otherwise "the C nearest qA1" is an ambiguous question on any chip
+        // with a chain through it.
+        [["C", rpa, 1, mv === "control", re.source],
+         ["T", rpb, -1, mv === "target", re.target]].forEach(function (spec) {
+          var letter = spec[0], pt = spec[1], dir = spec[2], moves = spec[3],
+              atId = spec[4];
+          var attrs = ' data-cm-pair="' + esc(re.pair_id == null ? rkey : re.pair_id) +
+                      '" data-cm-at="' + esc(atId) + '"';
+          var bx = pt.x + rux * inset * dir, by = pt.y + ruy * inset * dir;
+          svg += '<g class="cm-role cm-role-' + letter.toLowerCase() + '"' + attrs + '>' +
+                 '<circle class="cm-role-dot" cx="' + bx + '" cy="' + by +
+                 '" r="' + roleR + '"/>' +
+                 '<text class="cm-role-txt" x="' + bx + '" y="' + by +
+                 '" font-size="' + roleFont + '" text-anchor="middle"' +
+                 ' dominant-baseline="central">' + letter + "</text>" +
+                 "<title>" + (letter === "C" ? "control" : "target") +
+                 " of " + esc(re.pair_id != null ? re.pair_id
+                              : rkey.replace("|", "–")) + "</title></g>";
+          if (moves) {
+            // -n: the chevron sits at +0.16·CELL on the normal, so M takes the
+            // other side of the line and the two never overlap.
+            var mx = bx - rnx * step, my = by - rny * step;
+            svg += '<g class="cm-role cm-role-m"' + attrs + '>' +
+                   '<circle class="cm-role-dot cm-role-dot-m" cx="' + mx +
+                   '" cy="' + my + '" r="' + roleR + '"/>' +
+                   '<text class="cm-role-txt" x="' + mx + '" y="' + my +
+                   '" font-size="' + roleFont + '" text-anchor="middle"' +
+                   ' dominant-baseline="central">M</text>' +
+                   "<title>moving qubit — its flux is what moves during the gate" +
+                   "</title></g>";
+          }
+        });
+      }
+    }
+    return svg;
+  }
+
   function renderLayout(mount, opts) {
     var noop = { mode: "none", highlightEntity: function () {} };
     if (!mount) return noop;
@@ -542,63 +729,15 @@ window.TopoGraph = (function () {
              "<title>" + esc(e.pair_id) + "</title></g>";
     }
 
-    // Frequency-inequality chevrons (docs/93 F5): ONE glyph per PHYSICAL pair
-    // (CR chips carry both directions as separate edges — deduped by the
-    // sorted endpoint key), offset perpendicular off the midpoint so it never
-    // sits on a coupler dot or CR arrow. The apex points at the LOWER-f_01
-    // qubit — the glyph IS the inequality sign between the endpoints, read
-    // from either side (lo < hi / hi > lo). Honesty gates: BOTH endpoints
-    // numeric and |Δ| >= 1 MHz, else nothing; the exact Δ lives in the
-    // tooltip, never as drawn text (docs/91 §2.4). Top-level, not inside a
-    // direction's group: the glyph describes the PAIR, so one inactive CR
-    // direction must not dim it.
-    var fById = {};
-    for (var fbi = 0; fbi < nodes.length; fbi++) {
-      var fv = nodes[fbi].f_01;
-      if (typeof fv === "number" && isFinite(fv)) fById[nodes[fbi].id] = fv;
-    }
-    function fmtDf(hz) {
-      return hz >= 1e9 ? (hz / 1e9).toFixed(2) + " GHz" : (hz / 1e6).toFixed(1) + " MHz";
-    }
-    var chevW = Math.round(Math.max(1.6, CELL * 0.028) * 10) / 10;
-    var chevDone = {};
-    for (var ci = 0; ci < edges.length; ci++) {
-      var ce = edges[ci];
-      if (ce == null || ce.source == null || ce.target == null) continue;
-      var cpa = px(ce.source), cpb = px(ce.target);
-      if (!cpa || !cpb) continue;
-      var ckey = String(ce.source) < String(ce.target)
-        ? ce.source + "|" + ce.target : ce.target + "|" + ce.source;
-      if (chevDone[ckey]) continue;
-      chevDone[ckey] = true;
-      var fS = fById[ce.source], fT = fById[ce.target];
-      if (fS == null || fT == null) continue;
-      var dF = fS - fT;
-      if (Math.abs(dF) < 1e6) continue;
-      var loPt = dF > 0 ? cpb : cpa, hiPt = dF > 0 ? cpa : cpb;
-      var hiId = dF > 0 ? ce.source : ce.target;
-      var loId = dF > 0 ? ce.target : ce.source;
-      var cux = hiPt.x - loPt.x, cuy = hiPt.y - loPt.y;
-      var cul = Math.sqrt(cux * cux + cuy * cuy) || 1;
-      cux /= cul; cuy /= cul;
-      var cnx = -cuy, cny = cux;
-      var cmx = (loPt.x + hiPt.x) / 2 + cnx * CELL * 0.16;
-      var cmy = (loPt.y + hiPt.y) / 2 + cny * CELL * 0.16;
-      var arm = CELL * 0.10, half = CELL * 0.075, gap = CELL * 0.09;
-      var chev = "";
-      for (var cg = 0; cg < 2; cg++) {
-        // both apexes point toward the LOWER end (-u); arms open toward the higher
-        var apX = cmx + cux * (cg === 0 ? -gap / 2 : gap / 2);
-        var apY = cmy + cuy * (cg === 0 ? -gap / 2 : gap / 2);
-        chev += '<polyline class="cm-freqchev" stroke-width="' + chevW + '" points="' +
-                (apX + cux * arm + cnx * half) + "," + (apY + cuy * arm + cny * half) + " " +
-                apX + "," + apY + " " +
-                (apX + cux * arm - cnx * half) + "," + (apY + cuy * arm - cny * half) + '"/>';
-      }
-      svg += '<g class="cm-freq" data-cm-freq="' + esc(ckey) + '">' + chev +
-             "<title>Δf_01: " + esc(hiId) + " +" + fmtDf(Math.abs(dF)) + " vs " + esc(loId) +
-             "</title></g>";
-    }
+    // docs/120 item 11: the chevrons (and now the C/T/M role markers) are
+    // drawn by the SHARED pairGlyphs, so the Chip Status hero and this map
+    // cannot drift apart. The CHEVRON half is lifted verbatim and its geometry
+    // is unchanged; the role markers are ADDITIVE here (the customer asked for
+    // one convention across SM), so this map's output is deliberately NOT
+    // byte-identical to what it replaced -- component_map_selfcheck was
+    // updated in the same change, restating the docs/92 §2.4 pin at the
+    // invariant it always meant: ids or role letters, and never a number.
+    svg += pairGlyphs(nodes, edges, { px: px, cell: CELL, roles: true });
 
     // qubit stones + per-qubit component marks (resonator NE, flux stub S)
     // id text scales WITH the cell (docs/93 F2) — a CSS-fixed size left tiny
@@ -793,6 +932,7 @@ window.TopoGraph = (function () {
     layoutFor: layoutFor,
     LOGICAL_LAYOUT_NOTE: LOGICAL_LAYOUT_NOTE,
     spreadCoincident: spreadCoincident,
+    pairGlyphs: pairGlyphs,
     renderLayout: renderLayout,
     edgeStyleForGate: edgeStyleForGate,
     legendForGate: legendForGate,

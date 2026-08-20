@@ -289,21 +289,34 @@ window.getPageSize = function(storageKey, defaultVal) {
  * (the "2nd pulse click → broken plot, but fine after close+reopen" bug).
  * Without it Plotly also leaks WebGL contexts + DOM refs (~2-5MB per swap).
  */
-document.addEventListener('htmx:beforeSwap', function(evt) {
-    if (!evt.detail) return;
-    // No swap will happen (htmx drops 4xx/5xx bodies → shouldSwap=false), so the
-    // container keeps its current content — purging its live plots here would
-    // blank them with nothing to replace them (a failed inspector-pane load used
-    // to wipe the visible figures). Only tear down when the swap is real.
-    if (evt.detail.shouldSwap === false) return;
-    if (typeof Plotly === 'undefined') return;
-    var el = evt.detail.target || evt.detail.elt;   // the container being replaced
-    if (!el || !el.querySelectorAll) return;
-    var plots = el.querySelectorAll('.js-plotly-plot');
-    for (var i = 0; i < plots.length; i++) {
-        try { Plotly.purge(plots[i]); } catch(e) {}
-    }
+/* htmx history restore replaces the BODY outside every swap hook — the one
+   destructive path the beforeSwap choke point cannot see (docs/124 minor).
+   By the time htmx:historyRestore fires the outgoing nodes are gone, so the
+   reachable cleanup is the observer registry sweep (unobserveWithin's
+   gone-sweep semantics); Plotly's own responsive handlers on the dropped
+   graph divs are NOT reachable post-restore — recorded, not hidden. All
+   charts in this app are SVG (docs/122 measured), so the residue is
+   plain-memory until GC pressure, not WebGL contexts. */
+document.addEventListener('htmx:historyRestore', function () {
+    if (window.PlotHost) { try { window.PlotHost.unobserveWithin(document); } catch (e) {} }
 });
+
+/* The pinned-run interceptor must speak FIRST (docs/124 M-2): it may cancel
+   the swap to keep the current layout, and every teardown listener below
+   gates on shouldSwap — a later-registered interceptor meant the purge had
+   already blanked the KEPT layout's figures (executed: click the pinned run
+   again -> svg 3->0, unrecoverable, since the same pre-suppression pass also
+   disconnected the lazy-render observer). The function is declared next to
+   the rest of the pin machinery (hoisted — app.js is one top-level script);
+   only the registration lives up here, ahead of the destroyers. */
+document.addEventListener('htmx:beforeSwap', _pinnedRunSwapInterceptor);
+
+/* (docs/125 round 3) The docs/110-era bare-class purge listener that lived
+   here was REMOVED: the PlotHost choke point (registered further down) purges
+   strictly more (structural graphDivs ⊇ the class), releases observers at the
+   same moment, and honors the PaneState keep-route carve-out this one never
+   did — two doors with different rules was itself a docs/124 finding, and the
+   pinned-run blanking was purged TWICE through them. One door now. */
 
 /* /config/regenerate returns its error banner with a 4xx/5xx status; htmx 2.x
    drops error-response bodies by default (responseHandling), so the banner
@@ -347,6 +360,18 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     // Dataset "Load State" gates (r11): chip-mismatch / pending-edits answer
     // 409 with a confirm fragment — same pattern as state-history-detail.
     if (t.id === 'ds-load-state-result' && status === 409) {
+        evt.detail.shouldSwap = true;
+        evt.detail.isError = false;
+    }
+    // docs/120 item 10: the top-bar version panel's "Go back" posts the SAME
+    // gated restore-live route, into #table-pane. Its two independent gates
+    // (unsaved edits, wiring-topology mismatch) answer 409 with the force
+    // panel, and having unsaved edits is the ORDINARY state — so without this
+    // the button was a dead click exactly when "revert back and forth has to
+    // be really free" mattered most. Narrow, like its siblings: only a body
+    // that actually carries the confirm fragment may swap.
+    if (t.id === 'table-pane' && status === 409 && evt.detail.xhr
+        && /sh-confirm/.test(evt.detail.xhr.responseText || '')) {
         evt.detail.shouldSwap = true;
         evt.detail.isError = false;
     }
@@ -513,6 +538,11 @@ window._pruneInteractiveTiles = _pruneInteractiveTiles;
 // so it catches the inspector pane on a dataset switch.
 document.addEventListener('htmx:beforeSwap', function(evt) {
     if (!evt.detail) return;
+    // A cancelled swap keeps its content (the pinned-run same-run click, a
+    // dropped 4xx body) — disconnecting its lazy-render observer would leave
+    // tiles that can never rebuild (docs/124 M-2's second half: data-rendered
+    // still "1", _io dead, tab re-click builds nothing).
+    if (evt.detail.shouldSwap === false) return;
     var scope = evt.detail.target || evt.detail.elt;
     if (!scope || !scope.querySelectorAll) return;
     scope.querySelectorAll('[id$="interactive-container"]').forEach(function(c) {
@@ -1390,10 +1420,12 @@ window.chipNavView = function(view, ev) {
     if (typeof window.setChipStatusView === 'function' && document.querySelector('.topo-subnav')) {
         window.setChipStatusView(view, null, true);   // scroll to the chosen section
         try { history.replaceState(null, '', '/topology?view=' + view); } catch (e) {}
+        if (window.syncSidebarNavActive) window.syncSidebarNavActive();
     } else if (window.htmx) {
         window.htmx.ajax('GET', '/topology?view=' + view,
                          { target: '#table-pane', swap: 'innerHTML' }).then(function() {
             try { history.pushState(null, '', '/topology?view=' + view); } catch (e) {}
+            if (window.syncSidebarNavActive) window.syncSidebarNavActive();
         });
     } else {
         window.location.href = '/topology?view=' + view;
@@ -1628,6 +1660,25 @@ window.toggleSidebar = function() {
     } catch(e) {}
 };
 
+/* docs/126: the ☰ cycles THREE states (customer request) —
+   0 everything shown → 1 sidebar collapsed → 2 top bar hidden too (only a
+   small floating ☰ remains, fixed top-left) → back to 0. Any state the user
+   reached by the individual toggles still cycles sensibly from wherever it
+   is, and both legs persist through the toggles' own localStorage keys. */
+window.cycleChrome = function() {
+    var layout = document.querySelector(".app-layout");
+    var sbCollapsed = !!(layout && layout.classList.contains("sidebar-collapsed"));
+    var tbHidden = document.documentElement.classList.contains("topbar-hidden");
+    if (!sbCollapsed) {
+        window.toggleSidebar();                       // 0 → 1
+    } else if (!tbHidden) {
+        window.toggleTopbar();                        // 1 → 2
+    } else {
+        window.toggleTopbar();                        // 2 → 0
+        window.toggleSidebar();
+    }
+};
+
 /**
  * Global toggle that hides the top title bar to reclaim vertical space. The class
  * lives on <html> (NOT .app-layout) because the .topbar sits OUTSIDE .app-layout;
@@ -1774,10 +1825,26 @@ window.dsNavRun = function(dir) {
         if (entries[i].getAttribute('data-uid') === curUid) { idx = i; break; }
     }
     if (idx === -1) { serverNeighbor(); return; }   // open run not in the tree
-    var next = entries[idx + dir];
+    // docs/126 ⑥: dir may be ±10 (the fast buttons). A big step past the end
+    // CLAMPS to the end entry (the server neighbor walk is single-step only);
+    // a single step past the end keeps the server fallback.
+    var tgt = idx + dir;
+    if (Math.abs(dir) > 1) tgt = Math.max(0, Math.min(entries.length - 1, tgt));
+    if (tgt === idx) return;
+    var next = entries[tgt];
     if (!next) { serverNeighbor(); return; }        // tree end — folder may have more
     next.scrollIntoView({block: 'nearest'});
     next.click();
+};
+
+/* docs/126 r3: the run-number jump lives on the Prev State comparison bar
+ * (its original home per the request) — typing a number compares the open
+ * run against exactly that run. A number with no saved state renders the
+ * route's honest fallback note in the same pane. */
+window.prevDiffJump = function(inp, uid, compact) {
+    var n = parseInt((inp && inp.value || '').replace(/[^0-9]/g, ''), 10);
+    if (!isFinite(n)) return;
+    window.loadPrevDiff(inp, uid, n, compact);
 };
 
 // Enter/Space open a keyboard-focused tree run entry (they're tabindex=0 now).
@@ -2344,7 +2411,7 @@ function _failedPathsSummary(failed) {
     return " Affected: " + shown + ".";
 }
 
-window.doStateSync = function(mode, forced) {
+window.doStateSync = function(mode, forced, ackUnseen) {
     mode = mode || "discard";
     // Double-submit guard: a second click (or a grid ⚡ + tray button double-fire)
     // while one apply/sync is in flight used to queue a second /state/sync that
@@ -2357,13 +2424,52 @@ window.doStateSync = function(mode, forced) {
     // response is handled by the conflict tray + toast, which never needed the
     // modal open.
     window.closeReview();
+    // docs/120 item 22: declare what THIS screen is showing. Two SM windows
+    // share one server-side change log, and a tray only refreshes on its own
+    // actions — so an Apply pressed here can carry edits made in the other
+    // window that were never on this one. Sending the count the user actually
+    // saw is what lets the server tell the difference between "apply my three
+    // edits" and "apply three edits plus one you have never seen".
+    var _seen = (function () {
+        var t = document.getElementById("pending-tray");
+        var v = t && t.getAttribute("data-change-count");
+        return (v === null || v === undefined || v === "") ? null : v;
+    })();
     fetch("/state/sync", {
         method: "POST",
         headers: {"Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
         body: "mode=" + encodeURIComponent(mode) + (forced ? "&force=1" : "")
+              + (ackUnseen ? "&ack_unseen=1" : "")
+              + (_seen !== null ? "&seen_changes=" + encodeURIComponent(_seen) : "")
     })
         .then(function(r) { return r.json(); })
         .then(function(data) {
+            if (data.status === "unseen_changes") {
+                // Never a dead end — name what would go, and let one click
+                // accept it or send the user to review it first.
+                var lines = (data.paths || []).slice(0, 6).join("\n  ");
+                if (window.confirm((data.message || "") + "\n\n  " + lines
+                        + "\n\nApply everything, including those?")) {
+                    setTimeout(function () {
+                        window._applyInFlight = false;
+                        // `ackUnseen`, never `forced`: force=1 answers the
+                        // STALENESS question and must not double as consent to
+                        // another window's edits.
+                        window.doStateSync(mode, false, true);
+                    }, 0);
+                } else {
+                    // Refresh the tray so this screen stops lying, then show it.
+                    if (window.htmx) {
+                        window.htmx.ajax("GET", "/state/tray",
+                                         {target: "#pending-tray", swap: "outerHTML"});
+                    }
+                    if (window.showToast) {
+                        window.showToast("Nothing was applied — the tray now shows "
+                                         + "every pending edit.", "info");
+                    }
+                }
+                return;
+            }
             if (data.status === "needs_confirm") {
                 // docs/65: the working state holds staged/saved content that a
                 // pull would destroy — the server refuses until confirmed. The
@@ -2662,6 +2768,58 @@ window.applyEditsToLive = function () {
                 // here. It announced a silent auto-pull after the fact; the user-facing
                 // path now ASKS first through the live-diverged banner, which carries
                 // the same count and both directions, so there is nothing to report.
+                // docs/120 item 8 — Auto-Sync's pull rides THIS poll rather
+                // than adding one of its own. The server decides everything:
+                // whether pull is armed, whether live actually diverged, and
+                // whether unapplied edits block it. All the client does is
+                // press the button when told, and share the in-flight latch
+                // with the manual Apply + the auto-apply flusher so a pull can
+                // never interleave with a push.
+                if (d && d.auto_pull && !window._applyInFlight && window.htmx) {
+                    window._applyInFlight = true;
+                    var _relTimer = null;
+                    var _rel = function () {
+                        if (_relTimer) { clearTimeout(_relTimer); _relTimer = null; }
+                        window._applyInFlight = false;
+                        // This latch also gates the MANUAL Apply buttons and the
+                        // auto-apply flusher, and the flusher parks work in its
+                        // own `_queued` flag while it is held. Releasing without
+                        // poking it left an edit unapplied until the next tray
+                        // mutation, while the pill still claimed auto-push was on.
+                        if (window.AutoApply && window.AutoApply.drain) {
+                            try { window.AutoApply.drain(); } catch (e2) {}
+                        }
+                    };
+                    // A never-settling request must not wedge Apply forever —
+                    // docs/80 fixed exactly this class for the dataset poll and
+                    // the pattern belongs here too. The server side is idempotent,
+                    // so releasing early can at worst allow one redundant pull.
+                    _relTimer = setTimeout(_rel, 20000);
+                    try {
+                        // The server cannot see typed-but-uncommitted grid cells
+                        // (a fill-down or pasted column lives only in the DOM
+                        // until Apply), so it would read the working copy as
+                        // clean and pull straight over them. Report them.
+                        //
+                        // The class is `dirty`, set by `_markCellDirty` in BOTH
+                        // bulk-edit.js and pair-edit.js. The first cut looked
+                        // for `.bulk-dirty` — which exists only as the id of the
+                        // COUNTER span (`#bulk-dirty-count`) — and fell back to
+                        // `BulkEdit.hasUnsaved`, which does not exist. So this
+                        // never once reported dirt, and a filled-down column was
+                        // destroyed by a pull with "replace" UNCHECKED: exactly
+                        // the row of the policy table that is supposed to ask.
+                        // Nothing failed and no test saw it, because the pin
+                        // posted `dom_dirty=1` by hand.
+                        var _domDirty = !!document.querySelector('.bulk-cell.dirty');
+                        var pp = window.htmx.ajax('POST',
+                            '/auto-sync/pull' + (_domDirty ? '?dom_dirty=1' : ''), {
+                            target: '#pending-tray', swap: 'outerHTML',
+                        });
+                        if (pp && typeof pp.then === 'function') pp.then(_rel, _rel);
+                        else _rel();
+                    } catch (e) { _rel(); }
+                }
                 var count = (d && d.ok && d.tracked) ? (d.count || 0) : 0;
                 // Count changed → refresh any embedded panel / open overlay so
                 // the State History page + a viewing user see it accumulate.
@@ -2964,16 +3122,58 @@ document.addEventListener("cellDiscarded", function(evt) {
 // Ctrl+Z undo: the server reverts one user action (a batch/rename undoes as a
 // unit) and fires cellsReverted with every affected path so the visible cells +
 // Explorer nodes roll back in place. Reuses the same _revertCell path as discard.
+/* docs/122 item 3: the grids used to answer EVERY undo with a full /bulk
+   re-GET — 2,418 ms on the real 20-qubit chip against 55 ms for the undo
+   itself, and the same press on a page with no grid settles in 56 ms. But the
+   response already names each reverted path and the value it reverted to, so
+   the grids can repaint exactly those cells.
+
+   The refetch is not simply deleted; it is kept for the two cases the patch
+   provably cannot express:
+     - a CREATE or DELETE was undone. A restored subtree can add columns and an
+       undone creation turns a cell back into "not set" (data-missing) — neither
+       is a value edit, and the response's own created/deleted flags say so.
+     - some named path had no cell to land in even after cold-column hydration.
+       Then we cannot claim the grid is up to date for it, so we don't.
+   Debounced, because a burst of presses should cost ONE rebuild, not N. */
+var _gridResyncTimer = null;
+function _scheduleGridResync(ms) {
+    if (_gridResyncTimer) clearTimeout(_gridResyncTimer);
+    _gridResyncTimer = setTimeout(function () {
+        _gridResyncTimer = null;
+        document.dispatchEvent(new CustomEvent("quam:state-changed"));
+    }, ms == null ? 900 : ms);
+}
+window._scheduleGridResync = _scheduleGridResync;
+
 document.addEventListener("cellsReverted", function(evt) {
     var d = evt.detail || {};
-    (d.entries || []).forEach(function(e) {
+    var entries = d.entries || [];
+    entries.forEach(function(e) {
         _revertCell(e.dot_path, e.old_value_str != null ? e.old_value_str : "");
     });
-    // The Live-State-Edit grids render their own cells (not inspector inputs), so
-    // _revertCell can't roll them back — tell the grids to re-pull from the (now
-    // reverted) working copy so they don't keep showing the undone value. The
-    // listeners no-op off their page and skip when a cell is mid-edit/dirty.
-    document.dispatchEvent(new CustomEvent("quam:state-changed"));
+    // The Live-State-Edit grids render their own cells (not inspector inputs),
+    // so _revertCell can't reach them — repaint by path, then decide.
+    var structural = entries.some(function (e) { return e && (e.created || e.deleted); });
+    var gridOnScreen = !!(document.getElementById('bulk-table')
+                          || document.getElementById('bulk-pair-table'));
+    var uncovered = 0;
+    try {
+        var covered = {};
+        [window.BulkEdit, window.BulkPairEdit].forEach(function (api) {
+            if (!api || !api.revertPaths) return;
+            ((api.revertPaths(entries) || {}).covered || []).forEach(function (p) {
+                covered[p] = 1;
+            });
+        });
+        // Per ENTRY, not per surface: a qubit leaf is legitimately absent from
+        // the pair grid, and counting that as a miss would rebuild the pane for
+        // every ordinary edit — i.e. keep the 2.4 s we just removed.
+        entries.forEach(function (e) {
+            if (e && e.dot_path && !covered[e.dot_path]) uncovered++;
+        });
+    } catch (err) { uncovered = entries.length; }   // never trust a half repaint
+    if (gridOnScreen && (structural || uncovered > 0)) _scheduleGridResync();
     if (d.message && window.showToast) window.showToast(d.message, "success");
     // r16 ⓪-2 (docs/73): flash the reverted item in place, or navigate to
     // its owning surface with the current page's typing stashed + restored.
@@ -3175,7 +3375,16 @@ window.TypeAlert = (function () {
         }
         inflight = true;
         fetch("/type-alert", { headers: { "HX-Request": "true" } })
-            .then(function (r) { return r.status === 200 ? r.text() : null; })
+            // docs/120 item 21: the 204 branch returned without reading the
+            // body, so Chrome cancelled the response stream and logged
+            // `net::ERR_ABORTED` — on EVERY page, since 204 is the normal
+            // answer. Console noise is not cosmetic here: it is the channel a
+            // real uncaught error has to be noticed in, and this drowned it.
+            // Draining the (empty) body costs nothing and keeps it quiet.
+            .then(function (r) {
+                var st = r.status;
+                return r.text().then(function (t) { return st === 200 ? t : null; });
+            })
             .then(function (html) {
                 inflight = false;
                 if (!html) return;                 // 204: nothing new to say
@@ -3708,14 +3917,133 @@ window.PaneState = (function () {
 
     function _purge(root) {
         // The app-wide rule: a Plotly node must never die via innerHTML
-        // without purge (WebGL contexts + DOM refs leak).
+        // without purge (WebGL contexts + DOM refs leak). Structural lookup
+        // (docs/124 §4.3 — the class does not always survive); bare class
+        // only if PlotHost is somehow absent.
+        if (window.PlotHost) {
+            try { window.PlotHost.purgeWithin(root); } catch (e) {}
+            return;
+        }
         if (window.Plotly && root.querySelectorAll) {
             root.querySelectorAll('.js-plotly-plot').forEach(function (n) {
                 try { window.Plotly.purge(n); } catch (e) {}
             });
         }
     }
-    function _captureSoft(root) {
+    /* docs/122 item 2: the SOFT tier used to carry the search TEXT and nothing
+       else, so an /explorer rebuild -- which an armed Auto-Sync pull triggers
+       unattended, measured at ~25 s after a qualibrate write -- still lost the
+       expanded nodes, the state/wiring tab and the scroll position. Those are
+       state the user built by hand; a rebuild that keeps only the text still
+       reads as "it reset itself". */
+    function _captureExplorer() {
+        var st = document.getElementById('explorer-tree-state');
+        var wi = document.getElementById('explorer-tree-wiring');
+        if (!st || !wi) return null;
+        var onState = st.style.display !== 'none';
+        var active = onState ? st : wi;
+        return {
+            tab: onState ? 'state' : 'wiring',
+            expanded: window.jsonTreeExpandedPaths
+                ? window.jsonTreeExpandedPaths(active.id) : [],
+            scroll: active.scrollTop || 0,
+            pane: (pane() || {}).scrollTop || 0,
+        };
+    }
+    /* A retried scroll restore must never fight the user. Same rule docs/75's
+       InlineCommit already applies to its own restore: a wheel or a PageUp
+       means they are reading somewhere else now, and the pending attempts are
+       abandoned.
+       Two hard-won rules (docs/124 M-16/M-17):
+       - the abort state is PER RESTORE, and a new restore SUPERSEDES every
+         older one's timers via a generation counter. One shared boolean let
+         arming restore B reset the flag and resurrect restore A's
+         already-aborted retries, which yanked the user to A's stale target
+         (executed: four ping-pong yanks over 2 s).
+       - Chrome gives scrollbar interaction no wheel/keydown at all — a track
+         click or thumb drag targets the SCROLLER ELEMENT itself, never a row
+         — and ArrowUp/ArrowDown/Space scroll too; all were invisible to the
+         old listener set and yanked back by the next retry. A raw 'scroll'
+         listener is deliberately NOT the fix: while the filter settles the
+         browser CLAMPS scrollTop and fires the same event, which would read
+         as a user scroll and abort the very restore the retries exist for. */
+    var _restoreGen = 0;
+    function _armScrollAbort() {
+        var state = { aborted: false };
+        function typing(e) {
+            var t = e.target;
+            return !!(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA'
+                            || t.isContentEditable));
+        }
+        function off() { state.aborted = true; cleanup(); }
+        function onKey(e) {
+            if (typing(e)) return;   // arrows inside the search box are typing
+            if (e.key === 'PageUp' || e.key === 'PageDown' || e.key === 'Home'
+                || e.key === 'End' || e.key === 'ArrowUp' || e.key === 'ArrowDown'
+                || e.key === ' ') off();
+        }
+        function onDown(e) {
+            if (e.button === 1) { off(); return; }   // middle-click autoscroll
+            var t = e.target;
+            if (t && ((t.classList && t.classList.contains('json-tree'))
+                      || t.id === 'table-pane')) off();
+        }
+        function cleanup() {
+            window.removeEventListener('wheel', off, true);
+            window.removeEventListener('keydown', onKey, true);
+            window.removeEventListener('touchmove', off, true);
+            window.removeEventListener('mousedown', onDown, true);
+        }
+        window.addEventListener('wheel', off, true);
+        window.addEventListener('touchmove', off, true);
+        window.addEventListener('keydown', onKey, true);
+        window.addEventListener('mousedown', onDown, true);
+        setTimeout(cleanup, 2600);
+        return state;
+    }
+
+    function _restoreExplorer(d) {
+        if (!d || !document.getElementById('explorer-tree-state')) return;
+        var gen = ++_restoreGen;
+        var abort = _armScrollAbort();
+        if (d.tab === 'wiring' && window.switchExplorerTab) {
+            window.switchExplorerTab('wiring');
+        }
+        var id = d.tab === 'wiring' ? 'explorer-tree-wiring' : 'explorer-tree-state';
+        // Expansion FIRST: the search that follows hides rows, it does not
+        // collapse them, so restoring in this order gives the filter the same
+        // tree the user was looking at.
+        if (window.jsonTreeSetExpanded) window.jsonTreeSetExpanded(id, d.expanded || []);
+        /* Scroll is RETRIED, not scheduled once.
+           A single delayed write silently CLAMPS: the search that follows is
+           debounced 200 ms and then hides rows across a 7,800-row tree, so for
+           a while the document is shorter than the offset we are restoring and
+           the browser quietly truncates it. Measured on the real chip: a
+           restore of 420 landed on 119 and looked preserved only because the
+           earlier probe had itself been clamped to the same number at BOTH
+           ends. So: try, check whether it stuck, and try again while the layout
+           is still settling. Stops as soon as it takes (or the attempts run
+           out) — never loops, never fights a user who scrolled meanwhile. */
+        var tries = [260, 700, 1400, 2400];
+        tries.forEach(function (ms, i) {
+            setTimeout(function () {
+                var el = document.getElementById(id);
+                var p = pane();
+                // A scroll the user has since moved themselves is theirs —
+                // and a NEWER restore owns the pane now (generation check:
+                // a superseded restore's timers must never write its stale
+                // target, aborted or not).
+                if (abort.aborted || gen !== _restoreGen) return;
+                if (el && d.scroll && Math.abs(el.scrollTop - d.scroll) > 4) {
+                    el.scrollTop = d.scroll;
+                }
+                if (p && d.pane && Math.abs(p.scrollTop - d.pane) > 4) {
+                    p.scrollTop = d.pane;
+                }
+            }, ms);
+        });
+    }
+    function _captureSoft(root, route) {
         var inputs = [];
         var els = root.querySelectorAll('input[type="search"], .tree-search');
         Array.prototype.forEach.call(els, function (el, i) {
@@ -3724,13 +4052,17 @@ window.PaneState = (function () {
             inputs.push({ key: el.id ? ('#' + el.id) : ('@' + i),
                           value: el.value });
         });
-        return { inputs: inputs };
+        var d = { inputs: inputs };
+        if (route === '/explorer') d.explorer = _captureExplorer();
+        return d;
     }
     function _reapplySoft(route) {
         var d = soft[route];
-        if (!d || !d.inputs.length) return;
+        if (!d) return;
         var p = pane();
         if (!p) return;
+        if (d.explorer) _restoreExplorer(d.explorer);
+        if (!d.inputs.length) return;
         var els = p.querySelectorAll('input[type="search"], .tree-search');
         d.inputs.forEach(function (it) {
             var el = null;
@@ -3748,7 +4080,7 @@ window.PaneState = (function () {
     function _park(route) {
         var p = pane();
         if (!p || !p.firstChild) return;
-        if (SOFT.indexOf(route) >= 0) soft[route] = _captureSoft(p);
+        if (SOFT.indexOf(route) >= 0) soft[route] = _captureSoft(p, route);
         if (KEEP.indexOf(route) < 0) return;
         var holder = document.createElement('div');
         while (p.firstChild) holder.appendChild(p.firstChild);
@@ -3814,7 +4146,7 @@ window.PaneState = (function () {
         // park the OUTGOING route (htmx's history snapshot is already taken);
         // a same-route refresh only refreshes the SOFT capture, never parks
         if (inRoute && inRoute !== _cur) _park(_cur);
-        else if (SOFT.indexOf(_cur) >= 0 && pane()) soft[_cur] = _captureSoft(pane());
+        else if (SOFT.indexOf(_cur) >= 0 && pane()) soft[_cur] = _captureSoft(pane(), _cur);
     });
     document.addEventListener('htmx:afterSwap', function (evt) {
         if (!evt.target || evt.target.id !== 'table-pane') return;
@@ -3848,6 +4180,24 @@ window.PaneState = (function () {
     document.addEventListener('htmx:historyRestore', _historyReset);
 
     return {
+        // docs/122 item 4: the global purge-on-swap must not kill plots that are
+        // about to be PARKED alive. Answers for the CURRENT route by default —
+        // that is the one whose DOM is leaving.
+        isKeepRoute: function (route) { return KEEP.indexOf(route || _cur) >= 0; },
+        // docs/124 (the parked-observer minor): PlotHost's registry sweep must
+        // not treat a parked-but-returning subtree as dead DOM — its observers
+        // survive detach/re-attach (a ResizeObserver keeps its observation and
+        // re-fires with the new size, verified in real Chrome), so sweeping
+        // them handed the restored pane back with zero live observers and
+        // nothing re-observing. Latent while KEEP=['/explorer'] holds no
+        // plots; armed the moment KEEP grows.
+        holdsDetached: function (el) {
+            for (var k in stash) {
+                var h = stash[k] && stash[k].holder;
+                if (h && (h === el || (h.contains && h.contains(el)))) return true;
+            }
+            return false;
+        },
         _stash: function () { return stash; },
         _cur: function () { return _cur; },
         _soft: function () { return soft; },
@@ -4295,12 +4645,132 @@ document.addEventListener("focusout", function(evt) {
 // text-undo keeps working) — EXCEPT bulk-grid cells and the Column History
 // panel, where LiveEditUndo owns the history (Escape still restores a
 // cell's original value).
+//
+// The carve-out keys on the Column History panel's OWN class, not on the
+// shared `.ch-overlay` shell. Four dialogs reuse that shell (Column History,
+// the type-fix repair dialog, the env-schema dialog, and the FSP compensation
+// popup) and only Column History wants LiveEditUndo to own the keystroke. When
+// docs/120 item 7 made the FSP amplitudes editable, a `.ch-overlay` test meant
+// Ctrl+Z on a typo in an amplitude field skipped the native-undo bail-out and
+// fell through to the app-wide chain — silently restoring a grid cell hidden
+// behind the modal, or POSTing /undo to discard a staged group.
+/* docs/122 item 3 — the server tier is a QUEUE, because presses were being
+   dropped, not raced.
+   Measured on the real 20-qubit chip: ten Ctrl+Z presses all reached the server
+   tier (window._lastUndoTier read 'server' ten times) and produced only FOUR
+   htmx:beforeRequest events, three of which completed. htmx keeps per-source
+   request bookkeeping and discards a second request from #pending-tray while
+   one is in flight, so six presses did nothing and said nothing — which is the
+   "unstable / it goes back and forth" half of the report. Peak concurrency was
+   1 and the tray count never went backwards, so serialisation was never the
+   missing piece; not throwing the presses away is.
+
+   Undo and redo share one queue so an interleaved burst is applied in the order
+   it was typed. The bound is a held key, not a rate limit: past it we stop
+   accepting rather than silently discarding somewhere in the middle. */
+window.UndoQueue = (function () {
+    var MAX = 20;
+    var q = [], busy = false, waiting = false, _fullToastAt = 0;
+    /* The queue's OWN htmx sync source (docs/124 M-11). It must NOT be the
+       tray: htmx 2.0.4's per-element sync (default strategy "last") lives on
+       the SOURCE element, and both the grid ⚡ apply (applyEditsToLive) and
+       the armed auto-apply flush issue from "#pending-tray" — a /undo queued
+       behind their in-flight request was REPLACED in htmx's queuedRequests,
+       the pump's promise resolved instantly, and the lone survivor re-issued
+       against the tray element the apply's own swap had detached, dying on
+       htmx's isConnected guard. Executed on the real chip: 3 presses in an
+       apply window → 0 POST /undo, no toast — the original customer symptom
+       reintroduced through a side door, chronic under an armed auto-apply
+       session (every commit triggers a flush). A body-level element that no
+       response ever swaps has its own sync lane; the events htmx raises from
+       the HX-Trigger header bubble from it to document, where the
+       cellsReverted listener lives. */
+    function src() {
+        var s = document.getElementById("undo-sync-src");
+        if (!s) {
+            s = document.createElement("div");
+            s.id = "undo-sync-src";
+            s.style.display = "none";
+            document.body.appendChild(s);
+        }
+        return s;
+    }
+    function pump() {
+        if (busy || !q.length || !window.htmx) return;
+        /* An apply (manual ⚡ or an auto-apply flush) is mid-write: HOLD the
+           press, never race it and never drop it. Ordered execution is also
+           the docs/107 model — an undo pressed during an apply lands after
+           it, walking the journal the apply just wrote. */
+        if (window._applyInFlight) {
+            if (!waiting) {
+                waiting = true;
+                setTimeout(function () { waiting = false; pump(); }, 120);
+            }
+            return;
+        }
+        var path = q.shift();
+        if (!document.getElementById("pending-tray")) { q.length = 0; return; }
+        busy = true;
+        var done = function () { busy = false; pump(); };
+        var r;
+        // A throw here (htmx torn down mid-navigation) must not wedge the queue
+        // for the rest of the session — releasing on the spot is the only
+        // behaviour that cannot strand the presses still waiting behind it.
+        try {
+            r = htmx.ajax("POST", path, {
+                source: src(), target: "#pending-tray", swap: "outerHTML",
+            });
+        } catch (e) { done(); return; }
+        /* A /undo that never settles used to hold `busy` FOREVER — every
+           later press queued silently behind it for the rest of the session
+           (docs/124 minor: no timeout at any layer). Releasing busy alone
+           would just queue the next request behind the wedged one inside
+           htmx's own sync lane, so a timeout gives up HONESTLY: drop the
+           queue, say so. A response that still lands later swaps the tray
+           normally — nothing is corrupted, the user just pressed again. */
+        var guard = setTimeout(function () {
+            if (!busy) return;
+            busy = false;
+            q.length = 0;
+            if (window.showToast) window.showToast(
+                "Undo is not responding — the press was abandoned. "
+                + "Check the server and try again.", "error");
+        }, 20000);
+        var settle = function () { clearTimeout(guard); done(); };
+        if (r && typeof r.then === "function") r.then(settle, settle);
+        else settle();   // no completion signal ⇒ never hold the lock on a guess
+    }
+    return {
+        push: function (path) {
+            if (!window.htmx || !document.getElementById("pending-tray")) return false;
+            if (q.length >= MAX) {
+                // The refusal used to be COMPLETELY invisible — preventDefault
+                // had already fired and the return value was discarded, the
+                // same silence the queue was built to end (docs/124 minor).
+                // Throttled: a held key reaches this ~30x/s.
+                var now = Date.now();
+                if (now - _fullToastAt > 1500 && window.showToast) {
+                    _fullToastAt = now;
+                    window.showToast("Undo queue is full (" + MAX
+                        + " pending) — release the key.", "warning");
+                }
+                return false;
+            }
+            q.push(path);
+            pump();
+            return true;
+        },
+        depth: function () { return q.length; },
+        busy: function () { return busy; },
+    };
+})();
+
 document.addEventListener("keydown", function(evt) {
     if (!((evt.ctrlKey || evt.metaKey) && (evt.key === "z" || evt.key === "Z")
           && !evt.altKey)) return;
     var a = document.activeElement;
     var inGridCell = !!(a && a.classList && a.classList.contains("bulk-cell"));
-    var inChPanel = !!(a && a.closest && a.closest(".ch-overlay"));
+    var inChPanel = !!(a && a.closest && a.closest(".colhist-overlay"));
     if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)
         && !inGridCell && !inChPanel) return;
     if (evt.shiftKey) {
@@ -4311,10 +4781,20 @@ document.addEventListener("keydown", function(evt) {
         // says whether the wizard is actually on screen (real-browser catch).
         if (window._wizUndo && window._wizUndo.mounted
             && window._wizUndo.mounted()) { evt.preventDefault(); return; }
+        // Server ops in flight or queued: redo must join THAT order, not
+        // answer from the client stack first — Ctrl+Shift+Z during an
+        // in-flight server undo used to re-apply an older client action
+        // instead of redoing the press it chased (docs/124 minor).
+        if (window.UndoQueue && (window.UndoQueue.busy() || window.UndoQueue.depth() > 0)
+            && window.htmx && document.getElementById("pending-tray")) {
+            evt.preventDefault();
+            window.UndoQueue.push("/redo");
+            return;
+        }
         if (window.LiveEditUndo && window.LiveEditUndo.tryRedo()) { evt.preventDefault(); return; }
         if (!window.htmx || !document.getElementById("pending-tray")) return;
         evt.preventDefault();
-        htmx.ajax("POST", "/redo", {source: "#pending-tray", target: "#pending-tray", swap: "outerHTML"});
+        window.UndoQueue.push("/redo");
         return;
     }
     // ---- undo chain ----
@@ -4336,7 +4816,7 @@ document.addEventListener("keydown", function(evt) {
     if (!window.htmx || !document.getElementById("pending-tray")) return;
     evt.preventDefault();
     window._lastUndoTier = "server";
-    htmx.ajax("POST", "/undo", {source: "#pending-tray", target: "#pending-tray", swap: "outerHTML"});
+    window.UndoQueue.push("/undo");
 }, true);
 
 function _revertCell(dotPath, oldValueStr) {
@@ -4944,7 +5424,8 @@ window.renderFilterTags = function(inputEl, containerEl) {
                 inputEl.value = parts.join(" ");
                 if (window.autoGrowNote) autoGrowNote(inputEl);  // shrink back as pills go
                 renderFilterTags(inputEl, containerEl);
-                htmx.trigger(inputEl, "keyup");
+                // 'input', matching the box's hx-trigger (docs/126 #20).
+                htmx.trigger(inputEl, "input");
             };
             pill.appendChild(btn);
             containerEl.appendChild(pill);
@@ -5399,6 +5880,17 @@ window.clearDetailPanelSearch = function(btnEl) {
                 row.appendChild(jsonBtn);
             }
 
+            // docs/126 ④: name the port's owner right on the node ("q2 · z",
+            // "q1-2 · coupler") — the map is server-derived from the wiring
+            // pointers and injected by the explorer page (absent elsewhere).
+            if (window._treePortOwners && window._treePortOwners[path]) {
+                var ownEl = document.createElement("span");
+                ownEl.className = "tree-owner-chip";
+                ownEl.textContent = "⌁ " + window._treePortOwners[path];
+                ownEl.title = "This port is wired to " + window._treePortOwners[path];
+                row.appendChild(ownEl);
+            }
+
             // Lazy children container — populated on first expand
             var children = document.createElement("div");
             children.className = "tree-children";
@@ -5520,7 +6012,11 @@ window.clearDetailPanelSearch = function(btnEl) {
                     acc.textContent = "✓";
                     acc.title = "Accept Qualibrate's value into the working state";
                     (function(p, rv, el, rw) {
-                        acc.onclick = function(e) { e.stopPropagation(); _acceptLiveValue(p, rv, el, rw); };
+                        // window.-qualified: the handlers live in the live-diff
+                        // IIFE, not this one — a bare call is a ReferenceError
+                        // at click time and the accept is silently lost
+                        // (docs/124 C-1; same cross-IIFE class as _deepEqual).
+                        acc.onclick = function(e) { e.stopPropagation(); window._acceptLiveValue(p, rv, el, rw); };
                     })(path, refValue, valEl, row);
                     row.appendChild(acc);
                     var rej = document.createElement("button");
@@ -5529,7 +6025,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                     rej.textContent = "✗";
                     rej.title = "Keep your value (dismiss this incoming change)";
                     (function(rw, p) {
-                        rej.onclick = function(e) { e.stopPropagation(); _rejectLiveValue(rw, p); };
+                        rej.onclick = function(e) { e.stopPropagation(); window._rejectLiveValue(rw, p); };
                     })(row, path);
                     row.appendChild(rej);
                 }
@@ -6024,6 +6520,17 @@ window.clearDetailPanelSearch = function(btnEl) {
                     _showEditError(valEl, data.error);
                     return;
                 }
+                // docs/120 item 25: the rejection chip has an 8-second life and
+                // was only ever cleared by a NEWER rejection, so after a fix it
+                // sat beside the accepted value still reading "✗ …" — the screen
+                // contradicting itself about the edit the user just made. A
+                // success is the most definitive reason to retire it.
+                (function () {
+                    var _r = valEl.closest ? valEl.closest(".tree-row") : null;
+                    var _e = _r && _r.querySelector(".tree-edit-err");
+                    if (_e) _e.remove();
+                    valEl.classList.remove("tree-val-error");
+                })();
                 // r14 honesty: re-render from the COMMITTED value the server
                 // echoes (the coercer may have kept the old type) — the old
                 // raw-text write-back showed "0.13"-the-string as bare 0.13
@@ -6373,6 +6880,39 @@ window.clearDetailPanelSearch = function(btnEl) {
         return b;
     }
 
+    function _copyClipboardFallback(txt) {
+        try {
+            var ta = document.createElement("textarea");
+            ta.value = txt; ta.style.position = "fixed"; ta.style.opacity = "0";
+            document.body.appendChild(ta); ta.select();
+            var ok = document.execCommand("copy");
+            ta.remove(); return ok;
+        } catch (e) { return false; }
+    }
+
+    /* docs/126 ④ — copy this row (key + value, as a JSON snippet) to the
+       system clipboard. Distinct from the in-app paste buffer (_treeCopyKey):
+       this hands the text to the OS for pasting anywhere. */
+    function _copyKeyValue(node, btn) {
+        var m = node._meta, v = node._value, txt;
+        try {
+            txt = (m && m.key != null && m.key !== "")
+                ? JSON.stringify(String(m.key)) + ": " + JSON.stringify(v, null, 2)
+                : JSON.stringify(v, null, 2);
+        } catch (e) { txt = String(v); }
+        function done(okFlag) {
+            if (!btn) return;
+            var old = btn.textContent;
+            btn.textContent = okFlag ? "✓" : "✗";
+            setTimeout(function () { btn.textContent = old; }, 800);
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(txt).then(
+                function () { done(true); },
+                function () { done(_copyClipboardFallback(txt)); });
+        } else { done(_copyClipboardFallback(txt)); }
+    }
+
     function _buildRowActions(container, node, row) {
         var m = node._meta, v = node._value;
         var parent = _parentInfo(node);
@@ -6383,19 +6923,27 @@ window.clearDetailPanelSearch = function(btnEl) {
         var inList = Array.isArray(parent.value);
         var topLevel = m.depth === 0;
         var identity = m.key === "__class__" || m.key === "id";
-        if (inList || identity) return;      // elements/identity: value-edit only
 
-        if (isDict) {
-            span.appendChild(_mkBtn("＋", "Add a key under " + (m.key || "root"),
-                "tree-act-add", function () { _openAddKey(container, node); }));
-        }
-        if (!isDict && !isArr) {
-            span.appendChild(_mkBtn("⚙", "Expected type of " + m.key,
-                "tree-act-type", function (b) { _openTypePicker(node, row, b); }));
-        }
-        if (!topLevel) {
-            span.appendChild(_mkBtn("✕", "Delete " + m.key,
-                "tree-act-del", function () { _confirmDelete(container, node, row, span); }));
+        // docs/126 ④: EVERY row copies (key + value as JSON) — the customer
+        // pointed at the empty gap between the hover actions and asked for it.
+        span.appendChild(_mkBtn("⧉",
+            "Copy " + (m.key != null && m.key !== "" ? '"' + m.key + '" and its value' : "this value")
+            + " as JSON",
+            "tree-act-copy", function (b) { _copyKeyValue(node, b); }));
+
+        if (!inList && !identity) {          // elements/identity: value-edit + copy only
+            if (isDict) {
+                span.appendChild(_mkBtn("＋", "Add a key under " + (m.key || "root"),
+                    "tree-act-add", function () { _openAddKey(container, node); }));
+            }
+            if (!isDict && !isArr) {
+                span.appendChild(_mkBtn("⚙", "Expected type of " + m.key,
+                    "tree-act-type", function (b) { _openTypePicker(node, row, b); }));
+            }
+            if (!topLevel) {
+                span.appendChild(_mkBtn("✕", "Delete " + m.key,
+                    "tree-act-del", function () { _confirmDelete(container, node, row, span); }));
+            }
         }
         if (span.children.length) row.appendChild(span);
     }
@@ -6632,6 +7180,14 @@ window.clearDetailPanelSearch = function(btnEl) {
         });
     }
 
+    // The live-diff IIFE's ✓-accept handler repaints a value element this
+    // renderer built, and must format it the way this renderer would — its
+    // bare `_formatValue` call was a ReferenceError that fired AFTER the edit
+    // landed, killing the pending mark / count / tray swap while the value was
+    // already staged (docs/124 C-1, second layer — found by the pin the first
+    // layer's fix added).
+    window._formatValue = _formatValue;
+
     window.renderJsonTree = function(containerId, data, options) {
         var container = document.getElementById(containerId);
         if (!container) return;
@@ -6698,6 +7254,44 @@ window.clearDetailPanelSearch = function(btnEl) {
     window.jsonTreeExpandAll = function(containerId) {
         var c = document.getElementById(containerId);
         if (c) _expandAll(c);
+    };
+
+    /* docs/122 item 2 — expansion is state the user built by hand, and every
+       /explorer rebuild threw it away because nothing anywhere recorded it.
+       Addressed by dot-path, never by DOM index: the rebuilt tree is a
+       different document, and an index would restore the wrong nodes rather
+       than none. Bounded, because a fully expanded 20-qubit chip is ~7,800 rows
+       and a restore that walked all of them would cost more than the rebuild it
+       is repairing. */
+    var _EXPAND_CAP = 1200;
+    window.jsonTreeExpandedPaths = function(containerId) {
+        var c = document.getElementById(containerId);
+        if (!c) return [];
+        var out = [], nodes = c.querySelectorAll('.tree-node[data-path]');
+        for (var i = 0; i < nodes.length && out.length < _EXPAND_CAP; i++) {
+            var t = nodes[i].querySelector(':scope > .tree-row > .tree-toggle');
+            if (t && !t.classList.contains('collapsed')) {
+                out.push(nodes[i].getAttribute('data-path'));
+            }
+        }
+        return out;
+    };
+    window.jsonTreeSetExpanded = function(containerId, paths) {
+        var c = document.getElementById(containerId);
+        if (!c || !paths || !paths.length) return 0;
+        // Shallowest first: a child node does not exist in the DOM until its
+        // parent has been expanded, so depth order is what makes one pass enough.
+        var sorted = paths.slice().sort(function (a, b) {
+            return a.split('.').length - b.split('.').length || (a < b ? -1 : 1);
+        });
+        var n = 0;
+        for (var i = 0; i < sorted.length; i++) {
+            var node = c.querySelector('.tree-node[data-path="' + sorted[i] + '"]');
+            if (!node) continue;
+            var t = node.querySelector(':scope > .tree-row > .tree-toggle');
+            if (t && t.classList.contains('collapsed')) { t.click(); n++; }
+        }
+        return n;
     };
 
     window.jsonTreeSearch = function(containerId, query) {
@@ -7103,13 +7697,189 @@ window.clearDetailPanelSearch = function(btnEl) {
     };
 })();
 
-document.addEventListener("htmx:pushedIntoHistory", function() {
-    var path = window.location.pathname.replace(/^\//, "").split("/")[0] || "home";
-    document.querySelectorAll(".sidebar-nav a").forEach(function(a) {
-        var href = a.getAttribute("href").replace(/^\//, "");
-        a.classList.toggle("active", href === path);
+/* ONE canonical sidebar-active sync (docs/126 r3). Three independent setters
+ * used to fight: this handler (which compared hrefs WITH their query string
+ * against the bare path, so subnav links never toggled and same-href
+ * parent+child both lit), chipNavView's manual push/replaceState (which fires
+ * no htmx history event, so nothing ever CLEARED the previous menu), and
+ * chip-status's _setActiveTab (its own group only). Every navigation now
+ * clears everything and re-derives the active set from the URL. */
+window.syncSidebarNavActive = function() {
+    var path = window.location.pathname;
+    var view = null;
+    try { view = new URLSearchParams(window.location.search).get("view"); } catch (e) {}
+    var matches = [];
+    document.querySelectorAll(".sidebar-nav a[href]").forEach(function(a) {
+        a.classList.remove("active");
+        var href = a.getAttribute("href") || "";
+        var q = href.indexOf("?");
+        var hPath = q < 0 ? href : href.slice(0, q);
+        if (hPath !== path) return;
+        var hView = null;
+        if (q >= 0) { try { hView = new URLSearchParams(href.slice(q)).get("view"); } catch (e) {} }
+        // a view-scoped link matches its own view; bare /topology means the
+        // page's first section (the spy moves the subnav highlight later)
+        if (hView && view && hView !== view) return;
+        if (hView && !view && hView !== "topology") return;
+        matches.push({ a: a, href: href, sub: !!a.closest(".nav-subitems") });
     });
-});
+    // same-href parent+child (Chip Components + Qubits are both /qubits):
+    // the child owns the highlight — base.html: "Parent deliberately carries
+    // no active class". Distinct hrefs (Chip Status + its ?view= child) keep
+    // both, matching the server's own full-load render.
+    matches.forEach(function(m) {
+        var twin = matches.some(function(o) { return o !== m && o.href === m.href && o.sub; });
+        if (!(m.sub === false && twin)) m.a.classList.add("active");
+    });
+};
+/* Workspace Refresh feedback (docs/126 r3, second round): the CSS-only
+ * .htmx-request spin is invisible on a SMALL workspace — the rescan settles
+ * in milliseconds, one or two frames of animation. So the press itself arms
+ * a spin that lasts at least 700 ms (or the real request, whichever is
+ * longer), then flashes a ✓ for a second. A press is now always seen. */
+(function () {
+    /* Round 4 (user: the ring still does not READ as moving): rotation is now
+       driven by rAF in JS — immune to any environment that freezes CSS
+       animations — and the rotating shape is a HALF-FILLED disc, whose sweep
+       is unmistakable at any size (a quadrant ring at 13px was not). */
+    function _wsSpin(b, on) {
+        var ico = b.querySelector('.ws-refresh-ico');
+        if (!ico) return;
+        if (on) {
+            if (b._wsRaf) return;
+            ico.textContent = '◐';                 // the half-filled disc
+            var step = function (ts) {
+                ico.style.transform = 'rotate(' + ((ts / 2) % 360) + 'deg)';
+                b._wsRaf = requestAnimationFrame(step);
+            };
+            b._wsRaf = requestAnimationFrame(step);
+        } else {
+            if (b._wsRaf) cancelAnimationFrame(b._wsRaf);
+            b._wsRaf = null;
+            ico.style.transform = '';
+            ico.textContent = '↻';                 // the resting glyph
+        }
+    }
+    document.addEventListener('click', function (e) {
+        var b = e.target && e.target.closest && e.target.closest('.btn-workspace-refresh');
+        if (!b) return;
+        b.classList.remove('ws-done');
+        b.classList.add('ws-kick');
+        b._wsT0 = Date.now();
+        _wsSpin(b, true);
+    });
+    document.addEventListener('htmx:afterRequest', function (evt) {
+        var b = evt.detail && evt.detail.elt;
+        if (!b || !b.classList || !b.classList.contains('btn-workspace-refresh')) return;
+        var wait = Math.max(0, 700 - (Date.now() - (b._wsT0 || 0)));
+        setTimeout(function () {
+            _wsSpin(b, false);
+            b.classList.remove('ws-kick');
+            b.classList.add('ws-done');
+            setTimeout(function () { b.classList.remove('ws-done'); }, 1100);
+        }, wait);
+    });
+})();
+
+document.addEventListener("htmx:pushedIntoHistory", window.syncSidebarNavActive);
+document.addEventListener("htmx:replacedInHistory", window.syncSidebarNavActive);
+window.addEventListener("popstate", function() { setTimeout(window.syncSidebarNavActive, 0); });
+
+/* NavProgress (docs/126 r3) — the brand-area loading indicator. Counts
+ * in-flight #table-pane requests via htmx's own events; shows after 400 ms
+ * (fast navigations never flash) with an elapsed-seconds counter, and hides
+ * when the LAST one settles. A WeakSet dedups the settle events — htmx can
+ * fire more than one terminal event for the same xhr (afterRequest +
+ * responseError; sendAbort under hx-sync replace). */
+window.NavProgress = (function () {
+    var count = 0, t0 = 0, showTimer = null, tick = null, poll = null;
+    var seen = (typeof WeakSet !== 'undefined') ? new WeakSet() : null;
+    var ext = null;        // {label, done, total} pushed by a background job
+    var srv = null;        // newest /api/progress answer while visible
+    function el() { return document.getElementById('nav-progress'); }
+    function isPane(evt) {
+        var t = evt.detail && evt.detail.target;
+        return !!(t && t.id === 'table-pane');
+    }
+    function _render() {
+        var p = el(); if (!p) return;
+        var timeEl = p.querySelector('.nav-progress-time');
+        if (!timeEl) return;
+        // real counts beat elapsed time (docs/126 r3 follow-up: "12/1000 →
+        // 24/1000…") — shown ONLY when a loop actually reports them
+        var op = ext || srv;
+        if (op && op.total) {
+            timeEl.textContent = op.done + '/' + op.total;
+            p.title = op.label || '';
+        } else {
+            timeEl.textContent = ((Date.now() - t0) / 1000).toFixed(1) + ' s';
+            p.title = '';
+        }
+    }
+    function show() {
+        var p = el(); if (!p) return;
+        p.hidden = false;
+        clearInterval(tick);
+        tick = setInterval(_render, 100);
+        // while visible, ask the server whether a loop is reporting real
+        // counts — hidden means no polling, so an idle app pays nothing
+        clearInterval(poll);
+        poll = setInterval(function () {
+            fetch('/api/progress').then(function (r) { return r.json(); })
+                .then(function (j) { srv = (j && j.total) ? j : null; })
+                .catch(function () { srv = null; });
+        }, 350);
+        _render();
+    }
+    function hide() {
+        clearTimeout(showTimer); showTimer = null;
+        clearInterval(tick); tick = null;
+        clearInterval(poll); poll = null;
+        srv = null;
+        var p = el(); if (p) { p.hidden = true; p.title = ''; }
+    }
+    function maybeHide() {
+        if (count === 0 && !ext) hide();
+    }
+    document.addEventListener('htmx:beforeRequest', function (evt) {
+        if (!isPane(evt)) return;
+        count++;
+        if (count === 1 && !ext) {
+            t0 = Date.now();
+            clearTimeout(showTimer);
+            showTimer = setTimeout(show, 400);
+        }
+    });
+    function settle(evt) {
+        if (!isPane(evt)) return;
+        var x = evt.detail && evt.detail.xhr;
+        if (seen && x) {
+            if (seen.has(x)) return;
+            seen.add(x);
+        }
+        count = Math.max(0, count - 1);
+        maybeHide();
+    }
+    ['htmx:afterRequest', 'htmx:sendAbort', 'htmx:sendError',
+     'htmx:responseError', 'htmx:timeout'].forEach(function (n) {
+        document.addEventListener(n, settle);
+    });
+    return {
+        /* A background job (the param-history backfill poller) pushes its
+           own real counts here — the indicator shows without any pane
+           request in flight, which is exactly the phase the user watches. */
+        external: function (label, done, total) {
+            ext = { label: label, done: done || 0, total: total || 0 };
+            if (!t0) t0 = Date.now();
+            var p = el();
+            if (p && p.hidden) show(); else _render();
+        },
+        externalDone: function () {
+            ext = null;
+            maybeHide();
+        }
+    };
+})();
 
 /* ------------------------------------------------------------------ */
 /* Instrument Wiring Diagram                                           */
@@ -7734,40 +8504,29 @@ window.filterDatasetTable = function(input) {
  * HTMX innerHTML-swaps on every date-tab / rescan / nav-back. Delegated
  * listeners on document.body avoid re-binding after every swap.
  *
- * Open triggers:
- *   - first focus on #dataset-search per browser session (sessionStorage flag)
- *   - any click on #ds-search-help-toggle (the ? icon)
- * Close trigger:
- *   - click on #ds-search-help-close (the × button)
+ * Open/close trigger (docs/120 item 3): the ? icon TOGGLES. Nothing opens
+ * this panel on its own any more — it used to open on the first focus of
+ * #dataset-search per browser session, which meant the panel appeared the
+ * moment you started typing and then would not close from the same button
+ * you opened it with (the ? was open-only). The ? is the whole affordance.
+ * Also closable via #ds-search-help-close (the × button).
  *
  * Per user spec: NO auto-dismiss on blur/outside-click. The panel persists
  * through typing, sorting, chip clicks, and HTMX swaps until X is clicked.
  */
 (function() {
-    var FOCUS_FLAG = 'quam_dataset_search_help_shown';
-
-    function openHelp() {
-        var panel = document.getElementById('ds-search-help');
-        if (panel) panel.hidden = false;
-    }
     function closeHelp() {
         var panel = document.getElementById('ds-search-help');
         if (panel) panel.hidden = true;
     }
+    function toggleHelp() {
+        var panel = document.getElementById('ds-search-help');
+        if (panel) panel.hidden = !panel.hidden;
+    }
 
     // Attach to document (not document.body) — app.js loads in <head> with no
-    // defer, so document.body is null at script-parse time. Both focusin and
-    // click bubble up to document, so delegation works identically.
-    document.addEventListener('focusin', function(e) {
-        var t = e.target;
-        if (!t || t.id !== 'dataset-search') return;
-        try {
-            if (sessionStorage.getItem(FOCUS_FLAG) === '1') return;
-            sessionStorage.setItem(FOCUS_FLAG, '1');
-        } catch (_err) { /* sessionStorage may be disabled — open anyway */ }
-        openHelp();
-    });
-
+    // defer, so document.body is null at script-parse time. Click bubbles up
+    // to document, so delegation works identically.
     document.addEventListener('click', function(e) {
         var t = e.target;
         if (!t) return;
@@ -7779,7 +8538,7 @@ window.filterDatasetTable = function(input) {
         if (t.closest && t.closest('#datasets-scroll')) closeHelp();
         if (t.id === 'ds-search-help-toggle') {
             e.preventDefault();
-            openHelp();
+            toggleHelp();
             return;
         }
         if (t.id === 'ds-search-help-close') {
@@ -7801,36 +8560,31 @@ window.filterDatasetTable = function(input) {
 
 /* Generic scoped-search help panel — reused by any search box that opts in via
  * classes + data-attributes (currently the sidebar workspace filter):
- *   input:   class="search-help-input"   data-search-help="<panel-id>"
  *   ? icon:  class="search-help-toggle"  data-search-help="<panel-id>"
  *   × close: class="search-help-close"   data-search-help="<panel-id>"
  *   example: class="search-help-example" data-search-help-input="<input-id>" data-example="…"
- * Opens on first focus per session (flag keyed by panel id) + on ? click;
- * closes only via ×. Delegated on document (app.js loads in <head>). The
- * Datasets page keeps its own id-based handler above, unchanged. */
+ * The ? TOGGLES; × closes. Delegated on document (app.js loads in <head>).
+ * The Datasets page keeps its own id-based handler above.
+ *
+ * The INPUT needs no markup contract any more. It used to carry
+ * class="search-help-input" + data-search-help so the focus handler could find
+ * its panel; with that handler gone nothing reads either, and base.html's
+ * leftovers are vestigial — a new search box only needs the three rows above.
+ *
+ * docs/120 item 3 — nothing auto-opens this any more. It used to open on the
+ * first focus of the input per browser session, and the sidebar's copy of the
+ * panel is deliberately `position: static` (style.css, so a narrow scrolling
+ * sidebar can't clip an absolute popover) — meaning it renders INLINE and
+ * pushes the experiment tree down. Typing one character therefore buried the
+ * folder list, and the ? could not put it back because it was open-only. */
 (function() {
-    function flagKey(panelId) { return 'quam_search_help_shown:' + panelId; }
-
-    document.addEventListener('focusin', function(e) {
-        var t = e.target;
-        if (!t || !t.classList || !t.classList.contains('search-help-input')) return;
-        var panelId = t.getAttribute('data-search-help');
-        if (!panelId) return;
-        try {
-            if (sessionStorage.getItem(flagKey(panelId)) === '1') return;
-            sessionStorage.setItem(flagKey(panelId), '1');
-        } catch (_e) { /* sessionStorage disabled — open anyway */ }
-        var panel = document.getElementById(panelId);
-        if (panel) panel.hidden = false;
-    });
-
     document.addEventListener('click', function(e) {
         var t = e.target;
         if (!t || !t.classList) return;
         if (t.classList.contains('search-help-toggle')) {
             e.preventDefault();
             var p = document.getElementById(t.getAttribute('data-search-help'));
-            if (p) p.hidden = false;
+            if (p) p.hidden = !p.hidden;
             return;
         }
         if (t.classList.contains('search-help-close')) {
@@ -8376,11 +9130,15 @@ window.setInteractiveCols = function(n, btn) {
         b.classList.toggle('active', parseInt(b.getAttribute('data-cols'), 10) === n);
     });
     try { localStorage.setItem('quam_interactive_cols', String(n)); } catch (e) {}
-    if (typeof Plotly !== 'undefined') {
-        scope.querySelectorAll('.ds-interactive-list .js-plotly-plot').forEach(function(el) {
-            try { Plotly.Plots.resize(el); } catch (e) {}
-        });
-    }
+    // docs/122: the last raw Plots.resize on this path. A 1<->3 column change is
+    // the biggest width step any tile ever takes, and it went through the call
+    // measured as a no-op, over the class that does not always survive.
+    // requestAnimationFrame because --ds-cols has only just been written: the
+    // grid tracks have not been laid out yet, so reading clientWidth in this
+    // turn would resize every tile to its OLD width.
+    var _rz = function () { window.resizeInteractiveTiles(scope); };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(_rz);
+    else _rz();
 };
 
 /**
@@ -8393,13 +9151,245 @@ window.setInteractiveCols = function(n, btn) {
  * geometry they were drawn in: squashed, clipped, or with a stranded modebar.
  * `setInteractiveCols` was the ONLY caller of Plots.resize before this.
  */
+/* docs/122 item 4 — ONE place for the three things every Plotly mount needs.
+ *
+ * This bug class keeps being re-fixed per surface: docs/118 fixed resize for the
+ * Interactive tiles, docs/120 fixed a WebGL blank on Chip Status Trends, and
+ * docs/122 arrived at Trends again for the resize half. An inventory of the app
+ * found 15 Plotly mounts, of which 13 handle no CONTAINER resize (Plotly's
+ * `responsive:true` listens to WINDOW resize only — measured on Plotly 2.35.2:
+ * collapsing the sidebar left a 609 px SVG in a 742 px holder and it never
+ * healed in 6 s, while a window resize healed it instantly) and 7 destroy live
+ * plots with innerHTML/outerHTML without purging first, which the app's own rule
+ * (PaneState._purge) forbids.
+ *
+ * So: a helper, plus one global purge-on-swap so the rule is enforced by the
+ * framework rather than remembered at 15 call sites. */
+window.PlotHost = (function () {
+    /* Finding the graph divs is NOT `.js-plotly-plot`.
+       That class is Plotly's own marker and the whole app selects on it — but it
+       does not always survive here. Measured on the real chip: a Chip Status
+       Trends holder carried `_fullLayout`, a populated `.data`, three
+       `svg.main-svg` children and Plotly's own `<div class="plot-container
+       plotly">` — and its class attribute was exactly "topo-trend-chart".
+       `querySelectorAll('.js-plotly-plot')` inside that grid returned ZERO, so
+       the ResizeObserver fired (verified: 2 hits) against nothing at all and the
+       first version of this fix silently did not work.
+       `.plot-container.plotly` is structure Plotly always builds, so its parent
+       is the graph div whether or not the class stuck. Union with the class so
+       nothing that DOES carry it is missed, and de-duplicate. */
+    function _graphDivs(root) {
+        var r = root || document;
+        if (!r.querySelectorAll) return [];
+        var out = [], seen = [];
+        function add(el) {
+            if (!el || seen.indexOf(el) >= 0) return;
+            seen.push(el); out.push(el);
+        }
+        // The ROOT ITSELF counts. querySelectorAll never returns its own
+        // context node, and an `outerHTML` swap replaces exactly that node — so
+        // a purge driven off the swap target used to skip the one graph div
+        // most certain to be destroyed.
+        if (r.nodeType === 1 && (r.classList && r.classList.contains('js-plotly-plot')
+                                 || (r.querySelector && r.querySelector(':scope > .plot-container.plotly')))) {
+            add(r);
+        }
+        Array.prototype.forEach.call(r.querySelectorAll('.js-plotly-plot'), add);
+        Array.prototype.forEach.call(r.querySelectorAll('.plot-container.plotly'),
+            function (n) { add(n.parentElement); });
+        return out;
+    }
+    /* Plotly.Plots.resize is the documented call for this and it NO-OPS here.
+       Measured on the real chip after collapsing the sidebar: the holder was
+       1531 px wide, `_fullLayout.width` was 1265 with `autosize: true`, the
+       element was displayed — and it was still 1265 after Plots.resize AND
+       after relayout({autosize:true}). An explicit width moves it immediately.
+
+       WIDTH ONLY, and no release back to autosize. The first version followed
+       the width with `relayout({width: null, autosize: true})` to keep Plotly's
+       own responsiveness — but Plotly's implied-edit table makes `autosize`
+       imply `height: null`, so that second call DELETES the caller's explicit
+       layout height. On Chip Status Trends that is invisible, and only because
+       `.topo-trend-chart { min-height: 300px }` (style.css) happens to equal the
+       300 the caller asked for — verified in a browser: the rendered height held
+       at 300 while `layout.height` was gone. It would NOT be invisible on
+       ndview (`height: 420`, CSS min-height 200) or on the Chip Status bar
+       charts (height computed 160–640, no CSS height at all), which is exactly
+       where this was about to be extended. Releasing autosize is also
+       unnecessary: an observer watching the CONTAINER already fires on a window
+       resize, because that is what changes the container.
+
+       Chained through the element's own render chain, not fired beside it: a
+       relayout racing an in-flight newPlot is the collision _plotlyRender was
+       written to serialise. */
+    function resizeWithin(root) {
+        if (typeof Plotly === 'undefined') return 0;
+        var n = 0;
+        _graphDivs(root).forEach(function (el) {
+            if (!el.offsetParent) return;   // hidden — resizing is a no-op
+            var w = el.clientWidth;
+            if (!w) return;
+            var cur = el._fullLayout && el._fullLayout.width;
+            if (cur && Math.abs(cur - w) < 2) return;   // already matched
+            try {
+                var prev = el.__plotlyRenderChain || Promise.resolve();
+                el.__plotlyRenderChain = prev.catch(function () {}).then(function () {
+                    if (!document.body.contains(el) || !el.offsetParent) return null;
+                    var w2 = el.clientWidth;      // re-read: the layout may have moved again
+                    if (!w2) return null;
+                    /* Snapshot-restore (docs/124 M-1, payload chosen by an
+                       executed 6-candidate × 3-shape probe — docs/125 fix 5).
+                       Plotly 2.35.2's width relayout implies autosize=null AND
+                       pins the OTHER dimension, and Plots.resize — the
+                       responsive:true window handler — permanently rejects
+                       once layout.width && layout.height are both set. So one
+                       bare width touch froze every chart against window
+                       resizes forever (168px-clipped bar charts, executed).
+                       The cure: apply the width, then hand gd.layout back
+                       exactly as the caller wrote it — fullLayout keeps the
+                       correction, layout.width is absent again, the window
+                       path stays alive, and a DECLARED layout.height survives
+                       (which stock Plotly itself loses on window resizes —
+                       the restored state is byte-identical to an untouched
+                       chart's). relayout({autosize:true}) is NOT an
+                       alternative: its implied width:null never deletes an
+                       existing layout.width key in this Plotly. The snapshot
+                       is taken INSIDE the chain so back-to-back touches each
+                       see the restored layout. */
+                    var lay = el.layout || {};
+                    var has = Object.prototype.hasOwnProperty;
+                    var snap = {
+                        width:    has.call(lay, 'width')    ? lay.width    : undefined,
+                        height:   has.call(lay, 'height')   ? lay.height   : undefined,
+                        autosize: has.call(lay, 'autosize') ? lay.autosize : undefined
+                    };
+                    return Plotly.relayout(el, { width: w2 }).then(function () {
+                        var l2 = el.layout || {};
+                        ['width', 'height', 'autosize'].forEach(function (k) {
+                            if (snap[k] === undefined) delete l2[k]; else l2[k] = snap[k];
+                        });
+                    });
+                }).catch(function () {});
+                n++;
+            } catch (e) {}
+        });
+        return n;
+    }
+    /* Watch a CONTAINER, not the window: the geometry changes that break these
+       figures are a sidebar collapse and a split-gutter drag, neither of which
+       is a window resize. Debounced, and idempotent per container. */
+    var _observed = [];   // every container we hold an observer on
+    function observe(container) {
+        if (!container || container._phRo || typeof ResizeObserver === 'undefined') return;
+        // SINGLE OWNER per subtree. An ancestor already watching this region
+        // would resize the same divs on the same event, and docs/118's own
+        // interactive container (`_ro`) is exactly such an ancestor. Two
+        // observers driving two strategies at one node is how the Pulses plot
+        // was measurably broken once already.
+        for (var a = container.parentElement; a; a = a.parentElement) {
+            if (a._phRo || a._ro) return;
+        }
+        var t = null, lastW = 0;
+        container._phRo = new ResizeObserver(function (entries) {
+            // WIDTH-only. RO fires on both axes and #table-pane's content height
+            // moves on every banner, tray or toast — a height-only change must
+            // not cost a relayout per chart.
+            var w = 0;
+            try { w = Math.round((entries[0].contentRect || {}).width || 0); } catch (e) {}
+            if (w && Math.abs(w - lastW) < 2) return;
+            lastW = w;
+            clearTimeout(t);
+            t = setTimeout(function () { resizeWithin(container); }, 120);
+        });
+        try {
+            container._phRo.observe(container);
+            _observed.push(container);
+        } catch (e) { container._phRo = null; }
+    }
+    function unobserve(container) {
+        if (container && container._phRo) {
+            try { container._phRo.disconnect(); } catch (e) {}
+            container._phRo = null;
+        }
+        var i = _observed.indexOf(container);
+        if (i >= 0) _observed.splice(i, 1);
+    }
+    /* Teardown belongs at the same choke point as the purge, or it never
+       happens: `unobserve` shipped with ZERO callers while ChipTrends._reload
+       swaps its observed grid with outerHTML on EVERY metric toggle, so the app
+       leaked one ResizeObserver — and the detached subtree it strongly
+       references — per toggle. */
+    function unobserveWithin(root) {
+        var r = root || document;
+        var n = 0;
+        // Walk the REGISTRY, not the DOM: a swap target can be #table-pane,
+        // whose subtree on the real chip is tens of thousands of nodes, and
+        // paying a full-tree query per swap to find at most a handful of
+        // observers is the wrong trade. Also sweeps entries whose element has
+        // already been detached by some other path.
+        _observed = _observed.filter(function (el) {
+            var gone = !document.body || !document.body.contains(el);
+            // Detached-but-PARKED is not dead: PaneState will re-attach that
+            // subtree and its observations resume on their own (docs/124, the
+            // parked-observer minor).
+            if (gone && window.PaneState && window.PaneState.holdsDetached
+                && window.PaneState.holdsDetached(el)) gone = false;
+            if (gone || r === el || (r.contains && r.contains(el))) {
+                if (el._phRo) { try { el._phRo.disconnect(); } catch (e) {} el._phRo = null; }
+                n++;
+                return false;
+            }
+            return true;
+        });
+        return n;
+    }
+    /* A Plotly node must never die via innerHTML without purge — WebGL contexts
+       and DOM references leak. Safe to call on anything: purging a node that is
+       about to be discarded cannot break it. */
+    function purgeWithin(root) {
+        if (typeof Plotly === 'undefined') return 0;
+        var n = 0;
+        _graphDivs(root).forEach(function (el) {
+            try { Plotly.purge(el); n++; } catch (e) {}
+        });
+        return n;
+    }
+    return { resizeWithin: resizeWithin, observe: observe,
+             unobserve: unobserve, unobserveWithin: unobserveWithin,
+             purgeWithin: purgeWithin, graphDivs: _graphDivs,
+             _observed: function () { return _observed.slice(); } };
+})();
+
+/* Enforce the purge rule at the ONE place every destructive swap goes through.
+ * Additive by construction: the nodes are about to be replaced anyway.
+ * The exception is a pane PaneState is about to PARK — those plots are meant to
+ * come back alive, and purging them would hand the user a corpse on return. */
+function _plotSwapTeardown(evt) {
+    var t = evt && evt.target;
+    if (!t || !t.querySelectorAll) return;
+    if (evt.detail && evt.detail.shouldSwap === false) return;
+    if (t.id === 'table-pane' && window.PaneState && window.PaneState.isKeepRoute
+        && window.PaneState.isKeepRoute()) return;
+    window.PlotHost.purgeWithin(t);
+    // ...and release the observers on what is being destroyed, at the same
+    // choke point, or they strand on a detached subtree they keep alive.
+    window.PlotHost.unobserveWithin(t);
+}
+document.addEventListener('htmx:beforeSwap', _plotSwapTeardown);
+// OOB swaps fire their OWN event and used to bypass the door entirely
+// (docs/124 note) — same rules, same handler.
+document.addEventListener('htmx:oobBeforeSwap', _plotSwapTeardown);
+
 window.resizeInteractiveTiles = function(scope) {
-    if (typeof Plotly === 'undefined') return;
+    // Scope preserved exactly (docs/118 pins assert .ds-interactive-list only);
+    // the implementation is now shared.
     var root = scope || document;
-    root.querySelectorAll('.ds-interactive-list .js-plotly-plot').forEach(function(el) {
-        if (!el.offsetParent) return;          // hidden — resizing it is a no-op
-        try { Plotly.Plots.resize(el); } catch (e) {}
-    });
+    if (root.classList && root.classList.contains('ds-interactive-list')) {
+        return void window.PlotHost.resizeWithin(root);
+    }
+    if (!root.querySelectorAll) return;
+    Array.prototype.forEach.call(root.querySelectorAll('.ds-interactive-list'),
+        function (l) { window.PlotHost.resizeWithin(l); });
 };
 
 /**
@@ -9434,6 +10424,16 @@ window._openFspPopup = (function () {
         if (typeof v === "number" && window._groupDigits) return window._groupDigits(v);
         return String(v);
     }
+    /* An amplitude for an INPUT: never grouped (thousands separators would not
+       parse back) and never the raw product of a float multiply. */
+    function _ampStr(v) {
+        if (typeof v !== "number" || !isFinite(v)) return String(v);
+        var s = v.toPrecision(6);
+        if (s.indexOf("e") < 0 && s.indexOf(".") >= 0) {
+            s = s.replace(/0+$/, "").replace(/\.$/, "");
+        }
+        return s;
+    }
     function ensure() {
         if (overlay) return overlay;
         overlay = document.createElement("div");
@@ -9487,16 +10487,14 @@ window._openFspPopup = (function () {
             "To keep every pulse's real output power constant, SM will update "
             + "these amplitudes WITH the port change. Nothing is written until "
             + "you choose below."));
-        if (plan.clip_count) {
-            var lowering = Number(plan.fsp_new) < Number(plan.fsp_old);
-            card.appendChild(_el("p", "fsp-warn",
-                "⚠ " + plan.clip_count + " compensated amplitude"
-                + (plan.clip_count === 1 ? "" : "s") + " would exceed 1.0 — the "
-                + "DAC clips. "
-                + (lowering
-                   ? "Do not lower FSP this far (or reduce those pulses' powers first)."
-                   : "Those pulses already sit past DAC full scale — fix them first.")));
-        }
+        // docs/120 item 7 — the compensated amplitudes are EDITABLE, so this
+        // warning can no longer be a fact baked in at 409 time: it has to track
+        // what will ACTUALLY be written. Always build it, hide it at zero, and
+        // recompute on every keystroke (_recount below).
+        var lowering = Number(plan.fsp_new) < Number(plan.fsp_old);
+        var clipWarn = _el("p", "fsp-warn");
+        clipWarn.style.display = "none";
+        card.appendChild(clipWarn);
         if (plan.range_warn) card.appendChild(_el("p", "fsp-warn", "⚠ " + plan.range_warn));
         if (plan.more_fsp_in_batch) {
             card.appendChild(_el("p", "fsp-note",
@@ -9506,24 +10504,114 @@ window._openFspPopup = (function () {
         var table = _el("table", "ch-table");
         var thead = document.createElement("thead");
         var hr = document.createElement("tr");
-        ["pulse", "amplitude now", "", "compensated", "Δ", ""].forEach(function (t) {
+        ["pulse", "amplitude now", "", "compensated", "Δ", "", ""].forEach(function (t) {
             hr.appendChild(_el("th", null, t));
         });
         thead.appendChild(hr);
         table.appendChild(thead);
         var tbody = document.createElement("tbody");
+        var rows = [];   // {a, input, dTd, mark, reset}
+
+        /* The value this row will actually write. `a.new` stays the COMPUTED
+           value forever so "reset" has something to return to; the user's
+           override rides alongside as `a.userNew` (read back by
+           _fspCompUpdates). Blank means "use the computed one" — deleting the
+           contents is not a request to write nothing. */
+        function _rowValue(r) {
+            var raw = String(r.input.value).trim();
+            if (raw === "") return Number(r.a.new);
+            var v = Number(raw);
+            return isFinite(v) ? v : NaN;
+        }
+        function _recount() {
+            var clips = 0, bad = 0, edited = 0;
+            rows.forEach(function (r) {
+                var v = _rowValue(r);
+                var raw = String(r.input.value).trim();
+                if (!isFinite(v)) {
+                    bad++;
+                    r.input.classList.add("fsp-amp-bad");
+                    r.mark.textContent = "not a number";
+                    r.dTd.textContent = ""; r.dTd.hidden = true;
+                } else {
+                    r.input.classList.remove("fsp-amp-bad");
+                    if (Math.abs(v) > 1.0) { clips++; r.mark.textContent = "⚠ >1.0"; }
+                    else { r.mark.textContent = ""; }
+                    if (window.ValueDelta) window.ValueDelta.paint(r.dTd, r.a.old, v);
+                }
+                r.input.classList.toggle("fsp-amp-clip", isFinite(v) && Math.abs(v) > 1.0);
+                // "edited" means differs from the computed value, not merely
+                // non-empty — retyping the same number is not an override.
+                var isEdit = raw !== "" && Number(raw) !== Number(r.a.new);
+                if (isEdit) edited++;
+                r.reset.style.visibility = isEdit ? "visible" : "hidden";
+                r.a.userNew = isEdit && isFinite(v) ? v : undefined;
+            });
+            if (clips) {
+                clipWarn.textContent = "⚠ " + clips + " amplitude"
+                    + (clips === 1 ? "" : "s") + " above 1.0 — the DAC clips. "
+                    + (lowering
+                       ? "Do not lower FSP this far (or reduce those pulses' powers first)."
+                       : "Those pulses already sit past DAC full scale — fix them first.");
+                clipWarn.style.display = "";
+            } else {
+                clipWarn.style.display = "none";
+            }
+            // Never let a typo be written: an unparseable cell blocks the apply
+            // rather than silently falling back to the computed value.
+            bComp.disabled = !rows.length || bad > 0;
+            bComp.title = bad
+                ? bad + " amplitude" + (bad === 1 ? " is" : "s are") + " not a number"
+                : (edited ? edited + " amplitude" + (edited === 1 ? "" : "s")
+                            + " edited from the computed value" : "");
+            editNote.style.display = edited ? "" : "none";
+        }
+
         (plan.amps || []).forEach(function (a) {
             var tr = document.createElement("tr");
             tr.appendChild(_el("td", "fsp-pulse", (a.channel || "") + " · " + (a.op || "")));
             tr.appendChild(_el("td", null, _fmt(a.old)));
             tr.appendChild(_el("td", "fsp-arrow", "→"));
-            tr.appendChild(_el("td", a.clips ? "fsp-clip" : null, _fmt(a.new)));
+            // docs/120 item 7: an input, not text. The customer had only
+            // accept-all or discard-all; they want to nudge an amplitude and
+            // then commit. RAW value (never _fmt) — thousands separators would
+            // not parse back.
+            var inTd = _el("td");
+            var inp = document.createElement("input");
+            inp.type = "text";
+            inp.className = "fsp-amp-input" + (a.clips ? " fsp-amp-clip" : "");
+            // Readable, not raw. `a.new` is amp*factor, so it arrives as
+            // 0.15848931924611134 — which overflowed the field and read as
+            // noise beside a nicely formatted "amplitude now". Amplitudes are
+            // O(0.001..1), so 6 significant figures is far finer than anything
+            // a DAC resolves while still fitting. `a.new` keeps the exact value
+            // for the reset and for the un-edited resend.
+            inp.value = _ampStr(a.new);
+            inp.setAttribute("inputmode", "decimal");
+            inp.setAttribute("aria-label", "compensated amplitude for "
+                + (a.channel || "") + " " + (a.op || ""));
+            inp.addEventListener("input", _recount);
+            inTd.appendChild(inp);
+            tr.appendChild(inTd);
             // docs/76: the compensation factor is uniform, but the amplitude
             // MOVE per pulse is not — show it per row.
             var dTd = _el("td", "fsp-delta");
-            if (window.ValueDelta) window.ValueDelta.paint(dTd, a.old, a.new);
             tr.appendChild(dTd);
-            tr.appendChild(_el("td", "fsp-clipmark", a.clips ? "⚠ >1.0" : ""));
+            var mark = _el("td", "fsp-clipmark");
+            tr.appendChild(mark);
+            var reset = _el("button", "fsp-amp-reset", "↺");
+            reset.type = "button";
+            reset.title = "Back to the computed value (" + _ampStr(a.new) + ")";
+            reset.style.visibility = "hidden";
+            reset.addEventListener("click", function () {
+                inp.value = _ampStr(a.new);
+                _recount();
+                inp.focus();
+            });
+            var rTd = _el("td");
+            rTd.appendChild(reset);
+            tr.appendChild(rTd);
+            rows.push({ a: a, input: inp, dTd: dTd, mark: mark, reset: reset });
             tbody.appendChild(tr);
         });
         table.appendChild(tbody);
@@ -9536,6 +10624,14 @@ window._openFspPopup = (function () {
                 }).join("; "));
             card.appendChild(sk);
         }
+        // Shown only once something is actually overridden — the identity is
+        // what the compensation is FOR, so departing from it should be said out
+        // loud rather than left for the user to notice later in the tray.
+        var editNote = _el("p", "fsp-note fsp-edited-note",
+            "Edited amplitudes no longer satisfy P = FSP + 20·log10|amp| — those "
+            + "pulses' output power will move. ↺ restores the computed value.");
+        editNote.style.display = "none";
+        card.appendChild(editNote);
         var foot = _el("div", "fsp-actions");
         var n = (plan.amps || []).length;
         var bComp = _el("button", "btn-sync primary", "Apply FSP + compensate "
@@ -9554,6 +10650,10 @@ window._openFspPopup = (function () {
         foot.appendChild(bSolo);
         foot.appendChild(bCancel);
         card.appendChild(foot);
+        // First pass paints every Δ / clip mark from the seeded inputs, so the
+        // clip warning above is derived by the SAME code that will keep it in
+        // sync as the user types — never a baked count that drifts.
+        _recount();
         o.style.display = "flex";
         if (window.trapFocus) {
             o._releaseTrap = window.trapFocus(card, function () { finish("cancel"); });
@@ -9562,10 +10662,22 @@ window._openFspPopup = (function () {
     return open;
 })();
 
-/* Build the compensated-amp updates a 'comp' resend appends to the batch. */
+/* Build the compensated-amp updates a 'comp' resend appends to the batch.
+ *
+ * THE one place every caller funnels through (Explorer, both grids, All-values,
+ * and the plot-apply popup's per-row + Apply-All paths), which is why docs/120
+ * item 7 -- "users want to adjust the amps a little and then update" -- lands
+ * here rather than in five resend sites.
+ *
+ * `a.new` is always the value SM computed from P = FSP + 20*log10|amp|;
+ * `a.userNew` is set by the popup only when the user typed something different,
+ * so a plan that was never edited (or came from an un-wired caller that never
+ * opened the popup) serialises byte-identically to before. */
 window._fspCompUpdates = function (plan) {
     return (plan && plan.amps ? plan.amps : []).map(function (a) {
-        return { dot_path: a.path, value: String(a.new) };
+        var v = (a.userNew === undefined || a.userNew === null
+                 || !isFinite(a.userNew)) ? a.new : a.userNew;
+        return { dot_path: a.path, value: String(v) };
     });
 };
 
@@ -10553,8 +11665,10 @@ window.unpinDataset = function() {
         // dangling <defs>/clip-paths corrupt the next plot (clipped/invisible axes)
         // and ~2-5MB of WebGL/DOM leaks per unpin. These are plain calls, so the
         // htmx:beforeSwap purge handler never runs.
-        if (window.Plotly) pane.querySelectorAll('.js-plotly-plot')
-            .forEach(function (p) { try { Plotly.purge(p); } catch (e) {} });
+        if (window.PlotHost) {
+            try { window.PlotHost.purgeWithin(pane); } catch (e) {}
+            try { window.PlotHost.unobserveWithin(pane); } catch (e) {}
+        }
         pane.innerHTML = currentCol.innerHTML;
         _reviveInteractiveMarkup(pane);     // docs/118: the plots above are gone
         _activatePinnedPane(pane);
@@ -10579,8 +11693,10 @@ function _closeCurrentKeepPinned() {
     window._pinnedRunId = null;
     window._pinnedHtml = null;
     // Purge live plots before innerHTML nukes them (see unpinDataset).
-    if (window.Plotly) pane.querySelectorAll('.js-plotly-plot')
-        .forEach(function (p) { try { Plotly.purge(p); } catch (e) {} });
+    if (window.PlotHost) {
+        try { window.PlotHost.purgeWithin(pane); } catch (e) {}
+        try { window.PlotHost.unobserveWithin(pane); } catch (e) {}
+    }
     pane.innerHTML = tmp.innerHTML;
     _reviveInteractiveMarkup(pane);         // docs/118
     _activatePinnedPane(pane);
@@ -10677,7 +11793,9 @@ function _initCompareSplitResizer(pane) {
  * HTMX beforeSwap interceptor: when a run is pinned, intercept the new
  * dataset detail swap and render two-column layout instead.
  */
-document.addEventListener('htmx:beforeSwap', function(evt) {
+// Registered EARLY (see the top-of-file registration, docs/124 M-2): this
+// must set shouldSwap before the purge/unobserve/_io-teardown listeners look.
+function _pinnedRunSwapInterceptor(evt) {
     if (!window._pinnedRunId) return;
     if (!evt.detail || !evt.detail.target) return;
     if (evt.detail.target.id !== 'inspector-pane') return;
@@ -10703,6 +11821,13 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     // Build two-column layout
     var pane = document.getElementById('inspector-pane');
     if (pane) {
+        // Running FIRST means the choke-point purge listeners will see our
+        // shouldSwap=false and skip — so this branch, which replaces the pane
+        // itself, must do its own teardown (same rule as unpinDataset).
+        if (window.PlotHost) {
+            try { window.PlotHost.purgeWithin(pane); } catch (e) {}
+            try { window.PlotHost.unobserveWithin(pane); } catch (e) {}
+        }
         pane.innerHTML = _wrapPinnedLayout(window._pinnedHtml, evt.detail.serverResponse);
         _reviveInteractiveMarkup(pane);     // docs/118: the pinned half is a string
         // innerHTML skips <script> execution + htmx wiring, so without this the
@@ -10728,7 +11853,7 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
         var rightClose = pane.querySelector('.inspector-current-col .inspector-close');
         if (rightClose) rightClose.onclick = _closeCurrentKeepPinned;
     }
-});
+}
 
 // ── Sticky view state: preserves inspector state across ALL navigation ──
 // Works for table rows, bookmark panel, parent/child links — no click capture needed.
@@ -11413,10 +12538,8 @@ document.addEventListener('htmx:afterSwap', function(evt) {
         } else {
             // Fallback: no inspector pane → navigate to Datasets
             htmx.ajax('GET', '/datasets', {target: '#table-pane', swap: 'innerHTML'}).then(function() {
-                document.querySelectorAll('.sidebar-nav a').forEach(function(a) {
-                    a.classList.toggle('active', a.getAttribute('href') === '/datasets');
-                });
                 history.pushState({}, '', '/datasets');
+                if (window.syncSidebarNavActive) window.syncSidebarNavActive();
                 window._dsOpenAtTop = true;
                 htmx.ajax('GET', '/dataset/' + runId, {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'});
             });
@@ -11507,6 +12630,11 @@ function renderParamHistorySparklines() {
 function paramHistoryOpenDrawer(qubit, prop) {
     var drawer = document.getElementById('param-history-drawer');
     if (!drawer) return;
+    // A live #phd-chart rendered with responsive:true holds a window-resize
+    // handler that references the graph div — innerHTML without purge leaks
+    // the whole detached subtree per open (docs/124, the popover/drawer
+    // minor). Purge through the choke point this drawer used to bypass.
+    if (window.PlotHost) { try { window.PlotHost.purgeWithin(drawer); } catch (e) {} }
     drawer.style.display = 'block';
     drawer.innerHTML = '<p class="muted" style="padding:1rem">Loading…</p>';
     var url = '/param-history/expand?qubit=' + encodeURIComponent(qubit)
@@ -11533,6 +12661,10 @@ function paramHistoryOpenDrawer(qubit, prop) {
 function paramHistoryCloseDrawer() {
     var drawer = document.getElementById('param-history-drawer');
     if (!drawer) return;
+    if (window.PlotHost) {
+        try { window.PlotHost.purgeWithin(drawer); } catch (e) {}
+        try { window.PlotHost.unobserveWithin(drawer); } catch (e) {}
+    }
     drawer.style.display = 'none';
     drawer.innerHTML = '';
 }
@@ -11653,6 +12785,9 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
         return typeof p.value === 'number' && isFinite(p.value);
     });
     if (!pts.length) {
+        if (window.PlotHost) {
+            try { window.PlotHost.purgeWithin(document.getElementById('phd-chart')); } catch (e) {}
+        }
         document.getElementById('phd-chart').innerHTML =
             '<p class="muted" style="text-align:center;padding:2rem">No numeric values.</p>';
         return;
@@ -11756,6 +12891,14 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
     })
         .then(function() {
             var plotDiv = document.getElementById('phd-chart');
+            /* docs/122 — one of the two surfaces that draws itself instead of
+               going through _plotlyRender, so no central hook could ever reach
+               it. Its host is `width:100%` inside the main pane: exactly the box
+               a sidebar collapse or a gutter drag changes. Observe the DRAWER,
+               not the chart div. */
+            if (window.PlotHost) {
+                window.PlotHost.observe(document.getElementById('param-history-drawer'));
+            }
             // Click → open the experiment's dataset detail in the same window
             plotDiv.on('plotly_click', function(evt) {
                 if (!evt.points || !evt.points.length) return;
@@ -11859,11 +13002,14 @@ function _paramHistoryPollBackfill() {
                     loader.classList.add('visible');
                     progressLine.textContent = msg;
                 }
+                // the brand indicator counts the same import (docs/126 r3)
+                if (window.NavProgress) NavProgress.external('Importing snapshots', s.done || 0, s.total || 0);
                 setTimeout(_paramHistoryPollBackfill, 800);
             } else if (s.status === 'done') {
                 if (status) status.textContent = 'Imported ' + (s.ingested || 0) + ' snapshots. Reloading…';
                 if (progressLine) progressLine.textContent = '';
                 if (loader) loader.classList.remove('visible');
+                if (window.NavProgress) NavProgress.externalDone();
                 // Mark this chip as "user has imported at least once" so
                 // the auto-incremental backfill on next visit can fire
                 // without surprising a first-time user.
@@ -11887,18 +13033,21 @@ function _paramHistoryPollBackfill() {
                 if (status) status.textContent = 'Error: ' + (s.error || 'unknown');
                 if (progressLine) progressLine.textContent = '';
                 if (loader) loader.classList.remove('visible');
+                if (window.NavProgress) NavProgress.externalDone();
                 // Errors also count as an attempt — don't keep auto-firing.
                 _paramHistoryMarkSessionAttempt();
             } else {
                 // Unknown/unexpected status — treat as terminal so the poll chain
                 // doesn't die silently and let htmx:afterSwap re-fire forever.
                 if (loader) loader.classList.remove('visible');
+                if (window.NavProgress) NavProgress.externalDone();
                 _paramHistoryMarkSessionAttempt();
             }
         })
         .catch(function(err) {
             // Status fetch failed — stop the chain; the attempt is already marked.
             if (loader) loader.classList.remove('visible');
+            if (window.NavProgress) NavProgress.externalDone();
             _paramHistoryMarkSessionAttempt();
             console.warn('param-history backfill status poll failed:', err);
         });
@@ -13053,7 +14202,33 @@ document.addEventListener('click', function(evt) {
        lands as a pending working-copy edit; the usual "Apply to live" then
        writes it. GATED by the workbench path-match: only meaningful when SM and
        Qualibrate share the chip (a mismatch shows zero changes). */
-    var _explorerLiveDiffOn = false;
+    /* Diff-mode truth is the DOM, DERIVED — never a shadow variable
+       (docs/124 M-4/M-5). The old closure flag survived every pane swap while
+       the toggle's class did not (_explorer.html always renders it inactive),
+       so any fresh render of /explorer with diff mode on produced flag=true /
+       DOM=inactive — the next click computed !true and ran the OFF branch: a
+       silent dead first click, reachable by three ordinary daily sequences
+       (grid edit → PaneState seq-mismatch → back; a held /state/live-diff
+       response committing against a parked pane; stateRestored's soft
+       refresh). And the zero-pairs no-op flipped only the flag, leaving a
+       stuck-lit toggle whose own button could never turn it off while it
+       toasted "No incoming changes" against a real server divergence. A pane
+       replacement drops the overlay WITH the DOM, so deriving from the DOM is
+       not merely consistent — it is the true state. */
+    function _explorerLiveDiffOn() {
+        var t = document.getElementById("explorer-livediff-toggle");
+        return !!(t && t.classList.contains("active"));
+    }
+    function _setLiveDiffUi(on, remaining) {
+        var t = document.getElementById("explorer-livediff-toggle");
+        if (t) t.classList.toggle("active", !!on);
+        var bar = document.getElementById("explorer-livediff-bar");
+        if (bar) bar.hidden = !on;
+        if (on) {
+            var cnt = document.getElementById("livediff-bar-count");
+            if (cnt) cnt.textContent = remaining;
+        }
+    }
     var _liveDiffState = [];   // [{dot_path, value(live)}] for state.json tree
     var _liveDiffWiring = [];  // ... for wiring.json tree
     var _liveDiffDone = {};    // dot_path -> 1 once accepted/rejected this session
@@ -13204,8 +14379,8 @@ document.addEventListener('click', function(evt) {
                     + (res.transient ? " — try again" : ""), "warning");
                 return;
             }
-            valEl.textContent = _formatValue(liveValue);
-            valEl.dataset.editVal = (typeof liveValue === "string") ? liveValue : _formatValue(liveValue);
+            valEl.textContent = window._formatValue(liveValue);
+            valEl.dataset.editVal = (typeof liveValue === "string") ? liveValue : window._formatValue(liveValue);
             _clearIncoming(row);
             row.classList.add("tree-row-pending");
             _liveDiffDone[dotPath] = 1;
@@ -13227,6 +14402,14 @@ document.addEventListener('click', function(evt) {
     // Test hooks (jsdom selfchecks pin the dot-form path grammar through these).
     window._collectDiffPairs = _collectDiffPairs;
     window._ancestorPaths = _ancestorPaths;
+    // NOT test hooks: the tree renderer (a different IIFE) wires the per-row
+    // ✓/✗ buttons to these. They close over this IIFE's state (_liveDiffDone,
+    // the remaining-count, _liveFetchJson), so unlike _deepEqual above they
+    // cannot be copied into the caller's scope — they must be exported. Bare
+    // cross-IIFE calls threw ReferenceError on every click and the accept was
+    // silently LOST while the user believed it staged (docs/124 C-1).
+    window._acceptLiveValue = _acceptLiveValue;
+    window._rejectLiveValue = _rejectLiveValue;
 
     // The tree's own inline value-editor (_makeValueEditable, a different scope)
     // calls this after the user types a new value into a field that is part of
@@ -13235,7 +14418,7 @@ document.addEventListener('click', function(evt) {
     // later "Accept all" can't replay the stale LIVE value over the value the user
     // just typed (field/edit-batch is last-write-wins per path). Idempotent.
     window._explorerNoteInlineEdit = function (dotPath, row) {
-        if (!_explorerLiveDiffOn || !dotPath || _liveDiffDone[dotPath]) return;
+        if (!_explorerLiveDiffOn() || !dotPath || _liveDiffDone[dotPath]) return;
         if (row) _clearIncoming(row);
         _liveDiffDone[dotPath] = 1;
         _bumpLiveDiffCount(-1);
@@ -13289,19 +14472,69 @@ document.addEventListener('click', function(evt) {
         window.showToast(msg + " Click ⇄ Live diff again to retry.", "warning");
     }
 
+    /* docs/122 item 2 — a re-rendered tree must never leave the search box
+       describing rows that are no longer filtered.
+
+       renderJsonTree deliberately clears `_lastSearchQuery` (it wiped
+       innerHTML), so every caller owns the re-apply — and explorerLiveDiff was
+       the one that did not. Measured on the real 20-qubit chip: with
+       `amplitude` in the box, turning live diff ON took the tree to 189 visible
+       rows of which 189 did NOT match the query, the box still reading
+       `amplitude`; re-typing the same value restored the filter WITHOUT leaving
+       diff mode, which is what proved the search was fine and simply never
+       called. On /workbench this is not even a click: a 3 s poll turns diff on
+       by itself on every qualibrate write (workbench.html:512 ->
+       showLiveDiffInline), so the search died unattended. */
+    function _explorerReapplySearch() {
+        var box = document.getElementById("explorer-search");
+        var q = box && box.value ? box.value : "";
+        if (!q || !window.jsonTreeSearch || !window._activeTreeId) return false;
+        window.jsonTreeSearch(window._activeTreeId(), q);
+        return true;
+    }
+
+    /* Report, never silently hide. A filter applied over a diff can exclude the
+       very rows the diff is announcing, and a bar that says "changed 3 fields"
+       above an empty tree reads as "qualibrate changed nothing here". Runs
+       after jsonTreeSearch's own 200 ms debounce has settled. */
+    function _explorerDiffFilterNote() {
+        setTimeout(function () {
+            var note = document.getElementById("livediff-bar-filtered");
+            if (!note) return;
+            var bar = document.getElementById("explorer-livediff-bar");
+            var box = document.getElementById("explorer-search");
+            if (!bar || bar.hidden || !box || !box.value) { note.hidden = true; return; }
+            var el = document.getElementById(window._activeTreeId());
+            if (!el) { note.hidden = true; return; }
+            var rows = el.querySelectorAll(".tree-row-incoming");
+            var hidden = 0;
+            Array.prototype.forEach.call(rows, function (r) {
+                if (r.offsetParent === null) hidden++;
+            });
+            if (!hidden) { note.hidden = true; return; }
+            note.textContent = " — " + hidden + " of them " +
+                (hidden === 1 ? "is" : "are") + " hidden by your search";
+            note.hidden = false;
+        }, 350);
+    }
+    /* The search box's single entry point: filter, then keep the diff bar's
+       claim honest about what the filter left on screen. */
+    window.explorerSearch = function (value) {
+        if (window.jsonTreeSearch && window._activeTreeId) {
+            window.jsonTreeSearch(window._activeTreeId(), value);
+        }
+        _explorerDiffFilterNote();
+    };
+
     window.explorerLiveDiff = function(on) {
         var stateEl = document.getElementById("explorer-tree-state");
         var wiringEl = document.getElementById("explorer-tree-wiring");
         if (!stateEl || !wiringEl) return;
-        if (on === undefined) on = !_explorerLiveDiffOn;
+        if (on === undefined) on = !_explorerLiveDiffOn();
 
         if (!on) {
-            _explorerLiveDiffOn = false;
+            _setLiveDiffUi(false);
             _liveDiffState = []; _liveDiffWiring = []; _liveDiffDone = {}; _liveDiffRemaining = 0;
-            var t0 = document.getElementById("explorer-livediff-toggle");
-            if (t0) t0.classList.remove("active");
-            var b0 = document.getElementById("explorer-livediff-bar");
-            if (b0) b0.hidden = true;
             // Reload the explorer fresh: drops refData AND reflects any accepted
             // edits (the client tree data went stale as we accepted them).
             if (window._softRefreshLiveSurface) window._softRefreshLiveSurface();
@@ -13325,7 +14558,9 @@ document.addEventListener('click', function(evt) {
                 _liveDiffRemaining = _liveDiffState.length + _liveDiffWiring.length;
 
                 if (_liveDiffRemaining === 0) {
-                    _explorerLiveDiffOn = false;
+                    // BOTH halves off (docs/124 M-5): clearing only the flag
+                    // left a lit toggle that lied and could not be turned off.
+                    _setLiveDiffUi(false);
                     window.showToast(
                         "No incoming changes — the working state matches the live chip.", "info");
                     return;
@@ -13339,17 +14574,17 @@ document.addEventListener('click', function(evt) {
                 _autoExpandAndTag("explorer-tree-wiring", _liveDiffWiring);
                 // renderJsonTree wiped innerHTML — re-apply hardware-spec marks.
                 if (window._applyExplorerSpecMarks) window._applyExplorerSpecMarks();
+                // ...and the search, for the same reason (docs/122 item 2).
+                // AFTER the tagging, so the incoming marks exist on the rows the
+                // filter then judges — and so the count below describes what the
+                // user can actually see.
+                _explorerReapplySearch();
+                _explorerDiffFilterNote();
 
                 // Commit the ON state ATOMICALLY — only after the render fully
                 // succeeded, so a render error never leaves a half-applied overlay
                 // with a stuck-on toggle (the old code set on=true BEFORE rendering).
-                _explorerLiveDiffOn = true;
-                var t = document.getElementById("explorer-livediff-toggle");
-                if (t) t.classList.add("active");
-                var cnt = document.getElementById("livediff-bar-count");
-                if (cnt) cnt.textContent = _liveDiffRemaining;
-                var bar = document.getElementById("explorer-livediff-bar");
-                if (bar) bar.hidden = false;
+                _setLiveDiffUi(true, _liveDiffRemaining);
             } catch (err) {
                 window.explorerLiveDiff(false);   // full clean reset — never a half overlay
                 _liveDiffRecover("Could not render the live diff.");
@@ -13859,6 +15094,26 @@ window.FieldHistory = (function () {
         document.addEventListener("keydown", function (e) {
             if (e.key === "Escape" && panel.style.display !== "none") close();
         });
+        // Singleton (ensurePanel runs once): a window shrink used to strand
+        // the position:fixed panel fully off-screen — config.responsive
+        // covers only the PLOT (docs/124, the popover minor). Re-clamp into
+        // the viewport while visible.
+        window.addEventListener("resize", function () {
+            if (!panel || panel.style.display === "none") return;
+            var w = Math.min(500, window.innerWidth - 16);
+            panel.style.width = w + "px";
+            var r = panel.getBoundingClientRect();
+            var left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8));
+            // Clamp by the panel's own HEIGHT, not a fixed top margin — the
+            // first version guaranteed only the top edge and left the bottom
+            // overhanging by up to the panel height (measured 270px worst
+            // case, 10.6px in the realistic one). Floored at 8: a panel
+            // taller than the viewport top-aligns, which is the best honest
+            // outcome.
+            var top = Math.max(8, Math.min(r.top, window.innerHeight - r.height - 8));
+            panel.style.left = left + "px";
+            panel.style.top = top + "px";
+        });
         return panel;
     }
 
@@ -13883,6 +15138,11 @@ window.FieldHistory = (function () {
         if (!path) return;
         applyInput = input || null;
         var p = ensurePanel();
+        // The previous open's #fh-chart (responsive:true) holds a window
+        // resize handler referencing the graph div — innerHTML without purge
+        // leaked one handler + one detached Plotly subtree PER OPEN
+        // (docs/124, the popover minor).
+        if (window.PlotHost) { try { window.PlotHost.purgeWithin(p); } catch (e) {} }
         p.innerHTML = '<p class="fh-empty">Loading history…</p>';
         position(anchor);
         fetch("/field/history?path=" + encodeURIComponent(path))
@@ -13903,7 +15163,24 @@ window.FieldHistory = (function () {
         // small twin): change points as a step line, trigger-colored markers.
         var mount = p.querySelector("#fh-chart");
         var dataEl = p.querySelector("#fh-chart-data");
-        if (!mount || !dataEl || !window.Plotly) return;
+        if (!mount || !dataEl) return;
+        if (!window.Plotly) {
+            // Plotly is lazy-loaded, and this popover's home surfaces (the
+            // qubit/pair inspectors, the bulk grids) mount no other chart — so
+            // on a fresh page load the library is simply not there yet, and
+            // bailing made the docs/20 mini-trend dead on arrival exactly
+            // where it lives (docs/124 M-18). Load it, then render whatever
+            // the panel holds by then; renderChart re-queries its own mounts,
+            // so a panel that moved on to another path renders that one, and
+            // a closed panel (display:none, never detached) renders hidden —
+            // harmless, correct on reopen.
+            if (window.requirePlotly) {
+                window.requirePlotly().then(function () {
+                    if (p.isConnected) renderChart(p);
+                }).catch(function () {});
+            }
+            return;
+        }
         var pts;
         try { pts = JSON.parse(dataEl.textContent || "[]"); }
         catch (e) { return; }
@@ -14009,13 +15286,18 @@ window.FieldHistory = (function () {
        measured off-DOM (canvas measureText + letter-spacing correction; a
        length×char-width monospace fallback where canvas is unavailable). */
     var _measureCanvas = null;
-    function _cellTextWidth(input) {
+    function _cellTextWidth(input, geom) {
         var value = input.value || "";
-        var cs = null;
-        try { cs = window.getComputedStyle(input); } catch (e) {}
+        // `geom` carries the font already measured for this cell (docs/120 item
+        // 24) — asking the engine again per keystroke is a forced style recalc
+        // for values that cannot have changed since the cell took focus.
+        var cs = geom || null;
+        if (!cs) {
+            try { cs = window.getComputedStyle(input); } catch (e) {}
+        }
         var fontPx = 14;
         if (cs) {
-            var fp = parseFloat(cs.fontSize);
+            var fp = parseFloat(cs.fontSize !== undefined ? cs.fontSize : cs.fontPx);
             if (fp > 0) fontPx = fp;
         }
         if (_measureCanvas === null) {
@@ -14028,8 +15310,8 @@ window.FieldHistory = (function () {
         }
         if (_measureCanvas && cs) {
             try {
-                _measureCanvas.font = (cs.fontWeight || "500") + " " + fontPx
-                    + "px " + (cs.fontFamily || "monospace");
+                _measureCanvas.font = cs.font || ((cs.fontWeight || "500") + " "
+                    + fontPx + "px " + (cs.fontFamily || "monospace"));
                 var w = _measureCanvas.measureText(value).width;
                 var ls = parseFloat(cs.letterSpacing);
                 if (ls > 0 && value.length > 1) w += ls * (value.length - 1);
@@ -14038,19 +15320,53 @@ window.FieldHistory = (function () {
         }
         return value.length * fontPx * 0.62;   // monospace approximation
     }
+    /* docs/120 item 24 — this runs on EVERY keystroke in a grid cell, and it
+       was reading `getComputedStyle` twice (once here, once inside
+       _cellTextWidth) and then `offsetLeft`/`offsetWidth`, which forces a full
+       layout of a 158-column sticky table, before writing `style.left` and
+       toggling a class — i.e. read/write/read alternation, per key.
+
+       Measured with the CPU profiler on the customer's 20-qubit chip: 70.4 ms
+       of self time across ten keystrokes, the dominant app cost of typing by an
+       order of magnitude. (The audit agent had blamed `_refreshGlobal` scanning
+       3,160 nodes twice; that measures 0.9 ms for the same ten keystrokes.)
+
+       None of what it reads CHANGES while a key is pressed — padding, font and
+       the cell's own geometry are fixed for as long as the cell holds focus,
+       which the neighbouring comment already relies on ("the cell never resizes
+       on plain focus"). So measure once when the button arrives at a cell and
+       reuse it; only the text width, measured off-DOM on a canvas, is per-key. */
+    function _cellBtnMeasure() {
+        var b = cellBtn, input = b && b._input;
+        if (!b || !input || !input.isConnected) { if (b) b._geom = null; return; }
+        var padL = 4, cs = null;
+        try { cs = window.getComputedStyle(input); } catch (e) {}
+        if (cs) {
+            var pl = parseFloat(cs.paddingLeft);
+            if (pl >= 0) padL = pl;
+        }
+        b._geom = {
+            padL: padL,
+            left: input.offsetLeft,
+            width: input.offsetWidth,
+            font: cs ? ((cs.fontWeight || "500") + " "
+                        + (parseFloat(cs.fontSize) > 0 ? parseFloat(cs.fontSize) : 14)
+                        + "px " + (cs.fontFamily || "monospace")) : null,
+            fontPx: (cs && parseFloat(cs.fontSize) > 0) ? parseFloat(cs.fontSize) : 14,
+            letterSpacing: cs ? parseFloat(cs.letterSpacing) : NaN,
+        };
+    }
     function _positionCellBtn() {
         var b = cellBtn, input = b && b._input;
         if (!b || !input || !input.isConnected) return;
-        var padL = 4;
-        try {
-            var pl = parseFloat(window.getComputedStyle(input).paddingLeft);
-            if (pl >= 0) padL = pl;
-        } catch (e) {}
-        var want = input.offsetLeft + padL + _cellTextWidth(input) + 4;
-        var max = input.offsetLeft + input.offsetWidth - 20;
+        if (!b._geom) _cellBtnMeasure();
+        var g = b._geom;
+        if (!g) return;
+        var padL = g.padL;
+        var want = g.left + padL + _cellTextWidth(input, g) + 4;
+        var max = g.left + g.width - 20;
         var clamped = want > max;
-        b.style.left = Math.max(input.offsetLeft + 2,
-                                Math.min(want, max)) + "px";
+        b.style.left = Math.max(g.left + 2, Math.min(want, max)) + "px";
         // Only a FULL cell needs the text padded away from the icon — the
         // unclamped icon sits in the input's empty tail (and the cell never
         // resizes on plain focus, restoring the style.css invariant).
@@ -14066,6 +15382,9 @@ window.FieldHistory = (function () {
         b._input = input;
         td.appendChild(b);               // appendChild MOVES the shared button
         b.style.display = "block";
+        // The one place the cell's geometry really can differ: re-measure HERE,
+        // then every keystroke reuses it (docs/120 item 24).
+        _cellBtnMeasure();
         _positionCellBtn();
     }
     function hideCellBtn() {
@@ -14076,12 +15395,24 @@ window.FieldHistory = (function () {
             cellBtn._input.classList.remove("fh-docked");
             cellBtn._input = null;
         }
+        cellBtn._geom = null;            // stale geometry must never be reused
         // Park on <body> so a grid re-render can't destroy the shared button
         // (and the td's search/sort surface stays byte-clean while unfocused).
         if (cellBtn.parentElement && cellBtn.parentElement !== document.body) {
             document.body.appendChild(cellBtn);
         }
     }
+    /* Drop the focused cell's cached metrics WITHOUT hiding the button — the
+       one thing that can change them mid-focus is a UI-scale change, which
+       rescales every cell while the user is still typing in one. */
+    window.__cellBtnInvalidate = function () {
+        if (!cellBtn) return;
+        cellBtn._geom = null;
+        if (cellBtn._input && cellBtn.style.display !== "none") {
+            _cellBtnMeasure();
+            _positionCellBtn();
+        }
+    };
     document.addEventListener("focusin", function (e) {
         var t = e.target;
         if (t && t.classList && t.classList.contains("bulk-cell") &&
@@ -14149,9 +15480,25 @@ window.LiveEditUndo = (function () {
             a.cells.forEach(function (c) {
                 var input = _input(c.dp);
                 if (!input || input.readOnly) { gone++; return; }
-                if (input.getAttribute("data-orig") === String(c.next)) {
-                    staged++; return;
-                }
+                // "Committed since" has TWO spellings, and only one was
+                // recognised. `c.next` is the RAW TYPED TEXT, captured by the
+                // change listener; a commit rewrites data-orig with the
+                // STORED value, which is formatted (4.41e9 -> 4,410,000,000).
+                // On the ENTER path the two happen to match, so Ctrl+Z
+                // correctly fell through to the server. On the CLICK-AWAY
+                // path `change` fires before `focusout`, the stored text
+                // differs from what was typed, the guard missed — and Ctrl+Z
+                // then "undid" locally: no request, the cell rewound and was
+                // re-marked dirty, while the working state still held the new
+                // value. On a field that was "not set" it staged an empty
+                // string that Apply-all could never coerce, wedging the grid
+                // until a Reset threw away every pending edit.
+                //
+                // A committed cell is a CLEAN cell, whatever the formatting
+                // did to the text, so ask that instead.
+                var _committed = input.getAttribute("data-orig") === String(c.next)
+                    || input.value === input.getAttribute("data-orig");
+                if (_committed) { staged++; return; }
                 input.value = c.prev;
                 input.dispatchEvent(new Event("input", { bubbles: true }));
                 input.classList.add("leu-flash");
@@ -14259,12 +15606,9 @@ window.LiveEditUndo = (function () {
     function trigger() {
         if (window._wizUndo && window._wizUndo.tryUndo()) return;
         if (tryUndo()) return;
-        if (window.htmx && document.getElementById("pending-tray")) {
-            htmx.ajax("POST", "/undo", {
-                source: "#pending-tray", target: "#pending-tray",
-                swap: "outerHTML",
-            });
-        }
+        // Same queue as Ctrl+Z (docs/122 item 3): a fast double-click on the
+        // tray ↶ used to lose its second press exactly like a fast keypress.
+        if (window.UndoQueue) window.UndoQueue.push("/undo");
     }
 
     function _changeCount() {
@@ -14584,7 +15928,10 @@ window.ColumnHistory = (function () {
     function ensureOverlay() {
         if (overlay) return overlay;
         overlay = document.createElement("div");
-        overlay.className = "ch-overlay";
+        // `colhist-overlay` is what the Ctrl+Z carve-out keys on: inside THIS
+        // panel LiveEditUndo owns the keystroke. The bare `.ch-overlay` shell
+        // is shared with three other dialogs that must keep native text undo.
+        overlay.className = "ch-overlay colhist-overlay";
         overlay.style.display = "none";
         var backdrop = document.createElement("div");
         backdrop.className = "ch-backdrop";
@@ -14747,3 +16094,575 @@ window.ColumnHistory = (function () {
              switchView: switchView };
 })();
 
+
+/* ── docs/120 item 10: the working-state version panel ───────────────────
+ *
+ * Customer: "move the bookmark below Calculator and put the current state
+ * working version id in its place ... clicking it lists the versions with when
+ * each was updated, checkboxes to pick several -> show just the combined diff
+ * -> and let a chosen state be applied to the live chip."
+ *
+ * This module is only the popover mechanics and the selection maths. Every
+ * ACTION delegates to a surface that already exists and is already gated:
+ * two ticks open the docs/84 diff workbench, three or more open the Compare
+ * hub basket, and "Go back" posts the same restore-live route State History
+ * uses, with both of its independent force gates intact.
+ */
+window.StateVersions = (function () {
+    function panel() { return document.getElementById('state-version-panel'); }
+    function chip() { return document.querySelector('.state-version-chip'); }
+
+    function close() {
+        var p = panel(); if (!p) return;
+        p.hidden = true;
+        var c = chip(); if (c) c.setAttribute('aria-expanded', 'false');
+    }
+    function _clampToViewport(p) {
+        // The panel is CSS-anchored left:0 under its topbar chip; a chip far
+        // enough right pushes the 46rem panel past the viewport edge (bug
+        // report: "the panel is cut off on the right"). Nudge it back in.
+        p.style.left = '';
+        var r = p.getBoundingClientRect();
+        var over = r.right - (window.innerWidth - 8);
+        if (over > 0) p.style.left = (p.offsetLeft - over) + 'px';
+        r = p.getBoundingClientRect();
+        if (r.left < 8) p.style.left = (p.offsetLeft + (8 - r.left)) + 'px';
+    }
+    function toggle() {
+        var p = panel(); if (!p) return;
+        // htmx fills the panel from the same click; only visibility is ours.
+        var opening = p.hidden;
+        p.hidden = !opening;
+        var c = chip(); if (c) c.setAttribute('aria-expanded', opening ? 'true' : 'false');
+        if (opening) {
+            requestAnimationFrame(function () { _clampToViewport(p); });
+            setTimeout(function () {
+                document.addEventListener('click', function away(e) {
+                    if (p.hidden) { document.removeEventListener('click', away); return; }
+                    if (p.contains(e.target) || (chip() && chip().contains(e.target))) return;
+                    close();
+                    document.removeEventListener('click', away);
+                });
+            }, 0);
+        }
+    }
+    /* docs/126: while the panel is OPEN and an Auto-Sync session is armed,
+       applies keep landing — the quick "since the previous version" table
+       must follow them. The tray swaps on every flush, so ride that (the
+       docs/117 observation: every commit path ends in a tray swap), debounced;
+       ticked rows survive the refresh exactly like more() preserves them. */
+    var _svLiveTimer = null;
+    // on document, not document.body: app.js runs from <head>, where body is
+    // still null — and a throw here would take the whole IIFE (toggle incl.)
+    // down with it. htmx events bubble to document anyway.
+    document.addEventListener('htmx:afterSwap', function (evt) {
+        var p = panel();
+        if (!p || p.hidden) return;
+        if (!document.querySelector('.auto-apply-pill.auto-apply-on')) return;
+        var t = evt.detail && evt.detail.target;
+        var isTray = t && (t.id === 'pending-tray'
+            || (t.querySelector && t.querySelector('#pending-tray')));
+        if (!isTray) return;
+        clearTimeout(_svLiveTimer);
+        _svLiveTimer = setTimeout(function () {
+            var pp = panel();
+            if (!pp || pp.hidden || !window.htmx) return;
+            var keep = _checked();
+            htmx.ajax('GET', '/state/versions',
+                      { target: '#state-version-panel', swap: 'innerHTML' })
+                .then(function () {
+                    keep.forEach(function (ts) {
+                        var el = document.querySelector(
+                            '#state-version-panel .sv-check[value="' + ts + '"]');
+                        if (el) el.checked = true;
+                    });
+                    pick();
+                });
+        }, 900);
+    });
+    function _checked() {
+        return Array.prototype.slice
+            .call(document.querySelectorAll('#state-version-panel .sv-check:checked'))
+            .map(function (c) { return c.value; });
+    }
+    /* Paging. A real chip has hundreds of versions and the first page shows 40,
+       so the rest has to be reachable — but re-fetching replaces the list, and
+       a user who has already ticked the version they want to compare against
+       must not lose it just for scrolling further back. So the selection is
+       carried across the swap and re-applied by value. */
+    function more(limit) {
+        if (!window.htmx) return;
+        var keep = _checked();
+        htmx.ajax('GET', '/state/versions?limit=' + encodeURIComponent(limit),
+                  { target: '#state-version-panel', swap: 'innerHTML' })
+            .then(function () {
+                keep.forEach(function (ts) {
+                    var el = document.querySelector(
+                        '#state-version-panel .sv-check[value="' + ts + '"]');
+                    if (el) el.checked = true;
+                });
+                pick();
+            });
+    }
+    /* The button says what the current selection will actually do, rather than
+       being enabled-and-then-explaining afterwards. */
+    function pick() {
+        var n = _checked().length;
+        var btn = document.getElementById('sv-compare');
+        var hint = document.getElementById('sv-hint');
+        if (!btn) return;
+        btn.disabled = n < 2;
+        if (hint) {
+            hint.textContent = n === 0 ? 'Tick two versions to see what changed.'
+                : n === 1 ? 'Tick one more.'
+                : n === 2 ? 'Opens the diff of these two.'
+                : 'Opens all ' + n + ' in the Compare hub.';
+        }
+    }
+    function compare(chipKey) {
+        var sel = _checked();
+        if (sel.length < 2) return;
+        // Oldest first, so the diff reads forward in time like every other
+        // before -> after surface in SM (docs/76).
+        sel.sort();
+        var url;
+        if (sel.length === 2) {
+            url = '/diff/snapshots?ts_a=' + encodeURIComponent(sel[0])
+                + '&ts_b=' + encodeURIComponent(sel[1])
+                + (chipKey ? '&chip_key=' + encodeURIComponent(chipKey) : '');
+        } else {
+            url = '/compare-hub?' + sel.map(function (ts) {
+                return 'src=' + encodeURIComponent('hist:' + chipKey + '/' + ts);
+            }).join('&');
+        }
+        close();
+        if (window.htmx) {
+            htmx.ajax('GET', url, { target: '#table-pane', swap: 'innerHTML' });
+            try { history.pushState({}, '', url); } catch (e) {}
+        } else {
+            window.location.href = url;
+        }
+    }
+    return { toggle: toggle, close: close, pick: pick, compare: compare,
+             more: more };
+})();
+
+/* ── the top bar's REAL height (docs/120 item 23) ─────────────────────────
+ *
+ * `--topbar-height` is used by every `calc(100vh - var(--topbar-height))`
+ * panel, and it declared 48px while the rendered bar — a wrapping <nav> —
+ * measured 201px at 1600 wide, 229 at 1280 and 254 at 1024. So every main
+ * panel was sized 150-200px taller than the space it had, on every page and
+ * at every width, and worse on the narrow windows a laptop actually uses.
+ * That is what pushed the Generate wizard's failure message below the fold
+ * and let content scroll under a sticky bar the layout thought was 48px.
+ *
+ * A stylesheet cannot express "however tall that element turns out to be",
+ * so measure it and publish it. No rule changes; they all just start being
+ * given the truth.
+ *
+ * Two details that matter:
+ *  - `html.topbar-hidden` zeroes the variable in CSS, and an inline style on
+ *    <html> would BEAT that rule (inline wins over a stylesheet). So a hidden
+ *    or absent bar must publish 0 here rather than leave a stale number.
+ *  - writes are gated on an actual change, because this runs from a
+ *    ResizeObserver and re-publishing the same value would loop.
+ */
+window.TopbarHeight = (function () {
+    'use strict';
+    var _last = null;
+    function measure() {
+        var tb = document.querySelector('.topbar');
+        if (!tb || document.documentElement.classList.contains('topbar-hidden')) return 0;
+        var r = tb.getBoundingClientRect();
+        return (r.height > 0 && r.width > 0) ? Math.round(r.height) : 0;
+    }
+    function publish() {
+        var h = measure();
+        if (h === _last) return h;
+        _last = h;
+        document.documentElement.style.setProperty('--topbar-height', h + 'px');
+        return h;
+    }
+    function start() {
+        publish();
+        var tb = document.querySelector('.topbar');
+        if (tb && window.ResizeObserver) {
+            try { new ResizeObserver(function () { publish(); }).observe(tb); }
+            catch (e) { /* older engine — the resize listener below still runs */ }
+        }
+        window.addEventListener('resize', publish);
+        // The bar's contents change with the chip (badges, project chip, the
+        // Auto-Sync pill), and htmx swaps them in without a resize event.
+        // Bound to `document`, not `document.body`: app.js is loaded in <head>
+        // and `document.body` is null there — the existing
+        // `test_app_js_no_top_level_document_body` pin caught exactly that.
+        // htmx events bubble to document, so nothing is lost.
+        document.addEventListener('htmx:afterSwap', function () { publish(); });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', start);
+    } else {
+        start();
+    }
+    return { publish: publish, measure: measure };
+})();
+
+/* ── hx-on without eval (docs/120 item 27) ────────────────────────────────
+ *
+ * The app sets its own Content-Security-Policy, and it deliberately does NOT
+ * include 'unsafe-eval'. htmx compiles every `hx-on::…` attribute with
+ * `new Function("event", body)`, so under our own policy that compile throws:
+ * EVERY `hx-on::after-request` in this codebase silently never ran, and the
+ * console carried one CSP violation per page as the only sign.
+ *
+ * Seven handlers were affected, and one of them had already been reported as a
+ * bug by hand: the Auto-Sync popup did not close after Save. That was patched
+ * defensively before the cause was known — this is the cause.
+ *
+ * Verifying it needs care, and two of my probes lied before one held up. A
+ * `new Function` evaluated from a debugger-injected script returns a value
+ * quite happily, so "eval works here" proves nothing about what the page's own
+ * htmx can do. What settled it, and what a future check should repeat: attach
+ * an `hx-on::after-request` that writes into the DOM, fire the request, and
+ * read the DOM back — it stayed unwritten while a CSP `new Function` violation
+ * appeared. After this change the same probe on a `data-after-request` handler
+ * writes, and the violation count on the page goes 1 -> 0.
+ *
+ * The fix keeps every behaviour and removes the eval: a data attribute names
+ * an action, one delegated listener runs it. Greppable, no mini-language, and
+ * a typo'd name fails loudly here rather than silently in a compile nobody
+ * sees.
+ */
+(function () {
+    'use strict';
+    var ACTIONS = {
+        /* the archive form: reset + flash the status line on success */
+        archiveDone: function (el, ev) {
+            var xhr = ev && ev.detail && ev.detail.xhr;
+            if (!xhr || String(xhr.responseText || '').indexOf('archive-ok') < 0) return;
+            if (el.reset) el.reset();
+            var s = document.getElementById('archive-status');
+            if (!s) return;
+            s.classList.remove('archive-flash');
+            void s.offsetWidth;                       // restart the animation
+            s.classList.add('archive-flash');
+            if (window.applyLocalTimes) window.applyLocalTimes(s);
+        },
+        autoSyncClose: function () {
+            if (window.AutoSync && AutoSync.close) AutoSync.close();
+        },
+        dropApplyConflict: function (el, ev) {
+            if (!(ev && ev.detail && ev.detail.successful)) return;
+            var box = el.closest('.ds-apply-conflict');
+            if (box) box.remove();
+        },
+        clearUndo: function () {
+            if (window.LiveEditUndo) LiveEditUndo.clear();
+        },
+        closeReviewAndClearUndo: function () {
+            if (window.closeReview) window.closeReview();
+            if (window.LiveEditUndo) LiveEditUndo.clear();
+        }
+    };
+    document.addEventListener('htmx:afterRequest', function (ev) {
+        var el = ev.target;
+        if (!el || !el.getAttribute) return;
+        var name = el.getAttribute('data-after-request');
+        if (!name) return;
+        var fn = ACTIONS[name];
+        if (!fn) {
+            if (window.console) console.warn('unknown data-after-request:', name);
+            return;
+        }
+        try { fn(el, ev); }
+        catch (e) { if (window.console) console.warn('after-request ' + name, e); }
+    });
+    window.__afterRequestActions = ACTIONS;   // named so a pin can enumerate them
+})();
+
+/* ── docs/126 ④: Json Tree quick patches ──────────────────────────────────
+   The Live-Edit patch idea, on the tree: curated terms that actually OCCUR in
+   this chip's documents (honesty — never a chip that matches nothing) + the
+   user's own saved patches, from the SAME store Live Edit writes
+   (quam_bulk_custom_chips — "decouple" registered once serves both surfaces).
+   Click → the term joins/leaves #explorer-search (space = AND, the tree
+   grammar) and the tree filters through window.explorerSearch. */
+window.ExplorerChips = (function () {
+    var CUSTOM_KEY = 'quam_bulk_custom_chips';
+    var CURATED = [
+        ['freq', 'Freq'], ['readout', 'Readout'], ['resonator', 'Resonator'],
+        ['flux', 'Flux'], ['coupler', 'Coupler'], ['amp', 'Amp'],
+        ['power', 'Power'], ['length', 'Length'], ['delay', 'Delay'],
+        ['offset', 'Offset'], ['filter', 'Filter'], ['phase', 'Phase'],
+        ['port', 'Port'],
+    ];
+    function _custom() {
+        try {
+            var a = JSON.parse(localStorage.getItem(CUSTOM_KEY) || '[]');
+            return Array.isArray(a) ? a.filter(function (t) {
+                return typeof t === 'string' && /^[^\s|]{1,40}$/.test(t);
+            }) : [];
+        } catch (e) { return []; }
+    }
+    function _saveCustom(list) {
+        try { localStorage.setItem(CUSTOM_KEY, JSON.stringify(list)); } catch (e) {}
+    }
+    function _input() { return document.getElementById('explorer-search'); }
+    function _tokens() {
+        var el = _input();
+        return el ? el.value.trim().split(/\s+/).filter(Boolean) : [];
+    }
+    function _apply(value) {
+        var el = _input(); if (!el) return;
+        el.value = value;
+        if (window.explorerSearch) window.explorerSearch(value);
+    }
+    function _toggle(bar, term) {
+        var toks = _tokens();
+        var i = toks.map(function (t) { return t.toLowerCase(); }).indexOf(term);
+        if (i >= 0) toks.splice(i, 1); else toks.push(term);
+        _apply(toks.join(' '));
+        _paint(bar);
+    }
+    function _paint(bar) {
+        var lit = {};
+        _tokens().forEach(function (t) { lit[t.toLowerCase()] = 1; });
+        bar.querySelectorAll('.bulk-chip[data-chip-term]').forEach(function (b) {
+            var on = !!lit[b.getAttribute('data-chip-term')];
+            b.classList.toggle('active', on);
+            b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+    }
+    function _render(bar, hay) {
+        bar.innerHTML = '';
+        var seen = {};
+        CURATED.forEach(function (c) {
+            if (hay.indexOf(c[0]) < 0) return;   // term occurs nowhere on this chip
+            seen[c[0]] = 1;
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'bulk-chip';
+            b.setAttribute('data-chip-term', c[0]);
+            b.setAttribute('aria-pressed', 'false');
+            b.textContent = c[1];
+            bar.appendChild(b);
+        });
+        _custom().forEach(function (t) {
+            if (seen[t]) return;
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'bulk-chip bulk-chip-custom';
+            b.setAttribute('data-chip-term', t);
+            b.setAttribute('aria-pressed', 'false');
+            b.title = 'your saved filter patch — × removes it';
+            b.textContent = t;
+            var x = document.createElement('span');
+            x.className = 'bulk-chip-x';
+            x.textContent = '×';
+            b.appendChild(x);
+            bar.appendChild(b);
+        });
+        var add = document.createElement('button');
+        add.type = 'button';
+        add.className = 'bulk-chip bulk-chip-add';
+        add.title = 'Save your own filter word as a patch (shared with Live Edit)';
+        add.textContent = '+';
+        bar.appendChild(add);
+    }
+    function mount(barId, docsArr) {
+        var bar = document.getElementById(barId);
+        if (!bar) return;
+        var hay = '';
+        try { hay = JSON.stringify(docsArr).toLowerCase(); } catch (e) {}
+        bar._hay = hay;
+        _render(bar, hay);
+        _paint(bar);
+        if (!bar._chipWired) {
+            bar._chipWired = true;
+            bar.addEventListener('click', function (e) {
+                var t = e.target;
+                if (!t || !t.classList) return;
+                if (t.classList.contains('bulk-chip-x')) {
+                    var term = t.parentNode.getAttribute('data-chip-term');
+                    _saveCustom(_custom().filter(function (x) { return x !== term; }));
+                    var toks = _tokens().filter(function (tk) { return tk.toLowerCase() !== term; });
+                    _apply(toks.join(' '));
+                    _render(bar, bar._hay || '');
+                    _paint(bar);
+                } else if (t.classList.contains('bulk-chip-add')) {
+                    if (bar.querySelector('.bulk-chip-add-input')) return;
+                    var inp = document.createElement('input');
+                    inp.className = 'bulk-chip-add-input';
+                    inp.placeholder = 'new patch…';
+                    inp.setAttribute('aria-label', 'New filter patch');
+                    bar.insertBefore(inp, t);
+                    inp.focus();
+                    var commit = function () {
+                        var v = inp.value.trim().toLowerCase();
+                        if (inp.parentNode) inp.parentNode.removeChild(inp);
+                        if (!/^[^\s|]{1,40}$/.test(v)) return;
+                        var cur = _custom();
+                        if (cur.indexOf(v) < 0) { cur.push(v); _saveCustom(cur); }
+                        _render(bar, bar._hay || '');
+                        var toks = _tokens();
+                        if (toks.map(function (x) { return x.toLowerCase(); }).indexOf(v) < 0) toks.push(v);
+                        _apply(toks.join(' '));
+                        _paint(bar);
+                    };
+                    inp.addEventListener('keydown', function (ke) {
+                        if (ke.key === 'Enter') { ke.preventDefault(); commit(); }
+                        else if (ke.key === 'Escape') {
+                            if (inp.parentNode) inp.parentNode.removeChild(inp);
+                        }
+                    });
+                    inp.addEventListener('blur', function () {
+                        setTimeout(function () { if (inp.parentNode) commit(); }, 120);
+                    });
+                } else if (t.classList.contains('bulk-chip')) {
+                    _toggle(bar, t.getAttribute('data-chip-term'));
+                }
+            });
+            // hand-typing a patch's word lights its chip
+            var el = _input();
+            if (el && !el._chipPaint) {
+                el._chipPaint = true;
+                el.addEventListener('input', function () { _paint(bar); });
+            }
+        }
+    }
+    return { mount: mount };
+})();
+
+/* ── docs/126 ⑥: the floating Instrument Wiring panel ─────────────────────
+   The customer wants a port picture ALWAYS in view while working elsewhere —
+   today the diagram only exists as the main pane. The ⧉ beside the sidebar
+   item opens this body-level panel: the SAME renderInstrumentWiring drawing
+   fed by /api/instrument/data, draggable by its header, collapsible to the
+   header bar, resizable (CSS resize), position/size/collapse persisted.
+   Read-only by design — hover details land in the panel's own footer strip
+   (the cursor popup and the JSON drill-down belong to the main page). */
+window.FloatWiring = (function () {
+    var KEY = 'quam_float_wiring';
+    function _geo() {
+        try { return JSON.parse(localStorage.getItem(KEY) || '{}') || {}; }
+        catch (e) { return {}; }
+    }
+    function _save(patch) {
+        var g = _geo();
+        Object.keys(patch).forEach(function (k) { g[k] = patch[k]; });
+        try { localStorage.setItem(KEY, JSON.stringify(g)); } catch (e) {}
+    }
+    function panel() { return document.getElementById('float-wiring'); }
+
+    function refresh() {
+        var host = document.getElementById('float-wiring-diagram');
+        if (!host) return;
+        host.innerHTML = '<p class="muted" style="padding:.6rem">loading…</p>';
+        fetch('/api/instrument/data', { cache: 'no-store' })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                var h = document.getElementById('float-wiring-diagram');
+                if (!h) return;
+                if (!d || d.error) {
+                    h.innerHTML = '';
+                    var pe = document.createElement('p');
+                    pe.className = 'muted'; pe.style.padding = '.6rem';
+                    pe.textContent = 'Wiring unavailable: ' + ((d && d.error) || 'no data');
+                    h.appendChild(pe);
+                    return;
+                }
+                window.renderInstrumentWiring('float-wiring-diagram',
+                    d.instrument, d.wiring, {
+                        onPortHover: function (a) {
+                            var f = document.getElementById('float-wiring-status');
+                            if (!f) return;
+                            f.textContent = a
+                                ? (a.label || '') + (a.role ? ' · ' + a.role : '')
+                                : '';
+                        },
+                    });
+            })
+            .catch(function () {
+                var h = document.getElementById('float-wiring-diagram');
+                if (h) h.innerHTML = '<p class="muted" style="padding:.6rem">Could not load the wiring data.</p>';
+            });
+    }
+
+    function _applyCollapsed(p, on) {
+        p.classList.toggle('fw-collapsed', !!on);
+        var b = p.querySelector('.fw-collapse');
+        if (b) { b.textContent = on ? '▸' : '▾'; b.title = on ? 'Expand' : 'Collapse to the title bar'; }
+    }
+
+    function open() {
+        if (panel()) return;
+        var p = document.createElement('div');
+        p.id = 'float-wiring';
+        p.className = 'float-wiring';
+        p.innerHTML =
+            '<div class="fw-head">'
+            + '<span class="fw-title">Instrument Wiring</span>'
+            + '<span id="float-wiring-status" class="fw-status muted"></span>'
+            + '<button type="button" class="fw-btn fw-refresh" title="Reload from the open chip">↻</button>'
+            + '<button type="button" class="fw-btn fw-collapse" title="Collapse to the title bar">▾</button>'
+            + '<button type="button" class="fw-btn fw-close" title="Close">✕</button>'
+            + '</div>'
+            + '<div class="fw-body"><div id="float-wiring-diagram"></div></div>';
+        document.body.appendChild(p);
+        var g = _geo();
+        if (typeof g.x === 'number' && typeof g.y === 'number') {
+            p.style.left = Math.max(0, Math.min(g.x, window.innerWidth - 120)) + 'px';
+            p.style.top = Math.max(0, Math.min(g.y, window.innerHeight - 60)) + 'px';
+            p.style.right = 'auto'; p.style.bottom = 'auto';
+        }
+        if (typeof g.w === 'number') p.style.width = g.w + 'px';
+        if (typeof g.h === 'number') p.style.height = g.h + 'px';
+        _applyCollapsed(p, !!g.collapsed);
+
+        p.querySelector('.fw-close').onclick = function () { p.remove(); };
+        p.querySelector('.fw-refresh').onclick = refresh;
+        p.querySelector('.fw-collapse').onclick = function () {
+            var on = !p.classList.contains('fw-collapsed');
+            _applyCollapsed(p, on);
+            _save({ collapsed: on });
+        };
+        // drag by the header (buttons excluded)
+        var head = p.querySelector('.fw-head');
+        head.addEventListener('pointerdown', function (e) {
+            if (e.target.closest && e.target.closest('.fw-btn')) return;
+            var r = p.getBoundingClientRect();
+            var dx = e.clientX - r.left, dy = e.clientY - r.top;
+            function mv(ev) {
+                p.style.left = Math.max(0, ev.clientX - dx) + 'px';
+                p.style.top = Math.max(0, ev.clientY - dy) + 'px';
+                p.style.right = 'auto'; p.style.bottom = 'auto';
+            }
+            function up(ev) {
+                document.removeEventListener('pointermove', mv);
+                document.removeEventListener('pointerup', up);
+                var r2 = p.getBoundingClientRect();
+                _save({ x: r2.left, y: r2.top });
+            }
+            document.addEventListener('pointermove', mv);
+            document.addEventListener('pointerup', up);
+            e.preventDefault();
+        });
+        // persist a CSS resize (the handle fires no event — sample on pointerup)
+        p.addEventListener('pointerup', function () {
+            var r = p.getBoundingClientRect();
+            if (r.width > 80 && r.height > 40) _save({ w: r.width, h: r.height });
+        });
+        refresh();
+    }
+
+    function toggle() {
+        var p = panel();
+        if (p) p.remove(); else open();
+    }
+
+    // a wholesale working-copy replacement (chip switch, stage, pull) can
+    // change the wiring the panel shows — refresh it in place
+    document.addEventListener('stateRestored', function () { if (panel()) refresh(); });
+    return { toggle: toggle, open: open, refresh: refresh };
+})();

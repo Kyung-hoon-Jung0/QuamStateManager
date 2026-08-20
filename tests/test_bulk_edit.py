@@ -151,14 +151,34 @@ class TestBulkRender:
         assert "bulk-col-group-start" in body
 
     def test_readability_controls_present(self, client):
+        """The readability cluster lives in Settings ▸ Live Edit (docs/120 item 4).
+
+        It used to sit in the grid's controls row — the row a user works in all
+        day — to adjust something set once and then never touched. That slot is
+        now the quick-filter chips, so these controls are asserted on the FULL
+        page (which renders base.html's Settings popover) rather than on the
+        /bulk fragment. They still call the same BulkEdit setters and write the
+        same localStorage keys; only the location moved.
+        """
+        page = client.get("/").get_data(as_text=True)
+        assert 'id="bulk-ls-slider"' in page and "BulkEdit.setLetterSpacing" in page
+        assert "BulkEdit.setFont" in page and "BulkEdit.toggleBold" in page
+        # the Flat View's own, independent set moved alongside it
+        assert "AllValues.setFont" in page and "AllValues.setRowSpacing" in page
+        # ...and they are inside the Settings popover, not loose in the topbar
+        i = page.index('id="settings-dropdown"')
+        assert page.index("BulkEdit.setLetterSpacing") > i
+
+    def test_grid_toolbar_keeps_its_help_popover(self, client):
         body = client.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
-        # letter-spacing slider + the help popover (r6 item 5: a <details>
-        # dropdown at the ⓘ left of Properties — the boxed hint is gone)
-        assert 'id="bulk-ls-slider"' in body and "BulkEdit.setLetterSpacing" in body
+        # help popover (r6 item 5: a <details> dropdown at the ⓘ left of
+        # Properties — the boxed hint is gone)
         assert 'id="bulk-help-pop"' in body and "bulk-help-menu" in body
         assert 'class="bulk-hint muted"' not in body
         # the popover sits BEFORE the Properties menu in the controls row
         assert body.index('id="bulk-help-pop"') < body.index('id="bulk-colvis-menu"')
+        # the readability cluster is GONE from the working row
+        assert 'class="bulk-font-ctl"' not in body
 
     def test_cells_use_readable_mono_no_pointer_italic(self):
         css = (Path(__file__).resolve().parent.parent
@@ -776,3 +796,234 @@ class TestListColumnKeepsItsJsonEditorOnNullRows:
             r'<input[^>]*data-dot-path="%s"[^>]*>' % re.escape(path), body)
         assert not [w for w in writable if "readonly" not in w], \
             "it must never be a writable scalar input: %s" % writable[:1]
+
+
+class TestFilterChips:
+    """docs/120 item 4 — the quick-filter chip row.
+
+    Customer: "the most common workflow is going to the search box and TYPING
+    x180, amp, ro, power ... it's very repetitive and eats time. Put the main
+    parameters there as clickable patches, multi-select of course." And: "the
+    patches must cover ALL the major column items."
+
+    Derivation is server-side so it can be checked here: curated short keywords
+    for the words a lab actually thinks in, plus a coverage sweep so no band of
+    a chip goes unreachable.
+    """
+
+    def _chips(self, cols, pair_cols=None):
+        from quam_state_manager.web.routes import _bulk_filter_chips
+        return _bulk_filter_chips(cols, pair_cols or [])
+
+    def _terms(self, *a, **k):
+        return [c["term"] for c in self._chips(*a, **k)]
+
+    def test_a_chip_is_never_offered_that_matches_nothing(self):
+        """The whole point of validating against the live column model: a dead
+        chip is worse than a missing one."""
+        cols = [{"key": "f_01", "label": "Qubit f01", "section": "Frequencies"}]
+        terms = self._terms(cols)
+        assert "freq" in terms
+        # this chip has no readout, no flux, no coupler, no pairs
+        for absent in ("readout", "flux", "coupler", "phase", "fidelity"):
+            assert absent not in terms, absent
+
+    def test_every_chip_reports_a_real_hit_count(self):
+        cols = [{"key": "readout_amplitude", "label": "RO amp", "section": "Readout"},
+                {"key": "x180_amplitude", "label": "x180 amp", "section": "XY Drive"}]
+        for ch in self._chips(cols):
+            assert ch["n"] >= 1, ch
+
+    def test_one_keyword_spans_the_sibling_bands(self):
+        """`xy` has to reach XY Drive / XY Port / XY+ / XY Port+ — a chip per
+        section would be a wall of chips on a real 22-section chip."""
+        cols = [{"key": "a", "label": "x", "section": "XY Drive"},
+                {"key": "b", "label": "y", "section": "XY Port"},
+                {"key": "c", "label": "z", "section": "XY+"},
+                {"key": "d", "label": "w", "section": "XY Port+"}]
+        chips = {c["term"]: c for c in self._chips(cols)}
+        assert chips["xy"]["n"] == 4
+
+    def test_the_sweep_covers_a_band_no_keyword_reaches(self):
+        # deliberately shares no word with any curated term — "Exotic Band"
+        # would NOT qualify, because the curated `band` chip already reaches it
+        cols = [{"key": "k", "label": "Weird", "section": "Exotic Widget"}]
+        assert "exotic" in self._terms(cols)
+
+    def test_a_band_a_keyword_already_reaches_gets_no_second_chip(self):
+        """Coverage, not duplication: `band` is curated, so "Exotic Band" is
+        already reachable and must not also spawn an `exotic` chip."""
+        cols = [{"key": "k", "label": "Weird", "section": "Exotic Band"}]
+        terms = self._terms(cols)
+        assert "band" in terms
+        assert "exotic" not in terms
+
+    def test_cz_gate_bands_get_a_chip_despite_the_z_chip(self):
+        """Regression: the sweep used to test coverage by SUBSTRING, and the
+        `Z+` section contributes the term "z", which is a substring of "cz" —
+        so every CZ gate band on a real chip read as already covered and the
+        gates had no chip at all. Coverage is prefix-wise per word now."""
+        cols = [{"key": "zk", "label": "Zed", "section": "Z+"}]
+        pair = [{"key": "p1", "label": "dur", "section": "CZ Unipolar"},
+                {"key": "p2", "label": "dur", "section": "CZ Flattop"}]
+        terms = self._terms(cols, pair)
+        assert "z" in terms
+        assert "cz" in terms, terms
+
+    def test_sibling_gate_bands_share_one_chip(self):
+        pair = [{"key": "a", "label": "x", "section": "CZ Unipolar"},
+                {"key": "b", "label": "y", "section": "CZ Flattop"},
+                {"key": "c", "label": "z", "section": "CZ Bipolar"}]
+        assert self._terms([], pair).count("cz") == 1
+
+    def test_terms_are_single_tokens(self):
+        """The search splits on whitespace, so a two-word term would silently
+        become an AND of two tokens instead of one filter."""
+        pair = [{"key": "a", "label": "x", "section": "Some Long Band Name"}]
+        for t in self._terms([], pair):
+            assert " " not in t, t
+
+    def test_pair_columns_count_too(self):
+        """Both grids read the ONE #bulk-search box, so a chip must not go dead
+        just because its columns live in the pair table."""
+        pair = [{"key": "c", "label": "amp", "section": "Coupler"}]
+        assert "coupler" in self._terms([], pair)
+
+    def test_the_haystack_reads_all_four_fields(self):
+        """label + key + section + search — the same four _colHay reads in
+        bulk-edit.js. A chip that matched here and not there would be a lie.
+
+        Each case hides the matching word in exactly ONE field so a dropped
+        field would fail rather than be masked by another."""
+        chip = "amp"
+        by_label = [{"key": "k", "label": "RO amplitude", "section": "S"}]
+        by_key = [{"key": "x180_amplitude", "label": "l", "section": "S"}]
+        by_section = [{"key": "k", "label": "l", "section": "Amplitudes"}]
+        # the alias terms the entity-suffix fold hid from the header (docs/85)
+        by_search = [{"key": "k", "label": "l", "section": "S",
+                      "search": "cz_flattop_amplitude_q1_q2"}]
+        for cols, where in ((by_label, "label"), (by_key, "key"),
+                            (by_section, "section"), (by_search, "search")):
+            assert chip in self._terms(cols), where
+
+    def test_no_chips_when_there_are_no_columns(self):
+        assert self._chips([], []) == []
+
+    def test_rendered_bar_carries_mode_and_offer(self, client):
+        body = client.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert 'id="bulk-chipbar"' in body
+        assert 'id="bulk-chip-mode"' in body
+        assert 'id="bulk-chip-offer"' in body
+        # AND is the default the user chose
+        assert 'data-mode="and"' in body
+
+
+@pytest.mark.skipif(__import__("shutil").which("node") is None,
+                    reason="node not available")
+def test_chipbar_selfcheck():
+    """Chips write the shared query, multi-select, AND/OR re-joins it, free
+    text survives, typing a chip's word lights it, and the zero-match OR offer
+    switches in one click — against the REAL bulk-edit.js."""
+    import subprocess
+    node = __import__("shutil").which("node")
+    root = Path(__file__).resolve().parent.parent
+    try:
+        subprocess.run([node, "-e", "require('jsdom')"], check=True,
+                       capture_output=True, timeout=30)
+    except Exception:
+        pytest.skip("jsdom not installed")
+    r = subprocess.run([node, str(root / "tests" / "chipbar_selfcheck.cjs")],
+                       capture_output=True, text=True, encoding="utf-8",
+                       timeout=180, cwd=str(root))
+    if r.returncode == 2:
+        pytest.skip("jsdom not installed")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.count("ok - ") >= 28, r.stdout
+
+
+class TestOperationChips:
+    """The term the customer named FIRST had to be typed (review finding 1).
+
+    Their sentence was "go to the search box and TYPE x180, amp, ro, power".
+    `amp` and `power` are curated keywords and `readout` is a section, but
+    ``x180`` is neither -- it is an *operation*, and the chip row was derived
+    from curated words plus SECTION names only. So the one term they led with
+    was the one the feature could not offer.
+
+    Both grids already render operations: ``_build_bulk_cell`` labels an
+    operation leaf ``op . x180_DragCosine . amplitude`` (U+00B7), plus the
+    alias column ``op . x180``. The names were on screen the whole time.
+    """
+
+    def _chips(self, cols, pair_cols=None):
+        from quam_state_manager.web.routes import _bulk_filter_chips
+        return _bulk_filter_chips(cols, pair_cols or [])
+
+    def _terms(self, *a, **k):
+        return [c["term"] for c in self._chips(*a, **k)]
+
+    def test_x180_is_offered(self):
+        cols = [
+            {"key": "dyn__xy_operations_x180", "label": "op \u00b7 x180", "section": "XY+"},
+            {"key": "dyn__xy_operations_x180_DragCosine_amplitude",
+             "label": "op \u00b7 x180_DragCosine \u00b7 amplitude", "section": "XY+"},
+        ]
+        assert "x180" in self._terms(cols)
+
+    def test_the_short_alias_absorbs_the_long_spelling(self):
+        """`x180` and `x180_DragCosine` are one thing to a user, and the short
+        term is a substring of the long one, so it reaches every leaf."""
+        cols = [
+            {"key": "a", "label": "op \u00b7 x180_DragCosine \u00b7 amplitude", "section": "XY+"},
+            {"key": "b", "label": "op \u00b7 x180_DragCosine \u00b7 length", "section": "XY+"},
+        ]
+        chips = {c["term"]: c for c in self._chips(cols)}
+        assert "x180" in chips
+        assert "x180_dragcosine" not in chips
+        assert chips["x180"]["n"] == 2
+
+    def test_a_signed_alias_never_becomes_a_negated_term(self):
+        """Real chips carry `-x90` / `-y90`. A leading `-` opens a NEGATED term
+        in the docs/96 grammar, so a chip labelled "-x90" would have filtered
+        to everything EXCEPT x90 -- the exact opposite of its own label."""
+        cols = [{"key": "a", "label": "op \u00b7 -x90", "section": "XY+"},
+                {"key": "b", "label": "op \u00b7 x90_DragCosine \u00b7 amplitude",
+                 "section": "XY+"}]
+        terms = self._terms(cols)
+        assert not any(t.startswith("-") for t in terms), terms
+        assert "x90" in terms
+
+    def test_operations_lead_the_row(self):
+        """Reading order is the customer's own sentence: which pulse, then
+        which property."""
+        cols = [{"key": "a", "label": "op \u00b7 x180 \u00b7 amplitude", "section": "XY Drive"}]
+        chips = self._chips(cols)
+        kinds = [c["kind"] for c in chips]
+        assert kinds[0] == "op"
+        assert "kw" in kinds
+        assert kinds.index("op") < kinds.index("kw")
+
+    def test_a_curated_word_keeps_its_label_when_an_operation_shares_it(self):
+        """One chip, one term -- and the nicer label wins."""
+        cols = [{"key": "a", "label": "op \u00b7 readout \u00b7 amplitude",
+                 "section": "Readout"}]
+        chips = [c for c in self._chips(cols) if c["term"] == "readout"]
+        assert len(chips) == 1
+        assert chips[0]["label"] == "Readout"
+
+    def test_a_one_letter_operation_is_not_a_filter(self):
+        cols = [{"key": "a", "label": "op \u00b7 p \u00b7 amplitude", "section": "XY+"}]
+        assert "p" not in self._terms(cols)
+
+    def test_pair_gate_operations_are_harvested_too(self):
+        """One search box, two grids -- the pair grid labels its operations the
+        same way."""
+        pair = [{"key": "coupler__coupler_operations_const_amplitude",
+                 "label": "op \u00b7 const \u00b7 amplitude", "section": "Coupler"}]
+        assert "const" in self._terms([], pair)
+
+    def test_a_chip_with_no_operations_is_unchanged(self):
+        """The extension-shaped pin: nothing is invented where there is
+        nothing to harvest."""
+        cols = [{"key": "f_01", "label": "Qubit f01", "section": "Frequencies"}]
+        assert all(c["kind"] != "op" for c in self._chips(cols))

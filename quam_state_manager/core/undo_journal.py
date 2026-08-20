@@ -6,9 +6,14 @@ module records the OUTGOING log at each save as *units* (one unit == one
 user action == exactly what one ``undo_group`` press would have popped), so
 the undo chain can keep walking past the save/apply boundary.
 
-Covenant (user-stated, binding; AMENDED 2026-08-12 -- docs/117): **a direct
-live write happens only on an explicit Apply press OR inside a user-enabled
-auto-apply session** (default OFF, always visible, auto-disarmed on conflict).
+Covenant (user-stated, binding; AMENDED 2026-08-12 -- docs/117, and again
+2026-08-16 -- docs/120 item 8): **a direct live write happens only on an
+explicit Apply press OR inside a user-enabled Auto-Sync session** (default OFF,
+always visible, auto-disarmed on conflict). The 2026-08-16 amendment extends
+the same shape to the OTHER direction: that session may also replace the
+working copy FROM live -- but only with "auto replace" ticked, which the user
+defined as the consent. Unticked, a pull that would discard unapplied edits is
+refused and the drift banner asks instead.
 A journal step is unaffected: it never touches the live files -- it only
 STAGES the inverse edits back into the change log (the review tray), under a
 ``jrn:<unit-id>`` group id.  With a session armed, that staged inverse is

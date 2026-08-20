@@ -100,6 +100,26 @@ class TestArming:
             html = c.get(url).data.decode()
             assert 'data-auto-apply="1"' in html, url
             assert "auto-apply-pill" in html, url
+            # docs/126 r3: the bolt is an SVG (CSS-recolorable: gray OFF,
+            # orange ON), never the emoji, which no stylesheet can tint.
+            assert "icon-bolt" in html, url
+            assert "⚡" not in html, url
+
+    def test_the_panel_checkboxes_have_real_dimensions(self):
+        """Bug report: the popup's toggles never seemed to change. They DID
+        toggle — but `.as-row input { width: auto }` (dodging the global
+        input{width:100%}) collapsed the appearance:none checkbox to a 4px
+        sliver whose checked and unchecked states were the same blue bar.
+        The rule must carry an explicit square so Pico's :checked checkmark
+        can render."""
+        from pathlib import Path
+        import quam_state_manager
+        css = (Path(quam_state_manager.__file__).parent / "web" / "static"
+               / "style.css").read_text(encoding="utf-8")
+        i = css.index(".as-row input")
+        block = css[i:css.index("}", i)]
+        assert "width: auto" not in block
+        assert "width: 1.1rem" in block and "height: 1.1rem" in block
 
     def test_archive_can_never_arm(self, env):
         ctx = _ctx(env)

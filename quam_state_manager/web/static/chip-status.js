@@ -20,11 +20,24 @@ window.ChipStatus.density = (function () {
         try { s = parseFloat(localStorage.getItem(KEY)); } catch (e) {}
         return (isFinite(s) && s > 0) ? clamp(s) : 1;
     }
+    var _rsT = null;
     function apply(s) {
         var d = document.querySelector('.topo-dashboard');
         if (!d) return;
         s = clamp(s);
         d.style.setProperty('--topo-density-scale', s);
+        // The metric bar charts are the one Chip Status surface no observer
+        // can serve: this slider reflows SIBLINGS without moving any outer
+        // container's box (docs/123 §7). The setter is therefore the resize
+        // trigger — debounced (the slider fires per pixel), and safe to call
+        // since docs/125 fix 5: resizeWithin hands each chart's layout back
+        // untouched, so the window-resize path stays alive.
+        clearTimeout(_rsT);
+        _rsT = setTimeout(function () {
+            if (window.PlotHost) {
+                try { window.PlotHost.resizeWithin(d); } catch (e) {}
+            }
+        }, 150);
         var sl = document.getElementById('topo-density-slider');
         if (sl && parseFloat(sl.value) !== s) sl.value = s;
         var preds = document.querySelectorAll('.density-preset');
@@ -70,10 +83,14 @@ window.ChipStatus.layout = (function () {
         lastNarrow = narrow;
         var d = document.querySelector('.topo-dashboard');
         if (d) d.classList.toggle('is-narrow', narrow);
-        if (window.Plotly) {                   // ONE resize over already-built charts
-            document.querySelectorAll(
-                '.topo-metric-bar-chart .js-plotly-plot, .topo-hist-chart .js-plotly-plot'
-            ).forEach(function (el) { try { Plotly.Plots.resize(el); } catch (e) {} });
+        // docs/122: PlotHost, not Plots.resize + the bare class. The old form
+        // was doubly wrong here — the selector was a DESCENDANT match
+        // ('.topo-metric-bar-chart .js-plotly-plot') while the chart IS the
+        // .topo-metric-bar-chart element, so it selected nothing even when the
+        // class survived.
+        if (window.PlotHost) {
+            document.querySelectorAll('.topo-metric-bar-chart')
+                .forEach(function (el) { window.PlotHost.resizeWithin(el); });
         }
     }
     function onResize() { clearTimeout(debTimer); debTimer = setTimeout(settle, 150); }
@@ -111,7 +128,15 @@ window.ChipStatus.liveDiff = (function () {
         Object.keys(byEntity).forEach(function (id) {
             var n = byEntity[id];
             var _e = (window.CSS && CSS.escape) ? CSS.escape(id) : id;
-            document.querySelectorAll('[data-qubit="' + _e + '"], [data-pair="' + _e + '"]').forEach(function (el) {
+            // docs/120 item 11: `data-hero-*` joins the selector. These
+            // attributes were the CARD diagram's, so with the cards deleted
+            // this marker would have matched nothing on the page and the
+            // "changed vs live" highlight would have quietly stopped appearing
+            // — a feature lost to a deletion rather than to a decision.
+            document.querySelectorAll(
+                '[data-qubit="' + _e + '"], [data-pair="' + _e + '"], '
+                + '[data-hero-qubit="' + _e + '"], [data-hero-pair="' + _e + '"]'
+            ).forEach(function (el) {
                 var target = el.closest('.topo-node-card') || el;
                 target.classList.add('topo-changed');
                 var base = target.getAttribute('title') || '';
@@ -246,7 +271,7 @@ window.ChipStatus.mount = function (opts) {
     // One qubit-card / popup property row with the physical gate applied: an
     // unphysical fit shows its raw value struck-through ("bad fit"), never a
     // heat colour. nullLabel is what a genuinely-missing value renders as
-    // ('—' on cards, 'None' in popups).
+    // ('—' everywhere: cards, popups and heatmaps say absence the same way).
     function _propRowHtml(n, p, nullLabel) {
         if (_badFit(n, p.key)) {
             return '<div class="topo-prop-row" data-prop="' + p.key + '">'
@@ -299,7 +324,7 @@ window.ChipStatus.mount = function (opts) {
         var m = Math.floor(n / 2);
         return n % 2 ? sorted[m] : (sorted[m - 1] + sorted[m]) / 2;
     }
-    function outlierScorer(arr) {
+    function outlierScorer(arr, opts) {
         var clean = arr.filter(function(v) { return typeof v === 'number' && isFinite(v); });
         if (clean.length < 5) return null;   // too few points for a robust call
         var sorted = clean.slice().sort(function(a, b) { return a - b; });
@@ -318,7 +343,22 @@ window.ChipStatus.mount = function (opts) {
                 if (typeof v !== 'number' || !isFinite(v)) return null;
                 return Math.abs(v - med) / (1.4826 * mad);
             },
-            isOutlier: function(v) { var s = this.score(v); return s != null && s >= _OUTLIER_K; }
+            isOutlier: function(v) {
+                var s = this.score(v);
+                if (s == null || s < _OUTLIER_K) return false;
+                // docs/126 (customer report): a value that PASSES its spec is
+                // never an outlier. On a tight chip the MAD collapses — every
+                // 1Q fidelity within 99.85–99.92% put a 99.67% qubit at
+                // 16.8× MAD, flagging an excellent result ("over
+                // calculation"). No spec for the metric ⇒ a practical floor:
+                // the deviation must be ≥1% of |median| to be worth a mark.
+                if (opts && opts.verdict) {
+                    var vr = opts.verdict(v);
+                    if (vr === 'pass') return false;
+                    if (vr != null) return true;   // warn/fail + statistical
+                }
+                return med !== 0 && Math.abs(v - med) >= 0.01 * Math.abs(med);
+            }
         };
     }
 
@@ -544,198 +584,30 @@ window.ChipStatus.mount = function (opts) {
     // never a second implementation.
     var _sharedQubitPopup = null;
 
-    var idToIdx = {};
-
-    (function buildTopology() {
-        var wrap = document.getElementById('topo-html-wrap');
-        if (!wrap) return;
-
-        // ── Parse grid positions ─────────────────────────────────────
-        var positions = topo.nodes.map(function(n, i) {
-            var parts = (n.grid_location || '').split(',');
-            idToIdx[n.id] = i;
-            return {
-                col: parts.length === 2 ? parseFloat(parts[0]) : (i % 4),
-                row: parts.length === 2 ? parseFloat(parts[1]) : Math.floor(i / 4)
-            };
-        });
-
-        var minCol = Infinity, maxCol = -Infinity, minRow = Infinity, maxRow = -Infinity;
-        positions.forEach(function(p) {
-            if (p.col < minCol) minCol = p.col;
-            if (p.col > maxCol) maxCol = p.col;
-            if (p.row < minRow) minRow = p.row;
-            if (p.row > maxRow) maxRow = p.row;
-        });
-
-        // ── Layout constants (from UI_CONFIG.plotly.topology.layout) ─
-        var L = UI_CONFIG.plotly.topology.layout;
-        var CARD_W     = L.cardWidth;
-        var ROW_H      = L.rowHeight;
-        var HDR_H      = L.headerHeight;
-        var BODY_PAD   = L.bodyPadding;
-        var MORE_ROW_H = L.moreRowHeight;
-        // Visible card height = primary props + "... more" button only
-        var cardH = HDR_H + PRIMARY_PROPS.length * ROW_H + MORE_ROW_H + BODY_PAD;
-        var SPACING_X = CARD_W + L.gapX;
-        var SPACING_Y = cardH + L.gapY;
-        var PAD = L.padding;
-
-        // Convert grid coords to pixel positions
-        // Flip row axis: QUAM convention has row 0 at the bottom of the chip,
-        // but screen y=0 is at the top, so invert.
-        positions.forEach(function(p) {
-            p.x = (p.col - minCol) * SPACING_X + PAD;
-            p.y = (maxRow - p.row) * SPACING_Y + PAD;
-        });
-
-        var containerW = (maxCol - minCol) * SPACING_X + CARD_W + PAD * 2;
-        var containerH = (maxRow - minRow) * SPACING_Y + cardH + PAD * 2;
-
-        // ── Build SVG edges ──────────────────────────────────────────
-        // Directed (CR) edges: each direction is its own calibration target —
-        // offset the two anti-parallel lines perpendicular to the run so they
-        // never overpaint, and dim pairs outside active_qubit_pair_names.
-        // Control/target orientation is carried by the EDGE LABEL's pointed
-        // shape (below), not a separate arrowhead here — a small in-line
-        // polygon read as too subtle to notice (review feedback), and the
-        // label already needs to encode direction via source→target text.
-        var svgLines = '';
-        topo.edges.forEach(function(e) {
-            var si = idToIdx[e.source], ti = idToIdx[e.target];
-            if (si === undefined || ti === undefined) return;
-            var x1 = positions[si].x + CARD_W / 2;
-            var y1 = positions[si].y + cardH / 2;
-            var x2 = positions[ti].x + CARD_W / 2;
-            var y2 = positions[ti].y + cardH / 2;
-
-            var _ep = _edgePaint(e);
-            var color = _ep.color;
-            var width = _ep.width;
-            var opacity = (e.active === false) ? 0.35 : 1;
-            if (e.directed) {
-                var dx = x2 - x1, dy = y2 - y1;
-                var len = Math.sqrt(dx * dx + dy * dy) || 1;
-                var ux = dx / len, uy = dy / len;
-                // perpendicular offset — travel-direction-relative, so the
-                // reverse pair lands on the opposite side automatically
-                var off = 4;
-                x1 += -uy * off; y1 += ux * off;
-                x2 += -uy * off; y2 += ux * off;
-            }
-            svgLines += '<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" stroke="'+color+'" stroke-width="'+width+'" stroke-linecap="round" opacity="'+opacity+'"/>';
-        });
-
-        // ── Build edge labels ────────────────────────────────────────
-        var edgeLabelsHtml = '';
-        topo.edges.forEach(function(e) {
-            var si = idToIdx[e.source], ti = idToIdx[e.target];
-            if (si === undefined || ti === undefined) return;
-            // Place label at geometric midpoint between the two connected cards.
-            // For horizontal edges this centers in the gapX between the two cards.
-            // For vertical edges this centers in the gapY between the two rows.
-            // CSS transform: translate(-50%,-50%) handles visual centering.
-            var mx = (positions[si].x + positions[ti].x) / 2 + CARD_W / 2;
-            var my = (positions[si].y + positions[ti].y) / 2 + cardH / 2;
-            if (e.directed) {
-                // mirror the line's perpendicular offset (larger, so the two
-                // direction labels of one physical edge don't overlap)
-                var ddx = positions[ti].x - positions[si].x;
-                var ddy = positions[ti].y - positions[si].y;
-                var dlen = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
-                mx += -(ddy / dlen) * 14;
-                my += (ddx / dlen) * 14;
-            }
-
-            var color = _edgePaint(e).color;
-            // Any pair with a resolved control/target orientation gets a
-            // pointed label (clip-path reshapes the target-facing EDGE of the
-            // box into a point — see style.css .topo-edge-label-arrow-*)
-            // instead of a separate arrowhead on the line, which read as too
-            // subtle to notice (review feedback).
-            var hasOrientation = e.directed || (!!e.source && !!e.target);
-            var arrowCls = '';
-            if (hasOrientation) {
-                var ddx = positions[ti].x - positions[si].x;
-                var ddy = positions[ti].y - positions[si].y;
-                // dominant axis decides the pointer direction — chip grids are
-                // overwhelmingly axis-aligned (nearest-neighbor placement), so
-                // a diagonal (non-adjacent) CR/CZ pair just snaps to the
-                // nearest cardinal direction rather than an exact angle (which
-                // would also tip the label's TEXT sideways to stay pointed).
-                arrowCls = Math.abs(ddx) >= Math.abs(ddy)
-                    ? (ddx >= 0 ? ' topo-edge-label-arrow-right' : ' topo-edge-label-arrow-left')
-                    : (ddy >= 0 ? ' topo-edge-label-arrow-down' : ' topo-edge-label-arrow-up');
-            }
-            var label = _esc(e.pair_id);
-            if (hasOrientation) label = _esc(e.source) + '→' + _esc(e.target);
-            if (e.cz_fidelity != null) label += ' (' + (e.cz_fidelity * 100).toFixed(1) + '%)';
-            if (e.best_gate) label += ' ' + _esc(e.best_gate.replace(/^cz_/, ''));
-            if (e.active === false) label += ' · off';
-
-            edgeLabelsHtml += '<div class="topo-edge-label' + arrowCls + '" data-pair="' + _esc(e.pair_id) + '" '
-                + 'style="left:' + mx + 'px;top:' + my + 'px;border-color:' + color + ';color:' + color
-                + (e.active === false ? ';opacity:.45' : '') + '">'
-                + label + '</div>';
-        });
-
-        // ── Build qubit cards ────────────────────────────────────────
-        var cardsHtml = '';
-        topo.nodes.forEach(function(n, i) {
-            var chain = chainColors[n.chain] || tCfg.chainFallback;
-            var left = positions[i].x;
-            var top = positions[i].y;
-
-            cardsHtml += '<div class="topo-node-card" data-qubit="' + _esc(n.id) + '" '
-                + 'style="left:' + left + 'px;top:' + top + 'px;width:' + CARD_W + 'px">';
-            cardsHtml += '<div class="topo-node-header" style="background:' + chain + '">' + _esc(n.id) + '</div>';
-            cardsHtml += '<div class="topo-node-body">';
-
-            // Primary props (always visible)
-            PRIMARY_PROPS.forEach(function(p) {
-                cardsHtml += _propRowHtml(n, p, '\u2014');
-            });
-
-            // "... more" button (opens popup overlay)
-            if (SECONDARY_PROPS.length > 0) {
-                cardsHtml += '<div class="topo-card-more-btn" data-qubit-more="' + n.id + '">'
-                    + '\u2026 more <span style="font-size:1.1em">\u203A</span></div>';
-            }
-
-            cardsHtml += '</div></div>';
-        });
-
-        // ── Assemble ─────────────────────────────────────────────────
-        // Build inner content at natural size, then auto-scale to fit
-        var innerHtml = '<div class="topo-inner" style="width:' + containerW + 'px;height:' + containerH + 'px;position:relative">'
-            + '<svg class="topo-edges-svg" width="' + containerW + '" height="' + containerH + '">'
-            + svgLines + '</svg>' + edgeLabelsHtml + cardsHtml + '</div>';
-        wrap.innerHTML = innerHtml;
-
-        // Auto-fit: scale inner content to fill available width without scrollbar
-        if (L.autoFit !== false) {
-            var availW = wrap.parentElement ? wrap.parentElement.clientWidth - 2 : wrap.clientWidth;
-            if (availW > 0 && containerW > availW) {
-                var scale = availW / containerW;
-                var inner = wrap.querySelector('.topo-inner');
-                inner.style.transformOrigin = 'top left';
-                inner.style.transform = 'scale(' + scale + ')';
-                wrap.style.width = availW + 'px';
-                wrap.style.height = (containerH * scale) + 'px';
-                wrap.style.overflow = 'hidden';
-            } else {
-                wrap.style.width = containerW + 'px';
-                wrap.style.height = containerH + 'px';
-                wrap.style.overflow = 'hidden';
-            }
-        } else {
-            wrap.style.width = containerW + 'px';
-            wrap.style.minHeight = containerH + 'px';
-        }
+    /* ── The qubit detail popup (docs/120 item 11) ────────────────────────
+     *
+     * This used to be the tail of buildTopology, the pre-hero CARD diagram
+     * that rendered a second chip map underneath the hero one. The customer
+     * reported the duplication ("the qubit layout appears twice ... why does
+     * the first one exist?") and preferred the hero, so the cards are gone.
+     *
+     * The popup could NOT go with them. `_sharedQubitPopup` is what the hero
+     * opens on hover, and it was only ever ASSIGNED inside that IIFE — so
+     * deleting the block wholesale would have left it null forever and the
+     * hero's hover popup would have stopped opening with NO error and NO
+     * failing test (bindHover simply guards on it). It lives here now, owning
+     * nothing but itself: the single activePopup, its positioning, its
+     * document-click and htmx:beforeSwap teardown, and openQubitMore.
+     *
+     * `positionPopup` still prefers a `.topo-node-card` ancestor when one
+     * exists and falls back to the element it was handed, which is what makes
+     * it work unchanged for the hero's circular nodes.
+     */
+    (function buildQubitPopup() {
+        if (!topo || !topo.nodes || !topo.nodes.length) return;
 
         // ── Popup management ─────────────────────────────────────────
         var activePopup = null;
-        var topoInner = wrap.querySelector('.topo-inner');
         function closePopup() {
             if (activePopup) { activePopup.remove(); activePopup = null; }
         }
@@ -810,7 +682,8 @@ window.ChipStatus.mount = function (opts) {
             var html = '<div class="topo-popup-header"><span>' + n.id + ' \u2014 details</span>'
                 + '<button class="topo-popup-close">\u2715</button></div>';
             SECONDARY_PROPS.forEach(function(p) {
-                html += _propRowHtml(n, p, 'None');
+                // '—', not Python's None spelled out — see the heatmap note.
+                html += _propRowHtml(n, p, '—');
             });
             // Per-metric recency: the 1Q gate fidelity carries its own measurement
             // time — show it honestly (only metric on the qubit that has one).
@@ -848,207 +721,90 @@ window.ChipStatus.mount = function (opts) {
                     .catch(function() { if (sparkSlot.parentNode) sparkSlot.remove(); });
             }
         }
-        topo.nodes.forEach(function(n) {
-            var btn = wrap.querySelector('[data-qubit-more="' + n.id + '"]');
-            if (btn) btn.addEventListener('click', function(ev) {
-                ev.stopPropagation();
-                openQubitMore(n, btn, true);     // click the button = pin it open
+
+
+        // ── Pair detail popup (docs/126 ②) ───────────────────────────
+        // Same singleton + positioning + teardown as the qubit popup; the
+        // pair flavor renders the edge payload the topology already carries
+        // (2Q fidelities per gate, detuning, coupler offsets, roles).
+        function openPairPopup(e, anchorEl, pinned) {
+            closePopup();
+            var popup = document.createElement('div');
+            popup.className = 'topo-pair-popup';
+            function pct(v) { return (v * 100).toFixed(2) + '%'; }
+            function row(label, val, win) {
+                return '<div class="topo-popup-row' + (win ? ' topo-popup-row-win' : '') + '">'
+                     + '<span class="topo-popup-row-label">' + label + '</span>'
+                     + '<span>' + val + '</span></div>';
+            }
+            var kind = e.gate_kind === 'cr' ? 'CR' : (e.gate_kind === 'cz' ? 'CZ' : '');
+            var html = '<div class="topo-popup-header"><span>' + _esc(e.pair_id)
+                + (kind ? ' <span class="topo-popup-kind">' + kind + '</span>' : '')
+                + (e.active === false ? ' <span class="topo-popup-kind topo-popup-off">off</span>' : '')
+                + '</span><button class="topo-popup-close">✕</button></div>';
+
+            var fidRows = '';
+            (e.gate_fidelities || []).forEach(function(gf) {
+                var v = typeof gf.value === 'number' ? gf.value
+                      : typeof gf.average_gate_fidelity === 'number' ? gf.average_gate_fidelity : null;
+                if (v == null) return;
+                fidRows += row(_esc(gf.gate) + ' · ' + _esc(gf.metric), pct(v),
+                               e.best_gate && gf.gate === e.best_gate);
             });
-        });
+            if (!fidRows && e.cz_fidelity != null) fidRows = row('2Q fidelity', pct(e.cz_fidelity));
+            if (fidRows) {
+                html += '<div class="topo-popup-section">'
+                     + '<div class="topo-popup-section-title">Gate fidelity</div>' + fidRows;
+                if (typeof e.cz_fidelity_updated_at === 'number') {
+                    html += '<div class="topo-popup-recency"><span class="topo-recency '
+                         + _ageClass(e.cz_fidelity_updated_at) + '">measured '
+                         + _ageLabel(e.cz_fidelity_updated_at) + '</span></div>';
+                }
+                html += '</div>';
+            }
+
+            var parRows = '';
+            if (typeof e.detuning === 'number') parRows += row('detuning', fmt(e.detuning, 'MHz'));
+            if (typeof e.mutual_flux_bias === 'number') parRows += row('mutual flux bias', e.mutual_flux_bias);
+            if (e.has_coupler && typeof e.coupler_decouple_offset === 'number') {
+                parRows += row('coupler decouple offset', e.coupler_decouple_offset.toFixed(4) + ' V');
+            }
+            if (e.moving_qubit) {
+                parRows += row('moving qubit (M)', e.moving_qubit === 'control'
+                               ? 'control — ' + _esc(e.source) : 'target — ' + _esc(e.target));
+            }
+            if (e.confusion_size) {
+                parRows += row('confusion', e.confusion_size + '×' + e.confusion_size
+                               + (e.confusion_diag ? ' (diag ' + e.confusion_diag.map(function(d) {
+                                     return (d * 100).toFixed(1) + '%'; }).join(' / ') + ')' : ''));
+            }
+            if (parRows) {
+                html += '<div class="topo-popup-section">'
+                     + '<div class="topo-popup-section-title">Parameters</div>' + parRows + '</div>';
+            }
+            if (!fidRows && !parRows) {
+                html += '<div class="topo-popup-section muted">no recorded pair data</div>';
+            }
+
+            popup.innerHTML = html;
+            popup.querySelector('.topo-popup-close').addEventListener('click', function(ev) {
+                ev.stopPropagation(); closePopup();
+            });
+            popup._pinned = !!pinned;
+            popup.addEventListener('mouseenter', function() { clearTimeout(_moreLeaveTimer); });
+            popup.addEventListener('mouseleave', _scheduleMoreClose);
+            activePopup = popup;
+            positionPopup(popup, anchorEl);
+        }
 
         // Hand the ONE popup implementation to the hero map (see the bridge
         // declaration above buildTopology) — same singleton, same teardown.
         _sharedQubitPopup = {
             open: openQubitMore,
+            openPair: openPairPopup,
             scheduleClose: _scheduleMoreClose,
             cancelClose: function() { clearTimeout(_moreHoverTimer); clearTimeout(_moreLeaveTimer); },
         };
-
-        // ── Click + hover handlers ───────────────────────────────────
-        var _coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
-        topo.nodes.forEach(function(n) {
-            var card = wrap.querySelector('[data-qubit="' + ((window.CSS && CSS.escape) ? CSS.escape(n.id) : n.id) + '"]');
-            if (!card) return;
-            // hover-to-preview the "... more" details (intent-delay in, grace out);
-            // skipped on touch (tap the "... more" button instead).
-            if (!_coarse) {
-                card.addEventListener('mouseenter', function() {
-                    clearTimeout(_moreLeaveTimer);
-                    clearTimeout(_moreHoverTimer);
-                    _moreHoverTimer = setTimeout(function() {
-                        if (activePopup && activePopup._pinned) return;   // don't disturb a pinned popup
-                        var b = wrap.querySelector('[data-qubit-more="' + n.id + '"]');
-                        openQubitMore(n, b || card, false);
-                    }, 260);
-                });
-                card.addEventListener('mouseleave', function() {
-                    clearTimeout(_moreHoverTimer);
-                    _scheduleMoreClose();
-                });
-            }
-            var _clickTime = 0;
-            card.addEventListener('click', function(ev) {
-                if (ev.target.closest('[data-qubit-more]')) return;  // handled by popup
-                var now = Date.now();
-                if (now - _clickTime < 400) {
-                    _clickTime = 0;
-                    showQubitJsonPanel(n.id, rawWiring);
-                } else {
-                    _clickTime = now;
-                    setTimeout(function() {
-                        if (_clickTime !== 0) {
-                            htmx.ajax('GET', '/qubit/' + n.id, {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'});
-                        }
-                    }, 420);
-                }
-            });
-        });
-
-        // ── Pair popup on edge labels ────────────────────────────────
-        topo.edges.forEach(function(e) {
-            var lbl = wrap.querySelector('.topo-edge-label[data-pair="' + ((window.CSS && CSS.escape) ? CSS.escape(e.pair_id) : e.pair_id) + '"]');
-            if (!lbl) return;
-            lbl.addEventListener('click', function(ev) {
-                ev.stopPropagation();
-                closePopup();
-                var popup = document.createElement('div');
-                popup.className = 'topo-pair-popup';
-                var html = '<div class="topo-popup-header"><span>' + e.pair_id + '</span>'
-                    + '<button class="topo-popup-close">\u2715</button></div>';
-
-                // Gate fidelities — grouped one row per CANDIDATE gate (the old
-                // code emitted one row per metric, all labelled with the same gate
-                // name → indistinguishable). The pair's CZ number is the "best of
-                // N" of these; mark the winner (e.best_gate) and give each gate its
-                // own RB-source deep-link.
-                var anyRowLoadId = false;
-                if (e.gate_fidelities && e.gate_fidelities.length > 0) {
-                    var byGate = {}, gateOrder = [];
-                    e.gate_fidelities.forEach(function(gf) {
-                        var g = gf.gate;
-                        if (!byGate[g]) { byGate[g] = {metrics: {}, load_id: null}; gateOrder.push(g); }
-                        var val = (gf.Fidelity != null) ? gf.Fidelity : gf.value;
-                        if (val != null && byGate[g].metrics[gf.metric] == null) byGate[g].metrics[gf.metric] = val;
-                        if (gf.load_id != null) byGate[g].load_id = gf.load_id;
-                    });
-                    var nGates = gateOrder.length;
-                    var title = 'Gate Fidelity' + (nGates > 1 ? ' — best of ' + nGates : '');
-                    // Per-metric recency: when THIS number's own measurement time is
-                    // recorded, show "measured Nd ago" coloured by staleness — the
-                    // honest per-metric signal, not the pair's freshest calibration.
-                    var czAge = (typeof e.cz_fidelity_updated_at === 'number')
-                        ? '<span class="topo-recency ' + _ageClass(e.cz_fidelity_updated_at) + '">measured ' + _ageLabel(e.cz_fidelity_updated_at) + '</span>'
-                        : '';
-                    html += '<div class="topo-popup-section"><div class="topo-popup-section-title">' + title + czAge + '</div>';
-                    gateOrder.forEach(function(g) {
-                        var info = byGate[g];
-                        var isWin = (g === e.best_gate);
-                        var parts = [];
-                        // Headline fidelities only — the compact popup is a "best of
-                        // N" summary; RB fit byproducts (StandardRB_alpha, …) are
-                        // clutter here and live in the full /pair inspector.
-                        var HEADLINE = [['Bell_State','Bell'],['StandardRB','SRB'],['InterleavedRB','IRB']];
-                        HEADLINE.forEach(function(pair) {
-                            if (info.metrics[pair[0]] != null) parts.push(pair[1] + ' ' + (info.metrics[pair[0]]*100).toFixed(1) + '%');
-                        });
-                        // Fallback: a gate with none of the three still shows one number.
-                        if (parts.length === 0) {
-                            Object.keys(info.metrics).forEach(function(mk) {
-                                if (!/_alpha$/.test(mk)) parts.push(mk + ' ' + fmtNum(info.metrics[mk], 4));
-                            });
-                        }
-                        var src = '';
-                        if (info.load_id != null) {
-                            anyRowLoadId = true;
-                            src = ' <a href="/dataset/by-run/' + info.load_id + '" style="font-size:0.85em" title="Open the RB run that produced these numbers">RB #' + info.load_id + ' →</a>';
-                        }
-                        html += '<div class="topo-popup-row' + (isWin ? ' topo-popup-row-win' : '') + '">'
-                            + '<span class="topo-popup-row-label">' + (isWin ? '★ ' : '') + g.replace(/^cz_/, '') + '</span>'
-                            + '<span>' + parts.join(' · ') + src + '</span></div>';
-                    });
-                    html += '</div>';
-                }
-
-                // Gate details (amplitudes, lengths, phase shifts)
-                if (e.gate_details && e.gate_details.length > 0) {
-                    html += '<div class="topo-popup-section"><div class="topo-popup-section-title">Gate Parameters</div>';
-                    e.gate_details.forEach(function(gd) {
-                        var label = gd.name.replace(/^cz_/, '');
-                        var parts = [];
-                        if (gd.amplitude != null) parts.push('amp=' + gd.amplitude.toFixed(4));
-                        if (gd.coupler_amp != null) parts.push('c_amp=' + gd.coupler_amp.toFixed(4));
-                        if (gd.length != null) parts.push('len=' + gd.length);
-                        if (gd.flat_length != null) parts.push('flat=' + gd.flat_length);
-                        if (gd.phase_ctrl != null) parts.push('p\u2081=' + gd.phase_ctrl.toFixed(3));
-                        if (gd.phase_tgt != null) parts.push('p\u2082=' + gd.phase_tgt.toFixed(3));
-                        // CR/ZZ drive levers (query._extract_cr_details rows)
-                        if (gd.drive_amplitude_scaling != null) parts.push('drv\u00d7=' + gd.drive_amplitude_scaling.toFixed(4));
-                        if (gd.drive_phase != null) parts.push('drv\u03c6=' + gd.drive_phase.toFixed(4));
-                        if (gd.cancel_amplitude_scaling != null) parts.push('cnl\u00d7=' + gd.cancel_amplitude_scaling.toFixed(4));
-                        if (gd.cancel_phase != null) parts.push('cnl\u03c6=' + gd.cancel_phase.toFixed(4));
-                        if (gd.qc_correction_phase != null) parts.push('\u03c6c=' + gd.qc_correction_phase.toFixed(3));
-                        if (gd.qt_correction_phase != null) parts.push('\u03c6t=' + gd.qt_correction_phase.toFixed(3));
-                        if (gd.eff_if_mhz != null) parts.push('IF=' + gd.eff_if_mhz + 'MHz');
-                        html += '<div class="topo-popup-row"><span class="topo-popup-row-label">' + label + '</span><span>' + parts.join(', ') + '</span></div>';
-                    });
-                    html += '</div>';
-                }
-
-                // Confusion matrix
-                if (e.confusion_diag || e.confusion_offdiag) {
-                    html += '<div class="topo-popup-section"><div class="topo-popup-section-title">' + e.confusion_size + '\u00d7' + e.confusion_size + ' Confusion Matrix</div>';
-                    if (e.confusion_diag) {
-                        html += '<div class="topo-popup-row"><span class="topo-popup-row-label">diag</span><span>' + e.confusion_diag.map(function(v){return (v*100).toFixed(1)+'%';}).join(', ') + '</span></div>';
-                    }
-                    if (e.confusion_offdiag) {
-                        var maxOff = Math.max.apply(null, e.confusion_offdiag);
-                        var avgOff = e.confusion_offdiag.reduce(function(a,b){return a+b;},0) / e.confusion_offdiag.length;
-                        html += '<div class="topo-popup-row"><span class="topo-popup-row-label">offdiag</span><span>max=' + (maxOff*100).toFixed(1) + '%, avg=' + (avgOff*100).toFixed(1) + '%</span></div>';
-                    }
-                    html += '</div>';
-                }
-
-                // Pair-level parameters
-                var pairParams = [];
-                if (e.detuning != null) pairParams.push(['detuning', fmtNum(e.detuning, 4)]);
-                if (e.coupler_decouple_offset != null) pairParams.push(['decouple', fmtNum(e.coupler_decouple_offset, 4)]);
-                if (e.mutual_flux_bias != null) {
-                    var mfb = Array.isArray(e.mutual_flux_bias) ? e.mutual_flux_bias.map(function(v){return fmtNum(v,3);}).join(', ') : fmtNum(e.mutual_flux_bias, 4);
-                    pairParams.push(['flux_bias', mfb]);
-                }
-                if (pairParams.length > 0) {
-                    html += '<div class="topo-popup-section"><div class="topo-popup-section-title">Pair Parameters</div>';
-                    pairParams.forEach(function(pp) {
-                        html += '<div class="topo-popup-row"><span class="topo-popup-row-label">' + pp[0] + '</span><span>' + pp[1] + '</span></div>';
-                    });
-                    html += '</div>';
-                }
-
-                // Provenance fallback: the per-gate rows above already carry their
-                // own "RB #<id> \u2192" links. Only fall back to an edge-level line when
-                // NO gate row had a load_id \u2014 either the legacy single edge-level
-                // cz_load_id, or (honest-missing) an explicit "not recorded" so a
-                // silent gap never reads as "broken" (same rule as the grey None tiles).
-                if (!anyRowLoadId && e.cz_load_id != null) {
-                    html += '<div class="topo-popup-section" style="text-align:center;padding-top:2px">'
-                        + '<a href="/dataset/by-run/' + e.cz_load_id + '" style="font-size:0.72em">source: RB run #'
-                        + e.cz_load_id + ' \u2192</a></div>';
-                } else if (!anyRowLoadId && e.cz_fidelity != null) {
-                    html += '<div class="topo-popup-section muted" style="text-align:center;padding-top:2px;font-size:0.72em">'
-                        + 'source: RB run not recorded</div>';
-                }
-                // "Open in inspector" link \u2014 id in an escaped data-attr, read back
-                // at click time (not interpolated into the JS string / URL).
-                html += '<div class="topo-popup-section" style="text-align:center;padding-top:4px">'
-                    + '<a href="#" style="font-size:0.72em" data-inspect-id="' + _esc(e.pair_id) + '"'
-                    + ' onclick="event.preventDefault();window._inspectPair(this.getAttribute(\'data-inspect-id\'))">Open in inspector \u2192</a></div>';
-
-                popup.innerHTML = html;
-                popup.querySelector('.topo-popup-close').addEventListener('click', function(ev) { ev.stopPropagation(); closePopup(); });
-                activePopup = popup;
-                positionPopup(popup, lbl);
-            });
-        });
     })();
 
     // ══════════════════════════════════════════════════════════════════
@@ -1074,14 +830,69 @@ window.ChipStatus.mount = function (opts) {
         }
 
         var HERO_KEY = 'quam_topo_hero_metric';
+        var ZOOM_KEY = 'quam_topo_hero_zoom';
+        // docs/126 ② — the metric patches ARE the map's controls: clicking one
+        // paints the value inside every stone (or, for a 2Q metric, ON every
+        // edge) immediately, no scrolling. Frequencies join the row, and 2Q
+        // metrics become first-class EDGE metrics (scope:'edge').
         var METRICS = [
-            { key: 'T1',                  fmtFn: function(v) { return fmt(v, 'us'); } },
-            { key: 'T2echo',              fmtFn: function(v) { return fmt(v, 'us'); } },
+            { key: 'f_01',                label: 'Qubit freq',
+              fmtFn: function(v) { return fmt(v, 'GHz'); } },
+            { key: 'readout_frequency',   label: 'Readout freq',
+              fmtFn: function(v) { return fmt(v, 'GHz'); } },
             { key: 'gate_fidelity_avg',   fmtFn: function(v) { return fmtPct(v, 2) + '%'; } },
             { key: 'assignment_fidelity', fmtFn: function(v) { return fmtPct(v, 2) + '%'; } },
+            { key: 'T1',                  fmtFn: function(v) { return fmt(v, 'us'); } },
+            { key: 'T2echo',              fmtFn: function(v) { return fmt(v, 'us'); } },
         ].filter(function(m) {
             return topo.nodes.some(function(n) { return _mv(n, m.key) != null; });
         });
+
+        // Per-edge value for a named 2Q RB metric (the same per-pair-best +
+        // physical (0,1] gate buildOverviewTiles' collect2Q applies). docs/126:
+        // RB numbers exist PER GATE (cz_flattop's RB vs cz_gaussian_bipolar's
+        // …), so the caller can pin one gate — 'best' keeps the old best-of.
+        function edgeBest2Q(e, match, gate) {
+            if (!e.gate_fidelities) return null;
+            var best = null;
+            e.gate_fidelities.forEach(function(gf) {
+                if (!match(gf.metric)) return;
+                if (gate && gate !== 'best' && gf.gate !== gate) return;
+                var v = typeof gf.value === 'number' ? gf.value
+                      : typeof gf.average_gate_fidelity === 'number'
+                          ? gf.average_gate_fidelity : null;
+                if (v != null && v > 0 && v <= 1 && (best == null || v > best)) best = v;
+            });
+            return best;
+        }
+        function gatesFor2Q(match) {
+            var names = {};
+            topo.edges.forEach(function(e) {
+                (e.gate_fidelities || []).forEach(function(gf) {
+                    if (match(gf.metric) && gf.gate) names[gf.gate] = 1;
+                });
+            });
+            return Object.keys(names).sort();
+        }
+        var GATE_KEY = 'quam_topo_hero_gate';
+        var heroGate = 'best';
+        try { heroGate = localStorage.getItem(GATE_KEY) || 'best'; } catch (e) {}
+        var EDGE_METRICS = [
+            { key: 'cz_fidelity', scope: 'edge', label: '2Q Bell (CZ)',
+              fmtFn: function(v) { return fmtPct(v, 1) + '%'; },
+              valFn: function(e) { return _mv(e, 'cz_fidelity'); } },
+            { key: 'rb2q_standard', scope: 'edge', label: '2Q RB', perGate: true,
+              match: function(m) { return m === 'StandardRB'; },
+              fmtFn: function(v) { return fmtPct(v, 1) + '%'; },
+              valFn: function(e) { return edgeBest2Q(e, function(m) { return m === 'StandardRB'; }, heroGate); } },
+            { key: 'rb2q_interleaved', scope: 'edge', label: '2Q IRB', perGate: true,
+              match: function(m) { return m === 'InterleavedRB' || m === 'IRB'; },
+              fmtFn: function(v) { return fmtPct(v, 1) + '%'; },
+              valFn: function(e) { return edgeBest2Q(e, function(m) { return m === 'InterleavedRB' || m === 'IRB'; }, heroGate); } },
+        ].filter(function(m) {
+            return topo.edges.some(function(e) { return m.valFn(e) != null; });
+        });
+        METRICS = METRICS.concat(EDGE_METRICS);
         if (topo.nodes.some(function(n) { return n.last_calibrated != null; })) {
             METRICS.push({ key: 'last_calibrated', mode: 'age', label: 'Last calibrated' });
         }
@@ -1090,6 +901,24 @@ window.ChipStatus.mount = function (opts) {
         var current = null;
         try { current = localStorage.getItem(HERO_KEY); } catch (e) {}
         if (!METRICS.some(function(m) { return m.key === current; })) current = METRICS[0].key;
+
+        // Map zoom — a multiplier over the pane-fit width (docs/126 ②: "make
+        // the whole topology ~2× bigger"). 1 = fit-to-pane. The scroll
+        // container owns the overflow, so a zoomed or tall map scrolls INSIDE
+        // the section instead of pushing the page around. The default is
+        // resolved on first render (needs the map's W/H + the pane width).
+        var zoom = null;
+        try {
+            var zRaw = parseFloat(localStorage.getItem(ZOOM_KEY));
+            if (zRaw >= 0.5 && zRaw <= 4) zoom = zRaw;
+        } catch (e) {}
+        // docs/126: compact mode trades stone/marker footprint for TEXT — the
+        // small-monitor answer. Fonts grow relative to the cell (CSS on
+        // .hero-compact) so a zoomed-out whole-chip view keeps readable
+        // numbers; the half-overlapped role markers free the edge middles.
+        var COMPACT_KEY = 'quam_topo_hero_compact';
+        var compactMode = false;
+        try { compactMode = localStorage.getItem(COMPACT_KEY) === '1'; } catch (e) {}
 
         // Per-qubit open findings, attributed by jump_path (same address
         // grammar as liveDiff's _entityOf). Pair findings are out of scope
@@ -1126,14 +955,14 @@ window.ChipStatus.mount = function (opts) {
             }
             if (m.mode === 'age') {
                 var ms = n.last_calibrated;
-                if (ms == null) return { fill: dCfg.nullCellColor, fg: '#666', text: '—',
-                                         title: 'no calibration timestamps' };
+                if (ms == null) return { fill: dCfg.nullCellColor, fg: 'var(--pico-muted-color)',
+                                         text: '—', title: 'no calibration timestamps' };
                 var ac = _ageClass(ms);
-                if (!ac) return { fill: dCfg.nullCellColor, fg: '#666', text: '—', title: '' };
+                if (!ac) return { fill: dCfg.nullCellColor, fg: 'var(--pico-muted-color)', text: '—', title: '' };
                 return { cls: 'hs-' + ac, text: _ageLabel(ms), title: 'last calibrated ' + _ageLabel(ms) };
             }
             if (_badFit(n, m.key)) {
-                return { fill: dCfg.nullCellColor, fg: '#666', cls: 'hs-badfit',
+                return { fill: dCfg.nullCellColor, fg: 'var(--pico-muted-color)', cls: 'hs-badfit',
                          text: m.fmtFn(n.metrics[m.key].raw),
                          title: 'unphysical (likely a failed fit) — excluded from stats & colour' };
             }
@@ -1143,7 +972,14 @@ window.ChipStatus.mount = function (opts) {
                      title: v == null ? 'no data' : '' };
         }
 
-        var CELL = 96, R = 27;
+        // docs/120 item 11: the hero is now the ONLY chip map on this page, so
+        // it gets the room the card diagram used to take. The cell grew with
+        // it (96 -> 132) — every glyph, the id, the metric value and the new
+        // role markers all scale off CELL, so one number widens the whole map
+        // rather than each piece needing its own bump. The rendered size is
+        // responsive (see .topo-hero-svg): these are the intrinsic dimensions
+        // and the viewBox aspect, which CSS then fits to the pane.
+        var CELL = 132;
         var W = Math.max(CELL, Math.round(lay.cols * CELL));
         var H = Math.max(CELL, Math.round(lay.rows * CELL));
         function cx(p) { return (p.col + 0.5) * CELL; }
@@ -1161,9 +997,23 @@ window.ChipStatus.mount = function (opts) {
             });
         })();
 
+        function _edgeAgg(m) {
+            return computeAggregates(topo.edges.map(function(e) { return m.valFn(e); }));
+        }
+
         function legendHtml(key) {
             var m = _metric(key);
             var out = '<div class="topo-hero-legend">';
+            if (m.scope === 'edge') {
+                var eagg = _edgeAgg(m);
+                var estops = dCfg.colorScale;
+                out += '<span class="topo-hero-lg-item">' + (eagg.min != null ? m.fmtFn(eagg.min) : '')
+                     + '<span class="topo-hero-lg-grad" style="background:linear-gradient(90deg,' + estops.join(',') + ')"></span>'
+                     + (eagg.max != null ? m.fmtFn(eagg.max) : '') + '</span>'
+                     + '<span class="topo-hero-lg-item"><span class="topo-hero-lg-swatch" style="background:'
+                     + dCfg.nullCellColor + '"></span>no data</span>';
+                return out + '</div>';
+            }
             if (m.mode === 'diag' || m.mode === 'age') {
                 out += '<span class="topo-hero-lg-item"><span class="topo-hero-lg-swatch hs-pass"></span>ok</span>'
                      + '<span class="topo-hero-lg-item"><span class="topo-hero-lg-swatch hs-warn"></span>'
@@ -1188,43 +1038,155 @@ window.ChipStatus.mount = function (opts) {
         }
 
         function render() {
+            var mCurPre = _metric(current);
+            if (zoom == null) {
+                // Default ≈ 1.7× what the OLD render showed (the customer
+                // dialed the initial 2× back a notch). Pre-docs/126 the map
+                // was fit-to-pane AND letterboxed by a 70vh max-height, so
+                // the factor multiplies min(fit, cap). Unmeasurable layout
+                // (jsdom, display:none) falls back to a plain 1.7× pane.
+                zoom = 1.7;
+                try {
+                    var _pw = host.clientWidth || 0, _vh = window.innerHeight || 0;
+                    if (_pw > 0 && _vh > 0 && H > 0) {
+                        zoom = Math.min(4, Math.max(
+                            0.9, 1.7 * Math.min(1, 0.7 * _vh * W / (H * _pw))));
+                    }
+                } catch (e) {}
+            }
             var bar = '<div class="topo-hero-bar" role="tablist" aria-label="Chip map metric">';
             METRICS.forEach(function(m) {
                 bar += '<button type="button" role="tab" aria-selected="' + (m.key === current) + '"'
-                     + ' class="topo-hero-mbtn' + (m.key === current ? ' active' : '') + '"'
+                     + ' class="topo-hero-mbtn' + (m.key === current ? ' active' : '')
+                     + (m.scope === 'edge' ? ' topo-hero-mbtn-edge' : '') + '"'
                      + ' data-hero-metric="' + _esc(m.key) + '">'
                      + (m.label ? _esc(m.label) : labelHtml(m.key, true)) + '</button>';
             });
-            bar += '</div>';
+            // no role="group": Pico styles [role=group] as a full-width
+            // button bar (width:100% + flex:1 children) — real-browser caught.
+            bar += '<span class="topo-hero-zoomctl" aria-label="Map size">'
+                 + '<button type="button" class="topo-hero-zbtn" data-hero-zoom="out" title="Smaller">&minus;</button>'
+                 + '<input type="range" class="topo-hero-zslider" min="0.5" max="4" step="0.05"'
+                 + ' value="' + zoom.toFixed(2) + '" aria-label="Map size" title="Map size">'
+                 + '<button type="button" class="topo-hero-zbtn" data-hero-zoom="in" title="Bigger">+</button>'
+                 + '<button type="button" class="topo-hero-zbtn" data-hero-zoom="fit" title="Fit the pane width">Fit</button>'
+                 + '<button type="button" class="topo-hero-zbtn topo-hero-compact-btn'
+                 + (compactMode ? ' active' : '') + '" data-hero-compact="1"'
+                 + ' title="Compact — smaller stones and markers, bigger numbers (fits a small monitor)"'
+                 + ' aria-pressed="' + compactMode + '">Aa</button>'
+                 + '</span></div>';
+            // docs/126: RB numbers exist per GATE — a second row picks which
+            // pulse variant's number the edges show ('best' = the old best-of).
+            if (mCurPre && mCurPre.perGate) {
+                var gnames = gatesFor2Q(mCurPre.match);
+                if (gnames.length > 1) {
+                    bar += '<div class="topo-hero-gatebar" role="tablist" aria-label="Gate variant">'
+                         + '<span class="muted topo-hero-gatelabel">pulse:</span>';
+                    ['best'].concat(gnames).forEach(function(g) {
+                        var on = (heroGate === g) || (g === 'best' && gnames.indexOf(heroGate) < 0);
+                        bar += '<button type="button" class="topo-hero-mbtn topo-hero-gbtn'
+                             + (on ? ' active' : '') + '" data-hero-gate="' + _esc(g) + '">'
+                             + _esc(g) + '</button>';
+                    });
+                    bar += '</div>';
+                }
+            }
+
+            var mCur = mCurPre;
+            var edgeMode = mCur.scope === 'edge';
+            var eagg = edgeMode ? _edgeAgg(mCur) : null;
 
             var svg = '';
+            var evalSvg = '';
+            var R = compactMode ? 33 : 37;   // docs/126 compact: smaller stones
             topo.edges.forEach(function(e) {
                 var a = lay.positions[e.source], b = lay.positions[e.target];
                 if (!a || !b) return;
                 var oA = offsets[e.source] || { dx: 0, dy: 0 }, oB = offsets[e.target] || { dx: 0, dy: 0 };
                 var x1 = cx(a) + oA.dx, y1 = cy(a) + oA.dy, x2 = cx(b) + oB.dx, y2 = cy(b) + oB.dy;
+                var pdx = 0, pdy = 0;   // unit perpendicular (label offset)
+                {
+                    var ddx = x2 - x1, ddy = y2 - y1, LL = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
+                    pdx = -ddy / LL; pdy = ddx / LL;
+                }
                 if (e.directed) {
                     // anti-parallel offset so BOTH directions of a CR pair show
-                    var dx = x2 - x1, dy = y2 - y1, L = Math.sqrt(dx * dx + dy * dy) || 1;
-                    var off = 5;
-                    x1 += -dy / L * off; y1 += dx / L * off;
-                    x2 += -dy / L * off; y2 += dx / L * off;
+                    var off = 6;
+                    x1 += pdx * off; y1 += pdy * off;
+                    x2 += pdx * off; y2 += pdy * off;
                 }
-                var ep = _edgePaint(e);
+                // docs/126 ②: an EDGE metric paints the edges the way a node
+                // metric paints the stones — chip-relative palette + a value
+                // printed ON the edge; a node metric keeps the fidelity
+                // good/warn/bad paint (thicker than before — the customer
+                // could barely click the old 3px lines).
+                var stroke, width, evTxt = null;
+                if (edgeMode) {
+                    var ev = mCur.valFn(e);
+                    if (ev != null && eagg.count >= 1) {
+                        var t = eagg.count < 2 ? 0.5
+                              : (ev - eagg.min) / ((eagg.max - eagg.min) || 1);
+                        stroke = interpolateColor(t, dCfg.colorScale);
+                        width = 9;
+                        evTxt = mCur.fmtFn(ev);
+                    } else {
+                        stroke = dCfg.nullCellColor; width = 5;
+                    }
+                } else {
+                    var ep = _edgePaint(e);
+                    stroke = ep.color; width = ep.width + 3;
+                }
                 var tt = e.pair_id + (e.cz_fidelity != null ? ' — ' + (e.cz_fidelity * 100).toFixed(1) + '%' : '')
                        + (e.active === false ? ' · off' : '');
                 var coords = ' x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"';
+                var mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
                 svg += '<g class="topo-hero-edge" data-hero-pair="' + _esc(e.pair_id) + '"'
                      + (e.active === false ? ' opacity="0.35"' : '') + '>'
-                     + '<line' + coords + ' stroke="' + ep.color + '" stroke-width="' + (ep.width + 0.5)
+                     + '<line' + coords + ' stroke="' + stroke + '" stroke-width="' + width
                      + '" stroke-linecap="round"/>'
-                     + '<line class="topo-hero-edge-hit"' + coords + ' stroke="transparent" stroke-width="11">'
+                     + '<line class="topo-hero-edge-hit"' + coords + ' stroke="transparent" stroke-width="22">'
                      + '</line><title>' + _esc(tt) + '</title></g>';
+                // docs/126: the value draws in a TOP layer, after the stones
+                // and the role markers — on the real chip the C/T circles sat
+                // exactly on the midpoint and covered every printed number.
+                if (evTxt != null) {
+                    evalSvg += '<text class="topo-hero-eval" x="' + (mx + pdx * (e.directed ? 15 : 0))
+                        + '" y="' + (my + pdy * (e.directed ? 15 : 0) + 4) + '">'
+                        + _esc(evTxt) + '</text>';
+                }
             });
+            // docs/120 item 11 → amended by docs/126: the C/T/M markers now
+            // draw AFTER the stones (compactRoles centres them ON the rim —
+            // half-overlapping the stone, smaller — so the edge middle stays
+            // free for the metric value; same shared TopoGraph.pairGlyphs,
+            // so the component maps keep their own classic placement).
+            var glyphSvg = '';
+            if (TG.pairGlyphs) {
+                glyphSvg = TG.pairGlyphs(topo.nodes, topo.edges, {
+                    cell: CELL, roles: true, compactRoles: true,
+                    px: function (id) {
+                        var p = lay.positions[id];
+                        if (!p) return null;
+                        var o = offsets[id] || { dx: 0, dy: 0 };
+                        return { x: cx(p) + o.dx, y: cy(p) + o.dy };
+                    },
+                });
+            }
             topo.nodes.forEach(function(n) {
                 var p = lay.positions[n.id];
                 if (!p) return;
                 var o = offsets[n.id] || { dx: 0, dy: 0 };
+                if (edgeMode) {
+                    // The edges carry the numbers — stones go neutral so the
+                    // painted edges read as the subject, not the background.
+                    svg += '<g class="topo-hero-node topo-hero-node-neutral" data-hero-qubit="' + _esc(n.id)
+                         + '" transform="translate(' + (cx(p) + o.dx) + ',' + (cy(p) + o.dy) + ')" tabindex="0">'
+                         + '<circle class="topo-hero-stone" r="' + R + '"'
+                         + (o.shared ? ' stroke-dasharray="3 2"' : '') + '></circle>'
+                         + '<text class="topo-hero-id" y="4">' + _esc(n.id) + '</text>'
+                         + '</g>';
+                    return;
+                }
                 var pt = nodePaint(n, current);
                 svg += '<g class="topo-hero-node' + (pt.cls ? ' ' + pt.cls : '') + '" data-hero-qubit="' + _esc(n.id)
                      + '" transform="translate(' + (cx(p) + o.dx) + ',' + (cy(p) + o.dy) + ')" tabindex="0">'
@@ -1241,10 +1203,16 @@ window.ChipStatus.mount = function (opts) {
 
             var note = lay.mode === 'logical'
                 ? '<div class="topo-hero-note">' + _esc(TG.LOGICAL_LAYOUT_NOTE) + '</div>' : '';
+            // Zoom: percentage of the scroll pane's width (1 = the old fit).
+            // The container scrolls both axes, so a big map never buries the
+            // sections below (docs/126 ② — "~2× bigger" is the default).
             host.innerHTML = bar
                 + '<div class="topo-hero-map">' + note
-                + '<div class="topo-hero-scroll"><svg class="topo-hero-svg" width="' + W + '" height="' + H
-                + '" viewBox="0 0 ' + W + ' ' + H + '">' + svg + '</svg></div></div>'
+                + '<div class="topo-hero-scroll"><svg class="topo-hero-svg'
+                + (compactMode ? ' hero-compact' : '') + '" width="' + W + '" height="' + H
+                + '" viewBox="0 0 ' + W + ' ' + H + '"'
+                + ' style="width:' + Math.round(zoom * 100) + '%">'
+                + svg + glyphSvg + evalSvg + '</svg></div></div>'
                 + legendHtml(current);
             bindHover();
         }
@@ -1255,7 +1223,44 @@ window.ChipStatus.mount = function (opts) {
         var _heroClickTime = 0, _heroClickId = null;
         if (!host._heroBound) {
             host._heroBound = true;
+            // Zoom only changes the svg's CSS width — applied in place, no
+            // rebuild (a full re-render mid-slider-drag would destroy the
+            // slider under the pointer).
+            function _applyZoom(z) {
+                zoom = Math.min(4, Math.max(0.5, z));
+                try { localStorage.setItem(ZOOM_KEY, String(zoom)); } catch (e) {}
+                var el = host.querySelector('svg.topo-hero-svg');
+                if (el) el.style.width = Math.round(zoom * 100) + '%';
+                var sl = host.querySelector('.topo-hero-zslider');
+                if (sl && document.activeElement !== sl) sl.value = zoom.toFixed(2);
+            }
+            host.addEventListener('input', function(ev) {
+                if (ev.target && ev.target.classList
+                        && ev.target.classList.contains('topo-hero-zslider')) {
+                    _applyZoom(parseFloat(ev.target.value));
+                }
+            });
             host.addEventListener('click', function(ev) {
+                var zb = ev.target.closest && ev.target.closest('[data-hero-zoom]');
+                if (zb) {
+                    var act = zb.getAttribute('data-hero-zoom');
+                    _applyZoom(act === 'fit' ? 1 : zoom + (act === 'in' ? 0.25 : -0.25));
+                    return;
+                }
+                var cb = ev.target.closest && ev.target.closest('[data-hero-compact]');
+                if (cb) {
+                    compactMode = !compactMode;
+                    try { localStorage.setItem(COMPACT_KEY, compactMode ? '1' : '0'); } catch (e) {}
+                    render();
+                    return;
+                }
+                var gb = ev.target.closest && ev.target.closest('[data-hero-gate]');
+                if (gb) {
+                    heroGate = gb.getAttribute('data-hero-gate') || 'best';
+                    try { localStorage.setItem(GATE_KEY, heroGate); } catch (e) {}
+                    render();
+                    return;
+                }
                 var mb = ev.target.closest && ev.target.closest('[data-hero-metric]');
                 if (mb) {
                     current = mb.getAttribute('data-hero-metric');
@@ -1306,6 +1311,24 @@ window.ChipStatus.mount = function (opts) {
                     if (_sharedQubitPopup) _sharedQubitPopup.scheduleClose();
                 });
             });
+            // docs/126 ②: pairs hover too — same singleton popup, pair flavor.
+            var edgesById = {};
+            topo.edges.forEach(function(e) { edgesById[e.pair_id] = e; });
+            host.querySelectorAll('[data-hero-pair]').forEach(function(g) {
+                g.addEventListener('mouseenter', function() {
+                    if (!_sharedQubitPopup || !_sharedQubitPopup.openPair) return;
+                    _sharedQubitPopup.cancelClose();
+                    clearTimeout(_heroHoverTimer);
+                    _heroHoverTimer = setTimeout(function() {
+                        var e = edgesById[g.getAttribute('data-hero-pair')];
+                        if (e) _sharedQubitPopup.openPair(e, g, false);
+                    }, 260);
+                });
+                g.addEventListener('mouseleave', function() {
+                    clearTimeout(_heroHoverTimer);
+                    if (_sharedQubitPopup) _sharedQubitPopup.scheduleClose();
+                });
+            });
         }
 
         _rebuildHeroMap = render;
@@ -1316,11 +1339,11 @@ window.ChipStatus.mount = function (opts) {
     var legendEl = document.getElementById('topology-legend');
     if (legendEl) {
         var items = [];
-        var seenChains = {};
-        topo.nodes.forEach(function(n) { if (n.chain) seenChains[n.chain] = chainColors[n.chain] || tCfg.chainFallback; });
-        Object.keys(seenChains).sort().forEach(function(ch) {
-            items.push('<span class="topology-legend-item"><span class="topology-legend-swatch" style="background:' + seenChains[ch] + '"></span>Chain ' + ch + '</span>');
-        });
+        // docs/120 item 11: the per-chain colour swatches are GONE. The card
+        // headers were the only thing ever painted a chain colour, so with the
+        // cards deleted this legend described an encoding that appears nowhere
+        // on the page — worse than a legend you have to memorise, because it
+        // sends the reader looking for something that is not there.
         if (topo.edges.length > 0) {
             items.push('<span class="topology-legend-item"><span class="topology-legend-line" style="background:' + tCfg.edgeFidelityGood + '"></span>CZ \u226595%</span>');
             items.push('<span class="topology-legend-item"><span class="topology-legend-line" style="background:' + tCfg.edgeFidelityWarn + '"></span>CZ \u226585%</span>');
@@ -1334,23 +1357,12 @@ window.ChipStatus.mount = function (opts) {
     // (single-metric heatmap grid removed; the Overview section carries the
     // headline metrics now — see buildOverviewTiles.)
 
-    // ── Edge label toggle ────────────────────────────────────────────
-    var _edgeLabelsVisible = true;
-    try { var st = localStorage.getItem('quam_topo_edge_labels'); if (st === '0') _edgeLabelsVisible = false; } catch(e) {}
+    // docs/120 item 11: toggleEdgeLabels + its localStorage restore lived
+    // here to show/hide the CARD diagram's `.topo-edge-label` elements. The
+    // hero draws no text on its edges (direction is the C/T/M markers), so
+    // both the function and the checkbox that called it are gone rather than
+    // left as a control that does nothing.
 
-    window.toggleEdgeLabels = function(show) {
-        _edgeLabelsVisible = show;
-        document.querySelectorAll('.topo-edge-label').forEach(function(el) {
-            el.style.display = show ? '' : 'none';
-        });
-        try { localStorage.setItem('quam_topo_edge_labels', show ? '1' : '0'); } catch(e) {}
-    };
-
-    var toggleEl = document.getElementById('topo-labels-toggle');
-    if (!_edgeLabelsVisible) {
-        if (toggleEl) toggleEl.checked = false;
-        toggleEdgeLabels(false);
-    }
 
     // ── JSON panel function ──────────────────────────────────────────
     function showQubitJsonPanel(name, raw) {
@@ -1372,48 +1384,8 @@ window.ChipStatus.mount = function (opts) {
     // buildOverviewTiles renders the rich headline instead. The colorscale/palette
     // selectors still apply to the per-metric panel grids via their data-heat-t.)
 
-    // ══════════════════════════════════════════════════════════════════
-    // Section 4: Distribution Histograms
-    // ══════════════════════════════════════════════════════════════════
-
-    // Distribution histogram definitions (colors assigned from bar palette)
-    // Histograms read the gated value (_mv) too \u2014 an unphysical fit never adds a
-    // phantom bar at \u2212473\u00b5s.
-    var _histDefs = [
-        {id:'hist-gate-fidelity', boxId:'hist-box-gate-fidelity', metricKey:'gate_fidelity_avg',
-         values: topo.nodes.map(function(n){return _mv(n,'gate_fidelity_avg');}), stopIdx:3, xaxis:'Fidelity'},
-        {id:'hist-t1', boxId:'hist-box-t1', metricKey:'T1',
-         values: topo.nodes.map(function(n){var v=_mv(n,'T1');return v!=null?v*1e6:null;}), stopIdx:2, xaxis:'T1 (\u00b5s)'},
-        {id:'hist-cz-fidelity', boxId:'hist-box-cz-fidelity', metricKey:'cz_fidelity',
-         values: topo.edges.map(function(e){return _mv(e,'cz_fidelity');}), stopIdx:4, xaxis:'CZ Fidelity'},
-        {id:'hist-f01', boxId:'hist-box-f01', metricKey:'f_01',
-         values: topo.nodes.map(function(n){var v=_mv(n,'f_01');return v!=null?v/1e9:null;}), stopIdx:1, xaxis:'f_01 (GHz)'}
-    ];
-
-    function renderHistograms() {
-        _histDefs.forEach(function(h) {
-            var vals = h.values.filter(function(v){return v!=null && typeof v==='number';});
-            var box = document.getElementById(h.boxId);
-            if (vals.length === 0) { if (box) box.style.display = 'none'; return; }
-            var color = _barColorScale[Math.min(h.stopIdx, _barColorScale.length - 1)];
-            // Plotly titles are plain strings (no HTML) → append the good-direction
-            // glyph only; the hover blurb lives on the HTML surfaces, not here.
-            var ar = h.metricKey ? arrow(h.metricKey) : '';
-            var axisTitle = h.xaxis + (ar ? '  ' + ar : '');
-            _plotlyRender(h.id, [{
-                x: vals, type: 'histogram',
-                nbinsx: Math.min(20, Math.max(8, Math.ceil(vals.length/2))),
-                marker: {color: color, line: {color:'#fff', width:1}}
-            }], {
-                margin:{l:45,r:15,t:10,b:35},
-                xaxis:{title:{text:axisTitle,font:{size:11}},tickfont:{size:10}},
-                yaxis:{title:{text:'Count',font:{size:11}},tickfont:{size:10}},
-                plot_bgcolor:'transparent', paper_bgcolor:'transparent', bargap:0.08
-            }, {responsive:true, displayModeBar:false});
-        });
-    }
-    // renderHistograms() is invoked lazily by setChipStatusView (the
-    // Distributions view), not eagerly — keeps the default view Plotly-free.
+    // (docs/126 ②: the Distributions section was removed on customer request —
+    // the histograms duplicated what the map + per-metric panels already show.)
 
     // ══════════════════════════════════════════════════════════════════
     // Shared: Pre-compute grid layout from topology positions
@@ -1468,6 +1440,14 @@ window.ChipStatus.mount = function (opts) {
                 var el = document.getElementById(s.chartId);
                 if (!el) continue;
                 var layout = s.computeLayout ? s.computeLayout(el, s.layout) : s.layout;
+                // docs/126 ②: every spec chart rides the house theme — the
+                // specs set sizes/margins but never a font COLOR, so dark mode
+                // rendered every axis label in Plotly's default gray (the
+                // customer: "cannot read the axis numbers at all"). houseLayout
+                // deep-merges UNDER the spec's own overrides.
+                if (window.PlotTheme && window.PlotTheme.houseLayout) {
+                    layout = window.PlotTheme.houseLayout(layout);
+                }
                 _plotlyRender(el, s.data, layout, s.config);
             }
             if (i < specs.length) {
@@ -1562,7 +1542,10 @@ window.ChipStatus.mount = function (opts) {
                 if (agg.count === 0) return;
 
                 var range = agg.max - agg.min || 1;
-                var scorer = outlierScorer(_physCz);   // robust MAD outlier flag (this gate)
+                var scorer = outlierScorer(_physCz, {   // robust MAD flag (this gate),
+                    // spec-gated: an in-spec fidelity is never branded
+                    verdict: function(v) { return _verdict(v, thresholds['cz_fidelity']); },
+                });
                 var gateLabel = _esc(gateName.replace(/^cz_/, ''));   // only ever rendered as HTML
                 var secId = 'rb-' + rbType + '-' + gateName.replace(/[^a-zA-Z0-9]/g, '-');
                 var chartId = secId + '-chart';
@@ -1588,7 +1571,7 @@ window.ChipStatus.mount = function (opts) {
                 }
 
                 // Render a cell for EVERY pair at its grid position — pairs with
-                // no RB data for THIS gate show a grey "None" instead of leaving a
+                // no RB data for THIS gate show a grey em dash instead of leaving a
                 // gap, so the topology shape is preserved and an uncalibrated pair
                 // is a visible to-do, not invisible. (Without a grid we can only
                 // place the data pairs.)
@@ -1608,7 +1591,13 @@ window.ChipStatus.mount = function (opts) {
                             + 'title="' + pidE + ' \u2014 ' + gateLabel + ': not measured \u00b7 click to inspect" '
                             + 'style="' + posStyle + '">'
                             + '<div class="heatmap-cell-name">' + pidE + '</div>'
-                            + '<div class="heatmap-cell-value">None</div></div>';
+                            // Python's None reached the screen as a WORD. The
+                            // title beside it already says "not measured" and the
+                            // panel header says "(1/20 qubits)", so three places
+                            // described the same absence and one of them used a
+                            // foreign language's null literal. An em dash is what
+                            // the hero map already prints for exactly this.
+                            + '<div class="heatmap-cell-value">—</div></div>';
                         return;
                     }
                     var bg, fg, ht;
@@ -1665,7 +1654,7 @@ window.ChipStatus.mount = function (opts) {
                     config: {responsive: true, displayModeBar: false},
                     computeLayout: function(chartEl, base) {
                         // Size to the bar COUNT (capped) — NOT the topology grid height.
-                        // The grid now shows every pair (grey "None"), so matching it blew
+                        // The grid now shows every pair (grey em dash), so matching it blew
                         // the chart up to ~1000px and overlapped the next panel.
                         base.height = Math.min(640, Math.max(160, sorted.length * 26));
                         return base;
@@ -1765,7 +1754,9 @@ window.ChipStatus.mount = function (opts) {
             // separate bad-fit signal. Unbounded metrics (frequencies, amplitudes)
             // have no such gate; every finite value participates, which is correct
             // (there's no "unphysical" frequency). Null when <5 pts / no spread.
-            var scorer = outlierScorer(vals);
+            var scorer = outlierScorer(vals, {
+                verdict: function(v) { return _verdict(v, thresholds[def.key]); },
+            });
 
             var sectionHtml = '<div class="topo-section" data-group="' + def.group + '" id="' + secId + '">';
             // Keep the curated title text (it carries the unit suffix) but pull the
@@ -1829,7 +1820,8 @@ window.ChipStatus.mount = function (opts) {
                     + tAttr
                     + 'style="' + posStyle + (v == null ? '' : 'background-color:' + bg + ';color:' + fg + ';') + '">'
                     + '<div class="heatmap-cell-name">' + nidE + '</div>'
-                    + '<div class="heatmap-cell-value">' + (v != null ? prop.fmtFn(v) : 'None') + '</div></div>';
+                    + '<div class="heatmap-cell-value">'
+                    + (v != null ? prop.fmtFn(v) : '—') + '</div></div>';
             });
             sectionHtml += '</div>'; // close grid
 
@@ -2012,7 +2004,6 @@ window.ChipStatus.mount = function (opts) {
         _currentBarPaletteName = paletteName;
         try { localStorage.setItem('quam_bar_palette', paletteName); } catch(e) {}
         recolorBarCharts();
-        if (_chipSectionBuilt.distributions) renderHistograms();
         updateLegendSwatches();
     };
 
@@ -2030,22 +2021,45 @@ window.ChipStatus.mount = function (opts) {
     var TAB_SPEC = {
         topology:     { build: null,           sel: '#sec-topology' },
         overview:     { build: null,           sel: '[data-topo-section="overview"]' },
-        distributions:{ build: 'distributions', sel: '[data-topo-section="distributions"]' },
         gate:         { build: '2qrb',          sel: '[data-topo-section="2qrb"]' },
         fidelity:     { build: 'metrics',       sel: '#topo-metric-panels [data-group="fidelity"]' },
         coherence:    { build: 'metrics',       sel: '#topo-metric-panels [data-group="coherence"]' },
         frequencies:  { build: 'metrics',       sel: '#topo-metric-panels [data-group="frequency"]' },
         calibration:  { build: 'metrics',       sel: '#topo-metric-panels [data-group="calibration"]' },
+        // docs/120 items 5+9 — every qubit on ONE plot per metric.
+        trends:       { build: 'trends',        sel: '[data-topo-section="trends"]' },
     };
     var _chipSectionBuilt = {};   // section key -> built once (lazy heavy builders)
     var _suppressSpyUntil = 0;    // ignore scroll-spy briefly after a click-jump
 
     function _ensureSectionBuilt(key) {
         if (!key || _chipSectionBuilt[key]) return;
-        _chipSectionBuilt[key] = true;
-        if (key === 'distributions') renderHistograms();
-        else if (key === '2qrb') build2QRBPanels();
-        else if (key === 'metrics') buildMetricPanels();
+        else if (key === '2qrb') { _chipSectionBuilt[key] = true; build2QRBPanels(); }
+        else if (key === 'metrics') { _chipSectionBuilt[key] = true; buildMetricPanels(); }
+        // Trends fetches its own data (the history index is not cheap enough to
+        // ride the page render), so building it means asking for it once.
+        else if (key === 'trends') {
+            var host = document.getElementById('topo-trends');
+            if (!host || !window.htmx) return;
+            /* docs/122 item 4 — the flag used to be set BEFORE the request, so a
+               single failed fetch retired the section for the life of the page:
+               reproduced by aborting the first /topology/trends, after which
+               #topo-trends stayed empty (innerHTML length 0) and scrolling away
+               and back never retried. Mark built only on success; a failure
+               leaves the section eligible for the next intersection. */
+            _chipSectionBuilt[key] = true;
+            var p = htmx.ajax('GET', '/topology/trends',
+                              { source: '#topo-trends', target: '#topo-trends',
+                                swap: 'outerHTML' });
+            if (p && typeof p.then === 'function') {
+                p.then(function () {
+                    if (!document.querySelector('.topo-trend-box')
+                        && !document.querySelector('.topo-trends-controls')) {
+                        _chipSectionBuilt[key] = false;   // nothing arrived — retry later
+                    }
+                }, function () { _chipSectionBuilt[key] = false; });
+            }
+        }
     }
 
     function _throttle(fn, ms) {
@@ -2087,14 +2101,26 @@ window.ChipStatus.mount = function (opts) {
     // Lazy build: materialise a heavy section as it approaches the viewport.
     function _setupLazyBuild() {
         if (!window.IntersectionObserver) {       // fallback: build everything now
-            ['distributions', '2qrb', 'metrics'].forEach(_ensureSectionBuilt); return;
+            ['2qrb', 'metrics', 'trends'].forEach(_ensureSectionBuilt); return;
         }
         var io = new IntersectionObserver(function(entries) {
             entries.forEach(function(e) {
                 if (e.isIntersecting) _ensureSectionBuilt(e.target.getAttribute('data-topo-section'));
             });
         }, { root: _scrollPane(), rootMargin: '400px 0px 400px 0px' });
-        ['distributions', '2qrb', 'metrics'].forEach(function(k) {
+        // Tear it down on nav-away. ChipStatus.mount runs on every /topology
+        // render, so without this each visit stranded an observer holding its
+        // [data-topo-section] subtrees alive — and docs/120 added a 4th section
+        // whose charts carry ~1 MB of data and live Plotly divs. Mirrors the
+        // scroll-spy teardown below; pre-existing, but this change is what made
+        // it expensive.
+        document.body.addEventListener('htmx:beforeSwap', function _ioTeardown(evt) {
+            if (evt.detail && evt.detail.target && evt.detail.target.id === 'table-pane') {
+                try { io.disconnect(); } catch (e) {}
+                document.body.removeEventListener('htmx:beforeSwap', _ioTeardown);
+            }
+        });
+        ['2qrb', 'metrics', 'trends'].forEach(function(k) {
             var el = document.querySelector('[data-topo-section="' + k + '"]');
             if (el) io.observe(el);
         });
@@ -2135,35 +2161,10 @@ window.ChipStatus.mount = function (opts) {
     // Re-fit the topology diagram to the current pane width (no rebuild) — runs
     // on pane/window resize so docking the inspector or dragging the split gutter
     // doesn't leave it stale/clipped.
-    var _lastFitW = 0;
-    window._refitTopology = function() {
-        var wrap = document.getElementById('topo-html-wrap');
-        if (!wrap) return;
-        var inner = wrap.querySelector('.topo-inner');
-        if (!inner) return;
-        var cw = parseFloat(inner.style.width), ch = parseFloat(inner.style.height);
-        if (!cw || !ch) return;
-        var availW = wrap.parentElement ? wrap.parentElement.clientWidth - 2 : wrap.clientWidth;
-        if (availW > 0 && cw > availW) {
-            var s = availW / cw;
-            inner.style.transformOrigin = 'top left';
-            inner.style.transform = 'scale(' + s + ')';
-            wrap.style.width = availW + 'px';
-            wrap.style.height = (ch * s) + 'px';
-        } else {
-            inner.style.transform = '';
-            wrap.style.width = cw + 'px';
-            wrap.style.height = ch + 'px';
-        }
-    };
-    function _maybeRefit() {
-        var wrap = document.getElementById('topo-html-wrap');
-        if (!wrap || !wrap.parentElement) return;
-        var w = wrap.parentElement.clientWidth;
-        if (w === _lastFitW) return;              // width-only guard (no resize loop)
-        _lastFitW = w;
-        window._refitTopology();
-    }
+    // docs/120 item 11: _refitTopology / _maybeRefit lived here to scale the
+    // CARD diagram's .topo-inner down to the pane width. The cards are gone and
+    // the hero is responsive by construction — a viewBox plus `width:100%` in
+    // CSS — so there is no JS re-fit any more, and no resize listener to leak.
 
     // ══════════════════════════════════════════════════════════════════
     // Initialization
@@ -2252,6 +2253,21 @@ window.ChipStatus.mount = function (opts) {
             });
         });
         var belowCount = Object.keys(below).length;
+        // A qubit with NO data is UNJUDGED, not "in spec".
+        //
+        // `_verdict(null, …)` returns neither 'fail' nor 'warn', so a qubit
+        // that has never been measured simply never enters `below` — and on a
+        // chip in early bring-up, where T1 / T2 / fidelity are null CHIP-WIDE
+        // (exactly the real customer chip), that made belowCount 0 and the
+        // banner announce "Chip looks healthy — all 20 qubits in spec" over a
+        // chip with no calibration data at all. The map's own legend already
+        // had a distinct "No data" swatch; only the verdict was pretending.
+        var measuredCount = nodes.filter(function (n) {
+            return NODE_METRICS.some(function (m) {
+                var v = _mval(n, m);
+                return typeof v === 'number' && isFinite(v);
+            });
+        }).length;
         var failCount = Object.keys(below).filter(function(k) { return below[k] === 'fail'; }).length;
         var czBelow = edges.filter(function(e) {
             var v = _verdict(_mval(e, 'cz_fidelity'), thresholds.cz_fidelity); return v === 'warn' || v === 'fail';
@@ -2272,11 +2288,30 @@ window.ChipStatus.mount = function (opts) {
         html += _hTile('qubits', nodes.length, 'neutral', edges.length + ' pairs');
         html += _hTile('oldest calibration', _ageLabel(oc), _ageClass(oc),
                        summ.newest_calibration ? 'newest ' + _ageLabel(summ.newest_calibration) : 'no timestamps');
-        html += _hTile('qubits below spec', belowCount, belowCount ? (failCount ? 'fail' : 'warn') : 'pass',
+        html += _hTile('qubits below spec', belowCount,
+                       belowCount ? (failCount ? 'fail' : 'warn')
+                                  : (measuredCount ? 'pass' : 'neutral'),
                        failCount ? (failCount + ' failing &middot; ' + (belowCount - failCount) + ' warn')
-                                 : (belowCount ? 'to watch' : 'all in spec'));
-        html += _hTile('CZ below spec', czBelow, czBelow ? (czFailCount ? 'fail' : 'warn') : 'pass',
-                       czBelow ? 'of ' + edges.length + ' pairs' : 'all pairs in spec');
+                                 : (belowCount ? 'to watch'
+                                    : (measuredCount === 0 ? 'no data yet'
+                                       : (measuredCount < nodes.length
+                                          ? measuredCount + ' of ' + nodes.length + ' measured'
+                                          : 'all in spec'))));
+        // Same rule on the pair side: cz_fidelity is null chip-wide on a chip
+        // that has not run 2Q calibration yet, and "all pairs in spec" over
+        // zero measurements is the same lie as its qubit twin above.
+        var czMeasured = edges.filter(function (e) {
+            var v = _mval(e, 'cz_fidelity');
+            return typeof v === 'number' && isFinite(v);
+        }).length;
+        html += _hTile('CZ below spec', czBelow,
+                       czBelow ? (czFailCount ? 'fail' : 'warn')
+                               : (czMeasured ? 'pass' : 'neutral'),
+                       czBelow ? 'of ' + edges.length + ' pairs'
+                               : (czMeasured === 0 ? 'no data yet'
+                                  : (czMeasured < edges.length
+                                     ? czMeasured + ' of ' + edges.length + ' measured'
+                                     : 'all pairs in spec')));
         var diagTotal = diagErr + diagWarn;
         html += '<a class="topo-health-tile ' + (diagErr ? 'fail' : (diagWarn ? 'warn' : 'pass')) + '" ' +
                 'href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane" hx-push-url="true" ' +
@@ -2296,7 +2331,20 @@ window.ChipStatus.mount = function (opts) {
                         : (belowCount > 0 || czBelow > 0 || diagWarn > 0) ? 'warn' : 'pass';
             var icon = verdict === 'fail' ? '⛔' : (verdict === 'warn' ? '⚠' : '✓');
             var headline;
-            if (verdict === 'pass') {
+            if (verdict === 'pass' && measuredCount === 0) {
+                // Nothing was measured, so nothing passed. Say that.
+                verdict = 'unknown';
+                icon = 'ⓘ';
+                headline = 'No coherence or fidelity data on this chip yet — '
+                         + 'nothing to judge'
+                         + (diagTotal ? '' : ', and no structural issues found') + '.';
+            } else if (verdict === 'pass' && measuredCount < nodes.length) {
+                headline = 'All ' + measuredCount + ' measured qubit'
+                         + (measuredCount === 1 ? '' : 's') + ' in spec — '
+                         + (nodes.length - measuredCount) + ' of ' + nodes.length
+                         + ' not measured yet'
+                         + (diagTotal ? '' : ', no structural issues') + '.';
+            } else if (verdict === 'pass') {
                 headline = 'Chip looks healthy — all ' + nodes.length + ' qubits in spec'
                          + (diagTotal ? '' : ', no structural issues') + '.';
             } else {
@@ -2494,33 +2542,13 @@ window.ChipStatus.mount = function (opts) {
     buildHealthSummary();
     buildOverviewTiles();
 
-    // Phase C: wire the unified dashboard — lazy build on scroll, scroll-spy tab
-    // highlight, and a resize re-fit for the topology diagram.
+    // Phase C: wire the unified dashboard — lazy build on scroll + scroll-spy
+    // tab highlight. The resize re-fit that used to live here went with the card
+    // diagram (docs/120 item 11): the hero scales itself through its viewBox, so
+    // there is no longer a window-resize listener or ResizeObserver to register
+    // — or, as this block existed to guarantee, to tear down on nav-away.
     _setupLazyBuild();
     _setupScrollSpy();
-    (function() {
-        var wrap = document.getElementById('topo-html-wrap');
-        _lastFitW = (wrap && wrap.parentElement) ? wrap.parentElement.clientWidth : 0;
-        // Keep refs so BOTH the window-resize listener and the ResizeObserver are
-        // torn down on nav-away. Without this they were re-added on every mount and
-        // never removed → after N visits a single resize fires N stale handlers →
-        // the progressive "gets sluggish after bouncing menus" stutter. Mirrors the
-        // poll-timer + LayoutController.ro teardown.
-        var _refitRO = null;
-        var _refitResize = _throttle(_maybeRefit, 120);
-        if (window.ResizeObserver && wrap && wrap.parentElement) {
-            try { _refitRO = new ResizeObserver(_throttle(_maybeRefit, 100)); _refitRO.observe(wrap.parentElement); } catch (e) {}
-        }
-        window.addEventListener('resize', _refitResize);
-        function _refitTeardown(evt) {
-            if (evt.detail && evt.detail.target && evt.detail.target.id === 'table-pane') {
-                window.removeEventListener('resize', _refitResize);
-                if (_refitRO) { try { _refitRO.disconnect(); } catch (e) {} }
-                document.body.removeEventListener('htmx:beforeSwap', _refitTeardown);
-            }
-        }
-        document.body.addEventListener('htmx:beforeSwap', _refitTeardown);
-    })();
 
     // A deep-link ?view= (left-nav sub-item or a shared link) scrolls to that
     // section; a bare /topology load stays at the top (topology), by design — we
@@ -2544,7 +2572,11 @@ window.ChipStatus.mount = function (opts) {
         var dash = document.querySelector('.topo-dashboard');
         if (!dash || dash._kbdBound) return;
         dash._kbdBound = true;
-        var SEL = '.heatmap-cell, .topo-node-card';
+        // docs/120 item 11: `.topo-node-card` no longer exists, so on the
+        // Topology section this selector matched NOTHING and arrow/Enter
+        // navigation of the chip map silently died — while the tip line under
+        // the map still promised it. The hero's nodes take its place.
+        var SEL = '.heatmap-cell, [data-hero-qubit]';
         function decorate() {
             var cs = dash.querySelectorAll(SEL), seeded = false;
             cs.forEach(function(c) {
@@ -2562,7 +2594,13 @@ window.ChipStatus.mount = function (opts) {
             var r = from.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
             var best = null, bestScore = Infinity;
             cells().forEach(function(c) {
-                if (c === from || !c.offsetParent) return;   // skip hidden
+                // `offsetParent` is HTMLElement-only. docs/120 item 11 repointed
+                // this selector at the hero stones, which are SVG <g> nodes, so
+                // the guard scored all 20 as hidden and nearest() always returned
+                // null — arrow keys could never move, on any chip. getClientRects()
+                // is defined on Element and agrees with offsetParent on all 120
+                // real heatmap cells (measured, 0 disagreements).
+                if (c === from || !c.getClientRects().length) return;   // skip hidden
                 var b = c.getBoundingClientRect(), x = b.left + b.width / 2, y = b.top + b.height / 2;
                 var dx = x - cx, dy = y - cy;
                 var ok = dir === 'down' ? dy > 4 : dir === 'up' ? dy < -4 : dir === 'right' ? dx > 4 : dx < -4;
@@ -2616,7 +2654,17 @@ window.ChipStatus.mount = function (opts) {
             }
             var cell = t.closest('[data-kbd-cell]');
             if (!cell) return;
-            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); cell.click(); return; }
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                // Same cause: SVGElement has no .click(), so Enter threw
+                // "cell.click is not a function" and the inspector never opened.
+                // Every consumer listens via addEventListener, so a bubbling
+                // MouseEvent is identical for the HTML cells and the only thing
+                // that works for the SVG ones.
+                cell.dispatchEvent(new MouseEvent('click',
+                    { bubbles: true, cancelable: true, view: window }));
+                return;
+            }
             var dir = ARROWS[e.key];
             if (!dir) return;
             decorate();                    // pick up any lazily-built panel cells
@@ -2765,3 +2813,306 @@ window.ChipStatus.liveDetection = function () {
         }
     });
 };
+
+/* ── docs/120 items 5+9: chip-wide Trends ────────────────────────────────
+ *
+ * Customer: "to see T1/RB/T2 trends today you go to Param History, but that
+ * shows PER-QUBIT trends, not an INTEGRATED one. Add a Trends tab under Chip
+ * Status where ALL qubits' T1 appear in a SINGLE plot. A multiple-line plot,
+ * legend = all qubits."
+ *
+ * One chart per metric, one trace per qubit, legend = the qubit ids. The
+ * colorway is UI_CONFIG.plotly.colorway, which app.js documents as being for
+ * exactly this ("Plotly cycles through these colors to draw each qubit's
+ * line"), so the chip-wide view matches every other multi-qubit surface.
+ */
+window.ChipTrends = (function () {
+    function _params() {
+        var box = document.getElementById('topo-trends');
+        var sel = [];
+        if (box) {
+            Array.prototype.slice.call(box.querySelectorAll('.topo-trend-chip.active'))
+                .forEach(function (b) { sel.push(b.getAttribute('data-trend-metric')); });
+        }
+        var pathEl = document.getElementById('topo-trend-path');
+        var q = 'metrics=' + encodeURIComponent(sel.join(','));
+        if (pathEl && pathEl.value.trim()) q += '&path=' + encodeURIComponent(pathEl.value.trim());
+        return q;
+    }
+    /* docs/122 item 4 — `source` is not optional here.
+       Without it htmx runs the request with elt = document.body and queues it
+       against every other body-sourced request in the app; measured, a metric
+       toggle's /topology/trends was simply NEVER SENT while two /workspace/tree
+       polls held the body queue, and the chips lit with no chart behind them.
+       Sourcing it on the element it targets also gives htmx the per-element
+       bookkeeping that stops a fast second toggle racing the first. */
+    var _reloadSeq = 0;
+    function _reload() {
+        if (!window.htmx || !document.getElementById('topo-trends')) return;
+        var mine = ++_reloadSeq;
+        var p = htmx.ajax('GET', '/topology/trends?' + _params(),
+                          { source: '#topo-trends', target: '#topo-trends',
+                            swap: 'outerHTML' });
+        // A late response swaps into a target that no longer exists (htmx
+        // resolves the target eagerly), and its charts are silently lost. If we
+        // are no longer the newest request, or the section went away, re-render
+        // from whatever the DOM now holds rather than leaving empty boxes.
+        var settle = function () {
+            if (mine !== _reloadSeq) return;
+            var host = document.getElementById('topo-trends');
+            if (!host) return;
+            var data = document.getElementById('topo-trends-data');
+            if (!data) return;
+            // Chain-presence, not class sniffing (docs/124 minor): the
+            // fragment's inline script renders through the ASYNC chain, so at
+            // settle time the class/svg may simply not exist yet — the old
+            // '.js-plotly-plot' sniff double-rendered every toggle (and the
+            // class itself was proven strippable, docs/124 §1.1). The render
+            // entry sets __plotlyRenderChain SYNCHRONOUSLY at call time, so
+            // its presence on any chart host is the deterministic "a render
+            // is already owed" signal; the fallback fires only when the
+            // inline script genuinely never ran (the late-response case this
+            // fallback exists for).
+            var started = false;
+            host.querySelectorAll('.topo-trend-chart').forEach(function (el) {
+                if (el.__plotlyRenderChain || el._fullLayout) started = true;
+            });
+            if (!started) {
+                try { render(JSON.parse(data.textContent)); } catch (e) {}
+            }
+        };
+        if (p && typeof p.then === 'function') p.then(settle, settle);
+    }
+    function toggle(metric) {
+        var b = document.querySelector('.topo-trend-chip[data-trend-metric="' + metric + '"]');
+        if (b) {
+            var on = b.classList.toggle('active');
+            b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        }
+        _reload();
+    }
+    function setPath(p) {
+        var el = document.getElementById('topo-trend-path');
+        if (el) el.value = p || '';
+        var s = document.getElementById('topo-trend-suggest');
+        if (s) s.hidden = true;
+        _reload();
+    }
+    var _sugTimer = null;
+    function suggest(q) {
+        clearTimeout(_sugTimer);
+        var box = document.getElementById('topo-trend-suggest');
+        if (!box) return;
+        if (!q || q.trim().length < 2) { box.hidden = true; return; }
+        _sugTimer = setTimeout(function () {
+            fetch('/topology/trends/paths?q=' + encodeURIComponent(q.trim()))
+                .then(function (r) { return r.json(); })
+                .then(function (rows) {
+                    if (!rows || !rows.length) { box.hidden = true; return; }
+                    box.innerHTML = rows.map(function (r) {
+                        var p = (typeof r === 'string') ? r : (r.path || r.dot_path || '');
+                        return '<button type="button" class="topo-trend-sug"'
+                             + ' onclick="ChipTrends.setPath(this.textContent)">'
+                             + p.replace(/[&<>"]/g, function (c) {
+                                 return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+                               }) + '</button>';
+                    }).join('');
+                    box.hidden = false;
+                })
+                .catch(function () { box.hidden = true; });
+        }, 220);
+    }
+    /* Charts arrive as [{metric, series:[{entity, points:[[snapId, value]]}]}].
+
+       The instant is DERIVED here, not shipped: it is a pure reformat of the
+       snapshot id, and sending it too cost 61 bytes/point — up to 2.3 MB of
+       HTML for one section on a 419-snapshot chip. `_iso` is the character-for-
+       character twin of `routes._snap_iso`, including its refusal to guess:
+       an id that does not parse returns null and keeps its raw label rather
+       than being placed at a fabricated instant. */
+    var _TS_RE = /^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/;
+    function _iso(ts) {
+        var m = _TS_RE.exec(String(ts == null ? '' : ts));
+        if (!m) return null;
+        return m[1] + '-' + m[2] + '-' + m[3] + 'T' + m[4] + ':' + m[5] + ':' + m[6];
+    }
+
+    /* The axis is TIME, not the snapshot sequence. A category axis spaces 433
+       snapshots evenly, which silently redraws three quiet weeks and two
+       minutes of frantic retuning as the same distance — on the one page whose
+       question is "when did this drift". The snapshot id stays in the hover,
+       because that is what a user carries over to State History.
+
+       An id that does not parse to an instant keeps its raw label rather than
+       being placed at an invented one; such a chart falls back to the category
+       axis WHOLESALE, since mixing the two would put the unparsed points at
+       epoch zero. */
+    /* Above this many drawn nodes SVG genuinely hurts (the server caps a series
+       at 400 points, so 20 qubits x 400 = 8,000 is the real worst case). Below
+       it, SVG is faster to first paint and CANNOT fail the way GL can. */
+    var GL_MIN_NODES = 4000;
+    var _glBudget = 0;          // WebGL contexts we are willing to spend, per render
+
+    /* Plotly does not throw when a WebGL context is refused — it writes "WebGL
+       is not supported by your browser" into the div and returns normally. So
+       the only way to know is to LOOK, and the only honest response is to draw
+       the same data again as SVG rather than leave the user staring at a chart
+       that silently contains no data. */
+    function _healIfBlank(host, traces, layout, config) {
+        if (!host || !/WebGL is not supported/i.test(host.innerHTML || '')) return;
+        var svg = traces.map(function (t) {
+            var c = {}; for (var k in t) if (Object.prototype.hasOwnProperty.call(t, k)) c[k] = t[k];
+            c.type = 'scatter';
+            return c;
+        });
+        try { window._plotlyRender(host, svg, layout, config); } catch (e) { /* nothing left to try */ }
+    }
+
+    function _axisFor(series) {
+        var allDated = true;
+        series.forEach(function (s) {
+            s.points.forEach(function (p) { if (!_iso(p[0])) allDated = false; });
+        });
+        return allDated ? 'date' : 'category';
+    }
+    function render(charts) {
+        if (!window._plotlyRender || !charts) return;
+        // One budget per render pass, spent by the first genuinely dense chart.
+        _glBudget = 1;
+        charts.forEach(function (c, idx) {
+            // docs/122 item 4: the host id is POSITIONAL, so a response from an
+            // older generation would draw into whatever now sits at that index.
+            // Prefer the box that carries this chart's own metric and fall back
+            // to the index only when the markup predates that attribute.
+            var box = c.metric && document.querySelector(
+                '.topo-trend-box[data-trend-metric="' + String(c.metric).replace(/"/g, '\\"') + '"]');
+            var host = (box && box.querySelector('.topo-trend-chart'))
+                    || document.getElementById('topo-trend-' + idx);
+            if (!host || !c.series || !c.series.length) return;
+            // WebGL is EARNED BY NODE COUNT, and only while contexts remain.
+            //
+            // The first cut gated on `series.length > 8` — the qubit count —
+            // so every chip bigger than 8 qubits went to WebGL no matter how
+            // little data it had. On the real 20-qubit chip that meant 20
+            // series x 7 points = 140 nodes rendered through GL, and, worse,
+            // THREE scattergl charts on one page. Each takes ~3 WebGL contexts,
+            // browsers cap the total (~16), and Plotly's failure mode when a
+            // context is refused is to REPLACE THE CHART with the text "WebGL
+            // is not supported by your browser". Measured in real Chrome with a
+            // working GPU (Intel Arc / ANGLE D3D11): all three Trends charts
+            // blank, axes and legend drawn, not one data point visible.
+            //
+            // So: GL only for a genuinely large chart, and at most one per
+            // render — plus the post-draw fallback below, because a silent
+            // blank chart on the page whose whole job is showing values move is
+            // the worst failure this surface can have.
+            var longest = c.series.reduce(function (m, s) {
+                return Math.max(m, s.points.length); }, 0);
+            var nodes = c.series.length * longest;
+            var dense = nodes > GL_MIN_NODES && _glBudget > 0;
+            if (dense) _glBudget--;
+            var axisType = _axisFor(c.series);
+            // A parameter that has NOT moved is the common case on a healthy
+            // chip, and Plotly's autorange for a set of identical small values
+            // spans zero: readout_amplitude = 0.00447 chip-wide drew a flat
+            // line at 0 on a -0.5..1 axis, which reads as "this is zero".
+            // Give a constant series a range around ITS OWN value instead.
+            var _lo = Infinity, _hi = -Infinity;
+            c.series.forEach(function (s2) {
+                s2.points.forEach(function (p) {
+                    if (typeof p[1] === 'number' && isFinite(p[1])) {
+                        if (p[1] < _lo) _lo = p[1];
+                        if (p[1] > _hi) _hi = p[1];
+                    }
+                });
+            });
+            var _flat = null;
+            if (isFinite(_lo) && isFinite(_hi)) {
+                var _span = _hi - _lo;
+                var _scale = Math.max(Math.abs(_lo), Math.abs(_hi));
+                if (_scale > 0 && _span <= _scale * 1e-9) {
+                    var _pad = _scale * 0.05;
+                    _flat = [_lo - _pad, _hi + _pad];
+                }
+            }
+            var traces = c.series.map(function (s) {
+                return {
+                    x: s.points.map(function (p) {
+                        return axisType === 'date' ? _iso(p[0]) : p[0]; }),
+                    y: s.points.map(function (p) { return p[1]; }),
+                    // The snapshot id, carried per point so the hover can name
+                    // the snapshot the value came from even on a date axis.
+                    customdata: s.points.map(function (p) { return p[0]; }),
+                    mode: longest > 120 ? 'lines' : 'lines+markers',
+                    type: dense ? 'scattergl' : 'scatter', name: s.entity,
+                    connectgaps: false, marker: { size: 5 },
+                    hovertemplate: '%{fullData.name}<br>%{x}<br>%{y}'
+                                 + '<br><span style="font-size:.85em">%{customdata}</span>'
+                                 + '<extra></extra>',
+                };
+            });
+            var layout = {
+                margin: { l: 58, r: 12, t: 8, b: 64 },
+                height: 300,
+                showlegend: true,
+                legend: { orientation: 'h', y: -0.28, font: { size: 10 } },
+                colorway: (window.UI_CONFIG && UI_CONFIG.plotly && UI_CONFIG.plotly.colorway) || undefined,
+                xaxis: { type: axisType, tickangle: axisType === 'date' ? 0 : -40,
+                         tickfont: { size: 9 }, automargin: true },
+                yaxis: { title: { text: c.metric + (c.unit ? ' (' + c.unit + ')' : ''),
+                                  font: { size: 11 } },
+                         // SI prefixes, not US-billions: a 4.333 GHz qubit read
+                         // "4.3B" on an axis whose only other label was the bare
+                         // metric name. `~s` gives 4.3G, and the unit now sits
+                         // in the title, so the axis says what it means.
+                         tickformat: '~s',
+                         tickfont: { size: 10 }, automargin: true,
+                         range: _flat || undefined,
+                         autorange: _flat ? false : true },
+                plot_bgcolor: 'transparent', paper_bgcolor: 'transparent',
+            };
+            // Zoom/pan matter MORE here than anywhere else in the app: the
+            // question this page answers is "when did this drift", which needs
+            // a closer look at a region.
+            var cfg = {
+                displayModeBar: 'hover', responsive: true,
+                modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+                displaylogo: false };
+            // House theme AT RENDER (docs/124 M-6): these charts used to ship
+            // Plotly's light defaults and rely on a later retheme() pass to
+            // recolor them — but the one-shot retheme runs at DOMContentLoaded
+            // +800ms and Trends builds later (lazy observer + fetch), so a
+            // dark-theme user saw #444-on-light charts until the next theme
+            // toggle. houseLayout deep-merges UNDER the overrides above, so
+            // every explicit choice here (tickformat, ranges, transparent
+            // backgrounds) stands.
+            if (window.PlotTheme && window.PlotTheme.houseLayout) {
+                layout = window.PlotTheme.houseLayout(layout);
+            }
+            var drawn = window._plotlyRender(host, traces, layout, cfg);
+            // Plotly writes the WebGL message asynchronously, after the promise
+            // its renderer returns; check on the far side of it, and once more
+            // on the next frame for the case where it lands later still.
+            if (drawn && typeof drawn.then === 'function') {
+                drawn.then(function () {
+                    _healIfBlank(host, traces, layout, cfg);
+                    setTimeout(function () { _healIfBlank(host, traces, layout, cfg); }, 250);
+                });
+            } else {
+                setTimeout(function () { _healIfBlank(host, traces, layout, cfg); }, 250);
+            }
+        });
+        /* docs/122 item 4 — keep the figures matched to their container.
+           Plotly's `responsive:true` listens to WINDOW resize only (verified on
+           2.35.2): collapsing the sidebar left a 609 px SVG in a 742 px holder
+           and it was still 609 px six seconds later, while a window resize
+           healed it instantly. A split-gutter drag is the same story at 56 px.
+           Observed on the grid, so one observer covers every chart in it. */
+        if (window.PlotHost) {
+            var grid = document.querySelector('.topo-trends-grid')
+                    || document.getElementById('topo-trends');
+            if (grid) window.PlotHost.observe(grid);
+        }
+    }
+    return { toggle: toggle, setPath: setPath, suggest: suggest, render: render };
+})();

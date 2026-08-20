@@ -111,6 +111,15 @@
         _onTrayChanged: onTrayChanged,
         armed: armed,
         pending: pending,
+        /* Someone ELSE held window._applyInFlight and has just released it.
+           `_queued` is drained only by this module's own completion handler, so
+           without a poke an edit that committed during (say) an Auto-Sync pull
+           would sit unapplied until the next tray mutation — while the pill
+           still said auto-push was on. docs/120 item 8 review finding. */
+        drain: function () {
+            if (_queued) { _queued = false; setTimeout(flush, 0); }
+            else flush();
+        },
         toggleLog: function (btn) {
             var log = document.getElementById('applied-log');
             if (!log) return;
@@ -148,4 +157,97 @@
         onTrayChanged();      // an armed session + pending edits after a reload
     });
     document.addEventListener('htmx:afterSwap', function () { applyLogState(); });
+})();
+
+/* ── docs/120 item 8: the Auto-Sync popup ────────────────────────────────
+ *
+ * Only the popover mechanics live here. The three switches POST to
+ * /auto-sync/set and every decision that follows -- whether pull is armed,
+ * whether live diverged, whether unapplied edits block a replace -- is made on
+ * the server, so the covenant is stated in exactly one place.
+ */
+window.AutoSync = (function () {
+    function host() { return document.getElementById('auto-sync-pop-host'); }
+    function pop() { return document.getElementById('auto-sync-pop'); }
+    function btn() { return document.querySelector('.auto-apply-pill'); }
+
+    function close() {
+        var h = host(); if (h) h.innerHTML = '';
+        var b = btn(); if (b) b.setAttribute('aria-expanded', 'false');
+    }
+    function toggle() {
+        var h = host(); if (!h) return;
+        var p = pop();
+        if (p) {                                  // open -> close
+            h.innerHTML = '';
+            var b0 = btn(); if (b0) b0.setAttribute('aria-expanded', 'false');
+            return;
+        }
+        // Fetched fresh so the switches always show the CURRENT session, and
+        // so a tray swap mid-configuration cannot destroy a partial choice.
+        var b = btn(); if (b) b.setAttribute('aria-expanded', 'true');
+        if (!window.htmx) return;
+        window.htmx.ajax('GET', '/auto-sync/panel',
+                         { target: '#auto-sync-pop-host', swap: 'innerHTML' })
+            .then(function () { _place(); syncNested(); _bindAway(); });
+    }
+    /* docs/126: the host span sits unpositioned in the topbar nav, so the
+       old absolute pop anchored to some far ancestor and opened at the LEFT
+       EDGE of the window (customer screenshot). Anchor it under the pill in
+       viewport coordinates, clamped on-screen (docs/89 pattern). */
+    function _place() {
+        var p = pop(), b = btn();
+        if (!p) return;
+        p.style.position = 'fixed';
+        var w = p.offsetWidth || 336, hpx = p.offsetHeight || 200;
+        var r = b ? b.getBoundingClientRect()
+                  : { left: window.innerWidth / 2 - w / 2, bottom: 60, top: 40 };
+        var left = Math.min(Math.max(8, r.left), window.innerWidth - w - 8);
+        var top = r.bottom + 6;
+        if (top + hpx > window.innerHeight - 8) top = Math.max(8, r.top - hpx - 6);
+        p.style.left = Math.round(left) + 'px';
+        p.style.top = Math.round(top) + 'px';
+        p.style.right = 'auto'; p.style.bottom = 'auto';
+    }
+    function _bindAway() {
+        setTimeout(function () {
+            document.addEventListener('click', function away(e) {
+                var pp = pop();
+                if (!pp) { document.removeEventListener('click', away); return; }
+                if (pp.contains(e.target) || (btn() && btn().contains(e.target))) return;
+                close();
+                document.removeEventListener('click', away);
+            });
+        }, 0);
+    }
+    /* "Replace" qualifies a pull rather than being a mode of its own, so it is
+       disabled (and visibly so) when pull is off -- a checkbox that cannot mean
+       anything should not look like it can. */
+    function syncNested() {
+        var pull = document.getElementById('as-pull');
+        var rep = document.getElementById('as-pull-replace');
+        if (!pull || !rep) return;
+        rep.disabled = !pull.checked;
+        var row = rep.closest('.as-row');
+        if (row) row.classList.toggle('as-row-disabled', !pull.checked);
+    }
+    // Close from the DOCUMENT, never from the panel itself.
+    //
+    // Both of this popup's buttons target `#pending-tray`, which is an ANCESTOR
+    // of the form — so the swap destroys the form, and anything hung on the
+    // form (`hx-on::after-request`) never fires. The first cut had the opposite
+    // failure of the same shape: `onsubmit="AutoSync.close()"` ran BEFORE htmx
+    // and deleted the form out of the DOM, so no request was ever issued and
+    // Auto-Sync could not be armed OR disarmed from the UI at all. Confirmed in
+    // a real browser: clicking Save produced zero network traffic.
+    //
+    // A document listener survives both, because it is not attached to the
+    // thing being replaced.
+    document.addEventListener('htmx:afterRequest', function (e) {
+        var d = e && e.detail;
+        var url = (d && d.pathInfo && (d.pathInfo.requestPath || d.pathInfo.finalRequestPath)) || '';
+        if (/\/auto-sync\/set|\/auto-apply\/disarm/.test(url)) close();
+    });
+
+    return { toggle: toggle, close: close, syncNested: syncNested };
 })();

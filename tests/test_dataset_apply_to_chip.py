@@ -12,10 +12,11 @@ Pins:
     ctx["last_apply"], and the tray comes back clean;
   - the plain (stage-only) call is byte-identical legacy: live untouched,
     same message/trigger shape;
-  - both 409 gates carry apply=1 through their confirm URLs;
-  - a staleness conflict (live moved since load) STAGES but never
-    force-pushes — honest warning + the conflict tray, live keeps the
-    out-of-band content;
+  - docs/126 ⑤ (user-directed 2026-08-19): the IDENTITY gate is the one
+    question the apply path still asks (and it carries apply=1); pending
+    edits and live drift are applied over WITHOUT asking, each NAMED in the
+    result line, with ↺ Revert last apply armed — the review path (plain
+    stage) keeps its 409s;
   - the template offers Apply to chip (apply=1) + Stage only + read-only.
 """
 
@@ -120,10 +121,11 @@ class TestOneClickApply:
         assert _live_off(env) == 0.08, "stage-only must not touch live"
         assert _ctx(env).get("last_apply") is None
 
-    def test_gates_carry_apply_flag(self, env):
+    def test_identity_gate_still_asks_and_carries_apply(self, env):
+        """docs/126 ⑤: chip identity is the ONE question the apply path still
+        asks — a different-chip run never lands on one press."""
         c = env["client"]
         root = env["tmp"] / "data"
-        # different-network run → identity gate fires
         _seed_run(root, 33, {**_state(0.05),
                              })
         run_dir = root / "2026-12-30" / "#33_08_spec_010000"
@@ -137,20 +139,44 @@ class TestOneClickApply:
         assert "APPLIED to the live chip" in html   # the gate names the stakes
         assert _live_off(env) == 0.08
 
-        # pending-edits gate: put an unsaved edit in, confirm URL keeps apply=1
+    def test_pending_edits_apply_without_asking_but_reported(self, env):
+        """docs/126 ⑤ (user-directed 2026-08-19): unsaved edits no longer 409
+        the APPLY path — the press already means "the run's state wins" — but
+        what was replaced is NAMED in the result (docs/86: reported, never
+        silent). The review path (plain stage) keeps its 409."""
+        c = env["client"]
+        root = env["tmp"] / "data"
+        # both runs seeded BEFORE the workspace scan — a later _seed_run is
+        # invisible until a rescan and resolves as "No quam_state in this run"
+        _seed_run(root, 43, _state(off_a=0.076))
+        _seed_run(root, 47, _state(off_a=0.074))
+        uid = _uid(env, root, 43)
+        uid47 = _uid(env, root, 47)
         r2 = c.post("/field/edit-batch", json={
             "updates": [{"dot_path": "qubits.qA1.f_01", "value": "5.01e9"}],
             "expect_chip": ""})
         assert r2.status_code == 200 and r2.get_json()["ok"]
-        r3 = c.post(f"/dataset/{uid}/load-state?apply=1&force_chip=1")
-        assert r3.status_code == 409
+        r3 = c.post(f"/dataset/{uid}/load-state?apply=1")
+        assert r3.status_code == 200
         html3 = r3.data.decode()
-        assert "force=1" in html3 and "apply=1" in html3
+        assert "now LIVE" in html3
+        assert "Replaced 1 unsaved edit" in html3
+        assert _live_off(env) == 0.076, "one press reaches live despite edits"
+        # the review path (plain stage) still asks
+        r_e = c.post("/field/edit-batch", json={
+            "updates": [{"dot_path": "qubits.qA1.f_01", "value": "5.02e9"}],
+            "expect_chip": ""})
+        assert r_e.status_code == 200 and r_e.get_json()["ok"], r_e.get_json()
+        r4 = c.post(f"/dataset/{uid47}/load-state")
+        assert r4.status_code == 409
+        assert "force=1" in r4.data.decode()
 
-    def test_conflict_stages_but_never_force_pushes(self, env):
-        """Live moved out-of-band since the chip was loaded: one-click must
-        NOT clobber it — the snapshot stays staged, the honest conflict tray
-        renders, and live keeps the out-of-band content."""
+    def test_drifted_live_is_overwritten_and_named(self, env):
+        """docs/126 ⑤ (user-directed 2026-08-19, superseding the docs/116
+        conflict panel here): live moved out-of-band since the chip was
+        loaded — the press already decided the run's state wins, so the drift
+        is pushed over, the overwrite is NAMED in the result, and ↺ Revert
+        last apply is armed (the reversibility that licenses this)."""
         c = env["client"]
         root = env["tmp"] / "data"
         _seed_run(root, 34, _state(off_a=0.076))
@@ -160,36 +186,29 @@ class TestOneClickApply:
         r = c.post(f"/dataset/{uid}/load-state?apply=1")
         assert r.status_code == 200
         html = r.data.decode()
-        assert "is safe" in html
-        assert "pending-tray-conflict" in html      # the honest tray, OOB
-        assert _live_off(env) == 0.5, "a drifted live chip is never clobbered"
-        assert _ctx(env)["working_dirty"]
+        assert "now LIVE" in html
+        assert "HAD changed" in html and "overwritten" in html
+        assert "ds-apply-conflict" not in html
+        assert _live_off(env) == 0.076, "the run's state wins over the drift"
+        assert not _ctx(env)["working_dirty"]
+        assert _ctx(env).get("last_apply", {}).get("pre_ts"), \
+            "the overwrite must stay reversible (Revert last apply armed)"
 
-    def test_conflict_answers_where_the_press_happened(self, env):
-        """docs/116: the verdict used to be a one-liner pointing at the top
-        bar, and the tray it pointed at asked a DIFFERENT flow's question
-        (\"choose which side wins\", whose down-choice discards the run just
-        chosen). The continuation now renders in place, names the run, and
-        offers the choice the press actually meant."""
+    def test_drift_answer_lands_where_the_press_happened(self, env):
+        """docs/116 established that the verdict must answer IN PLACE (not a
+        one-liner pointing at the top bar); docs/126 ⑤ changed the verdict
+        itself from a conflict panel to a completed, disclosed overwrite —
+        still rendered in #ds-load-state-result, still naming the run."""
         c = env["client"]
         root = env["tmp"] / "data"
         _seed_run(root, 44, _state(off_a=0.076))
         uid = _uid(env, root, 44)
         _write_chip(env["live"], _state(off_a=0.5))
         html = c.post(f"/dataset/{uid}/load-state?apply=1").data.decode()
-
-        assert "ds-apply-conflict" in html            # rendered in place
-        assert "Apply run #44 over live" in html      # the one continuation
-        assert "/state/apply-to-live?force=1" in html
-        assert "Leave live as it is" in html
-        assert "Review changes" in html
-        # the panel IS the confirmation - no native dialog stacked on top.
-        # (Scoped to the PANEL: the OOB tray below keeps its own confirm,
-        # which docs/86 requires of a force button that has no prose.)
-        panel = html.split('<div id="pending-tray"')[0]
-        assert 'hx-confirm=' not in panel
-        # and it still refuses to write by itself
-        assert _live_off(env) == 0.5
+        assert "Run #44" in html and "now LIVE" in html
+        assert "overwritten" in html
+        assert "Revert last apply" in html   # the road back is named in place
+        assert _live_off(env) == 0.076
 
     def test_apply_that_changes_nothing_is_not_a_conflict(self, env):
         """docs/116 (the root cause): the staleness gate answered \"did live
@@ -213,17 +232,19 @@ class TestOneClickApply:
         assert _live_off(env) == 0.079
         assert not _ctx(env)["working_dirty"]
 
-    def test_a_real_difference_still_conflicts(self, env):
-        """The carve-out is identical-content ONLY: a live chip holding
-        DIFFERENT values is still never clobbered."""
+    def test_a_real_difference_is_overwritten_with_disclosure(self, env):
+        """docs/126 ⑤: a live chip holding DIFFERENT values is overwritten by
+        the press — while the identical-content carve-out (docs/116) stays the
+        QUIET path, so the overwrite note appears only when something real was
+        replaced (see test_apply_that_changes_nothing_is_not_a_conflict)."""
         c = env["client"]
         root = env["tmp"] / "data"
         _seed_run(root, 46, _state(off_a=0.076))
         uid = _uid(env, root, 46)
         _write_chip(env["live"], _state(off_a=0.31))
         html = c.post(f"/dataset/{uid}/load-state?apply=1").data.decode()
-        assert "ds-apply-conflict" in html
-        assert _live_off(env) == 0.31
+        assert "now LIVE" in html and "overwritten" in html
+        assert _live_off(env) == 0.076
 
     def test_template_offers_both_buttons(self, env):
         c = env["client"]

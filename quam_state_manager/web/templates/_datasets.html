@@ -34,7 +34,11 @@
 </div>
 {% endif %}
 <div class="table-header-row">
-    <h2 style="white-space:nowrap">{{ page_title }} <small class="muted">({{ total }} runs{% if stats %}, {{ stats.experiment_types }} types, {{ stats.unique_qubits | length }} qubits{% endif %})</small></h2>
+    <h2 style="white-space:nowrap">{{ page_title }} <small class="muted">({{ total }} runs{% if stats %}, {{ stats.experiment_types }} types, {{ stats.unique_qubits | length }} qubits{% endif %})</small>
+        {# docs/126 ⑥ — the times' basis, stated where they are read: SM shows
+           the run folders' own timestamps verbatim (the acquisition PC's
+           local clock) and never converts them. #}
+        <small class="muted ds-tz-note" title="Run dates and times are read from the run folders exactly as the acquisition PC wrote them (its local clock). SM does not convert time zones.">&#128336; acquisition&#8209;PC local time</small></h2>
     <div style="display:flex;gap:.5rem;align-items:center;flex:1;min-width:0">
         <div class="table-filter ds-search-wrap" style="flex:1;position:relative">
             <input type="search" id="dataset-search"

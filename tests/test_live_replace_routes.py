@@ -297,3 +297,69 @@ class TestBannerSlot:
         client = self._make_diverged(tmp_path, live_folder)
         html = client.get("/qubits").data.decode()
         assert "live-diverged-banner" in html
+
+
+class TestTheBadgeAndTheBannerAgree:
+    """The badge said "● Synced — Working state matches the live chip" directly
+    above the amber banner saying the live files had changed on disk. Both
+    rendered, both visible, contradicting each other.
+
+    `_dirty = change_count > 0 or working_dirty` answers "have I edited?" — it
+    never answers "does my working state match the chip?", which is exactly what
+    the badge's own words claim. Local-clean-but-live-moved is a third state,
+    and the banner beside it already offers the choice; the badge only had to
+    stop contradicting it.
+
+    Verified in real Chrome by writing the live state.json out of band and
+    waiting past the 30 s ground-truth throttle: badge became
+    `state-status-drifted` / "● Live chip moved", banner visible and agreeing.
+    """
+
+    def test_both_renderers_stamp_the_live_verdict(self):
+        """The docs/110 both-renderers rule, again: base.html includes the tray
+        directly, so a full-page render must carry the same field the OOB
+        render does or the badge silently falls back to 'Synced'."""
+        import re as _re
+        from pathlib import Path as _P
+        from quam_state_manager.web import routes as R
+        src = _P(R.__file__).read_text(encoding="utf-8")
+        i = src.index('"_pending_tray.html",')
+        assert "live_diverged=" in src[i:i + 1400], "_render_tray does not pass it"
+        j = src.index("def _ctx(")
+        assert '"live_diverged"' in src[j:j + 8000], "_ctx() does not stamp it"
+
+    def test_the_badge_has_a_third_state(self):
+        from pathlib import Path as _P
+        tpl = _P("quam_state_manager/web/templates/_pending_tray.html").read_text(
+            encoding="utf-8")
+        assert "_drifted = live_diverged and not _dirty" in tpl
+        assert "state-status-drifted" in tpl
+        assert "Live chip moved" in tpl
+
+    def test_a_drifted_chip_is_not_called_synced(self):
+        """The one sentence that must never appear on a diverged chip."""
+        from pathlib import Path as _P
+        tpl = _P("quam_state_manager/web/templates/_pending_tray.html").read_text(
+            encoding="utf-8")
+        # Check the ORDER inside the title attribute itself — the same phrase
+        # also appears in this file's own explanatory comment, so a bare
+        # str.index over the whole template compares the wrong occurrences.
+        line = next(l for l in tpl.splitlines() if 'title="{% if _archive %}' in l)
+        assert line.index("_drifted") < line.index(
+            "Working state matches the live chip"), (
+            "the synced claim must sit in the FINAL else, after the drift branch")
+
+    def test_local_edits_still_win_the_label(self):
+        """A user's own unapplied edits stay the headline — drift is only the
+        verdict when there is nothing of theirs to report."""
+        from pathlib import Path as _P
+        tpl = _P("quam_state_manager/web/templates/_pending_tray.html").read_text(
+            encoding="utf-8")
+        assert "live_diverged and not _dirty" in tpl
+
+    def test_the_drifted_badge_is_not_styled_as_success(self):
+        from pathlib import Path as _P
+        css = _P("quam_state_manager/web/static/style.css").read_text(encoding="utf-8")
+        i = css.index(".state-status-drifted")
+        rule = css[i:i + 260]
+        assert "#22c55e" not in rule, "green would restate the lie in colour"

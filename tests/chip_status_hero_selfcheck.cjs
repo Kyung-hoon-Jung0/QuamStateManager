@@ -96,18 +96,19 @@ function mount(win, topo, findings) {
   const q4 = hero.querySelector('[data-hero-qubit="qA4"]');
   ok(q4 && q4.getAttribute('class').indexOf('hs-badfit') !== -1, 'physical: unphysical fit wears hs-badfit');
 
-  // edge parity with the card diagram: BOTH surfaces go through _edgePaint,
-  // so the hero's stroke multiset must equal the card SVG's stroke multiset.
+  // Edge colours come from the ONE _edgePaint. This used to be pinned as
+  // "identical to the card diagram"; docs/120 item 11 deleted that diagram, so
+  // the invariant is restated directly against the palette instead of against
+  // a second renderer that no longer exists: a calibrated CZ takes the good
+  // colour, an uncalibrated pair the no-data grey, and nothing else appears.
   const edges = hero.querySelectorAll('.topo-hero-edge');
   ok(edges.length === 2, 'physical: both edges drawn');
   const heroStrokes = Array.prototype.map.call(edges, function (g) {
     return g.querySelector('line').getAttribute('stroke');
   }).sort();
-  const cardStrokes = Array.prototype.map.call(
-    win.document.querySelectorAll('#topo-html-wrap .topo-edges-svg line'),
-    function (l) { return l.getAttribute('stroke'); }).sort();
+  const cardStrokes = ['#08519c', '#bbbbbb'];   // good-CZ, no-data
   ok(JSON.stringify(heroStrokes) === JSON.stringify(cardStrokes),
-     'edge colours IDENTICAL to the card diagram (one _edgePaint) — hero '
+     'edge colours come from the one _edgePaint palette — hero '
      + JSON.stringify(heroStrokes) + ' vs cards ' + JSON.stringify(cardStrokes));
   ok(heroStrokes[0] !== heroStrokes[1],
      'physical: the 97% CZ edge and the no-data edge are visibly different');
@@ -132,9 +133,21 @@ function mount(win, topo, findings) {
   const q1d = hero.querySelector('[data-hero-qubit="qA1"]');
   ok(q1d && q1d.getAttribute('class').indexOf('hs-pass') !== -1, 'diagnostics view: clean qubit wears hs-pass');
 
-  // the card diagram below is still built (hero is additive)
-  ok(win.document.querySelectorAll('#topo-html-wrap .topo-node-card').length === 4,
-     'card diagram still renders all 4 property cards');
+  // docs/120 item 11: there is exactly ONE chip map on this page now. The card
+  // diagram that used to render below the hero is gone — that duplication is
+  // what the customer reported ("the qubit layout appears twice").
+  // The fixture deliberately still provides a #topo-html-wrap host: this is a
+  // hostile control, so the assertion proves the CODE no longer builds cards
+  // rather than merely proving the fixture stopped offering somewhere to put
+  // them. (The template's own removal is pinned in test_topology_hero.py.)
+  ok(win.document.querySelectorAll('.topo-node-card').length === 0,
+     'the card diagram is GONE — one chip map, not two');
+  ok((win.document.getElementById('topo-html-wrap') || { innerHTML: '' }).innerHTML === '',
+     'nothing is rendered into the old card host even when it is present');
+
+  // The qubit detail popup the cards used to OWN survives the deletion — that
+  // is proved on its own timeline in hero_popup_selfcheck.cjs, because it opens
+  // after a hover-intent delay and this file is synchronous.
 
   // single-click -> inspector (after the dbl-click window)
   const target = hero.querySelector('[data-hero-qubit="qA1"]');
@@ -201,7 +214,116 @@ function part4() {
     ok(a.querySelector('circle').hasAttribute('stroke-dasharray'),
        'coincident: shared-cell members wear the dashed ring');
   }
-  finish();
+  part5();
+}
+
+/* docs/126 ② — the metric patches drive the map: frequency patches, EDGE
+ * metrics (2Q Bell / 2Q RB printed ON the edges, stones neutral), the 2×
+ * default zoom with working controls, the fat edge hit area, and the pair
+ * hover popup. */
+function part5() {
+  const win = makeWorld();
+  const topo = {
+    nodes: [
+      { id: 'q1', grid_location: '0,0', T1: 1e-5, f_01: 4.8e9, readout_frequency: 7.2e9 },
+      { id: 'q2', grid_location: '1,0', T1: 2e-5, f_01: 5.1e9, readout_frequency: 7.3e9 },
+      { id: 'q3', grid_location: '0,1', T1: 3e-5, f_01: 4.9e9 },
+    ],
+    edges: [
+      { pair_id: 'q1-2', source: 'q1', target: 'q2', has_cz: true, cz_fidelity: 0.97,
+        gate_kind: 'cz', directed: false, active: null, best_gate: 'cz_flattop',
+        gate_fidelities: [
+          { gate: 'cz_flattop', metric: 'StandardRB', value: 0.951 },
+          { gate: 'cz_gaussian_bipolar', metric: 'StandardRB', value: 0.902 },
+        ],
+        detuning: 2.5e8, has_coupler: true, coupler_decouple_offset: 0.012 },
+      { pair_id: 'q1-3', source: 'q1', target: 'q3', has_cz: true, cz_fidelity: null,
+        gate_kind: 'cz', directed: false, active: null, best_gate: null },
+    ],
+  };
+  mount(win, topo, []);
+  const hero = win.document.getElementById('topo-hero');
+  const doc = win.document;
+
+  const fbtn = hero.querySelector('[data-hero-metric="f_01"]');
+  ok(!!fbtn, 'freq: Qubit freq patch offered');
+  ok(fbtn && fbtn.className.indexOf('active') !== -1, 'freq: f_01 is the default metric');
+  ok(!!hero.querySelector('[data-hero-metric="readout_frequency"]'),
+     'freq: Readout freq patch offered');
+  const q1n = hero.querySelector('[data-hero-qubit="q1"]');
+  ok(q1n && /4\.8000 GHz/.test(q1n.textContent), 'freq: node shows its GHz value on the map');
+
+  const svg = hero.querySelector('svg.topo-hero-svg');
+  ok(svg && (svg.getAttribute('style') || '').indexOf('width:170%') !== -1,
+     'zoom: default is 1.7x the old render (customer dialed 2x back)');
+  hero.querySelector('[data-hero-zoom="in"]').click();
+  // zoom now applies IN PLACE (a rebuild would destroy the slider mid-drag)
+  ok(svg.style.width === '195%', 'zoom: + steps up in place (' + svg.style.width + ')');
+  ok(Math.abs(parseFloat(win.localStorage.getItem('quam_topo_hero_zoom')) - 1.95) < 1e-9,
+     'zoom persists');
+  hero.querySelector('[data-hero-zoom="fit"]').click();
+  ok(svg.style.width === '100%', 'zoom: Fit returns to the pane fit');
+  ok(!!hero.querySelector('.topo-hero-zslider'), 'zoom: the slider renders');
+
+  // docs/126 compact mode: smaller stones, hero-compact class for the bigger
+  // relative fonts; persisted.
+  hero.querySelector('[data-hero-compact]').click();
+  const csvg = hero.querySelector('svg.topo-hero-svg');
+  ok(csvg.classList.contains('hero-compact'), 'compact: class applied');
+  ok(csvg.querySelector('.topo-hero-stone').getAttribute('r') === '33',
+     'compact: stones shrink to r=33');
+  ok(win.localStorage.getItem('quam_topo_hero_compact') === '1', 'compact persists');
+  hero.querySelector('[data-hero-compact]').click();
+  ok(hero.querySelector('svg.topo-hero-svg .topo-hero-stone').getAttribute('r') === '37',
+     'compact: toggling back restores r=37');
+
+  const eb = hero.querySelector('[data-hero-metric="rb2q_standard"]');
+  ok(!!eb, 'edge metric: 2Q RB patch offered');
+  ok(!!hero.querySelector('[data-hero-metric="cz_fidelity"]'), 'edge metric: 2Q Bell patch offered');
+  eb.click();
+  const evals = hero.querySelectorAll('.topo-hero-eval');
+  ok(evals.length === 1, '2Q RB: exactly the measured edge prints a value (got '
+     + evals.length + ')');
+  ok(evals[0] && /95\.1/.test(evals[0].textContent), '2Q RB: the printed value is the best StandardRB');
+  // docs/126: the value text draws AFTER the role markers (they used to cover
+  // it dead-center on the real chip), and the markers half-overlap the stones
+  const role = hero.querySelector('.cm-role circle');
+  ok(role && (evals[0].compareDocumentPosition(role) & 2) !== 0,
+     'edge values draw ON TOP of the C/T/M markers');
+  // per-gate toggle: two gates ship StandardRB → the pulse bar renders,
+  // picking the second gate switches the printed number
+  const gbar = hero.querySelector('.topo-hero-gatebar');
+  ok(!!gbar, 'per-gate bar renders when >1 gate carries the metric');
+  const gbtn = hero.querySelector('[data-hero-gate="cz_gaussian_bipolar"]');
+  ok(!!gbtn, 'the gate variant is offered by name');
+  gbtn.click();
+  const evals2 = hero.querySelectorAll('.topo-hero-eval');
+  ok(evals2[0] && /90\.2/.test(evals2[0].textContent),
+     'picking a gate shows THAT gate variant RB (' + (evals2[0] && evals2[0].textContent) + ')');
+  ok(win.localStorage.getItem('quam_topo_hero_gate') === 'cz_gaussian_bipolar',
+     'the gate choice persists');
+  hero.querySelector('[data-hero-gate="best"]').click();
+  ok(hero.querySelectorAll('.topo-hero-node-neutral').length === 3,
+     'edge mode: stones go neutral (edges carry the numbers)');
+  ok(hero.querySelectorAll('.topo-hero-val').length === 0, 'edge mode: no stale node values');
+  ok(win.localStorage.getItem('quam_topo_hero_metric') === 'rb2q_standard', 'edge metric persists');
+  const legend = hero.querySelector('.topo-hero-legend');
+  ok(legend && !!legend.querySelector('.topo-hero-lg-grad'), 'edge mode: gradient legend renders');
+
+  const hit = hero.querySelector('.topo-hero-edge-hit');
+  ok(hit && hit.getAttribute('stroke-width') === '22',
+     'edges carry a fat (22) hit area — the customer could not click the old 11');
+
+  const eg = hero.querySelector('[data-hero-pair="q1-2"]');
+  eg.dispatchEvent(new win.Event('mouseenter'));
+  setTimeout(function () {
+    const pop = doc.querySelector('.topo-pair-popup');
+    ok(!!pop, 'pair hover opens the pair popup');
+    ok(pop && /q1-2/.test(pop.textContent), 'pair popup names the pair');
+    ok(pop && /95\.10%/.test(pop.textContent), 'pair popup lists the per-gate RB fidelity');
+    ok(pop && /detuning/.test(pop.textContent), 'pair popup lists the parameters section');
+    finish();
+  }, 400);
 }
 
 function finish() {

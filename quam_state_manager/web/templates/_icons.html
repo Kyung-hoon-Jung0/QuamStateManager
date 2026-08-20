@@ -46,3 +46,22 @@
         stroke-width="2.4"/>
 </svg>
 {%- endmacro %}
+
+{% macro icon_bolt(size=14) -%}
+<svg class="icon-bolt" width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24"
+     fill="currentColor" stroke="none" aria-hidden="true">
+  <path d="M13 2 4.5 13.2h5.3L10 22l8.5-11.2h-5.3L13 2z"/>
+</svg>
+{%- endmacro %}
+
+{# docs/126 #21: printer — the Chip Status report affordance. Same 24x24 /
+   1.7 stroke / currentColor contract as the tool icons above. #}
+{% macro icon_printer(size=14) -%}
+<svg class="ic ic-printer" width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24"
+     fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
+     stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <polyline points="6.5 8.2 6.5 3 17.5 3 17.5 8.2"/>
+  <path d="M6.5 17.5H4.6a2 2 0 0 1-2-2v-5.3a2 2 0 0 1 2-2h14.8a2 2 0 0 1 2 2v5.3a2 2 0 0 1-2 2h-1.9"/>
+  <rect x="6.5" y="14.4" width="11" height="6.6" rx="0.8"/>
+</svg>
+{%- endmacro %}

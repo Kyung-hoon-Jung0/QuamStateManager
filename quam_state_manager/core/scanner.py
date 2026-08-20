@@ -64,6 +64,17 @@ class ExperimentEntry:
     parent_ids: list[int]
     date_str: str
     is_standalone: bool
+    # resolve() result cache — rescan_root keys _entries_by_path by resolved
+    # path, and resolving 2x2,652 entries measured 3.3 s of a 3.5 s refresh
+    # (nt._getfinalpathname walks the filesystem per component). Stamped
+    # lazily on first use; reused entries carry it across rescans.
+    qs_resolved: object = None
+    # the RUN FOLDER mtime at parse time — what lets an incremental rescan
+    # re-parse only entries whose folder actually moved (docs/126 r3: the
+    # manual Refresh re-walked and re-parsed all 2,655 runs to discover that
+    # nothing changed). Any write inside the run — node.json rewritten on
+    # completion, quam_state created or deleted, figures landing — bumps it.
+    run_mtime: float = 0.0
 
     @property
     def short_label(self) -> str:
@@ -299,7 +310,8 @@ class Workspace:
                 self._loaded_stores.pop(resolved, None)
             self._version += 1
 
-    def rescan_root(self, path: str | Path) -> list[ExperimentEntry]:
+    def rescan_root(self, path: str | Path, *,
+                    full: bool = False) -> list[ExperimentEntry]:
         """Re-scan a root folder (e.g. after new experiments are added).
 
         r13 (audit D2): this used to be remove_root + add_root, which rebound
@@ -316,13 +328,24 @@ class Workspace:
             if registered is None:
                 return self.add_root(path)
             key = str(registered)
-            old_probe_dirs = list(self._scan_probes.get(key, {}))
+            old_probe = dict(self._scan_probes.get(key, {}))
+            old_probe_dirs = list(old_probe)
+            old_entries = [e for g in self.tree.get(key, [])
+                           for e in g.entries]
         # Pre-walk sample of the KNOWN spine — a run landing mid-scan in one
         # of these dirs bumps its mtime above the recorded value, so the next
         # rescan_if_stale catches it (same guarantee add_root's shallow
         # pre-probe gives a first scan).
         pre_probe = _probe_dirs(old_probe_dirs) if old_probe_dirs else {}
-        entries = _scan_root(registered)               # the slow part — no lock
+        # docs/126 r3: incremental by default — re-walk only the changed
+        # subtrees and verify the reused entries — because a refresh is
+        # almost always "the same archive plus a few new runs". Full stays
+        # for the first scan, a standalone root, and callers that ask.
+        if (full or not old_probe
+                or any(e.is_standalone for e in old_entries)):
+            entries = _scan_root(registered)           # the slow part — no lock
+        else:
+            entries = _incremental_rescan(registered, old_entries, old_probe)
         groups = _group_by_date(entries)
         spine = _spine_of(registered, entries)
         probe = _probe_dirs(spine)
@@ -338,16 +361,35 @@ class Workspace:
             for d in probe:
                 if d not in pre_probe:
                     probe[d] = 0.0
+        def _rp(e: ExperimentEntry) -> Path:
+            if e.qs_resolved is None:
+                e.qs_resolved = e.quam_state_path.resolve()
+            return e.qs_resolved
+
+        # An incremental rescan that changed NOTHING returns the very same
+        # entry objects in the same order. Publishing it as a new version
+        # would invalidate the tree HTML memo and make every poller refetch
+        # a byte-identical sidebar — so a no-op rescan refreshes only the
+        # staleness bookkeeping (docs/126 r3: this is what turns the
+        # Refresh round-trip from ~1.1 s into the ~0.45 s scan itself).
+        unchanged_scan = (len(entries) == len(old_entries)
+                          and all(a is b for a, b in zip(entries, old_entries)))
         with self._lock:
             if self._find_registered_root(registered) is None:
                 return entries                         # removed mid-scan — discard
+            if unchanged_scan and key in self.tree:
+                self._scan_spines[key] = spine
+                self._scan_probes[key] = probe
+                logger.info("Rescanned %s: unchanged (%d quam_state folders)",
+                            registered, len(entries))
+                return entries
             old_paths = set()
             for group in self.tree.get(key, []):
                 for e in group.entries:
-                    old_paths.add(e.quam_state_path.resolve())
+                    old_paths.add(_rp(e))
             new_paths = set()
             for e in entries:
-                rp = e.quam_state_path.resolve()
+                rp = _rp(e)
                 new_paths.add(rp)
                 self._entries_by_path[rp] = e
             for gone in old_paths - new_paths:
@@ -596,13 +638,24 @@ def _spine_of(root: Path, entries: list[ExperimentEntry]) -> list[str]:
     run_folders = {e.folder_path for e in entries}
     for d in list(spine):                  # r16 ⑦: watch empty/invalid dirs too
         try:
-            for child in d.iterdir():
-                # Discovered run folders are LEAVES (already listed; their
-                # internal churn is not tree structure) — including them
-                # would balloon the probe with every run and make each new
-                # run cost a second healing rescan via the D-B stamp.
-                if child.is_dir() and child not in run_folders:
-                    spine.add(child)
+            # scandir, not iterdir+is_dir(): the enumeration already carries
+            # each child's kind, where Path.is_dir() is one stat per child
+            # (~2,700 stats on a real archive — docs/126 r3 profile).
+            with os.scandir(d) as it:
+                for de in it:
+                    try:
+                        if not de.is_dir():
+                            continue
+                    except OSError:
+                        continue
+                    child = d / de.name
+                    # Discovered run folders are LEAVES (already listed;
+                    # their internal churn is not tree structure) —
+                    # including them would balloon the probe with every run
+                    # and make each new run cost a second healing rescan
+                    # via the D-B stamp.
+                    if child not in run_folders:
+                        spine.add(child)
         except OSError:
             continue
     dirs = list(spine)
@@ -686,6 +739,141 @@ def build_nested_tree(root: Path, entries: list[ExperimentEntry]) -> list[dict]:
     return root_node["children"]
 
 
+def _incremental_rescan(root: Path, old_entries: list[ExperimentEntry],
+                        old_probe: dict[str, float]) -> list[ExperimentEntry]:
+    """Rescan *root* by re-walking ONLY what moved (docs/126 r3).
+
+    A refresh is almost always "the same archive plus a few new runs", yet
+    the manual button re-walked and re-parsed every run (3.7 s over 2,655
+    runs, measured). The recorded spine probe already names every directory
+    whose mtime moves when structure changes anywhere, so:
+
+      1. re-stat the recorded spine — CHANGED dirs (moved, new, vanished)
+         get their subtrees re-walked and re-parsed, pruned at unchanged
+         spine dirs so a bumped ancestor never cascades into a full walk;
+      2. entries outside every re-walked subtree are REUSED — verified
+         cheaply (state.json still there, node.json mtime unmoved; a moved
+         node.json re-parses, so a run finishing still updates its status);
+      3. unchanged spine dirs are re-listed once (pure iterdir) to catch the
+         one structural case mtimes cannot see from above: a run folder that
+         existed at scan time but only later gained its quam_state (creating
+         it bumps the RUN dir, which the spine deliberately does not watch).
+
+    Falls back to nothing here — the CALLER chooses this path only when a
+    previous probe exists and the root is not a standalone quam_state.
+    """
+    cur = _probe_dirs(list(old_probe))
+    changed = {d for d in old_probe if cur.get(d) != old_probe.get(d)}
+    unchanged = frozenset(old_probe) - changed
+
+    # top-most changed dirs only — a changed date dir under a changed chip
+    # dir is covered by the chip dir's walk
+    tops = [d for d in sorted(changed)
+            if not any(d != o and d.startswith(o + os.sep) for o in changed)]
+
+    fresh: dict[Path, ExperimentEntry] = {}
+    candidates: list[Path] = []
+    for t in tops:
+        tp = Path(t)
+        if tp.is_dir():
+            candidates.extend(_discover(tp, prune=unchanged))
+
+    # An entry is REPLACED by the re-walk only if the walk actually reaches
+    # it: from its folder upward, meeting an UNCHANGED spine dir first means
+    # the walk prunes there (the entry is reused), meeting a walked top first
+    # means it is re-visited. A bare startswith(top) check dropped every
+    # entry whenever the ROOT was the changed top (any new date dir bumps
+    # it), and the sweep then re-parsed the whole archive to rescue them.
+    tops_set = set(tops)
+
+    def _rewalked(folder: Path) -> bool:
+        d = folder
+        while True:
+            sd = str(d)
+            if sd in unchanged:
+                return False               # pruned above the entry
+            if sd in tops_set:
+                return True                # reached without a prune
+            nd = d.parent
+            if nd == d:
+                return False               # outside every walked top
+            d = nd
+
+    kept: list[ExperimentEntry] = []
+    for e in old_entries:
+        if _rewalked(e.folder_path):
+            continue                       # replaced (or vanished) by a re-walk
+        kept.append(e)
+
+    # Verify pass — ONE os.scandir per run-parent directory. A directory
+    # enumeration on Windows carries every child entry attributes, so this
+    # reads thousands of run mtimes in a handful of syscalls where per-entry
+    # stat/is_file calls measured ~4 s (the first cut of this function). A
+    # kept entry whose run folder mtime moved re-parses (a finishing run
+    # rewrites node.json, quam_state can appear or vanish, figures land —
+    # all bump it); one that vanished from its listing is dropped; an
+    # unmoved one is reused untouched. The same listings also name child
+    # dirs with NO entry — the late-quam_state case — which get one
+    # validity check each.
+    by_parent: dict[Path, list[ExperimentEntry]] = {}
+    for e in kept:
+        by_parent.setdefault(e.folder_path.parent, []).append(e)
+    listing_dirs = set(by_parent) | {Path(d) for d in unchanged}
+    listings: dict[Path, dict[str, tuple[bool, float]]] = {}
+    for d in listing_dirs:
+        lst: dict[str, tuple[bool, float]] = {}
+        try:
+            with os.scandir(d) as it:
+                for de in it:
+                    try:
+                        lst[de.name] = (de.is_dir(), de.stat().st_mtime)
+                    except OSError:
+                        continue
+        except OSError:
+            listings[d] = {}
+            continue
+        listings[d] = lst
+
+    verified: list[ExperimentEntry] = []
+    reparse: list[Path] = []
+    for parent, es in by_parent.items():
+        lst = listings.get(parent, {})
+        for e in es:
+            info = lst.get(e.folder_path.name)
+            if info is None or not info[0]:
+                continue                   # the run folder is gone
+            if info[1] != e.run_mtime:
+                reparse.append(e.quam_state_path)
+            else:
+                verified.append(e)
+    kept = verified
+
+    # the late-quam_state sweep, from the SAME listings (no new I/O)
+    known_runs = {e.folder_path for e in kept} | {qs.parent for qs in reparse}
+    for d, lst in listings.items():
+        for name, (is_dir, _mt) in lst.items():
+            child = d / name
+            if not is_dir or child in known_runs or str(child) in old_probe:
+                continue
+            qs = child / "quam_state"
+            if _is_quam_state_folder(qs):
+                candidates.append(qs)
+    candidates.extend(reparse)
+
+    if candidates:
+        seen: set[Path] = set()
+        todo = [c for c in candidates
+                if _is_quam_state_folder(c) and not (c in seen or seen.add(c))]
+        if todo:
+            workers = min(_SCAN_PARSE_WORKERS, len(todo))
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                for e in ex.map(_parse_experiment_folder, todo):
+                    fresh[e.folder_path] = e
+
+    kept = [e for e in kept if e.folder_path not in fresh]
+    return kept + list(fresh.values())
+
+
 def _scan_root(root: Path) -> list[ExperimentEntry]:
     """Recursively find all quam_state folders under *root* and parse metadata.
 
@@ -713,9 +901,32 @@ def _scan_root(root: Path) -> list[ExperimentEntry]:
 
     # Discovery pass.
     _TRUNCATED_ROOTS.discard(str(root))     # re-decided by THIS walk (docs/105 #9)
+    candidates = _discover(root)
+
+    if not candidates:
+        return []
+
+    # Parse pass — bounded parallelism. ``ThreadPoolExecutor.map``
+    # preserves input order so the resulting list is reproducible.
+    workers = min(_SCAN_PARSE_WORKERS, len(candidates))
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        return list(ex.map(_parse_experiment_folder, candidates))
+
+
+def _discover(root: Path, prune: frozenset[str] = frozenset()) -> list[Path]:
+    """The os.walk half of a scan: every quam_state dir under *root*.
+
+    ``prune`` (docs/126 r3, incremental rescan) names spine directories whose
+    mtime did NOT move — their contents are provably what the previous scan
+    recorded, so the walk skips their subtrees instead of re-visiting
+    thousands of run folders to rediscover what it already knows.
+    """
     candidates: list[Path] = []
     visited: set[tuple[int, int]] = set()
     for dirpath, dirnames, _filenames in os.walk(root, followlinks=True):
+        if prune and dirpath != str(root) and dirpath in prune:
+            dirnames.clear()
+            continue
         if len(visited) >= _SCAN_DIR_CAP:
             # The inode guard stops CYCLES, not scope — a symlink escaping to a
             # huge tree (/, $HOME) would otherwise walk the whole filesystem.
@@ -744,15 +955,7 @@ def _scan_root(root: Path) -> list[ExperimentEntry]:
         if dp.name == "quam_state" and _is_quam_state_folder(dp):
             candidates.append(dp)
             dirnames.clear()
-
-    if not candidates:
-        return []
-
-    # Parse pass — bounded parallelism. ``ThreadPoolExecutor.map``
-    # preserves input order so the resulting list is reproducible.
-    workers = min(_SCAN_PARSE_WORKERS, len(candidates))
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        return list(ex.map(_parse_experiment_folder, candidates))
+    return candidates
 
 
 def _is_quam_state_folder(path: Path) -> bool:
@@ -765,6 +968,10 @@ def _parse_experiment_folder(quam_state_path: Path) -> ExperimentEntry:
     experiment_folder = quam_state_path.parent
     node_json_path = experiment_folder / "node.json"
 
+    try:
+        run_mtime = experiment_folder.stat().st_mtime
+    except OSError:
+        run_mtime = 0.0
     if not node_json_path.is_file():
         return _make_standalone_entry(quam_state_path)
 
@@ -819,6 +1026,7 @@ def _parse_experiment_folder(quam_state_path: Path) -> ExperimentEntry:
         parent_ids=[int(p) for p in parent_ids if isinstance(p, (int, float))],
         date_str=date_str,
         is_standalone=False,
+        run_mtime=run_mtime,
     )
 
 

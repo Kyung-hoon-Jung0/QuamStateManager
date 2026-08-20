@@ -59,6 +59,10 @@
             <button type="button" class="bulk-dyncol-hint" id="bulk-dyncol-hint" hidden
                     onclick="BulkEdit.showMatchedDynCols()"
                     title="Hidden chip properties match your search — click to enable those columns"></button>
+            {# docs/120 item 8: searching a VALUE hides the rows that don't hold
+               it yet — which are exactly the rows you would type it into. #}
+            <button type="button" class="bulk-valrow-hint" id="bulk-valrow-hint" hidden
+                    onclick="BulkEdit.toggleStrandedRows()"></button>
         </span>
         <span class="bulk-band-warn" id="bulk-band-warn" aria-live="polite" hidden></span>
         <span class="bulk-dirty-count" id="bulk-dirty-count" aria-live="polite"></span>
@@ -74,20 +78,53 @@
                title="When on, editing a qubit/readout frequency mirrors its f₀₁↔RF twin — but only when the two are currently equal. RF_frequency is what the hardware actually plays (the config's IF is inferred from it); f_01 is bookkeeping the calibration keeps equal to it. An already-detuned pair is left untouched. Turn off to detune one deliberately.">
             <input type="checkbox" id="bulk-freq-sync" checked onchange="BulkEdit.setFreqSync(this.checked)">
             &#128279;&nbsp;Sync f&#8320;&#8321;&#8596;RF</label>
-        <span class="bulk-font-ctl" title="Cell readability — size · weight · letter spacing">
-            <span class="bulk-font-label">Aa</span>
-            <button type="button" class="btn-xs outline bulk-font-preset" data-fs="0.85" onclick="BulkEdit.setFont(0.85)">S</button>
-            <button type="button" class="btn-xs outline bulk-font-preset" data-fs="1" onclick="BulkEdit.setFont(1)">M</button>
-            <button type="button" class="btn-xs outline bulk-font-preset" data-fs="1.25" onclick="BulkEdit.setFont(1.25)">L</button>
-            <input type="range" id="bulk-font-slider" min="0.75" max="1.7" step="0.05" value="1"
-                   oninput="BulkEdit.setFont(this.value)" aria-label="Cell font size" title="Font size">
-            <button type="button" class="btn-xs outline bulk-bold-toggle" id="bulk-bold"
-                    onclick="BulkEdit.toggleBold()" aria-pressed="false" title="Bold values">B</button>
-            <span class="bulk-font-label bulk-ls-label" title="Letter spacing">&#8596;</span>
-            <input type="range" id="bulk-ls-slider" min="0" max="0.12" step="0.02" value="0"
-                   oninput="BulkEdit.setLetterSpacing(this.value)" aria-label="Cell letter spacing" title="Letter spacing (digit gap)">
+    </div>
+    {# ── docs/120 item 4: quick-filter chips ────────────────────────────────
+       The readability cluster (Aa · S M L · B · letter spacing) that used to
+       occupy this row moved into Settings ▸ Live Edit — it is set once and
+       then never touched, while THIS is the row a user works in all day.
+
+       The customer's own description of the daily loop: "go to the search box
+       and TYPE x180, amp, ro, power ... it's very repetitive and eats time."
+       So the parameters are clickable, multi-select, and they drive the SAME
+       #bulk-search box the user can still type into freely — which is why one
+       chip filters both grids (they share that input) and why typing a chip's
+       word by hand lights the chip. Chips are a VIEW of the query, not a
+       second filter that could disagree with it.
+
+       Terms are validated server-side against this chip's real columns
+       (_bulk_filter_chips), so a chip is never offered that would match
+       nothing, and any band the curated keywords miss is appended.
+
+       Reading order is the customer's own sentence, "x180 amp": the chip's own
+       OPERATIONS first (which pulse), then the property words (which value),
+       then any remaining band. `x180` is an operation, not a section — the
+       band sweep alone could never have offered the very term they named
+       first. #}
+    {% if filter_chips %}
+    <div class="bulk-chipbar" id="bulk-chipbar" role="group" aria-label="Quick parameter filters">
+        {# Leftmost and prominent, per the user. AND is the default: a lab types
+           "x180 amp" far more often than it wants a union. #}
+        <button type="button" class="bulk-chip-mode" id="bulk-chip-mode"
+                aria-pressed="false" data-mode="and"
+                title="How selected chips combine. AND = a column must match every chip. OR = matching any chip is enough.">AND</button>
+        <span class="bulk-chip-scroll">
+        {% for ch in filter_chips %}
+            <button type="button" class="bulk-chip bulk-chip-{{ ch.kind|default('kw') }}"
+                    data-chip-term="{{ ch.term }}" aria-pressed="false"
+                    title="{{ ch.n }} column{{ '' if ch.n == 1 else 's' }} match &quot;{{ ch.term }}&quot;">{{ ch.label }}</button>
+        {% endfor %}
+        </span>
+        {# Zero matches is the one moment a user is likely to want the other
+           mode, so offer it AS a mode switch rather than making them find the
+           toggle: accepting costs the same single click. #}
+        <span class="bulk-chip-offer" id="bulk-chip-offer" hidden>
+            <span class="bulk-chip-offer-text">No matches — try OR?</span>
+            <button type="button" class="bulk-chip-offer-yes" id="bulk-chip-offer-yes">Yes</button>
+            <button type="button" class="bulk-chip-offer-no" id="bulk-chip-offer-no">No</button>
         </span>
     </div>
+    {% endif %}
     {# docs/94: the derived-column cap must never be silent — when it trips,
        say so where the missing columns would have been. #}
     {% if dyn_truncated %}
@@ -171,9 +208,9 @@
                                {% if cell.lo %}data-lo-field="{{ cell.lo.field }}"{% if cell.lo.band is not none %} data-band="{{ cell.lo.band }}"{% endif %}{% if cell.lo.freq is not none %} data-freq="{{ cell.lo.freq }}"{% endif %}{% if cell.lo.peer_band is not none %} data-peer-band="{{ cell.lo.peer_band }}"{% endif %}{% if cell.lo.peer_qubit %} data-peer="{{ cell.lo.peer_qubit }}"{% endif %}{% endif %}
                                {%- if cell.missing %} placeholder="not set" data-missing="1"{% endif %}
                                {%- if cell.phys %} data-phys-kind="{{ cell.phys.kind }}"{% if cell.phys.kind == 'mw' %} data-phys-fsp="{{ cell.phys.fsp }}"{% endif %}{% endif %}
-                               title="{{ cell.dot_path }}{% if cell.str_numeric %} — stored as TEXT (string), not a real: edits keep text unless the type is converted (Json Tree View ⚙ → real, or edit there){% endif %}{% if cell.lo and cell.lo.peer_qubit %} — shares the LO with {{ cell.lo.peer_qubit }} (band {{ cell.lo.peer_band }}); coupled ports must use the same band{% elif cell.is_pointer %} — pointer alias (edits the resolved target){% endif %}{% if cell.phys and cell.phys.kind == 'mw' %} — actual output shown below (P = FSP {{ cell.phys.fsp }} dBm + 20·log10|amp|; V is rms @ 50 Ω){% elif cell.phys %} — actual output shown below (LF amplitude IS the output voltage){% endif %}">
+                               title="{{ cell.dot_path }}{% if cell.str_numeric %} — stored as TEXT (string), not a real: edits keep text unless the type is converted (Json Tree View ⚙ → real, or edit there){% endif %}{% if cell.lo and cell.lo.peer_qubit %} — shares the LO with {{ cell.lo.peer_qubit }} (band {{ cell.lo.peer_band }}); coupled ports must use the same band{% elif cell.ptr_kind == 'runtime' %} — a value the component computes at runtime; the reference shown is how the chip declares it{% elif cell.ptr_kind == 'dangling' %} — a reference that currently resolves to NOTHING (dangling). The value shown IS the reference; type a pointer to re-point it{% elif cell.ptr_kind %} — a reference to a {{ cell.ptr_kind }}, not a value. The value shown IS the reference; type a pointer to re-point it{% elif cell.is_pointer %} — pointer alias (edits the resolved target){% endif %}{% if cell.phys and cell.phys.kind == 'mw' %} — actual output shown below (P = FSP {{ cell.phys.fsp }} dBm + 20·log10|amp|; V is rms @ 50 Ω){% elif cell.phys %} — actual output shown below (LF amplitude IS the output voltage){% endif %}">
                         {% if cell.str_numeric %}<span class="bulk-strq" aria-hidden="true">"</span>{% endif %}
-                        {% if cell.lo and cell.lo.peer_qubit %}<span class="bulk-shared" title="Shares the LO with {{ cell.lo.peer_qubit }} (band {{ cell.lo.peer_band }}) — LO-coupled ports must use the same band (bands 1 & 3 compatible; band 2 only with band 2)">&#9888;</span>{% elif cell.is_pointer %}<span class="bulk-ptr" title="JSON pointer — editing writes the resolved target">&#8599;</span>{% endif %}
+                        {% if cell.lo and cell.lo.peer_qubit %}<span class="bulk-shared" title="Shares the LO with {{ cell.lo.peer_qubit }} (band {{ cell.lo.peer_band }}) — LO-coupled ports must use the same band (bands 1 & 3 compatible; band 2 only with band 2)">&#9888;</span>{% elif cell.is_pointer %}{% if cell.ptr_kind == 'runtime' %}<span class="bulk-ptr" title="Computed at runtime by the component — the reference is how the chip declares it">&#8635;</span>{% elif cell.ptr_kind == 'dangling' %}<span class="bulk-ptr bulk-ptr-dangling" title="Dangling reference — it resolves to nothing on this chip">&#9888;&#8599;</span>{% elif cell.ptr_kind %}<span class="bulk-ptr bulk-ptr-ref" title="A reference to a {{ cell.ptr_kind }} — the cell IS the reference; type a pointer to re-point it">&#8599;</span>{% else %}<span class="bulk-ptr" title="JSON pointer — editing writes the resolved target">&#8599;</span>{% endif %}{% endif %}
                         <span class="bulk-band-msg" hidden></span>
                         {# docs/109: the TRUE physical output — always visible, recomputed
                            live as the user types (data-phys-* attrs above). #}
@@ -291,9 +328,9 @@
                                {% if cell.lo %}data-lo-field="{{ cell.lo.field }}"{% if cell.lo.band is not none %} data-band="{{ cell.lo.band }}"{% endif %}{% if cell.lo.freq is not none %} data-freq="{{ cell.lo.freq }}"{% endif %}{% if cell.lo.peer_band is not none %} data-peer-band="{{ cell.lo.peer_band }}"{% endif %}{% if cell.lo.peer_qubit %} data-peer="{{ cell.lo.peer_qubit }}"{% endif %}{% endif %}
                                {%- if cell.missing %} placeholder="not set" data-missing="1"{% endif %}
                                {%- if cell.phys %} data-phys-kind="{{ cell.phys.kind }}"{% if cell.phys.kind == 'mw' %} data-phys-fsp="{{ cell.phys.fsp }}"{% endif %}{% endif %}
-                               title="{{ cell.dot_path }}{% if cell.str_numeric %} — stored as TEXT (string), not a real: edits keep text unless the type is converted (Json Tree View ⚙ → real, or edit there){% endif %}{% if cell.is_pointer %} — pointer alias (edits the resolved target){% endif %}{% if cell.phys and cell.phys.kind == 'mw' %} — actual output shown below (P = FSP {{ cell.phys.fsp }} dBm + 20·log10|amp|; V is rms @ 50 Ω){% elif cell.phys %} — actual output shown below (LF amplitude IS the output voltage){% endif %}">
+                               title="{{ cell.dot_path }}{% if cell.str_numeric %} — stored as TEXT (string), not a real: edits keep text unless the type is converted (Json Tree View ⚙ → real, or edit there){% endif %}{% if cell.ptr_kind == 'runtime' %} — a value the component computes at runtime; the reference shown is how the chip declares it{% elif cell.ptr_kind == 'runtime' %} — a value the component computes at runtime; the reference shown is how the chip declares it{% elif cell.ptr_kind == 'dangling' %} — a reference that currently resolves to NOTHING (dangling). The value shown IS the reference; type a pointer to re-point it{% elif cell.ptr_kind %} — a reference to a {{ cell.ptr_kind }}, not a value. The value shown IS the reference; type a pointer to re-point it{% elif cell.is_pointer %} — pointer alias (edits the resolved target){% endif %}{% if cell.phys and cell.phys.kind == 'mw' %} — actual output shown below (P = FSP {{ cell.phys.fsp }} dBm + 20·log10|amp|; V is rms @ 50 Ω){% elif cell.phys %} — actual output shown below (LF amplitude IS the output voltage){% endif %}">
                         {% if cell.str_numeric %}<span class="bulk-strq" aria-hidden="true">"</span>{% endif %}
-                        {% if cell.is_pointer %}<span class="bulk-ptr" title="JSON pointer — editing writes the resolved target">&#8599;</span>{% endif %}
+                        {% if cell.is_pointer %}{% if cell.ptr_kind == 'runtime' %}<span class="bulk-ptr" title="Computed at runtime by the component — the reference is how the chip declares it">&#8635;</span>{% elif cell.ptr_kind == 'dangling' %}<span class="bulk-ptr bulk-ptr-dangling" title="Dangling reference — it resolves to nothing on this chip">&#9888;&#8599;</span>{% elif cell.ptr_kind %}<span class="bulk-ptr bulk-ptr-ref" title="A reference to a {{ cell.ptr_kind }} — the cell IS the reference; type a pointer to re-point it">&#8599;</span>{% else %}<span class="bulk-ptr" title="JSON pointer — editing writes the resolved target">&#8599;</span>{% endif %}{% endif %}
                         {% if cell.phys %}<span class="bulk-phys" aria-hidden="true"{% if cell.phys.kind == 'mw' %} data-dbm="{{ cell.phys.dbm }}"{% endif %}>{{ cell.phys.text }}</span>{% endif %}
                         <span class="bulk-ba" aria-hidden="true"><span class="bulk-ba-old">{{ cell.old_display }}</span> &rarr; <span class="bulk-ba-new"></span><span class="bulk-ba-delta" hidden></span></span>
                         {% endif %}
@@ -327,18 +364,11 @@
             </div>
             <div class="av-toolbar-right">
                 {# A1: All-values readability controls (size · bold · spacing), like Live Grid #}
-                <span class="av-font-ctl" title="Readability — size · weight · spacing">
-                    <span class="av-font-label">Aa</span>
-                    <button type="button" class="btn-xs outline av-font-preset" data-fs="0.85" onclick="AllValues.setFont(0.85)" title="Small">S</button>
-                    <button type="button" class="btn-xs outline av-font-preset" data-fs="1" onclick="AllValues.setFont(1)" title="Medium">M</button>
-                    <button type="button" class="btn-xs outline av-font-preset" data-fs="1.2" onclick="AllValues.setFont(1.2)" title="Large">L</button>
-                    <input type="range" id="av-font-slider" min="0.85" max="1.3" step="0.05" value="1" oninput="AllValues.setFont(this.value)" aria-label="Font size" title="Font size">
-                    <button type="button" class="btn-xs outline av-bold-toggle" id="av-bold" onclick="AllValues.toggleBold()" aria-pressed="false" title="Bold values">B</button>
-                    <span class="av-font-label" title="Letter spacing">↔</span>
-                    <input type="range" id="av-ls-slider" min="0" max="0.12" step="0.02" value="0" oninput="AllValues.setLetterSpacing(this.value)" aria-label="Letter spacing" title="Letter spacing">
-                    <span class="av-font-label" title="Row spacing">↕</span>
-                    <input type="range" id="av-rh-slider" min="1" max="1.6" step="0.05" value="1" oninput="AllValues.setRowSpacing(this.value)" aria-label="Row spacing" title="Row spacing (row height)">
-                </span>
+                {# docs/120 item 4: the Flat-view readability cluster moved to
+                   Settings ▸ Live Edit along with the Table view's. It was left
+                   here as well in the first cut, which produced DUPLICATE
+                   element ids — getElementById returned the Settings copy, so
+                   these sliders silently stopped tracking the real setting. #}
                 <button type="button" class="btn-xs outline" id="av-expand-all" title="Expand every group">Expand all</button>
                 <button type="button" class="btn-xs outline" id="av-collapse-all" title="Collapse every group">Collapse all</button>
                 <span class="bulk-dirty-count" id="av-dirty-count" aria-live="polite"></span>

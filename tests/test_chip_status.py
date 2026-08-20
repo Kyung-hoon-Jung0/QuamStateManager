@@ -211,3 +211,64 @@ def test_unnormalized_confusion_matrix_yields_no_readout_fidelity():
     assert q._assignment_fidelity([[98, 2], [5, 95]]) is None        # counts, rows sum 100
     assert q._assignment_fidelity([[0.5, 0.2], [0.1, 0.3]]) is None  # rows don't sum ~1
     assert q._cm_diag([[98, 2], [5, 95]], 0) is None
+
+
+class TestNoDataIsNotInSpec:
+    """The chip announced "✓ Chip looks healthy — all 20 qubits in spec" over a
+    chip with NO coherence or fidelity data at all.
+
+    Found by driving real Chrome against the customer chip, where T1, T2ramsey,
+    T2echo, gate_fidelity and cz_fidelity are null CHIP-WIDE — the ordinary
+    state of a chip in bring-up, and the exact user this claim misleads.
+
+    Mechanism: `_verdict(null, …)` returns neither 'fail' nor 'warn', so a qubit
+    that was never measured never enters `below`; belowCount 0 then reads as
+    "everything passed". The map's own legend already carried a distinct "No
+    data" swatch — only the verdict was pretending. The data needed to say this
+    honestly (measured vs missing) was already computed.
+    """
+
+    def _js(self):
+        from pathlib import Path
+        return Path("quam_state_manager/web/static/chip-status.js").read_text(encoding="utf-8")
+
+    def test_the_verdict_counts_what_was_actually_measured(self):
+        src = self._js()
+        assert "var measuredCount = nodes.filter(" in src
+        assert "var czMeasured = edges.filter(" in src
+
+    def test_nothing_measured_is_its_own_state_not_pass(self):
+        """Green with a ✓ is the lie; the third state has to exist."""
+        src = self._js()
+        assert "verdict = 'unknown';" in src
+        assert "No coherence or fidelity data on this chip yet" in src
+        assert "nothing to judge" in src
+
+    def test_a_partly_measured_chip_says_how_many(self):
+        src = self._js()
+        assert "' not measured yet'" in src
+        assert "measured qubit" in src
+
+    def test_the_tiles_say_no_data_rather_than_all_in_spec(self):
+        src = self._js()
+        i = src.index("_hTile('qubits below spec'")
+        block = src[i:i + 700]
+        assert "'no data yet'" in block
+        assert "measuredCount ? 'pass' : 'neutral'" in block
+        j = src.index("_hTile('CZ below spec'")
+        cz = src[j:j + 700]
+        assert "'no data yet'" in cz
+        assert "czMeasured ? 'pass' : 'neutral'" in cz
+
+    def test_a_fully_measured_healthy_chip_still_says_so(self):
+        """The happy path must not have been traded away."""
+        src = self._js()
+        assert "Chip looks healthy — all ' + nodes.length + ' qubits in spec" in src
+
+    def test_the_unknown_banner_is_not_styled_as_success(self):
+        from pathlib import Path
+        css = Path("quam_state_manager/web/static/style.css").read_text(encoding="utf-8")
+        assert ".topo-verdict-banner.unknown" in css
+        i = css.index(".topo-verdict-banner.unknown")
+        rule = css[i:i + 220]
+        assert "success" not in rule

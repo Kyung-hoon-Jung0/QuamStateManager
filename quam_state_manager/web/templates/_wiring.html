@@ -46,8 +46,6 @@
             onclick="setChipStatusView('topology', this, true)" title="Jump to the chip topology diagram">Topology</button>
     <button type="button" class="topo-subnav-btn" role="tab" data-view="overview"
             onclick="setChipStatusView('overview', this, true)" title="Jump to the per-metric overview">Overview</button>
-    <button type="button" class="topo-subnav-btn" role="tab" data-view="distributions"
-            onclick="setChipStatusView('distributions', this, true)" title="Jump to the distribution histograms">Distributions</button>
     <button type="button" class="topo-subnav-btn" role="tab" data-view="gate"
             onclick="setChipStatusView('gate', this, true)" title="Jump to the 2Q gate fidelity (RB)">Gate (2Q)</button>
     <button type="button" class="topo-subnav-btn" role="tab" data-view="fidelity"
@@ -58,6 +56,9 @@
             onclick="setChipStatusView('frequencies', this, true)" title="Jump to the frequency panels">Frequencies</button>
     <button type="button" class="topo-subnav-btn" role="tab" data-view="calibration"
             onclick="setChipStatusView('calibration', this, true)" title="Jump to the calibration panels">Calibration</button>
+    {# docs/120 items 5+9 #}
+    <button type="button" class="topo-subnav-btn" role="tab" data-view="trends"
+            onclick="setChipStatusView('trends', this, true)" title="Jump to the chip-wide trends">Trends</button>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
@@ -83,19 +84,27 @@
         <button class="outline btn-sm history-toggle-btn" onclick="toggleHistoryPanel()">
             History (<span id="history-count">{{ history_count | default(0) }}</span>)
         </button>
-        <label class="topo-toggle">
-            <input type="checkbox" id="topo-labels-toggle" checked onchange="toggleEdgeLabels(this.checked)">
-            Edge labels
-        </label>
+        {# docs/120 item 11: the "Edge labels" checkbox went with the card
+           diagram it controlled. The hero has no text labels on its edges —
+           direction is the C/T/M markers and the chevrons — so the toggle
+           would have been a control that silently does nothing. #}
     </div>
     {# Hero chip map (docs/92 P1): the at-a-glance SVG map — geometry/mode from
        TopoGraph.layoutFor (physical / labelled-logical / none), node fill = the
        selected metric through the SAME palette + physical gate as the heatmaps.
        Built client-side by ChipStatus.mount's buildHeroMap. #}
+    {# docs/120 item 11 — ONE chip map. A second, card-style diagram used to
+       render directly below this one (`#topo-html-wrap`), left in place when
+       the hero shipped ("cards below untouched", docs/92). The customer
+       reported exactly that: "the qubit layout appears twice ... why does the
+       first one exist?", while preferring this one. The cards are gone; the
+       hero took their space, their frequency chevrons and their control/target
+       information, and — critically — the qubit detail popup they used to own
+       now lives on its own (chip-status.js buildQubitPopup). #}
     <div id="topo-hero" class="topo-hero"></div>
     <div id="topology-legend" class="topology-legend"></div>
-    <p class="topo-hint"><small class="muted">Tip: click a qubit to inspect it &middot; double-click for its wiring JSON &middot; <kbd>Tab</kbd> into the grid, <kbd>&larr;&uarr;&darr;&rarr;</kbd> to move, <kbd>Enter</kbd> to inspect, <kbd>Esc</kbd> to close</small></p>
-    <div class="topo-html-wrap" id="topo-html-wrap"></div>
+    <p class="topo-hint"><small class="muted">Tip: click a qubit to inspect it &middot; double-click for its wiring JSON &middot; hover for its parameters &middot; <kbd>Tab</kbd> into the grid, <kbd>&larr;&uarr;&darr;&rarr;</kbd> to move, <kbd>Enter</kbd> to inspect, <kbd>Esc</kbd> to close<br>
+    <b>C</b> control &middot; <b>T</b> target &middot; <b>M</b> the qubit whose flux moves during the gate &middot; the chevrons point at the <em>lower</em> f&#8320;&#8321; of a pair</small></p>
     <div class="topo-colorscale-note">
         <small>Heatmap: <span id="cs-low" class="cs-swatch">&#9632;</span> low <span id="cs-mid" class="cs-swatch">&#9632;</span> mid <span id="cs-high" class="cs-swatch">&#9632;</span> high</small>
         <select id="palette-selector" class="palette-selector" onchange="switchPalette(this.value)"></select>
@@ -115,31 +124,6 @@
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
-     Section 4: Distribution Histograms
-     ═══════════════════════════════════════════════════════════════════ -->
-<div class="topo-section" data-topo-section="distributions">
-    <h3 class="topo-section-title">Distributions</h3>
-    <div class="topo-histograms" id="topo-histograms">
-        <div class="topo-hist-box" id="hist-box-gate-fidelity">
-            <div class="topo-hist-title">Gate Fidelity</div>
-            <div class="topo-hist-chart" id="hist-gate-fidelity"></div>
-        </div>
-        <div class="topo-hist-box" id="hist-box-t1">
-            <div class="topo-hist-title">T1</div>
-            <div class="topo-hist-chart" id="hist-t1"></div>
-        </div>
-        <div class="topo-hist-box" id="hist-box-cz-fidelity">
-            <div class="topo-hist-title">CZ Fidelity</div>
-            <div class="topo-hist-chart" id="hist-cz-fidelity"></div>
-        </div>
-        <div class="topo-hist-box" id="hist-box-f01">
-            <div class="topo-hist-title">f_01 Frequency</div>
-            <div class="topo-hist-chart" id="hist-f01"></div>
-        </div>
-    </div>
-</div>
-
-<!-- ═══════════════════════════════════════════════════════════════════
      Section 5: Gate Fidelity — 2Q RB (pair-based: grid + bar chart)
      ═══════════════════════════════════════════════════════════════════ -->
 <div id="topo-2q-rb-panels" data-topo-section="2qrb"></div>
@@ -148,6 +132,18 @@
      Section 6: Per-Metric Detail Panels (grid + bar chart each)
      ═══════════════════════════════════════════════════════════════════ -->
 <div id="topo-metric-panels" data-topo-section="metrics"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     docs/120 items 5+9 — chip-wide Trends: every qubit on ONE plot per
+     metric. Param History answers "how did THIS qubit move"; the customer
+     asked for the integrated view, and asked for it twice.
+     Lazily fetched (see _ensureSectionBuilt) — it reads the history index,
+     which is not cheap enough to ride the Chip Status page render.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="topo-section" data-topo-section="trends">
+    <h3 class="topo-section-title">Trends</h3>
+    <div id="topo-trends" class="topo-trends"></div>
+</div>
 
 <!-- JSON drill-down panel (hidden by default) -->
 <div id="json-panel" class="json-panel hidden">

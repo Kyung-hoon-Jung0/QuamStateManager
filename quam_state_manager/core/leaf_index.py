@@ -452,7 +452,13 @@ def rebuild(conn: sqlite3.Connection, *, timestamps: Iterable[str],
     n_rows = 0
     truncated = False
     n_loaded = 0
+    # Real progress for the brand indicator (docs/126 r3) — a 1,000-snapshot
+    # rebuild parses every state.json and the user watching the counter is
+    # exactly the person waiting on it.
+    from quam_state_manager.core.progress import Progress
+    _prog = Progress("Rebuilding change index", total=len(merged))
     for sid, (ts, is_new) in enumerate(merged):
+        _prog.step()
         payload = load(ts) if is_new else None
         if payload is None:                     # retained, or unreadable now
             meta = retained_meta.get(ts) or (None, None, None, None)
@@ -486,6 +492,7 @@ def rebuild(conn: sqlite3.Connection, *, timestamps: Iterable[str],
             n_rows += len(rows)
     _meta_set(conn, "truncated", "1" if truncated else "0")
     clear_dirty(conn)
+    _prog.finish()
     return {"snapshots": len(merged), "rows": n_rows, "kept": len(retained),
             "loaded": n_loaded}
 

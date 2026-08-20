@@ -1,0 +1,50 @@
+{# docs/126 ⑦b — build Gaussian-filtered CZ macros from a pair's calibrated
+   cz_flattop (the customer's add_gaussian_cz_macros.py workflow, in SM).
+   Creation lands in the WORKING COPY like every edit (one Review bundle,
+   one Ctrl+Z); Apply to live stays the user's explicit act (docs/107). #}
+<div id="gcz-root" class="pulse-create-card">
+    <div class="inspector-header-line">
+        <h3 style="margin:0">Gaussian CZ macros</h3>
+        <button class="inspector-close" onclick="document.getElementById('inspector-pane').innerHTML=''"
+                title="Close" aria-label="Close">&times;</button>
+    </div>
+    <p class="muted" style="font-size:.82em;margin:.3rem 0 .6rem">
+        Builds <code>cz_gaussian_unipolar</code> + <code>cz_gaussian_bipolar</code>
+        for a pair from its calibrated <code>cz_flattop</code> (amplitude +
+        flat_length; the coupler pulse too when the pair has one), and the
+        pointer-linked operations on the moving qubit's z line and the coupler
+        — the macro's pulse stays the single source of truth.
+    </p>
+    {% if not pairs %}
+    <p class="muted">No pair on this chip carries a <code>cz_flattop</code>
+        macro to source from.</p>
+    {% else %}
+    <form id="gcz-form"
+          hx-post="/api/pulse/gaussian-cz" hx-target="#gcz-result" hx-swap="innerHTML">
+        <label>Pair
+            <select name="pair_id" required>
+                {% for p in pairs %}
+                <option value="{{ p.pair_id }}">{{ p.pair_id }}{{ " · coupler" if p.has_coupler }}{{ " · already has Gaussian macros" if p.existing }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <div class="gcz-params">
+            <label>Padding (ns)
+                <input type="number" name="padding_length" value="20" step="1" min="0">
+            </label>
+            <label>Qubit filter (MHz)
+                <input type="number" name="qubit_filter_mhz" value="20" step="any" min="0.1">
+            </label>
+            <label>Coupler filter (MHz)
+                <input type="number" name="coupler_filter_mhz" value="20" step="any" min="0.1">
+            </label>
+        </div>
+        <div style="display:flex;gap:.5rem;align-items:center;margin-top:.4rem">
+            <button type="submit" class="btn-sm primary">Create in working state</button>
+            <small class="muted">6 subtrees, one Review bundle — Apply to live
+                stays yours.</small>
+        </div>
+    </form>
+    {% endif %}
+    <div id="gcz-result" style="margin-top:.5rem"></div>
+</div>

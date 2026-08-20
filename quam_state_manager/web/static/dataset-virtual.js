@@ -1580,6 +1580,29 @@
         if (state.scrollEl) state.scrollEl.scrollTop = 0;   // where new runs sort (newest-first default)
     }
 
+    // docs/126 ⑥: Esc or a click anywhere else DISMISSES the announcement
+    // (customer request). Dismissal only acknowledges — the held rows still
+    // land on the next idle flush; nothing is lost, just no longer announced.
+    function _dismissNewPill() {
+        var el = document.getElementById('ds-new-pill');
+        if (!el || el.hidden) return false;
+        if (state.arrivalUids) state.arrivalUids.clear();
+        _updateNewPill();
+        return true;
+    }
+    if (!window._dsPillDismissBound) {
+        window._dsPillDismissBound = true;
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') _dismissNewPill();
+        });
+        document.addEventListener('click', function (e) {
+            var el = document.getElementById('ds-new-pill');
+            if (!el || el.hidden) return;
+            if (e.target === el || (el.contains && el.contains(e.target))) return;
+            _dismissNewPill();
+        });
+    }
+
     function startPolling() {
         if (state.pollTimer) clearInterval(state.pollTimer);
         state.pollTimer = setInterval(function() {

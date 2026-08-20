@@ -81,10 +81,26 @@
         });
         _updateStickyOffset();
     }
+    // docs/120 item 19 — the pair grid's twin of the qubit grid's geometry
+    // sync, and the reason that fix had to be made TWICE. The page carries two
+    // grids; coalescing only the qubit one handed the whole forced-layout bill
+    // straight to this function (measured: 20 ms -> 579 ms, the new hot spot).
+    // A layout read is not owned by whoever calls it, it is owned by whoever
+    // reads FIRST after a write.
+    // Degrades without rAF — see the twin note in bulk-edit.js.
+    var _rafP = (typeof window !== 'undefined' && window.requestAnimationFrame)
+        ? window.requestAnimationFrame.bind(window)
+        : function (f) { return setTimeout(f, 0); };
+    var _stickyPending = false;
     function _updateStickyOffset() {
-        var t = table(); if (!t) return;
-        var grow = t.querySelector('.bulk-group-row');
-        if (grow) t.style.setProperty('--bulk-grouphead-h', grow.offsetHeight + 'px');
+        if (_stickyPending) return;
+        _stickyPending = true;
+        _rafP(function () {
+            _stickyPending = false;
+            var t = table(); if (!t) return;
+            var grow = t.querySelector('.bulk-group-row');
+            if (grow) t.style.setProperty('--bulk-grouphead-h', grow.offsetHeight + 'px');
+        });
     }
 
     // ── Property-Selection menu ──────────────────────────────────────────────
@@ -854,6 +870,60 @@
         }
         return null;
     }
+
+    /* docs/122 item 3 — the pair grid's half of the undo repaint.
+       Same contract as BulkEdit.revertPaths: patch every cell the /undo
+       response named, report what could not be reached, and leave the decision
+       about an authoritative refetch to the caller. There is no cold-column
+       hydration here because the pair grid is not virtualised. */
+    function _revertPaths(entries) {
+        var t = table();
+        if (!t || !entries || !entries.length) return { patched: 0, missing: 0 };
+        var esc = function (k) {
+            return (window.CSS && CSS.escape) ? CSS.escape(k)
+                                              : String(k).replace(/"/g, '\\"');
+        };
+        var patched = 0, missing = 0, rows = [], covered = [];
+        entries.forEach(function (e) {
+            if (!e || !e.dot_path) return;
+            // BOTH attributes (docs/124 C-2/M-8, same as BulkEdit): the server
+            // names RESOLVED paths; the alias twins (coupler.operations.* over
+            // macros.*) carry them in data-resolved — matching both repaints
+            // value AND data-orig on the twin, so the phantom-dirty cell that
+            // vetoed every later rebuild cannot arise.
+            var q = esc(e.dot_path);
+            var cs = t.querySelectorAll('.bulk-cell[data-dot-path="' + q + '"]'
+                + ', .bulk-cell[data-resolved="' + q + '"]');
+            if (!cs.length) { missing++; return; }
+            // group_digits display string first (docs/124 M-9), and coverage
+            // is only claimed when the repaint can honestly stand in for a
+            // fresh render (docs/124 M-10 + readOnly) — see BulkEdit.
+            var v = e.old_value_disp != null ? String(e.old_value_disp)
+                : (e.old_value_str == null ? '' : String(e.old_value_str));
+            var wrote = 0;
+            var honest = e.old_kind !== 'pointer';
+            Array.prototype.forEach.call(cs, function (c) {
+                if (c.readOnly) return;
+                var isStr = c.hasAttribute('data-str-numeric')
+                    || c.classList.contains('bulk-cell-str');
+                if ((e.old_kind === 'str_numeric') !== isStr) honest = false;
+                c.value = v;
+                c.setAttribute('data-orig', v);
+                c.dispatchEvent(new Event('input', { bubbles: true }));
+                _markCellDirty(c);
+                if (c.classList.contains('bulk-cell-linked')) _mirrorLinked(c);
+                var tr = _rowOf(c);
+                if (tr && rows.indexOf(tr) < 0) rows.push(tr);
+                patched++;
+                wrote++;
+            });
+            if (wrote && honest) covered.push(e.dot_path);
+        });
+        rows.forEach(_refreshRow);
+        if (patched) _refreshGlobal();
+        return { patched: patched, missing: missing, covered: covered };
+    }
+    BulkPairEdit.revertPaths = _revertPaths;
 
     window.BulkPairEdit = BulkPairEdit;
 })();

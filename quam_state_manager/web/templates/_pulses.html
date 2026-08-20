@@ -23,6 +23,10 @@
                hx-indicator="#pulses-search-spin">
         <span id="pulses-search-spin" class="htmx-indicator spinner"></span>
     </div>
+    <button class="btn-sm pulse-gcz-btn" hx-get="/pulse/gaussian-cz"
+            hx-target="#inspector-pane" hx-swap="innerHTML"
+            hx-indicator="#inspector-pane"
+            title="Build cz_gaussian_unipolar + cz_gaussian_bipolar for a pair from its calibrated cz_flattop (docs/126)">+ Gaussian CZ&hellip;</button>
     <button class="btn-sm pulse-new-btn" hx-get="/pulse/new"
             hx-target="#inspector-pane" hx-swap="innerHTML"
             hx-indicator="#inspector-pane">+ New pulse</button>

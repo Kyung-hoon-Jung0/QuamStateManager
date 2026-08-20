@@ -465,7 +465,19 @@ class TestPulseDelete:
         assert resp.status_code == 200
         assert resp.headers.get("HX-Trigger") == "pulses-changed, diagnostics-changed"
         html = loaded_client.get("/pulses").data.decode()
-        assert "saturation" not in html
+        # Scoped to the pulse TABLE, not the whole page. The Review drawer now
+        # renders on a full page load (it used to be silently empty — the
+        # `_ctx()` / `_render_tray` field mismatch), and it correctly lists the
+        # pending deletion by path. A whole-page `not in` therefore fails on the
+        # very evidence the drawer exists to show.
+        import re as _re
+        table = _re.search(r"<table[^>]*pulse[^>]*>.*?</table>", html, _re.S | _re.I)
+        body = table.group(0) if table else html.split('id="pending-tray"')[0]
+        assert "saturation" not in body, "the deleted pulse is still listed"
+        # ...and the deletion IS reported where a user reviews changes — a
+        # delete the review surface hid would be the real defect.
+        assert "tray-change-item" in html
+        assert f"{XY}.saturation" in html
 
     def test_delete_referenced_409_without_force(self, loaded_client):
         resp = loaded_client.post("/api/pulse/delete",
@@ -1136,15 +1148,27 @@ class TestCreateEnvAware:
 
     def test_roster_adds_env_class_and_verdicts(self, loaded_client,
                                                 modern_roster):
+        # The roster-only group rides a synthetic lab class since docs/126 ⑦a
+        # promoted CosineBipolarPulse into the static catalog (which is itself
+        # pinned here: env-verified, NOT env_only, creatable as a regular
+        # Flux/Bipolar entry).
+        import copy as _copy
         from quam_state_manager.core import pulse_catalog as pc
-        pc.apply_env_overlay(modern_roster)
+        roster = _copy.deepcopy(modern_roster)
+        rec = _copy.deepcopy(roster["CosineBipolarPulse"])
+        rec["canonical"] = "otherlab.custom.pulses.LabWigglePulse"
+        rec["homes"] = ["otherlab.custom.pulses"]
+        roster["LabWigglePulse"] = rec
+        pc.apply_env_overlay(roster)
         html = loaded_client.get("/pulse/new").data.decode()
         assert "From environment" in html
-        assert ">CosineBipolarPulse</option>" in html
+        assert ">LabWigglePulse</option>" in html
         cat = json.loads(html.split('id="pulse-catalog-data"'
                                     ' type="application/json">')[1]
                          .split("</script>")[0])
-        assert cat["CosineBipolarPulse"]["env_only"] is True
+        assert cat["LabWigglePulse"]["env_only"] is True
+        assert cat["LabWigglePulse"]["verify"] == "env"
+        assert cat["CosineBipolarPulse"].get("env_only") is not True
         assert cat["CosineBipolarPulse"]["verify"] == "env"
         assert cat["SquarePulse"]["verify"] == "env"
         # the one creatable catalog class the modern roster does NOT ship

@@ -417,13 +417,25 @@ def set_value(
     # list elements) — this CLI writes LIVE files directly, so an unguarded set was
     # a data-loss hole. Parse inside the try so 'inf'/'nan' is a clean error, not a
     # traceback.
-    from quam_state_manager.core.edit_policy import editability_reason, resolve_edit_path
+    from quam_state_manager.core.edit_policy import (
+        editability_reason, pointer_cell_refusal, resolve_edit_path)
     try:
         parsed = _parse_value(value)
         target_path = resolve_edit_path(store, dot_path)
         reason = editability_reason(store, target_path)
         if reason is not None:
             raise ValueError(reason)
+        # docs/121 made `resolve_edit_path` stop following a pointer into a
+        # CONTAINER, which is right — but it also means the write now lands on
+        # the pointer cell itself, where the type judge used to refuse it. The
+        # four web routes gained `pointer_cell_refusal` in the same change; this
+        # one did not, and it is the surface with NO working copy: a `cli set`
+        # wrote `"q3"` straight over `#/qubits/q1` in the live state.json and
+        # exited 0. "They MUST NOT diverge" is the comment above — this is what
+        # enforces it.
+        refusal = pointer_cell_refusal(store, dot_path, parsed)
+        if refusal is not None:
+            raise ValueError(refusal)
         entry = mod.set_value(target_path, parsed)
     except (KeyError, TypeError, ValueError, IndexError) as e:
         console.print(f"[red]Error:[/red] {e}")

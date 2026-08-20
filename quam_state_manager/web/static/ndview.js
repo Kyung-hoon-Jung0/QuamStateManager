@@ -165,6 +165,16 @@
                         '" data-comp="' + p[0] + '">' + p[1] + '</button>';
                 }).join('') + '</div>';
         }
+        // docs/122 item 1 — offered only when there IS a second axis to trade
+        // with. It names both dims so the button says what it will do rather
+        // than leaving the user to find out by pressing it.
+        var _ev = effectiveView(cube);
+        if (_ev.y) {
+            html += '<div class="ndv-ctl"><span class="ndv-ctl-label">axes</span>' +
+                '<button type="button" class="ndv-chip ndv-swap"' +
+                ' title="Put ' + esc(_ev.y) + ' on x and ' + esc(_ev.x) + ' on y">' +
+                '&#8646; ' + esc(_ev.x) + ' / ' + esc(_ev.y) + '</button></div>';
+        }
         // Repetition axes were averaged server-side (see ndview._default_view).
         // Say so: the plot is a mean over N identical shots, not one of them.
         var red = (cube.default_view || {}).reduced || [];
@@ -182,6 +192,29 @@
         if (dec) html += '<span class="ndv-note muted">decimated view — peaks preserved</span>';
         c.innerHTML = html;
         c.hidden = !html;
+    }
+
+    /* docs/122 item 1 — the user's own x/y choice, on top of the server default.
+       The server now orients 2-D maps by the lab's convention instead of by
+       array size, which is what makes the Raw-data tab agree with Interactive.
+       But ndview is a GENERIC viewer over every variable of every file, and no
+       curated name table can cover a node type nobody has written yet — so the
+       default has to be correctable, and before this there was no axis control
+       at all (renderControls emitted entity/slider chips and the IQ component
+       selector, nothing else).
+
+       Deliberately NOT persisted: docs/113 gated ndview view-state memory out
+       with recorded reasons, and this is one look at one variable, not a
+       preference. It resets with the mount, like the component selector. */
+    function effectiveView(cube) {
+        var v = (cube || state.cube || {}).default_view || {};
+        if (!state.swapXY || !v.y) return v;
+        var o = {};
+        for (var k in v) { if (Object.prototype.hasOwnProperty.call(v, k)) o[k] = v[k]; }
+        // Only the two axis names trade places. entity/overlay/sliders/reduced
+        // are a CLASSIFICATION, not a layout, and must not move with the swap.
+        o.x = v.y; o.y = v.x;
+        return o;
     }
 
     function roleOf(name) {
@@ -235,7 +268,7 @@
                 fallback: null,
             });
         }
-        var v = cube.default_view || {};
+        var v = effectiveView(cube);
         var xI = dimByName(cube, v.x), yI = v.y ? dimByName(cube, v.y) : -1;
         // fixed = every non-axis, non-overlay dim at its selected index
         var overlays = (v.overlay || []).map(function (n) { return dimByName(cube, n); })
@@ -320,6 +353,13 @@
         // (a fresh div has no `.on` yet and the handler would be silently lost).
         Promise.resolve(drawn).then(function () {
             attachClick(plotEl, cube, xI, yI);
+            /* docs/122 — follow the container. Plotly's config.responsive covers
+               WINDOW resizes only, and the geometry that moves here is the
+               sidebar collapse and the Split gutter. Observe #ndv-root, not
+               #ndv-plot: the plot div is what we RESIZE, and watching the box we
+               are about to change is how a feedback loop starts. Idempotent —
+               PlotHost.observe returns early if this root is already watched. */
+            if (window.PlotHost) window.PlotHost.observe(root());
         }).catch(function (e) { console.error('ndview click attach failed', e); });
     }
 
@@ -440,7 +480,12 @@
                 if (card) return openVar(card.getAttribute('data-var'));
                 var chip = evt.target.closest('.ndv-chip');
                 if (chip && state) {
-                    if (chip.hasAttribute('data-comp')) {
+                    // The swap carries no data-dim/data-idx, so it has to be
+                    // recognised BEFORE the slider branch — falling through
+                    // would set state.sel[NaN] = NaN and silently do nothing.
+                    if (chip.classList.contains('ndv-swap')) {
+                        state.swapXY = !state.swapXY;
+                    } else if (chip.hasAttribute('data-comp')) {
                         state.comp = chip.getAttribute('data-comp');
                     } else {
                         state.sel[+chip.getAttribute('data-dim')] = +chip.getAttribute('data-idx');
@@ -510,7 +555,12 @@
                 '<button type="button" class="ndv-copy" data-raw="' + esc(String(raw)) +
                 '" title="Copy the raw state-unit value">copy</button></div>';
         });
-        var view = cube.default_view || {};
+        // The EFFECTIVE view, not the server default: candidates bind to a dim
+        // by NAME, so after a user swap an x coordinate belongs to what is now
+        // on x. Reading the raw default here would stage the other axis's number
+        // under this one's field — the exact class of wrongness the by-name
+        // binding exists to prevent.
+        var view = effectiveView(cube);
         var cands = (click.candidates || []).filter(function (cd) {
             return !ent || cd.path.indexOf('{p}') === -1 || view.entity === 'qubit_pair';
         });

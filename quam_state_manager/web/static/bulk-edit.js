@@ -48,6 +48,16 @@
     // of them AND re-toggling their classes per keystroke froze typing.
     var _searchTimer = null;       // debounce: one applySearch per typing pause
     var _hayCache = null;          // { key, rowMap: WeakMap(row→[hay]), colHay } across keystrokes
+    // docs/120 item 8 — a VALUE token restricts both axes, so the surviving
+    // grid is the intersection: exactly the cells that ALREADY hold that value.
+    // For a filter that is right; for an EDITOR it is a dead end, and it is the
+    // customer's own report — searching `amplified` showed only the qubits
+    // already set to it, so "이거를 사용자가 SM에서 입력을 실제로 할수가없었음".
+    // The search keeps its meaning (silently widening it would break "show me
+    // the qubits whose T1 is 12"); the way out is offered instead, in the same
+    // shape as the neighbouring hidden-column chip.
+    var _valRowsAll = false;       // user asked to keep the rows a value token hid
+    var _valRowsQ = null;          // the query that choice belongs to
     var _lastDirtySig = null;      // ⚏ picker refresh gate: dirty-ID set signature
     var sortKey = null, sortDir = 1;
 
@@ -167,7 +177,291 @@
         if (window.htmx) htmx.ajax('GET', '/bulk', { target: '#table-pane', swap: 'innerHTML' });
     }
 
+    /* ── docs/120 item 4: the quick-filter chip bar ────────────────────────
+     *
+     * The customer's daily loop was "go to the search box and TYPE x180, amp,
+     * ro, power ... over and over -- very repetitive, eats time". So the common
+     * parameters are chips.
+     *
+     * The chips are a VIEW OF THE QUERY STRING, never a second filter. Toggling
+     * one rewrites #bulk-search and lets the existing search do all the work,
+     * which buys three things for free: one chip filters BOTH grids (they read
+     * the same input), typing a chip's word by hand lights that chip, and
+     * deleting it un-lights it. A parallel filter could disagree with the box;
+     * this cannot.
+     *
+     * The query is rebuilt as `<free text> <chip segment>`, where the segment
+     * joins the active terms with ' ' (AND) or ' | ' (OR) -- the docs/96
+     * grammar the search already parses, so there is no new matching logic
+     * anywhere. Free text the user typed is preserved verbatim.
+     */
+    var ChipBar = (function () {
+        var MODE_KEY = 'quam_bulk_chip_mode';
+        var terms = [];          // every term this chip renders, from the server
+        var active = [];         // ordered, the ones currently pressed
+        var mode = 'and';
+        var offerDismissed = false;
+
+        function bar() { return document.getElementById('bulk-chipbar'); }
+        function input() { return document.getElementById('bulk-search'); }
+        function _readMode() {
+            try { return localStorage.getItem(MODE_KEY) === 'or' ? 'or' : 'and'; }
+            catch (e) { return 'and'; }
+        }
+        function _tokens() {
+            var el = input();
+            return el ? el.value.trim().split(/\s+/).filter(Boolean) : [];
+        }
+        /* Everything that is NOT one of our chips (and not a bare pipe we
+           emitted). Kept verbatim and in order so a user's own query survives
+           every chip press. */
+        function _freeTokens() {
+            var out = [], toks = _tokens();
+            for (var i = 0; i < toks.length; i++) {
+                var t = toks[i].toLowerCase();
+                if (t === '|' || terms.indexOf(t) >= 0) continue;
+                out.push(toks[i]);
+            }
+            return out;
+        }
+        function _write() {
+            var el = input(); if (!el) return;
+            var seg = active.join(mode === 'or' ? ' | ' : ' ');
+            var free = _freeTokens().join(' ');
+            el.value = (free ? free + ' ' : '') + seg;
+            try { localStorage.setItem(SEARCH_KEY, el.value); } catch (e) {}
+            _paint();
+            offerDismissed = false;
+            applySearch();
+            // The PAIR grid listens on this input's 'input' EVENT (pair-edit.js
+            // keeps its own applySearch — deliberately isolated). Assigning
+            // .value programmatically fires nothing, so without this dispatch a
+            // chip narrowed the qubit grid and left the pair table untouched —
+            // while this module's own comment claimed one chip filters both.
+            // Review caught it because the selfcheck fixture had no pair table.
+            // ...and the flag tells THIS grid's own listener that its scan is
+            // already done, so the dispatch costs one pass, not two. Cleared in
+            // a finally: leaving it set would mute every later keystroke.
+            window._chipDrivenSearch = true;
+            try { el.dispatchEvent(new Event('input', { bubbles: true })); }
+            catch (e) { /* pre-Event browsers: the qubit grid is already done */ }
+            finally { window._chipDrivenSearch = false; }
+            _offer();
+        }
+        function _paint() {
+            var b = bar(); if (!b) return;
+            Array.prototype.slice.call(b.querySelectorAll('.bulk-chip')).forEach(function (btn) {
+                var on = active.indexOf(btn.getAttribute('data-chip-term')) >= 0;
+                btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+                btn.classList.toggle('active', on);
+            });
+            var m = document.getElementById('bulk-chip-mode');
+            if (m) {
+                m.textContent = mode === 'or' ? 'OR' : 'AND';
+                m.setAttribute('data-mode', mode);
+                m.setAttribute('aria-pressed', mode === 'or' ? 'true' : 'false');
+                m.classList.toggle('chip-mode-or', mode === 'or');
+            }
+        }
+        /* Zero matches with 2+ chips in AND is the one moment the other mode is
+           probably what was meant -- so offer it AS a switch. Accepting costs
+           the same single click as finding the toggle, which is the whole
+           point (the user's own framing). Never shown in OR: if a union
+           matches nothing, the other mode cannot help. */
+        function _offer() {
+            var o = document.getElementById('bulk-chip-offer'); if (!o) return;
+            var show = !offerDismissed && mode === 'and' && active.length > 1
+                && _visibleColCount() === 0;
+            o.hidden = !show;
+        }
+        /* Both grids, because both are filtered by these chips. Counting only
+           the qubit table offered "No matches — try OR?" while the pair table
+           below was full of hits, which is a false statement about the screen
+           the user is looking at. */
+        function _visibleColCount() {
+            var n = 0, seen = false;
+            ['bulk-table', 'bulk-pair-table'].forEach(function (id) {
+                var t = document.getElementById(id);
+                if (!t) return;
+                seen = true;
+                // Count DATA columns only. Subtracting just `.bulk-corner`
+                // left the permanent apply-column header in the total, so the
+                // minimum was 1 per table and `=== 0` was unreachable on any
+                // chip — the "No matches — try OR?" offer could never appear,
+                // however many chips you ANDed together. Every real column
+                // carries data-col-key; no permanent header does.
+                // ...and never the row-name column. `__id__` is the qubit /
+                // pair name: always visible, not a value, one per table — so
+                // counting it kept the floor at 2 and `=== 0` stayed
+                // unreachable even after the apply header was excluded.
+                n += t.querySelectorAll(
+                    'thead th[data-col-key]:not([data-col-key="__id__"])'
+                    + ':not(.bulk-search-hidden):not(.bulk-col-hidden)'
+                ).length;
+            });
+            return seen ? n : 1;   // no grid mounted → never claim "no matches"
+        }
+        function toggle(term) {
+            var i = active.indexOf(term);
+            if (i >= 0) active.splice(i, 1); else active.push(term);
+            _write();
+        }
+        /* docs/126 ③ — user-defined patches ("decouple", "joint", …): saved
+           per browser, injected beside the server chips, filtered through the
+           exact same toggle/_write path. The server chips stay authoritative
+           for coverage; these are the lab's own vocabulary on top. */
+        var CUSTOM_KEY = 'quam_bulk_custom_chips';
+        function _customTerms() {
+            try {
+                var a = JSON.parse(localStorage.getItem(CUSTOM_KEY) || '[]');
+                return Array.isArray(a) ? a.filter(function (t) {
+                    return typeof t === 'string' && /^[^\s|]{1,40}$/.test(t);
+                }) : [];
+            } catch (e) { return []; }
+        }
+        function _saveCustom(list) {
+            try { localStorage.setItem(CUSTOM_KEY, JSON.stringify(list)); } catch (e) {}
+        }
+        function _injectCustom(b) {
+            var scroll = b.querySelector('.bulk-chip-scroll'); if (!scroll) return;
+            Array.prototype.slice.call(scroll.querySelectorAll(
+                '.bulk-chip-custom, .bulk-chip-add, .bulk-chip-add-input'
+            )).forEach(function (n) { n.parentNode.removeChild(n); });
+            var server = Array.prototype.slice.call(scroll.querySelectorAll('.bulk-chip'))
+                .map(function (x) { return x.getAttribute('data-chip-term'); });
+            _customTerms().forEach(function (t) {
+                if (server.indexOf(t) >= 0) return;   // the server already offers it
+                var btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'bulk-chip bulk-chip-custom';
+                btn.setAttribute('data-chip-term', t);
+                btn.setAttribute('aria-pressed', 'false');
+                btn.title = 'your saved filter patch — × removes it';
+                btn.textContent = t;
+                var x = document.createElement('span');
+                x.className = 'bulk-chip-x';
+                x.textContent = '×';
+                btn.appendChild(x);
+                scroll.appendChild(btn);
+            });
+            var add = document.createElement('button');
+            add.type = 'button';
+            add.className = 'bulk-chip bulk-chip-add';
+            add.title = 'Save your own filter word as a patch (e.g. "decouple", "joint")';
+            add.textContent = '+';
+            scroll.appendChild(add);
+        }
+        function _remount() {
+            var b = bar(); if (!b) return;
+            _injectCustom(b);
+            terms = Array.prototype.slice.call(
+                b.querySelectorAll('.bulk-chip:not(.bulk-chip-add)')
+            ).map(function (x) { return x.getAttribute('data-chip-term'); })
+             .filter(Boolean);
+            _paint();
+        }
+        function _openAdd() {
+            var b = bar(); var scroll = b && b.querySelector('.bulk-chip-scroll');
+            if (!scroll || scroll.querySelector('.bulk-chip-add-input')) return;
+            var inp = document.createElement('input');
+            inp.className = 'bulk-chip-add-input';
+            inp.placeholder = 'new patch…';
+            inp.setAttribute('aria-label', 'New filter patch');
+            scroll.insertBefore(inp, scroll.querySelector('.bulk-chip-add'));
+            inp.focus();
+            function commit() {
+                var t = inp.value.trim().toLowerCase();
+                if (inp.parentNode) inp.parentNode.removeChild(inp);
+                if (!/^[^\s|]{1,40}$/.test(t)) return;   // one token, no pipes
+                var cur = _customTerms();
+                if (cur.indexOf(t) < 0 && terms.indexOf(t) < 0) {
+                    cur.push(t); _saveCustom(cur);
+                }
+                _remount();
+                if (terms.indexOf(t) >= 0 && active.indexOf(t) < 0) active.push(t);
+                _write();
+            }
+            inp.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter') { e.preventDefault(); commit(); }
+                else if (e.key === 'Escape') {
+                    if (inp.parentNode) inp.parentNode.removeChild(inp);
+                }
+            });
+            inp.addEventListener('blur', function () {
+                setTimeout(function () { if (inp.parentNode) commit(); }, 120);
+            });
+        }
+        function _removeCustom(term) {
+            _saveCustom(_customTerms().filter(function (x) { return x !== term; }));
+            var i = active.indexOf(term);
+            if (i >= 0) active.splice(i, 1);
+            // _write BEFORE _remount: once the term leaves `terms`,
+            // _freeTokens would keep the word as user-typed text and the
+            // filter would silently stay on (caught by selfcheck F9).
+            _write();
+            _remount();
+        }
+        function setMode(next) {
+            mode = next === 'or' ? 'or' : 'and';
+            try { localStorage.setItem(MODE_KEY, mode); } catch (e) {}
+            _write();
+        }
+        /* The box is the truth: re-derive which chips are lit from its tokens.
+           Called on every keystroke, so hand-typing `flux` lights Flux. */
+        function syncFromQuery() {
+            var toks = _tokens().map(function (t) { return t.toLowerCase(); });
+            // Order comes from the QUERY, not from the chip row. Deriving it
+            // from `terms` re-sorted the selection into render order on every
+            // keystroke, so the box visibly reshuffled itself as the user
+            // toggled — and, once _write started dispatching `input` for the
+            // pair grid, that reshuffle fed straight back into the next write.
+            var seen = {};
+            active = [];
+            toks.forEach(function (t) {
+                if (terms.indexOf(t) >= 0 && !seen[t]) { seen[t] = 1; active.push(t); }
+            });
+            _paint();
+        }
+        function mount() {
+            var b = bar(); if (!b) return;
+            _injectCustom(b);   // docs/126 ③ — before terms are read
+            terms = Array.prototype.slice.call(
+                b.querySelectorAll('.bulk-chip:not(.bulk-chip-add)')
+            ).map(function (x) { return x.getAttribute('data-chip-term'); })
+             .filter(Boolean);
+            mode = _readMode();
+            if (b._chipWired) { syncFromQuery(); _paint(); return; }
+            b._chipWired = true;
+            b.addEventListener('click', function (e) {
+                var t = e.target;
+                if (!t || !t.classList) return;
+                if (t.classList.contains('bulk-chip-x')) {
+                    _removeCustom(t.parentNode.getAttribute('data-chip-term'));
+                } else if (t.classList.contains('bulk-chip-add')) {
+                    _openAdd();
+                } else if (t.classList.contains('bulk-chip')) {
+                    toggle(t.getAttribute('data-chip-term'));
+                } else if (t.id === 'bulk-chip-mode') {
+                    setMode(mode === 'and' ? 'or' : 'and');
+                } else if (t.id === 'bulk-chip-offer-yes') {
+                    setMode('or');
+                } else if (t.id === 'bulk-chip-offer-no') {
+                    offerDismissed = true;
+                    _offer();
+                }
+            });
+            syncFromQuery();
+        }
+        return { mount: mount, syncFromQuery: syncFromQuery, toggle: toggle,
+                 setMode: setMode,
+                 _state: function () { return { mode: mode, active: active.slice(), terms: terms.slice() }; } };
+    })();
+
     // ── user font size + weight + letter-spacing (persisted; applied globally) ─
+    // Controls live in Settings ▸ Live Edit since docs/120 item 4 (they were in
+    // the grid toolbar, where the chip bar now is). The setters are unchanged
+    // and stay panel-absent-safe, because base.html loads this file on EVERY
+    // page while #bulk-panel exists only on /bulk.
     var FONT_KEY = 'quam_bulk_fs', BOLD_KEY = 'quam_bulk_bold', LS_KEY = 'quam_bulk_ls';
     function _readScale() {
         var fs = parseFloat(localStorage.getItem(FONT_KEY));
@@ -194,6 +488,11 @@
         // the pinned columns' px insets must follow (deferred so the new
         // metrics are laid out before they are measured).
         if (window.__bulkRepin) setTimeout(window.__bulkRepin, 0);
+        // docs/120 item 24: the value-history button caches the focused cell's
+        // font + geometry so typing costs no layout. Rescaling every cell is
+        // exactly the event that invalidates it, and it can happen WHILE a cell
+        // holds focus — so drop the memo here rather than wait for a re-focus.
+        if (window.__cellBtnInvalidate) window.__cellBtnInvalidate();
         var s = _applyGlobalScale();
         var panel = document.getElementById('bulk-panel'); if (!panel) return;
         panel.style.setProperty('--bulk-fs', s.fs);
@@ -213,10 +512,51 @@
     //  next to Properties — no JS/persistence needed; closed by default.)
 
     // ── synced top horizontal scrollbar ──────────────────────────────────────
-    function _updateTopScroll() {
-        var tbl = table(), inner = document.getElementById('bulk-scroll-top-inner');
-        if (tbl && inner) inner.style.width = tbl.scrollWidth + 'px';
+    // docs/120 item 19. `tbl.scrollWidth` is a FORCED SYNCHRONOUS LAYOUT, and
+    // its four callers each run it straight after writing classes onto
+    // thousands of cells — so every call re-laid out a 158-column × 20-row
+    // sticky table from scratch. Measured with the CPU profiler on the real
+    // 20-qubit chip: 397 ms of self time inside a single 1,429 ms blocked
+    // frame at mount, the largest app-code cost on the page by 8×. (The audit
+    // agent had blamed `_virtInit`'s layout reads instead; those measure
+    // 0.6 ms for all 158 headers — reads in a row share one layout, it is the
+    // write-then-read alternation that costs.)
+    //
+    // Deferring THIS read alone was measured and did not help: the cost simply
+    // moved to `_updateStickyOffset` (397 ms -> 369 ms there), which proves the
+    // expense is not any one function but the ALTERNATION — the first read
+    // after a write pays for the whole re-layout, whoever it happens to be. So
+    // both geometry reads are coalesced into one rAF that reads first and
+    // writes second, the standard batching order: one forced layout per frame,
+    // shared, instead of one per call site.
+    //
+    // Nothing needs either value synchronously — one sizes a cosmetic scrollbar
+    // proxy, the other a sticky offset that is already re-applied on font and
+    // column changes.
+    // A missing rAF must DEGRADE, not throw: the geometry sync is called from
+    // mount, and an exception there takes the whole grid down. (jsdom harnesses
+    // hand over individual globals — CLAUDE.md's standing warning — and four
+    // selfchecks went red on exactly this.)
+    var _raf = (typeof window !== 'undefined' && window.requestAnimationFrame)
+        ? window.requestAnimationFrame.bind(window)
+        : function (f) { return setTimeout(f, 0); };
+    var _layoutPending = false;
+    function _syncTableGeometry() {
+        if (_layoutPending) return;
+        _layoutPending = true;
+        _raf(function () {
+            _layoutPending = false;
+            var t = table();
+            var inner = document.getElementById('bulk-scroll-top-inner');
+            var grow = t && t.querySelector('.bulk-group-row');
+            // READ both, then WRITE both — never interleave.
+            var w = (t && inner) ? t.scrollWidth : null;
+            var h = grow ? grow.offsetHeight : null;
+            if (w !== null) inner.style.width = w + 'px';
+            if (h !== null) t.style.setProperty('--bulk-grouphead-h', h + 'px');
+        });
     }
+    function _updateTopScroll() { _syncTableGeometry(); }
     function _setupTopScroll() {
         var wrap = document.querySelector('.bulk-table-wrap');
         var top = document.getElementById('bulk-scroll-top');
@@ -249,11 +589,7 @@
     }
     // The 2nd header row (column heads) sticks BELOW the group band, so offset its
     // sticky `top` by the band's measured height (varies with the font scale).
-    function _updateStickyOffset() {
-        var t = table(); if (!t) return;
-        var grow = t.querySelector('.bulk-group-row');
-        if (grow) t.style.setProperty('--bulk-grouphead-h', grow.offsetHeight + 'px');
-    }
+    function _updateStickyOffset() { _syncTableGeometry(); }
 
     // ── Property-Selection menu ──────────────────────────────────────────────
     function _buildColMenu() {
@@ -553,8 +889,15 @@
         // strip rewrote `cz_flattop_pulse_q1_q2` into `cz_flattop_pulse_q1`.
         // `search` carries the real operation ids so looking for the name you
         // actually have in state.json finds its column.
+        // docs/120 item 4: the SECTION joins the haystack. It is the band name
+        // already printed above the column (`_bulk_column_groups`), so a user
+        // searching "readout" or "flux" plainly means "that band" — and the
+        // quick-filter chips emit exactly these words, which is what lets one
+        // short keyword span the four XY-ish sections a chip really has
+        // (XY Drive / XY Port / XY+ / XY Port+) instead of needing four chips.
         function _colHay(c) {
-            return (c.label + ' ' + c.key + ' ' + (c.search || '')).toLowerCase();
+            return (c.label + ' ' + c.key + ' ' + (c.section || '')
+                    + ' ' + (c.search || '')).toLowerCase();
         }
         var visCols = COLS.filter(function (c) { return !hide.has(c.key); });
         var tokens = q ? q.split(/\s+/) : [];
@@ -613,7 +956,11 @@
         // row passes if every group has a member that matches: id tokens match
         // the row id, value tokens match some cell. Column-only tokens don't
         // restrict rows (neutral), exactly as before.
-        function rowVisible(id, rowHaystacks) {
+        // `valNeutral` answers the second question the grid needs: would this
+        // row survive if the VALUE tokens didn't restrict rows? The difference
+        // between the two answers is the number the "show them anyway" chip
+        // reports — and, once the user clicks it, the visibility rule itself.
+        function rowVisible(id, rowHaystacks, valNeutral) {
             for (var g = 0; g < tokGroups.length; g++) {
                 var any = false;
                 for (var i = 0; i < tokGroups[g].length && !any; i++) {
@@ -621,7 +968,8 @@
                     if (ti.isId && !ti.isCol) {
                         any = id.indexOf(ti.tok) >= 0;
                     } else if (ti.isVal) {
-                        any = rowHaystacks.some(function (h) { return h.indexOf(ti.tok) >= 0; });
+                        any = valNeutral
+                            || rowHaystacks.some(function (h) { return h.indexOf(ti.tok) >= 0; });
                     } else {
                         any = true;                       // column token — neutral here
                     }
@@ -680,22 +1028,84 @@
         // decide column visibility (search layer, on top of checkbox layer)
         var colSearchHide = {};
         visCols.forEach(function (c) { colSearchHide[c.key] = !colVisible(c.key, colHay[c.key] || []); });
-        t.querySelectorAll('th.bulk-col-head, td[data-col-key]').forEach(function (el) {
+        // docs/126 ③ perf: the class stays on the ~460 THs (the count/offer/
+        // reveal machinery reads it there), but the ~9,000 TDs are hidden by
+        // ONE generated stylesheet instead of a classList.toggle each — the
+        // per-td invalidation was most of the (program) style-recalc block in
+        // the 1.2–1.6 s patch press the customer reported. Tab/arrow cell
+        // navigation consults _searchHiddenKeys instead of the td class.
+        _searchHiddenKeys = {};
+        t.querySelectorAll('th.bulk-col-head').forEach(function (el) {
             var k = el.getAttribute('data-col-key');
             if (k === '__id__' || hide.has(k)) return;   // checkbox-hidden handled elsewhere
             el.classList.toggle('bulk-search-hidden', !!colSearchHide[k]);
         });
+        var _hideSels = [];
+        Object.keys(colSearchHide).forEach(function (k) {
+            if (!colSearchHide[k] || k === '__id__' || hide.has(k)) return;
+            _searchHiddenKeys[k] = 1;
+            _hideSels.push('#bulk-table td[data-col-key="' + _cssEsc(k) + '"]');
+        });
+        _searchHideStyleEl().textContent = _hideSels.length
+            ? _hideSels.join(',\n') + ' { display: none !important; }' : '';
+        // docs/120 item 28 — SEARCHING FOR A COLUMN MUST MAKE IT USABLE, not
+        // just visible. Cold columns (docs/105 virtualization) have their cell
+        // contents detached, and hydration only ever fired on scroll, nav or a
+        // path repaint — never on search. So a user who typed `T1`, narrowed
+        // the grid to exactly that column, and reached for the cell found it
+        // EMPTY and un-editable: the same shape as the report that opened this
+        // campaign. Reproduced on the customer chip after the gate change
+        // widened virtualization to it; latent before that for any chip over
+        // the old 4,000-cell threshold.
+        //
+        // A surviving column is one the user has just asked to look at, so
+        // hydrate it. Gated on a non-empty query: with no search every column
+        // survives, and hydrating them all would simply undo virtualization.
+        if (_virt && q) {
+            var _due = [];
+            visCols.forEach(function (c) {
+                if (!colSearchHide[c.key] && _virt.cold.has(c.key)) _due.push(c.key);
+            });
+            _virtHydrateCols(_due);   // one batch — never a scan per column
+        }
+        // A new query retires the previous "show them anyway" choice — it was
+        // made about those tokens, and silently carrying it forward would make
+        // the next search quietly stop filtering rows.
+        if (q !== _valRowsQ) { _valRowsAll = false; _valRowsQ = q; }
+        var _hasVal = tokInfo.some(function (ti) { return ti.isVal; });
+
         // decide row visibility
         var shown = 0;
+        var strandedRows = 0;
         rows.forEach(function (r, i) {
             var id = (r.getAttribute('data-qubit') || '').toLowerCase();
-            var vis = rowVisible(id, rowHay[i]);
+            var vis = rowVisible(id, rowHay[i], _valRowsAll);
             r.classList.toggle('bulk-row-hidden', !vis);
             // the count reflects what's actually on screen: search AND ⚏ Qubits
             if (vis && !r.classList.contains('bulk-qubit-off')) shown++;
+            if (!vis && _hasVal && rowVisible(id, rowHay[i], true)) strandedRows++;
         });
         var cnt = document.getElementById('bulk-search-count');
         if (cnt) cnt.textContent = q ? (shown + ' of ' + rows.length) : '';
+        // The offer only makes sense while a column is still on screen to type
+        // into — with every column filtered away too there is nothing to reach.
+        var _anyCol = visCols.some(function (c) { return !colSearchHide[c.key]; });
+        var vrh = document.getElementById('bulk-valrow-hint');
+        if (vrh) {
+            var _showVrh = strandedRows > 0 && _anyCol;
+            vrh.hidden = !_showVrh && !_valRowsAll;
+            if (_valRowsAll && _hasVal) {
+                vrh.textContent = 'showing all rows ✗';
+                vrh.title = 'Value matches are highlighted; rows without a match '
+                          + 'are shown so you can edit them. Click to filter again.';
+            } else if (_showVrh) {
+                vrh.textContent = strandedRows + ' more row'
+                    + (strandedRows === 1 ? '' : 's') + ' — show';
+                vrh.title = strandedRows + ' qubit' + (strandedRows === 1 ? '' : 's')
+                          + ' have this column but not this value, so the search hid '
+                          + 'them. Click to show them and edit them here.';
+            }
+        }
         // The search ALWAYS scans every column the chip has, including the ones
         // this user hid — a property you can't find is a property that doesn't
         // exist as far as the user is concerned (the r6-item-4 complaint). Two
@@ -1228,12 +1638,35 @@
     // painter that addresses cells by path. Below the threshold nothing
     // changes - small chips are byte-identical, which is also the safety
     // gate every existing test chip rides.
-    var _VIRT_MIN_CELLS = 4000;
+    //
+    // docs/120 item 19 — the gate used to be `total cells >= 4000` and the real
+    // customer chip has 3,160 in this grid, so the mechanism built for exactly
+    // this page DECLINED TO ENGAGE, 840 cells under a threshold that is a proxy
+    // for the thing it cares about. Measured on that chip: with it off the
+    // mount blocks the main thread for 2.46 s; with it on, 1.85 s and the worst
+    // single stall falls from 1,368 ms to 1,016 ms.
+    //
+    // So gate on the BENEFIT instead of a proxy for it: how many cells would
+    // actually go cold. That is already computed below, it needs no new
+    // measurement, and it cannot be wrong about a wide-but-short or a
+    // narrow-but-tall chip the way a bare cell count is. `_VIRT_MIN_CELLS`
+    // stays as a cheap pre-filter so a genuinely small grid never even walks
+    // its headers.
+    var _VIRT_MIN_CELLS = 600;       // pre-filter only — the real gate is below
+    var _VIRT_MIN_COLD = 800;        // cold CELLS that make the detach worth it
     var _VIRT_BUFFER = 1.5;          // hydrate up to 1.5 viewports ahead
     var _virt = null;                // { html:Map, vals:Map, cold:Set, wrap }
     function _virtStyleEl() {
         var el = document.getElementById('bulk-virt-width-style');
         if (!el) { el = document.createElement('style'); el.id = 'bulk-virt-width-style'; document.head.appendChild(el); }
+        return el;
+    }
+    // docs/126 ③: search-hidden QUBIT-grid columns, as one stylesheet (tds)
+    // + a key set (cell navigation) — see the applySearch note.
+    var _searchHiddenKeys = {};
+    function _searchHideStyleEl() {
+        var el = document.getElementById('bulk-search-hide-style');
+        if (!el) { el = document.createElement('style'); el.id = 'bulk-search-hide-style'; document.head.appendChild(el); }
         return el;
     }
     function _cssEsc(k) { return (window.CSS && CSS.escape) ? CSS.escape(k) : String(k).replace(/"/g, '\\"'); }
@@ -1255,6 +1688,10 @@
             }
         });
         if (!cold.size) return;
+        // The real gate: enough cells actually go cold to repay detaching them.
+        // (`_rows().length` rather than tds/th, because hidden columns are in
+        // `tds` but contribute no layout worth reclaiming.)
+        if (cold.size * _rows().length < _VIRT_MIN_COLD) return;
         _virt = { html: new Map(), vals: new Map(), cold: cold, wrap: wrap };
         _virtStyleEl().textContent = widths.join('\n');
         Array.prototype.forEach.call(tds, function (td) {
@@ -1271,11 +1708,23 @@
             wrap.addEventListener('scroll', _virtOnScroll, { passive: true });
         }
     }
-    function _virtHydrateCol(key) {
-        if (!_virt || !_virt.cold.has(key)) return;
-        _virt.cold.delete(key);
+    function _virtHydrateCols(keys) {
+        if (!_virt || !keys || !keys.length) return;
+        var due = keys.filter(function (k) { return _virt.cold.has(k); });
+        if (!due.length) return;
         var t = table(); if (!t) { _virt = null; return; }
-        t.querySelectorAll('td[data-col-key="' + _cssEsc(key) + '"]').forEach(function (td) {
+        // ONE cold-cell scan + ONE PhysAmp pass for the whole batch. The old
+        // per-column path (a full-table querySelectorAll AND a whole-table
+        // PhysAmp.applyAll per column) is what made a broad patch press cost
+        // 1.2–1.6 s on the real 20Q chip — clicking "Qubit" survives ~100
+        // cold columns, so the table was scanned ~200 times per click
+        // (docs/126 ③, CDP-profiled: 253 ms querySelectorAll + 740 ms style
+        // recalc from the interleaved writes).
+        var set = {};
+        due.forEach(function (k) { set[k] = 1; _virt.cold.delete(k); });
+        t.querySelectorAll('td.bulk-td-cold').forEach(function (td) {
+            var k = td.getAttribute('data-col-key');
+            if (!k || !set[k]) return;
             var h = _virt.html.get(td);
             if (h != null) { td.innerHTML = h; _virt.html.delete(td); _virt.vals.delete(td); }
             td.classList.remove('bulk-td-cold');
@@ -1287,6 +1736,7 @@
         // the re-inserted text would be stale; reformat on arrival.
         if (window.PhysAmp) window.PhysAmp.applyAll(t);
     }
+    function _virtHydrateCol(key) { _virtHydrateCols([key]); }
     function _virtEnsureTd(td) {
         if (_virt && td) {
             var k = td.getAttribute('data-col-key');
@@ -1295,7 +1745,7 @@
     }
     function _virtHydrateAll() {
         if (!_virt) return;
-        Array.from(_virt.cold).forEach(_virtHydrateCol);
+        _virtHydrateCols(Array.from(_virt.cold));
     }
     var _virtScrollPending = false;
     function _virtOnScroll() {
@@ -1313,7 +1763,7 @@
                 var k = h.getAttribute('data-col-key');
                 if (_virt && _virt.cold.has(k) && h.offsetLeft < edge) due.push(k);
             });
-            due.forEach(_virtHydrateCol);
+            _virtHydrateCols(due);
         });
     }
 
@@ -1750,6 +2200,26 @@
                 var isFill = (ev.ctrlKey || ev.metaKey)
                     && (ev.key === 'd' || ev.key === 'D');
                 if (!isFill && ev.key !== 'Escape') return;
+                // docs/120 item 9: Escape cleared a SELECTION but could not
+                // cancel the edit in progress — the one thing every grid on
+                // earth binds it to. Worse than inert: the typed value stayed
+                // in the box, so the next click away COMMITTED the edit the
+                // user had just tried to abandon. Revert-and-keep-focus, the
+                // spreadsheet contract; the selection branch below is
+                // untouched, so Escape with nothing being typed still clears.
+                if (ev.key === 'Escape') {
+                    var _ae = document.activeElement;
+                    if (_ae && _ae.classList
+                            && _ae.classList.contains('bulk-cell')
+                            && !_ae.readOnly && _isDirty(_ae)) {
+                        ev.preventDefault();
+                        ev.stopPropagation();       // don't also close a popover
+                        _ae.value = _ae.getAttribute('data-orig');
+                        _ae.dispatchEvent(new Event('input', { bubbles: true }));
+                        _ae.select();
+                        return;
+                    }
+                }
                 if (!_selCells().length) return;
                 if (isFill) {
                     ev.preventDefault();
@@ -1914,7 +2384,17 @@
                 // COMMIT of the focused row. relatedTarget is null in some engines,
                 // so also honour the toolbar pointerdown stamp that fires before blur.
                 if (BulkEdit._toolbarPressTs && (Date.now() - BulkEdit._toolbarPressTs) < 1000) return;
-                if (to && to.closest && to.closest('#bulk-apply-all, #bulk-apply-sync, #bulk-reset')) return;
+                // ...and the same reasoning covers LEAVING. Clicking a sidebar link
+                // blurs the focused cell first, so this handler committed that one
+                // row, and only THEN did the leave-guard ask "Leave and discard
+                // them?". Accepting the discard then dropped every pasted value
+                // EXCEPT the focused one, which survived as a pending edit armed to
+                // reach the chip on the next Apply to live — a discard that commits.
+                // Anything that swaps #table-pane IS a leave; let the leave-guard own
+                // the decision rather than committing behind it.
+                if (to && to.closest && to.closest(
+                        '#bulk-apply-all, #bulk-apply-sync, #bulk-reset, '
+                        + '[hx-target="#table-pane"]')) return;
                 var b = row && row.querySelector('.bulk-row-apply');
                 if (b && !b.disabled) BulkEdit.applyRow(b);
             });
@@ -1955,6 +2435,14 @@
             var search = document.getElementById('bulk-search');
             if (search) search.addEventListener('input', function () {
                 try { localStorage.setItem(SEARCH_KEY, search.value); } catch (e) {}
+                ChipBar.syncFromQuery();   // typing a chip's word lights the chip
+                // A chip press already ran applySearch SYNCHRONOUSLY and only
+                // dispatches this event to reach the pair grid, which listens
+                // here. Without this check the press cost TWO full scans of a
+                // 4,480-cell table (measured 12.9-30.5 ms sync + another
+                // debounced pass) — so the button built to replace typing cost
+                // about twice what typing the same word does.
+                if (window._chipDrivenSearch) return;
                 // DEBOUNCED (audit: typing here was slow): applySearch re-scans
                 // the table and re-toggles ~2000 cells' classes — a full-table
                 // reflow on a multi-MB DOM. One pass shortly after the last
@@ -1962,6 +2450,7 @@
                 if (_searchTimer) clearTimeout(_searchTimer);
                 _searchTimer = setTimeout(applySearch, 120);
             });
+            ChipBar.mount();
 
             // nav guard: warn before losing unapplied edits
             if (!window._bulkNavGuard) {
@@ -2115,6 +2604,14 @@
             _refreshGlobal();
         },
 
+        // docs/120 item 8 — the way out of a value search that hid exactly the
+        // rows you meant to type into. A toggle, not a one-way door: the second
+        // click restores the filter, and any change to the query retires it.
+        toggleStrandedRows: function () {
+            _valRowsAll = !_valRowsAll;
+            applySearch();
+        },
+
         // Un-hide every column the current search matched — the "N hidden
         // columns match — Show" chip. Curated/rendered columns reveal by CSS
         // (no round-trip); dyn columns the server never rendered need the pane
@@ -2266,6 +2763,7 @@
             applyQubitVis();
             _buildQubitMenu();
         },
+        chips: ChipBar,   // docs/120 item 4 — quick-filter chip bar
         setFont: function (scale) { try { localStorage.setItem(FONT_KEY, String(scale)); } catch (e) {} _applyFont(); },
         setLetterSpacing: function (ls) { try { localStorage.setItem(LS_KEY, String(ls)); } catch (e) {} _applyFont(); },
         toggleBold: function () {
@@ -2355,7 +2853,9 @@
             return null;
         }
         if (dc) {
-            var tds = Array.prototype.slice.call(tr.querySelectorAll('.bulk-td:not(.bulk-col-hidden):not(.bulk-search-hidden)'));
+            var tds = Array.prototype.slice.call(
+                tr.querySelectorAll('.bulk-td:not(.bulk-col-hidden):not(.bulk-search-hidden)')
+            ).filter(function (x) { return !_searchHiddenKeys[x.getAttribute('data-col-key')]; });
             for (var ci = tds.indexOf(td) + dc; ci >= 0 && ci < tds.length; ci += dc) {
                 var nc0 = _editableIn(tds[ci]);
                 if (nc0) return nc0;
@@ -2372,14 +2872,16 @@
         var td = cell.closest('td');
         var tr = cell.closest('tr');
         var sel = '.bulk-td:not(.bulk-col-hidden):not(.bulk-search-hidden)';
-        var tds = Array.prototype.slice.call(tr.querySelectorAll(sel));
+        var tds = Array.prototype.slice.call(tr.querySelectorAll(sel))
+            .filter(function (x) { return !_searchHiddenKeys[x.getAttribute('data-col-key')]; });
         for (var i = tds.indexOf(td) + dc; i >= 0 && i < tds.length; i += dc) {
             var c = _editableIn(tds[i]);
             if (c) return c;
         }
         var rows = _navRows();
         for (var ri = rows.indexOf(tr) + dc; ri >= 0 && ri < rows.length; ri += dc) {
-            var ntds = Array.prototype.slice.call(rows[ri].querySelectorAll(sel));
+            var ntds = Array.prototype.slice.call(rows[ri].querySelectorAll(sel))
+                .filter(function (x) { return !_searchHiddenKeys[x.getAttribute('data-col-key')]; });
             for (var j = dc > 0 ? 0 : ntds.length - 1; j >= 0 && j < ntds.length; j += dc) {
                 var nc = _editableIn(ntds[j]);
                 if (nc) return nc;
@@ -2387,6 +2889,102 @@
         }
         return null;
     }
+
+    /* docs/122 item 3 — repaint the cells an undo actually moved.
+       The /undo response already names every path it reverted AND the value it
+       reverted to, and the grid ignored all of it: `cellsReverted` dispatched
+       `quam:state-changed`, whose only listener re-GETs the whole /bulk.
+       Measured on the real 20-qubit chip: the undo itself is 55 ms and that
+       refetch is 2,418 ms — the same press on /explorer, which has no grid,
+       settles in 56 ms and issues no /bulk at all. So the lag was never the
+       undo.
+
+       querySelectorAll, not querySelector: two columns can resolve to the SAME
+       leaf (an alias pointer, a linked shared-port pair), and patching only the
+       first would leave the twin showing the undone value — the exact silent
+       staleness the refetch existed to prevent.
+
+       The caller decides whether an authoritative refetch still has to follow;
+       this function only reports what it could and could not reach. */
+    function _revertPaths(entries) {
+        var t = table();
+        if (!t || !entries || !entries.length) return { patched: 0, missing: 0 };
+        var sel = function (p) {
+            // BOTH attributes (docs/124 C-2): /undo names RESOLVED paths while
+            // a pointer-alias cell carries its alias in data-dot-path and the
+            // resolved leaf in data-resolved — on the real chip that is every
+            // x180/x90 amp column. Matching the alias axis only left those
+            // cells permanently stale and clean-marked after Ctrl+Z, with the
+            // hydrated dyn column absorbing the repaint and reporting the
+            // entry covered. The apply path always matched by data-resolved
+            // (_syncAppliedAcrossTable); the undo repaint now does too — and
+            // the union also lands on alias TWINS (two cells, one leaf), so
+            // both get value AND data-orig and the phantom-dirty twin (M-8)
+            // cannot arise.
+            var q = _cssEsc(p);
+            return t.querySelectorAll('.bulk-cell[data-dot-path="' + q + '"]'
+                + ', .bulk-cell[data-resolved="' + q + '"]');
+        };
+        // A cold column (docs/105) has no .bulk-cell to land in — the same trap
+        // _consumeEditCarry hit. Hydrate once if any named path is absent.
+        var absent = entries.some(function (e) {
+            return e && e.dot_path && !sel(e.dot_path).length;
+        });
+        if (absent) _virtHydrateAll();
+        var patched = 0, missing = 0, rows = [], covered = [];
+        entries.forEach(function (e) {
+            if (!e || !e.dot_path) return;
+            var cs = sel(e.dot_path);
+            if (!cs.length) { missing++; return; }
+            // The grids render group_digits; the server ships that exact
+            // string as old_value_disp (docs/124 M-9 — writing _fmt_val's
+            // 7-sig-fig form here showed a truncated value AND made it the
+            // clean baseline the next edit committed from).
+            var v = e.old_value_disp != null ? String(e.old_value_disp)
+                : (e.old_value_str == null ? '' : String(e.old_value_str));
+            // Coverage is a PROMISE that the cell now looks exactly as a fresh
+            // server render would. Three cases where a value write cannot keep
+            // it (docs/124 M-10 + the readonly gap): a pointer must render as
+            // a link, not a value; the docs/56 stored-as-text decorations
+            // (quote spans, amber, tooltip) are server-rendered and must
+            // appear/disappear with the type; and a path whose every match is
+            // readOnly was not repainted at all. Uncovered ⇒ the caller's
+            // debounced rebuild repaints honestly (values below still update
+            // so the number on screen is right immediately).
+            var wrote = 0;
+            var honest = e.old_kind !== 'pointer';
+            Array.prototype.forEach.call(cs, function (c) {
+                if (c.readOnly) return;
+                var isStr = c.hasAttribute('data-str-numeric')
+                    || c.classList.contains('bulk-cell-str');
+                if ((e.old_kind === 'str_numeric') !== isStr) honest = false;
+                c.value = v;
+                // The server has COMMITTED this value, so it is the new clean
+                // baseline — not an edit. Setting data-orig is what keeps the
+                // cell out of the dirty set and off the Apply-row button.
+                c.setAttribute('data-orig', v);
+                // 'input' is what recomputes the docs/109 physical-units
+                // sub-line; _markCellDirty then settles the class (value ===
+                // data-orig ⇒ clean).
+                c.dispatchEvent(new Event('input', { bubbles: true }));
+                _markCellDirty(c);
+                if (c.classList.contains('bulk-cell-linked')) _mirrorLinked(c);
+                var tr = _rowOf(c);
+                if (tr && rows.indexOf(tr) < 0) rows.push(tr);
+                patched++;
+                wrote++;
+            });
+            if (wrote && honest) covered.push(e.dot_path);
+        });
+        rows.forEach(_refreshRow);
+        if (patched) _refreshGlobal();
+        // `covered` (not a missing COUNT) is what the caller needs: with both
+        // grids on screen a qubit leaf is legitimately absent from the pair
+        // grid, so summing each surface's misses would demand a full rebuild
+        // for every ordinary edit.
+        return { patched: patched, missing: missing, covered: covered };
+    }
+    BulkEdit.revertPaths = _revertPaths;
 
     // docs/111 test hooks (jsdom selfcheck drives the internals directly)
     BulkEdit._ge = {

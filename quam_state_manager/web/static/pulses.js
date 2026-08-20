@@ -263,9 +263,12 @@ window.PulsesPage = (function () {
         var ro = new ResizeObserver(function () {
             if (!document.body.contains(el)) { ro.disconnect(); return; }
             if (!primed) { primed = true; return; }
-            if (window.Plotly && el.data) {
-                try { window.Plotly.Plots.resize(el); } catch (e) {}
-            }
+            // docs/122: Plots.resize was measured as a no-op on this app's
+            // charts, so this observer has been firing correctly and achieving
+            // nothing. The `primed` skip above is KEPT — it exists because
+            // resizing the just-rendered plot broke its axes/hover, and that
+            // reason is unaffected by which call does the resizing.
+            if (window.PlotHost && el.data) window.PlotHost.resizeWithin(el);
         });
         ro.observe(el);
         root._plotObserver = ro;

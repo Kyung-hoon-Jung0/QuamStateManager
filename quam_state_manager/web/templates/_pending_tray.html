@@ -1,3 +1,4 @@
+{% from '_icons.html' import icon_bolt %}
 {% from '_delta_macros.html' import delta_chip %}
 <div id="pending-tray"
      class="pending-tray{% if not active_name and change_count == 0 and not working_dirty and not (qualibrate_tray is defined and qualibrate_tray) %} tray-empty{% endif %}"
@@ -24,7 +25,23 @@
    Projects page. Red = the active project's state_path doesn't exist (its
    runs would fail); amber = SM has a DIFFERENT chip open than the one
    qualibrate writes to; neutral otherwise. #}
-{% if qualibrate_tray is defined and qualibrate_tray %}
+{% if qualibrate_tray is defined and qualibrate_tray and qualibrate_tray.standalone %}
+{# docs/120 item 1 — "sometimes a user just opens an arbitrary state file and
+   wants to handle the FULL state file; it's enough to indicate the user is
+   modifying a specific folder, not a project."
+
+   Editing an unaffiliated folder always worked; SM simply never said so, and
+   an absent badge reads as "not applicable yet", not as "standalone". This
+   chip is purely informational — it is NOT a warning and must never wear a
+   warn/danger colour. It can sit BESIDE the ⚗ badge: qualibrate having an
+   active project while the open chip belongs to none is exactly the case
+   worth naming, and it explains the amber ⚗ (no project, rather than a
+   different one). #}
+<span class="qualibrate-tray-badge tray-standalone-badge"
+      title="This chip is a standalone folder — it is not part of any QUAlibrate project. Everything is editable as usual; only the project association is absent.{% if qualibrate_tray.standalone_path %}&#10;{{ qualibrate_tray.standalone_path }}{% endif %}">
+    <span aria-hidden="true">&#128193;</span>&nbsp;Standalone folder</span>
+{% endif %}
+{% if qualibrate_tray is defined and qualibrate_tray and (qualibrate_tray.project or qualibrate_tray.sm_scope) %}
 {# Badge name = SM's own project scope when present (docs/63), else the
    qualibrate-active project. When both exist and differ, the active project
    is appended muted — informational, never a warn color (colors keep their
@@ -36,14 +53,23 @@
 {% endif %}
 {% if active_name or change_count > 0 or working_dirty %}
 {% set _dirty = change_count > 0 or working_dirty %}
+{# A THIRD state. `_dirty` answers "have I edited?"; it does not answer "does my
+   working state match the chip?", which is what the badge's own words claim.
+   With no local edits and a chip that moved underneath you, the badge said
+   "● Synced — Working state matches the live chip" directly above the banner
+   announcing that the live files had changed. Local-clean-but-live-moved is
+   neither dirty nor synced, and the banner beside it already offers the
+   choice — the badge only has to stop contradicting it. #}
+{% set _drifted = live_diverged and not _dirty %}
 <button type="button"
-        class="state-status-badge {{ 'state-status-archive' if _archive else 'state-status-dirty' if _dirty else 'state-status-synced' }}"
+        class="state-status-badge {{ 'state-status-archive' if _archive else 'state-status-dirty' if _dirty else 'state-status-drifted' if _drifted else 'state-status-synced' }}"
         onclick="openReview()"
-        title="{% if _archive %}Opened from a dataset run archive (read-only) — load the live folder to edit/apply{% elif _dirty %}Local edits live in the working state — click to review and apply to the live chip{% else %}Working state matches the live chip — click to review{% endif %}">
+        title="{% if _archive %}Opened from a dataset run archive (read-only) — load the live folder to edit/apply{% elif _dirty %}Local edits live in the working state — click to review and apply to the live chip{% elif _drifted %}The live chip changed on disk since your working state was synced — click to review and choose which side wins{% else %}Working state matches the live chip — click to review{% endif %}">
     <span class="state-status-dot" aria-hidden="true">&#9679;</span>
     {% if _archive %}Archive (read-only)
     {% elif change_count > 0 %}Working state · {{ change_count }} unsaved
     {% elif working_dirty %}Working state · not applied
+    {% elif _drifted %}Live chip moved
     {% else %}Synced{% endif %}
     {# title: the name span ellipsizes at 26ch, so hover must recover the full
        folder name (the button's own title explains the status instead). #}
@@ -74,24 +100,40 @@
    one labelled act, no dialog (docs/104 #1). While armed it is deliberately
    loud and permanent — a mode that changes what leaving a cell DOES may never
    be quiet. Turning it off is the same button. #}
-{% if auto_apply %}
+{# docs/120 item 8 — Auto-SYNC. The pill was "Auto-apply" (push only); the
+   user asked for both directions behind one control: "change the Auto-apply
+   button into an Auto-Sync button, click it and a popup opens with checkboxes
+   — auto pulling from the live chip, auto replace the current modified values
+   in SM, auto pushing to the live chip — all checked, uncheck what you don't
+   want."
+
+   The popup IS the consent. While armed the pill states the MODE rather than
+   just "ON", because pull and push are different promises and a user must be
+   able to see which ones they granted. #}
+{% set _as = auto_sync if auto_sync is defined else None %}
+<span class="auto-sync-wrap">
+{% if _as %}
 <button type="button" class="auto-apply-pill auto-apply-on"
-        hx-post="/auto-apply/disarm" hx-target="#pending-tray" hx-swap="outerHTML"
-        title="Auto-apply is ON: leaving an edited field writes it to the live chip. Click to turn it off.">
-  &#9889; Auto-apply <b>ON</b>
-  {%- if auto_apply.flushes %} <span class="aa-count">{{ auto_apply.flushes }}</span>{% endif %}
+        onclick="AutoSync.toggle(this)" aria-haspopup="dialog" aria-expanded="false"
+        title="Auto-Sync is ON. Click to change what it does, or turn it off.">
+  {{ icon_bolt(13) }} Auto-Sync
+  <b>{% if _as.pull and _as.push %}both{% elif _as.push %}push{% else %}pull{% endif %}</b>
+  {%- if _as.pull and not _as.pull_replace %} <span class="aa-hint">(asks before replacing)</span>{% endif %}
+  {%- if _as.flushes %} <span class="aa-count">{{ _as.flushes }}</span>{% endif %}
   <span class="aa-power">&#9211;</span></button>
-{% elif auto_apply_armable and auto_apply_armable[0] %}
+{% elif (auto_apply_armable and auto_apply_armable[0]) or auto_pull_armable and auto_pull_armable[0] %}
 <button type="button" class="auto-apply-pill auto-apply-off"
-        hx-post="/auto-apply/arm" hx-target="#pending-tray" hx-swap="outerHTML"
-        title="Turn on auto-apply: after this, leaving an edited field writes it straight to the live chip (each change stays revertible).">
-  &#9889; Auto-apply
-  {%- if change_count > 0 %} <span class="aa-hint">(will apply {{ change_count }} pending)</span>{% endif %}
+        onclick="AutoSync.toggle(this)" aria-haspopup="dialog" aria-expanded="false"
+        title="Turn on Auto-Sync: keep SM and the live chip in step without pressing anything.">
+  {{ icon_bolt(13) }} Auto-Sync
+  {%- if change_count > 0 %} <span class="aa-hint">({{ change_count }} pending)</span>{% endif %}
 </button>
 {% elif auto_apply_armable %}
 <span class="auto-apply-pill auto-apply-blocked" title="{{ auto_apply_armable[1] }}">
-  &#9889; Auto-apply</span>
+  {{ icon_bolt(13) }} Auto-Sync</span>
 {% endif %}
+
+</span>
 {# docs/20 v2 LiveEditUndo: one ↶ = one event, exactly mirrored in the Review
    list (staged undos swap this whole tray via /undo's response; un-staged
    fill undos leave it untouched — they were never in the change_log).
@@ -174,7 +216,7 @@
               hx-swap="outerHTML"
               hx-disabled-elt="this"
               hx-confirm="Apply the working state to the live chip's state.json / wiring.json now?"
-              hx-on::after-request="if(window.LiveEditUndo)LiveEditUndo.clear()"
+              data-after-request="clearUndo"
               title="Push the working state (your saved, not-yet-applied edits) to the live chip.">
         <span aria-hidden="true">&#8593;</span> Apply to live chip</button>
       {% endif %}
@@ -251,7 +293,14 @@
               hx-swap="outerHTML"
               hx-disabled-elt="this"
               title="Revert every pending change (Ctrl+Shift+Z restores them one by one)">Discard all</button>
+      {# The armed session is exactly when this promise stops being true — and
+   the same panel already says so at the top. Two lines, one panel,
+   opposite claims is worse than either alone. #}
+      {% if auto_apply and auto_apply.on %}
+      <span class="muted tray-foot-hint">Durable draft &mdash; and Auto-Sync is applying it as you go.</span>
+      {% else %}
       <span class="muted tray-foot-hint">Durable draft &mdash; the live chip stays untouched.</span>
+      {% endif %}
 
     </div>
   </div>

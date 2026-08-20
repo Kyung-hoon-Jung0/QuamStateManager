@@ -7,7 +7,7 @@
                         {# Core mental model — kept always-visible; everything else keys off these three. #}
                         <div class="welcome-glossary">
                             <div><b>Live chip</b> — the <code>state.json</code> / <code>wiring.json</code> your instrument &amp; Qualibrate actually read.</div>
-                            <div><b>Working state</b> — your private editable copy; edits here never touch the instrument until you <b>Apply to live</b>.</div>
+                            <div><b>Working state</b> — your private editable copy; edits here reach the instrument only when you <b>Apply to live</b> — or automatically, while <b>Auto-Sync</b> is armed (off by default; the top bar shows when it is on).</div>
                             <div><b>Snapshot</b> — an immutable, timestamped archive (in State History) you can roll back to.</div>
                         </div>
 
@@ -61,7 +61,7 @@
                                 <div class="wc-feat-body">
                                     <p class="wc-gist">The whole chip’s health at a glance.</p>
                                     <ul class="wc-steps">
-                                        <li><b>Topology · Overview · Distributions</b> — layout &amp; summaries</li>
+                                        <li><b>Topology · Overview</b> — layout &amp; summaries</li>
                                         <li><b>Coherence · Fidelity · Frequencies</b> — heatmap views</li>
                                         <li><b>Gate (2Q) · Calibration</b> — per-pair readouts</li>
                                     </ul>

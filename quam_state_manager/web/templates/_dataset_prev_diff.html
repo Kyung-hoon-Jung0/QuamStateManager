@@ -9,16 +9,30 @@
 {% else %}
 <div class="prevdiff">
     <div class="prevdiff-bar">
+        {# docs/126 r3: the ±10 skips and the direct run-id box live HERE, on
+           the comparison itself — the header carried a duplicate of this and
+           lost it (the original request was always about vs-prev). Type a
+           run number and Enter compares straight against it. #}
         <div class="prevdiff-stepper">
+            <button type="button" class="btn-sm outline prevdiff-skip"{% if older10 is none %} disabled{% endif %}
+                    onclick="loadPrevDiff(this, '{{ uid }}', {{ older10 if older10 is not none else 'null' }}, {{ 1 if compact else 0 }})"
+                    title="Compare against a run 10 steps earlier" aria-label="10 older">&laquo;</button>
             <button type="button" class="btn-sm outline"{% if older is none %} disabled{% endif %}
                     onclick="loadPrevDiff(this, '{{ uid }}', {{ older if older is not none else 'null' }}, {{ 1 if compact else 0 }})"
                     title="Compare against an earlier run">&lsaquo; older</button>
             <span class="prevdiff-vs">#{{ run_id }} <span class="muted">vs</span>
-                <strong class="inspector-runid">#{{ prev_run_id }}</strong></span>
+                <span class="prevdiff-vs-pick">#<input class="prevdiff-vs-input" inputmode="numeric"
+                    value="{{ prev_run_id }}" aria-label="Compare against run number"
+                    title="Type a run number and press Enter to compare against it"
+                    onkeydown="if(event.key==='Enter'){event.preventDefault();prevDiffJump(this, '{{ uid }}', {{ 1 if compact else 0 }});}"></span></span>
             <button type="button" class="btn-sm outline"{% if newer is none %} disabled{% endif %}
                     onclick="loadPrevDiff(this, '{{ uid }}', {{ newer if newer is not none else 'null' }}, {{ 1 if compact else 0 }})"
                     title="Compare against a more recent run">newer &rsaquo;</button>
+            <button type="button" class="btn-sm outline prevdiff-skip"{% if newer10 is none %} disabled{% endif %}
+                    onclick="loadPrevDiff(this, '{{ uid }}', {{ newer10 if newer10 is not none else 'null' }}, {{ 1 if compact else 0 }})"
+                    title="Compare against a run 10 steps later" aria-label="10 newer">&raquo;</button>
         </div>
+        {% if vs_note %}<p class="muted prevdiff-note">{{ vs_note }}</p>{% endif %}
         <div class="prevdiff-badges">
             {% if summary.added %}<span class="diff-badge diff-added">+{{ summary.added }}</span>{% endif %}
             {% if summary.removed %}<span class="diff-badge diff-removed">&minus;{{ summary.removed }}</span>{% endif %}

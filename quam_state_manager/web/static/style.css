@@ -27,8 +27,21 @@
     /* ── TOPBAR ───────────────────────────────────────────────────── */
     /* ⚠ --topbar-height is PROTECTED — it is used in calc(100vh - ...)
        for the sidebar and main panel heights. If you change it, the
-       actual rendered bar must match or panels will overflow/gap.      */
-    --topbar-height:         48px;    /* ⚠ PROTECTED — height of the sticky top navigation bar */
+       actual rendered bar must match or panels will overflow/gap.
+
+       docs/120 item 23: it did not match, and had not for a long time. The
+       bar is a wrapping <nav>, so its real height depends on the window —
+       measured on the customer build at 201px @1600, 229 @1280, 254 @1024,
+       against the 48px declared here. Every panel sized `calc(100vh - 48px)`
+       therefore ran ~150-200px past the bottom of the window, which is what
+       put the wizard's failure message below the fold and let content slide
+       under a sticky bar four times taller than the layout believed.
+
+       The literal below is now only the pre-JS fallback: `TopbarHeight` in
+       app.js measures the rendered bar and publishes the truth here on load
+       and on every resize. Keep this value as a sane first paint; do not try
+       to make it "right", because there is no one right number. */
+    --topbar-height:         48px;    /* ⚠ fallback only — app.js publishes the measured height */
     --topbar-pad-v:          0.2rem;  /* top/bottom padding inside the topbar */
     --topbar-pad-h:          0.75rem; /* left/right padding inside the topbar */
     --topbar-right-gap:      0.4rem;  /* gap between items on the right side of the topbar (search, save, settings) */
@@ -184,9 +197,6 @@
     --topo-heatmap-value-size:  1.25em; /* value inside heatmap cell */
 
     /* -- Histogram section -- */
-    --topo-hist-height:         344px;  /* height of each histogram chart */
-    --topo-hist-min-width:      438px;  /* min width of each histogram box */
-    --topo-hist-title-size:     1.29em; /* histogram box title (e.g. "Gate Fidelity Distribution") */
 
     /* -- Per-metric detail panels (Section 5 & 6) -- */
     --topo-panel-cell-size:     132px;  /* width/height of metric panel grid cells */
@@ -1026,12 +1036,11 @@ html.topbar-hidden .topbar-reveal { display: block; }
 .calc-popover.calc-floating { position: fixed; right: auto; top: auto; margin-top: 0; }
 .calc-title { font-size: 0.85rem; font-weight: 700; }
 .calc-header-tools { display: flex; gap: 0.15rem; cursor: default; }
-.calc-pin, .calc-close {
+.calc-close {
     background: none; border: none; cursor: pointer; padding: 0.1rem 0.3rem;
     color: var(--pico-muted-color); border-radius: 4px; font-size: 0.95rem; line-height: 1;
 }
-.calc-pin:hover, .calc-close:hover { background: var(--pico-muted-border-color); color: var(--pico-contrast); }
-.calc-pin[aria-pressed="true"] { color: var(--pico-primary); }
+.calc-close:hover { background: var(--pico-muted-border-color); color: var(--pico-contrast); }
 
 .calc-body { padding: 0.1rem 0.55rem; }
 /* B2: clear per-section separation — hairline top divider + a bold, full-contrast,
@@ -1425,6 +1434,21 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
 .sidebar-nav a { display: block; padding: var(--sidebar-nav-link-pad-v) var(--sidebar-nav-link-pad-h); border-radius: 4px; text-decoration: none; }
 .sidebar-nav a:hover { background: var(--pico-muted-border-color); }
 .sidebar-nav a.active { background: var(--pico-primary-background); color: var(--pico-primary-inverse); font-weight: 600; }
+/* docs/126 r3: rows that carry a trailing icon (Instrument Wiring's ⧉, Chip
+   Status' 🖨/▾) paint the WHOLE row when active — the icon sits OUTSIDE the
+   anchor, so the pill used to stop mid-row and look cut. The anchor goes
+   transparent (the row owns the color) and the icons inherit the inverse. */
+.sidebar-nav li.nav-floatable:has(> a.active),
+.sidebar-nav .nav-sub-row:has(> a.active) {
+    background: var(--pico-primary-background); border-radius: 4px;
+}
+.sidebar-nav li.nav-floatable:has(> a.active) > a.active,
+.sidebar-nav .nav-sub-row:has(> a.active) > a.active { background: transparent; }
+.sidebar-nav li.nav-floatable:has(> a.active) .nav-float-btn,
+.sidebar-nav .nav-sub-row:has(> a.active) .nav-print,
+.sidebar-nav .nav-sub-row:has(> a.active) .nav-sub-toggle {
+    color: var(--pico-primary-inverse); background: transparent;
+}
 hr.sidebar-section-divider { margin: 0.6rem 0; border-color: var(--pico-muted-border-color); opacity: 0.5; }
 
 /* Tree entries */
@@ -1788,6 +1812,14 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
     background: color-mix(in srgb, #a855f7 14%, transparent);
 }
 .state-status-archive .state-status-dot { color: #a855f7; }
+/* The chip moved under a working state you have not edited. Not green (nothing
+   is "synced") and not the amber of YOUR pending edits — this is the live side
+   that changed, and the drift banner beside it offers the choice. */
+.state-status-drifted {
+    border-color: #38bdf8;
+    background: color-mix(in srgb, #38bdf8 14%, transparent);
+}
+.state-status-drifted .state-status-dot { color: #38bdf8; }
 /* Folder names are user-controlled and can be long — cap them so one name
    can't push the whole topbar cluster into wrapping. Full name in tooltip. */
 .state-status-name { opacity: .65; font-weight: 400; margin-left: .1rem;
@@ -3293,7 +3325,12 @@ td.col-delta .val-delta { margin-left: 0; }
 
 /* Trend charts */
 .trend-chart-container { margin-bottom: 1rem; }
-.trend-mini-chart { height: var(--trend-chart-height); margin-bottom: 0.5rem; }
+/* --trends-mini-height, NOT --trend-chart-height: the mini charts' layout
+   declares 220 (UI_CONFIG.plotly.trendsMini.height) and the wrong 250px var
+   here is exactly the 30px the charts SNAPPED by on any window resize —
+   Plotly's responsive autosize recomputes height from this holder (found by
+   the docs/125 round-3 verification's control experiment; pre-existing). */
+.trend-mini-chart { height: var(--trends-mini-height); margin-bottom: 0.5rem; }
 .trend-legend { font-size: 0.85em; }
 .trend-legend td, .trend-legend th { padding: 0.25rem 0.6rem; }
 .trend-legend code { font-size: 0.85em; word-break: break-all; }
@@ -3309,10 +3346,15 @@ td.col-delta .val-delta { margin-left: 0; }
 .topo-subnav {
     /* Phase C: sticky scroll-spy jump bar — pins to the top of #table-pane and
        stays across every section. The opaque background hides content scrolling
-       underneath. */
-    position: sticky; top: 0; z-index: 20;
+       underneath. docs/126 item 4: top must be NEGATIVE the pane's own
+       padding — sticky pins at the scrollport's PADDING edge, and overflow
+       clips at the padding box, so content stayed visible in that strip and
+       scrolled past "behind" the bar (measured 12.6px on the real chip). The
+       negative top parks the bar flush at the border edge and its background
+       covers the strip. */
+    position: sticky; top: calc(-1 * var(--table-pane-pad-v)); z-index: 20;
     display: flex; flex-wrap: wrap; gap: 0.3rem;
-    margin: 0; padding: 0.45rem 0 0.5rem 0;
+    margin: 0; padding: calc(0.45rem + var(--table-pane-pad-v)) 0 0.5rem 0;
     border-bottom: 1px solid var(--pico-muted-border-color);
     background: var(--pico-background-color);
 }
@@ -3390,15 +3432,76 @@ td.col-delta .val-delta { margin-left: 0; }
     color: var(--pico-primary-inverse); font-weight: 600;
 }
 .topo-hero-mbtn.active .metric-label { color: inherit; }
+/* pair-metric patches read as edges: a subtle link glyph before the label */
+.topo-hero-mbtn-edge::before { content: '↔ '; opacity: .7; }
+.topo-hero-zoomctl { margin-left: auto; display: inline-flex; gap: .25rem; align-items: center; }
+.topo-hero-zbtn {
+    /* width/margin: Pico's global button rules are width:100% + a bottom
+       margin — without the override the three controls render as full-row
+       bars (caught by the real-browser probe). */
+    width: auto; margin: 0;
+    font-size: .78em; line-height: 1.3; padding: .14rem .5rem; cursor: pointer;
+    border: 1px solid var(--pico-muted-border-color); border-radius: 6px;
+    background: transparent; color: var(--pico-muted-color);
+}
+.topo-hero-zbtn:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
+.topo-hero-zbtn.active { background: var(--pico-primary); color: var(--pico-primary-inverse);
+    border-color: var(--pico-primary); }
+.topo-hero-zslider { width: 110px; margin: 0; padding: 0; height: auto; }
+/* docs/126 — the per-gate (pulse-variant) picker under the metric row */
+.topo-hero-gatebar { display: flex; gap: .3rem; align-items: center; flex-wrap: wrap;
+    flex-basis: 100%; margin-top: .25rem; }
+.topo-hero-gatelabel { font-size: .74em; }
+.topo-hero-gbtn { font-family: var(--pico-font-family-monospace, ui-monospace, monospace);
+    font-size: .72em; }
+/* docs/126 compact mode: the stones/markers shrink (see buildHeroMap), and the
+   TEXT grows relative to the cell — a zoomed-out whole-chip view on a small
+   monitor keeps readable numbers. */
+.topo-hero-svg.hero-compact .topo-hero-id { font-size: 14px; }
+.topo-hero-svg.hero-compact .topo-hero-val { font-size: 13px; }
+.topo-hero-svg.hero-compact .topo-hero-eval { font-size: 19px; }
+.topo-hero-svg.hero-compact .cm-role-txt { font-weight: 800; }
+/* docs/126 ②: the value printed ON an edge when a 2Q metric is selected —
+   halo (paint-order stroke) instead of a pill, so no width estimation and it
+   stays readable over the coloured line in both themes. */
+.topo-hero-eval {
+    font-size: 15px; font-weight: 700; text-anchor: middle; pointer-events: none;
+    fill: var(--pico-color); paint-order: stroke;
+    stroke: var(--pico-card-background-color, #fff); stroke-width: 5px;
+    stroke-linejoin: round;
+}
+.topo-hero-node-neutral .topo-hero-id { fill: var(--pico-muted-color); font-size: 13px; }
 .topo-hero-map { position: relative; }
-.topo-hero-scroll { overflow-x: auto; }
+/* docs/126 ②: the container owns the overflow on BOTH axes — the map renders
+   at zoom × pane width (default 2×) and scrolls inside this box, so a big or
+   tall chip never buries the sections below. */
+.topo-hero-scroll { overflow: auto; max-height: 82vh; }
 .topo-hero-note {
     position: absolute; top: 6px; left: 6px; z-index: 2; pointer-events: none;
     font-size: .78em; font-weight: 600; padding: .15rem .55rem; border-radius: 4px;
     background: var(--color-warning-bg); border: 1px solid var(--color-warning-border);
     color: var(--color-warning-text);
 }
-.topo-hero-svg { display: block; }
+/* docs/120 item 11 — the hero is the only chip map now, so it takes the room
+   the card diagram used to. RESPONSIVE rather than JS-refitted: the SVG's own
+   viewBox carries the aspect, width:100% fits the pane, and height:auto follows
+   — which is what let _refitTopology and its resize listener be deleted rather
+   than repointed. The max-height keeps a tall, narrow chip from pushing the
+   sections below off the first screen. */
+/* Sized by the inline zoom style (width: N%, docs/126 ②); the old 70vh
+   max-height letterboxed the drawing smaller than the pane — the container
+   above scrolls instead. */
+.topo-hero-svg { display: block; width: 100%; height: auto;
+    max-width: none; margin-inline: auto; }
+/* C / T / M role markers. Circles read as a distinct LAYER from the stones:
+   filled with the surface colour so the edge beneath does not show through,
+   outlined so they stay legible over a heat-coloured node. */
+.cm-role-dot { fill: var(--pico-card-background-color, #fff);
+    stroke: var(--pico-muted-border-color); stroke-width: 1; }
+/* M wears the SAME neutral style as C and T — the accent version shouted
+   over the map (user, 2026-08-20: "M이 너무 눈에 띈다"). */
+.cm-role-txt { fill: var(--pico-muted-color); font-weight: 700;
+    pointer-events: none; user-select: none; }
 .topo-hero-node { cursor: pointer; }
 .topo-hero-node:focus { outline: none; }
 .topo-hero-stone {
@@ -3627,49 +3730,54 @@ td.col-delta .val-delta { margin-left: 0; }
     user-select: none;
 }
 .topo-card-more-btn:hover { color: var(--pico-primary); }
-.topo-card-popup {
+/* docs/126 ② — modernized popup chrome (customer feedback: same info, less
+   dated): soft 14px radius, layered shadow, translucent blurred surface, and
+   theme-aware hairline borders (the old rgba(0,0,0,…) borders vanished on
+   dark). Both popups share the language. */
+.topo-card-popup, .topo-pair-popup {
     position: absolute; z-index: 100;
-    background: var(--pico-card-background-color, #fff);
-    border: 1px solid rgba(0,0,0,0.15);
-    box-shadow: 0 4px 16px rgba(0,0,0,0.22);
-    border-radius: 6px; padding: 4px 0;
-    min-width: 190px;
+    background: color-mix(in srgb, var(--pico-card-background-color, #fff) 88%, transparent);
+    -webkit-backdrop-filter: blur(10px) saturate(1.15);
+    backdrop-filter: blur(10px) saturate(1.15);
+    border: 1px solid var(--pico-muted-border-color);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.10), 0 12px 32px rgba(0,0,0,0.18);
+    border-radius: 14px;
     animation: topo-popup-in 0.15s ease-out;
 }
-.topo-card-popup .topo-popup-header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 2px 8px 4px; font-size: var(--topo-popup-header-size); font-weight: 600;
-    border-bottom: 1px solid rgba(0,0,0,0.08);
+.topo-card-popup { padding: 6px 2px; min-width: 200px; }
+.topo-card-popup .topo-prop-row { padding: 0 8px; }
+.topo-pair-popup { padding: 8px 2px; min-width: 240px; max-width: 340px; }
+.topo-card-popup .topo-popup-header, .topo-pair-popup .topo-popup-header {
+    display: flex; align-items: center; justify-content: space-between; gap: .5rem;
+    padding: 2px 12px 6px; font-weight: 600;
+    border-bottom: 1px solid var(--pico-muted-border-color);
 }
-.topo-card-popup .topo-popup-close {
-    background: none; border: none; cursor: pointer;
-    font-size: 1.1em; color: var(--pico-muted-color); padding: 0 2px;
+.topo-card-popup .topo-popup-header { font-size: var(--topo-popup-header-size); }
+.topo-pair-popup .topo-popup-header { font-size: var(--topo-popup-pair-header-size); font-weight: 700; }
+.topo-card-popup .topo-popup-close, .topo-pair-popup .topo-popup-close {
+    background: none; border: none; cursor: pointer; line-height: 1;
+    font-size: 1em; color: var(--pico-muted-color);
+    width: 24px; height: 24px; border-radius: 50%; padding: 0;
 }
-.topo-pair-popup {
-    position: absolute; z-index: 100;
-    background: var(--pico-card-background-color, #fff);
-    border: 1px solid rgba(0,0,0,0.15);
-    box-shadow: 0 4px 16px rgba(0,0,0,0.22);
-    border-radius: 6px; padding: 6px 0;
-    min-width: 220px; max-width: 320px;
-    animation: topo-popup-in 0.15s ease-out;
+.topo-card-popup .topo-popup-close:hover, .topo-pair-popup .topo-popup-close:hover {
+    background: var(--pico-muted-border-color); color: var(--pico-color);
 }
-.topo-pair-popup .topo-popup-header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 2px 8px 4px; font-size: var(--topo-popup-pair-header-size); font-weight: 700;
-    border-bottom: 1px solid rgba(0,0,0,0.08);
+/* gate-kind chip in the pair header (CZ / CR / off) */
+.topo-popup-kind {
+    font-size: .62em; font-weight: 700; letter-spacing: .04em; vertical-align: middle;
+    padding: .08rem .4rem; border-radius: 999px; margin-left: .1rem;
+    background: var(--pico-primary); color: var(--pico-primary-inverse);
 }
-.topo-pair-popup .topo-popup-close {
-    background: none; border: none; cursor: pointer;
-    font-size: 1.1em; color: var(--pico-muted-color); padding: 0 2px;
-}
+.topo-popup-kind.topo-popup-off { background: var(--pico-muted-color); }
 .topo-pair-popup .topo-popup-section {
-    padding: 3px 8px; font-size: var(--topo-popup-section-size); line-height: 1.5;
+    padding: 4px 12px; font-size: var(--topo-popup-section-size); line-height: 1.55;
 }
 .topo-pair-popup .topo-popup-section-title {
-    font-weight: 600; font-size: var(--topo-popup-section-title-size); color: var(--pico-muted-color);
-    margin-top: 4px; border-top: 1px solid rgba(0,0,0,0.06); padding-top: 3px;
+    font-weight: 700; font-size: calc(var(--topo-popup-section-title-size) * 0.82);
+    text-transform: uppercase; letter-spacing: .06em; color: var(--pico-muted-color);
+    margin-top: 4px; padding-top: 5px; border-top: 1px solid var(--pico-muted-border-color);
 }
+.topo-pair-popup .topo-popup-section:first-of-type .topo-popup-section-title { border-top: none; margin-top: 0; }
 .topo-pair-popup .topo-popup-row {
     display: flex; justify-content: space-between; gap: 8px; font-family: monospace;
 }
@@ -3811,6 +3919,10 @@ td.col-delta .val-delta { margin-left: 0; }
 .topo-verdict-banner .verdict-text { line-height: 1.35; }
 .topo-verdict-banner.pass { background: var(--color-success-bg); border-color: var(--color-success-border); }
 .topo-verdict-banner.warn { background: var(--color-warning-bg); border-color: var(--color-warning-border); }
+/* Nothing measured yet — neither healthy nor unhealthy. Green here was the
+   lie: a chip in early bring-up has no coherence or fidelity data at all. */
+.topo-verdict-banner.unknown { background: var(--pico-card-sectioning-background-color,
+    var(--pico-card-background-color)); border-color: var(--pico-muted-border-color); }
 .topo-verdict-banner.fail { background: var(--color-error-bg);   border-color: var(--color-error-border); }
 .verdict-avoid { color: var(--pico-muted-color); }
 .verdict-avoid-chip {
@@ -3983,17 +4095,6 @@ a.topo-health-tile:hover { background: var(--pico-card-sectioning-background-col
 }
 
 /* ── Distribution histograms ──────────────────────────────────────── */
-.topo-histograms {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--topo-hist-min-width), 1fr));
-    gap: 0.75rem;
-}
-.topo-hist-box {
-    border: 1px solid var(--pico-muted-border-color); border-radius: 6px;
-    overflow: hidden; background: var(--pico-card-background-color, var(--pico-background-color));
-}
-.topo-hist-title { font-size: var(--topo-hist-title-size); font-weight: 600; padding: 0.4rem 0.6rem 0; }
-.topo-hist-chart { height: var(--topo-hist-height); }
-
 /* ── Metric detail panels (Section 5) ─────────────────────────────── */
 .topo-metric-panel-row {
     display: flex; align-items: flex-start; gap: 1rem; flex-wrap: wrap;
@@ -8009,6 +8110,7 @@ tr.gen-pop-row-linked > td {
     background: rgba(0,0,0,0.02);
 }
 .cmd-palette-hint kbd {
+    color: var(--pico-color);   /* same inverted-kbd trap as .help-sc-grid kbd */
     background: var(--pico-muted-border-color, rgba(0,0,0,0.08));
     border-radius: 3px; padding: 1px 5px; margin: 0 0.15em;
     font-size: 0.75em; font-family: monospace;
@@ -8350,6 +8452,177 @@ button.diag-badge { cursor: pointer; }
 .bulk-toolbar { display: flex; align-items: center; gap: 0.7rem; margin-bottom: 0.6rem; flex-wrap: wrap; }
 .bulk-toolbar-title { margin-bottom: 0.3rem; }   /* tight gap to the controls row below */
 /* user font-size control (tiles + slider + bold) */
+/* docs/120 item 4 — quick-filter chips, in the row the readability cluster
+   used to occupy. Its own line under the controls row: on a real chip this is
+   ~17 chips, which would push the search box off a laptop screen if it shared
+   a row, and it wraps to a horizontal scroll rather than growing the toolbar
+   downward while the user works. */
+.bulk-chipbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem;
+    margin: 0.1rem 0 0.35rem; }
+.bulk-chip-scroll { display: flex; align-items: center; gap: 0.25rem;
+    overflow-x: auto; scrollbar-width: thin; padding-bottom: 2px; min-width: 0; }
+.bulk-chip { flex: 0 0 auto; margin: 0; width: auto;
+    padding: 0.08rem 0.5rem; border-radius: 1rem;
+    border: 1px solid var(--pico-muted-border-color);
+    background: transparent; color: var(--color-text-muted, var(--pico-muted-color));
+    font-size: 0.74rem; line-height: 1.5; cursor: pointer; white-space: nowrap; }
+.bulk-chip:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
+.bulk-chip.active { background: var(--pico-primary); color: var(--pico-primary-inverse);
+    border-color: var(--pico-primary); }
+/* An operation is a NAME the chip carries (x180, cz), not a property word, and
+   the two combine rather than compete — "x180" AND "amp". Monospace says
+   "this is an identifier from your chip" without spending a second colour on
+   a row whose one colour already means selected. */
+.bulk-chip-op { font-family: var(--pico-font-family-monospace, ui-monospace, monospace);
+    font-size: 0.71rem; letter-spacing: -0.01em;
+    border-style: dashed; }
+.bulk-chip-op.active { border-style: solid; }
+/* Leftmost and prominent, per the user — it governs every chip beside it, so
+   it must not read as one of them. Square, bordered, never the chip pill. */
+.bulk-chip-mode { flex: 0 0 auto; margin: 0; width: auto;
+    padding: 0.08rem 0.45rem; border-radius: 0.25rem;
+    border: 1px solid var(--pico-muted-border-color);
+    background: transparent; color: var(--pico-contrast, inherit);
+    font-size: 0.7rem; font-weight: 700; letter-spacing: 0.03em;
+    cursor: pointer; white-space: nowrap; }
+.bulk-chip-mode:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
+.bulk-chip-mode.chip-mode-or { border-color: var(--pico-primary);
+    color: var(--pico-primary); }
+/* docs/126 ③: the no-match notice used to sit at the RIGHT END of the chip
+   row where nobody saw it — it is now a full-width centered band. It stays a
+   child of the chipbar so the delegated yes/no click handling is untouched. */
+.bulk-chip-offer { flex: 1 1 100%; display: flex; align-items: center; justify-content: center;
+    padding: .3rem .6rem; border-radius: 8px; font-weight: 600;
+    background: var(--color-warning-bg); border: 1px solid var(--color-warning-border);
+    color: var(--color-warning-text);
+    gap: 0.25rem; font-size: 0.72rem;
+    color: var(--color-warning-text, var(--pico-muted-color)); }
+.bulk-chip-offer[hidden] { display: none; }
+/* docs/126 ③ custom patches */
+.bulk-chip-custom { border-style: dashed; }
+.bulk-chip-x { margin-left: .3rem; opacity: .6; font-weight: 700; cursor: pointer; }
+.bulk-chip-x:hover { opacity: 1; color: var(--color-error-text); }
+.bulk-chip-add { border-style: dashed; font-weight: 700; min-width: 1.7em; }
+.bulk-chip-add-input { width: 9em; margin: 0; padding: .1rem .4rem; font-size: .8em;
+    height: auto; border-radius: 999px; }
+/* docs/126 ④ — the tree's patch row + port-owner chips */
+.explorer-chipbar { margin: .3rem 0 .35rem; }
+.tree-owner-chip {
+    margin-left: .55rem; font-size: .72em; font-weight: 600; white-space: nowrap;
+    padding: .05rem .45rem; border-radius: 999px; vertical-align: middle;
+    background: var(--pico-card-background-color, transparent);
+    border: 1px solid var(--pico-muted-border-color); color: var(--pico-muted-color);
+}
+.tree-act-copy { font-weight: 600; }
+/* docs/126 — the Versions panel's "since the previous version" quick table */
+.sv-quick { margin: .3rem 0 .5rem; padding: .4rem .5rem; border-radius: 9px;
+    border: 1px solid var(--pico-muted-border-color);
+    background: var(--pico-card-background-color, transparent); }
+.sv-quick-head { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap;
+    font-size: .78rem; margin-bottom: .25rem; }
+.sv-quick-table { width: 100%; margin: 0; font-size: .74rem; }
+.sv-quick-table td { padding: .1rem .3rem; border: none; vertical-align: top;
+    overflow-wrap: anywhere; }
+.sv-q-path code { font-size: .95em; word-break: break-all; }
+.sv-q-vals { white-space: nowrap; text-align: right; }
+.sv-q-old { color: var(--pico-muted-color); text-decoration: line-through; }
+.sv-q-add { color: var(--color-success-text); }
+.sv-q-del { color: var(--color-error-text); }
+.sv-quick-big { font-size: .76rem; margin: .1rem 0 0; }
+/* docs/126 — the floating ☰ (chrome cycle, leg 3). Slightly inset from the
+   corner, opaque, above sticky page bars. */
+.chrome-reveal {
+    display: none; position: fixed; top: 6px; left: 6px; z-index: 120;
+    width: 30px; height: 30px; margin: 0; padding: 0; line-height: 1;
+    border: 1px solid var(--pico-muted-border-color); border-radius: 8px;
+    background: var(--pico-card-background-color, #fff);
+    /* --pico-contrast, never --pico-color: Pico rescopes the latter to white
+       on <button>, which is invisible on this card in light theme. */
+    color: var(--pico-contrast);
+    cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.25);
+}
+html.topbar-hidden .chrome-reveal { display: block; }
+.chrome-reveal:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
+/* docs/126 — dismiss affordances on toasts + the data-folder banner */
+.toast { position: relative; padding-right: 2rem; }
+.toast .toast-x {
+    position: absolute; top: .3rem; right: .35rem; width: 22px; height: 22px;
+    margin: 0; padding: 0; background: none; border: none; border-radius: 50%;
+    cursor: pointer; line-height: 1; font-size: 1em; color: inherit; opacity: .65;
+}
+.toast .toast-x:hover { opacity: 1; background: rgba(128,128,128,.25); }
+.chip-name-banner { position: relative; padding-right: 2.1rem; }
+.cnb-x {
+    position: absolute; top: .3rem; right: .35rem; width: 22px; height: 22px;
+    margin: 0; padding: 0; background: none; border: none; border-radius: 50%;
+    cursor: pointer; line-height: 1; font-size: 1.05em; color: inherit; opacity: .6;
+}
+.cnb-x:hover { opacity: 1; background: rgba(128,128,128,.25); }
+/* docs/126 ⑥ — floating Instrument Wiring panel */
+.nav-floatable { display: flex; align-items: center; }
+.nav-floatable > a { flex: 1 1 auto; min-width: 0; }
+.nav-float-btn {
+    flex: 0 0 auto; width: auto; margin: 0 .2rem 0 0; padding: 0 .3rem;
+    background: transparent; border: none; cursor: pointer; line-height: 1.2;
+    color: var(--pico-muted-color); font-size: .95em; border-radius: 4px;
+}
+.nav-float-btn:hover { color: var(--pico-primary); background: var(--pico-muted-border-color); }
+.float-wiring {
+    position: fixed; right: 18px; bottom: 18px; z-index: 96;
+    width: 520px; height: 420px; min-width: 260px; min-height: 40px;
+    display: flex; flex-direction: column;
+    background: var(--pico-card-background-color, #fff);
+    /* Accent-tinted hairline (user, 2026-08-20): the muted border melted
+       into the page and the floating panel had no visible boundary. Soft
+       blue, not full primary — a frame, not a highlight. */
+    border: 1px solid color-mix(in srgb, var(--pico-primary) 55%, var(--pico-muted-border-color));
+    border-radius: 12px;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--pico-primary) 18%, transparent),
+                0 2px 6px rgba(0,0,0,0.10), 0 12px 32px rgba(0,0,0,0.22);
+    resize: both; overflow: hidden;
+}
+.float-wiring .fw-head {
+    display: flex; align-items: center; gap: .4rem; cursor: grab;
+    padding: .3rem .55rem; border-bottom: 1px solid var(--pico-muted-border-color);
+    user-select: none; flex: 0 0 auto;
+}
+.float-wiring .fw-title { font-weight: 700; font-size: .85em; white-space: nowrap; }
+.float-wiring .fw-status { flex: 1 1 auto; min-width: 0; font-size: .75em;
+    font-family: var(--font-mono, monospace); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; text-align: right; }
+.float-wiring .fw-btn { flex: 0 0 auto; width: 24px; height: 24px; margin: 0; padding: 0;
+    background: none; border: none; border-radius: 50%; cursor: pointer;
+    color: var(--pico-muted-color); font-size: .85em; line-height: 1; }
+.float-wiring .fw-btn:hover { background: var(--pico-muted-border-color); color: var(--pico-color); }
+.float-wiring .fw-body { flex: 1 1 auto; overflow: auto; }
+.float-wiring.fw-collapsed { height: auto !important; min-height: 0; resize: none; }
+.float-wiring.fw-collapsed .fw-body { display: none; }
+
+/* docs/126 r3 — the run-number box + ±10 skips live on the Prev State
+   comparison bar (the request's real home; the header copy was removed). */
+.prevdiff-vs-pick { display: inline-flex; align-items: baseline; gap: 0.05em; }
+/* two-class selector on purpose: Pico's `input:not([type=checkbox],...)`
+   carries (0,1,1) and beats a lone class — the box rendered 213px wide. */
+.prevdiff-stepper .prevdiff-vs-input { width: 3.9em; margin: 0;
+    padding: .05rem .3rem; height: auto;
+    font-size: .95em; font-weight: 700; text-align: center; border-radius: 6px;
+    display: inline-block; }
+.prevdiff-skip { font-size: 1.05em; }
+.prevdiff-note { font-size: .74rem; margin: .15rem 0 0; }
+.bulk-chip-offer-yes, .bulk-chip-offer-no { margin: 0; width: auto;
+    padding: 0.02rem 0.4rem; border-radius: 0.25rem; font-size: 0.72rem;
+    border: 1px solid var(--color-warning-border, var(--pico-muted-border-color));
+    background: transparent; color: inherit; cursor: pointer; }
+.bulk-chip-offer-yes:hover, .bulk-chip-offer-no:hover {
+    background: var(--color-warning-bg, transparent); }
+/* Settings ▸ Live Edit — two labelled sub-rows (Table / Flat), because the two
+   views keep independent keys and merging them would silently change behaviour. */
+.settings-sub { margin: 0.15rem 0 0.3rem; }
+.settings-sub-label { display: block; font-size: 0.7rem;
+    color: var(--pico-muted-color); margin-bottom: 0.15rem; }
+.settings-slider { display: flex; align-items: center; gap: 0.3rem;
+    margin: 0.2rem 0 0; }
+.settings-slider input[type=range] { width: 100%; margin: 0; }
 .bulk-font-ctl { display: inline-flex; align-items: center; gap: 0.25rem; }
 .bulk-font-ctl .bulk-font-label { font-size: 0.78em; color: var(--pico-muted-color); }
 .bulk-font-ctl .btn-xs { margin: 0; padding: 0.05rem 0.45rem; width: auto; }
@@ -8500,7 +8773,10 @@ a.sidebar-tool-btn { text-decoration: none; color: inherit; }
 .help-shortcuts { margin-top: 1.5rem; }
 .help-sc-grid { display: grid; grid-template-columns: max-content 1fr; gap: .3rem 1rem; align-items: baseline; }
 .help-sc-group { grid-column: 1 / -1; font-weight: 700; font-size: .82em; opacity: .65; text-transform: uppercase; letter-spacing: .04em; margin-top: .6rem; }
-.help-sc-grid kbd { font-family: var(--font-mono, monospace); font-size: .82em; background: var(--pico-background-color); border: 1px solid var(--pico-muted-border-color); border-radius: 4px; padding: .05rem .35rem; }
+/* color is load-bearing: Pico's kbd is INVERTED (text = background token), so a
+   background-only override leaves page-background text on a page-background chip
+   — invisible in both themes (docs/126 ⑥, customer report). */
+.help-sc-grid kbd { font-family: var(--font-mono, monospace); font-size: .82em; color: var(--pico-color); background: var(--pico-background-color); border: 1px solid var(--pico-muted-border-color); border-radius: 4px; padding: .05rem .35rem; }
 /* docs/111 (#11): selection · fill-down · pinning */
 .bulk-td.bulk-sel { outline: 2px solid var(--pico-primary); outline-offset: -2px; background: color-mix(in srgb, var(--pico-primary) 12%, transparent); }
 /* the ANCHOR is the cell whose value Ctrl+D propagates — it must not look
@@ -8526,7 +8802,7 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 .kb-sheet-rows { display: grid; grid-template-columns: max-content 1fr; gap: .25rem .9rem; align-items: baseline; }
 .kb-sheet-group { grid-column: 1 / -1; font-weight: 700; font-size: .82em; opacity: .65; text-transform: uppercase; letter-spacing: .04em; margin-top: .45rem; }
 .kb-sheet-row { display: contents; }
-.kb-sheet kbd { font-family: var(--font-mono, monospace); font-size: .82em; background: var(--pico-background-color); border: 1px solid var(--pico-muted-border-color); border-radius: 4px; padding: .05rem .35rem; white-space: nowrap; }
+.kb-sheet kbd { font-family: var(--font-mono, monospace); font-size: .82em; color: var(--pico-color); background: var(--pico-background-color); border: 1px solid var(--pico-muted-border-color); border-radius: 4px; padding: .05rem .35rem; white-space: nowrap; }
 .kb-sheet-hint { margin: .6rem 0 .3rem; font-size: .78em; }
 .kb-sheet-close { margin-top: .2rem; }
 
@@ -8605,9 +8881,23 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
    conflict tray's force button and the drift banner / review modal's
    "Keep mine — overwrite live" are the same act, so they must not look like
    two different weights of decision. */
+/* SPECIFICITY, not order. Each of these buttons also carries a two-class base
+   (`.btn-sync.outline`, `.btn-sm.primary`), which outranks a single class no
+   matter where it sits in the file — so this rule was written, shipped, and
+   silently lost every cascade. Measured in Chrome: "↑ Keep mine — overwrite
+   live" computed to rgb(152,161,179) on rgb(32,38,50), byte-identical to the
+   "Close" button beside it, while --color-error-text is #f5a0a8. The most
+   destructive control on the screen looked exactly like the least. Each
+   selector is now paired with the base class it actually ships with. */
+.btn-sm.tray-force-btn,
+.btn-sync.state-review-overwrite-btn,
+.btn-sm.live-diverged-overwrite,
 .tray-force-btn,
 .state-review-overwrite-btn,
 .live-diverged-overwrite { color: var(--color-error-text); border-color: var(--color-error-text); }
+.btn-sm.tray-force-btn:hover,
+.btn-sync.state-review-overwrite-btn:hover,
+.btn-sm.live-diverged-overwrite:hover,
 .tray-force-btn:hover,
 .state-review-overwrite-btn:hover,
 .live-diverged-overwrite:hover { background: var(--color-error-text); color: var(--pico-card-background-color); border-color: var(--color-error-text); }
@@ -8667,6 +8957,19 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
     border: 1px solid var(--color-warning-border);
 }
 .bulk-dyncol-hint:hover { background: var(--color-warning-bg); }
+/* docs/120 item 8 — "N more rows — show". Same chip shape as its neighbour but
+   in the accent colour, because this one is not a warning: the search behaved
+   correctly and this is the way out of it. */
+.bulk-valrow-hint {
+    width: auto; margin: 0 0 0 0.3rem; padding: 0 0.55rem; font-size: 0.76em;
+    line-height: 1.7; white-space: nowrap; cursor: pointer; border-radius: 999px;
+    background: transparent; color: var(--pico-primary);
+    border: 1px solid var(--pico-primary);
+}
+.bulk-valrow-hint:hover { background: var(--pico-primary-hover-background, transparent); }
+.bulk-valrow-hint[hidden] { display: none; }
+/* docs/120 item 1 — the entity a container-valued pointer names. */
+.ptr-entity { font-weight: 600; }
 /* Collapsible per-section dynamic groups appended to the Properties menu. */
 .bulk-colvis-dyn { margin: 0; }
 .bulk-colvis-dyn > summary {
@@ -9881,6 +10184,14 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
     color: var(--cell-ok-color, #ff7f0e); }
 .qualibrate-tray-danger { border-color: var(--cell-bad-color, #d62728);
     color: var(--cell-bad-color, #d62728); }
+/* docs/120 item 1 — "this chip is a bare folder, not a project". A statement
+   of fact, not a problem: it borrows the badge shape but stays deliberately
+   quieter than the ⚗ badge beside it (dashed border, muted text, no hover
+   affordance) because nothing here is clickable or wrong. Its own class, NOT
+   the sidebar tree's `.status-standalone` — that one belongs to the run-status
+   family (.status-finished/.status-failed) and would drag this along with any
+   future change to run colours. */
+.tray-standalone-badge { border-style: dashed; cursor: default; }
 /* Project lens (docs/63): muted "(qualibrate: <active>)" note when SM's scope
    differs from qualibrate's active project — informational, never a warn color */
 .qualibrate-tray-active-note { color: var(--pico-muted-color); font-size: .92em; }
@@ -10239,6 +10550,24 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .fsp-clipmark { color: var(--color-error-text); font-size: .72rem; }
 .fsp-skipped { margin: .2rem 0 0; font-size: .7rem; color: var(--color-text-muted); }
 .fsp-actions { display: flex; gap: .4rem; margin-top: .5rem; flex-wrap: wrap; }
+/* docs/120 item 7 — the compensated amplitude is an INPUT, so it has to read
+   as editable at a glance while staying visually a table cell. Monospace +
+   tabular figures so a column of amplitudes stays comparable, and sized to the
+   values it holds rather than stretching the dialog. */
+.fsp-amp-input { width: 11ch; padding: .1rem .3rem; margin: 0;
+    font-family: var(--font-mono); font-size: .78rem;
+    font-variant-numeric: tabular-nums; height: auto; }
+.fsp-amp-input.fsp-amp-clip { color: var(--color-error-text); font-weight: 700;
+    border-color: var(--color-error-border, var(--color-error-text)); }
+.fsp-amp-input.fsp-amp-bad { border-color: var(--color-error-text);
+    background: var(--color-error-bg, transparent); }
+/* Reveals itself only on an overridden row (visibility, not display, so the
+   column never reflows as the user types). */
+.fsp-amp-reset { background: none; border: none; padding: 0 .25rem; margin: 0;
+    width: auto; color: var(--color-text-muted); cursor: pointer;
+    font-size: .8rem; line-height: 1; }
+.fsp-amp-reset:hover { color: var(--pico-primary); }
+.fsp-edited-note { color: var(--color-warning-text, var(--color-error-text)); }
 
 /* undo flash on a restored/filled cell */
 @keyframes leuFlash { 0% { background: var(--pico-primary); opacity: .35; }
@@ -10433,6 +10762,12 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
     font-size: .8em; line-height: 1.5; cursor: pointer; white-space: nowrap;
 }
 .auto-apply-pill:hover { color: var(--text-primary); border-color: var(--accent); }
+/* docs/126: the bolt is an SVG (currentColor) so ON/OFF can actually differ —
+   the ⚡ emoji ignored CSS color. OFF = gray; ON = bright orange, border too. */
+.auto-apply-pill .icon-bolt { color: var(--pico-muted-color); }
+.auto-apply-on { border-color: #f59e0b !important; }
+.auto-apply-on .icon-bolt { color: #f59e0b;
+    filter: drop-shadow(0 0 3px rgba(245, 158, 11, .55)); }
 .auto-apply-off .aa-hint { color: var(--text-muted); font-size: .92em; }
 .auto-apply-blocked { cursor: not-allowed; opacity: .45; }
 .auto-apply-on {
@@ -10484,3 +10819,237 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .al-reverted { opacity: .55; text-decoration: line-through; }
 .applied-log-reverted { color: var(--text-muted); font-size: .78em; }
 .btn-al-revert { padding: 0 .3rem; line-height: 1.4; }
+
+/* ── docs/120 item 10: working-state version chip + panel ──────────────── */
+.state-version-wrap { position: relative; }
+.state-version-chip { display: inline-flex; align-items: center; gap: 0.25rem;
+    margin: 0; width: auto; padding: 0.12rem 0.5rem; border-radius: 1rem;
+    border: 1px solid var(--pico-muted-border-color); background: transparent;
+    color: var(--color-text-muted, var(--pico-muted-color));
+    font-size: 0.72rem; line-height: 1.4; cursor: pointer; white-space: nowrap; }
+.state-version-chip:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
+.state-version-id { font-family: var(--font-mono); }
+/* "unsaved" is the ordinary mid-edit condition, not a fault — muted italic,
+   never a warning colour. */
+.state-version-none { font-style: italic; }
+.state-version-count { opacity: 0.6; font-size: 0.9em; }
+/* "live is on this version, and SM has moved past it". Deliberately a mark on
+   the id rather than a different id: the id is still true, it is just no longer
+   the whole truth. */
+.state-version-edits { font-weight: 700; line-height: 1;
+    color: var(--color-warning, var(--pico-primary)); }
+.state-version-panel { position: absolute; top: calc(100% + 0.35rem); left: 0;
+    z-index: 40; width: min(46rem, 92vw); max-height: 70vh; overflow-y: auto;
+    background: var(--pico-card-background-color);
+    border: 1px solid var(--pico-muted-border-color); border-radius: 0.4rem;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18); padding: 0.6rem 0.8rem;
+    font-size: 0.8rem; }
+.state-version-panel[hidden] { display: none; }
+.state-versions-head { display: flex; align-items: center; gap: 0.5rem;
+    margin-bottom: 0.35rem; }
+.state-versions-close { margin-left: auto; background: none; border: none;
+    width: auto; padding: 0 0.3rem; font-size: 1.2em; line-height: 1;
+    color: var(--pico-muted-color); cursor: pointer; }
+.state-versions-actions { display: flex; align-items: center; gap: 0.5rem;
+    margin-bottom: 0.35rem; }
+.sv-hint { font-size: 0.72rem; }
+/* display:block explicitly — the panel lives inside the topbar <nav>, and
+   Pico's `nav ul { display:flex }` reaches nested lists, which laid the
+   version rows out HORIZONTALLY with a scrollbar (bug report). */
+.state-versions-list { list-style: none; margin: 0; padding: 0; display: block; }
+.state-version-row { display: flex; align-items: baseline; gap: 0.5rem;
+    padding: 0.2rem 0.25rem; border-radius: 0.25rem; }
+.state-version-row:hover { background: var(--pico-card-sectioning-background-color, transparent); }
+.state-version-row.sv-current { outline: 1px solid var(--pico-primary); }
+.sv-pick { display: flex; align-items: baseline; gap: 0.35rem; margin: 0;
+    cursor: pointer; flex: 0 0 auto; }
+.sv-pick input { margin: 0; }
+.sv-when { display: flex; flex-direction: column; line-height: 1.25; }
+.sv-id { font-family: var(--font-mono); font-size: 0.68rem; opacity: 0.6; }
+.sv-meta { display: flex; align-items: baseline; gap: 0.35rem; flex-wrap: wrap;
+    flex: 1 1 auto; min-width: 0; }
+.sv-trigger { font-size: 0.66rem; text-transform: uppercase;
+    letter-spacing: 0.04em; opacity: 0.75; }
+.sv-now { font-size: 0.66rem; color: var(--pico-primary); }
+.sv-label { font-weight: 600; }
+.sv-exp, .sv-note { font-size: 0.72rem; }
+.sv-row-actions { flex: 0 0 auto; margin-left: auto; }
+.state-versions-empty { font-size: 0.78rem; margin: 0.3rem 0; }
+.state-versions-more { display: flex; align-items: center; gap: 0.4rem;
+    flex-wrap: wrap; padding: 0.35rem 0.1rem 0.1rem;
+    border-top: 1px solid var(--pico-muted-border-color); margin-top: 0.25rem; }
+.sv-cap-note { font-size: 0.72rem; }
+
+/* ── docs/120 item 8: the Auto-Sync popup ──────────────────────────────── */
+.auto-sync-wrap { position: relative; display: inline-block; }
+/* docs/126 restyle: JS pins it under the pill (fixed, clamped) — the old
+   absolute left:0 anchored to a far ancestor and opened at the window's left
+   edge. Modern chrome = the topology-popup language (radius, blur, hairline);
+   each option is a bordered ROW that inverts on hover, and the sub-option
+   wears a tree elbow so its subordination is unmistakable. */
+.auto-sync-pop { position: fixed; z-index: 120; width: 22rem;
+    padding: 0.65rem 0.7rem;
+    background: color-mix(in srgb, var(--pico-card-background-color, #fff) 90%, transparent);
+    -webkit-backdrop-filter: blur(10px) saturate(1.15);
+    backdrop-filter: blur(10px) saturate(1.15);
+    border: 1px solid var(--pico-muted-border-color); border-radius: 14px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.10), 0 12px 32px rgba(0,0,0,0.22);
+    font-size: 0.8rem; }
+.auto-sync-pop[hidden] { display: none; }
+.as-title { display: block; margin-bottom: 0.45rem; font-size: 0.9rem; }
+.as-row { display: flex; align-items: flex-start; gap: 0.5rem;
+    margin: 0.25rem 0; cursor: pointer; padding: 0.4rem 0.5rem;
+    border: 1px solid var(--pico-muted-border-color); border-radius: 9px;
+    transition: background 0.12s, color 0.12s; }
+.as-row:hover { background: var(--pico-color); color: var(--pico-background-color); }
+.as-row:hover .muted, .as-row:hover small { color: inherit; opacity: 0.75; }
+/* An explicit SQUARE, not width:auto: Pico strips native rendering
+   (appearance:none) and the global input{width:100%} fight collapsed the
+   box to a 4px sliver — checked and unchecked were the same blue bar, so
+   the popup looked dead (bug report). With real dimensions Pico's own
+   :checked checkmark renders and the toggle is visible again. */
+.as-row input { margin: 0.1rem 0 0; flex: 0 0 auto;
+    width: 1.1rem; height: 1.1rem; }
+.as-row small { display: block; line-height: 1.3; }
+/* Nested under its parent because "replace" qualifies a pull — the elbow
+   makes the subordination visible, not just an indent. */
+.as-row-sub { margin-left: 1.9rem; position: relative; }
+.as-row-sub::before { content: ""; position: absolute; left: -1.15rem;
+    top: -0.35rem; width: 0.8rem; height: 1.15rem;
+    border-left: 2px solid var(--pico-muted-border-color);
+    border-bottom: 2px solid var(--pico-muted-border-color);
+    border-bottom-left-radius: 6px; }
+.as-row-disabled { opacity: 0.45; }
+.as-note { font-size: 0.72rem; margin: 0.45rem 0 0.5rem; line-height: 1.35; }
+.as-actions { display: flex; gap: 0.4rem; justify-content: flex-end; }
+.as-actions .btn-sm { width: auto; margin: 0; padding: 0.2rem 0.8rem; }
+
+/* ── docs/120 items 5+9: chip-wide Trends ──────────────────────────────────
+   The customer asked for this to be "BIG, NICE, MODERN and FANCY" — it is the
+   final read on a whole chip. The first cut shipped with NO rules at all, so
+   under Pico every <button> rendered as a full-width solid primary block with a
+   1rem margin: eleven identical blue slabs, no visible selected state, and a
+   suggestion list that shoved the page down instead of floating. These follow
+   .topo-hero-mbtn, the same control pattern one section above. */
+.topo-trends-controls { display: flex; align-items: center; gap: .5rem;
+    flex-wrap: wrap; margin-bottom: .7rem; }
+.topo-trends-label { font-size: .74rem; text-transform: uppercase;
+    letter-spacing: .05em; }
+.topo-trends-chips { display: flex; align-items: center; gap: .3rem;
+    flex-wrap: wrap; min-width: 0; }
+.topo-trend-chip { margin: 0; width: auto;
+    font-size: .76em; padding: .16rem .6rem; border-radius: 999px;
+    border: 1px solid var(--pico-muted-border-color); background: transparent;
+    color: var(--pico-muted-color); cursor: pointer; line-height: 1.35;
+    white-space: nowrap; font-family: var(--font-mono); }
+.topo-trend-chip:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
+.topo-trend-chip.active { background: var(--pico-primary);
+    border-color: var(--pico-primary); color: var(--pico-primary-inverse);
+    font-weight: 600; }
+.topo-trends-count { font-size: .74rem; margin-left: auto; }
+
+/* The any-parameter typeahead: a real dropdown, not a page-shoving list. */
+.topo-trends-any { position: relative; flex: 1 1 16rem; min-width: 12rem; }
+.topo-trend-path { width: 100%; margin: 0; padding: .2rem .5rem;
+    font-size: .78rem; height: auto; font-family: var(--font-mono); }
+.topo-trend-suggest { position: absolute; top: calc(100% + .2rem); left: 0; right: 0;
+    z-index: 30; max-height: 16rem; overflow-y: auto;
+    background: var(--pico-card-background-color);
+    border: 1px solid var(--pico-muted-border-color); border-radius: .3rem;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, .16); }
+.topo-trend-suggest[hidden] { display: none; }
+.topo-trend-sug { display: block; width: 100%; margin: 0; text-align: left;
+    padding: .22rem .5rem; border: none; border-radius: 0; background: transparent;
+    color: inherit; font-family: var(--font-mono); font-size: .72rem;
+    cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topo-trend-sug:hover { background: var(--pico-primary); color: var(--pico-primary-inverse); }
+
+/* Charts: two-up on a wide pane, one-up when narrow. Big is the point. */
+.topo-trends-grid { display: grid; gap: .9rem;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 30rem), 1fr)); }
+.topo-trend-box { border: 1px solid var(--pico-muted-border-color);
+    border-radius: .45rem; padding: .5rem .6rem .3rem;
+    background: var(--pico-card-background-color); min-width: 0; }
+.topo-trend-title { font-size: .82rem; font-weight: 600; margin-bottom: .2rem;
+    font-family: var(--font-mono); }
+.topo-trend-title .muted { font-family: var(--font-sans, inherit); font-weight: 400; }
+.topo-trend-chart { min-height: 300px; }
+.topo-trend-empty { font-size: .76rem; margin: .6rem 0 .9rem; line-height: 1.4; }
+
+/* docs/121 — a reference cell. The value shown IS the pointer, so it reads as
+   code, not as a quantity; a dangling one is warning-tinted because it resolves
+   to nothing on this chip. */
+.bulk-td-pointer input.bulk-cell { font-family: var(--pico-font-family-monospace, ui-monospace, monospace);
+    font-size: 0.92em; }
+.bulk-ptr-dangling { color: var(--color-warning, #b8860b); }
+
+/* docs/126 #21 — the Chip Status printable-report affordance in the sidebar.
+   Muted beside the link; accent on hover, like its .nav-sub-toggle neighbour. */
+.nav-sub-row .nav-print {
+    display: inline-flex; align-items: center; padding: 0 0.25rem;
+    color: var(--text-muted); flex: 0 0 auto; line-height: 1;
+}
+.nav-sub-row .nav-print:hover { color: var(--accent); }
+
+/* docs/126 r3 — the brand-area loading indicator (NavProgress, app.js).
+   Overlays the app title while a #table-pane request runs past 400 ms:
+   an indeterminate blue sweep + a tabular-nums elapsed counter. Honest by
+   construction — the server reports no progress, so no percentage is
+   invented; what the user asked to see is that time IS passing. */
+.app-title-link { position: relative; display: inline-block; }
+.nav-progress { position: absolute; inset: 0; display: flex; align-items: center;
+    gap: 0.5rem; padding: 0 0.15rem; pointer-events: none;
+    background: var(--pico-card-background-color, var(--pico-background-color)); }
+.nav-progress[hidden] { display: none; }
+.nav-progress-bar { flex: 1 1 auto; height: 6px; border-radius: 3px;
+    position: relative; overflow: hidden;
+    background: color-mix(in srgb, var(--pico-primary) 22%, transparent); }
+.nav-progress-bar::after { content: ""; position: absolute; top: 0; bottom: 0;
+    width: 38%; border-radius: 3px;
+    background: linear-gradient(90deg, var(--pico-primary), #4db8ff);
+    animation: nav-progress-sweep 1.1s ease-in-out infinite; }
+@keyframes nav-progress-sweep { 0% { left: -38%; } 100% { left: 100%; } }
+.nav-progress-time { flex: 0 0 auto; font-size: 0.72rem; font-weight: 700;
+    color: var(--pico-primary); font-variant-numeric: tabular-nums;
+    min-width: 3.4em; text-align: right; }
+@media (prefers-reduced-motion: reduce) { .nav-progress-bar::after { animation: none; width: 100%; left: 0; } }
+
+/* docs/126 r3 — the workspace Refresh button shows it is WORKING. Second
+   round: on a small workspace the rescan settles in milliseconds, so gating
+   the spin on .htmx-request alone showed one invisible frame ("still no
+   reaction"). app.js arms .ws-kick on the press for >=700 ms (or the real
+   request if longer), then .ws-done flashes a ✓ — a press is ALWAYS seen. */
+.btn-workspace-refresh { position: relative; }
+.btn-workspace-refresh .ws-refresh-ico { display: inline-block; line-height: 1; }
+/* Round 3 (user: "체크표시가 뜰 때까지 아무런 표시가 없다"): rotating the ↻
+   GLYPH is imperceptible — it is nearly circular, so spinning it about its
+   own center moves only the tiny arrowhead. The in-flight state now swaps it
+   for a real ring spinner (one lit quadrant orbiting), unmistakable at 14px.
+   Deliberately kept under reduced motion too — the user explicitly asked for
+   continuous rotation, and a spinner that exists but cannot be seen is the
+   exact bug being fixed; it just turns slower there. */
+.btn-workspace-refresh.htmx-request, .btn-workspace-refresh.ws-kick {
+    pointer-events: none; }
+/* Round 4: while pressed, JS swaps the glyph for a half-filled disc and
+   rotates it with rAF (see app.js) — the CSS here only colors it. The ring
+   ::after survives ONLY for .htmx-request WITHOUT .ws-kick, the no-JS
+   fallback path. */
+.btn-workspace-refresh.ws-kick .ws-refresh-ico {
+    color: var(--pico-primary); font-size: 1.05em; }
+.btn-workspace-refresh.htmx-request:not(.ws-kick) .ws-refresh-ico { visibility: hidden; }
+.btn-workspace-refresh.htmx-request:not(.ws-kick)::after {
+    content: ""; position: absolute; inset: 0; margin: auto;
+    width: 13px; height: 13px; border-radius: 50%;
+    border: 2px solid color-mix(in srgb, var(--pico-primary) 28%, transparent);
+    border-top-color: var(--pico-primary);
+    animation: ws-refresh-spin 0.6s linear infinite; }
+@keyframes ws-refresh-spin { to { transform: rotate(360deg); } }
+.btn-workspace-refresh.ws-done { color: var(--color-success, #2e9e5b); }
+.btn-workspace-refresh.ws-done .ws-refresh-ico { visibility: hidden; }
+.btn-workspace-refresh.ws-done::after { content: "✓"; position: absolute;
+    inset: 0; display: flex; align-items: center; justify-content: center;
+    font-weight: 700; }
+@media (prefers-reduced-motion: reduce) {
+    .btn-workspace-refresh.htmx-request:not(.ws-kick)::after {
+        animation-duration: 1.4s; }
+}

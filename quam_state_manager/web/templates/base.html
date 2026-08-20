@@ -1,4 +1,4 @@
-{% from '_icons.html' import icon_gear, icon_calculator, icon_help %}
+{% from '_icons.html' import icon_gear, icon_calculator, icon_help, icon_printer %}
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
@@ -55,6 +55,19 @@
        silently broke those pages on full-page load. The app is served locally,
        so eager JS costs ~nothing. Plotly is the one exception — it's lazy-loaded
        on demand via window.requirePlotly() (see app.js), never eagerly. #}
+    {# docs/124 §1.1 (the settle fix): htmx 2.0.4's attribute settle restores an
+       id-matched element's class/style to the incoming MARKUP values ~20ms after
+       every swap — wiping anything a script set during the swap window. That one
+       mechanism stripped js-plotly-plot off live Trends charts (the docs/123 §4.3
+       mystery), stripped .json-tree so the Explorer scroll regime flipped and the
+       restore clamped to 0, and re-hid both Explorer trees on the wiring tab.
+       Nothing in this app wants class/style settling (no CSS keys on
+       htmx-settling/htmx-added; the dataset row flash is its own mechanism), so
+       it is disarmed at the config level rather than per-surface — every current
+       and future render-during-swap site is covered at once. Must precede the
+       htmx <script> tag: htmx reads this meta once, at load.
+       Pinned by tests/settle_config_selfcheck.cjs. #}
+    <meta name="htmx-config" content='{"attributesToSettle":["width","height"]}'>
     <script src="{{ url_for('static', filename='htmx.min.js') }}"></script>
     <script src="{{ url_for('static', filename='split.min.js') }}"></script>
     {# The one query grammar (space=AND, standalone |=OR) — must precede every
@@ -89,43 +102,56 @@
     <header class="topbar">
         <nav>
             <ul>
-                <li><button class="sidebar-toggle" onclick="toggleSidebar()" title="Toggle sidebar">☰</button></li>
-                <li><a href="/" class="app-title-link" title="Projects landing"><strong class="app-title">QUAM State Manager</strong></a></li>
+                {# docs/126: ☰ cycles sidebar → +topbar → restore all. #}
+                <li><button class="sidebar-toggle" onclick="cycleChrome()"
+                        title="Collapse the sidebar, then the top bar — click the floating ☰ to bring everything back">☰</button></li>
+                {# docs/126 r3 — while a main-pane load runs past 400 ms, the
+                   brand becomes a blue progress bar + elapsed counter (an
+                   HONEST indeterminate sweep — no invented percentage), so a
+                   heavy first open (Param History on a big chip) shows how
+                   long you have actually been waiting. NavProgress (app.js)
+                   drives it off htmx's own request events; pointer-events
+                   none keeps the link clickable. #}
+                <li><a href="/" class="app-title-link" title="Projects landing"><strong class="app-title">QUAM State Manager</strong><span
+                        id="nav-progress" class="nav-progress" hidden aria-hidden="true"><span
+                        class="nav-progress-bar"></span><span class="nav-progress-time">0.0 s</span></span></a></li>
                 {# Workbench: a standalone co-display shell that puts Qualibrate
                    (iframe) beside this app. Full-page route, so a plain link
                    (not hx-get); opens in a new tab. #}
                 <li><a href="/workbench" target="_blank" rel="noopener"
                        class="wb-link" title="Open Qualibrate side-by-side with the State Manager">⌗ Sync-Qualibrate</a></li>
-                <li id="topbar-tray-slot">{% include '_pending_tray.html' %}</li>
-                {# State Archive / Bookmark (feedback #3) — snapshot the current
-                   state into the history store with a tag + note, PINNED (prune-
-                   exempt). Native <details> popover (no JS); HTMX posts the form. #}
-                <li class="archive-wrap">
-                    <details class="archive-details" id="archive-details">
-                        <summary class="archive-btn" title="Bookmark / archive this state (tag + note)" aria-label="Bookmark this state"><span class="archive-ico" aria-hidden="true">&#128278;</span><span class="archive-label">bookmark</span></summary>
-                        <div class="archive-pop" role="dialog" aria-label="Bookmark this state">
-                            <strong class="archive-title">Bookmark this state</strong>
-                            {# C1: keep the popover OPEN on success (closing it hid the
-                               confirmation — "no response"); reset the fields + FLASH the
-                               status so each save is unmistakable. The status now carries
-                               the snapshot time, so a 2nd save with the same tag still
-                               differs in content (HTMX re-renders) and re-flashes. #}
-                            <form hx-post="/state/archive" hx-target="#archive-status" hx-swap="innerHTML"
-                                  hx-on::after-request="if(event.detail.xhr.responseText.indexOf('archive-ok')>=0){this.reset();var s=document.getElementById('archive-status');if(s){s.classList.remove('archive-flash');void s.offsetWidth;s.classList.add('archive-flash');if(window.applyLocalTimes)applyLocalTimes(s);}}">
-                                <input type="text" name="tag" class="archive-in" maxlength="120"
-                                       placeholder="Tag (e.g. before CZ retune)" autocomplete="off">
-                                <textarea name="note" class="archive-note" rows="2" maxlength="2000"
-                                          placeholder="Note (optional)"></textarea>
-                                <div class="archive-actions">
-                                    <button type="submit" class="btn-sm">Save bookmark</button>
-                                    <a href="/state-history" hx-get="/state-history" hx-target="#table-pane"
-                                       hx-push-url="true" class="archive-link"
-                                       onclick="this.closest('details').open=false">View archive →</a>
-                                </div>
-                                <span id="archive-status" class="archive-status-slot" aria-live="polite"></span>
-                            </form>
-                        </div>
-                    </details>
+                <li id="topbar-tray-slot">{% include '_pending_tray.html' %}
+                    {# docs/120 item 8: OUTSIDE #pending-tray (which OOB-swaps on
+                       every commit) but inside its slot, so the popup survives a
+                       flush and the CSS can still anchor to the pill. Filled on
+                       demand — the switches must show the CURRENT session. #}
+                    <span id="auto-sync-pop-host"></span></li>
+                {# docs/120 item 10 — the working-state VERSION, in the slot the
+                   bookmark used to hold (it moved to the sidebar tools, below
+                   Calculator, per the user). It sits immediately right of the
+                   Auto-apply pill, which is where the user asked for it:
+                   with auto-sync arriving, "revert back and forth has to be
+                   really free", and that starts with being able to see which
+                   recorded state you are actually on.
+
+                   LAZY, never render-path: resolving it hashes the live
+                   state.json + wiring.json (snapshot_ts_for_current_content),
+                   and docs/28 forbids a live read on a surface that renders on
+                   every page. Same shape as the diagnostics and instances
+                   slots above — a request after paint, refreshed on the events
+                   that can change the answer. #}
+                <li class="state-version-wrap">
+                    {# The swap target is the SPAN, not the <li>: an innerHTML
+                       swap on the wrapper would delete the panel below it every
+                       time the chip refreshed. #}
+                    <span id="state-version-slot" class="state-version-slot"
+                          hx-get="/state/version"
+                          hx-trigger="load, stateHistoryChanged from:body delay:300ms, stateRestored from:body delay:300ms"
+                          hx-swap="innerHTML"></span>
+                    {# Anchored to a topbar item that never scrolls and whose
+                       ancestors do not clip (unlike #sidebar, docs/89), so this
+                       can stay in place and be positioned by CSS alone. #}
+                    <div id="state-version-panel" class="state-version-panel" hidden></div>
                 </li>
                 {# Always-on diagnostics health badge for the active chip. Lazily
                    loaded (load + diagnostics-changed); shows "✓ healthy" or
@@ -198,6 +224,11 @@
        only when <html> carries .topbar-hidden (see style.css). #}
     <button type="button" class="topbar-reveal" onclick="toggleTopbar()"
             title="Show top bar" aria-label="Show top bar">&#9662;</button>
+    {# docs/126: the floating ☰ (visible only with the top bar hidden) restores
+       BOTH the top bar and the sidebar in one click — the third leg of the
+       hamburger cycle. #}
+    <button type="button" class="chrome-reveal" onclick="cycleChrome()"
+            title="Restore the top bar and sidebar" aria-label="Restore the top bar and sidebar">☰</button>
     {# Out-of-band live-change banner. ONE base-level slot on every full page,
        OUTSIDE #table-pane so HTMX pane navigation never drops an active
        warning. The /explorer partial (what a chip load swaps in) carries an
@@ -244,6 +275,13 @@
                so they read as tools rather than as two more destinations.
                Settings first, per the user's call. #}
             <div class="sidebar-tools" role="group" aria-label="Tools">
+                {# docs/126: Help leads the tools (Help → Settings → Calculator,
+                   per the user) and wears the same row styling as its siblings
+                   — its old tail position + odd class was the complaint. #}
+                <a href="/help" hx-get="/help" hx-target="#table-pane"
+                   hx-sync="#table-pane:replace" hx-push-url="true"
+                   class="sidebar-tool sidebar-tool-btn" title="Help — the working-copy model, the feature tour, shortcuts">
+                    {{ icon_help() }}<span class="sidebar-tool-label">Help</span></a>
                 <button type="button" class="sidebar-tool settings-btn"
                         onclick="toggleSettings(this)"
                         title="Settings — font size, UI scale, theme, layout">
@@ -253,12 +291,41 @@
                         aria-expanded="false" aria-controls="calc-popover"
                         title="Calculator — dBm · volt · amplitude · expression (Alt+C)">
                     {{ icon_calculator() }}<span class="sidebar-tool-label">Calculator</span></button>
-                {# docs/115 (#14): the manual is one click from EVERY page —
-                   it used to live only on the landing, one swap from gone. #}
-                <a href="/help" hx-get="/help" hx-target="#table-pane"
-                   hx-sync="#table-pane:replace" hx-push-url="true"
-                   class="sidebar-tool-btn" title="Help — the working-copy model, the feature tour, shortcuts">
-                    {{ icon_help() }}<span class="sidebar-tool-label">Help</span></a>
+                {# docs/120 item 10 — the bookmark moved here from the top bar,
+                   below Calculator per the user, so its slot could carry the
+                   working-state version. It is a tool (tag + note this state),
+                   not a destination, so it belongs with the other two. Same
+                   <details> popover, same /state/archive form — only the place
+                   changed. #}
+                <details class="archive-details sidebar-tool-details" id="archive-details">
+                    <summary class="sidebar-tool archive-btn"
+                             title="Bookmark / archive this state (tag + note)"
+                             aria-label="Bookmark this state">
+                        <span class="archive-ico" aria-hidden="true">&#128278;</span>
+                        <span class="sidebar-tool-label">Bookmark</span></summary>
+                    <div class="archive-pop" role="dialog" aria-label="Bookmark this state">
+                        <strong class="archive-title">Bookmark this state</strong>
+                        {# C1: keep the popover OPEN on success (closing it hid the
+                           confirmation — "no response"); reset the fields + FLASH the
+                           status so each save is unmistakable. The status now carries
+                           the snapshot time, so a 2nd save with the same tag still
+                           differs in content (HTMX re-renders) and re-flashes. #}
+                        <form hx-post="/state/archive" hx-target="#archive-status" hx-swap="innerHTML"
+                              data-after-request="archiveDone">
+                            <input type="text" name="tag" class="archive-in" maxlength="120"
+                                   placeholder="Tag (e.g. before CZ retune)" autocomplete="off">
+                            <textarea name="note" class="archive-note" rows="2" maxlength="2000"
+                                      placeholder="Note (optional)"></textarea>
+                            <div class="archive-actions">
+                                <button type="submit" class="btn-sm">Save bookmark</button>
+                                <a href="/state-history" hx-get="/state-history" hx-target="#table-pane"
+                                   hx-push-url="true" class="archive-link"
+                                   onclick="this.closest('details').open=false">View archive →</a>
+                            </div>
+                            <span id="archive-status" class="archive-status-slot" aria-live="polite"></span>
+                        </form>
+                    </div>
+                </details>
             </div>
             <hr class="sidebar-section-divider sidebar-tools-divider">
             <nav class="sidebar-nav">
@@ -341,8 +408,15 @@
                     {# r15 IA (docs/69): structure→health order — the chip's
                        physical wiring + component entities first, then the
                        health/status pair (Diagnostics, Chip Status). #}
-                    <li><a href="/instrument" hx-get="/instrument" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           {% if page == 'instrument' %}class="active"{% endif %}>Instrument Wiring</a></li>
+                    {# docs/126 ⑥: the ⧉ opens the port diagram as a FLOATING
+                       panel so a user can keep a port picture in view while
+                       working on any other page — the menu click still swaps
+                       the main pane as before. #}
+                    <li class="nav-floatable"><a href="/instrument" hx-get="/instrument" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           {% if page == 'instrument' %}class="active"{% endif %}>Instrument Wiring</a><button
+                           type="button" class="nav-float-btn" title="Open as a floating panel (stays visible while you work elsewhere)"
+                           aria-label="Open Instrument Wiring as a floating panel"
+                           onclick="event.stopPropagation(); if (window.FloatWiring) FloatWiring.toggle(); return false;">&#10697;</button></li>
                     <li class="nav-with-sub">
                         <div class="nav-sub-row">
                             {# Parent deliberately carries no active class — the
@@ -381,6 +455,11 @@
                         <div class="nav-sub-row">
                             <a href="/topology" hx-get="/topology" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
                                {% if page == 'topology' %}class="active"{% endif %}>Chip Status</a>
+                            {# docs/126 #21 — printable report: components + topology as one
+                               standalone page (new tab; Print / self-contained download). #}
+                            <a class="nav-print" href="/chip-status/report" target="_blank"
+                               title="Printable chip report — components + topology"
+                               aria-label="Open printable chip report">{{ icon_printer(13) }}</a>
                             <button type="button" class="nav-sub-toggle" aria-expanded="true"
                                     aria-controls="chip-status-subnav" aria-label="Toggle Chip Status sections"
                                     onclick="toggleChipStatusSub(this)">&#9662;</button>
@@ -392,8 +471,6 @@
                                    onclick="return chipNavView('topology', event)">Topology</a></li>
                             <li><a href="/topology?view=overview" data-view="overview"
                                    onclick="return chipNavView('overview', event)">Overview</a></li>
-                            <li><a href="/topology?view=distributions" data-view="distributions"
-                                   onclick="return chipNavView('distributions', event)">Distributions</a></li>
                             <li><a href="/topology?view=gate" data-view="gate"
                                    onclick="return chipNavView('gate', event)">Gate (2Q)</a></li>
                             <li><a href="/topology?view=fidelity" data-view="fidelity"
@@ -404,6 +481,8 @@
                                    onclick="return chipNavView('frequencies', event)">Frequencies</a></li>
                             <li><a href="/topology?view=calibration" data-view="calibration"
                                    onclick="return chipNavView('calibration', event)">Calibration</a></li>
+                            <li><a href="/topology?view=trends" data-view="trends"
+                                   onclick="return chipNavView('trends', event)">Trends</a></li>
                         </ul>
                     </li>
                     {# Compare — docs/84 made the DIFF the front door: the hub
@@ -517,10 +596,20 @@
                            so the HTMX filter, poll re-fetch, pill chips, and ?-help all
                            keep working. Placeholder kept short so the resting box is one
                            line; full scoped syntax lives in the ? panel. #}
+                        {# docs/126 #20 (search lag/stall): trigger on `input` (keyup
+                           missed mouse paste/cut) and hx-sync this:replace — each new
+                           keystroke ABORTS the in-flight request instead of htmx's
+                           default queue-last, which stacked 200-500 ms responses on a
+                           2,600-run archive (clear-to-empty is the slowest render, so
+                           clear-then-retype felt dead for ~a second). The tree poller's
+                           refetch joins THIS sync group (source: this element), so a
+                           version-bump refetch can never land after a newer keystroke
+                           and freeze the tree on a stale query. #}
                         <textarea rows="1" placeholder="Filter experiments…"
                                   id="sidebar-filter-input" aria-label="Filter experiments"
                                   class="search-help-input" data-search-help="sidebar-search-help"
-                                  hx-get="/workspace/tree" hx-trigger="keyup changed delay:200ms"
+                                  hx-get="/workspace/tree" hx-trigger="input changed delay:250ms"
+                                  hx-sync="this:replace"
                                   hx-target="#sidebar-tree" name="name" autocomplete="off"
                                   oninput="renderFilterTags(this, document.getElementById('filter-tags')); autoGrowNote(this);"></textarea>
                         <button type="button" class="ds-search-help-btn search-help-toggle"
@@ -572,10 +661,15 @@
                     <button type="button" class="tree-density-btn" id="exp-density-compact"
                             onclick="setExpListCompact(true)" aria-pressed="false"
                             title="Compact — one truncated line per entry">&#9638;</button>
+                    {# docs/126 r3: pressing this gave NO feedback for the whole
+                       (up to 20 s, docs/105) rescan. htmx stamps .htmx-request
+                       on the button while the POST is in flight — the glyph
+                       spins accent-colored and re-clicks are ignored; CSS only. #}
                     <button class="btn-workspace-refresh" type="button"
                             hx-post="/workspace/refresh" hx-target="#sidebar-tree"
                             hx-include="#sidebar-filter-input"
-                            title="Refresh folder list" aria-label="Refresh folder list">&#8635;</button>
+                            title="Refresh folder list" aria-label="Refresh folder list"><span
+                            class="ws-refresh-ico" aria-hidden="true">&#8635;</span></button>
                 </div>
                 <div id="sidebar-tree"
                      hx-get="/workspace/tree" hx-trigger="load"
@@ -611,15 +705,31 @@
                     var _pollN = 0;
                     function refetchTree(v) {
                         var f = document.getElementById('sidebar-filter-input');
-                        return htmx.ajax('GET', '/workspace/tree', {
+                        // docs/126 #20: issue through the FILTER element so this
+                        // refetch shares its hx-sync group — whichever request is
+                        // issued last (poll or keystroke) aborts the other, so the
+                        // last response always matches the latest intent. Without
+                        // this, a version-bump refetch racing a keystroke could
+                        // land LAST and pin the tree on a stale query (a lab with
+                        // a live run bumps the version on most polls).
+                        var opts = {
                             target: '#sidebar-tree', swap: 'innerHTML',
                             values: { name: (f && f.value) || '' }
-                        }).then(function(){ if (typeof v !== 'undefined') lastV = v; })
+                        };
+                        if (f) opts.source = f;
+                        return htmx.ajax('GET', '/workspace/tree', opts)
+                          .then(function(){ if (typeof v !== 'undefined') lastV = v; })
                           .catch(function(){});
                     }
                     function poll() {
                         // In-flight guard + visibility gating (audit B24).
                         if (_treePolling || document.hidden) return;
+                        // docs/126 #20: never swap a 200+ KB tree under someone
+                        // mid-search — defer the whole tick while the filter box
+                        // is focused. lastV does not advance, so the next idle
+                        // tick performs the catch-up render.
+                        var _fi = document.getElementById('sidebar-filter-input');
+                        if (_fi && document.activeElement === _fi) return;
                         _treePolling = true;
                         _pollN++;
                         // 10 s abort (r13 audit D5): a hung socket used to pin
@@ -729,12 +839,70 @@
         <button onclick="PhysAmp.setUnit('both')" class="settings-opt" data-phys-unit="both">Both</button>
         </div>
         </div>
+        {# docs/120 item 4 — the Live-Edit readability cluster lived in the grid
+           toolbar, in the row a user works in all day, to control something set
+           once and then never touched. Its old spot is now the quick-filter
+           chips. Two rows, not one merged control: the Table and Flat views
+           keep their own independent localStorage keys (quam_bulk_* vs
+           quam_av_*), so this is a pure relocation with no behaviour change.
+
+           Safe to call from every page: base.html loads bulk-edit.js and
+           all-values.js unconditionally, and both apply functions early-return
+           when their pane is not mounted — the choice persists and lands on the
+           next render. #}
+        <div class="settings-group">
+        <small class="settings-label">Live Edit <span class="muted">(cell readability)</span></small>
+        <div class="settings-sub">
+        <span class="settings-sub-label">Table view</span>
+        <div class="settings-options">
+        <button onclick="BulkEdit.setFont(0.85)" class="settings-opt bulk-font-preset" data-fs="0.85">S</button>
+        <button onclick="BulkEdit.setFont(1)" class="settings-opt bulk-font-preset" data-fs="1">M</button>
+        <button onclick="BulkEdit.setFont(1.25)" class="settings-opt bulk-font-preset" data-fs="1.25">L</button>
+        <button onclick="BulkEdit.toggleBold()" class="settings-opt bulk-bold-toggle" id="bulk-bold"
+                aria-pressed="false" title="Bold values">B</button>
+        </div>
+        <label class="settings-slider" title="Font size">
+        <span class="muted">Aa</span>
+        <input type="range" id="bulk-font-slider" min="0.75" max="1.7" step="0.05" value="1"
+               oninput="BulkEdit.setFont(this.value)" aria-label="Table cell font size">
+        </label>
+        <label class="settings-slider" title="Letter spacing (digit gap)">
+        <span class="muted">&#8596;</span>
+        <input type="range" id="bulk-ls-slider" min="0" max="0.12" step="0.02" value="0"
+               oninput="BulkEdit.setLetterSpacing(this.value)" aria-label="Table cell letter spacing">
+        </label>
+        </div>
+        <div class="settings-sub">
+        <span class="settings-sub-label">Flat view</span>
+        <div class="settings-options">
+        <button onclick="AllValues.setFont(0.85)" class="settings-opt" data-av-fs="0.85">S</button>
+        <button onclick="AllValues.setFont(1)" class="settings-opt" data-av-fs="1">M</button>
+        <button onclick="AllValues.setFont(1.2)" class="settings-opt" data-av-fs="1.2">L</button>
+        <button onclick="AllValues.toggleBold()" class="settings-opt" id="av-bold"
+                aria-pressed="false" title="Bold values">B</button>
+        </div>
+        <label class="settings-slider" title="Font size">
+        <span class="muted">Aa</span>
+        <input type="range" id="av-font-slider" min="0.85" max="1.3" step="0.05" value="1"
+               oninput="AllValues.setFont(this.value)" aria-label="Flat view font size">
+        </label>
+        <label class="settings-slider" title="Letter spacing (digit gap)">
+        <span class="muted">&#8596;</span>
+        <input type="range" id="av-ls-slider" min="0" max="0.12" step="0.02" value="0"
+               oninput="AllValues.setLetterSpacing(this.value)" aria-label="Flat view letter spacing">
+        </label>
+        <label class="settings-slider" title="Row spacing">
+        <span class="muted">&#8597;</span>
+        <input type="range" id="av-rh-slider" min="1" max="1.6" step="0.05" value="1"
+               oninput="AllValues.setRowSpacing(this.value)" aria-label="Flat view row spacing">
+        </label>
+        </div>
+        </div>
         </div>
         <div id="calc-popover" class="calc-popover calc-hidden" role="dialog" aria-modal="false" aria-label="Calculator">
         <div class="calc-header" id="calc-header">
         <strong class="calc-title">Calculator</strong>
         <span class="calc-header-tools">
-        <button type="button" class="calc-pin" id="calc-pin" onclick="calcTogglePin()" aria-pressed="false" title="Pin open (ignore outside clicks)">&#128204;</button>
         <button type="button" class="calc-close" onclick="toggleCalc()" title="Close" aria-label="Close">&times;</button>
         </span>
         </div>
@@ -1129,10 +1297,16 @@
                     /* Split.js resizing the panes does not fire a window
                        resize, so any Plotly chart in the inspector keeps its
                        pre-drag dimensions (axes/legend drift). Re-layout them. */
-                    if (typeof Plotly !== 'undefined') {
-                        document.querySelectorAll('#inspector-pane .js-plotly-plot, #table-pane .js-plotly-plot').forEach(function(el) {
-                            try { Plotly.Plots.resize(el); } catch (e) {}
-                        });
+                    /* docs/122: through PlotHost, not Plots.resize + the bare
+                       class. Both are measurably wrong here — Plots.resize
+                       no-ops on this app's charts, and `.js-plotly-plot` does
+                       not always survive (a Trends holder carried Plotly's own
+                       .plot-container while its class was just its own). This
+                       is the app's most important resize trigger, and it was
+                       doing nothing. */
+                    if (window.PlotHost) {
+                        window.PlotHost.resizeWithin(document.getElementById('inspector-pane'));
+                        window.PlotHost.resizeWithin(document.getElementById('table-pane'));
                     }
                 }
             });

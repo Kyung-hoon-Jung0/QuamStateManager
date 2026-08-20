@@ -19,19 +19,27 @@ _QC = "quam.components.pulses."
 class TestCatalogShape:
     def test_all_expected_classes_present(self):
         expected = {
+            "Pulse",       # digital-marker-only (docs/126: the QDAC trigger pulses)
             "SquarePulse", "SquareReadoutPulse", "GaussianPulse",
             "DragGaussianPulse", "DragCosinePulse",
             "FlatTopGaussianPulse", "FlatTopCosinePulse", "FlatTopTanhPulse",
             "FlatTopBlackmanPulse", "BlackmanIntegralPulse",
-            "ErfSquarePulse", "SNZPulse",
+            "ErfSquarePulse", "SNZPulse", "CosineBipolarPulse",
             "GaussianFilteredSquarePulse", "GaussianFilteredSymmetricBipolarPulse",
             "WaveformPulse", "_FlatTopGaussianPulse", "_CosineBipolarPulse",
         }
         assert set(PULSE_CATALOG) == expected
 
     def test_qclass_strings_are_canonical(self):
-        # The LabC quam loader needs these verbatim.
+        # The LabC quam loader needs these verbatim. CosineBipolarPulse is
+        # the one class with NO quam-era home (quam_builder >= 0.4 only) —
+        # its qclass is the quam_builder arch path by design (docs/126 ⑦a).
         for spec in PULSE_CATALOG.values():
+            if spec.key == "CosineBipolarPulse":
+                assert spec.qclass == (
+                    "quam_builder.architecture.superconducting.components"
+                    ".pulses.CosineBipolarPulse")
+                continue
             assert spec.qclass == _QC + spec.key
 
     def test_deprecated_not_creatable(self):

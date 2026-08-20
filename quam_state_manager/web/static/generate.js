@@ -356,8 +356,14 @@
     // back — or an unexpected pane swap — never loses work. captureDomFields()
     // first flushes any value typed but not yet committed (webview blur race).
     captureDomFields();
-    saveDraft();
+    // docs/120 item 12: saveDraft() ran BEFORE state.step moved, so the draft
+    // always recorded the step the user was LEAVING. Reload anywhere in the
+    // wizard and it reopened one step back — on a long Populate table that is
+    // a page of re-scrolling and a real "did it lose my work?" moment. The
+    // capture above is what the old ordering was protecting (it flushes the
+    // outgoing step's fields); persisting must simply happen after the move.
     state.step = Math.max(1, Math.min(STEP_COUNT, n));
+    saveDraft();
     showMessage(null);
     render();
   }
@@ -2228,11 +2234,20 @@
         var fnum = Math.floor(idx / muxSize) + 1;
         var group = (state.wiringTouched && groupOf[q]) ? groupOf[q] : "feedline" + fnum;
         // LO-safe auto-pairing: a MW-FEM has 5 LOs, each shared by a port pair
-        // (Out1+In1, Out2+Out3, Out4+Out5, Out6+Out7, Out8+In2). Alternating
-        // feedlines Out8+In1 / Out1+In2 confines readout to LO1+LO5, leaving
-        // Out2-7 (LO2/3/4) free for drives. con/slot left to the allocator.
-        var loPair = (fnum % 2 === 1) ? { out_port: 8, in_port: 1 }
-                                      : { out_port: 1, in_port: 2 };
+        // (Out1+In1, Out2+Out3, Out4+Out5, Out6+Out7, Out8+In2 — MW_LO_PAIRS,
+        // this file). Alternating feedlines Out8+In2 / Out1+In1 confines
+        // readout to LO5+LO1, leaving Out2-7 (LO2/3/4) free for drives.
+        // con/slot left to the allocator.
+        //
+        // The two in_ports used to be TRANSPOSED — Out8+In1 and Out1+In2 —
+        // which is precisely the pairing the comment above says NOT to make:
+        // In1 belongs to LO1 and In2 to LO5, so each feedline straddled two
+        // LOs. One LO then had to cover both the readout (≈4.95 GHz) and a
+        // drive (≈6.6 GHz), the solver fell back to their midpoint, and the
+        // wizard flagged its OWN generated value red. Confirmed against
+        // MW_LO_PAIRS, which is the authority in this file.
+        var loPair = (fnum % 2 === 1) ? { out_port: 8, in_port: 2 }
+                                      : { out_port: 1, in_port: 1 };
         var rch = (state.wiringTouched && pinned[q + "|resonator"])
           ? pinned[q + "|resonator"]
           : { kind: "mw_fem", out_port: loPair.out_port, in_port: loPair.in_port };

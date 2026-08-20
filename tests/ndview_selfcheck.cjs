@@ -182,6 +182,44 @@ async function main() {
     ok(JSON.stringify(plots[0].data[0].z[0]) === JSON.stringify([1, 2, 3, 4]),
        'heatmap z rows extracted correctly');
 
+    /* ══ 2a. docs/122 item 1 — the user can correct the axis choice ═════ */
+    // The server now orients 2-D maps by the lab's convention rather than by
+    // array size, which is what makes this tab agree with Interactive. But
+    // ndview is generic over every variable of every file and no curated name
+    // table covers a node type nobody has written yet, so the default has to be
+    // correctable — and before this there was no axis control at all.
+    {
+        const ctl2 = document.getElementById('ndv-controls');
+        const swap = ctl2.querySelector('.ndv-swap');
+        ok(!!swap, 'a 2-sweep cube offers a swap-axes control');
+        ok(swap && swap.textContent.indexOf('freq') >= 0
+                && swap.textContent.indexOf('flux') >= 0,
+           'the control NAMES both dims, so it says what it will do: '
+           + JSON.stringify(swap && swap.textContent.trim()));
+        plots.length = 0;
+        swap.click();
+        await sleep(30);
+        ok(plots.length === 1 && plots[0].data[0].type === 'heatmap',
+           'swapping re-renders the heatmap');
+        // z is [y][x]; before the swap y=flux(3) x=freq(4), after y=freq(4) x=flux(3)
+        ok(plots[0].data[0].z.length === 4 && plots[0].data[0].z[0].length === 3,
+           'the cube is transposed, not merely relabelled: z is now [freq][flux] ('
+           + plots[0].data[0].z.length + 'x' + plots[0].data[0].z[0].length + ')');
+        ok(JSON.stringify(plots[0].data[0].x) === JSON.stringify([0, 1, 2]),
+           'the x coordinate array follows the axis, not the old position');
+        ok(window.NdView._state().swapXY === true, 'the choice is in state');
+        // ...and it is a view choice only: the entity/overlay/slider
+        // classification must not move with it.
+        ok((window.NdView._state().cube.default_view.x) === 'freq',
+           'the SERVER default is left intact — the swap is an overlay on top');
+        plots.length = 0;
+        document.querySelector('.ndv-swap').click();
+        await sleep(30);
+        ok(plots[0].data[0].z.length === 3 && plots[0].data[0].z[0].length === 4,
+           'swapping again returns to the server orientation');
+        ok(window.NdView._state().swapXY === false, 'the toggle is symmetric');
+    }
+
     /* ══ 2b. averaged-repeat note (docs/82) ════════════════════════════ */
     // The server averages shot axes away before shipping the cube. The plot
     // then shows a MEAN, not one of the shots — never silently.

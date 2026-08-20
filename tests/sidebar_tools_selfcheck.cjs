@@ -64,6 +64,14 @@ const dom = new JSDOM('<!doctype html><html><body>' + DOM + '</body></html>',
   { url: 'http://localhost/', pretendToBeVisual: true });
 const { window } = dom;
 global.window = window;
+// jsdom bridges only what we hand it, and `CSS` was never on the list: the
+// window HAS a CSS object, but bare `CSS` is undefined here, so app.js's
+// `(window.CSS && CSS.escape) ? CSS.escape(s) : s` THREW ReferenceError
+// instead of taking either branch. Inside LiveEditUndo._input that throw was
+// swallowed by a try/catch returning null, so every cell lookup silently
+// missed and whole selfchecks failed for a reason no assertion could name.
+// A browser has CSS as a global; the harness must too.
+global.CSS = window.CSS;
 global.document = window.document;
 global.CustomEvent = window.CustomEvent;
 global.Event = window.Event;

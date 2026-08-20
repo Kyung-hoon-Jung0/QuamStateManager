@@ -96,7 +96,9 @@ from quam_state_manager.core.param_specs import (  # noqa: F401  (re-export shim
     _QUBIT_PROPERTY_MAP,
     _TABLE_PROP_GROUPS,
 )
-from quam_state_manager.core.pointer_resolver import is_pointer, is_self_ref
+from quam_state_manager.core.pointer_resolver import (
+    is_pointer, is_self_ref, pointer_target_name,
+)
 from quam_state_manager.core.pulse_index import PulseIndex
 from quam_state_manager.core.query import QueryEngine
 from quam_state_manager.core.saver import Saver
@@ -177,11 +179,57 @@ def _build_bulk_cell(merged: dict, alias: str, modified: dict,
     # resolved_value is scalar-nulled for containers, so a real LIST leaf reads
     # as null — one cheap walk (only on the resolvable-but-null case) detects it
     # for the ✎ list-cell swap.
+    #
+    # docs/121: the same null ALSO arrives from two other shapes, and reading it
+    # as "this field is not set" is what made `qubit_control` / `qubit_target`
+    # render blank while Json Tree View showed `#/qubits/q1` right there. The
+    # question "does the pointer reach a scalar" is not the question "does this
+    # field have a value" — so ask the alias what IT holds, in the SAME branch
+    # (a cell with a scalar never pays for this walk).
     is_list = False
-    if resolvable and val is None:
+    ptr_kind: str | None = None      # dict | list | dangling — pointer, no scalar
+    raw_present = False
+    raw_val = None
+    if val is None:
         from quam_state_manager.core.pointer_path import _walk as _walk_abs
-        found, node = _walk_abs(merged, resolved.split("."))
-        is_list = bool(found) and isinstance(node, list)
+        from quam_state_manager.core.pointer_resolver import is_pointer
+        container = False
+        if resolvable:
+            found, node = _walk_abs(merged, resolved.split("."))
+            is_list = bool(found) and isinstance(node, list)
+            container = bool(found) and isinstance(node, (dict, list))
+        rfound, raw_val = _walk_abs(merged, alias.split("."))
+        raw_present = bool(rfound) and raw_val is not None
+        if raw_present and isinstance(raw_val, str) and is_pointer(raw_val):
+            # A pointer with no SCALAR behind it: it reaches a dict, a list, or
+            # nothing at all. In each case the field's value IS the pointer, and
+            # that is what the inspector and the tree already show.
+            #
+            # DANGLING MEANS THE RESOLUTION FAILED — never merely that the value
+            # found is null. The first cut conflated the two, and the customer
+            # -role audit caught what that costs: `-x90.digital_marker` is
+            # `#../x180_DragCosine/digital_marker`, which resolves PERFECTLY to a
+            # target holding null. It was badged "resolves to NOTHING (dangling),
+            # type a pointer to re-point it" while `resolve_edit_path` still ran
+            # value-mode — so typing `ON` was accepted and written to the SHARED
+            # x180 pulse, a path the user never named. Screen and behaviour said
+            # opposite things. A pointer that reaches a scalar (null included) is
+            # ordinary value-mode and keeps its pre-docs/121 rendering exactly.
+            if is_list:
+                ptr_kind = "list"
+            elif container:
+                ptr_kind = "dict"
+            elif not resolvable:
+                # A `#./` self-ref that does not resolve is quam's shape for a
+                # value the COMPONENT computes — `#./inferred_intermediate_
+                # frequency`, `#./upconverter_frequency`. `qubit_columns`
+                # already classifies exactly this as `runtime` (its own rule:
+                # "#./ self-ref → runtime … editing breaks the link"), which is
+                # why the derived `LO_frequency` column reads "computed at
+                # runtime" while the CURATED sibling read "dangling". Same
+                # shape, two verdicts, one of them false. Reuse the one rule.
+                from quam_state_manager.core.pointer_resolver import is_self_ref
+                ptr_kind = "runtime" if is_self_ref(raw_val) else "dangling"
     p = mw_fem.port_of_resolved(resolved)
     if p:
         kind, con, fem, port, field = p
@@ -195,9 +243,24 @@ def _build_bulk_cell(merged: dict, alias: str, modified: dict,
     return {
         "dot_path": alias,            # what we POST (edit-batch re-resolves)
         "resolved_path": resolved,    # what the change_log keys on
-        "display": _bulk_display(val),
-        "is_pointer": bool(ft.get("is_pointer")),
-        "missing": (not resolvable) or val is None,
+        # A pointer with no scalar behind it SHOWS THE POINTER, exactly as
+        # `_pair_detail.html`'s pointer-badge and the tree already do. Blank was
+        # never a rendering choice, it was `_bulk_display(None)`.
+        "display": raw_val if ptr_kind else _bulk_display(val),
+        "is_pointer": bool(ft.get("is_pointer")) or bool(ptr_kind),
+        # docs/121: "missing" means the field is genuinely ABSENT — that is the
+        # question docs/88 made it answer (it is what turns into `create: true`).
+        # A cell is not missing exactly when it is SHOWING something: a scalar,
+        # a pointer rendered as itself, or a container. Keyed off what is on
+        # screen rather than off `raw_present`, so a pointer that resolves to a
+        # null scalar keeps its pre-docs/121 "not set" cell — it is in
+        # value-mode, and its value really is null.
+        "missing": val is None and not ptr_kind and not is_list
+                   and not isinstance(raw_val, (dict, list)),
+        # What the cell holds when there is no scalar: a pointer to a container,
+        # or one that resolves to nothing. Blank whenever it IS a scalar, so
+        # every previously-correct cell is byte-identical.
+        "ptr_kind": ptr_kind,
         "linkable": resolvable,
         "modified": resolved in modified,
         "old_display": _bulk_display(modified.get(resolved)),
@@ -252,6 +315,164 @@ def _bulk_column_groups(columns: list[dict]) -> list[dict[str, Any]]:
             g["visible"] += 1
         prev_section = col["section"]
     return column_groups
+
+
+# docs/120 item 4 — quick-filter chips for the Live-Edit search box.
+#
+# The customer's daily loop is "go to the search box and TYPE x180, amp, ro,
+# power ... over and over", and they asked for those to be clickable instead:
+# "it's very repetitive and eats time". A real chip carries 314 columns in 22
+# sections, so a chip per section would be a wall — but a SUBSTRING keyword
+# spans the related bands for free (`xy` covers XY Drive / XY Port / XY+ /
+# XY Port+), which is exactly why the client haystack now includes `section`.
+#
+# Curated for the order and the short words a user actually thinks in; DERIVED
+# for the coverage guarantee. Anything the curated list does not already reach
+# is appended from the chip's own section names, so the set is complete by
+# construction on any chip and never offers a term that matches nothing.
+_BULK_CHIP_TERMS: tuple[tuple[str, str], ...] = (
+    ("freq", "Freq"),
+    ("xy", "Qubit"),      # docs/126 ③: the lab calls the drive line "qubit", not "xy"
+    ("readout", "Readout"),
+    ("resonator", "Resonator"),
+    ("flux", "Flux"),
+    ("coupler", "Coupler"),
+    ("amp", "Amp"),
+    ("power", "Power"),
+    ("length", "Length"),
+    ("delay", "Delay"),
+    ("offset", "Offset"),
+    ("filter", "Filter"),
+    ("phase", "Phase"),
+    ("coherence", "Coherence"),
+    ("fidelity", "Fidelity"),
+    ("port", "Port"),
+    ("band", "Band"),
+)
+
+
+def _bulk_op_names(labels: list[str]) -> list[str]:
+    """The chip's own pulse-operation names, harvested from its column labels.
+
+    ``x180`` is the term the customer named FIRST — and it is not a section, so
+    the band sweep below could never reach it. It is an *operation*, and both
+    grids already render one: ``_build_bulk_cell`` labels an operation leaf
+    ``op · x180_DragCosine · amplitude`` (and its alias column ``op · x180``),
+    on the qubit grid and the pair grid alike. So the names are on screen; they
+    were simply never offered.
+
+    The term is the name's FIRST underscore segment, which is what collapses
+    ``x180`` + ``x180_DragCosine`` into the one chip a user means by "x180" —
+    and it stays a substring of the longer spelling, so the shorter term still
+    reaches every leaf of the longer one. Order is the chip's own.
+    """
+    names: list[str] = []
+    for lab in labels:
+        if not lab.startswith("op · "):
+            continue
+        rest = lab[5:].split(" · ", 1)[0].strip()
+        # A leading sign is NOT part of the term. Real chips carry the
+        # negative-amplitude aliases `-x90` / `-y90`, and `-` opens a NEGATED
+        # term in the docs/96 grammar — a chip labelled "-x90" would have
+        # filtered to everything EXCEPT x90. Stripped, it collapses into the
+        # `x90` chip, which reaches those columns as a substring anyway.
+        rest = rest.lstrip("-+ ")
+        term = rest.split("_", 1)[0].strip().lower()
+        # Two characters is the floor: a one-letter term would match half the
+        # chip, which is not a filter.
+        if len(term) < 2 or term.isdigit() or term in names:
+            continue
+        names.append(term)
+    return names
+
+
+def _bulk_filter_chips(*column_sets: list[dict]) -> list[dict[str, Any]]:
+    """The chip row, validated against THIS chip's real columns.
+
+    One entry per offered term: ``{term, label, n, kind}``. ``n`` is how many
+    columns the term reaches, across every grid that shares the one search box
+    (the qubit grid and the pair grid both read ``#bulk-search``), so a chip is
+    only rendered when pressing it would do something.
+
+    Three groups, in the order the query reads left to right: the chip's own
+    operations (``x180`` — WHICH pulse), then the curated property words
+    (``amp`` — WHICH property), then any band neither reached. That order is
+    the customer's own example sentence, "x180 amp", turned into two clicks.
+
+    The haystack mirrors ``_colHay`` in bulk-edit.js — label + key + section +
+    search — because a chip that matched here and not there would be a lie.
+    """
+    hays: list[str] = []
+    sections: list[str] = []
+    labels: list[str] = []
+    for cols in column_sets:
+        for c in cols or []:
+            lab = str(c.get("label") or "")
+            labels.append(lab)
+            hays.append(" ".join((
+                lab, str(c.get("key") or ""),
+                str(c.get("section") or ""), str(c.get("search") or ""),
+            )).lower())
+            sec = str(c.get("section") or "").strip()
+            if sec and sec not in sections:
+                sections.append(sec)
+
+    def _hits(term: str) -> int:
+        return sum(1 for h in hays if term in h)
+
+    chips: list[dict[str, Any]] = []
+    taken: set[str] = set()
+
+    # Curated first for the DEDUP claim only — a curated word keeps its nicer
+    # label ("Readout" over "readout") when an operation shares its spelling.
+    kw_chips: list[dict[str, Any]] = []
+    for term, label in _BULK_CHIP_TERMS:
+        n = _hits(term)
+        if n:
+            kw_chips.append({"term": term, "label": label, "n": n, "kind": "kw"})
+            taken.add(term)
+
+    for term in _bulk_op_names(labels):
+        if term in taken:
+            continue
+        n = _hits(term)
+        if n:
+            chips.append({"term": term, "label": term, "n": n, "kind": "op"})
+            taken.add(term)
+
+    chips.extend(kw_chips)
+
+    # Coverage sweep: any band no curated chip already reaches gets its own, so
+    # the set is complete on a chip whose architecture nobody has thought of.
+    #
+    # The term is the section's FIRST WORD. It has to be a single token because
+    # the search splits on whitespace — a two-word term would silently become
+    # an AND of two tokens — and it usefully collapses siblings: one `cz` chip
+    # covers CZ Unipolar / CZ Flattop / CZ Bipolar.
+    #
+    # Coverage is tested PREFIX-wise against each word, not by substring
+    # anywhere in the name. Substring matching looked right and quietly dropped
+    # the CZ bands on a real chip: the `Z+` section contributes the term "z",
+    # and "z" is a substring of "cz", so every gate band read as already
+    # covered. A prefix test keeps "freq" ⊃ "Frequencies" while letting "cz"
+    # through.
+    def _covered(sec_words: list[str]) -> bool:
+        return any(w.startswith(t) for w in sec_words for t in taken)
+
+    for sec in sections:
+        words = [w.strip("+*·").lower() for w in sec.split()]
+        words = [w for w in words if w]
+        if not words or _covered(words):
+            continue
+        term = words[0]
+        if term in taken:
+            continue
+        n = _hits(term)
+        if n:
+            chips.append({"term": term, "label": sec.rstrip("+").strip(),
+                          "n": n, "kind": "band"})
+            taken.add(term)
+    return chips
 
 
 def _bulk_col_maxlen(columns: list[dict], grid: dict, ids: list[str]) -> None:
@@ -506,7 +727,25 @@ def _refresh_live_diverged(ctx) -> None:
     if not ctx or ctx.get("type") != "quam" or ctx.get("live_diverged"):
         return
     if _quam_ctx_dirty(ctx):
-        return
+        # docs/120 item 8: an ARMED Auto-Sync pull is the user asking SM to
+        # watch, so the skip is lifted for exactly that case.
+        #
+        # The skip's original reasoning ("the explicit sync/apply paths own
+        # those") was sound while nothing pulled on its own. With auto-pull it
+        # became a hole precisely where the feature was promised: make edits,
+        # qualibrate rewrites the chip, and the flag the pull depends on is
+        # never raised — so "auto replace my modified values", the checkbox
+        # asked for BY NAME, could only ever fire when the divergence happened
+        # before the user started typing.
+        #
+        # Everyone who has not armed pull is untouched, and escalating the flag
+        # is still all this does: it never clears it, never touches change_log
+        # / working_dirty / pending_reapply. The decision about what to do with
+        # a dirty context still belongs to /auto-sync/pull, which refuses
+        # unless "replace" was ticked.
+        sess = ctx.get("auto_apply") or {}
+        if not sess.get("pull"):
+            return
     wc = ctx.get("working_copy")
     if wc is None:
         return
@@ -2750,8 +2989,7 @@ def chip_data_folder_set():
         _maybe_data_folder_suggest(ctx)
         body = render_template(
             "_status.html", level="success",
-            message=("Data folder cleared from the working state — Save + "
-                     "Apply to live makes it permanent"
+            message=("Data folder cleared — Apply to live makes it permanent"
                      if had else "No data folder was declared — nothing to clear"))
         resp = make_response(body + _tray_oob())
         resp.headers["HX-Trigger"] = "pulses-changed"
@@ -2876,7 +3114,20 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         "chip_token": _active_chip_token() or "",
         "context_type": _context_type(),
         "change_count": _change_count(),
+        # THE SAME TRAP, THIRD FIELD. base.html includes _pending_tray.html
+        # directly, so on a FULL page render the tray's context comes from
+        # HERE, not from _render_tray — and the Review drawer loops over
+        # `changes`. Without it Jinja iterates an Undefined and silently
+        # renders ZERO rows while the badge beside it says "N unsaved
+        # changes": the review surface, which is the whole point of the
+        # working-copy model, was empty on every page load until the next
+        # edit's OOB swap refilled it. docs/110 caught this with
+        # `mutation_seq` and docs/117 with the auto-apply session; the rule
+        # is that BOTH renderers stamp every field the template reads.
+        "changes": (_modifier().get_change_log() if _modifier() else []),
         "working_dirty": _working_dirty(),
+        # ...and the badge's live verdict, for the same reason as `changes`.
+        "live_diverged": bool((_active_ctx() or {}).get("live_diverged")),
         # docs/110 #10-A: the FULL-page tray must carry the same freshness
         # beacon the OOB tray does — otherwise a page render stamps "" while
         # the next mutation's OOB swap stamps a real seq, and PaneState reads
@@ -2900,6 +3151,14 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # mutation_seq hit in docs/110 — real-browser caught both).
         "auto_apply": _auto_apply_state(),
         "auto_apply_armable": _auto_apply_armable(),
+        # The FULL session for the pill. `auto_apply` stays push-only because
+        # the flusher's data-auto-apply beacon reads it; a pull-only session
+        # must not make the client start writing to live.
+        "auto_sync": _auto_sync_state(),
+        # docs/120 item 8: pull is gated on its OWN question, so the pill can
+        # still be offered on a chip where push is refused (a diverged chip is
+        # exactly where pull is wanted).
+        "auto_pull_armable": _auto_pull_armable(),
         "applied_log": _applied_log_rows(),
         # docs/20 v2: first-open "name this chip?" banner payload (None when
         # named / declined / archive / no chip) + declared-but-unreachable
@@ -2989,6 +3248,7 @@ def _build_qubit_sections(name: str, qubit_data: dict[str, Any], store: QuamStor
             "is_self_ref": self_ref,
             "dangling": dangling,
             "editable": editable,
+            "ptr_name": _ptr_entity_name(store, raw_value, dot_path, resolved_value),
             "_present": present,
         })
 
@@ -3058,6 +3318,30 @@ def _humanize_gate_name(gate_name: str) -> str:
     return " ".join(tok.upper() if tok == "cz" else tok.capitalize() for tok in gate_name.split("_"))
 
 
+def _ptr_entity_name(store: QuamStore, raw_value: Any, dot_path: str | None,
+                     resolved_value: Any) -> str | None:
+    """The entity a container-valued pointer row actually names, or None.
+
+    docs/120 item 1: a pair's ``qubit_control`` is a pointer to a whole qubit
+    dict, so every inspector printed ``[19 items]`` — the row was tagged
+    ``row-pointer`` and the template threw that fact away, leaving the user no
+    way to learn which qubits a pair couples without opening the Json Tree
+    View. That is the customer's report, verbatim.
+
+    Only containers ask this question: a pointer to a scalar already displays
+    the scalar. Returns None when nothing nameable is reached, so the caller
+    falls back to what it showed before.
+    """
+    if not (dot_path and is_pointer(raw_value)
+            and isinstance(resolved_value, (list, dict))):
+        return None
+    try:
+        return pointer_target_name(
+            store.merged, raw_value, tuple(dot_path.split(".")))
+    except Exception:                    # noqa: BLE001 — display must not break
+        return None
+
+
 def _pair_prop(store: QuamStore, key: str, dot_path: str | None,
                resolved_value: Any = None, *, editable: bool | None = None) -> dict:
     """One inspector property row (the shared shape all section builders emit)."""
@@ -3088,6 +3372,7 @@ def _pair_prop(store: QuamStore, key: str, dot_path: str | None,
         # docs/114 (#15): dangling == the resolver handed the pointer back
         "dangling": bool(ptr and not self_ref and resolved_value == raw_value),
         "editable": editable,
+        "ptr_name": _ptr_entity_name(store, raw_value, dot_path, resolved_value),
     }
 
 
@@ -3244,6 +3529,7 @@ def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore)
             "is_self_ref": self_ref,
             "dangling": dangling,
             "editable": editable,
+            "ptr_name": _ptr_entity_name(store, raw_value, dot_path, resolved_value),
         })
 
     # Drop static sections whose every property is absent (None) — so a CR pair
@@ -3646,8 +3932,12 @@ def _qualibrate_tray_badge() -> dict | None:
     chip SM has open, or None when either side is unknown. ``sm_scope`` is
     SM's OWN project scope (docs/63) — shown as the badge name when present;
     a mere scope≠active difference is NEVER a warn/danger color (``match``
-    keeps meaning "SM's chip == qualibrate's active write target"). Hidden
-    only when there's no config, or neither an active project nor a scope."""
+    keeps meaning "SM's chip == qualibrate's active write target").
+
+    Hidden entirely when there is no config. Otherwise it renders for an
+    active project, for SM's own scope, or — docs/120 item 1 — for a chip that
+    belongs to no project at all (``standalone``), which SM used to say
+    nothing whatsoever about."""
     from quam_state_manager.core import qualibrate_config
 
     try:
@@ -3656,7 +3946,7 @@ def _qualibrate_tray_badge() -> dict | None:
         return None
     ctx = _active_ctx()
     sm_scope = (ctx or {}).get("qualibrate_project")
-    if not st.get("config_exists") or not (st.get("active") or sm_scope):
+    if not st.get("config_exists"):
         return None
     match = None
     live = (ctx or {}).get("live_path")
@@ -3664,11 +3954,39 @@ def _qualibrate_tray_badge() -> dict | None:
         # samefile-grounded — resolve()-equality false-ambered on case-variant
         # spellings of one folder on case-insensitive (macOS/Windows) hosts.
         match = path_match.same_folder(live, st["state_native"])
+    # docs\120 item 1: an open chip that belongs to NO project is standalone,
+    # and SM used to say nothing whatsoever about that — this function returned
+    # None, so the slot rendered empty and "you are editing a bare folder" was
+    # indistinguishable from "the badge doesn't apply yet". Editing was never
+    # blocked; only the fact was missing. Gated on a config existing, because
+    # without one "project" is not a concept this user has, so the contrast
+    # the word draws would be meaningless. An archive is excluded: it is not a
+    # folder you are working in, and the status badge already names it.
+    #
+    # ``match is not True`` keeps the tray from contradicting itself. sm_scope
+    # is a per-ctx memo derived at ACTIVATION, so pointing qualibrate at the
+    # already-open chip afterwards leaves it None — and the tray would then say
+    # "same chip as loaded in SM" on the alembic badge while the chip beside it
+    # said "not part of any QUAlibrate project". Whatever the memo says, a chip
+    # qualibrate is demonstrably writing to is not standalone.
+    standalone = bool(
+        ctx
+        and ctx.get("type") == "quam"
+        and (ctx.get("origin") or "live") == "live"
+        and not sm_scope
+        and match is not True
+    )
+    if not (st.get("active") or sm_scope or standalone):
+        return None
     return {"project": st["active"],
             # dangling only ever describes the ACTIVE project's state_path —
             # a scope-only badge (no active project) must not read as broken.
             "dangling": bool(st.get("active")) and not st["state_exists"],
-            "match": match, "sm_scope": sm_scope}
+            "match": match, "sm_scope": sm_scope,
+            "standalone": standalone,
+            # The folder itself, so the chip can name what is being edited
+            # rather than just asserting a category.
+            "standalone_path": (ctx or {}).get("live_path") if standalone else None}
 
 
 @bp.route("/api/qualibrate/projects")
@@ -4076,6 +4394,40 @@ def load():
 # ======================================================================
 
 
+def _port_owner_map(wiring_root: dict | None) -> dict[str, str]:
+    """Dot-path under ``ports.*`` → short owner label (docs/126 ④).
+
+    Pure walk of the wiring document: every channel dict under
+    ``wiring.qubits.<q>.<role>`` / ``wiring.qubit_pairs.<p>.<role>`` /
+    ``wiring.twpas.<t>.<role>`` whose leaves are ``#/ports/...`` pointers
+    names that port's owner — the Json Tree renders it beside the port node
+    ("q2 · z", "q1-2 · coupler") so a reader never has to chase the pointer
+    web backwards by hand. Shared ports list every owner; anything unshaped
+    is skipped (a broken wiring entry yields no label, never a crash).
+    """
+    out: dict[str, list[str]] = {}
+    wiring = (wiring_root or {}).get("wiring") or {}
+    role_names = {"c": "coupler", "rr": "readout", "qt": "trigger"}
+    for section in ("qubits", "qubit_pairs", "twpas"):
+        entities = wiring.get(section)
+        if not isinstance(entities, dict):
+            continue
+        for ent, roles in entities.items():
+            if not isinstance(roles, dict):
+                continue
+            for role, chan in roles.items():
+                if not isinstance(chan, dict):
+                    continue
+                label = f"{ent} · {role_names.get(role, role)}"
+                for ref in chan.values():
+                    if isinstance(ref, str) and ref.startswith("#/ports/"):
+                        dot = ref[2:].replace("/", ".")
+                        owners = out.setdefault(dot, [])
+                        if label not in owners:
+                            owners.append(label)
+    return {k: " + ".join(v) for k, v in out.items()}
+
+
 @bp.route("/explorer")
 def explorer():
     store = _store()
@@ -4089,6 +4441,7 @@ def explorer():
         **_ctx(page="explorer"),
         state_json=state_json,
         wiring_json=wiring_json,
+        port_owners=json.dumps(_port_owner_map(store.wiring)),
     )
 
 
@@ -4364,12 +4717,16 @@ def bulk_edit():
     # its z-port filter columns with no trace). Surface it as an honest line.
     dyn_truncated = next(
         (c["label"] for c in dyn_model if c.get("kind") == "note"), None)
+    # docs/120 item 4 — validated against BOTH grids, because they share the
+    # one #bulk-search box, so a chip must not go dead just because its columns
+    # live in the pair table.
+    filter_chips = _bulk_filter_chips(columns, pair_columns)
     template = "_bulkedit.html" if _is_htmx() else "bulkedit.html"
     html = render_template(template, **_ctx(page="bulk", columns=columns, rows=rows,
                                             column_groups=column_groups, band_meta=band_meta,
                                             dyn_cols=dyn_cols, qubit_meta=qubit_meta,
                                             pair_columns=pair_columns, pair_groups=pair_groups,
-                                            pair_rows=pair_rows,
+                                            pair_rows=pair_rows, filter_chips=filter_chips,
                                             dyn_truncated=dyn_truncated))
     # docs/103: this is the app's largest response by an order of magnitude
     # (measured 10.0 MB / 6.5 MB HTML on real 21Q/10Q chips — docs/85 ships
@@ -4619,18 +4976,65 @@ def _pair_bulk_grid(store: QuamStore, modified: dict
 _AUTO_SNAPSHOT_MIN_S = 120.0     # post-apply history snapshots, per session
 
 
-def _auto_apply_state(ctx: dict | None = None) -> dict | None:
-    """The armed session for the active (or given) ctx, else None."""
+# \u2500\u2500 docs/120 item 8 \u2014 Auto-Sync: the covenant amended a second time \u2500\u2500\u2500\u2500\u2500\u2500\u2500
+#
+# The user, on 2026-08-16: "many mature users run VS Code with auto-save on.
+# When qualibrate updates, VS Code always gets the SYNCED file. But SM's
+# original design concept was: never pull/push the source of truth without the
+# user's permission. It's time to drop that. What users want is auto pull/push
+# WHEN THEY ALLOW IT. Push is done; now pull."
+#
+# docs/107 stated the covenant as "any direct live write requires >=1 explicit
+# Apply-to-live press"; docs/117 amended its SCOPE so that one press could
+# authorize a session. This amends the OTHER direction for the first time: a
+# session may also replace the working copy from live without asking again.
+#
+# The floor that did not move, and the reason this is safe to offer: ticking
+# "auto replace" IS the consent. The user said so explicitly -- "if 1-1 is
+# checked, live ALWAYS wins" -- and that is the only configuration in which SM
+# discards work without a question. With it UNCHECKED and local edits present,
+# SM still refuses to choose and raises the banner, which is docs/87's rule
+# ("SM never swaps what you are looking at") intact.
+#
+#   pull  replace  local edits   behaviour
+#   ----  -------  -----------   -------------------------------------------
+#   on    on       either        live wins, silently -- pull and replace
+#   on    off      no            pull silently (a provably clean copy; this is
+#                                today's RECONCILE_SYNCED, unchanged)
+#   on    off      YES           do NOT pull; raise the drift banner and let
+#                                the user choose
+#   off   -        -             byte-identical to today
+#
+# ONE session dict holds all three flags. `_auto_apply_state` reads it only
+# when `push` is on, so every existing push code path -- the tray beacon, the
+# flusher, the applied log, the revert anchor, `_auto_disarm_response` -- is
+# untouched by construction rather than by test.
+
+
+def _auto_sync_state(ctx: dict | None = None) -> dict | None:
+    """The armed Auto-Sync session for the active (or given) ctx, else None."""
     ctx = ctx if ctx is not None else _active_ctx()
     if not ctx or ctx.get("type") != "quam":
         return None
     return ctx.get("auto_apply") or None
 
 
+def _auto_apply_state(ctx: dict | None = None) -> dict | None:
+    """The armed session, but ONLY when it authorizes pushing.
+
+    docs/120 item 8: the session grew pull flags, and every caller of this
+    helper is a push-side concern (the flusher's beacon, the applied log, the
+    revert anchor). A pull-only session must read as "not armed" to all of
+    them, or arming pull alone would start writing to the live chip.
+    """
+    sess = _auto_sync_state(ctx)
+    return sess if (sess and sess.get("push")) else None
+
+
 def _auto_apply_armable(ctx: dict | None = None) -> tuple[bool, str]:
-    """(can arm, why not). Refusals are the ones where arming would be a trap,
-    not a nuisance: nothing to write to, nothing writable, or a chip that has
-    ALREADY diverged (arming into a guaranteed immediate conflict)."""
+    """(can arm PUSH, why not). Refusals are the ones where arming would be a
+    trap, not a nuisance: nothing to write to, nothing writable, or a chip that
+    has ALREADY diverged (arming into a guaranteed immediate conflict)."""
     ctx = ctx if ctx is not None else _active_ctx()
     if not ctx or ctx.get("type") != "quam":
         return False, "No chip is open."
@@ -4640,6 +5044,27 @@ def _auto_apply_armable(ctx: dict | None = None) -> tuple[bool, str]:
         return False, "The live folder is read-only."
     if ctx.get("live_diverged"):
         return False, ("The live chip changed outside SM \u2014 resolve that first.")
+    return True, ""
+
+
+def _auto_pull_armable(ctx: dict | None = None) -> tuple[bool, str]:
+    """(can arm PULL, why not) \u2014 a DIFFERENT question from push.
+
+    Two of push's refusals are backwards here and one is irrelevant:
+
+    * ``live_diverged`` is push's "you would immediately conflict". For pull it
+      is the very condition that makes pulling useful, so refusing on it would
+      disarm the feature exactly when it is wanted.
+    * ``live_readonly_hint`` describes writing TO live. A pull only reads live
+      and writes the working copy, so a read-only folder is no obstacle.
+
+    What remains is the same as push: something to sync, and not an archive.
+    """
+    ctx = ctx if ctx is not None else _active_ctx()
+    if not ctx or ctx.get("type") != "quam":
+        return False, "No chip is open."
+    if (ctx.get("origin") or "live") != "live":
+        return False, "This is a read-only archive."
     return True, ""
 
 
@@ -4693,6 +5118,12 @@ def _render_tray(*, oob: bool) -> str:
         changes=changes,
         change_count=len(changes),
         working_dirty=_working_dirty(),
+        # The badge's else-branch says "Working state matches the live chip" —
+        # a claim about LIVE — while its verdict was built only from LOCAL edit
+        # flags. So with no edits of your own and a chip that moved underneath
+        # you, it rendered "● Synced" directly above the amber banner saying the
+        # live state files had changed on disk. Both visible, contradicting.
+        live_diverged=bool((_active_ctx() or {}).get("live_diverged")),
         active_name=ident["name"] if ident else None,
         chip_origin=ident["origin"] if ident else "live",
         qualibrate_tray=_qualibrate_tray_badge(),
@@ -4710,6 +5141,8 @@ def _render_tray(*, oob: bool) -> str:
         # the server owns it.
         auto_apply=_auto_apply_state(),
         auto_apply_armable=_auto_apply_armable(),
+        auto_sync=_auto_sync_state(),
+        auto_pull_armable=_auto_pull_armable(),
         applied_log=_applied_log_rows(),
         oob=oob,
     )
@@ -4755,6 +5188,49 @@ def _fmt_val(v) -> str:
         if abs_v >= 1e6 or (0 < abs_v < 1e-3):
             return "%.6e" % v
     return str(v)
+
+
+def _revert_entry_payload(dot_path, value, *, created=False, deleted=False,
+                          source_file="state") -> dict:
+    """ONE shape for every cellsReverted/cellDiscarded entry (docs/124 M-9/M-10).
+
+    Five emit sites (undo, journal-staged undo, both redo branches, discard-all,
+    plus the per-change ✕) used to build this dict by hand, and all five shipped
+    only ``_fmt_val`` — ``%.6e``, 7 sig figs — which the grids then wrote into
+    cells whose own rendering is the LOSSLESS ``group_digits``: the on-screen
+    value was wrong by the sub-kHz tail after every undo, and because the same
+    string became ``data-orig`` (the clean baseline), a user re-editing from
+    that cell committed the truncation. So:
+
+    - ``old_value_str``  — the inspector-input format (``_fmt_val``), unchanged;
+      the qubit/pair detail inputs render values this way.
+    - ``old_value_disp`` — the grids' own lossless ``_bulk_display`` string;
+      ``BulkEdit/BulkPairEdit.revertPaths`` prefer it for value AND baseline.
+    - ``old_kind``       — what the value IS (pointer / str_numeric / str /
+      bool / num / null / other), so the repaint can refuse to claim coverage
+      when the cell's server-rendered decorations (docs/56 quote spans, amber,
+      pointer links) no longer match and the debounced rebuild must repaint
+      them honestly. bool is checked before num — Python bools ARE ints.
+    """
+    if value is None:
+        kind = "null"
+    elif isinstance(value, str):
+        kind = ("pointer" if value.startswith("#")
+                else "str_numeric" if _is_numeric_string(value) else "str")
+    elif isinstance(value, bool):
+        kind = "bool"
+    elif isinstance(value, (int, float)):
+        kind = "num"
+    else:
+        kind = "other"
+    return {
+        "dot_path": dot_path,
+        "old_value_str": _fmt_val(value),
+        "old_value_disp": _bulk_display(value),
+        "old_kind": kind,
+        "created": bool(created), "deleted": bool(deleted),
+        "source_file": source_file,
+    }
 
 
 def _modified_map() -> dict[str, Any]:
@@ -4943,6 +5419,15 @@ def qubit_edit(name: str):
         _ro = _editability_reason(modifier.store, target_path)
         if _ro is not None:
             raise ValueError(_ro)
+        # docs/121: a pointer cell now SHOWS its pointer, so plain text
+        # typed into one must never silently replace the link.
+        _pr = _pointer_cell_refusal(modifier.store, dot_path, raw_value)
+        if _pr is not None:
+            raise ValueError(_pr)
+        # ...and a null field takes its type from the rest of the chip.
+        _sr = _sibling_type_refusal(modifier.store, dot_path, raw_value)
+        if _sr is not None:
+            raise ValueError(_sr)
         parsed = _parse_for_target(modifier.store, target_path, raw_value)
         # Mint one group id when the freq-mirror can fire, so the primary edit
         # and its mirrored twin share it and a single Ctrl+Z reverts both
@@ -4979,6 +5464,19 @@ def _op_of_path(dot_path: str) -> str | None:
         if i + 1 < len(segs):
             return segs[i + 1]
     return None
+
+
+def _sibling_type_refusal(store, dot_path: str, new_value):
+    """Thin wrapper — the rule lives in core.edit_policy, beside its twin."""
+    from quam_state_manager.core.edit_policy import sibling_type_refusal
+    return sibling_type_refusal(store, dot_path, new_value)
+
+
+def _pointer_cell_refusal(store, dot_path: str, new_value):
+    """Thin wrapper — the rule lives in core.edit_policy so the four generic
+    value-edit surfaces cannot drift on what a pointer cell accepts."""
+    from quam_state_manager.core.edit_policy import pointer_cell_refusal
+    return pointer_cell_refusal(store, dot_path, new_value)
 
 
 def _resolve_edit_path(store, dot_path: str) -> str:
@@ -5111,6 +5609,15 @@ def field_edit():
         _ro = _editability_reason(modifier.store, target_path)
         if _ro is not None:
             raise ValueError(_ro)
+        # docs/121: a pointer cell now SHOWS its pointer, so plain text
+        # typed into one must never silently replace the link.
+        _pr = _pointer_cell_refusal(modifier.store, dot_path, raw_value)
+        if _pr is not None:
+            raise ValueError(_pr)
+        # ...and a null field takes its type from the rest of the chip.
+        _sr = _sibling_type_refusal(modifier.store, dot_path, raw_value)
+        if _sr is not None:
+            raise ValueError(_sr)
         # docs/20 r12-B: an FSP edit NEVER silently changes amplitudes — and
         # never commits before the user saw the compensation offer. Without
         # an ack the plan comes back 409; the popup then applies FSP+amps in
@@ -5264,13 +5771,60 @@ def _parse_for_target(store, target_path: str, raw_value: str):
     """
     from quam_state_manager.core import type_policy as _tp
     from quam_state_manager.core.edit_policy import is_free_form_path
-    if is_free_form_path(target_path):
-        try:
-            current = store.get_value(target_path)
-        except Exception:  # noqa: BLE001 — fall through to the normal path
-            current = None
-        if isinstance(current, str) and not is_pointer(current):
-            return raw_value
+    # A POINTER IS ALWAYS STRIPPED, whatever the field currently holds.
+    # Surrounding whitespace is never meaningful in a QUAM reference, and a
+    # padded one is not a reference at all: '  #/qubits/q3  ' was stored with
+    # its spaces, so is_pointer() said no afterwards and the link was dead —
+    # HTTP 200, on disk after apply (red team). Hoisted above every branch
+    # because the field being edited may itself already be a pointer, which is
+    # exactly the case that reached disk.
+    _sp = raw_value.strip() if isinstance(raw_value, str) else raw_value
+    if isinstance(_sp, str) and is_pointer(_sp):
+        return _sp
+    try:
+        current = store.get_value(target_path)
+    except Exception:  # noqa: BLE001 — fall through to the normal path
+        current = None
+    # A TEXT leaf keeps what the user typed, verbatim.
+    #
+    # docs/81 introduced this for `extras` only, on the reasoning "free-form
+    # means the text is the value" — but that reasoning never depended on
+    # `extras`. Measured on the real chip: typing into `grid_location` (a plain
+    # chip field holding "1,0") stored `1032`, because the parser strips the
+    # thousands separators the grid itself prints and the coercer casts the
+    # number back to str. The Review tray then showed
+    # `grid_location  1,0 -> 1032  +1,022 (+10220%)` — a percentage delta on a
+    # coordinate. The comma IS the separator; "007" loses its zeros the same way.
+    #
+    # Gated on the current value being a NON-NUMERIC string, which is the
+    # narrowest form of the rule: a field genuinely holding "0.13" still parses,
+    # so docs/56's stored-as-TEXT detection and its convert/keep offer are
+    # untouched, and nothing about non-string fields changes. `extras` is
+    # subsumed (its numeric values were already parsed under the old gate too).
+    if (isinstance(current, str) and not is_pointer(current)
+            and (is_free_form_path(target_path) or not _is_numeric_string(current))):
+        # VERBATIM means "the characters are the value" — it does NOT mean the
+        # three tokens every other write path honours stop existing. Returning
+        # raw_value unconditionally broke them, and the red team caught it:
+        #   'null'    stored the four-character string 'null' (617 leaves on
+        #             this chip could no longer be CLEARED at all)
+        #   '"high"'  stored the quotes too, killing the documented escape hatch
+        #   '  #/q '  stored the padding, so the pointer was no longer a pointer
+        # So the tokens are handled first, exactly as parse_with_expected does,
+        # and only ordinary text falls through untouched.
+        _s = raw_value.strip()
+        if _s.lower() in ("null", "none"):
+            return None
+        if _s.startswith('"'):
+            try:
+                _loaded = json.loads(_s)
+                if isinstance(_loaded, str):
+                    return _loaded
+            except ValueError:
+                pass
+        if is_pointer(_s):
+            return _s          # stripped: a padded pointer is not a pointer
+        return raw_value
     policy = getattr(store, "type_policy", None)
     expected = None
     if policy is not None:
@@ -6393,6 +6947,14 @@ def field_create():
     reason = _crud_policy_reason(modifier.store, dot_path)
     if reason is not None:
         return jsonify(ok=False, error=reason, error_kind="policy"), 400
+    # docs/120 item 16: the sibling-type rule protected the four EDIT surfaces
+    # and not this one, so the same mistyped value the grid refuses could be
+    # created here — and a created key is exactly where a typo has no prior
+    # value to contradict it. (Its twin, the pointer-cell refusal, is
+    # inapplicable by construction: a key being created holds no pointer yet.)
+    _sr = _sibling_type_refusal(modifier.store, dot_path, raw_value)
+    if _sr is not None:
+        return jsonify(ok=False, error=_sr, error_kind="sibling_type"), 400
 
     try:
         if expect_type and expect_type != "infer":
@@ -6642,6 +7204,15 @@ def field_edit_batch():
                 _ro = _editability_reason(modifier.store, target_path)
                 if _ro is not None:
                     raise ValueError(_ro)   # read-only policy → existing atomic rollback (audit P0)
+                # docs/121: a pointer cell now SHOWS its pointer, so plain text
+                # typed into one must never silently replace the link.
+                _pr = _pointer_cell_refusal(modifier.store, dot_path, raw_value)
+                if _pr is not None:
+                    raise ValueError(_pr)
+                # ...and a null field takes its type from the rest of the chip.
+                _sr = _sibling_type_refusal(modifier.store, dot_path, raw_value)
+                if _sr is not None:
+                    raise ValueError(_sr)
                 # String values parse against the TARGET's expectation (JSON
                 # values pass through — the modifier gate is the backstop).
                 parsed = (_parse_for_target(modifier.store, target_path, raw_value)
@@ -7457,6 +8028,15 @@ def pair_edit(name: str):
         _ro = _editability_reason(modifier.store, target_path)
         if _ro is not None:
             raise ValueError(_ro)
+        # docs/121: a pointer cell now SHOWS its pointer, so plain text
+        # typed into one must never silently replace the link.
+        _pr = _pointer_cell_refusal(modifier.store, dot_path, raw_value)
+        if _pr is not None:
+            raise ValueError(_pr)
+        # ...and a null field takes its type from the rest of the chip.
+        _sr = _sibling_type_refusal(modifier.store, dot_path, raw_value)
+        if _sr is not None:
+            raise ValueError(_sr)
         parsed = _parse_for_target(modifier.store, target_path, raw_value)
         # Group primary + freq-mirror twin under one id (see qubit_edit) so a
         # single Ctrl+Z reverts both atomically instead of leaving f_01≠RF.
@@ -7560,6 +8140,48 @@ def comparison_table():
 # ======================================================================
 
 
+@bp.route("/chip-status/report")
+def chip_status_report():
+    """docs/126 #21 — the printable chip report (customer request).
+
+    A STANDALONE page (no app chrome): header, the component-map drawing, and
+    read-only tables of all five component views, unpaginated. Served for
+    viewing/printing; its own toolbar offers a self-contained .html download
+    (the client serializes the DOM after the map has drawn, inlining the
+    stylesheet, so the file opens anywhere with the SVG baked in). Data comes
+    from the same QueryEngine the live pages use — nothing is recomputed or
+    approximated for the report."""
+    engine = _engine()
+    store = _store()
+    if not engine or not store:
+        return render_template("chip_report.html", has_chip=False)
+
+    path = _active_path()
+    qubits = engine.list_qubits()
+    pairs = []
+    for pair_name in store.qubit_pair_names:
+        try:
+            pairs.append(engine.get_pair(pair_name))
+        except KeyError:
+            continue
+        except Exception as exc:  # noqa: BLE001 — same degrade as /pairs
+            logger.warning("report get_pair(%r) failed: %s", pair_name, exc)
+            pairs.append({"id": pair_name, "is_active": True,
+                          "_error": f"{type(exc).__name__}: {exc}"})
+    return render_template(
+        "chip_report.html",
+        has_chip=True,
+        chip_name=_chip_display_name(path) if path else "chip",
+        folder=str(path or ""),
+        generated=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        qubits=qubits,
+        pairs=pairs,
+        resonators=[q for q in qubits if q.get("has_resonator")],
+        flux=[q for q in qubits if q.get("has_z")],
+        couplers=[p for p in pairs if p.get("has_coupler")],
+    )
+
+
 @bp.route("/wiring")
 @bp.route("/topology")
 def wiring_view():
@@ -7588,8 +8210,8 @@ def wiring_view():
     # bare /topology from the main "Chip Status" item) → client default, which is
     # the topology-diagram-only view.
     # Phase C scroll-spy sections (+ "full" kept for old bookmarks → topology).
-    _CHIP_VIEWS = {"topology", "overview", "distributions", "gate", "fidelity",
-                   "coherence", "frequencies", "calibration", "full"}
+    _CHIP_VIEWS = {"topology", "overview", "gate", "fidelity",
+                   "coherence", "frequencies", "calibration", "trends", "full"}
     chip_view = request.args.get("view", "").strip().lower()
     if chip_view not in _CHIP_VIEWS:
         chip_view = ""
@@ -8056,6 +8678,410 @@ def state_history_snapshot():
     return state_history()
 
 
+# ── docs/120 items 5+9 — chip-wide Trends ─────────────────────────────────
+#
+# Customer (twice, as items 5 and 9): "to see T1/RB/T2 trends today you go to
+# Param History, but that shows PER-QUBIT trends, not an INTEGRATED one. Add a
+# Trends tab under Chip Status where ALL qubits' T1 appear in a SINGLE plot.
+# A multiple-line plot, legend = all qubits."
+#
+# The user approved "any numeric parameter" conditionally on the overhead
+# investigation, which came back green (docs/120): a whole-chip leaf index is
+# 1.21 MB over 433 real snapshots and a 20-qubit overlay of one metric costs
+# 0.32-0.92 ms. Coverage is why it matters -- on the real chip T1/T2/fidelity
+# are null and the curated eleven would render an almost empty page, while 588
+# parameters have a real history.
+#
+# So: the curated properties are the DEFAULT selection (useful on open, and the
+# fast SQL tier), and any other numeric leaf is reachable by dot-path through
+# the docs/83 leaf index. Both tiers are normalised to ONE series shape so the
+# template renders them identically.
+
+_TRENDS_MAX_SERIES = 400        # a 20-qubit chip x 4 metrics is 80; armor only.
+
+
+_SNAP_TS_RE = re.compile(r"^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})")
+
+
+def _snap_iso(ts: Any) -> str | None:
+    """A snapshot id as a real instant, or None if it is not one.
+
+    Snapshot ids are ``20260816_012907_4661``. Printed raw on an axis they are
+    unreadable, and — worse — a CATEGORY axis spaces them evenly, so a value
+    that sat untouched for three weeks looks exactly like one that moved twice
+    in a minute. The question this page exists to answer is *when did this
+    drift*, so the gaps ARE the information and the axis has to be time.
+
+    Returns None rather than guessing: an id that does not parse keeps its raw
+    label, which is honest, instead of being placed at a fabricated instant.
+    """
+    m = _SNAP_TS_RE.match(str(ts or ""))
+    if not m:
+        return None
+    y, mo, d, h, mi, s = m.groups()
+    return f"{y}-{mo}-{d}T{h}:{mi}:{s}"
+
+
+def _trend_points(values: list[dict]) -> list[tuple]:
+    """``[(snapshot id, value)]`` — two elements, deliberately.
+
+    The instant is a pure regex reformat of the id, so shipping it as a third
+    element sent the same information twice: measured on a real 419-snapshot
+    chip that was 61 bytes/point and up to 2.3 MB of HTML for one section. The
+    client derives it with the same rule (``ChipTrends._iso``, parity-pinned),
+    and the id still travels because that is what a user carries over to State
+    History.
+    """
+    out = []
+    for p in values or []:
+        v = p.get("value")
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            out.append((p.get("timestamp"), v))
+    return out
+
+
+def _trend_unit(metric: str) -> str:
+    """The unit the grid already prints beside this very number.
+
+    A trend chart drew `4.6B` on an axis titled `f_01` — US-billions, and no
+    unit anywhere on the plot. The chip's own column spec has carried
+    ``unit: "Hz"`` for that field all along, so the axis can simply say so
+    instead of the reader having to know. Unknown metric (any leaf path typed
+    into the box) => empty, never a guessed unit.
+    """
+    for spec in _BULK_COLUMNS_SPEC:
+        if isinstance(spec, dict) and spec.get("key") == metric:
+            return str(spec.get("unit") or "")
+    return ""
+
+
+def _trend_series_curated(hm, path: Path, props: list[str]) -> list[dict]:
+    """The SQLite property index — one call returns EVERY qubit for a metric."""
+    try:
+        rows = hm.extract_property_history(path, props, downsample=400)
+    except Exception:  # noqa: BLE001
+        return []
+    out = []
+    for r in rows:
+        pts = _trend_points(r.get("values") or [])
+        if pts:
+            out.append({"metric": r["property"], "entity": r["qubit"], "points": pts})
+    return out
+
+
+def _trend_metrics_with_data(hm, path: Path, curated: list[str]) -> set[str]:
+    """Which curated metrics this chip has actually recorded.
+
+    ONE indexed call for all of them — ``extract_property_history`` takes a
+    property list and returns every (qubit, property) bucket, so this costs the
+    same as asking about a single metric and saves opening Trends on three
+    empty boxes.
+    """
+    try:
+        # A small-but-SAFE downsample. This asks only "does this metric have any
+        # numeric point at all", so the cheapest honest answer wins — but it
+        # must not be so small that the LTTB bucket maths degenerates (asking
+        # for 2 used to raise ZeroDivisionError, which this function's own
+        # except swallowed, so the answer was always "nothing" and the caller
+        # silently fell back).
+        rows = hm.extract_property_history(path, list(curated), downsample=8)
+    except Exception:  # noqa: BLE001
+        logger.debug("trend metric probe failed", exc_info=True)
+        return set()
+    return {r["property"] for r in rows
+            if any(isinstance(p.get("value"), (int, float))
+                   for p in (r.get("values") or []))}
+
+
+def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str]) -> list[dict]:
+    """Any numeric leaf, via the docs/83 change-point index.
+
+    A path names ONE qubit (``qubits.q3.xy.operations.x180.amplitude``); the
+    point of this page is every qubit at once, so the qubit segment is swapped
+    across the chip and each concrete path queried. A qubit that never carried
+    the leaf simply contributes no line — absence is not an error.
+    """
+    parts = dot_path.split(".")
+    out: list[dict] = []
+    if len(parts) >= 3 and parts[0] == "qubits":
+        tmpl, label = parts[:], ".".join(parts[2:])
+        # ONE connection for the whole fan-out. Per-qubit calls spent their time
+        # opening and closing SQLite rather than querying it (measured 458 ms
+        # for 20 qubits, scaling with qubit count), which is half a second of a
+        # synchronous worker for a page whose whole point is this tier.
+        by_q = {}
+        for q in qubits:
+            tmpl[1] = q
+            by_q[".".join(tmpl)] = q
+        got = hm.leaf_field_series_many(path, list(by_q))
+        for dp, q in by_q.items():
+            pts = [(r[0], r[1]) for r in (got.get(dp) or [])
+                   if isinstance(r[1], (int, float))]
+            if pts:
+                out.append({"metric": label, "entity": q, "points": pts})
+        return out
+    # Not qubit-scoped (a port, a pair leaf, a top-level key) — one line, and
+    # the path itself is the legend, because there is nothing to fan out over.
+    rows = hm.leaf_field_series(path, dot_path)
+    pts = [(r[0], r[1]) for r in (rows or [])
+           if isinstance(r[1], (int, float))]
+    if pts:
+        out.append({"metric": dot_path, "entity": dot_path.split(".")[-1], "points": pts})
+    return out
+
+
+@bp.route("/topology/trends")
+def topology_trends():
+    """The Trends section: one chart per metric, one line per qubit.
+
+    Lazily fetched by the section (never on the Chip Status render) because it
+    touches the history index, and a chip with hundreds of snapshots should not
+    pay for a page the user may not scroll to.
+    """
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam" or not ctx.get("path"):
+        return render_template("_topo_trends.html", charts=[], curated=[],
+                               selected=[], extra="", no_chip=True)
+    hm = _history()
+    path = Path(ctx["path"])
+    store = _store()
+    qubits = list(store.qubit_names) if store else []
+
+    curated = list(DEFAULT_TRACKED_PROPERTIES)
+    extra = (request.args.get("path") or "").strip()
+    sel = [m for m in (request.args.get("metrics") or "").split(",") if m.strip()]
+    # Default only on a BARE request. Turning every chip off is a choice, and
+    # re-injecting the defaults over it would make the last chip un-turn-off-able
+    # whenever a parameter path was also being charted.
+    if not sel and "metrics" not in request.args and not extra:
+        # The default has to be metrics this chip ACTUALLY HAS. Preferring the
+        # coherence/fidelity trio looked right and opened empty on the real
+        # 20-qubit chip, where T1/T2/gate_fidelity are null chip-wide while
+        # f_01 and the amplitudes have hundreds of change points: a first visit
+        # that shows three "nothing recorded" boxes reads as a broken page, not
+        # as a chip early in bring-up. So: the preferred order, filtered to what
+        # has data, and only falling back to the preferred order when the chip
+        # has no history at all (where every metric is equally empty and the
+        # slots are what explain that).
+        preferred = ["T1", "T2echo", "gate_fidelity_avg", "f_01",
+                     "x180_amplitude", "readout_amplitude"]
+        have = _trend_metrics_with_data(hm, path, curated)
+        sel = [m for m in preferred if m in have][:3] or preferred[:3]
+    sel = [m for m in sel if m in curated][:8]
+
+    series = _trend_series_curated(hm, path, sel) if sel else []
+    extra_series = _trend_series_leaf(hm, path, extra, qubits) if extra else []
+    series += extra_series
+
+    # The same parameter must appear ONCE per qubit. A typed path like
+    # `qubits.q1.f_01` derives the label `f_01`, which is also a curated metric
+    # name, so the two tiers landed in one bucket and the chart drew every qubit
+    # twice and titled itself "f_01 · 40 qubits" on a 20-qubit chip. The curated
+    # tier is the denser series, so it wins; the leaf tier fills what it lacks.
+    _seen_series: set = set()
+    _deduped = []
+    for _s in series:
+        _k = (_s.get("metric"), _s.get("entity"))
+        if _k in _seen_series:
+            continue
+        _seen_series.add(_k)
+        _deduped.append(_s)
+    series = _deduped
+
+    if len(series) > _TRENDS_MAX_SERIES:
+        series = series[:_TRENDS_MAX_SERIES]
+
+    # Group into one chart per metric, preserving the requested order so the
+    # page does not reshuffle as data arrives.
+    order: list[str] = []
+    by_metric: dict[str, list[dict]] = {}
+    for s in series:
+        by_metric.setdefault(s["metric"], [])
+        if s["metric"] not in order:
+            order.append(s["metric"])
+        by_metric[s["metric"]].append(s)
+    charts = [{"metric": m, "series": by_metric[m],
+               "n_entities": len(by_metric[m]), "unit": _trend_unit(m)} for m in order]
+    # A selected metric with NO series still gets a chart slot so the page can
+    # say "nothing recorded yet" for it, instead of quietly showing fewer
+    # charts than the user asked for.
+    for m in sel:
+        if m not in by_metric:
+            charts.append({"metric": m, "series": [], "n_entities": 0,
+                           "unit": _trend_unit(m)})
+    # ...and the same courtesy for a TYPED path. A path the index cannot chart
+    # produced no series, so nothing was appended and the section came back
+    # byte-identical: no chart, no message, no error, the box still holding what
+    # the user typed. An empty slot renders the template's honest "Nothing
+    # recorded" line against the path itself, which at least distinguishes
+    # "asked and found nothing" from "the box ignored you".
+    if extra and not extra_series:
+        charts.append({"metric": extra, "series": [], "n_entities": 0,
+                       "unit": _trend_unit(extra)})
+
+    return render_template("_topo_trends.html", charts=charts, curated=curated,
+                           selected=sel, extra=extra, no_chip=False,
+                           snapshots=len(hm.list_snapshots(path)))
+
+
+@bp.route("/topology/trends/paths")
+def topology_trends_paths():
+    """Typeahead over every numeric leaf the chip has ever recorded."""
+    q = (request.args.get("q") or "").strip()
+    ctx = _active_ctx()
+    if not q or not ctx or not ctx.get("path"):
+        return jsonify([])
+    hits = _history().leaf_search(Path(ctx["path"]), q, limit=25)
+    return jsonify(hits)
+
+
+# ── docs/120 item 10 — the working-state version, from the top bar ────────
+#
+# Customer: "move the bookmark button below Calculator, and in its place show
+# the current state working version id. Since we're adding Auto-Sync, revert
+# back and forth has to be really free. Clicking it lists the version history
+# with WHEN each was updated, checkboxes to pick several -> show just the
+# combined diff -> and let a chosen state be applied to the live chip."
+#
+# Deliberately a thin, reachable surface over machinery that already exists:
+# the snapshots are State History's, the 2-way diff is the docs/84 workbench's
+# front door, an N-way pick is the Compare hub's basket, and applying is
+# /state-history/<ts>/restore-live WITH BOTH its independent force gates. The
+# value added is that it is one click from every page rather than a navigation.
+#
+# The version ID is the snapshot TIMESTAMP. Not store.mutation_seq: that resets
+# on reload, eviction and restart, so it is a liveness pulse, never an identity.
+# Which snapshot is "now" is CONTENT-matched (snapshot_ts_for_current_content),
+# never "the newest" -- after an A->B->A cycle the newest snapshot holds the
+# wrong content, which is the audit-r10 finding that put that helper there.
+
+
+def _state_version_now(ctx: dict | None) -> dict:
+    """What the top-bar chip shows. Never called from a page render.
+
+    Resolving this hashes the live state+wiring pair, so it rides its own lazy
+    endpoint (docs/28: no live reads on a surface that renders on every page).
+    """
+    out: dict[str, Any] = {"ts": None, "count": 0, "unmatched": False,
+                           "dirty": False}
+    if not ctx or ctx.get("type") != "quam" or not ctx.get("path"):
+        return out
+    hm = _history()
+    try:
+        out["count"] = len(hm.list_snapshots(Path(ctx["path"])))
+    except Exception:  # noqa: BLE001
+        return out
+    # STAT-GATED. Resolving `ts` reads BOTH live files whole, re-serializes them
+    # canonically and sha256s them — 526 KB on the real chip, 3.9 of the 4.1 ms
+    # this call costs. Cheap on NVMe; a lab `state_path` is often a share, and
+    # `stateHistoryChanged` fires on every apply (so every Auto-Sync flush
+    # too), which turns it into a network read per committed edit. The content
+    # cannot change without the files' (mtime, size) changing, which is the
+    # same gate `working_copy.live_diverged_now` already trusts — so recompute
+    # only when they actually moved. Keyed by path so switching chips can never
+    # serve the other one's answer.
+    stamp = None
+    try:
+        p = Path(ctx["path"])
+        stamp = tuple(sorted(
+            (n, s.st_mtime_ns, s.st_size)
+            for n, s in ((n, (p / n).stat()) for n in ("state.json", "wiring.json"))))
+    except OSError:
+        stamp = None
+    memo = ctx.get("_version_memo")
+    if stamp is not None and memo and memo[0] == str(p) and memo[1] == stamp:
+        out["ts"] = memo[2]
+    else:
+        try:
+            out["ts"] = hm.snapshot_ts_for_current_content(Path(ctx["path"]))
+        except Exception:  # noqa: BLE001
+            out["ts"] = None
+        if stamp is not None:
+            ctx["_version_memo"] = (str(p), stamp, out["ts"])
+    # "No snapshot holds exactly this content" is the ORDINARY mid-edit state,
+    # not a fault — say so plainly rather than inventing a nearest match.
+    out["unmatched"] = out["ts"] is None and out["count"] > 0
+    # WHOSE version this is, stated rather than assumed. The hash above is of
+    # ``ctx["path"]`` — the LIVE pair — so the id names what the chip is on,
+    # not what SM is holding. With unapplied edits those are different states,
+    # and a bare id would read as "your work is recorded as this". It is not.
+    out["dirty"] = _quam_ctx_dirty(ctx)
+    return out
+
+
+@bp.route("/state/version")
+def state_version_chip():
+    """The top-bar version chip (lazy; see _state_version_now)."""
+    ctx = _active_ctx()
+    # Gate on a chip actually being OPEN, not on a display name — the raw ctx
+    # carries no "name" (that is assembled by _ctx for full renders), and using
+    # it here made the chip silently render empty on every page.
+    return render_template("_state_version_chip.html",
+                           ver=_state_version_now(ctx),
+                           has_chip=bool(ctx and ctx.get("type") == "quam"
+                                         and ctx.get("path")))
+
+
+# One fetch must stay one fetch. The first guess at this said "500 rows is
+# ~90 KB"; MEASURED on a real 419-snapshot chip it is 1.35 KB/row — 566 KB at
+# 419 rows, so 500 would be ~675 KB into a top-bar popover. Each row carries a
+# full hx-post restore button plus six spans. 150 keeps the fetch ~200 KB and
+# still reaches months of history in two clicks; beyond it the right surface is
+# State History, which the footer names.
+_STATE_VERSIONS_CAP = 150
+
+
+@bp.route("/state/versions")
+def state_versions_panel():
+    """The version list the chip opens: when each was recorded, what produced
+    it, and the two things a user wants from it — compare, and go back."""
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam" or not ctx.get("path"):
+        return render_template("_state_versions.html", rows=[], ver=_state_version_now(None),
+                               chip_key="", total=0, cap=_STATE_VERSIONS_CAP,
+                               archive=True)
+    hm = _history()
+    path = Path(ctx["path"])
+    try:
+        snaps = hm.list_snapshots(path)
+    except Exception:  # noqa: BLE001
+        snaps = []
+    try:
+        chip_key = Path(hm.resolve_chip_dir(path)[0]).name
+    except Exception:  # noqa: BLE001
+        chip_key = ""
+    ver = _state_version_now(ctx)
+    limit = min(_int_arg("limit", 40, minimum=1), _STATE_VERSIONS_CAP)
+    rows = [{
+        "ts": m.timestamp,
+        "trigger": m.trigger,
+        "label": m.label,
+        "note": m.note,
+        "pinned": bool(m.pinned),
+        "experiment": m.experiment_name,
+        "run_id": m.run_id,
+        "current": m.timestamp == ver["ts"],
+    } for m in snaps[:limit]]
+    # docs/126: the ordinary question at this button is "what just changed?",
+    # and answering it used to cost tick-two + Compare. When the newest two
+    # versions differ by ≤ 50 leaves the panel now shows the table IMMEDIATELY
+    # (key | old → new, the docs/76 Δ); bigger diffs state their size and
+    # point at Compare. The tick-two flow stays for any other pairing.
+    quick = None
+    if len(rows) >= 2:
+        try:
+            entries = hm.diff_snapshots(path, rows[1]["ts"], rows[0]["ts"])
+            quick = {"a_ts": rows[1]["ts"], "b_ts": rows[0]["ts"],
+                     "n": len(entries),
+                     "entries": entries if 0 < len(entries) <= 50 else None}
+        except Exception:  # noqa: BLE001 — the list must render regardless
+            quick = None
+    return render_template("_state_versions.html", rows=rows, ver=ver,
+                           chip_key=chip_key, total=len(snaps),
+                           cap=_STATE_VERSIONS_CAP, quick=quick,
+                           archive=(ctx.get("origin") or "live") != "live")
+
+
 @bp.route("/state/archive", methods=["POST"])
 def state_archive():
     """Bookmark/archive the current chip state with a tag + note (feedback #3).
@@ -8133,6 +9159,27 @@ def instrument_view():
         **_ctx(page="instrument", instrument_json=instrument_json,
                wiring_json=wiring_json, instrument_error=instrument_error),
     )
+
+
+@bp.route("/api/instrument/data")
+def instrument_data():
+    """The wiring-diagram payload as JSON (docs/126 ⑥ — the floating panel).
+
+    The float panel renders the SAME diagram (`renderInstrumentWiring`) from
+    the same engine data as `/instrument`, but lives outside the main pane —
+    so it needs the data without the page. Read-only; errors are returned
+    honestly rather than as an empty rack (the /instrument doctrine)."""
+    engine = _engine()
+    if not engine:
+        return jsonify({"error": "no chip loaded"}), 200
+    try:
+        instrument = engine.get_instrument_wiring()
+    except Exception as exc:  # noqa: BLE001 — same honesty rule as /instrument
+        logger.exception("Failed to build instrument wiring data (float)")
+        return jsonify({"error": str(exc) or exc.__class__.__name__}), 200
+    store = _store()
+    return jsonify({"instrument": instrument,
+                    "wiring": (store.wiring if store else {}) or {}})
 
 
 # ----------------------------------------------------------------------
@@ -9065,6 +10112,120 @@ def pulse_env_strip():
     )
 
 
+@bp.route("/pulse/gaussian-cz")
+def pulse_gaussian_cz_form():
+    """The Gaussian-CZ macro builder form (docs/126 ⑦b)."""
+    store = _store()
+    if not store:
+        return render_template("_status.html", message="No state loaded",
+                               level="warning")
+    from quam_state_manager.core import gaussian_cz
+    with store._lock:
+        pairs = gaussian_cz.eligible_pairs(store.merged)
+    return render_template("_pulse_gaussian_cz.html", pairs=pairs)
+
+
+@bp.route("/api/pulse/gaussian-cz", methods=["POST"])
+def api_pulse_gaussian_cz():
+    """Create the Gaussian CZ macro set for one pair (docs/126 ⑦b).
+
+    The customer's ``add_gaussian_cz_macros.py`` workflow: sources amplitude /
+    flat_length from the pair's ``cz_flattop``, writes the two CZGate macros
+    plus the pointer-linked z / coupler operations — six ``create_subtree``
+    calls under ONE change group (one Review bundle, one Ctrl+Z). Existing
+    macros 409 until ``overwrite=1`` (then deleted first, in the SAME group,
+    so one undo restores exactly the prior state). Working copy only; archives
+    refuse (nothing here can write live — docs/107)."""
+    ctx = _active_ctx()
+    store = _store()
+    modifier = _modifier()
+    if not store or not modifier:
+        return render_template("_status.html", message="No state loaded",
+                               level="warning"), 400
+    if ctx and (ctx.get("origin") or "live") != "live":
+        return render_template(
+            "_status.html", level="error",
+            message="This chip is a read-only archive — open the live chip "
+                    "to create macros."), 409
+
+    from quam_state_manager.core import gaussian_cz
+
+    pair_id = request.form.get("pair_id", "").strip()
+
+    def _num(name, default, integer=False):
+        raw = (request.form.get(name) or "").strip()
+        if not raw:
+            return default
+        try:
+            return int(float(raw)) if integer else float(raw)
+        except ValueError:
+            return None
+
+    padding = _num("padding_length", 20, integer=True)
+    q_mhz = _num("qubit_filter_mhz", 20.0)
+    c_mhz = _num("coupler_filter_mhz", 20.0)
+    if padding is None or q_mhz is None or c_mhz is None:
+        return render_template("_status.html", level="error",
+                               message="Padding / filter values must be numbers."), 400
+
+    with store._lock:
+        result = gaussian_cz.plan(store.merged, pair_id,
+                                  padding_length=padding,
+                                  qubit_filter_mhz=q_mhz,
+                                  coupler_filter_mhz=c_mhz)
+        if "error" in result:
+            return render_template("_status.html", message=result["error"],
+                                   level="error"), 400
+        if result["existing"] and request.form.get("overwrite") != "1":
+            body = render_template(
+                "_status.html", level="warning",
+                message=("Already present on this pair: "
+                         + ", ".join(p.split(".")[-1] for p in result["existing"])
+                         + " — create again to replace them (the old subtrees "
+                           "are removed in the same undo group)."))
+            body += ('<button type="button" class="btn-sm" '
+                     'onclick="var f=document.getElementById(\'gcz-form\');'
+                     'var i=document.createElement(\'input\');i.type=\'hidden\';'
+                     'i.name=\'overwrite\';i.value=\'1\';f.appendChild(i);'
+                     'window.htmx&&htmx.trigger(f,\'submit\');">'
+                     'Replace existing</button>')
+            return body, 409
+
+        gid = modifier.new_group_id()
+        done = 0
+        try:
+            for path in result["existing"]:
+                modifier.delete_subtree(path, group_id=gid)
+                done += 1
+            for path, value in result["creates"]:
+                modifier.create_subtree(path, value, group_id=gid)
+                done += 1
+        except Exception as exc:  # noqa: BLE001 — all-or-nothing
+            for _ in range(done):
+                try:
+                    modifier.undo()
+                except Exception:  # noqa: BLE001
+                    break
+            logger.exception("gaussian-cz create failed; rolled back")
+            return render_template(
+                "_status.html", level="error",
+                message=f"Creation failed and was rolled back: {exc}"), 500
+
+    src = result["sources"]
+    msg = render_template(
+        "_status.html", level="success",
+        message=(f"Created cz_gaussian_unipolar + cz_gaussian_bipolar on "
+                 f"{pair_id} (moving qubit {src['moving_qubit']}, amplitude "
+                 f"{src['qubit_amplitude']:.6g}, pulse_length "
+                 f"{src['flat_length']}"
+                 + (", coupler included" if src["has_coupler"] else "")
+                 + ") — staged in the working state; review, then Apply to "
+                   "live."))
+    resp = make_response(msg + "\n" + _tray_oob())
+    resp.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
+    return resp
+
+
 @bp.route("/api/pulse/create", methods=["POST"])
 def api_pulse_create():
     """Create a new pulse on a qubit channel or a pair-gate flux slot."""
@@ -9864,9 +11025,8 @@ def undo():
             # then-undo design would race a concurrent commit), so the
             # navigate-to-owner decision rides these fields.
             "entries": [
-                {"dot_path": e.dot_path, "old_value_str": _fmt_val(e.old_value),
-                 "created": e.created, "deleted": e.deleted,
-                 "source_file": e.source_file}
+                _revert_entry_payload(e.dot_path, e.old_value, created=e.created,
+                                      deleted=e.deleted, source_file=e.source_file)
                 for e in entries
             ],
         },
@@ -9975,9 +11135,10 @@ def _undo_journal_step(ctx):
         "cellsReverted": {
             "message": message,
             "entries": [
-                {"dot_path": u["path"], "old_value_str": _fmt_val(u.get("old")),
-                 "created": bool(u.get("created")), "deleted": bool(u.get("deleted")),
-                 "source_file": u.get("source_file", "state")}
+                _revert_entry_payload(u["path"], u.get("old"),
+                                      created=bool(u.get("created")),
+                                      deleted=bool(u.get("deleted")),
+                                      source_file=u.get("source_file", "state"))
                 for u in uents
             ],
         },
@@ -10028,9 +11189,8 @@ def redo():
         message = (f"Redone: un-staged {n} change(s) ({anchor.dot_path} …)"
                    if n > 1 else f"Redone: un-staged {anchor.dot_path}")
         return _redo_response(message, [
-            {"dot_path": e.dot_path, "old_value_str": _fmt_val(e.old_value),
-             "created": e.created, "deleted": e.deleted,
-             "source_file": e.source_file}
+            _revert_entry_payload(e.dot_path, e.old_value, created=e.created,
+                                  deleted=e.deleted, source_file=e.source_file)
             for e in entries
         ])
 
@@ -10090,9 +11250,10 @@ def redo():
     # create restored it (deleted=True in undo-speak), a re-applied delete
     # removed it (created=True) — the exact inversion of the frame's flags.
     return _redo_response(message, [
-        {"dot_path": fe["path"], "old_value_str": _fmt_val(fe["new"]),
-         "created": bool(fe["deleted"]), "deleted": bool(fe["created"]),
-         "source_file": fe.get("source_file", "state")}
+        _revert_entry_payload(fe["path"], fe["new"],
+                              created=bool(fe["deleted"]),
+                              deleted=bool(fe["created"]),
+                              source_file=fe.get("source_file", "state"))
         for fe in reversed(fents)   # newest-first, like /undo's payload
     ])
 
@@ -10154,10 +11315,9 @@ def discard():
 
     resp = make_response(_tray_html())
     resp.headers["HX-Trigger"] = json.dumps({
-        "cellDiscarded": {
-            "dot_path": entry.dot_path,
-            "old_value_str": _fmt_val(entry.old_value),
-        },
+        "cellDiscarded": _revert_entry_payload(
+            entry.dot_path, entry.old_value, created=entry.created,
+            deleted=entry.deleted, source_file=entry.source_file),
         # open Pulses surfaces re-fetch their rows (no-op elsewhere)
         "pulses-changed": True,
         # refresh the diagnostics tray badge + error banner
@@ -10212,9 +11372,8 @@ def discard_all():
             "message": (f"Discarded all: {total} change(s) — "
                         "Ctrl+Shift+Z restores them one by one"),
             "entries": [
-                {"dot_path": e.dot_path, "old_value_str": _fmt_val(e.old_value),
-                 "created": e.created, "deleted": e.deleted,
-                 "source_file": e.source_file}
+                _revert_entry_payload(e.dot_path, e.old_value, created=e.created,
+                                      deleted=e.deleted, source_file=e.source_file)
                 for g in groups for e in g
             ],
         },
@@ -10246,21 +11405,260 @@ def _auto_disarm_response(ctx, body: str, reason: str, status: int = 200):
     return resp
 
 
-@bp.route("/auto-apply/arm", methods=["POST"])
-def auto_apply_arm():
-    """Arm the session. THIS press is the consent the covenant asks for —
-    one labelled act, no confirm dialog (docs/104 #1), and the pill it turns
-    on is visible on every page until the user turns it off."""
-    ctx = _active_ctx()
-    ok, why = _auto_apply_armable(ctx)
-    if not ok:
-        return render_template("_status.html", message=why, level="warning"), 409
-    ctx["auto_apply"] = {
+def _new_auto_session(*, pull: bool, pull_replace: bool, push: bool) -> dict:
+    """A fresh Auto-Sync session. NEVER persisted (docs/117): an armed session
+    must not outlive the window that armed it."""
+    return {
         "armed_at": time.time(),
         "pre_ts": None,        # the session's ONE revert anchor (docs/117)
         "last_snap": 0.0,      # post-apply snapshot throttle
         "flushes": 0,
+        "pull": bool(pull),
+        "pull_replace": bool(pull_replace),
+        "push": bool(push),
     }
+
+
+@bp.route("/auto-sync/panel")
+def auto_sync_panel():
+    """The Auto-Sync switches, fetched when the pill is clicked.
+
+    Rendered on demand rather than shipped inside the tray: the tray OOB-swaps
+    on every commit, which used to destroy a half-configured popup mid-edit.
+    """
+    return render_template("_auto_sync_panel.html",
+                           auto_sync=_auto_sync_state(),
+                           auto_apply_armable=_auto_apply_armable(),
+                           auto_pull_armable=_auto_pull_armable())
+
+
+@bp.route("/auto-sync/set", methods=["POST"])
+def auto_sync_set():
+    """Set the three Auto-Sync switches (docs/120 item 8).
+
+    The user's design: the pill opens a popup with checkboxes — auto pull from
+    the live chip, auto replace SM's modified values on that pull, and auto
+    push to the live chip — all on by default, uncheck what you do not want.
+    THIS submission is the consent the covenant asks for; the pill then states
+    the mode on every page until it is turned off.
+
+    Turning everything off clears the session entirely, so "off" is exactly
+    today's behaviour rather than an armed session that happens to do nothing.
+    """
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam":
+        return render_template("_status.html", message="No chip is open.",
+                               level="warning"), 409
+    want_pull = request.values.get("pull") in ("1", "on", "true")
+    want_replace = request.values.get("pull_replace") in ("1", "on", "true")
+    want_push = request.values.get("push") in ("1", "on", "true")
+
+    if not (want_pull or want_push):
+        ctx.pop("auto_apply", None)
+        return _tray_html()
+
+    # Each direction is gated on ITS OWN question, and a refusal on one must not
+    # swallow the other. The popup opens all-checked, so on a chip that has
+    # ALREADY drifted — the exact moment a user reaches for Auto-Sync — pressing
+    # Save used to arm NOTHING: push is refused while diverged, and refusing the
+    # whole submission took pull down with it. Four extra interactions to get
+    # what one press should have given. Now it arms what it legitimately can and
+    # SAYS what it withheld and why; the user's intent is honoured as far as the
+    # gates allow rather than discarded wholesale.
+    push_ok, push_why = (True, "")
+    if want_push:
+        push_ok, push_why = _auto_apply_armable(ctx)
+    if want_pull:
+        pull_ok, pull_why = _auto_pull_armable(ctx)
+        if not pull_ok:
+            # Pull's gate is the narrow one (a chip, not an archive). If even
+            # that refuses there is nothing to arm in either direction.
+            return render_template("_status.html", message=pull_why,
+                                   level="warning"), 409
+    if not want_pull and not push_ok:
+        return render_template("_status.html", message=push_why,
+                               level="warning"), 409
+
+    # "Replace" without "pull" is not a state — it qualifies a pull.
+    sess = _new_auto_session(
+        pull=want_pull, pull_replace=want_pull and want_replace,
+        push=want_push and push_ok)
+    # Changing a switch is not starting a new session. Rebuilding it wholesale
+    # discarded `pre_ts` — the docs/117 anchor "Revert last apply" points at —
+    # so unticking one box silently turned "undo this whole session" into "undo
+    # the next edit", with nothing on screen saying so.
+    prev = ctx.get("auto_apply")
+    if prev:
+        for k in ("armed_at", "pre_ts", "last_snap", "flushes"):
+            sess[k] = prev.get(k, sess[k])
+    ctx["auto_apply"] = sess
+    resp = make_response(_tray_html())
+    trig: dict[str, Any] = {"autoApplyArmed": True}
+    if want_push and not push_ok:
+        # Not a failure — a partial grant, named. The pill already shows which
+        # modes are live; this says why the third one is not.
+        trig["showToast"] = ("Auto-Sync armed for pulling. Auto-push is off: "
+                             + push_why)
+    resp.headers["HX-Trigger"] = json.dumps(trig)
+    return resp
+
+
+@bp.route("/auto-sync/pull", methods=["POST"])
+def auto_sync_pull():
+    """Perform (or decline) one automatic pull. The POLICY lives here.
+
+    The client's only job is to notice that the server said a pull is due and
+    to press this; every branch of the user's table is decided server-side, so
+    the rule cannot be half-implemented in two places.
+
+    204 means "nothing done" for every reason -- not armed, not diverged, or
+    DECLINED because the user has unapplied work and did not tick replace. In
+    that last case the drift banner is already up (``live_diverged`` is what
+    made this due), so refusing is not silent: the user is being asked.
+    """
+    ctx = _active_ctx()
+    sess = _auto_sync_state(ctx)
+    if not sess or not sess.get("pull"):
+        return "", 204
+    ok, _why = _auto_pull_armable(ctx)
+    if not ok:
+        return "", 204
+    if not ctx.get("live_diverged"):
+        return "", 204            # nothing to pull; the common case
+
+    # The client reports whether the GRID holds typed-but-uncommitted cells.
+    # The server cannot see them: a fill-down or a pasted column lives only in
+    # the DOM until Apply, so `change_log`/`working_dirty` are both clean and
+    # the "no local edits -> pull silently" row would fire and wipe a whole
+    # filled column with no prompt. Treating the client's report as dirt is the
+    # only way this decision can be made honestly.
+    dom_dirty = request.values.get("dom_dirty") in ("1", "true")
+    if (_quam_ctx_dirty(ctx) or dom_dirty) and not sess.get("pull_replace"):
+        # THE line docs/87 draws, kept: SM does not choose between the user's
+        # work and the live chip. The banner is already showing.
+        return "", 204
+
+    wc = ctx.get("working_copy")
+    if wc is None:
+        return "", 204
+    build_lock = _active_wc_lock(ctx)
+    try:
+        with build_lock:
+            # RE-CHECK INSIDE THE LOCK. /field/edit takes only store._lock, and
+            # the window between the check above and the write below spans lock
+            # ACQUISITION plus the whole of sync_from_live (two live reads, two
+            # working-folder writes, hashes) -- tens of ms locally, seconds on a
+            # share, and it opens exactly when an experiment just wrote the chip,
+            # i.e. exactly when someone is mid-edit. Without this an edit landing
+            # in that window is destroyed by store.reload() with "replace"
+            # UNCHECKED. Mirrors _reconcile_cached_quam_ctx, which re-checks for
+            # the same reason.
+            if _quam_ctx_dirty(ctx) and not sess.get("pull_replace"):
+                return "", 204
+            # A replace-pull discards work that exists NOWHERE else: the change
+            # log is not journalled (the journal captures on save), and the redo
+            # stack self-invalidates. Snapshot first so "the live chip wins" is
+            # still recoverable from State History -- the manual /state/sync
+            # already does this, and the popup promises revertibility.
+            discarding = _quam_ctx_dirty(ctx) or dom_dirty
+            if discarding:
+                try:
+                    _history().check_and_snapshot(
+                        ctx["path"], "manual", force=True,
+                        project=_scope_for(ctx["path"], ctx))
+                except Exception:      # noqa: BLE001 — never block the pull
+                    logger.warning("pre-pull snapshot failed", exc_info=True)
+            working_copy.sync_from_live(wc)
+            # RE-CHECK AGAIN, NOW THAT THE I/O IS DONE. The check above closed
+            # the lock-acquisition window; it did NOT close the window the
+            # comment itself describes, because `sync_from_live` is where those
+            # "tens of ms locally, seconds on a share" are actually spent and it
+            # holds no `store._lock` — so /field/edit can still land inside it,
+            # return 200, appear in the Review tray, and then be destroyed by
+            # the `store.reload()` below. Reproduced. This is the same race
+            # `_reconcile_cached_quam_ctx` re-checks for after ITS content I/O,
+            # and the resolution is the same: keep the edit, re-persist it so
+            # disk == memory (audit C29 — otherwise an LRU evict + rehydrate
+            # reads the new-live working files and silently drops it), and let
+            # the banner ask.
+            _st = ctx.get("store")
+            if _st is not None:
+                with _st._lock:
+                    if _quam_ctx_dirty(ctx) and not sess.get("pull_replace"):
+                        try:
+                            safe_io.write_state_wiring(
+                                wc.working_folder, _st.state, _st.wiring)
+                        except OSError:
+                            logger.exception("post-pull re-persist failed")
+                        ctx["live_diverged"] = True
+                        return "", 204
+            ctx["_alarm_reason"] = "live-pull"
+            _rebuild_after_working_copy_replaced(ctx)
+            # Every other caller of the rebuild pairs it with this. Leaving the
+            # stash behind lets a later "Pull & apply (merge)" replay the very
+            # values the user was told had been replaced -- back onto the chip.
+            _clear_reapply(ctx)
+    except (FileNotFoundError, OSError, ValueError):
+        # A pull that cannot read live is not a reason to keep retrying every
+        # poll: disarm, exactly like the push side's failure branches.
+        logger.warning("Auto-sync pull failed", exc_info=True)
+        # sync_from_live may already have advanced the working folder and the
+        # sync point while the in-memory store still holds the OLD content --
+        # an absorbing stale state where a later /save would write the old
+        # content back over the pulled files, UNFORCED, because the sync point
+        # now equals live and the staleness gate sees nothing wrong.
+        #
+        # Evicting from _quam_cache does NOT fix that: `_activate_quam` stores
+        # the SAME dict object in app.config["contexts"], which is what
+        # `_active_ctx()` reads, so the stale store stayed active until the user
+        # re-opened the chip. Reproduced — a failed pull then let a save+apply
+        # overwrite an experiment's f_01.
+        #
+        # So make the state consistent instead of hoping it is re-read:
+        # re-persist the in-memory content onto the working folder (C29's move)
+        # so disk == memory whichever step failed, and raise the banner. The
+        # eviction stays as belt-and-braces, no longer load-bearing.
+        try:
+            _st = ctx.get("store")
+            if _st is not None and wc is not None:
+                with _st._lock:
+                    safe_io.write_state_wiring(
+                        wc.working_folder, _st.state, _st.wiring)
+            ctx["live_diverged"] = True
+        except Exception:              # noqa: BLE001 — best effort on a failure path
+            logger.warning("post-failure re-persist failed", exc_info=True)
+        try:
+            with _quam_cache_lock:
+                for k in list(_quam_cache.keys()):
+                    if _quam_cache.get(k) is ctx:
+                        _quam_cache.pop(k, None)
+                        break
+        except Exception:              # noqa: BLE001 — bookkeeping, never fatal
+            logger.debug("post-failure eviction failed", exc_info=True)
+        return _auto_disarm_response(ctx, "", "error", status=204)
+
+    resp = make_response(_tray_html())
+    resp.headers["HX-Trigger"] = json.dumps({
+        "liveDriftChanged": True, "stateRestored": True,
+        "autoSyncPulled": {"replaced": bool(discarding)},
+    })
+    return resp
+
+
+@bp.route("/auto-apply/arm", methods=["POST"])
+def auto_apply_arm():
+    """Arm the session. THIS press is the consent the covenant asks for —
+    one labelled act, no confirm dialog (docs/104 #1), and the pill it turns
+    on is visible on every page until the user turns it off.
+
+    Kept as the PUSH-only entry point (docs/120 item 8 added /auto-sync/set for
+    the three-way choice) so the docs/117 contract and its pins are unchanged.
+    """
+    ctx = _active_ctx()
+    ok, why = _auto_apply_armable(ctx)
+    if not ok:
+        return render_template("_status.html", message=why, level="warning"), 409
+    ctx["auto_apply"] = _new_auto_session(pull=False, pull_replace=False, push=True)
     resp = make_response(_tray_html())
     # Pending edits made BEFORE arming are flushed by the client's first
     # mutation-driven pass; the label said so before the press.
@@ -10725,6 +12123,38 @@ def _reset_baseline_after_apply(ctx) -> None:
         logger.warning("baseline reset after apply-to-live failed", exc_info=True)
 
 
+def _auto_pull_due(ctx: dict | None) -> bool:
+    """Should the client press /auto-sync/pull right now?
+
+    docs/120 item 8 — this rides the EXISTING drift poll rather than adding a
+    poller of its own (docs/110 doctrine). It is deliberately a cheap read of
+    flags already on the ctx: `live_diverged` is maintained by the throttled
+    ground-truth check that runs on render and on /api/topology-mtime, so
+    asking here costs nothing and cannot itself read the live files.
+
+    It answers only "is a pull worth attempting". The POLICY -- whether local
+    edits block it -- is decided in /auto-sync/pull, so it lives in one place.
+    """
+    sess = _auto_sync_state(ctx)
+    if not sess or not sess.get("pull"):
+        return False
+    if (ctx or {}).get("origin", "live") != "live":
+        return False
+    if not (ctx or {}).get("live_diverged"):
+        return False
+    # Do not advertise a pull the policy will refuse. `live_diverged` never
+    # clears on its own, so a dirty working copy with "replace" unticked used to
+    # make the client POST a 204-ing pull on EVERY 5 s poll, forever — and each
+    # one took `window._applyInFlight`, which also gates the manual Apply
+    # buttons, so they read as dead clicks. The server already knows the answer;
+    # withholding the signal is the fix. (The DOM-only dirt the client reports
+    # is still re-checked at the pull itself — this can only over-offer, never
+    # over-pull.)
+    if _quam_ctx_dirty(ctx) and not sess.get("pull_replace"):
+        return False
+    return True
+
+
 @bp.route("/state/drift")
 def state_drift():
     """Cheap poll: how many params the live chip changed since the baseline.
@@ -10734,21 +12164,40 @@ def state_drift():
     Always 200 (even with no chip) so the banner poll never logs errors.
     """
     ctx = _active_ctx()
+    # docs/120 item 20: the signal below reads `live_diverged`, and the only
+    # things that REFRESH that flag were a full render and `/api/topology-mtime`
+    # — which only the Chip Status page polls. So a user who armed Auto-Sync and
+    # then stayed on Live State Edit was watched by nothing: measured at 9 polls
+    # over 90 s with `auto_pull:false` throughout while the live chip had really
+    # moved. The poll that asks the question must also be allowed to answer it.
+    #
+    # Cheap by construction: `_refresh_live_diverged` self-throttles to once per
+    # `_LIVE_HASH_RECHECK_S`, returns immediately once the flag is already True,
+    # and (for a dirty context) does nothing at all unless an Auto-Sync pull
+    # session is armed — so an idle chip pays two `os.stat` calls, exactly as
+    # this route did before.
+    _refresh_live_diverged(ctx)
+    # The Auto-Sync pull signal rides this poll. It is carried on EVERY branch,
+    # including the untracked ones — a chip with no drift baseline can still
+    # have diverged, and dropping the flag there would make auto-pull work only
+    # for chips that happen to be tracked.
+    auto_pull = _auto_pull_due(ctx)
     if not _drift_tracked(ctx):
-        return jsonify(ok=True, tracked=False, count=0)
+        return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull)
     try:
         info = _compute_drift(ctx)
     except Exception:   # noqa: BLE001 — a poll must never 500
         logger.debug("drift compute failed", exc_info=True)
-        return jsonify(ok=True, tracked=True, count=0)
+        return jsonify(ok=True, tracked=True, count=0, auto_pull=auto_pull)
     if info is None:
-        return jsonify(ok=True, tracked=False, count=0)
+        return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull)
     # (docs/87) ``auto_pulled`` used to ride along here as a one-shot so the
     # silent clean auto-pull became a visible toast. The user-facing path no
     # longer pulls without asking, so there is nothing to announce after the
     # fact — the banner asks BEFORE, and names the same count.
     return jsonify({"ok": True, "tracked": True, "count": info["count"],
-                    "baseline_utc": info["baseline_utc"]})
+                    "baseline_utc": info["baseline_utc"],
+                    "auto_pull": auto_pull})
 
 
 @bp.route("/state/drift/view")
@@ -10808,6 +12257,61 @@ def state_baseline_reset():
     return jsonify(ok=True, baseline_utc=ptr["captured_utc"], count=0)
 
 
+def _unseen_edit_refusal(ctx) -> dict | None:
+    """Refuse an apply that would write edits the presser never saw.
+
+    docs/120 item 22. Two SM tabs on one machine share ONE server context, so
+    they share one change log — and a tab's tray only refreshes on its own
+    actions. Reproduced in real Chrome: tab B, opened first and then left alone,
+    showed ``data-change-count="0"`` and "● Synced" while tab A typed an edit;
+    tab B's **Apply to live now** answered ``{"replay":{"applied":1}}`` and put
+    tab A's value on the instrument. The covenant asks for one explicit press
+    per live write, and that press was made against a screen that showed
+    nothing to write.
+
+    The tray already publishes what its user is looking at (``data-change-count``
+    / ``data-seq``, docs/110), so the presser's own view is the consent record:
+    if the server holds MORE pending changes than the view showed, this press
+    cannot have meant them.
+
+    Deliberately count-based rather than seq-based. A seq can run ahead for
+    reasons that harm nobody (a save, another tab merely reloading), and a
+    refusal that fires when the change set is identical would be noise on the
+    one button that must stay trustworthy. Absent parameter ⇒ None ⇒ byte-
+    identical to before, so no caller that has not opted in can be refused.
+    """
+    seen_raw = request.values.get("seen_changes")
+    if seen_raw is None or seen_raw == "":
+        return None
+    # ONE TOKEN NEVER COLLAPSES TWO GATES (docs/41). `force=1` already means
+    # "overwrite live despite a staleness conflict" — a different question,
+    # answered against a different screen. Letting it also wave this through
+    # would mean a user resolving a staleness conflict silently consented to
+    # another window's edits as well.
+    if request.values.get("ack_unseen") == "1":
+        return None                       # the user was asked THIS and said yes
+    store = ctx.get("store")
+    if store is None:
+        return None
+    try:
+        seen = int(seen_raw)
+    except (TypeError, ValueError):
+        return None
+    with store._lock:
+        have = len(store.change_log or [])
+        # ChangeEntry is a dataclass, not a dict.
+        paths = [str(getattr(c, "dot_path", None) or "?")
+                 for c in list(store.change_log or [])[seen:]][:8]
+    if have <= seen:
+        return None
+    return {"status": "unseen_changes", "have": have, "seen": seen,
+            "paths": paths,
+            "message": (
+                f"{have - seen} edit(s) were made in another State Manager "
+                f"window and are not shown on this screen. Applying now would "
+                f"write them to the live chip too.")}
+
+
 @bp.route("/state/sync", methods=["POST"])
 def state_sync():
     """Pull the live state files into the working copy (manual sync).
@@ -10839,6 +12343,10 @@ def state_sync():
         return jsonify({"status": "error",
                         "message": "This chip was opened from a dataset run "
                                    "archive (read-only) — cannot apply to live."}), 409
+    if mode == "apply":
+        _unseen = _unseen_edit_refusal(ctx)
+        if _unseen is not None:
+            return jsonify(_unseen), 409
 
     # docs/65 state-roundtrip: a SAVED/STAGED working copy (working_dirty — a
     # snapshot, a run's state, a revert, or /save'd edits; content that is NOT
@@ -10946,13 +12454,16 @@ def state_sync():
     })
 
 
-def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False):
+def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
+                             force=False):
     """Finish a ``mode=apply`` sync: save the re-applied edits to the working
     copy and push them to the live chip. Mirrors ``/state/apply-to-live`` but
     returns JSON so ``doStateSync`` can drive it. On a fresh staleness conflict
     the reapply stash is kept so the user can retry / force / discard.
     ``pulled_other_changes`` (echoed to the client) — the pull absorbed live
-    changes beyond the user's own edits, so the surface needs one refresh."""
+    changes beyond the user's own edits, so the surface needs one refresh.
+    ``force`` (docs/126 ⑤) pushes over a drifted live — callers pass it only
+    when the user's one press already meant exactly that."""
     store = ctx["store"]
     wc = ctx["working_copy"]
     saver = ctx["saver"]
@@ -11007,7 +12518,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False):
 
     try:
         with _active_wc_lock(ctx):
-            working_copy.apply_to_live(wc, force=False)
+            working_copy.apply_to_live(wc, force=force)
     except working_copy.StaleLiveError:
         # The live chip changed again while we merged. Keep the stash and hand
         # back the conflict tray so the user can retry / force / discard.
@@ -11088,6 +12599,10 @@ def state_apply_to_live():
     blocked = _archive_write_blocked(ctx)   # guard the CAPTURED ctx (TOCTOU)
     if blocked is not None:
         return blocked
+    # docs/120 item 22 — the other door onto the live chip gets the same gate.
+    _unseen = _unseen_edit_refusal(ctx)
+    if _unseen is not None:
+        return jsonify(_unseen), 409
     wc = ctx["working_copy"]
     store = ctx["store"]
     saver = ctx["saver"]
@@ -11920,18 +13435,43 @@ def _filter_tree(tree: dict, text: str) -> dict:
     return result
 
 
-def _tree_render_ctx(tree: dict) -> dict:
+# docs/126 #20 — per-workspace memo for the UNFILTERED nested render model.
+# build_nested_tree over a 2,600-run root costs ~200 ms and the sidebar filter
+# re-renders the whole tree on every keystroke; the unfiltered build (the
+# clear-the-box case, which is also the slowest) only changes when the
+# workspace version does. WeakKey so a discarded Workspace frees its cache.
+import weakref
+_NESTED_MEMO: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
+def _tree_render_ctx(tree: dict, ws=None) -> dict:
     """Template context for _sidebar_tree.html: the flat tree (root iteration,
     empty checks) + the per-root NESTED render model (r13 hierarchy — real
     folder levels between root and runs, newest-first) + the per-root
-    discovery-cap flag (docs/105 #9 — a truncated walk must say so)."""
+    discovery-cap flag (docs/105 #9 — a truncated walk must say so).
+
+    Pass ``ws`` ONLY when ``tree`` is the workspace's own unfiltered tree —
+    the nested build is then memoized against ``ws.version``. Filtered trees
+    must never pass it (their entry subsets vary per query).
+    """
     from quam_state_manager.core.scanner import (build_nested_tree,
                                                  root_scan_truncated)
+    memo = None
+    if ws is not None and tree is ws.tree:
+        memo = _NESTED_MEMO.setdefault(ws, {})
+        if memo.get("v") != ws.version:
+            memo.clear()
+            memo["v"] = ws.version
     nested = {}
     truncated = {}
     for root_path, groups in (tree or {}).items():
-        entries = [e for g in groups for e in g.entries]
-        nested[root_path] = build_nested_tree(Path(root_path), entries)
+        if memo is not None and root_path in memo:
+            nested[root_path] = memo[root_path]
+        else:
+            entries = [e for g in groups for e in g.entries]
+            nested[root_path] = build_nested_tree(Path(root_path), entries)
+            if memo is not None:
+                memo[root_path] = nested[root_path]
         truncated[root_path] = root_scan_truncated(root_path)
     return {"tree": tree or {}, "nested": nested, "tree_truncated": truncated}
 
@@ -11955,7 +13495,7 @@ def workspace_add():
     _dataset_candidates_cache.pop(id(current_app._get_current_object()), None)
     _save_workspace_roots()
 
-    return render_template("_sidebar_tree.html", **_tree_render_ctx(ws.tree),
+    return render_template("_sidebar_tree.html", **_tree_render_ctx(ws.tree, ws=ws),
                            message=f"Added {len(entries)} experiment(s)")
 
 
@@ -11999,7 +13539,15 @@ def workspace_remove():
                 ),
                 level="warning",
             )
-    return render_template("_sidebar_tree.html", **_tree_render_ctx(ws.tree))
+    return render_template("_sidebar_tree.html", **_tree_render_ctx(ws.tree, ws=ws))
+
+
+# docs/126 #20 — the unfiltered tree HTML, memoized per workspace version.
+# _sidebar_tree.html renders from pure context (tree/nested/truncated only, no
+# request or session state), so the empty-filter response — the SLOWEST render
+# and the one every clear-the-box keystroke requests — is a cache lookup until
+# the workspace actually changes.
+_TREE_HTML_MEMO: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 
 @bp.route("/workspace/tree")
@@ -12014,8 +13562,14 @@ def workspace_tree():
                                **_tree_render_ctx(_filter_tree(ws.tree, name_filter)),
                                name_filter=name_filter)
 
-    return render_template("_sidebar_tree.html",
-                           **_tree_render_ctx(ws.tree if ws else {}))
+    memo = _TREE_HTML_MEMO.get(ws) if ws else None
+    if memo and memo[0] == ws.version:
+        return memo[1]
+    html = render_template("_sidebar_tree.html",
+                           **_tree_render_ctx(ws.tree if ws else {}, ws=ws))
+    if ws:
+        _TREE_HTML_MEMO[ws] = (ws.version, html)
+    return html
 
 
 @bp.route("/workspace/tree/group")
@@ -12090,7 +13644,19 @@ def workspace_refresh():
     tree = ws.tree if ws else {}
     if name_filter:
         tree = _filter_tree(tree, name_filter)
-    return render_template("_sidebar_tree.html", **_tree_render_ctx(tree))
+        return render_template("_sidebar_tree.html",
+                               **_tree_render_ctx(tree))
+    # docs/126 r3: a no-change rescan keeps the version, so the memoized
+    # unfiltered HTML is still valid — the Refresh round-trip pays only the
+    # scan itself, not a 450 KB re-render of an identical tree.
+    memo = _TREE_HTML_MEMO.get(ws) if ws else None
+    if memo and memo[0] == ws.version:
+        return memo[1]
+    html = render_template("_sidebar_tree.html",
+                           **_tree_render_ctx(tree, ws=ws))
+    if ws:
+        _TREE_HTML_MEMO[ws] = (ws.version, html)
+    return html
 
 
 @bp.route("/workspace/select", methods=["POST"])
@@ -14693,7 +16259,14 @@ def param_history_backfill():
         }
 
     def _run() -> None:
+        # Also feed the process-wide progress registry (docs/126 r3) so the
+        # brand indicator's /api/progress poll sees the SAME numbers the
+        # backfill status endpoint reports.
+        from quam_state_manager.core.progress import Progress
+        _prog = Progress("Importing snapshots")
+
         def _progress(done: int, total: int) -> None:
+            _prog.step(done=done, total=total)
             with _backfill_lock:
                 _backfill_state[key]["done"] = done
                 _backfill_state[key]["total"] = total
@@ -14710,6 +16283,8 @@ def param_history_backfill():
             logger.exception("Backfill failed")
             with _backfill_lock:
                 _backfill_state[key].update({"status": "error", "error": str(exc)})
+        finally:
+            _prog.finish()
 
     threading.Thread(target=_run, daemon=True).start()
     return jsonify(_backfill_state[key])
@@ -14729,6 +16304,16 @@ def param_history_backfill_status():
 # ======================================================================
 # API: JSON endpoints for programmatic access
 # ======================================================================
+
+
+@bp.route("/api/progress")
+def api_progress():
+    """The newest active long-running operation's real N-of-M count
+    (docs/126 r3). Polled by the brand indicator ONLY while it is visible;
+    an idle app never calls this. Empty object = nothing is reporting —
+    the client then shows elapsed time alone, never an invented count."""
+    from quam_state_manager.core.progress import current as _prog_current
+    return jsonify(_prog_current() or {})
 
 
 @bp.route("/api/qubit/<name>")
@@ -16581,6 +18166,7 @@ def dataset_prev_state_diff(uid):
                                error="This run has no saved state to compare.")
 
     vs = request.args.get("vs", type=int)
+    vs_requested = vs is not None
     if vs is None:
         vs = ds.get_previous_run_id(run_id)
     compact = request.args.get("compact") == "1"
@@ -16589,6 +18175,15 @@ def dataset_prev_state_diff(uid):
                                prev_run_id=None, compact=compact)
 
     prev_path = ds.get_quam_state_path(vs)
+    vs_note = None
+    if not prev_path and vs_requested:
+        # docs/126 r3: the bar takes a TYPED run id now. A number that does
+        # not exist (or carries no state) must not blank the surface — fall
+        # back to the default comparison and SAY so.
+        vs_note = (f"Run #{vs} has no saved state in this folder — "
+                   "showing the previous run instead.")
+        vs = ds.get_previous_run_id(run_id)
+        prev_path = ds.get_quam_state_path(vs) if vs is not None else None
     if not prev_path:
         return render_template("_dataset_prev_diff.html", run_id=run_id, uid=uid,
                                prev_run_id=None, compact=compact)
@@ -16609,9 +18204,29 @@ def dataset_prev_state_diff(uid):
     if older == run_id:
         older = ds.get_previous_run_id(run_id)
 
+    def _step10(start, step_fn):
+        """The comparison id ten state-carrying hops away (docs/126 r3 —
+        the ±10 skip lives HERE, on the vs-prev bar, not the header).
+        Clamps to the farthest reachable run; None only when even one hop
+        is impossible."""
+        cur, landed = start, None
+        for _ in range(10):
+            nxt = step_fn(cur)
+            if nxt == run_id:               # never the self-diff
+                nxt = step_fn(run_id)
+            if nxt is None:
+                break
+            landed = cur = nxt
+        return landed
+
+    older10 = _step10(vs, ds.get_previous_run_id)
+    newer10 = _step10(vs, ds.get_next_run_id)
+
     return render_template("_dataset_prev_diff.html", run_id=run_id, uid=uid,
                            prev_run_id=vs, entries=entries, summary=summary,
-                           older=older, newer=newer, compact=compact,
+                           older=older, newer=newer,
+                           older10=older10, newer10=newer10, vs_note=vs_note,
+                           compact=compact,
                            limit=(8 if compact else 300))
 
 
@@ -16658,10 +18273,17 @@ def dataset_load_state(uid):
     snapshot arms "↺ Revert last apply" exactly like every other apply).
     Covenant-compliant: the button is labeled "Apply to chip", so the press
     IS the one explicit apply act — no confirm dialog (the no-confirm
-    doctrine), and reversibility is what makes one click safe. The identity /
-    pending-edit gates stay (they answer a DIFFERENT question than consent),
-    and a staleness conflict renders the honest conflict tray rather than
-    force-pushing over a live chip that moved.
+    doctrine), and reversibility is what makes one click safe.
+
+    docs/126 ⑤ (user-directed, 2026-08-19): on the apply path the ONLY
+    question still asked is chip identity. The user pressing "Apply to chip"
+    already means "this run's state wins, on the live chip, now" — so a
+    staleness drift is pushed over (unforced first; a conflict retries with
+    force, and the overwrite is NAMED in the result), and unsaved working
+    edits are replaced without a 409 but REPORTED in the result line (docs/86:
+    reported, never silently). Both amend the docs/108/116 behavior for this
+    button; the reviewed paths (plain stage, the sync tray) keep their gates,
+    and ↺ Revert last apply is what licenses the one press.
     """
     resolved = _resolve_run(uid)
     state_path = None
@@ -16722,12 +18344,17 @@ def dataset_load_state(uid):
                 target="#ds-load-state-result",
             ), 409
 
-    # Gate 2 — pending edits (mirrors /state-history/<ts>/stage).
+    # Gate 2 — pending edits (mirrors /state-history/<ts>/stage). docs/126 ⑤:
+    # on the APPLY path this stops asking — the press already means "the run's
+    # state wins" — but what it replaces is COUNTED here and reported in the
+    # result line (never silent). The review path (plain stage) keeps the 409.
     store = ctx["store"]
     with store._lock:
+        replaced_edits = len(store.change_log)
         has_pending = (bool(store.change_log) or bool(ctx.get("pending_reapply"))
                        or bool(ctx.get("working_dirty")))
-    if has_pending and request.values.get("force") != "1":
+    if (has_pending and not apply_req
+            and request.values.get("force") != "1"):
         url = (base_url + "?force=1"
                + ("&force_chip=1" if request.values.get("force_chip") == "1" else "")
                + apply_qs)
@@ -16740,6 +18367,12 @@ def dataset_load_state(uid):
             confirm="Discard your unsaved edits and load this run's state?",
             target="#ds-load-state-result",
         ), 409
+    replaced_note = ""
+    if apply_req and has_pending:
+        replaced_note = (f" (Replaced {replaced_edits} unsaved edit"
+                         f"{'' if replaced_edits == 1 else 's'}.)"
+                         if replaced_edits
+                         else " (Replaced saved-but-unapplied working changes.)")
 
     try:
         state, wiring = safe_io.read_state_wiring(Path(state_path))
@@ -16770,36 +18403,30 @@ def dataset_load_state(uid):
         result = _sync_pull_apply_to_live(ctx, None)
         body = (result[0] if isinstance(result, tuple) else result).get_json()
         status = (body or {}).get("status")
+        drift_note = ""
+        if status == "conflict":
+            # docs/126 ⑤ (user-directed, 2026-08-19, superseding the docs/116
+            # conflict panel here): the live chip moved since it was loaded —
+            # and the user pressing "Apply to chip" already decided the run's
+            # state wins over whatever moved it. Push over the drift, and NAME
+            # the overwrite in the result (docs/86: report, never block —
+            # reversibility via ↺ Revert last apply is what licenses this).
+            # The unforced first attempt is what tells us drift existed at all.
+            result = _sync_pull_apply_to_live(ctx, None, force=True)
+            body = (result[0] if isinstance(result, tuple) else result).get_json()
+            status = (body or {}).get("status")
+            drift_note = (" The live chip HAD changed since it was loaded — "
+                          "those changes were overwritten (the run's state "
+                          "wins).")
         if status == "ok":
             msg = render_template(
                 "_status.html",
-                message=(f"Run #{run_id}'s state is now LIVE on {chip_label}. "
-                         "Reversible — ↺ Revert last apply (top bar) "
-                         "restores the pre-apply state."),
+                message=(f"Run #{run_id}'s state is now LIVE on {chip_label}."
+                         + drift_note + replaced_note
+                         + " Reversible — ↺ Revert last apply (top bar) "
+                           "restores the pre-apply state."),
                 level="success")
             resp = make_response(msg + "\n" + _tray_oob())
-            resp.headers["HX-Trigger"] = "pulses-changed, stateRestored, diagnostics-changed"
-            return resp
-        if status == "conflict":
-            # The live chip moved since it was loaded — the snapshot is STAGED
-            # (safe) and live was NOT written; docs/108 never force-pushes over
-            # a chip that changed under us.
-            #
-            # docs/116: that verdict used to arrive as a one-line warning
-            # pointing at the TOP BAR, and the tray it pointed at asks the
-            # question of a different flow ("choose which side wins" — whose
-            # ↓ option discards the run the user had just chosen). One press
-            # therefore became: read a warning, go find the tray, pick from
-            # choices that misdescribe the situation, then answer a native
-            # confirm. The continuation now renders in #ds-load-state-result
-            # — where the button was — and offers the choice the press meant.
-            # The tray still swaps OOB so the two surfaces cannot disagree.
-            tray = (body.get("tray_html") or "").replace(
-                '<div id="pending-tray"',
-                '<div id="pending-tray" hx-swap-oob="outerHTML"', 1)
-            msg = render_template("_ds_apply_conflict.html",
-                                  run_id=run_id, chip_label=chip_label)
-            resp = make_response(msg + "\n" + tray)
             resp.headers["HX-Trigger"] = "pulses-changed, stateRestored, diagnostics-changed"
             return resp
         # error — the staging succeeded; say exactly how far things got.
