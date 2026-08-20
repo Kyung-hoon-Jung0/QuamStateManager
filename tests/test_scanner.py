@@ -943,13 +943,16 @@ class TestNestedTreeAndSpine:
         ws.add_root(root)
         key = str(root)
         seen: list[bool] = []
-        real = scanner_mod._scan_root
+        # docs/126 r3: a re-scan with a recorded probe takes the INCREMENTAL
+        # engine — the D2 invariant (root visible throughout the slow part)
+        # must hold on that path now.
+        real = scanner_mod._incremental_rescan
 
-        def spy(p):
+        def spy(*a, **k):
             seen.append(key in ws.tree)      # visible DURING the slow scan?
-            return real(p)
+            return real(*a, **k)
 
-        monkeypatch.setattr(scanner_mod, "_scan_root", spy)
+        monkeypatch.setattr(scanner_mod, "_incremental_rescan", spy)
         ws.rescan_root(root)
         assert seen == [True]
         assert key in ws.tree
@@ -1049,3 +1052,110 @@ class TestTreeFreshnessR16:
         _make_exp(root / "2026-08-01", 2, name="second")
         assert ws.rescan_if_stale() is True
         assert ws._is_root_stale(root) is False  # no follow-up tick
+
+
+class TestIncrementalRescan:
+    """docs/126 r3: the manual Refresh re-walked and re-parsed every run —
+    3.7 s over the customer's 2,655-run archive — to discover that (almost)
+    nothing changed. rescan_root now re-walks only the subtrees whose spine
+    mtime moved, reuses everything else (verified by ONE scandir per
+    run-parent — the same run-folder-mtime fingerprint DatasetStore's B27
+    walk already relies on), and stays equivalent to a full scan. Measured
+    after: ~450 ms on the same archive."""
+
+    def _tree(self, tmp_path):
+        root = tmp_path / "data"
+        _make_exp(root / "2026-08-01", 1, name="ramsey")
+        _make_exp(root / "2026-08-01", 2, name="rabi")
+        _make_exp(root / "2026-08-02", 3, name="t1")
+        ws = Workspace()
+        ws.add_root(root)
+        return ws, root
+
+    @staticmethod
+    def _entries(ws):
+        return {e.folder_path.name: e
+                for gs in ws.tree.values() for g in gs for e in g.entries}
+
+    def test_new_run_found_and_untouched_entries_reused(self, tmp_path):
+        ws, root = self._tree(tmp_path)
+        before = self._entries(ws)
+        time.sleep(0.02)
+        _make_exp(root / "2026-08-01", 4, name="echo")
+        ws.rescan_root(root)
+        after = self._entries(ws)
+        assert "#4_echo_010000" in after
+        # the untouched date dir's entry is the SAME OBJECT — proof it was
+        # reused, not re-walked and re-parsed
+        assert after["#3_t1_010000"] is before["#3_t1_010000"]
+
+    def test_new_date_dir_found_without_full_walk(self, tmp_path):
+        ws, root = self._tree(tmp_path)
+        before = self._entries(ws)
+        time.sleep(0.02)
+        _make_exp(root / "2026-08-03", 9, name="fresh")
+        ws.rescan_root(root)
+        after = self._entries(ws)
+        assert "#9_fresh_010000" in after
+        assert after["#1_ramsey_010000"] is before["#1_ramsey_010000"]
+
+    def test_deleted_run_disappears(self, tmp_path):
+        import shutil
+        ws, root = self._tree(tmp_path)
+        time.sleep(0.02)
+        shutil.rmtree(root / "2026-08-01" / "#2_rabi_010000")
+        ws.rescan_root(root)
+        assert "#2_rabi_010000" not in self._entries(ws)
+        assert "#1_ramsey_010000" in self._entries(ws)
+
+    def test_finished_run_reparsed_via_run_mtime(self, tmp_path):
+        """A run finishing rewrites node.json (atomically — a create in its
+        folder, so the RUN dir mtime moves even though the DATE dir's does
+        not). The verify pass must re-parse exactly that run."""
+        ws, root = self._tree(tmp_path)
+        run = root / "2026-08-02" / "#3_t1_010000"
+        _make_node_json(run, run_id=3, name="t1",
+                        timestamp="2026-02-19T01:00:00+09:00",
+                        status="running")
+        os.utime(run, None)
+        ws.rescan_root(root)
+        assert self._entries(ws)["#3_t1_010000"].status == "running"
+        time.sleep(0.02)
+        _make_node_json(run, run_id=3, name="t1",
+                        timestamp="2026-02-19T01:00:00+09:00",
+                        status="finished")
+        os.utime(run, None)               # the atomic-replace dir bump
+        ws.rescan_root(root)
+        assert self._entries(ws)["#3_t1_010000"].status == "finished"
+
+    def test_late_quam_state_is_discovered(self, tmp_path):
+        """A run folder that existed entry-less (no quam_state yet) and only
+        later gained one: creating quam_state bumps the RUN dir, which the
+        spine deliberately does not watch — the listing sweep catches it."""
+        ws, root = self._tree(tmp_path)
+        bare = root / "2026-08-02" / "#7_pending_010000"
+        bare.mkdir()
+        ws.rescan_root(root)              # adopt the (entry-less) folder
+        assert "#7_pending_010000" not in self._entries(ws)
+        time.sleep(0.02)
+        _make_quam_state(bare / "quam_state")
+        _make_node_json(bare, run_id=7, name="pending",
+                        timestamp="2026-02-19T01:00:00+09:00")
+        ws.rescan_root(root)
+        assert "#7_pending_010000" in self._entries(ws)
+
+    def test_incremental_equals_full(self, tmp_path):
+        import shutil
+        ws, root = self._tree(tmp_path)
+        time.sleep(0.02)
+        _make_exp(root / "2026-08-01", 4, name="echo")
+        _make_exp(root / "2026-08-04", 5, name="newday")
+        shutil.rmtree(root / "2026-08-02" / "#3_t1_010000")
+        ws.rescan_root(root)
+        inc = sorted((str(e.quam_state_path), e.run_id, e.status)
+                     for gs in ws.tree.values() for g in gs for e in g.entries)
+        ws.rescan_root(root, full=True)
+        full = sorted((str(e.quam_state_path), e.run_id, e.status)
+                      for gs in ws.tree.values() for g in gs for e in g.entries)
+        assert inc == full and len(inc) == 4
+

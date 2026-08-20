@@ -725,3 +725,37 @@ quadrant ring was not). The glyph and transform restore before the ✓; the
 CSS ring survives only as the no-JS `.htmx-request:not(.ws-kick)` fallback.
 Probe measures the angle ADVANCING between real frames (5°→106° over
 200 ms).
+
+### r3 — the manual Refresh is incremental now (3.7 s → 0.45 s on the real archive)
+
+"어차피 새로 갱신하는 건 기존에서 추가하는 느낌" — exactly right, and the
+button re-walked and re-parsed all 2,655 runs anyway. Three findings, each
+measured on `D:\work\Customer_Codes\CQT\data`:
+
+1. **`Path.resolve()` was the single biggest cost** — the swap section
+   re-resolved every old AND new entry (2×2,652 = 3.3 s of the 3.5 s total;
+   `nt._getfinalpathname` walks the filesystem per component). The resolved
+   path is now cached ON the entry (`qs_resolved`), stamped lazily; reused
+   entries carry it across rescans.
+2. **`rescan_root` is incremental by default** (`full=True` kept for the
+   first scan / standalone roots / callers that ask): re-stat the recorded
+   spine probe; re-walk ONLY changed subtrees (`_discover` learned a `prune`
+   set, so a bumped ANCESTOR — any new date dir bumps the root — never
+   cascades into a full walk; an entry is replaced only if the walk actually
+   REACHES it, decided by whose ancestor it meets first, a pruned dir or a
+   walked top); everything else is REUSED and verified by **one `os.scandir`
+   per run-parent** — the enumeration carries every child's mtime, so 2,652
+   run fingerprints cost a handful of syscalls where per-entry stats measured
+   4 s. A moved run-dir mtime re-parses (a finishing run rewrites node.json
+   atomically = a create in its folder — the SAME fingerprint DatasetStore's
+   B27 walk has always relied on); a vanished run drops; the same listings
+   catch the late-quam_state case for free. `_spine_of`'s child scan also
+   moved to scandir (~2,700 `Path.is_dir()` stats gone).
+3. **Equivalence is pinned, not assumed**: incremental == full on the real
+   2,652-run archive (paths, run ids, statuses, names, dates) and across the
+   synthetic add/delete/finish/late-state scenarios in
+   `TestIncrementalRescan`; the r13-D2 never-publish-empty-tree invariant is
+   re-pinned on the incremental path.
+
+Steady-state refresh measured 441-449 ms (was 3.7 s); the remaining cost is
+pure pathlib bookkeeping, not I/O.
