@@ -1,0 +1,102 @@
+{% from '_delta_macros.html' import delta_chip %}
+{# N ticked versions, differences ONLY (docs/128).
+
+   Customer: "pressing Compare on 3 picks must immediately list just the
+   keys whose values differ, as 3 columns" — not land on the Compare hub's
+   configuration surface, and never spend rows on values that agree.
+   Comparison is meaningful in the differences.
+
+   One row per dot-path where any two versions disagree (Differ.diff_n —
+   every leaf, state + wiring, same equality rule as the 2-way diff).
+   Columns read oldest → newest, forward in time like every other
+   before→after surface (docs/76); a cell wears .vc-changed exactly when
+   diff_n's own `changed` verdict says it moved from the column before it
+   (ONE rule for row and cell — the docs/118 lesson), with the docs/76 Δ
+   chip under the new value. The Compare hub stays one click away for the
+   hard cases (entity mapping across devices) — behind a link, not in the
+   way. #}
+<div class="version-compare" id="version-compare">
+  <div class="vc-head">
+    <h2 style="margin:0">Versions compared</h2>
+    {% if not error %}
+    <p class="muted" style="margin:0">
+      {{ chip_key or "this chip" }} &middot; {{ cols | length }} versions &middot;
+      only keys whose values differ are listed &mdash; every other leaf agrees
+      across all {{ cols | length }}.
+    </p>
+    {% endif %}
+    <div class="vc-actions">
+      <a class="btn-xs outline" href="{{ hub_url }}"
+         hx-get="{{ hub_url }}" hx-target="#table-pane" hx-swap="innerHTML"
+         hx-push-url="true"
+         title="Entity mapping, tolerance presets, N-way baskets — the advanced comparison surface.">Advanced: open in Compare hub</a>
+    </div>
+  </div>
+
+  {% if error %}
+  {# A full-page reload of a pushed/shared URL lands here WITH the chrome —
+     the message must never be the whole document. #}
+  <p class="vc-error">&#9888; {{ error }}</p>
+  {% else %}
+
+  {% if dropped_cols %}
+  <p class="muted vc-note">Showing the newest {{ cols | length }} of
+     {{ cols | length + dropped_cols }} ticked versions &mdash; more columns
+     than this stops being readable.</p>
+  {% endif %}
+
+  {% if not rows %}
+  <p class="muted vc-empty">No differences &mdash; these
+     {{ cols | length }} versions hold identical content on every leaf.</p>
+  {% else %}
+  <p class="muted vc-note">{{ total }} differing key{{ '' if total == 1 else 's' }}{%
+     if total > rows | length %} &mdash; showing the first {{ rows | length }}{% endif %}.</p>
+
+  <div class="vc-scroll">
+    <table class="vc-table">
+      <thead>
+        <tr>
+          <th class="vc-key-col">Key</th>
+          {% for c in cols %}
+          <th>
+            <span class="vc-col-time">{{ c.ts | ts_local }}</span>
+            <span class="vc-col-meta">
+              {% if c.trigger %}<span class="sv-trigger sv-trigger-{{ c.trigger }}">{{ c.trigger }}</span>{% endif %}
+              {% if c.label %}<span class="vc-col-label">{{ c.label }}</span>{% endif %}
+            </span>
+            <span class="vc-col-ts">{{ c.ts }}</span>
+          </th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        {% set _parts = r.dot_path.rsplit('.', 1) %}
+        <tr>
+          <td class="vc-key-col"><code class="dot-path" title="{{ r.dot_path }}">{%- if _parts | length == 2 -%}<span class="dp-dirs">{{ _parts[0] }}.</span><span class="dp-leaf">{{ _parts[1] }}</span>{%- else -%}<span class="dp-leaf">{{ r.dot_path }}</span>{%- endif -%}</code></td>
+          {% for v in r["values"] %}
+          {% set i = loop.index0 %}
+          <td class="{% if r.changed[i] %}vc-changed{% endif %}">
+            {% if not r.present[i] %}
+            <span class="muted" title="this leaf does not exist in this version">&ndash;</span>
+            {% elif v is none %}
+            {# A STORED null is a value, not an absence — groupdigits(None)
+               is '' and a blank cell would hide the very difference the row
+               exists to show. #}
+            <span class="vc-val vc-null" title="stored null in this version">null</span>
+            {% else %}
+            <span class="vc-val">{{ v | groupdigits }}</span>
+            {% if r.changed[i] and i > 0 and r.present[i - 1] %}
+            <span class="vc-delta">{{ delta_chip(r["values"][i - 1], v) }}</span>
+            {% endif %}
+            {% endif %}
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  {% endif %}{# error #}
+</div>

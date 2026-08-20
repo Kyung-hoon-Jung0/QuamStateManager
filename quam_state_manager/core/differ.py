@@ -140,6 +140,81 @@ class Differ:
         return flatten(QuamStore(side, validate=False).merged)
 
     # ------------------------------------------------------------------
+    # N-way differences-only leaf table (docs/128)
+    # ------------------------------------------------------------------
+
+    def diff_n(
+        self,
+        sides: list[Path | str | QuamStore | tuple[dict, dict]],
+        *,
+        float_tolerance: float = 1e-12,
+        ignore_keys: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """One row per dot-path where any two of N sides disagree.
+
+        The versions panel's multi-pick Compare (customer, 2026-08-21):
+        N snapshots of the SAME chip, every leaf considered (state + wiring,
+        unlike :meth:`multi_diff`, which walks only the curated per-qubit
+        properties), and rows where every present side agrees are DROPPED —
+        comparison is meaningful in the differences.
+
+        Returns dicts sorted by dot_path::
+
+            {"dot_path": str,
+             "values": [leaf-or-None per side, in the callers' side order],
+             "present": [bool per side],
+             "changed": [bool per side]}
+
+        ``values[i] is None`` with ``present[i] is False`` means the leaf did
+        not exist on that side; a real stored null keeps ``present[i]`` True.
+        ``changed[i]`` says "this side differs from the side immediately
+        before it" (``changed[0]`` is always False) — computed HERE with the
+        same ``_values_equal`` the row verdict uses, so no SECOND equality
+        rule exists for cells (the docs/118 two-rules trap). One honest
+        caveat: the row verdict compares base-vs-each while ``changed``
+        compares adjacent pairs, so a sub-tolerance chain (a≈b, b≈c yet
+        a≉c at the 1e-12 relative tolerance) can in principle list a row
+        whose ``changed`` flags are all False — accepted, the same
+        tolerance semantics as :meth:`diff` itself.
+        Equality is :meth:`diff`'s: same float tolerance, same ``__class__``
+        ignore, so 2 sides here and a 2-way ``diff`` never disagree about
+        whether a leaf changed.
+        """
+        flats = [self._flatten_side(s) for s in sides]
+        ignore = ignore_keys if ignore_keys is not None else _DEFAULT_IGNORE
+        all_keys: set[str] = set()
+        for flat in flats:
+            all_keys.update(flat.keys())
+        rows: list[dict[str, Any]] = []
+        for key in sorted(all_keys):
+            if _leaf_key(key) in ignore:
+                continue
+            present = [key in flat for flat in flats]
+            values = [flat.get(key) for flat in flats]
+            base_i = next(i for i, p in enumerate(present) if p)
+            differs = False
+            for i in range(len(flats)):
+                if present[i] != present[base_i]:
+                    differs = True
+                    break
+                if present[i] and not _values_equal(
+                        values[base_i], values[i], float_tolerance):
+                    differs = True
+                    break
+            if not differs:
+                continue
+            changed = [False] * len(flats)
+            for i in range(1, len(flats)):
+                if present[i] != present[i - 1]:
+                    changed[i] = True
+                elif present[i] and not _values_equal(
+                        values[i - 1], values[i], float_tolerance):
+                    changed[i] = True
+            rows.append({"dot_path": key, "values": values,
+                         "present": present, "changed": changed})
+        return rows
+
+    # ------------------------------------------------------------------
     # N-way multi-compare (trend extraction)
     # ------------------------------------------------------------------
 

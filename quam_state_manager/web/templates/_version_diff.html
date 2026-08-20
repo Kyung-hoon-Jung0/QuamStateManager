@@ -1,0 +1,77 @@
+{% from '_delta_macros.html' import delta_chip %}
+{# The Versions panel's per-row Diff (docs/128): ONE recorded version vs the
+   CURRENT working state, read-only, rendered in the sync review modal's shell
+   and row language (docs/76/86) with none of its write actions. Old side =
+   the version, new side = now, so the list reads forward in time like every
+   other before→after surface. "Full view" is the escape hatch into the
+   docs/84 workbench (tree view, ranked by |Δ%|) — the same hist:/working:
+   ref grammar the tick-two Compare flow uses. #}
+<div class="state-review version-diff">
+  <div class="state-review-head">
+    <h3>Version {{ ts | ts_local }} &rarr; now</h3>
+    <div class="state-review-head-actions">
+      {% if chip_key %}
+      <a class="btn-sync outline version-diff-workbench"
+         href="/diff?a={{ ('hist:' ~ chip_key ~ '/' ~ ts) | urlencode }}&amp;b={{ ('working:' ~ path_str) | urlencode }}"
+         hx-get="/diff?a={{ ('hist:' ~ chip_key ~ '/' ~ ts) | urlencode }}&amp;b={{ ('working:' ~ path_str) | urlencode }}"
+         hx-target="#table-pane" hx-swap="innerHTML" hx-push-url="true"
+         onclick="StateVersions.closeDiff(); StateVersions.close()"
+         title="Open this comparison in the Diff workbench — tree view, every entry, ranked by |Δ%|.">Full view</a>
+      {% endif %}
+      <button class="btn-sync outline state-review-close-btn" type="button"
+              onclick="StateVersions.closeDiff()" title="Close">Close</button>
+    </div>
+  </div>
+
+  <div class="state-review-body">
+  {% if total == 0 %}
+  <p class="muted state-review-empty">No differences &mdash; the current working
+     state matches this version.</p>
+  {% else %}
+  <div class="diff-summary">
+    <span class="diff-badge diff-added">Added: {{ summary.added }}</span>
+    <span class="diff-badge diff-removed">Removed: {{ summary.removed }}</span>
+    <span class="diff-badge diff-modified">Modified: {{ summary.modified }}</span>
+    <span class="diff-badge diff-total">Total: {{ summary.total }}</span>
+    {% if total > entries | length %}
+    <small class="muted">(showing {{ entries | length }} of {{ total }} &mdash;
+       Full view has them all)</small>
+    {% endif %}
+  </div>
+  {% if dirty %}
+  {# HONESTY: "now" is the working state the user is looking at, which may
+     hold edits the live chip does not — say so rather than letting the diff
+     read as "the live chip vs this version". #}
+  <p class="state-review-note muted">&#9888; The &ldquo;now&rdquo; side is your
+     working state, which holds edits not yet applied to the live chip.</p>
+  {% endif %}
+  {# The Pull-to-Live sentence only where that button actually exists on the
+     row (the panel hides it on archives and on the current version) — the
+     overlay must never instruct a press the panel deliberately withholds. #}
+  <p class="state-review-note muted">Read-only &mdash; nothing here writes.{%
+     if offers_pull %} <b>&#8593; Pull to Live</b> on this row would put the
+     live chip back on the left-hand values.{% endif %}</p>
+  <div class="state-review-cards">
+    {% for e in entries %}
+    {% set _glyph = {'modified': 'M', 'added': 'A', 'removed': 'D'}.get(e.change_type, '?') %}
+    {% set _parts = e.dot_path.rsplit('.', 1) %}
+    <div class="review-row diff-row-{{ e.change_type }}">
+      <div class="review-row-path">
+        <span class="diff-type-badge diff-type-{{ e.change_type }}" aria-label="{{ e.change_type }}" title="{{ e.change_type }} since this version">{{ _glyph }}</span>
+        <code class="dot-path" title="{{ e.dot_path }}">{%- if _parts | length == 2 -%}<span class="dp-dirs">{{ _parts[0] }}.</span><span class="dp-leaf">{{ _parts[1] }}</span>{%- else -%}<span class="dp-leaf">{{ e.dot_path }}</span>{%- endif -%}</code>
+      </div>
+      <div class="review-row-vals">
+        {% if e.old_value is none %}<span class="muted review-old">-</span>
+        {% else %}<span class="review-old" title="this version: {{ e.old_value | groupdigits }}">{{ e.old_value | groupdigits }}</span>{% endif %}
+        <span class="review-arrow" aria-hidden="true">&rarr;</span>
+        {% if e.new_value is none %}<span class="muted">-</span>
+        {% else %}<span class="review-now" title="now (working state): {{ e.new_value | groupdigits }}">{{ e.new_value | groupdigits }}</span>
+        {{ delta_chip(e.old_value, e.new_value, 'review-delta') }}
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  </div>
+</div>

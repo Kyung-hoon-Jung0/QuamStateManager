@@ -1032,6 +1032,14 @@
         <div id="live-drift-host" class="state-review-host"></div>
     </div>
 
+    <!-- Version-diff overlay (a recorded version vs. the current working
+         state — the Versions panel's per-row Diff, docs/128). Same shell
+         classes as the review overlays above; read-only content. -->
+    <div id="version-diff-overlay" class="state-review-overlay" style="display:none">
+        <div class="state-review-backdrop" onclick="StateVersions.closeDiff()"></div>
+        <div id="version-diff-host" class="state-review-host"></div>
+    </div>
+
     <!-- Command palette (Ctrl/Cmd+K) -->
     <div id="cmd-palette" class="cmd-palette" hidden role="dialog" aria-modal="true" aria-labelledby="cmd-palette-input">
         <div class="cmd-palette-backdrop" onclick="window.closeCmdPalette()"></div>
