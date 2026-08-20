@@ -123,6 +123,210 @@ class TestTheRawDataGateReadsBothFormats:
         assert isinstance(got, str) and "qZ9" in got
 
 
+class TestTraceVarAndPairCoordEquivalents:
+    """The CQT corpus exposed three recording-convention renames that left
+    whole families' G3 stuck at unverifiable (docs/127): state-discriminated
+    runs save the fitted trace as 'state' with no I/Q at all (423 targets),
+    the current coupler-node generation names the PAIR dim plain 'qubit'
+    (85 targets), and this generation's readout-freq-opt saves the |g>-|e>
+    distance 'D' instead of 'snr' (44 targets). Each fallback is a verified
+    rename of the SAME physical trace — never a different quantity."""
+
+    @staticmethod
+    def _h5(path, **arrays):
+        h5py = pytest.importorskip("h5py")
+        with h5py.File(path, "w") as f:
+            for k, v in arrays.items():
+                f[k] = v
+
+    def test_state_var_serves_an_I_family(self, tmp_path):
+        p = tmp_path / "ds_raw.h5"
+        self._h5(p, qubit=np.array([b"q18"]),
+                 state=np.sin(np.linspace(0, 6.28, 32))[None, :],
+                 amp_prefactor=np.linspace(0.9, 1.1, 32))
+        fc = FeatureCheck(var="I", axis_var="amp_prefactor", mode="span")
+        got = gates._read_target_trace(p, fc, "q18", "qubits")
+        assert not isinstance(got, str), got
+        _, row = got
+        assert row.shape == (32,)
+
+    def test_D_serves_the_snr_peak_check(self, tmp_path):
+        p = tmp_path / "ds_raw.h5"
+        y = np.zeros((1, 16)); y[0, 5] = 1.0
+        self._h5(p, qubit=np.array([b"q1"]), D=y,
+                 detuning=np.linspace(-8e6, 8e6, 16))
+        fc = FeatureCheck(var="snr", axis_var="detuning", mode="peak")
+        ax, row = gates._read_target_trace(p, fc, "q1", "qubits")
+        assert row[5] == pytest.approx(1.0) and ax.shape == (16,)
+
+    def test_pair_family_reads_the_renamed_qubit_coord(self, tmp_path):
+        # coupler cubes: dim named 'qubit', VALUES are pair names
+        p = tmp_path / "ds_raw.h5"
+        self._h5(p, qubit=np.array([b"q2-5"]),
+                 IQ_abs=np.random.default_rng(0).normal(size=(1, 8, 8)),
+                 flux_bias=np.linspace(-0.1, 0.1, 8))
+        fc = FeatureCheck(var="IQ_abs", axis_var="flux_bias", mode="span")
+        got = gates._read_target_trace(p, fc, "q2-5", "qubit_pairs")
+        assert not isinstance(got, str), got
+
+    def test_a_true_qubit_pair_coord_still_wins(self, tmp_path):
+        # both dims present -> qubit_pair preferred; the 'qubit' coord here
+        # carries MEMBER names, so reading it would mis-index the pair row
+        p = tmp_path / "ds_raw.h5"
+        self._h5(p, qubit_pair=np.array([b"q2-5"]),
+                 qubit=np.array([b"q2", b"q5"]),
+                 state_moving=np.zeros((1, 8)),
+                 time=np.arange(8.0))
+        fc = FeatureCheck(var="state_target", axis_var="time", mode="span")
+        got = gates._read_target_trace(p, fc, "q2-5", "qubit_pairs")
+        assert not isinstance(got, str), got
+
+    def test_no_equivalent_still_answers_the_honest_error(self, tmp_path):
+        p = tmp_path / "ds_raw.h5"
+        self._h5(p, qubit=np.array([b"q1"]),
+                 something_else=np.zeros((1, 8)), detuning=np.arange(8.0))
+        fc = FeatureCheck(var="IQ_abs", axis_var="detuning", mode="peak")
+        got = gates._read_target_trace(p, fc, "q1", "qubits")
+        assert isinstance(got, str) and "IQ_abs" in got
+
+    def test_identity_check_survives_the_coord_fallback(self, tmp_path):
+        # pair family, renamed coord, but the coord does NOT carry this pair
+        p = tmp_path / "ds_raw.h5"
+        self._h5(p, qubit=np.array([b"q1-4"]),
+                 IQ_abs=np.zeros((1, 8, 8)), flux_bias=np.arange(8.0))
+        fc = FeatureCheck(var="IQ_abs", axis_var="flux_bias", mode="span")
+        got = gates._read_target_trace(p, fc, "q2-5", "qubit_pairs")
+        assert isinstance(got, str) and "q2-5" in got
+
+
+class TestThreeZoneFeatureCheck:
+    """A family that declares a lower ``z_min`` buys a MIDDLE zone, not a
+    lower localization bar (docs/127). On the CQT chip corroborated qubit-spec
+    claims carry prominence z down to 2.35 — below the module floor of 5 —
+    but between the floors a global SEARCH is unreliable both ways (max-of-N
+    on a flat window already reads z≈3.3, and claim-vs-argmax turned 91
+    corroborated-good claims into wrong_peak). In the middle zone the check
+    TESTS the claim's own region instead: averaging over ±tol shrinks point
+    noise by √n, so a real feature at the claim survives and a noise window
+    provably fails — the no-signal corruption stays a hard fail. A family
+    declaring nothing keeps the one-floor behavior byte-identically."""
+
+    @staticmethod
+    def _trace(tmp_path, peak_height, wide=False, n=64):
+        h5py = pytest.importorskip("h5py")
+        # alternating ±1 noise → point-noise ≈ 2·1.4826/√2 ≈ 2.1, so
+        # z ≈ peak_height/2.1 — deterministic by construction
+        y = np.array([1.0 if i % 2 else -1.0 for i in range(n)])
+        if wide:
+            y[n // 2 - 3: n // 2 + 4] = peak_height   # spans the ±tol window
+        else:
+            y[n // 2] = peak_height
+        axis = np.linspace(4.0e9, 5.0e9, n)
+        p = tmp_path / "ds_raw.h5"
+        with h5py.File(p, "w") as f:
+            f["qubit"] = np.array([b"q1"])
+            f["IQ_abs"] = y[None, :]
+            f["full_freq"] = axis[None, :]
+        return p, float(axis[n // 2])
+
+    def _fc(self, z_min=None):
+        return FeatureCheck(var="IQ_abs", axis_var="full_freq", mode="peak",
+                            claim_key="frequency", tol_fwhm=0.0,
+                            fallback_tol=5e7, z_min=z_min)
+
+    def test_provably_empty_is_still_no_signal(self, tmp_path):
+        p, at = self._trace(tmp_path, peak_height=1.0)     # z ≈ 0.5
+        status, detail = gates._feature_check(
+            p, self._fc(z_min=2.0), "q1", "qubits", {"frequency": at}, None)
+        assert status == "no_signal", detail
+
+    def test_weak_real_feature_at_the_claim_passes(self, tmp_path):
+        p, at = self._trace(tmp_path, peak_height=9.0, wide=True)  # z mid-zone
+        status, detail = gates._feature_check(
+            p, self._fc(z_min=2.0), "q1", "qubits", {"frequency": at}, None)
+        assert status == "ok" and "claim region carries" in detail, detail
+
+    def test_weak_window_with_claim_on_flat_ground_fails(self, tmp_path):
+        p, at = self._trace(tmp_path, peak_height=9.0, wide=True)
+        status, detail = gates._feature_check(
+            p, self._fc(z_min=2.0), "q1", "qubits", {"frequency": 4.2e9}, None)
+        assert status == "no_signal" and "claim region" in detail, detail
+
+    def test_strong_feature_still_localizes_both_ways(self, tmp_path):
+        p, at = self._trace(tmp_path, peak_height=30.0)    # z ≈ 14
+        fc = self._fc(z_min=2.0)
+        status, _ = gates._feature_check(
+            p, fc, "q1", "qubits", {"frequency": at}, None)
+        assert status == "ok"
+        status, _ = gates._feature_check(
+            p, fc, "q1", "qubits", {"frequency": at + 3e8}, None)
+        assert status == "wrong_peak"
+
+    def test_undeclared_family_keeps_the_one_floor(self, tmp_path):
+        p, at = self._trace(tmp_path, peak_height=7.0)     # z ≈ 3.3 < 5
+        status, detail = gates._feature_check(
+            p, self._fc(z_min=None), "q1", "qubits", {"frequency": at}, None)
+        assert status == "no_signal", "no z_min ⇒ byte-identical legacy"
+
+    def test_presence_probe_keeps_the_module_floor(self, tmp_path):
+        # a probe with no claim to test must never call a noise maximum
+        # "feature present" just because the family lowered its empty-floor
+        p, _at = self._trace(tmp_path, peak_height=7.0)    # z ≈ 3.3
+        present, detail, _hint = gates._presence_probe(
+            p, self._fc(z_min=2.0), "q1", "qubits")
+        assert present is False, detail
+
+    def test_qubit_spectroscopy_declares_the_corpus_floor(self):
+        from quam_state_manager.core.autofit import families as fam_mod
+        fam = fam_mod.family_for("08_qubit_spectroscopy")
+        assert fam.feature_check.z_min == 2.0
+
+
+class TestSandboxRevertWalksLists:
+    """295 of 1,755 real CQT revert targets died as dict lookups: iq_blobs and
+    readout-power patches touch LIST elements (confusion_matrix/0/0), and the
+    sandbox fix walked every dotted segment as a dict key. The walk is now
+    structural — a digit segment indexes a list PARENT and stays a dict key
+    for number-keyed dicts — the modifier's own rule. After the fix the
+    full-archive harness verifies 1,755/1,755 targets byte-exact."""
+
+    def test_confusion_matrix_patch_reverts(self, tmp_path):
+        import json as _json
+        from quam_state_manager.core.autofit.replay import _sandbox_fix
+        state = {"qubits": {"q2": {"resonator": {
+            "confusion_matrix": [[0.9, 0.1], [0.2, 0.8]],
+            "operations": {"readout": {"threshold": 1.5e-5}}}}}}
+        (tmp_path / "state.json").write_text(_json.dumps(state),
+                                             encoding="utf-8")
+        patches = [
+            {"op": "replace",
+             "path": "/quam/qubits/q2/resonator/confusion_matrix/0/1",
+             "old": 0.4845, "value": 0.1},
+            {"op": "replace",
+             "path": "/quam/qubits/q2/resonator/operations/readout/threshold",
+             "old": 2.0e-5, "value": 1.5e-5},
+        ]
+        res = _sandbox_fix(tmp_path, None, "q2", patches, {}, "revert")
+        assert res["ok"], res
+        after = _json.loads((tmp_path / "state.json").read_text("utf-8"))
+        assert after["qubits"]["q2"]["resonator"]["confusion_matrix"][0][1] \
+            == 0.4845
+        assert after["qubits"]["q2"]["resonator"]["confusion_matrix"][0][0] \
+            == 0.9, "untouched cells must stay untouched"
+        assert after["qubits"]["q2"]["resonator"]["operations"]["readout"][
+            "threshold"] == 2.0e-5
+
+    def test_an_unwalkable_path_answers_ok_false_not_a_raise(self, tmp_path):
+        import json as _json
+        from quam_state_manager.core.autofit.replay import _sandbox_fix
+        (tmp_path / "state.json").write_text(
+            _json.dumps({"a": [1, 2]}), encoding="utf-8")
+        patches = [{"op": "replace", "path": "/quam/a/notanindex",
+                    "old": 5, "value": 6}]
+        res = _sandbox_fix(tmp_path, None, "q1", patches, {}, "revert")
+        assert res.get("ok") is False
+
+
 class TestMetricTrendBestIsTheRunningMaximum:
     """`best` advanced only on a value that CLEARED the noise floor, so it
     reported the last value that happened to jump rather than the best seen —

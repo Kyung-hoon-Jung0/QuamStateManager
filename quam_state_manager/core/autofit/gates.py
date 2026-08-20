@@ -61,6 +61,20 @@ def _spectral_floor(fc) -> float:
     return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool)         else _SPECTRAL_RATIO_MIN
 
 
+def _z_floor(fc) -> float:
+    """Per-family prominence-z floor for peak/dip modes (docs/127).
+
+    The same §27 argument as ``_spectral_floor``: a significance floor is a
+    claim about the lab's SNR, and one constant cannot serve every chip. On
+    the CQT corpus 98 of 318 neighbor-corroborated qubit-spectroscopy claims
+    sat below the module default of 5 — a third of the confirmed-good fits
+    read as "no signal". Families that declare nothing keep the default.
+    """
+    v = getattr(fc, "z_min", None)
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) \
+        else _FEATURE_Z_MIN
+
+
 @dataclass
 class GateVerdict:
     target: str
@@ -114,6 +128,23 @@ def _row_of(reader, handle, idx) -> np.ndarray:
         return np.asarray(reader.read(handle)[idx], dtype=float)
 
 
+# The SAME physical trace under another recording convention (docs/127).
+# Tried in declaration order when ``fc.var`` is absent from ds_raw — an
+# equivalence, never a guess: each row names a rename verified against the
+# generation's own analysis code.
+#   I -> state          use_state_discrimination=True saves the fitted
+#                       population trace as 'state' and writes no I/Q at all
+#                       (423 CQT targets sat unverifiable on this alone)
+#   snr -> D            readout-freq-opt: this generation saves the |g>-|e>
+#                       distance D — the very quantity its fit maximizes
+#   state_target -> state_moving   coupler-node rename (target = moving qubit)
+_VAR_EQUIVALENTS: dict[str, tuple[str, ...]] = {
+    "I": ("state",),
+    "snr": ("D",),
+    "state_target": ("state_moving",),
+}
+
+
 def _read_target_trace(raw_path: Path, fc: FeatureCheck, target: str,
                        kind: str) -> tuple[np.ndarray, np.ndarray] | str:
     """Return (axis, y) for *target*'s row, or an error string.
@@ -127,13 +158,30 @@ def _read_target_trace(raw_path: Path, fc: FeatureCheck, target: str,
     """
     from quam_state_manager.core.ndview import _h5_lock_for, _open_reader
 
-    dim0 = "qubit" if kind == "qubits" else "qubit_pair"
+    # Pair-kind cubes of the current coupler-node generation rename the
+    # qubit_pair dim to plain "qubit" while keeping PAIR NAMES as its values
+    # (the same rename run_fit_audit._derive_pairs handles) — so a pair family
+    # falls back to the "qubit" coord, and the target-membership check below
+    # still guarantees identity: a coord that doesn't carry this pair's name
+    # is refused exactly as before.
+    dim0s = ("qubit",) if kind == "qubits" else ("qubit_pair", "qubit")
     try:
         with _h5_lock_for(str(raw_path)), _open_reader(Path(raw_path)) as f:
             var = f.get(fc.var)
-            coord = f.read_coord(dim0)
+            if var is None:
+                for alt in _VAR_EQUIVALENTS.get(fc.var, ()):
+                    var = f.get(alt)
+                    if var is not None:
+                        break
+            dim0 = dim0s[0]
+            coord = None
+            for d0 in dim0s:
+                coord = f.read_coord(d0)
+                if coord is not None:
+                    dim0 = d0
+                    break
             if var is None or coord is None:
-                return f"var {fc.var!r} or coord {dim0!r} missing in ds_raw"
+                return f"var {fc.var!r} or coord {dim0s[0]!r} missing in ds_raw"
             names = [n.decode() if isinstance(n, bytes) else str(n)
                      for n in np.asarray(coord).tolist()]
             if target not in names:
@@ -212,9 +260,10 @@ def _feature_check(raw_path: Path, fc: FeatureCheck, target: str, kind: str,
     noise = float(np.median(np.abs(np.diff(y)))) * 1.4826 / math.sqrt(2) + 1e-30
     idx = int(np.argmax(y)) if fc.mode == "peak" else int(np.argmin(y))
     z = abs(float(y[idx]) - med) / noise
-    if z < _FEATURE_Z_MIN:
+    zf = _z_floor(fc)
+    if z < zf:
         return "no_signal", (f"no significant {fc.mode} in the swept window "
-                             f"(prominence z={z:.1f} < {_FEATURE_Z_MIN})")
+                             f"(prominence z={z:.1f} < {zf})")
 
     lo, hi = float(np.min(axis)), float(np.max(axis))
     if not (lo <= claim <= hi):
@@ -227,6 +276,45 @@ def _feature_check(raw_path: Path, fc: FeatureCheck, target: str, kind: str,
         tol = fc.tol_fwhm * float(fwhm)
     else:
         tol = fc.fallback_tol
+
+    if z < _FEATURE_Z_MIN:
+        # The three-zone contract (docs/127): a family that declares a lower
+        # z_min buys a MIDDLE zone, not a lower localization bar. Between the
+        # floors a global SEARCH is unreliable both ways — max-of-N on a flat
+        # window already sits near z≈3.3, and dropping straight into the
+        # claim-vs-argmax comparison turned 91 corroborated-good CQT claims
+        # into "wrong_peak" (the argmax was a noise spike). TESTING the
+        # claim's own region carries no look-elsewhere penalty: smooth by the
+        # feature's own width (point noise shrinks by √w) and read the
+        # deviation within ±tol of the claim. SIGN-AGNOSTIC deliberately —
+        # measured on the corroborated CQT claims, the qubit feature in
+        # |IQ| is a dip as often as a peak (median smoothed deviation −44σ
+        # with mode="peak"), because only the node's ROTATED projection has a
+        # guaranteed orientation. A noise window tops out at |z|≈3.6 under
+        # the same statistic (control p99 = 3.18), so the no-signal
+        # corruption stays a hard FAIL instead of a judge call.
+        sel = (axis >= claim - tol) & (axis <= claim + tol)
+        n_sel = int(sel.sum())
+        if n_sel < 1:
+            return "unverifiable", (f"weak {fc.mode} (z={z:.1f}) and no "
+                                    f"samples within ±{tol:.3g} of the claim")
+        df = abs(float(axis[1] - axis[0])) if axis.size > 1 else 1.0
+        if isinstance(fwhm, (int, float)) and not isinstance(fwhm, bool) \
+                and math.isfinite(fwhm) and fwhm > 0 and df > 0:
+            w = max(1, int(round(float(fwhm) / df)))
+        else:
+            w = max(1, n_sel // 2)
+        w = min(w, int(y.size))
+        smooth = np.convolve(y - med, np.ones(w) / w, mode="same")
+        z_at = float(np.max(np.abs(smooth[sel]))) / (noise / math.sqrt(w))
+        if z_at >= _FEATURE_Z_MIN:
+            return "ok", (f"weak window (z={z:.1f}) but the claim region "
+                          f"carries a resolved feature (|z_at|={z_at:.1f}, "
+                          f"width {w} samples)")
+        return "no_signal", (f"weak window (z={z:.1f}) and the claim region "
+                             f"shows no feature (|z_at|={z_at:.1f} over "
+                             f"{n_sel} samples)")
+
     feature_x = float(axis[idx])
     if abs(feature_x - claim) > tol:
         return "wrong_peak", (f"data {fc.mode} at {feature_x:.6g} but claim is "
@@ -291,6 +379,10 @@ def _presence_probe(raw_path: Path, fc: FeatureCheck, target: str, kind: str,
     noise = float(np.median(np.abs(np.diff(y)))) * 1.4826 / math.sqrt(2) + 1e-30
     idx = int(np.argmax(y)) if fc.mode == "peak" else int(np.argmin(y))
     z = abs(float(y[idx]) - med) / noise
+    # deliberately the MODULE floor, never the family's z_min: this probe has
+    # no claim to test, so "feature present" below the search-significance bar
+    # would send the adaptation ladder chasing a noise maximum (max-of-N on a
+    # flat window sits around z≈3.3)
     if z >= _FEATURE_Z_MIN:
         return True, (f"a clear {fc.mode} is visible in the window "
                       f"(prominence z={z:.1f}) — the failure is the FIT, "

@@ -305,6 +305,61 @@ class TestCorruptionLedger:
         assert v.failure_mode == "unverifiable"
 
 
+class TestRamseyCqtRecalibration:
+    """docs/127 — the CQT corpus (2,655 real runs) recalibrated ramsey by the
+    §15.2 method. The ±5 MHz freq_offset band fired on 26 node-accepted
+    offsets, ~20 CONFIRMED good (r² to 0.997; the next run shows the 39.8 MHz
+    correction landing at 60 kHz); the decay band's entire measured effect was
+    26 false alarms (no node-REJECTED target carries a decay at all). Bands
+    widen to absurdity envelopes, write-honesty moves into the update guard,
+    and judging moves to the node's own quality numbers (snr<1 OR r2<0.3
+    flags 31 of 483 accepted and ZERO of the r2≥0.5 ones)."""
+
+    def _cur(self, p):
+        return {"qubits.qX.f_01": 4.5e9,
+                "qubits.qX.xy.RF_frequency": 4.5e9,
+                "qubits.qX.T2ramsey": 2e-5}[p]
+
+    def test_freq_offset_band_is_an_absurdity_envelope(self):
+        fam = families.family_for("12_ramsey")
+        pl = {p.key: p for p in fam.plausibility}
+        assert pl["freq_offset"].lo == -5e7 and pl["freq_offset"].hi == 5e7
+        assert "decay" not in pl, \
+            "the decay band false-rejected 26 accepted runs and detected 0"
+
+    def test_unconstrained_t2_is_not_written_but_frequency_still_is(self):
+        fam = families.family_for("12_ramsey")
+        neg = {"freq_offset": 1e5, "decay": -2.9e-5, "decay_error": 2.7e-5}
+        labels = [r["label"] for r in
+                  families.resolve_updates(fam, "qX", neg, {}, self._cur)]
+        assert "T2*" not in labels and len(labels) == 2
+        inf_err = {"freq_offset": 1e5, "decay": 1.5e-5,
+                   "decay_error": float("inf")}
+        labels = [r["label"] for r in
+                  families.resolve_updates(fam, "qX", inf_err, {}, self._cur)]
+        assert "T2*" not in labels
+
+    def test_constrained_t2_and_errorless_generations_still_write(self):
+        fam = families.family_for("12_ramsey")
+        good = {"freq_offset": 1e5, "decay": 1.4e-5, "decay_error": 1.5e-6}
+        labels = [r["label"] for r in
+                  families.resolve_updates(fam, "qX", good, {}, self._cur)]
+        assert "T2*" in labels
+        no_err = {"freq_offset": 1e5, "decay": 1.4e-5}
+        labels = [r["label"] for r in
+                  families.resolve_updates(fam, "qX", no_err, {}, self._cur)]
+        assert "T2*" in labels, "an ABSENT error field must abstain, not block"
+
+    def test_judging_rides_the_nodes_own_quality_numbers(self):
+        fam = families.family_for("12_ramsey")
+        mg = {m.key: m for m in fam.metric_gates}
+        assert mg["osc_amp_snr"].min == 1.0
+        assert mg["r2"].min == 0.30
+        # spectral floor at its honest job only — a provably empty window
+        # (accepted r2≥0.5 fringes bottom out at peak/median 12.2)
+        assert fam.feature_check.spectral_min == 10.0
+
+
 class TestUpdateResolution:
     def test_ramsey_subtract_and_chevron_ceil4(self, tmp_path):
         chip = _mk_chip()

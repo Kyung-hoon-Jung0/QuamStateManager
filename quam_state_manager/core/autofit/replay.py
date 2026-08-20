@@ -221,12 +221,21 @@ def _sandbox_fix(sandbox: Path, fam, target: str, q_patches: list[dict],
         return {"ok": False, "error": f"sandbox unreadable: {exc}"}
 
     def set_dotted(dotted: str, value):
+        # structural list walk, the modifier's rule: a digit segment indexes a
+        # LIST parent (confusion_matrix/0/0 — 295 of 1,755 real CQT revert
+        # targets die as dict lookups without this), and stays a dict key for
+        # number-keyed dicts (ports."1")
         node = state
         parts = dotted.split(".")
         for part in parts[:-1]:
-            node = node[part]
-        old = node.get(parts[-1])
-        node[parts[-1]] = value
+            node = node[int(part)] if isinstance(node, list) else node[part]
+        last: Any = parts[-1]
+        if isinstance(node, list):
+            last = int(last)
+            old = node[last]
+        else:
+            old = node.get(last)
+        node[last] = value
         return old
 
     changes = []
@@ -255,7 +264,7 @@ def _sandbox_fix(sandbox: Path, fam, target: str, q_patches: list[dict],
                                 "after": r["value"]})
             note = None
         state_p.write_text(json.dumps(state), encoding="utf-8")
-    except (KeyError, TypeError, OSError) as exc:
+    except (KeyError, TypeError, OSError, ValueError, IndexError) as exc:
         return {"ok": False, "error": f"fix failed: {exc}"}
     return {"ok": True, "mode": mode, "changes": changes, "note": note}
 
@@ -263,7 +272,7 @@ def _sandbox_fix(sandbox: Path, fam, target: str, q_patches: list[dict],
 def _get_dotted(state: dict, dotted: str):
     node: Any = state
     for part in dotted.split("."):
-        node = node[part]
+        node = node[int(part)] if isinstance(node, list) else node[part]
     return node
 
 
