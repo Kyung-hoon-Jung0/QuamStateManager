@@ -983,7 +983,9 @@ def _power_map_family(chip, targets, params, corrupt_for, rng, *, is_dip: bool):
         fwhm = qt.res_fwhm if is_dip else qt.q_fwhm
         # punch-out (resonator) / power-broadening (qubit): the feature MOVES
         # with drive, which is the whole reason these nodes exist
-        frac = (power - power.min()) / max(power.ptp(), 1e-9)
+        # np.ptp(arr), not arr.ptp() — the method was removed in numpy 2.x
+        # and the customer stack ships 2.5; the function form works on both
+        frac = (power - power.min()) / max(np.ptp(power), 1e-9)
         ridge = (truth - centre) + (2.5e6 * frac if is_dip
                                     else np.zeros_like(frac))
         width = fwhm * (1.0 + (np.zeros_like(frac) if is_dip else 3.0 * frac))

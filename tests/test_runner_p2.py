@@ -600,7 +600,7 @@ class TestSimFidelity:
         # raw extremum ties across many columns (which is precisely why these
         # families have no honest 1-D localizer, docs/47).
         ridge = detuning[np.argmin(cube, axis=1)]
-        assert ridge.ptp() > 0.0, "flat cube — nothing for the node to fit"
+        assert np.ptp(ridge) > 0.0, "flat cube — nothing for the node to fit"
         a, b, _ = np.polyfit(flux, ridge, 2)
         assert a < 0, "ridge does not curve downward — no sweet spot"
         vertex = float(-b / (2 * a))

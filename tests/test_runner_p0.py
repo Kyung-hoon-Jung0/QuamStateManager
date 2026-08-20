@@ -79,6 +79,17 @@ class TestRunParams:
         assert "RFA.run_params(" in inspect.getsource(FG.main)
         assert "run_params(node)" in inspect.getsource(C.index_run)
 
+    def test_the_replay_runner_uses_it_too(self):
+        # it used raw _deep_find, so params stayed {"model": ..., "schema": ...}
+        # and every knob fell to defaults — a use_state_discrimination=True run
+        # then re-processed its state-only ds_raw through convert_IQ_to_V and
+        # died on KeyError 'I' (the CQT corpus, docs/127)
+        import inspect
+        from quam_state_manager.generator import run_autofit_replay as AR
+        src = inspect.getsource(AR.main)
+        assert "RFA.run_params(" in src
+        assert "_deep_find(node" not in src
+
 
 # ---------------------------------------------------------------------------
 # run_fit_audit: pair derivation (docs/78 §4.6) — from the RUN's record, never

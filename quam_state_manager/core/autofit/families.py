@@ -20,6 +20,8 @@ Each family bundles everything the gate pipeline and the decision policy need:
 """
 from __future__ import annotations
 
+import math as _math
+
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -194,6 +196,13 @@ class FeatureCheck:
     # runs bottom out at 18-79 and the 2-D ones at 4-6. None = the module
     # default, which the 1-D families keep.
     spectral_min: float | None = None
+    # peak/dip modes: per-family prominence-z floor (same §27 argument as
+    # spectral_min — a floor is a claim about the lab's SNR). On the CQT chip
+    # 98 of 318 neighbor-CORROBORATED qubit-spec claims sit below the module
+    # default of 5 (corroborated z bottoms out at 2.35), and z does not
+    # separate right claims from wrong ones anyway — it only answers "is
+    # there a peak at all". None = the module default.
+    z_min: float | None = None
 
 
 @dataclass
@@ -507,8 +516,13 @@ _register(Family(
     # detection is G5's job now that it is actually wired.
     plausibility=[Plausibility("frequency", lo=1e9, hi=12e9, max_abs_jump=200e6,
                                state_path="qubits.{q}.f_01")],
+    # z_min 2.0, corpus-derived (docs/127): this chip's qubit peaks are
+    # legitimately shallow — neighbor-corroborated claims carry prominence z
+    # down to 2.35, and 98 of 318 sat below the default floor of 5, so a
+    # third of confirmed-good fits read as "no signal". Below 2 there are
+    # ZERO corroborated claims: the floor keeps only its honest job.
     feature_check=FeatureCheck(var="IQ_abs", axis_var="full_freq", mode="peak",
-                               claim_key="frequency", tol_fwhm=2.0),
+                               claim_key="frequency", tol_fwhm=2.0, z_min=2.0),
     updates=[UpdateSpec("frequency", "qubits.{q}.f_01", label="Qubit f_01"),
              UpdateSpec("frequency", "qubits.{q}.xy.RF_frequency",
                         label="XY RF frequency")],
@@ -633,19 +647,60 @@ _register(Family(
     label="Ramsey (T2*)",
     kind="qubits",
     value_key="freq_offset",
-    metric_gates=[],
+    # The node's own quality numbers are the detector here — the spectral
+    # check cannot separate a garbage Ramsey from a good one (measured on the
+    # CQT corpus: garbage traces reach peak/median 531 via slow drift while a
+    # fast real fringe bottoms out at 12). snr<1 OR r2<0.3 flags 31 of 483
+    # node-accepted targets and ZERO of the r2≥0.5 ones — suspects only, so
+    # they queue for a look rather than reverting a calibration.
+    metric_gates=[MetricGate("osc_amp_snr", min=1.0,
+                             reason="oscillation amplitude below the noise"),
+                  MetricGate("r2", min=0.30,
+                             reason="the node's own fit explains <30% of "
+                                    "the trace")],
     plausibility=[
-        # a Ramsey offset beyond the artificial detuning scale is a beat/alias
-        Plausibility("freq_offset", lo=-5e6, hi=5e6),
-        Plausibility("decay", lo=0.5e-6, hi=1e-3, max_rel_jump=4.0,
-                     state_path="qubits.{q}.T2ramsey"),
+        # CQT-corpus recalibration (docs/127, the §15.2 method): ±5 MHz fired
+        # on 26 node-accepted offsets, ~20 of them CONFIRMED good (r² up to
+        # 0.997, and the node's own next run shows the correction landing —
+        # q14's 39.8 MHz drift measured, written, and the follow-up reads
+        # 60 kHz). ±50 MHz is the absurdity envelope: it keeps every confirmed
+        # real offset and still rejects the one true monster (an accepted
+        # freq_offset of 9.5e9 with r²=−inf). The garbage fits INSIDE the
+        # envelope (r²≈0, snr≈0) are G3's catch, and measurably are caught.
+        Plausibility("freq_offset", lo=-5e7, hi=5e7),
+        # NO decay band: on 2,655 real runs not one node-REJECTED target
+        # carries a decay value, so the band's entire measured effect was 26
+        # false alarms (§15.2b's jump-limit finding, met again) — the node
+        # accepts a Ramsey whose T2* came out negative/unconstrained because
+        # it gates on the frequency, and G4 killed the whole target over a
+        # secondary write. Write-side honesty lives in the update guard below.
     ],
-    feature_check=FeatureCheck(var="I", axis_var="idle_time", mode="span"),
+    # spectral floor 10, corpus-derived: accepted r2≥0.5 fringes bottom out at
+    # 12.2 (a fast oscillation spreads its power), so the module default of 50
+    # false-rejected 39 good runs. At 10 the check keeps only its honest job —
+    # a provably empty window — and the metric gates above do the judging.
+    feature_check=FeatureCheck(var="I", axis_var="idle_time", mode="span",
+                               spectral_min=10.0),
     updates=[UpdateSpec("freq_offset", "qubits.{q}.f_01",
                         op="subtract_from_current", label="Qubit f_01 (−offset)"),
              UpdateSpec("freq_offset", "qubits.{q}.xy.RF_frequency",
                         op="subtract_from_current", label="XY RF (−offset)"),
-             UpdateSpec("decay", "qubits.{q}.T2ramsey", label="T2*")],
+             # T2* is written only when the fit actually CONSTRAINED it:
+             # positive, physical, and error < value. A negative decay with
+             # error ≥ |value| means "unmeasured in this window" — the node
+             # still corrects the frequency, and so do we; we just never let
+             # a robot write T2ramsey = −29 µs (24 accepted runs carry one).
+             UpdateSpec("decay", "qubits.{q}.T2ramsey", label="T2*",
+                        guard=lambda e, p: (
+                            isinstance(e.get("decay"), (int, float))
+                            and 0.5e-6 <= e["decay"] <= 1e-3
+                            # an ABSENT error field abstains — a generation
+                            # that reports no error bars keeps its writes;
+                            # a PRESENT one must actually constrain the value
+                            and (not isinstance(e.get("decay_error"),
+                                                (int, float))
+                                 or (_math.isfinite(e["decay_error"])
+                                     and e["decay_error"] < e["decay"]))))],
     # ramsey has NO span param — its knobs are shots + the artificial
     # detuning (design-review physics #8)
     adaptations={"noisy": _more_shots, "no_signal": _more_shots,

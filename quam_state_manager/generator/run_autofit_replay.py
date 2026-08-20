@@ -49,9 +49,12 @@ def main() -> int:
     node = RFA._read_node(args.run)
     node_name = (node.get("metadata") or {}).get("name") or os.path.basename(args.run)
     util = args.util or RFA._derive_util(node_name)
-    params = RFA._deep_find(node, "parameters") or {}
-    if not isinstance(params, dict):
-        params = {}
+    # THE single unwrap (run_fit_audit.run_params) — the raw _deep_find hands
+    # back {"model": ..., "schema": ...}, every getattr(params, knob) misses,
+    # and the replay silently runs under TODAY'S defaults: measured on the CQT
+    # corpus, a use_state_discrimination=True run then re-processed its
+    # state-only ds_raw through convert_IQ_to_V and died on KeyError 'I'.
+    params = RFA.run_params(node)
 
     result = {
         "schema": "afreplay/v1", "util": util, "node_name": node_name,

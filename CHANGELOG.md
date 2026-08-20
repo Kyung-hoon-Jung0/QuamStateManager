@@ -504,3 +504,39 @@ per physical line — shared ports show every qubit on them, the hover popup
 shows marker/channel/delay/buffer/shareable/inverted, and a chip with no
 digital wiring renders byte-identically to before. Same drawing in the
 floating wiring panel and the drag-drop preview.
+
+## v0.9.9 (in progress — auto-calibration)
+
+**Verified against a real 2,655-run customer corpus (docs/127).** The whole
+offline verification stack of the auto-calibration loop was executed against
+seven days of a real 20-qubit chip's data — family dispatch, the deterministic
+gates, the lab-analysis refit tier, band derivation, the revert path at
+archive scale, and the replay scorer — and the seven defects it surfaced are
+fixed:
+
+- **Replay runner honored the run's own parameters** — it used a raw deep-find
+  instead of the one `run_params` unwrap, so every knob fell to defaults and a
+  state-discriminated run crashed the refit; the refit now reproduces the
+  stored fit value to the last digit (consumer pin extended).
+- **G3 reads this generation's recordings**: `state` serves the I-families
+  (423 targets were stuck unverifiable), `D` serves the readout-freq-opt
+  check, `state_moving` serves chevron, and pair families read the renamed
+  `qubit` pair-dim (85 targets) — each a verified rename of the same trace.
+- **Ramsey recalibrated by the corpus** (docs/78 §15.2 method): freq_offset
+  band widens to the ±50 MHz absurdity envelope (26 false alarms, ~20
+  confirmed-good corrections among them), the decay band is gone (its entire
+  measured effect was 26 false alarms) with write-honesty moved into a T2*
+  update guard, and judging rides the node's own `osc_amp_snr`/`r2`.
+- **Three-zone feature check**: per-family `z_min` + a sign-agnostic
+  claim-region test in the weak zone (smooth by the feature's width, no
+  look-elsewhere penalty) — 123 false gate-fails on accepted qubit-spec
+  claims became 16 honest flags, while the no-signal corruption stays a hard
+  fail (noise control p99 = 3.2 vs threshold 5).
+- **The sandbox revert walks lists** (confusion_matrix/0/0 — 295 real revert
+  targets died as dict lookups); all 1,755 patch-carrying targets now revert
+  byte-exact, verified against the archive.
+- **numpy-2 `.ptp()`** — the 23 "environmental" cqt-env failures were a real
+  incompatibility; the autofit baseline in the customer env is now 0.
+- **replay_score proven on real retry chains**: 105 sessions, 195 decision
+  points; the deterministic ladder's baseline is 4 runs saved / 52%
+  agreement — the number the model-driven proposer has to beat.
