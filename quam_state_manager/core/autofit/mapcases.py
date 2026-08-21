@@ -98,6 +98,13 @@ MIN_PLATEAU_SLICES = 8
 # How close a rival line must sit to half the run's OWN reported anharmonicity
 # to be called the two-photon partner. A fraction of that anharmonicity, never
 # a frequency: the number comes from the run, so the rule stays chip-independent.
+#
+# Which anharmonicity: the STORED one. The manual advises a person to prefer
+# the run's fitted value, and that advice was tested here rather than adopted
+# on authority — over the 103 targets with a consensus truth it scores 40 right
+# / 15 wrong against the stored value's 41 / 15. No improvement, so no change;
+# the fitted value is emitted on maps that carry nothing at all, which is
+# probably why. Recorded because "the manual said so" is not a measurement.
 TWO_PHOTON_TOLERANCE = 0.25
 
 # The qubit-power maps are read on the rotated projection. Measured against the

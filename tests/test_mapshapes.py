@@ -33,7 +33,8 @@ _ROOT = Path(__file__).resolve().parent.parent
 _FAMS = ("qubit_spectroscopy", "qubit_spectroscopy_vs_flux",
          "resonator_spectroscopy_vs_flux",
          "resonator_spectroscopy_vs_coupler_flux",
-         "resonator_spectroscopy")
+         "resonator_spectroscopy",
+         "qubit_spectroscopy_vs_power")
 
 
 def _write(path: Path, target: str, freq, sweep, z, *, sweep_name="flux_bias",
@@ -221,11 +222,18 @@ class TestSignalsAndTheManualsVocabulary:
         curve_keys = {MC.CURVE_ARCH, MC.CURVE_FULL_SWING, MC.CURVE_MONOTONIC,
                       MC.CURVE_FLAT, MC.CURVE_PARTIAL, MC.CURVE_BROKEN,
                       MC.CURVE_MULTI, MC.CURVE_EMPTY}
+        # a DRIVE-POWER second axis has its own vocabulary: what a power ridge
+        # does along the axis is not a shape the flux words can describe
+        power_keys = {MC.POWER_PLATEAU, MC.POWER_TWO_RIDGES, MC.POWER_NO_ANCHOR,
+                      MC.POWER_TOP_ONLY, MC.POWER_EMPTY}
         for fam in _FAMS:
             smap = set((knowledge.load_family(fam).get("signal_map") or {}))
-            want = (line_keys
-                    if fam in ("qubit_spectroscopy", "resonator_spectroscopy")
-                    else curve_keys)
+            if fam in ("qubit_spectroscopy", "resonator_spectroscopy"):
+                want = line_keys
+            elif fam.endswith("_vs_power"):
+                want = power_keys
+            else:
+                want = curve_keys
             assert want <= smap, (fam, sorted(want - smap))
 
     # Blind agreement is NOT uniform across families, and flattening it into
@@ -235,6 +243,8 @@ class TestSignalsAndTheManualsVocabulary:
     # call about one lineshape rather than a reading error. Pinned per family
     # so the difference stays visible instead of being averaged away.
     _BLIND_FLOOR = {"resonator_spectroscopy": 0.55}
+    # this family's pack reports agreement two ways; the exact-match number is
+    # the one the floor applies to
 
     def test_packs_carry_their_blind_verification_and_lab_span(self):
         for fam in _FAMS:
@@ -527,3 +537,48 @@ class TestTheTwoPhotonPartner:
                             fit={"frequency": centre, "success": True})
         assert MC.FLAG_RECORD_AT_SWEEP_CENTRE in sig.flags
         assert "frequency" not in sig.corrected
+
+
+class TestTheJointFamilysOwnPack:
+    """The power pack is the first that names a companion, because its cases
+    are only half the story without the 1-D manual beside it."""
+
+    def _pack(self):
+        return knowledge.load_family("qubit_spectroscopy_vs_power")
+
+    def test_it_names_its_companion_both_ways(self):
+        assert self._pack()["companion_family"] == "qubit_spectroscopy"
+        other = knowledge.load_family("qubit_spectroscopy")
+        assert other["companion_family"] == "qubit_spectroscopy_vs_power"
+
+    def test_the_joint_cases_live_in_both_manuals(self):
+        a = {c["id"] for c in self._pack()["cases"]
+             if c.get("kind") == "joint_case"}
+        b = {c["id"] for c in knowledge.load_family("qubit_spectroscopy")["cases"]
+             if c.get("kind") == "joint_case"}
+        assert a and a == b
+
+    def test_the_joint_cases_change_no_score(self):
+        """They are documentation for a reader, not dispatch: a case only
+        changes a replay if the family's signal_map names it."""
+        for fam in ("qubit_spectroscopy", "qubit_spectroscopy_vs_power"):
+            pack = knowledge.load_family(fam)
+            named = set((pack.get("signal_map") or {}).values())
+            joint = {c["id"] for c in pack["cases"]
+                     if c.get("kind") == "joint_case"}
+            assert not (named & joint), fam
+
+    def test_it_records_what_the_nodes_own_flags_are_worth(self):
+        lim = self._pack()["measured_limits"]
+        assert "182 of 182" in lim["node_success_is_uninformative"]
+        assert lim["two_photon_prevalence"]
+
+    def test_the_two_photon_offset_is_never_a_number_in_the_manual(self):
+        """Clause B by hand as well as by lint: the offset must be expressed
+        against the anharmonicity the RUN reports."""
+        import re
+        pack = self._pack()
+        text = " ".join(f"{c.get('geometry','')} {c.get('prescription','')}"
+                        for c in pack["cases"])
+        assert not re.search(r"\d+(\.\d+)?\s*(MHz|GHz|dBm)", text, re.I)
+        assert "anharmonicity" in text.lower()

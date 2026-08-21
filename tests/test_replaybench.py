@@ -446,8 +446,13 @@ class TestAMeasuredValueOutranksTheRecord:
     the reader measured it across many slices."""
 
     def test_the_relaxation_is_scoped_to_multi_slice_shapes(self):
+        # every member is a POWER shape whose value came from many swept
+        # powers; no 1-D shape may join, because there the corrected value is
+        # one peak of one trace
         assert RB._MEASURED_ACROSS_SLICES == {MC.POWER_PLATEAU,
-                                              MC.POWER_TWO_RIDGES}
+                                              MC.POWER_TWO_RIDGES,
+                                              MC.POWER_LADDER}
+        assert all(k.startswith("power_") for k in RB._MEASURED_ACROSS_SLICES)
         assert MC.LINE_CLEAN not in RB._MEASURED_ACROSS_SLICES
         assert MC.LINE_FANO not in RB._MEASURED_ACROSS_SLICES
 

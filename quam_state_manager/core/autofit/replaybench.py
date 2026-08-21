@@ -551,7 +551,17 @@ def score(result: Result, key: dict, *, rule: str = "recency") -> dict:
     truth is partly circular.
     """
     family = result.family
+    # A joint replay names itself after every node type it read, joined by
+    # "+", so a straight lookup finds nothing and every target scores as
+    # "adopted no value" — a silent zero that looks like a measurement.
     value_field, sweep_field = MC.VALUE_FIELDS.get(family, (None, None))
+    if value_field is None and "+" in family:
+        for part in family.split("+"):
+            vf, sf = MC.VALUE_FIELDS.get(part, (None, None))
+            if vf:
+                value_field = vf
+                sweep_field = sweep_field or sf
+                break
     term = key.get("termination") or {}
     want_f = term.get("final_frequency")
     want_s = term.get("final_sweep_value")

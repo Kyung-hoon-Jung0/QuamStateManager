@@ -56,7 +56,10 @@ FAMILY_NODES = {
                                "02_resonator_spectroscopy"],
     "resonator_spectroscopy_vs_power": ["05_resonator_spectroscopy_vs_power"],
     "qubit_spectroscopy": ["08_qubit_spectroscopy"],
-    "qubit_spectroscopy_vs_power": ["08b_qubit_spectroscopy_vs_power"],
+    # the joint cases legitimately cite runs of BOTH node types — that is what
+    # makes them joint — so this family resolves either
+    "qubit_spectroscopy_vs_power": ["08b_qubit_spectroscopy_vs_power",
+                                    "08_qubit_spectroscopy"],
     "qubit_spectroscopy_vs_flux": ["09_qubit_spectroscopy_vs_flux",
                                    "03c_qubit_spectroscopy_vs_flux_qdac"],
     "resonator_spectroscopy_vs_flux": ["06_resonator_spectroscopy_vs_flux",
@@ -112,7 +115,12 @@ SWEEP_ON_X = {
 # The qubit-power maps carry almost nothing in the magnitude and a clean line
 # in the rotated projection, so an exemplar rendered from the default would
 # teach a picture the reader never sees.
-FAMILY_VALUE_VARS = {"qubit_spectroscopy_vs_power": ("I_rot",)}
+# The magnitude fallback is REJECTED when reading a value (it costs precision,
+# see mapcases.FAMILY_VALUE_VARS) but allowed when drawing a picture: the 1-D
+# runs a joint case cites do not store the rotated projection in their raw file
+# at all, and the lab's own 1-D figure is the magnitude anyway. Drawing the
+# panel the lab drew is not the same decision as choosing a number from it.
+FAMILY_VALUE_VARS = {"qubit_spectroscopy_vs_power": ("I_rot", "IQ_abs")}
 
 
 def find_run(lab: str, run_no: str, family: str) -> tuple[Path | None, str]:

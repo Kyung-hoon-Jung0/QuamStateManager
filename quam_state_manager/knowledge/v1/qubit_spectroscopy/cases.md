@@ -737,3 +737,129 @@ i. Naming conventions differ completely (q1..q20, q6/q7, qA1/qA2, qC4/qD3). No r
 ## Blind verification
 
 8 of 10 agree. Method: located each run folder via the 'folder' field in b4_qubit_spectroscopy__*.json (runs live under D:\work\dataset\AS_10TQ9TC\ and D:\work\Customer_Codes\CQT\data\), viewed figures.amplitude.png myself — cropping and upscaling the target panel out of the 5x5 20-qubit sheets for #1253/#1254 — and formed a judgment before reading the claimed case. For the two calls that hinged on a marginal feature I additionally re-derived the rotated-I trace from ds_raw.h5 (NetCDF-classic, read via scipy.io.netcdf_file) rather than trusting the eye or the node's own reported SNR. Two disagreements, both in the same direction — the claimed case is more generous to the fit than the figure supports: (1) #27/q7 claimed Q5 weak/broad is really Q2 empty window; the window is pure noise on a slope, every detrended residual is under 3 sigma and scattered, and the fit centre is not even a local maximum in the smoothed residuals, so the reported peak_snr=3.5 is not backed by anything visible. (2) #31/q6 claimed Q1 clean peak is really Q3 edge-clipped; f0 is 4.90 MHz from the left window edge against a 5.94 MHz HWHM, so the half-max point lies outside the sweep and the rising flank is never measured, even though the fit itself is good (r2=0.92) and a maximum is visible. The eight agreements include two over-driven x180 runs (#1242, #1254) where Q7 and Q4 both partly apply; I resolved them on whether the lobes return to baseline between features (they do in #1254 -> Q4, they do not in #1242 -> Q7), and the claimed labels match that rule. No NEW: case was needed — the seven draft cases covered every figure.
+
+## Cases that need the vs-power run beside this one
+
+The drive power a 1-D run measures at is chosen by the vs-power node, and the two-photon partner that a 1-D fit can land on is only identifiable against the anharmonicity that node reports. The joint cases below are shared with that manual.
+
+Shared verbatim with the `qubit_spectroscopy_vs_power` manual. Each is invisible inside a single run.
+
+### J1 — The 1-D fit landed on the two-photon line  (seen 32x)
+
+**Geometry:** A 1-D trace whose fit sits on the tallest, narrowest, cleanest Lorentzian in the window — high SNR, good r-squared, clean shoulders, reproducible on an immediate repeat — and whose centre sits below the map's stationary stem by half the anharmonicity the run reports. At high drive this feature can be the strongest thing in the sweep and the fundamental the smaller peak above it. Nothing inside the 1-D figure or the 1-D record marks it; being properly resolved and Lorentzian does not make it the fundamental.
+
+**Prescription:** Reject and take the feature about half an anharmonicity ABOVE it. Confirm either with the companion map — where the partner exists only above a threshold power and its ef marker lands on it — or with the one-run drop-the-drive test (J2). Never adopt a 1-D fit whose centre moved down by about half an anharmonicity from the previously accepted value, however good the statistics.
+
+**Exemplars:** CQT/#497/q3, CQT/#498/q3, CQT/#1121/q7, SNU_1Q/#47/q9, SNU_1Q/#50/q9, CQT/#692/q6, CQT/#1219/q15, CQT/#1254/q20, CQT/#1431/q20, CQT/#732/q12, CQT/#1253/q11, SNU_1Q/#114/q17
+
+### J2 — The drop-the-drive test — the cheap in-family substitute for a map  (seen 10x)
+
+**Geometry:** Two competing features in one 1-D window. Repeat the identical sweep at a markedly lower drive (a bounded factor of roughly two to ten): the power-grown feature — two-photon partner or companion line — collapses into the noise while the fundamental survives. The mirror observation is equally diagnostic: past the linear regime, RAISING the drive makes the fundamental weaker, and a feature that disappears when you raise the drive was never a fit problem.
+
+**Prescription:** Spend the one run. Adopt the survivor. This costs one 1-D and settles what neither run alone can, and in this corpus it was decisive on four qubits across two labs. Do not read a repeat at the SAME drive as confirmation — nothing changed, so nothing could.
+
+**Exemplars:** SNU_1Q/#48/q9, CQT/#1122/q7, CQT/#958/q14, CQT/#919/q18, CQT/#693/q6, CQT/#1581/q11
+
+### J3 — Power-grown companion at a small fraction of an anharmonicity  (seen 18x)
+
+**Geometry:** A doublet whose separation is far too small to be half an anharmonicity. Both members drift together as the qubit is tuned and keep their spacing. Which member is taller flips with drive — back-to-back runs with nothing changed but the drive can disagree with each other. In the map, one member is present down to the bottom row while the other fades out in the lowest rows and lives inside the high-power flood or the asymmetric side of the fan.
+
+**Prescription:** Adopt the member present at the LOWEST power in the map, or the survivor of the drop-the-drive test. Relative height at a single drive says nothing. Explicitly do NOT reason about this pair as a two-photon pairing — the offset is the wrong size, and in one case the wrong sign as well.
+
+**Exemplars:** CQT/#956/q14, CQT/#971/q14, CQT/#1106/q14, CQT/#1088/q14, CQT/#1071/q10, CQT/#1085/q10, CQT/#1088/q10, IQCC_QOP37/#239/qC2, IQCC_QOP37/#240/qC2, IQCC_QOP37/#241/qC2
+
+### J4 — Fixed spur, proved by what does NOT move  (seen 22x)
+
+**Geometry:** A feature that stays at exactly the same frequency while the qubit's own line moves after a flux change, or that appears in the map as a constant-width vertical stripe at every power beside a real feature that funnels open. In a 1-D trace it is an isolated one- or two-sample spike, frequently taller than the qubit's own resolved line, and at wide spans a forest of such spikes can decide the fit on a few percent of height.
+
+**Prescription:** Dismiss it everywhere, and identify it once from the map so it can be dismissed cheaply thereafter. A two-photon partner is rigidly tied to its fundamental and must travel with it; a spur does not. Prefer the feature with a LINESHAPE over the taller bare spike — a spike narrower than the sweep can resolve cannot be a line. Where the spike forest cannot be resolved, narrow the span rather than argue about heights.
+
+**Exemplars:** CQT/#858/q9, CQT/#859/q9, CQT/#870/q9, IQCC_QOP37/#237/qA3, IQCC_QOP37/#241/qB1, CQT/#649/q11, CQT/#652/q11, CQT/#68/q2, CQT/#261/q4, CQT/#1106/q11
+
+### J5 — The following 1-D plate is the map's report card  (seen 25x)
+
+**Geometry:** The 1-D plate taken at the powers a map just chose. Most panels smooth bowls or ramps with NO FIT, with one panel showing a weak dip exactly at a known line, means the chosen power was BELOW onset. Most panels flat-topped saturated blobs many times wider than the same qubits' narrow lines means it was ABOVE. In one case thirteen of twenty targets failed one minute after a map that had reported success on all twenty and a power warning on only three.
+
+**Prescription:** Read the plate, not the map's flags, to judge the hand-off. Below onset: raise the handed-on power by a bounded step and re-run the 1-D — do not re-run the map. Above onset: lower it. Do not adopt widths or amplitudes from either kind of plate. Also verify the choice actually reached the drive: one 1-D plate was byte-for-byte unchanged from before the map that preceded it by minutes.
+
+**Exemplars:** CQT/#1344/q14, CQT/#1345/q14, CQT/#1345/q5, CQT/#1245/q10, CQT/#1247/q10, CQT/#500/q3, CQT/#42/q2, IQCC_QOP37/#238/qA1, IQCC_QOP37/#416/qC4
+
+### J6 — The map rescues a qubit the 1-D lost  (seen 8x)
+
+**Geometry:** A 1-D run returns NO FIT, or a noise-bin fit, because its window was centred far from the qubit or its drive was too low; a vs_power map minutes later on the same target shows a strong stationary column well off the 1-D sweep centre. In one instance the 1-D panel carried a strong resolved feature climbing out of the window edge and was stamped NO FIT — a miss, not a null.
+
+**Prescription:** Adopt the map's column and re-centre the 1-D window on it. A 1-D null does not mean the qubit is absent; check whether a map exists before repeating the 1-D at higher drive. A null with a strong excursion clipped by a window edge is always a window problem, never a power problem.
+
+**Exemplars:** CQT/#998/q20, CQT/#999/q20, CQT/#803/q13, CQT/#804/q13, CQT/#543/q5, CQT/#544/q5, CQT/#400/q13
+
+### J7 — A failed map's twophoton_freq is still a usable ruler  (seen 1x)
+
+**Geometry:** A vs_power run whose own map contains no measurable line — a readout-saturation boundary and a track that jumps the whole span at every power — still emits twophoton_freq, computed from its unsupported centre and the stored anharmonicity. In the corpus that field landed within a few linewidths of exactly where the five preceding 1-D runs had been locking, and it is the only useful thing the run produced.
+
+**Prescription:** Never adopt such a run's frequency, power, width or anharmonicity. Do use the emitted partner position as a ruler: if your 1-D answer coincides with it, you are sitting on the two-photon line. The same arithmetic can be done by hand from any anharmonicity you trust, so a failed map is not required for the check — only convenient.
+
+**Exemplars:** CQT/#1224/q15, CQT/#1219/q15, CQT/#1215/q15
+
+### J8 — Broadening merges the pair and drags the centre onto the wrong member  (seen 8x)
+
+**Geometry:** In a heavily broadened plate a previously resolved doublet appears as one hump whose apex sits on the power-grown member, with the correct line still visible as a shoulder inside the fitted width. The fitted width has grown to the order of the known splitting. The same mechanism appears on merged two-hump saturated plateaus, where the fitted centre lands in the trough between the two sub-humps rather than on either.
+
+**Prescription:** When the fitted width approaches the known splitting, the centre is no longer a frequency measurement — abstain and re-measure at lower drive. Note the mirror case honestly: on a qubit whose sharper runs had been taking the LOWER companion, merging can accidentally land the merged centre on the true line. That is luck, not a method, and it does not license the broadened plate.
+
+**Exemplars:** CQT/#1125/q14, CQT/#1128/q14, CQT/#1421/q18, CQT/#1239/q10, CQT/#1247/q10, CQT/#1125/q10, CQT/#1128/q10
+
+### J9 — The self-confirming stage — the window re-centres on the wrong answer  (seen 8x)
+
+**Geometry:** Once the wrong member has been written into the state, the next sweep is centred on it, the competitor falls outside the narrowed span, and the answer comes back at the sweep centre with an excellent-looking fit. The complementary version: the window inherited from a wrong value now cuts through a strong structure at its edge, and three consecutive 1-D runs make the identical mistake while the qubit's own line is plainly visible in the same panel, just shorter.
+
+**Prescription:** After any frequency change larger than a linewidth, re-verify once on a span wide enough to still contain the rejected candidate. Narrow the span to RESOLVE, widen it to IDENTIFY. Two or three consecutive identical mistakes mean the window, not the fitter, is the problem — re-centre rather than re-run.
+
+**Exemplars:** CQT/#923/q18, CQT/#1106/q14, CQT/#932/q18, CQT/#642/q10, CQT/#602/q10, CQT/#641/q10, CQT/#682/q10
+
+### J10 — A blank map is not evidence of absence  (seen 8x)
+
+**Geometry:** The map is uniform speckle over a window that provably contains the qubit — because its power ceiling was below the drive at which that qubit becomes visible at all, or because it averaged far fewer shots per point than the 1-D node — while dedicated 1-D runs before or after resolve a line in the same window. In one instance the map stamped sweep_too_hot on a sweep that was too cold from top to bottom.
+
+**Prescription:** Discard the map's centre-return; do not record the qubit as absent. Raise the map's power ceiling or its averaging and re-run, or work that target from the 1-D family. The 1-D node is sometimes the more sensitive instrument of the pair, and a vs_power 'nothing there' does not outrank it.
+
+**Exemplars:** CQT/#1165/q6, CQT/#1141/q6, CQT/#1113/q6, CQT/#1120/q6, SNU_1Q/#116/q17, SNU_1Q/#117/q17, SNU_1Q/#115/q17
+
+### J11 — Two maps of one qubit disagree; the 1-D family arbitrates  (seen 12x)
+
+**Geometry:** Two vs_power runs on the same qubit, minutes apart with identical or near-identical parameters, report frequencies many linewidths apart, or chosen powers most of a sweep range apart. Whichever run had genuine signal in its low-power rows is the one that agrees with the low-drive 1-D runs; the other read a median of noise, or the Stark-dragged branch, or a coarser sampling.
+
+**Prescription:** Never average them. Adopt the one the low-drive 1-D confirms; if neither is confirmed, abstain. Compare their sweep floors and frequency steps first — the coarser-step or higher-floor run is the one that will have reported the hotter power. A single vs_power run in this regime carries no more authority than the 1-D run it is supposed to arbitrate.
+
+**Exemplars:** CQT/#37/q2, CQT/#38/q2, SNU_1Q/#28/q10, SNU_1Q/#22/q10, SNU_1Q/#29/q10, IQCC_QOP37/#255/qD3, IQCC_QOP37/#256/qD3, CQT/#1344/q9, CQT/#1346/q9
+
+### J12 — A narrow-span 1-D cannot exonerate itself  (seen 10x)
+
+**Geometry:** A 1-D sweep whose span is much less than half an anharmonicity wide. The two-photon line is structurally outside the window, so a clean single peak in that panel is no evidence at all about WHICH transition it is — and repeating it four times at the same span produces four identically clean, identically uninformative panels.
+
+**Prescription:** Either widen the 1-D span at least once per qubit until it reaches half an anharmonicity below the candidate, or defer the identity check to the map. Treat a narrow-span clean peak as a REFINEMENT of an identity established elsewhere, never as the identification. Reproducibility at a fixed span is not identification.
+
+**Exemplars:** IQCC_QOP37/#414/qC1, IQCC_QOP37/#17/qA1, CQT/#1215/q15, CQT/#1216/q15, CQT/#923/q18, CQT/#1220/q15
+
+### J13 — The broadened 1-D diagnosed against the map's own intrinsic width  (seen 35x)
+
+**Geometry:** A 1-D hump many times wider than the map's intrinsic width for the same target, recorded successful, with a plausible centre; sometimes the fitted width exceeds the run's own measured data width, meaning the Lorentzian has escaped the feature and is fitting the skirts. A residual narrow spike often still rides on the hump's crest at the true centre. A flat top with steep shoulders is a saturated line, not a Lorentzian at all.
+
+**Prescription:** Keep the frequency, but only to a fraction of the hump width — the scatter between back-to-back repeats in this regime is the honest error bar, and it is coarser than the digits the node reports. Discard the width, the saturation amplitude and the pi-pulse amplitude. The ratio of the 1-D fitted width to the MAP's intrinsic width for the same target is what turns 'this qubit is broad' into 'this measurement was hot'.
+
+**Exemplars:** IQCC_QOP37/#115/qA1, IQCC_QOP37/#236/qA1, IQCC_QOP37/#239/qB2, IQCC_QOP37/#241/qB2, CQT/#1181/q13, CQT/#1125/q20, CQT/#1128/q20, CQT/#718/q7, CQT/#401/q2
+
+### J14 — The handed-on amplitude convicts the pair  (seen 15x)
+
+**Geometry:** The frequency looks fine but the saturation or x180 amplitude the run hands on is far outside the physical output range, orders of magnitude too small, or exactly zero. Upstream this is one of three things: a fit on noise, a fit on a lower ladder member, or a power the map chose badly — in one case a beautiful clean 1-D peak handed on an out-of-range amplitude purely because the vs_power run before it had picked the row where its own track jumped off the fundamental.
+
+**Prescription:** Treat an impossible amplitude as a harder alarm than any fit statistic and refuse to pass it on. Then diagnose which of the three it is: re-check the frequency against the map's stem for a ladder member, and re-derive the power from a map with a measured plateau.
+
+**Exemplars:** CQT/#581/q10, CQT/#1477/q15, CQT/#1620/q15, CQT/#733/q12, CQT/#826/q8, SNU_1Q/#64/q9, SNU_1Q/#104/q15, IQCC_QOP37/#241/qC1
+
+### J15 — Sign flip — the line is there as a DIP  (seen 4x)
+
+**Geometry:** A confident detection followed immediately by NO FIT at the same frequency and the same settings, with the figure showing the largest NEGATIVE excursion of the whole trace exactly where the peak had been. The readout rotation angle came out roughly half a turn away and the peak finder only looks for maxima. On a map, the same effect makes a hump present one run vanish the next while a monotone background slope remains.
+
+**Prescription:** Check the sign before changing anything else. A null immediately after a confident detection at the same frequency is a rotation problem, not a lost qubit and not a power problem. Related whole-batch version: when most panels of one plate show the same monotone baseline ramp, that is a readout condition, not many qubits disappearing at once.
+
+**Exemplars:** CQT/#468/q8, CQT/#469/q8, SNU_1Q/#122/q15, CQT/#1084/q20
