@@ -49,6 +49,9 @@ RETUNE = "retune"
 
 _ACTIONS: dict[str, str] = {
     MC.LINE_CLEAN: ADOPT_FREQ,
+    # a Fano-asymmetric trace still carries a resolved resonance; the flags
+    # decide whether the RECORD found it rather than the companion
+    MC.LINE_FANO: ADOPT_FREQ,
     MC.CURVE_ARCH: ADOPT_BOTH,
     MC.CURVE_FULL_SWING: ADOPT_BOTH,
     # the ridge never turned inside the window, so the frequency it carries is
@@ -113,6 +116,10 @@ def _moves(key: str, params: dict) -> dict:
         return _more_shots(params, 4.0)
     if key == MC.LINE_SPLIT:
         return _softer_drive(params) or _more_shots(params)
+    if key == MC.LINE_FANO:
+        # the notch is there and resolved; what a Fano trace wants is a
+        # narrower window around it so the companion stops dominating
+        return _widen_freq(params, 1 / 3.0)
     if key == MC.CURVE_EMPTY:
         return _widen_freq(params, 3.0) or _more_shots(params)
     if key == MC.CURVE_FLAT:
@@ -210,8 +217,10 @@ def replay(family: str, session: Session, target: str, *,
         reasons = list(sig.reasons)
 
         # flags that veto an adoption outright
-        if MC.FLAG_BATCH_MOSTLY_FAILED in sig.flags or \
-                MC.FLAG_OFF_FEATURE in sig.flags:
+        if (MC.FLAG_BATCH_MOSTLY_FAILED in sig.flags
+                or MC.FLAG_OFF_FEATURE in sig.flags
+                or MC.FLAG_OVER_BROADENED in sig.flags
+                or MC.FLAG_FIT_ON_WRONG_SIDE in sig.flags):
             action = RETUNE
         if action in (ADOPT_FREQ, ADOPT_BOTH) and value_field:
             v = fit.get(value_field)

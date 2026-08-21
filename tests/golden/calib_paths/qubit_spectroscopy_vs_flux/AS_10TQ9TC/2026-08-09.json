@@ -3,6 +3,23 @@
  "family": "qubit_spectroscopy_vs_flux",
  "chip": "AS_10TQ9TC",
  "session": "2026-08-09",
+ "runs": [
+  "#34_09_qubit_spectroscopy_vs_flux_050809",
+  "#35_09_qubit_spectroscopy_vs_flux_051149",
+  "#36_09_qubit_spectroscopy_vs_flux_052344",
+  "#37_09_qubit_spectroscopy_vs_flux_052921",
+  "#38_09_qubit_spectroscopy_vs_flux_053538",
+  "#39_09_qubit_spectroscopy_vs_flux_054428",
+  "#46_09_qubit_spectroscopy_vs_flux_061129",
+  "#47_09_qubit_spectroscopy_vs_flux_061227",
+  "#237_09_qubit_spectroscopy_vs_flux_202229",
+  "#238_09_qubit_spectroscopy_vs_flux_202410",
+  "#239_09_qubit_spectroscopy_vs_flux_202544",
+  "#243_09_qubit_spectroscopy_vs_flux_204914",
+  "#244_09_qubit_spectroscopy_vs_flux_205311",
+  "#245_09_qubit_spectroscopy_vs_flux_205605"
+ ],
+ "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: a key has no opinion about a run its author never examined, and judging against those was worth 12 points.",
  "session_id": "qubit_spectroscopy_vs_flux__AS_10TQ9TC__2026-08-09",
  "authored": "2026-08-21",
  "status": "hindsight-authored + adversarial audit",
@@ -419,22 +436,5 @@
    "confidence": "high",
    "caveats": "The strongest target in the session and the worst-served: four good fits, agreement to 0.47 MHz, and no f_01 / xy.RF_frequency / quad_term / joint_offset write at all. The gap here is a MISSING write, not a wrong one \u2014 an answer key should score adopting-at-#237 as correct and the operator's silence as the error. A single reconfirmation run (#238) would also be a defensible ideal path (length 2) given #237's 30 shots and multiplexed acquisition; it would not change the value, only the confidence route."
   }
- ],
- "runs": [
-  "#34_09_qubit_spectroscopy_vs_flux_050809",
-  "#35_09_qubit_spectroscopy_vs_flux_051149",
-  "#36_09_qubit_spectroscopy_vs_flux_052344",
-  "#37_09_qubit_spectroscopy_vs_flux_052921",
-  "#38_09_qubit_spectroscopy_vs_flux_053538",
-  "#39_09_qubit_spectroscopy_vs_flux_054428",
-  "#46_09_qubit_spectroscopy_vs_flux_061129",
-  "#47_09_qubit_spectroscopy_vs_flux_061227",
-  "#237_09_qubit_spectroscopy_vs_flux_202229",
-  "#238_09_qubit_spectroscopy_vs_flux_202410",
-  "#239_09_qubit_spectroscopy_vs_flux_202544",
-  "#243_09_qubit_spectroscopy_vs_flux_204914",
-  "#244_09_qubit_spectroscopy_vs_flux_205311",
-  "#245_09_qubit_spectroscopy_vs_flux_205605"
- ],
- "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: judging the system on runs the key's author never examined is neither fair nor sound \u2014 it can adopt from a run the key has no opinion about, and the mismatch showed up as a 12-point score difference between two harnesses reading the same archive."
+ ]
 }

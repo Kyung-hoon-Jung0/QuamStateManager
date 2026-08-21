@@ -3,6 +3,22 @@
  "family": "qubit_spectroscopy",
  "chip": "AS_10TQ9TC",
  "session": "2026-08-09",
+ "runs": [
+  "#22_08_qubit_spectroscopy_044933",
+  "#23_08_qubit_spectroscopy_044954",
+  "#25_08_qubit_spectroscopy_045653",
+  "#26_08_qubit_spectroscopy_045721",
+  "#27_08_qubit_spectroscopy_045740",
+  "#28_08_qubit_spectroscopy_045932",
+  "#29_08_qubit_spectroscopy_050005",
+  "#30_08_qubit_spectroscopy_050108",
+  "#31_08_qubit_spectroscopy_050147",
+  "#32_08_qubit_spectroscopy_050601",
+  "#33_08_qubit_spectroscopy_050627",
+  "#45_08_qubit_spectroscopy_061005",
+  "#236_08_qubit_spectroscopy_201850"
+ ],
+ "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: a key has no opinion about a run its author never examined, and judging against those was worth 12 points.",
  "session_id": "qubit_spectroscopy__AS_10TQ9TC__2026-08-09",
  "authored": "2026-08-21",
  "status": "hindsight-authored + adversarial audit",
@@ -442,21 +458,5 @@
    "confidence": "med",
    "caveats": "Only one run covers q8; the value is unreproduced, hence med confidence despite the best statistics in the run. || #236's recorded patch list contains no q8 entries at all. It holds exactly 8 entries (q5 x3, q6 x3, q7 x2, q8 x0) where every 2-qubit run in this session holds 6 (3 per qubit), so the list is truncated in the record rather than the write having been skipped. Do not score q8 as a missed state write on this evidence. || q8's sweep centre came from work outside this file, so the same 'centre chosen elsewhere' reservation as q5 applies; the small fwhm/span ratio (0.092) argues the peak is a real resolved line and not a window-filling degenerate fit."
   }
- ],
- "runs": [
-  "#22_08_qubit_spectroscopy_044933",
-  "#23_08_qubit_spectroscopy_044954",
-  "#25_08_qubit_spectroscopy_045653",
-  "#26_08_qubit_spectroscopy_045721",
-  "#27_08_qubit_spectroscopy_045740",
-  "#28_08_qubit_spectroscopy_045932",
-  "#29_08_qubit_spectroscopy_050005",
-  "#30_08_qubit_spectroscopy_050108",
-  "#31_08_qubit_spectroscopy_050147",
-  "#32_08_qubit_spectroscopy_050601",
-  "#33_08_qubit_spectroscopy_050627",
-  "#45_08_qubit_spectroscopy_061005",
-  "#236_08_qubit_spectroscopy_201850"
- ],
- "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: judging the system on runs the key's author never examined is neither fair nor sound \u2014 it can adopt from a run the key has no opinion about, and the mismatch showed up as a 12-point score difference between two harnesses reading the same archive."
+ ]
 }

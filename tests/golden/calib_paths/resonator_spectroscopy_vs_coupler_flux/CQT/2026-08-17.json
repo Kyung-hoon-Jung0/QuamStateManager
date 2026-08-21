@@ -3,6 +3,18 @@
  "family": "resonator_spectroscopy_vs_coupler_flux",
  "chip": "CQT",
  "session": "2026-08-17",
+ "runs": [
+  "#1174_07_resonator_spectroscopy_vs_coupler_flux_014604",
+  "#1175_07_resonator_spectroscopy_vs_coupler_flux_014702",
+  "#1176_07_resonator_spectroscopy_vs_coupler_flux_014759",
+  "#1177_07_resonator_spectroscopy_vs_coupler_flux_014920",
+  "#1225_07_resonator_spectroscopy_vs_coupler_flux_024116",
+  "#1226_07_resonator_spectroscopy_vs_coupler_flux_024527",
+  "#1238_07_resonator_spectroscopy_vs_coupler_flux_030255",
+  "#1248_07_resonator_spectroscopy_vs_coupler_flux_031541",
+  "#1271_07_resonator_spectroscopy_vs_coupler_flux_041455"
+ ],
+ "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: a key has no opinion about a run its author never examined, and judging against those was worth 12 points.",
  "session_id": "resonator_spectroscopy_vs_coupler_flux__CQT__2026-08-17",
  "authored": "2026-08-21",
  "status": "hindsight-authored + adversarial audit",
@@ -239,17 +251,5 @@
    "confidence": "high",
    "caveats": "Figure read for this run. Single-run, but the flatness claim is carried by 101 flux points and is independently corroborated for the same resonator by #1225. What this run does NOT establish is anything about q18 (never probed) or whether the q14-18 coupler line is actually being driven."
   }
- ],
- "runs": [
-  "#1174_07_resonator_spectroscopy_vs_coupler_flux_014604",
-  "#1175_07_resonator_spectroscopy_vs_coupler_flux_014702",
-  "#1176_07_resonator_spectroscopy_vs_coupler_flux_014759",
-  "#1177_07_resonator_spectroscopy_vs_coupler_flux_014920",
-  "#1225_07_resonator_spectroscopy_vs_coupler_flux_024116",
-  "#1226_07_resonator_spectroscopy_vs_coupler_flux_024527",
-  "#1238_07_resonator_spectroscopy_vs_coupler_flux_030255",
-  "#1248_07_resonator_spectroscopy_vs_coupler_flux_031541",
-  "#1271_07_resonator_spectroscopy_vs_coupler_flux_041455"
- ],
- "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: judging the system on runs the key's author never examined is neither fair nor sound \u2014 it can adopt from a run the key has no opinion about, and the mismatch showed up as a 12-point score difference between two harnesses reading the same archive."
+ ]
 }

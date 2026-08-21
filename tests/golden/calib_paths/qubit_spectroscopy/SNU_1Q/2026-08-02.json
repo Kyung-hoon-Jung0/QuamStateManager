@@ -3,6 +3,25 @@
  "family": "qubit_spectroscopy",
  "chip": "SNU_1Q",
  "session": "2026-08-02",
+ "runs": [
+  "#47_08_qubit_spectroscopy_222205",
+  "#48_08_qubit_spectroscopy_222234",
+  "#49_08_qubit_spectroscopy_222345",
+  "#50_08_qubit_spectroscopy_222449",
+  "#51_08_qubit_spectroscopy_222512",
+  "#52_08_qubit_spectroscopy_222641",
+  "#53_08_qubit_spectroscopy_222659",
+  "#54_08_qubit_spectroscopy_222719",
+  "#55_08_qubit_spectroscopy_222913",
+  "#64_08_qubit_spectroscopy_230131",
+  "#67_08_qubit_spectroscopy_231355",
+  "#68_08_qubit_spectroscopy_231823",
+  "#71_08_qubit_spectroscopy_235157",
+  "#72_08_qubit_spectroscopy_235240",
+  "#73_08_qubit_spectroscopy_235753",
+  "#74_08_qubit_spectroscopy_235908"
+ ],
+ "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: a key has no opinion about a run its author never examined, and judging against those was worth 12 points.",
  "session_id": "qubit_spectroscopy__SNU_1Q__2026-08-02",
  "authored": "2026-08-21",
  "status": "hindsight-authored + adversarial audit",
@@ -359,24 +378,5 @@
    "confidence": "high",
    "caveats": "q10's story is simple in both regimes - one decisive run each (#47 and #71), both verified by eye in the run figures - so the ideal path is short and well evidenced. Two reservations: (1) the final value rests on a single run with no lower-drive confirm, at operation_amplitude_factor 1.0 where FWHM 2.74 MHz is close to the 3.0 MHz target, so I hold value_confidence at med rather than high; (2) runs #49-#55 were multiplexed passengers driven by q9's troubles, so calling them 'wasted' for q10 means 'should not have influenced q10's held value', not 'cost extra beam time'. The origin of the priors at #64 (6.0574 GHz), #68 (5.4574 GHz) and #71 (5.44805 GHz) is inferred from the interleaved 09/08b runs visible in the folder listing, not read from those runs' records. The strong high-r2 candidates in #64/#67/#68 are real spectral features of something, but hindsight (convergence at 5.4483 GHz) plus their mutual inconsistency rules them out as q10's f_01."
   }
- ],
- "runs": [
-  "#47_08_qubit_spectroscopy_222205",
-  "#48_08_qubit_spectroscopy_222234",
-  "#49_08_qubit_spectroscopy_222345",
-  "#50_08_qubit_spectroscopy_222449",
-  "#51_08_qubit_spectroscopy_222512",
-  "#52_08_qubit_spectroscopy_222641",
-  "#53_08_qubit_spectroscopy_222659",
-  "#54_08_qubit_spectroscopy_222719",
-  "#55_08_qubit_spectroscopy_222913",
-  "#64_08_qubit_spectroscopy_230131",
-  "#67_08_qubit_spectroscopy_231355",
-  "#68_08_qubit_spectroscopy_231823",
-  "#71_08_qubit_spectroscopy_235157",
-  "#72_08_qubit_spectroscopy_235240",
-  "#73_08_qubit_spectroscopy_235753",
-  "#74_08_qubit_spectroscopy_235908"
- ],
- "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: judging the system on runs the key's author never examined is neither fair nor sound \u2014 it can adopt from a run the key has no opinion about, and the mismatch showed up as a 12-point score difference between two harnesses reading the same archive."
+ ]
 }

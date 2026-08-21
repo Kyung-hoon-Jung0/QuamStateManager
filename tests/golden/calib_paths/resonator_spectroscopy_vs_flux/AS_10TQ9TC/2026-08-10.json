@@ -3,6 +3,16 @@
  "family": "resonator_spectroscopy_vs_flux",
  "chip": "AS_10TQ9TC",
  "session": "2026-08-10",
+ "runs": [
+  "#308_06_resonator_spectroscopy_vs_flux_082351",
+  "#311_06_resonator_spectroscopy_vs_flux_083211",
+  "#330_06_resonator_spectroscopy_vs_flux_093400",
+  "#331_06_resonator_spectroscopy_vs_flux_093544",
+  "#332_06_resonator_spectroscopy_vs_flux_093652",
+  "#334_06_resonator_spectroscopy_vs_flux_094025",
+  "#337_06_resonator_spectroscopy_vs_flux_094239"
+ ],
+ "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: a key has no opinion about a run its author never examined, and judging against those was worth 12 points.",
  "session_id": "resonator_spectroscopy_vs_flux__AS_10TQ9TC__2026-08-10",
  "authored": "2026-08-21",
  "status": "hindsight-authored + adversarial audit",
@@ -538,15 +548,5 @@
    "confidence": "high",
    "caveats": "q8 write attribution comes from frequency_shift arithmetic, not from the patches array, which lists only q5/q6 for this session; I cannot tell whether q8's z/joint_offset was ever written. Only three successful q8 measurements exist (#308, #311, #334, #337 minus the survey = three at 200 shots), so the 33 mV sweep-value agreement rests on fewer points than for the other targets, even though it is the tightest. m_pH is NaN throughout, so phi0_current was never produced."
   }
- ],
- "runs": [
-  "#308_06_resonator_spectroscopy_vs_flux_082351",
-  "#311_06_resonator_spectroscopy_vs_flux_083211",
-  "#330_06_resonator_spectroscopy_vs_flux_093400",
-  "#331_06_resonator_spectroscopy_vs_flux_093544",
-  "#332_06_resonator_spectroscopy_vs_flux_093652",
-  "#334_06_resonator_spectroscopy_vs_flux_094025",
-  "#337_06_resonator_spectroscopy_vs_flux_094239"
- ],
- "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: judging the system on runs the key's author never examined is neither fair nor sound \u2014 it can adopt from a run the key has no opinion about, and the mismatch showed up as a 12-point score difference between two harnesses reading the same archive."
+ ]
 }

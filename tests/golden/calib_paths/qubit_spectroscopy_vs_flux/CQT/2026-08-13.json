@@ -3,6 +3,23 @@
  "family": "qubit_spectroscopy_vs_flux",
  "chip": "CQT",
  "session": "2026-08-13",
+ "runs": [
+  "#13_09_qubit_spectroscopy_vs_flux_171423",
+  "#14_09_qubit_spectroscopy_vs_flux_171503",
+  "#15_09_qubit_spectroscopy_vs_flux_171600",
+  "#16_09_qubit_spectroscopy_vs_flux_171639",
+  "#35_09_qubit_spectroscopy_vs_flux_172900",
+  "#36_09_qubit_spectroscopy_vs_flux_173001",
+  "#43_09_qubit_spectroscopy_vs_flux_174003",
+  "#44_09_qubit_spectroscopy_vs_flux_174107",
+  "#148_09_qubit_spectroscopy_vs_flux_134900",
+  "#149_09_qubit_spectroscopy_vs_flux_135030",
+  "#150_09_qubit_spectroscopy_vs_flux_135149",
+  "#186_09_qubit_spectroscopy_vs_flux_205520",
+  "#187_09_qubit_spectroscopy_vs_flux_205746",
+  "#201_09_qubit_spectroscopy_vs_flux_212613"
+ ],
+ "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: a key has no opinion about a run its author never examined, and judging against those was worth 12 points.",
  "session_id": "qubit_spectroscopy_vs_flux__CQT__2026-08-13",
  "authored": "2026-08-21",
  "status": "hindsight-authored + adversarial audit",
@@ -246,22 +263,5 @@
    "confidence": "high",
    "caveats": "The verdict rests on the inspected figure; from the record alone the run reads as a success. Only one run exists, so no cross-run corroboration is possible and the derived pre-existing f_01 is arithmetic on this single record, not an independent measurement. Resolving q14 requires runs that do not exist in this session."
   }
- ],
- "runs": [
-  "#13_09_qubit_spectroscopy_vs_flux_171423",
-  "#14_09_qubit_spectroscopy_vs_flux_171503",
-  "#15_09_qubit_spectroscopy_vs_flux_171600",
-  "#16_09_qubit_spectroscopy_vs_flux_171639",
-  "#35_09_qubit_spectroscopy_vs_flux_172900",
-  "#36_09_qubit_spectroscopy_vs_flux_173001",
-  "#43_09_qubit_spectroscopy_vs_flux_174003",
-  "#44_09_qubit_spectroscopy_vs_flux_174107",
-  "#148_09_qubit_spectroscopy_vs_flux_134900",
-  "#149_09_qubit_spectroscopy_vs_flux_135030",
-  "#150_09_qubit_spectroscopy_vs_flux_135149",
-  "#186_09_qubit_spectroscopy_vs_flux_205520",
-  "#187_09_qubit_spectroscopy_vs_flux_205746",
-  "#201_09_qubit_spectroscopy_vs_flux_212613"
- ],
- "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: judging the system on runs the key's author never examined is neither fair nor sound \u2014 it can adopt from a run the key has no opinion about, and the mismatch showed up as a 12-point score difference between two harnesses reading the same archive."
+ ]
 }

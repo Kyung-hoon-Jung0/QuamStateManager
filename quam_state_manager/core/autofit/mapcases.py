@@ -37,6 +37,7 @@ LINE_EDGE = "line_edge_clipped"
 LINE_MULTI = "line_multi_feature"
 LINE_WEAK = "line_weak_broad"
 LINE_SPLIT = "line_split_flat_top"
+LINE_FANO = "line_fano_asymmetric"
 
 # a swept curve (flux, coupler flux)
 CURVE_ARCH = "curve_arch_vertex_inside"
@@ -58,10 +59,19 @@ FLAG_ACCEPTED_EMPTY = "accepted_an_empty_map"
 FLAG_BATCH_MOSTLY_FAILED = "batch_mostly_failed"
 FLAG_UNSTABLE = "unstable_across_identical_runs"
 FLAG_LOW_COVERAGE = "ridge_lost_over_much_of_the_sweep"
+FLAG_FIT_ON_WRONG_SIDE = "fit_on_the_companion_not_the_notch"
+FLAG_OVER_BROADENED = "line_far_wider_than_the_node_asked_for"
+# How many times its own declared target width a line may be before its
+# centre stops being worth adopting. The node states the target it is trying
+# to reach (``target_peak_width``), so this is the node's own yardstick and
+# not a constant invented here; the factor is deliberately generous, because
+# the failure it catches is 5-16x, not 3.1x.
+BROADEN_FACTOR = 3.0
 
 # Which fit field carries the frequency answer, and which carries the swept
 # value the node picked. Both are family facts, taken from the records.
 VALUE_FIELDS = {
+    "resonator_spectroscopy": ("frequency", None),
     "qubit_spectroscopy": ("frequency", None),
     "qubit_spectroscopy_vs_flux": ("qubit_frequency", "idle_offset"),
     "resonator_spectroscopy_vs_flux": ("resonator_frequency", "idle_offset"),
@@ -72,6 +82,19 @@ SWEEP_PARAM_RANGE = {
     "resonator_spectroscopy_vs_flux": ("min_flux_offset_in_v", "max_flux_offset_in_v"),
     "resonator_spectroscopy_vs_coupler_flux": ("min_flux_offset_in_v",
                                                "max_flux_offset_in_v"),
+}
+
+
+# Where the PHYSICS fixes which way the feature points, it is not measured.
+# A readout resonator watched in |I+iQ| is a transmission notch, always — and
+# on a Fano-asymmetric trace the tallest excursion is the COMPANION peak, not
+# the resonance, so letting the orientation probe choose puts the reader on
+# the wrong feature (measured: one lab's entire 1-D readout set read as
+# "peak"). Families whose value is a rotated projection keep measuring their
+# sign, because there it really is a convention — and it differs between labs
+# and between qubits within one run.
+FAMILY_SIGN: dict[str, int] = {
+    "resonator_spectroscopy": -1,
 }
 
 
@@ -100,12 +123,22 @@ def signal_for(family: str, folder, target: str, *, fit: dict | None = None,
     if cube is None:
         return ShapeSignal(key=None, confidence="low",
                            reasons=["raw map unreadable — nothing to read"])
-    sign = MS.orient(cube)
+    forced = FAMILY_SIGN.get(family)
+    sign = forced if forced is not None else MS.orient(cube)
     sig = ShapeSignal(key=None)
     sig.measured["feature"] = "dip" if sign < 0 else "peak"
+    sig.measured["sign_source"] = "physics" if forced is not None else "measured"
 
     if cube.n_sweep <= 1:
         _line(cube, sign, fit, sig)
+        if forced is not None:
+            # The companion check belongs to the families whose feature
+            # direction is fixed by physics — that is where "the tallest
+            # excursion is not the resonance" is a KNOWN hazard. On a rotated
+            # projection an opposite-sign excursion nearby is ordinary
+            # background structure, and treating it as a Fano partner turned
+            # clean qubit lines into an unnameable case.
+            _companion(cube, sign, fit, sig)
     else:
         _curve(cube, sign, fit, params, family, sig)
 
@@ -123,8 +156,8 @@ def signal_for(family: str, folder, target: str, *, fit: dict | None = None,
 def _disagrees(a: str, b: str) -> bool:
     """A readable/unreadable flip between consecutive runs is instability;
     two shades of readable are not."""
-    good = {LINE_CLEAN, CURVE_ARCH, CURVE_FULL_SWING, CURVE_MONOTONIC,
-            CURVE_MULTI}
+    good = {LINE_CLEAN, LINE_FANO, CURVE_ARCH, CURVE_FULL_SWING,
+            CURVE_MONOTONIC, CURVE_MULTI}
     bad = {LINE_EMPTY, CURVE_EMPTY, CURVE_FLAT, LINE_WEAK}
     return (a in good and b in bad) or (a in bad and b in good)
 
@@ -175,6 +208,44 @@ def _line(cube, sign, fit, sig: ShapeSignal) -> None:
             sig.reasons.append("the claimed frequency sits several linewidths "
                                "off the feature the map carries")
             sig.corrected["frequency"] = seen_hz
+
+
+def _companion(cube, sign, fit, sig: ShapeSignal) -> None:
+    """A Fano-asymmetric line: the resonance notch with a comparable or larger
+    excursion of the OPPOSITE sense immediately beside it.
+
+    Worth its own name rather than folding into "multi-feature": it is ONE
+    resonance, not two features, and the danger it carries is specific — the
+    companion is frequently the taller thing in the panel, so any rule that
+    reaches for the largest excursion lands on it. Recording where the
+    companion sits is what lets the flag below say whether the record fell
+    for it, and hand back the notch instead.
+    """
+    ln = MS.shape_line(cube, sign=sign)
+    other = MS.shape_line(cube, sign=-sign)
+    if ln.pos_px is None or other.pos_px is None:
+        return
+    gap = abs(other.pos_px - ln.pos_px)
+    if not (gap <= max(4.0, 4.0 * max(1.0, ln.width_px))
+            and other.depth_z >= 0.5 * ln.depth_z):
+        return
+    sig.measured["companion_px"] = other.pos_px
+    sig.measured["companion_depth_z"] = round(other.depth_z, 2)
+    if sig.key in (LINE_CLEAN, LINE_MULTI, LINE_WEAK):
+        sig.key = LINE_FANO
+        sig.reasons.append("a notch with a comparable excursion of the "
+                           "opposite sense immediately beside it — one "
+                           "asymmetric resonance, not two features")
+    claim = _num(fit.get("frequency"))
+    comp_hz = cube.freq_at(other.pos_px)
+    seen_hz = cube.freq_at(ln.pos_px)
+    if (claim is not None and comp_hz is not None and seen_hz is not None
+            and abs(claim - comp_hz) < abs(claim - seen_hz)):
+        sig.flags.append(FLAG_FIT_ON_WRONG_SIDE)
+        sig.reasons.append("the claimed frequency sits closer to the "
+                           "companion than to the notch — the taller "
+                           "excursion is not the resonance")
+        sig.corrected["frequency"] = seen_hz
 
 
 def _curve(cube, sign, fit, params, family, sig: ShapeSignal) -> None:
@@ -278,6 +349,21 @@ def _common_flags(family, cube, fit, params, outcomes, sig: ShapeSignal) -> None
                                    f"edge of the swept range, where the sweep "
                                    f"could not see past it")
 
+    # A line far wider than the node's own declared target is power-broadened,
+    # and a broadened Lorentzian's centre is worth a fraction of what a
+    # resolved one's is. Measured on a real session: at full drive every qubit
+    # on the chip came back 5-16x the target width, and one of those centres
+    # was 30 MHz from where two low-drive sweeps agreed. The node states the
+    # target, so this compares the run against its own intent.
+    fwhm = _num(fit.get("fwhm"))
+    target = _num(params.get("target_peak_width"))
+    if fwhm is not None and target and fwhm > BROADEN_FACTOR * target:
+        sig.flags.append(FLAG_OVER_BROADENED)
+        sig.measured["fwhm_over_target"] = round(fwhm / target, 1)
+        sig.reasons.append(f"the fitted line is {fwhm / target:.0f}x the width "
+                           f"this node was asked to reach — power-broadened, "
+                           f"and its centre is worth correspondingly less")
+
     # the record's own admission
     if fit.get("vertex_extrapolated") is True:
         sig.flags.append(FLAG_EXTRAPOLATED)
@@ -285,8 +371,8 @@ def _common_flags(family, cube, fit, params, outcomes, sig: ShapeSignal) -> None
                            "fitted outside the swept range")
 
     success = fit.get("success")
-    readable = sig.key in (LINE_CLEAN, CURVE_ARCH, CURVE_FULL_SWING,
-                           CURVE_MONOTONIC, CURVE_MULTI)
+    readable = sig.key in (LINE_CLEAN, LINE_FANO, CURVE_ARCH,
+                           CURVE_FULL_SWING, CURVE_MONOTONIC, CURVE_MULTI)
     if success is False and readable:
         sig.flags.append(FLAG_REFUSED_READABLE)
         sig.reasons.append("the node refused a map that carries a readable "

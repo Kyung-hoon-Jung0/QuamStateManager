@@ -267,3 +267,93 @@ class TestExemplarsForEveryFamily:
                          .read_text(encoding="utf-8"))
         two_d = [r for r in idx["rendered"] if "sweep_on_x" in r]
         assert two_d and not any(r["sweep_on_x"] for r in two_d)
+
+
+class TestJudgingARunAgainstItsOwnIntent:
+    """Two checks that need no invented constant, because the node states the
+    thing they compare against."""
+
+    def _line_folder(self, tmp_path, *, n=400, depth=25.0, width=6.0,
+                     pos=200.0, companion=None, seed=3):
+        rng = np.random.default_rng(seed)
+        f = np.arange(n)
+        y = 10.0 + 2.0 * (f / n) - depth * np.exp(-0.5 * ((f - pos) / width) ** 2)
+        if companion:
+            cp, ch, cw = companion
+            y += ch * np.exp(-0.5 * ((f - cp) / cw) ** 2)
+        y += rng.normal(0, 1.0, n)
+        d = tmp_path / "f"
+        d.mkdir(exist_ok=True)
+        _write(d / "ds_raw.h5", "q1", f.astype(float) * 1e5 + 4e9, None, y)
+        return d, f.astype(float) * 1e5 + 4e9
+
+    def test_a_line_far_wider_than_the_node_asked_for_is_flagged(self, tmp_path):
+        d, _ = self._line_folder(tmp_path)
+        sig = MC.signal_for("qubit_spectroscopy", d, "q1",
+                            fit={"frequency": 4.02e9, "fwhm": 30e6,
+                                 "success": True},
+                            params={"target_peak_width": 3e6})
+        assert MC.FLAG_OVER_BROADENED in sig.flags
+        assert sig.measured["fwhm_over_target"] == 10.0
+
+    def test_a_line_at_the_asked_width_is_not_flagged(self, tmp_path):
+        d, _ = self._line_folder(tmp_path)
+        sig = MC.signal_for("qubit_spectroscopy", d, "q1",
+                            fit={"frequency": 4.02e9, "fwhm": 3.4e6,
+                                 "success": True},
+                            params={"target_peak_width": 3e6})
+        assert MC.FLAG_OVER_BROADENED not in sig.flags
+
+    def test_without_a_declared_target_nothing_is_asserted(self, tmp_path):
+        d, _ = self._line_folder(tmp_path)
+        sig = MC.signal_for("qubit_spectroscopy", d, "q1",
+                            fit={"frequency": 4.02e9, "fwhm": 30e6},
+                            params={})
+        assert MC.FLAG_OVER_BROADENED not in sig.flags, \
+            "the yardstick is the node's own parameter, never a constant"
+
+    def test_the_resonator_sign_comes_from_physics_not_measurement(self, tmp_path):
+        """A readout resonator in |I+iQ| is a notch. On a Fano trace the
+        companion peak is the taller thing, and measuring the sign puts the
+        reader on it."""
+        d, freq = self._line_folder(tmp_path, depth=20.0,
+                                    companion=(170.0, 40.0, 6.0))
+        sig = MC.signal_for("resonator_spectroscopy", d, "q1",
+                            fit={"frequency": float(freq[200])})
+        assert sig.measured["feature"] == "dip"
+        assert sig.measured["sign_source"] == "physics"
+        assert sig.key == MC.LINE_FANO, sig.reasons
+
+    def test_a_fit_on_the_companion_is_named_and_corrected(self, tmp_path):
+        d, freq = self._line_folder(tmp_path, depth=20.0,
+                                    companion=(170.0, 40.0, 6.0))
+        sig = MC.signal_for("resonator_spectroscopy", d, "q1",
+                            fit={"frequency": float(freq[170])})
+        assert MC.FLAG_FIT_ON_WRONG_SIDE in sig.flags
+        assert abs(sig.corrected["frequency"] - freq[200]) < 3e5
+
+    def test_a_rotated_projection_keeps_measuring_its_sign(self, tmp_path):
+        """The companion check belongs only to the families whose direction is
+        fixed by physics; on a rotated projection a nearby opposite excursion
+        is ordinary background, and calling it Fano made clean qubit lines
+        unnameable."""
+        d, freq = self._line_folder(tmp_path, depth=20.0,
+                                    companion=(170.0, 40.0, 6.0))
+        sig = MC.signal_for("qubit_spectroscopy", d, "q1",
+                            fit={"frequency": float(freq[200])})
+        assert sig.measured["sign_source"] == "measured"
+        assert sig.key != MC.LINE_FANO
+
+    def test_the_rf_frequency_axis_spelling_is_read(self, tmp_path):
+        """One lab names the absolute frequency axis RF_frequency; without it
+        that lab's entire 1-D readout set read as unreadable."""
+        h5py = pytest.importorskip("h5py")
+        d = tmp_path / "g"
+        d.mkdir()
+        y = 10.0 - 20.0 * np.exp(-0.5 * ((np.arange(300) - 150.0) / 5.0) ** 2)
+        with h5py.File(d / "ds_raw.h5", "w") as f:
+            f["qubit"] = np.array([b"qA1"])
+            f["IQ_abs"] = y[None, :]
+            f["RF_frequency"] = np.arange(300).astype(float) * 1e5 + 7e9
+        cube = MS.read_cube(d, "qA1")
+        assert cube is not None and cube.n_freq == 300

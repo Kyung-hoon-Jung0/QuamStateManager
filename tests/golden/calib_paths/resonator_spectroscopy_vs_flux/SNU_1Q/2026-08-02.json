@@ -3,6 +3,16 @@
  "family": "resonator_spectroscopy_vs_flux",
  "chip": "SNU_1Q",
  "session": "2026-08-02",
+ "runs": [
+  "#6_06_resonator_spectroscopy_vs_flux_162317",
+  "#7_06_resonator_spectroscopy_vs_flux_162458",
+  "#9_06_resonator_spectroscopy_vs_flux_173425",
+  "#10_06_resonator_spectroscopy_vs_flux_173913",
+  "#18_06_resonator_spectroscopy_vs_flux_181825",
+  "#25_06_resonator_spectroscopy_vs_flux_184132",
+  "#26_06_resonator_spectroscopy_vs_flux_185020"
+ ],
+ "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: a key has no opinion about a run its author never examined, and judging against those was worth 12 points.",
  "session_id": "resonator_spectroscopy_vs_flux__SNU_1Q__2026-08-02",
  "authored": "2026-08-21",
  "status": "hindsight-authored + adversarial audit",
@@ -710,15 +720,5 @@
    "confidence": "high",
    "caveats": "None material."
   }
- ],
- "runs": [
-  "#6_06_resonator_spectroscopy_vs_flux_162317",
-  "#7_06_resonator_spectroscopy_vs_flux_162458",
-  "#9_06_resonator_spectroscopy_vs_flux_173425",
-  "#10_06_resonator_spectroscopy_vs_flux_173913",
-  "#18_06_resonator_spectroscopy_vs_flux_181825",
-  "#25_06_resonator_spectroscopy_vs_flux_184132",
-  "#26_06_resonator_spectroscopy_vs_flux_185020"
- ],
- "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: judging the system on runs the key's author never examined is neither fair nor sound \u2014 it can adopt from a run the key has no opinion about, and the mismatch showed up as a 12-point score difference between two harnesses reading the same archive."
+ ]
 }

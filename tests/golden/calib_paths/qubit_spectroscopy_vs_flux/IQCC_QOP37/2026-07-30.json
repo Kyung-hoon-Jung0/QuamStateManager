@@ -3,6 +3,23 @@
  "family": "qubit_spectroscopy_vs_flux",
  "chip": "IQCC_QOP37",
  "session": "2026-07-30",
+ "runs": [
+  "#419_09_qubit_spectroscopy_vs_flux_200050",
+  "#420_09_qubit_spectroscopy_vs_flux_200246",
+  "#421_09_qubit_spectroscopy_vs_flux_200530",
+  "#422_09_qubit_spectroscopy_vs_flux_200712",
+  "#423_09_qubit_spectroscopy_vs_flux_201239",
+  "#424_09_qubit_spectroscopy_vs_flux_201916",
+  "#425_09_qubit_spectroscopy_vs_flux_202555",
+  "#426_09_qubit_spectroscopy_vs_flux_203154",
+  "#430_09_qubit_spectroscopy_vs_flux_213953",
+  "#431_09_qubit_spectroscopy_vs_flux_214136",
+  "#432_09_qubit_spectroscopy_vs_flux_215718",
+  "#433_09_qubit_spectroscopy_vs_flux_222504",
+  "#434_09_qubit_spectroscopy_vs_flux_222929",
+  "#437_09_qubit_spectroscopy_vs_flux_224507"
+ ],
+ "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: a key has no opinion about a run its author never examined, and judging against those was worth 12 points.",
  "session_id": "qubit_spectroscopy_vs_flux__IQCC_QOP37__2026-07-30",
  "authored": "2026-08-21",
  "status": "hindsight-authored + adversarial audit",
@@ -897,22 +914,5 @@
    "confidence": "high",
    "caveats": "Unresolved inside this session file, confidently so (14/14 no-fit). The faint ridge in #437's qC5 panel is my only in-scope evidence that the qubit responds at all; I read it off the figure and deliberately do not turn it into a number. Out of scope and flagged as such: #440 the same night (span 60 MHz, step 0.2, 41 flux points, amplitude 1.0, num_shots 60 - the only run of the night with more than 20 shots) fits qC5 at 5,740,459,925 Hz with idle_offset +0.002191 V and a 214 kHz shift, matching the faint ridge's position and confirming that num_shots was the missing knob. qC5 is the strictest case in the session: it needed 3x the shots AND the finer sampling, whereas qC4 came back at #439 on sampling alone."
   }
- ],
- "runs": [
-  "#419_09_qubit_spectroscopy_vs_flux_200050",
-  "#420_09_qubit_spectroscopy_vs_flux_200246",
-  "#421_09_qubit_spectroscopy_vs_flux_200530",
-  "#422_09_qubit_spectroscopy_vs_flux_200712",
-  "#423_09_qubit_spectroscopy_vs_flux_201239",
-  "#424_09_qubit_spectroscopy_vs_flux_201916",
-  "#425_09_qubit_spectroscopy_vs_flux_202555",
-  "#426_09_qubit_spectroscopy_vs_flux_203154",
-  "#430_09_qubit_spectroscopy_vs_flux_213953",
-  "#431_09_qubit_spectroscopy_vs_flux_214136",
-  "#432_09_qubit_spectroscopy_vs_flux_215718",
-  "#433_09_qubit_spectroscopy_vs_flux_222504",
-  "#434_09_qubit_spectroscopy_vs_flux_222929",
-  "#437_09_qubit_spectroscopy_vs_flux_224507"
- ],
- "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: judging the system on runs the key's author never examined is neither fair nor sound \u2014 it can adopt from a run the key has no opinion about, and the mismatch showed up as a 12-point score difference between two harnesses reading the same archive."
+ ]
 }

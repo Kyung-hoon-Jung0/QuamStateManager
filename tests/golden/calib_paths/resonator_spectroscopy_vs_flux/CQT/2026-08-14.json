@@ -3,6 +3,27 @@
  "family": "resonator_spectroscopy_vs_flux",
  "chip": "CQT",
  "session": "2026-08-14",
+ "runs": [
+  "#235_02e_resonator_spectroscopy_vs_flux_qdac_080732",
+  "#236_02e_resonator_spectroscopy_vs_flux_qdac_080819",
+  "#238_02e_resonator_spectroscopy_vs_flux_qdac_082551",
+  "#239_02e_resonator_spectroscopy_vs_flux_qdac_083002",
+  "#240_02e_resonator_spectroscopy_vs_flux_qdac_083306",
+  "#241_02e_resonator_spectroscopy_vs_flux_qdac_083427",
+  "#242_02e_resonator_spectroscopy_vs_flux_qdac_083524",
+  "#244_02e_resonator_spectroscopy_vs_flux_qdac_084012",
+  "#245_02e_resonator_spectroscopy_vs_flux_qdac_084043",
+  "#246_02e_resonator_spectroscopy_vs_flux_qdac_084220",
+  "#257_06_resonator_spectroscopy_vs_flux_092518",
+  "#274_02e_resonator_spectroscopy_vs_flux_qdac_094338",
+  "#275_02e_resonator_spectroscopy_vs_flux_qdac_094428",
+  "#323_02e_resonator_spectroscopy_vs_flux_qdac_113200",
+  "#324_02e_resonator_spectroscopy_vs_flux_qdac_113514",
+  "#325_02e_resonator_spectroscopy_vs_flux_qdac_113737",
+  "#328_02e_resonator_spectroscopy_vs_flux_qdac_114336",
+  "#331_02e_resonator_spectroscopy_vs_flux_qdac_115446"
+ ],
+ "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: a key has no opinion about a run its author never examined, and judging against those was worth 12 points.",
  "session_id": "resonator_spectroscopy_vs_flux__CQT__2026-08-14",
  "authored": "2026-08-21",
  "status": "hindsight-authored + adversarial audit",
@@ -363,26 +384,5 @@
    "confidence": "high",
    "caveats": "Figure not inspected - ridge_coverage exactly 0.0 with all-NaN fields is unambiguous on its own. The operator was right not to burn further flux sweeps on q9 (unlike q1/q3/q5, where they did), but wrong to leave the diagnosis unfinished: the required relocation run was never made, so q9 ends the session unresolved."
   }
- ],
- "runs": [
-  "#235_02e_resonator_spectroscopy_vs_flux_qdac_080732",
-  "#236_02e_resonator_spectroscopy_vs_flux_qdac_080819",
-  "#238_02e_resonator_spectroscopy_vs_flux_qdac_082551",
-  "#239_02e_resonator_spectroscopy_vs_flux_qdac_083002",
-  "#240_02e_resonator_spectroscopy_vs_flux_qdac_083306",
-  "#241_02e_resonator_spectroscopy_vs_flux_qdac_083427",
-  "#242_02e_resonator_spectroscopy_vs_flux_qdac_083524",
-  "#244_02e_resonator_spectroscopy_vs_flux_qdac_084012",
-  "#245_02e_resonator_spectroscopy_vs_flux_qdac_084043",
-  "#246_02e_resonator_spectroscopy_vs_flux_qdac_084220",
-  "#257_06_resonator_spectroscopy_vs_flux_092518",
-  "#274_02e_resonator_spectroscopy_vs_flux_qdac_094338",
-  "#275_02e_resonator_spectroscopy_vs_flux_qdac_094428",
-  "#323_02e_resonator_spectroscopy_vs_flux_qdac_113200",
-  "#324_02e_resonator_spectroscopy_vs_flux_qdac_113514",
-  "#325_02e_resonator_spectroscopy_vs_flux_qdac_113737",
-  "#328_02e_resonator_spectroscopy_vs_flux_qdac_114336",
-  "#331_02e_resonator_spectroscopy_vs_flux_qdac_115446"
- ],
- "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: judging the system on runs the key's author never examined is neither fair nor sound \u2014 it can adopt from a run the key has no opinion about, and the mismatch showed up as a 12-point score difference between two harnesses reading the same archive."
+ ]
 }

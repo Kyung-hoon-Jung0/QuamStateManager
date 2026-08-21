@@ -3,6 +3,23 @@
  "family": "resonator_spectroscopy_vs_coupler_flux",
  "chip": "CQT",
  "session": "2026-08-14",
+ "runs": [
+  "#258_07_resonator_spectroscopy_vs_coupler_flux_092731",
+  "#259_07_resonator_spectroscopy_vs_coupler_flux_092808",
+  "#294_07_resonator_spectroscopy_vs_coupler_flux_101018",
+  "#295_07_resonator_spectroscopy_vs_coupler_flux_101121",
+  "#297_07_resonator_spectroscopy_vs_coupler_flux_101237",
+  "#298_07_resonator_spectroscopy_vs_coupler_flux_101333",
+  "#299_07_resonator_spectroscopy_vs_coupler_flux_101411",
+  "#311_07_resonator_spectroscopy_vs_coupler_flux_102410",
+  "#312_07_resonator_spectroscopy_vs_coupler_flux_102441",
+  "#446_07_resonator_spectroscopy_vs_coupler_flux_171915",
+  "#489_07_resonator_spectroscopy_vs_coupler_flux_182144",
+  "#492_07_resonator_spectroscopy_vs_coupler_flux_182702",
+  "#493_07_resonator_spectroscopy_vs_coupler_flux_182834",
+  "#494_07_resonator_spectroscopy_vs_coupler_flux_183045"
+ ],
+ "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: a key has no opinion about a run its author never examined, and judging against those was worth 12 points.",
  "session_id": "resonator_spectroscopy_vs_coupler_flux__CQT__2026-08-14",
  "authored": "2026-08-21",
  "status": "hindsight-authored + adversarial audit",
@@ -297,22 +314,5 @@
    "confidence": "high",
    "caveats": "The +7.72 MHz separation between the dip this family tracks and q3's operating readout frequency is reproducible across three runs but is NOT independently confirmed by a 03/05 node on this day, and the readout point at 4,970.727 MHz is demonstrably the better one for discrimination (high-power/punched-out operation is visible in the record: #327 wrote frequency_bare = 4,965.12 MHz and moved f_01 +14 MHz). So the 4,978.45 MHz number should be reported, never adopted. Also note that #489's `success: true` is worthless as a gate here \u2014 the fit reports success with R2 = 0.04; the failure is only visible from the extracted-trace spread and from the result sitting at the window edge."
   }
- ],
- "runs": [
-  "#258_07_resonator_spectroscopy_vs_coupler_flux_092731",
-  "#259_07_resonator_spectroscopy_vs_coupler_flux_092808",
-  "#294_07_resonator_spectroscopy_vs_coupler_flux_101018",
-  "#295_07_resonator_spectroscopy_vs_coupler_flux_101121",
-  "#297_07_resonator_spectroscopy_vs_coupler_flux_101237",
-  "#298_07_resonator_spectroscopy_vs_coupler_flux_101333",
-  "#299_07_resonator_spectroscopy_vs_coupler_flux_101411",
-  "#311_07_resonator_spectroscopy_vs_coupler_flux_102410",
-  "#312_07_resonator_spectroscopy_vs_coupler_flux_102441",
-  "#446_07_resonator_spectroscopy_vs_coupler_flux_171915",
-  "#489_07_resonator_spectroscopy_vs_coupler_flux_182144",
-  "#492_07_resonator_spectroscopy_vs_coupler_flux_182702",
-  "#493_07_resonator_spectroscopy_vs_coupler_flux_182834",
-  "#494_07_resonator_spectroscopy_vs_coupler_flux_183045"
- ],
- "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: judging the system on runs the key's author never examined is neither fair nor sound \u2014 it can adopt from a run the key has no opinion about, and the mismatch showed up as a 12-point score difference between two harnesses reading the same archive."
+ ]
 }

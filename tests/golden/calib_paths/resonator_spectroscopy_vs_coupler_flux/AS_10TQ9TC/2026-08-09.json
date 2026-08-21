@@ -3,6 +3,18 @@
  "family": "resonator_spectroscopy_vs_coupler_flux",
  "chip": "AS_10TQ9TC",
  "session": "2026-08-09",
+ "runs": [
+  "#14_07_resonator_spectroscopy_vs_coupler_flux_042859",
+  "#15_07_resonator_spectroscopy_vs_coupler_flux_042919",
+  "#16_07_resonator_spectroscopy_vs_coupler_flux_042946",
+  "#17_07_resonator_spectroscopy_vs_coupler_flux_043043",
+  "#18_07_resonator_spectroscopy_vs_coupler_flux_043402",
+  "#19_07_resonator_spectroscopy_vs_coupler_flux_043434",
+  "#20_07_resonator_spectroscopy_vs_coupler_flux_043518",
+  "#229_07_resonator_spectroscopy_vs_coupler_flux_195856",
+  "#230_07_resonator_spectroscopy_vs_coupler_flux_195913"
+ ],
+ "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: a key has no opinion about a run its author never examined, and judging against those was worth 12 points.",
  "session_id": "resonator_spectroscopy_vs_coupler_flux__AS_10TQ9TC__2026-08-09",
  "authored": "2026-08-21",
  "status": "hindsight-authored + adversarial audit",
@@ -139,17 +151,5 @@
    "confidence": "high",
    "caveats": "No state was ever written in this session (patches empty for all nine runs), so there are literally no poisoned writes \u2014 the one thing the operator did right. Had any morning run been adopted, the chip would have taken a coupler idle offset of -0.13 to -0.47 V: wrong sign, ~13% of a period away from what the evening pair corroborates. || The single decisive fact is NOT in the supplied record: node.json's measure_qubit is 'target' for runs #14-#229 and 'control' for #230. A reader working from the fit fields alone will classify #230's 6.007475 GHz / 1.52 MHz as a runaway fit and discard the session's best measurement. Figures for #16, #229 and #230 were inspected to establish this. || Modulation depth on the TARGET resonator (~140-152 kHz) is this family's honest weak-modulation case: real (periodic, consistent depth across five runs) but comparable to the scatter of extracted dip positions, which is why six runs on it produced six different idle_offsets spanning 0.34 V. Absence of a strong arc there would have been correct physics; what was wrong was fighting it instead of reading the pair's other resonator. || dv_phi0 is determined only to ~10%: 4.7297 V (#16), 4.1474 V (#229), 3.7539 V (#230). The sweet-spot value is robust to that; any downstream use of the Phi0 voltage scale (mutual inductance, flux-to-voltage conversion) is not and would need a dedicated multi-period run. || The morning-to-evening target-resonator shift (6.101139 -> 6.100469 GHz, -670 kHz) is inferred from the ~200 unrelated nodes run in between (readout recalibration/drift), not from a recorded event. || Theoretical minimum is 4 runs, not 5: a system knowing the coupler's full DC range a priori would have started #14 at [-2.5,+2.5] V. #14 is kept in the ideal path because no prior knowledge of a ~4 V period existed at the cursor."
   }
- ],
- "runs": [
-  "#14_07_resonator_spectroscopy_vs_coupler_flux_042859",
-  "#15_07_resonator_spectroscopy_vs_coupler_flux_042919",
-  "#16_07_resonator_spectroscopy_vs_coupler_flux_042946",
-  "#17_07_resonator_spectroscopy_vs_coupler_flux_043043",
-  "#18_07_resonator_spectroscopy_vs_coupler_flux_043402",
-  "#19_07_resonator_spectroscopy_vs_coupler_flux_043434",
-  "#20_07_resonator_spectroscopy_vs_coupler_flux_043518",
-  "#229_07_resonator_spectroscopy_vs_coupler_flux_195856",
-  "#230_07_resonator_spectroscopy_vs_coupler_flux_195913"
- ],
- "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: judging the system on runs the key's author never examined is neither fair nor sound \u2014 it can adopt from a run the key has no opinion about, and the mismatch showed up as a 12-point score difference between two harnesses reading the same archive."
+ ]
 }

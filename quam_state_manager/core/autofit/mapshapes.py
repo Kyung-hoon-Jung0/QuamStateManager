@@ -45,7 +45,10 @@ EDGE_PX = 3
 # Candidate names for each role, in preference order. Different generations
 # and labs name the same axis differently (flux_bias vs current vs
 # attenuated_current); the role is what the shape analysis needs.
-FREQ_VARS = ("full_freq", "detuning")
+# ``RF_frequency`` is one lab's spelling of the same absolute frequency axis
+# ``full_freq`` carries elsewhere; without it that lab's entire 1-D readout
+# set — 96 of 96 targets — read as unreadable rather than as data.
+FREQ_VARS = ("full_freq", "RF_frequency", "detuning")
 SWEEP_VARS = ("power", "flux_bias", "current", "attenuated_current", "amplitude")
 VALUE_VARS = ("IQ_abs", "I", "state")
 

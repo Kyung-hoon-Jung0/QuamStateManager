@@ -3,6 +3,25 @@
  "family": "qubit_spectroscopy",
  "chip": "CQT",
  "session": "2026-08-17",
+ "runs": [
+  "#1239_08_qubit_spectroscopy_030349",
+  "#1240_08_qubit_spectroscopy_030414",
+  "#1241_08_qubit_spectroscopy_030532",
+  "#1242_08_qubit_spectroscopy_030553",
+  "#1243_08_qubit_spectroscopy_030617",
+  "#1244_08_qubit_spectroscopy_030719",
+  "#1247_08_qubit_spectroscopy_031321",
+  "#1249_08_qubit_spectroscopy_031652",
+  "#1250_08_qubit_spectroscopy_031805",
+  "#1253_08_qubit_spectroscopy_033636",
+  "#1254_08_qubit_spectroscopy_035232",
+  "#1255_08_qubit_spectroscopy_035402",
+  "#1256_08_qubit_spectroscopy_035427",
+  "#1257_08_qubit_spectroscopy_035514",
+  "#1272_08_qubit_spectroscopy_041553",
+  "#1279_08_qubit_spectroscopy_042132"
+ ],
+ "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: a key has no opinion about a run its author never examined, and judging against those was worth 12 points.",
  "session_id": "qubit_spectroscopy__CQT__2026-08-17",
  "authored": "2026-08-21",
  "status": "hindsight-authored + adversarial audit",
@@ -1225,24 +1244,5 @@
    "confidence": "med",
    "caveats": "This is the closest call in the session between 'resolved at low confidence' and 'unresolved'. Called unresolved because the disagreement (61 MHz) is far larger than either linewidth and the surviving candidate's own snr is 10 - if the next node were run on 4284.42 MHz and failed, there would be no way to tell which of the two possibilities was at fault."
   }
- ],
- "runs": [
-  "#1239_08_qubit_spectroscopy_030349",
-  "#1240_08_qubit_spectroscopy_030414",
-  "#1241_08_qubit_spectroscopy_030532",
-  "#1242_08_qubit_spectroscopy_030553",
-  "#1243_08_qubit_spectroscopy_030617",
-  "#1244_08_qubit_spectroscopy_030719",
-  "#1247_08_qubit_spectroscopy_031321",
-  "#1249_08_qubit_spectroscopy_031652",
-  "#1250_08_qubit_spectroscopy_031805",
-  "#1253_08_qubit_spectroscopy_033636",
-  "#1254_08_qubit_spectroscopy_035232",
-  "#1255_08_qubit_spectroscopy_035402",
-  "#1256_08_qubit_spectroscopy_035427",
-  "#1257_08_qubit_spectroscopy_035514",
-  "#1272_08_qubit_spectroscopy_041553",
-  "#1279_08_qubit_spectroscopy_042132"
- ],
- "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: judging the system on runs the key's author never examined is neither fair nor sound \u2014 it can adopt from a run the key has no opinion about, and the mismatch showed up as a 12-point score difference between two harnesses reading the same archive."
+ ]
 }
