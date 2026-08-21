@@ -131,6 +131,28 @@ def drive_power_dbm(view: Any, target: str) -> float | None:
     import math as _math
     return float(fsp) + 20.0 * _math.log10(abs(float(amp)))
 SWEEP_TOL_FRAC = 0.10          # of the swept range
+# How close two vouched values must be to count as the same answer when the
+# session is asked what it AGREES on rather than what it said last.
+AGREE_HZ = 2e6
+
+
+def _largest_cluster(vals: list[float]) -> float | None:
+    """The value the most readings agree on; ties broken by the later one, so
+    recency still decides where agreement does not.
+
+    Non-finite values are dropped first: a NaN does not even cluster with
+    itself, so leaving one in empties the cluster it is supposed to seed.
+    """
+    import math as _math
+    vals = [v for v in vals if isinstance(v, (int, float))
+            and not isinstance(v, bool) and _math.isfinite(v)]
+    best, bestn = None, 0
+    for v in vals:
+        near = [w for w in vals if abs(w - v) <= AGREE_HZ]
+        if len(near) >= bestn:
+            best, bestn = sum(near) / len(near), len(near)
+    return best
+
 
 # What the READER is willing to vouch for, per shape it measured. Not read
 # from the manual: see the module docstring.
@@ -146,7 +168,8 @@ RETUNE = "retune"
 # 1-D traces too converted an abstention into a wrong answer on the readout
 # benchmark and gained nothing anywhere.
 _MEASURED_ACROSS_SLICES = {"power_stationary_then_broadening",
-                           "power_second_line_below"}
+                           "power_second_line_below",
+                           "power_multiphoton_ladder"}
 
 _ACTIONS: dict[str, str] = {
     MC.LINE_CLEAN: ADOPT_FREQ,
@@ -169,6 +192,10 @@ _ACTIONS: dict[str, str] = {
     # other power shape has not seen the onset, so neither answer is derivable.
     MC.POWER_PLATEAU: ADOPT_BOTH,
     MC.POWER_TWO_RIDGES: ADOPT_BOTH,
+    # the ladder DOES carry a frequency — the bottom rung, measured over its
+    # own stretch — but the power the node chose is the one that climbed the
+    # ladder, so only the frequency is adoptable
+    MC.POWER_LADDER: ADOPT_FREQ,
 }
 
 # Bounded knob moves, per shape. Every one is a fraction of the CURRENT
@@ -267,6 +294,13 @@ def _moves(key: str, params: dict) -> dict:
         return _widen_freq(params, 2.0)
     if key == MC.POWER_NO_ANCHOR:
         return _extend_power_down(params, 1 / 3.0)
+    if key == MC.POWER_LADDER:
+        # the ladder was climbed because the drive went too high; the useful
+        # next sweep is the same window with a lower ceiling
+        lo, hi = params.get("min_power_dbm"), params.get("max_power_dbm")
+        if isinstance(lo, (int, float)) and isinstance(hi, (int, float)) and hi > lo:
+            return {"max_power_dbm": hi - (hi - lo) / 3.0}
+        return {}
     return {}
 
 
@@ -300,6 +334,11 @@ class Result:
     unresolved: bool
     revisions: list[dict]
     unscoreable_proposals: int
+    # Every value the walk vouched for, in order, and the one the largest
+    # cluster of them agrees on. A ratchet IS recency-following, so which of
+    # these two a session ends on is a real choice and is made by the caller.
+    adopted_values: dict = field(default_factory=dict)
+    consensus_state: dict = field(default_factory=dict)
 
 
 def _params_match(proposal: dict, params: dict, rel: float = 0.15) -> bool:
@@ -484,25 +523,42 @@ def replay(family: str, session: Session, target: str, *,
             prescription=(case.get("prescription") or "")[:400],
             reasons=reasons[:4]))
 
+    vouched: dict[str, list[float]] = {}
+    for st in steps:
+        for k, v in st.adopted.items():
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                vouched.setdefault(k, []).append(float(v))
+    consensus = {k: c for k, vs in vouched.items()
+                 if (c := _largest_cluster(vs)) is not None}
     return Result(family=("+".join(sorted(set(seen_families))) if joint
                           else family),
                   session_id=session.session_id, target=target,
                   steps=steps, final_state=state, first_value=first_value,
                   first_value_at=first_at, runs_to_first_value=runs_to_first,
                   runs_consumed=len(steps), unresolved=first_at is None,
-                  revisions=revisions, unscoreable_proposals=unscoreable)
+                  revisions=revisions, unscoreable_proposals=unscoreable,
+                  adopted_values=vouched, consensus_state=consensus)
 
 
-def score(result: Result, key: dict) -> dict:
-    """Compare a replay against the hand-built answer key for that target."""
+def score(result: Result, key: dict, *, rule: str = "recency") -> dict:
+    """Compare a replay against the hand-built answer key for that target.
+
+    ``rule`` chooses what the session's answer IS: ``"recency"`` keeps the
+    last value the walk vouched for, ``"agreement"`` keeps the one the largest
+    cluster of vouched values agrees on. The default is recency because every
+    published number in this study was measured that way; see docs/133 for the
+    comparison, and for why measuring the two against a clustering-derived
+    truth is partly circular.
+    """
     family = result.family
     value_field, sweep_field = MC.VALUE_FIELDS.get(family, (None, None))
     term = key.get("termination") or {}
     want_f = term.get("final_frequency")
     want_s = term.get("final_sweep_value")
     key_unresolved = bool(term.get("unresolved"))
-    got_f = result.final_state.get(value_field) if value_field else None
-    got_s = result.final_state.get(sweep_field) if sweep_field else None
+    end = result.consensus_state if rule == "agreement" else result.final_state
+    got_f = end.get(value_field) if value_field else None
+    got_s = end.get(sweep_field) if sweep_field else None
 
     out: dict[str, Any] = {
         "family": family, "session": result.session_id, "target": result.target,
@@ -517,6 +573,7 @@ def score(result: Result, key: dict) -> dict:
         "key_unresolved": key_unresolved,
         "unscoreable_proposals": result.unscoreable_proposals,
         "revisions": len(result.revisions),
+        "end_rule": rule,
     }
     if key_unresolved:
         out["frequency_verdict"] = ("correctly_abstained" if result.unresolved

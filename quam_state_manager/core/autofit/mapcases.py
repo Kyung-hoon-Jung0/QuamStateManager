@@ -58,6 +58,7 @@ POWER_NO_ANCHOR = "power_no_stationary_stretch"
 POWER_TOP_ONLY = "power_feature_only_at_the_top"
 POWER_TWO_RIDGES = "power_second_line_below"
 POWER_EMPTY = "power_empty"
+POWER_LADDER = "power_multiphoton_ladder"
 
 # flags, all cross-family
 FLAG_OFF_FEATURE = "fit_off_feature"
@@ -326,6 +327,18 @@ def _power(cube, sign, fit, sig: ShapeSignal) -> None:
     vouched = (ps.plateau_freq is not None
                and ps.plateau_len >= MIN_PLATEAU_SLICES)
 
+    # A rung BELOW in power and ABOVE in frequency by half the run's own
+    # anharmonicity is the ladder seen from the wrong step: the walk anchored
+    # on a multi-photon line and the fundamental is the stretch underneath it,
+    # at less drive. The walk cannot step there itself — the jump is far wider
+    # than its local search window, which is why the segment is sought
+    # separately at all.
+    rung_below = (ps.lower_freq is not None and ps.block_freq is not None
+                  and anh and ps.lower_len >= MIN_PLATEAU_SLICES
+                  and abs((ps.lower_freq - ps.block_freq) - anh / 2)
+                  <= TWO_PHOTON_TOLERANCE * anh)
+    sig.measured["lower_rung_freq"] = ps.lower_freq if rung_below else None
+
     # Which line did the tracker actually follow? A rival ABOVE the ridge by
     # about half the run's own anharmonicity means the ridge is the two-photon
     # partner and the fundamental is the rival; a rival BELOW by the same
@@ -336,7 +349,13 @@ def _power(cube, sign, fit, sig: ShapeSignal) -> None:
             partner = "above" if ps.second_offset_hz > 0 else "below"
     sig.measured["two_photon_partner"] = partner
 
-    if ps.plateau_freq is None and ps.coverage < 0.1:
+    if rung_below:
+        sig.key, sig.confidence = POWER_LADDER, "high"
+        sig.reasons.append("a second stretch at LESS drive sits half the "
+                           "reported anharmonicity ABOVE the tracked one — "
+                           "the rungs of a multi-photon ladder, and the "
+                           "tracked line is not the bottom one")
+    elif ps.plateau_freq is None and ps.coverage < 0.1:
         sig.key, sig.confidence = POWER_EMPTY, "high"
         sig.reasons.append("no line anywhere in the map at any drive power")
     elif ps.top_only:
@@ -359,7 +378,10 @@ def _power(cube, sign, fit, sig: ShapeSignal) -> None:
                            "and broadens above them")
 
     value = ps.plateau_freq if vouched else None
-    if value is not None and partner == "above":
+    if rung_below:
+        value = ps.lower_freq
+        sig.flags.append(FLAG_TWO_PHOTON_PRIMARY)
+    elif value is not None and partner == "above":
         value += ps.second_offset_hz
         sig.flags.append(FLAG_TWO_PHOTON_PRIMARY)
         sig.reasons.append("the strongest line has a partner ABOVE it at half "

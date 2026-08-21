@@ -38,11 +38,18 @@ class TestTheFloorIsDeclaredWhereMeasured:
     def test_the_two_d_flux_families_lower_it(self, key, expected):
         assert _fam(key).feature_check.spectral_min == expected
 
-    @pytest.mark.parametrize("key", ["ramsey", "echo", "T1"])
+    @pytest.mark.parametrize("key", ["echo", "T1"])
     def test_the_one_d_families_keep_the_default(self, key):
         """Their accepted runs sit at 18-79, comfortably above 50; re-deriving
         them needs the population split docs/78 §22.4 still calls for."""
         assert _fam(key).feature_check.spectral_min is None
+
+    def test_ramsey_left_the_default_when_its_band_was_re_derived(self):
+        """docs/127 §15.2 gave ramsey a floor of its own as part of the CQT
+        recalibration — the decay band was deleted and the spectral floor took
+        over its honest job. This test still asserted the old default and had
+        been failing since; it is the assertion that was stale, not the code."""
+        assert _fam("ramsey").feature_check.spectral_min == 10.0
 
     def test_every_declared_floor_sits_below_its_measured_accepted_minimum(self):
         """The project's rule: a floor may only sit BELOW the accepted minimum.

@@ -509,3 +509,119 @@ class TestPhysicalDrivePower:
             "data": {"outcomes": {}, "parameters": {"model": {}}},
             "patches": []}), encoding="utf-8")
         assert RB.drive_power_dbm(load_run(d), "q0") is None
+
+
+class TestHowASessionEnds:
+    """Recency or agreement. A ratchet IS recency-following, so which of the
+    two a session ends on is a real choice and the caller makes it."""
+
+    def test_the_largest_cluster_wins_not_the_last_value(self):
+        assert RB._largest_cluster([4.30e9, 4.3001e9, 4.2999e9, 4.40e9]) \
+            == pytest.approx(4.30e9, abs=2e5)
+
+    def test_a_nan_does_not_empty_the_cluster_it_seeds(self):
+        # a NaN does not compare equal to itself, so leaving one in used to
+        # divide by an empty cluster
+        assert RB._largest_cluster([float("nan"), 4.30e9, 4.3001e9]) \
+            == pytest.approx(4.30e9, abs=2e5)
+        assert RB._largest_cluster([float("nan")]) is None
+        assert RB._largest_cluster([]) is None
+
+    def test_ties_still_go_to_the_later_value(self):
+        # two clusters of one: recency decides where agreement does not
+        assert RB._largest_cluster([4.30e9, 4.40e9]) == pytest.approx(4.40e9)
+
+    def test_recency_is_the_default_so_published_numbers_do_not_move(self):
+        import inspect
+        sig = inspect.signature(RB.score)
+        assert sig.parameters["rule"].default == "recency"
+
+    def test_the_two_rules_can_disagree_on_the_same_result(self):
+        res = RB.Result(
+            family="qubit_spectroscopy", session_id="s", target="q0", steps=[],
+            final_state={"frequency": 4.40e9}, first_value={},
+            first_value_at="#1", runs_to_first_value=1, runs_consumed=3,
+            unresolved=False, revisions=[], unscoreable_proposals=0,
+            adopted_values={"frequency": [4.30e9, 4.3001e9, 4.40e9]},
+            consensus_state={"frequency": 4.30005e9})
+        key = {"termination": {"final_frequency": 4.30e9}}
+        assert RB.score(res, key)["frequency_verdict"] == "wrong_value"
+        assert RB.score(res, key, rule="agreement")["frequency_verdict"] == "match"
+
+
+# ---------------------------------------------------------------------------
+# the joint qubit-spectroscopy benchmark (docs/133)
+# ---------------------------------------------------------------------------
+
+_JOINT = _KEYS / "qubit_spectroscopy_vs_power"
+
+
+def _score_joint(rule: str = "recency"):
+    """Replay both qubit-spectroscopy node types as ONE session.
+
+    The keys record run NUMBERS rather than folder names because a joint
+    session mixes node types and the number is what identifies a run across
+    both.
+    """
+    import re as _re
+    rows = []
+    if not _JOINT.exists():
+        return rows
+    for kf in sorted(_JOINT.rglob("2026-*.json")):
+        doc = json.loads(kf.read_text(encoding="utf-8"))
+        lab, root = kf.parent.name, _ARCHIVES.get(kf.parent.name)
+        want = doc.get("runs") or []
+        if root is None or not want:
+            continue
+        day = root / kf.stem
+        if not day.exists():
+            continue
+        by_no = {}
+        for d in day.iterdir():
+            m = _re.match(r"^#(\d+)_", d.name)
+            if m and d.is_dir():
+                by_no.setdefault(int(m.group(1)), d)
+        folders = [by_no[int(n)] for n in want if int(n) in by_no]
+        if len(folders) < len(want):
+            continue                          # partial archive: skip, not guess
+        views = [v for v in (load_run(f) for f in folders) if v]
+        if not views:
+            continue
+        session = Session(doc.get("session_id") or f"{lab}__{kf.stem}", views)
+        for qkey in doc.get("qubits") or []:
+            q = qkey["qubit"]
+            if not session.runs_for(q):
+                continue
+            rows.append(RB.score(
+                RB.replay(RB.pack_family_for, session, q), qkey, rule=rule))
+    return rows
+
+
+@pytest.mark.skipif(not _JOINT.exists() or not _ARCHIVES["CQT"].exists(),
+                    reason="joint answer keys or archives are not on this machine")
+class TestTheJointBenchmark:
+    """Both node types replayed as one session, scored against keys written
+    with hindsight. Bars sit below the measured values on purpose."""
+
+    def test_it_scores_a_meaningful_number_of_targets(self):
+        assert len(_score_joint()) >= 12
+
+    def test_both_node_types_are_actually_read(self):
+        rows = _score_joint()
+        fams = {f for r in rows for f in r["family"].split("+")}
+        assert "qubit_spectroscopy" in fams
+        assert "qubit_spectroscopy_vs_power" in fams
+
+    def test_most_outcomes_are_right(self):
+        rows = _score_joint()
+        able = [r for r in rows
+                if r["frequency_verdict"] != "unscoreable_key_has_no_value"]
+        good = [r for r in able if r["frequency_verdict"] in
+                ("match", "correctly_abstained")]
+        assert able
+        assert len(good) / len(able) >= 0.50, \
+            f"{len(good)}/{len(able)} correct"
+
+    def test_the_end_rule_is_reported_so_a_number_names_its_own_rule(self):
+        rows = _score_joint(rule="agreement")
+        assert rows and all(r["end_rule"] == "agreement" for r in rows)
