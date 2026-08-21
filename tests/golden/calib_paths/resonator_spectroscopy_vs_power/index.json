@@ -1,0 +1,49 @@
+{
+ "schema": "smgoldenindex/v1",
+ "family": "resonator_spectroscopy_vs_power",
+ "note": "Per-run answer keys. Classified by chip and session because a golden path is chip- and situation-specific \u2014 this store is append-only and expected to grow as sessions are annotated.",
+ "sessions": [
+  {
+   "session": "AS_2026-08-09",
+   "qubits": 7,
+   "unresolved": 0,
+   "audit_chars": 4137
+  },
+  {
+   "session": "AS_2026-08-10",
+   "qubits": 2,
+   "unresolved": 0,
+   "audit_chars": 4378
+  },
+  {
+   "session": "CQT_2026-08-13",
+   "qubits": 7,
+   "unresolved": 3,
+   "audit_chars": 4364
+  },
+  {
+   "session": "CQT_2026-08-14",
+   "qubits": 16,
+   "unresolved": 4,
+   "audit_chars": 3714
+  },
+  {
+   "session": "CQT_2026-08-15",
+   "qubits": 2,
+   "unresolved": 2,
+   "audit_chars": 3334
+  },
+  {
+   "session": "CQT_2026-08-16",
+   "qubits": 6,
+   "unresolved": 2,
+   "audit_chars": 3508
+  },
+  {
+   "session": "CQT_2026-08-17",
+   "qubits": 11,
+   "unresolved": 5,
+   "audit_chars": 3770
+  }
+ ]
+}

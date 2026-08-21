@@ -311,11 +311,16 @@ A build only works if the selected env exposes the exact functions the chip need
 | `docs/28_conflict_safe_io.md` | Working-copy + armored I/O (read this before touching file paths) |
 | `docs/32_red_team_phase_2.md` | Phase 2 red-team findings + which are fixed |
 | `docs/53_qop37_alignment.md` | Modern-stack (quam 0.6.0 / quam_builder 0.4.0) ground truth: class moves, `_PULSE_HOMES`, padding_length rename, ParametricCZGate gating — read before touching pulse-class or build-script imports |
+| `docs/129_res_power_pilot.md` | The res-spec-vs-power domain-knowledge pilot: 95 real runs / 172 targets on two chips, the case taxonomy, and the expert review that turned it into `knowledge/v1` |
+| `docs/130_replay_benchmark.md` | The future-blind replay benchmark — exemplar images, 51 per-run answer keys, and the measured result (46/50 correct, 1 wrong frequency); **read §5 before quoting any number, and §6 for what it does NOT show** |
 | `docs/78_runner_agent.md` | Runner + AI calibration agent — the one-button bring-up loop. **Read §17 (audit) before trusting any earlier section**: it lists what shipped, what is still open, and which earlier claims were false |
 | `quam_state_manager/core/autofit/envmatrix.py` | (env × analysis-tree revision × run generation) compatibility probe — the triple a replay verdict is only valid within |
 | `quam_state_manager/core/autofit/sourceroot.py` | Read-only `git archive` materialization of a pinned analysis revision (never a checkout — the customer tree is untouchable) |
 | `quam_state_manager/core/autofit/figure_gen.py` | Regenerate a run's figure through the LAB's own plotting module, with a wrong-fit injection seam |
 | `quam_state_manager/core/autofit/judge_pack.py` | Vision-judge family knowledge: versioned JSON pack + the Clause-B lint enforced at LOAD (a bad exemplar is dropped, never taught) |
+| `quam_state_manager/core/autofit/knowledge.py` | Domain-knowledge packs: versioned per-family case manuals loaded through the Clause-B lint (an absolute-scale rule is DROPPED, never taught), additive-only lab overlays, `manual_hash` for the verdict context (docs/129) |
+| `quam_state_manager/core/autofit/pathreplay.py` | Future-blind replay: `Session.reveal(k)` RAISES past k, so cheating is a crash not a better score; raw-map reader -> case -> the pack's bounded knob moves -> adopt/retune/abstain, scored against per-run answer keys (docs/130) |
+| `quam_state_manager/generator/render_knowledge_exemplars.py` | Re-renders the manual's exemplars from raw with normalised, UNLABELLED axes — confidentiality and Clause B are the same fix, since a picture with no numbers cannot teach an absolute scale |
 | `quam_state_manager/core/autofit/verification.py` | The context a verdict is only valid inside — ONE shape stamped by `fit_audit`, `figure_gen` and the engine; `comparable()` is what stops two gate revisions being read as one |
 
 ## Tests

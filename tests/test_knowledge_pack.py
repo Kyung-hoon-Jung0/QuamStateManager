@@ -152,8 +152,68 @@ class TestGoldenPathsClassifiedStore:
         chips = sorted(p.name for p in g.iterdir() if p.is_dir())
         assert chips == ["AS_10TQ9TC", "CQT"]
         as9 = json.loads((g / "AS_10TQ9TC" / "2026-08-09.json").read_text(encoding="utf-8"))
-        assert as9["schema"] == "smgolden/v1"
+        assert as9["schema"] == "smgolden/v2"
         assert any("#8" == e["run"] for e in as9.get("exclusions", [])), \
             "the spur-lock false accept must be excluded from the answer key"
-        total = len(list(g.rglob("*.json")))
-        assert total == 10
+        assert len(list(g.rglob("2026-*.json"))) == 7
+
+    def test_every_key_is_per_run_and_carries_its_audit(self):
+        """v2 keys are step-by-step, not session prose — that is what makes
+        them scoreable — and each one ships the adversarial audit that
+        challenged it, so a reader can see what was doubted."""
+        g = _ROOT / "tests" / "golden" / "calib_paths" / _FAM
+        n_q = 0
+        for gf in g.rglob("2026-*.json"):
+            doc = json.loads(gf.read_text(encoding="utf-8"))
+            assert doc["schema"] == "smgolden/v2"
+            assert len(doc.get("adversarial_audit") or "") > 500, gf.name
+            for q in doc["qubits"]:
+                n_q += 1
+                term = q.get("termination") or {}
+                assert "unresolved" in term, (gf.name, q["qubit"])
+                if not term["unresolved"]:
+                    assert isinstance(term.get("final_resonator_frequency"),
+                                      (int, float)), (gf.name, q["qubit"])
+                assert q.get("ideal_path"), (gf.name, q["qubit"])
+        assert n_q == 51
+
+    def test_the_answer_keys_never_claim_a_value_without_evidence(self):
+        g = _ROOT / "tests" / "golden" / "calib_paths" / _FAM
+        for gf in g.rglob("2026-*.json"):
+            for q in json.loads(gf.read_text(encoding="utf-8"))["qubits"]:
+                term = q.get("termination") or {}
+                if term.get("final_resonator_frequency") is not None:
+                    assert len(term.get("value_evidence") or "") > 40, \
+                        (gf.name, q["qubit"])
+                    assert term.get("value_confidence") in ("high", "med", "low")
+
+
+class TestExemplarImages:
+    """The manual's pictures are re-rendered from raw with normalised,
+    unlabelled axes: no absolute frequency or power leaves the pack, and a
+    picture without numbers cannot teach an absolute scale."""
+
+    def _index(self):
+        p = (knowledge.pack_path(_FAM).parent / "exemplars" / "index.json")
+        return json.loads(p.read_text(encoding="utf-8"))
+
+    def test_every_rendered_exemplar_exists_and_is_referenced(self):
+        idx = self._index()
+        root = knowledge.pack_path(_FAM).parent
+        assert len(idx["rendered"]) >= 80
+        assert idx["missing"] == [], idx["missing"]
+        pack = knowledge.load_family(_FAM)
+        referenced = {f for c in pack["cases"] for f in c.get("exemplar_images", [])}
+        for r in idx["rendered"]:
+            assert (root / r["file"]).exists(), r["file"]
+            assert r["file"] in referenced, r["file"]
+
+    def test_both_pilot_chips_are_represented(self):
+        chips = {r["chip"] for r in self._index()["rendered"]}
+        assert chips == {"AS_10TQ9TC", "CQT"}, \
+            "a manual taught from one chip is a manual about that chip"
+
+    def test_the_note_states_why_the_axes_carry_no_numbers(self):
+        note = self._index()["note"].lower()
+        assert "normalised" in note or "normalized" in note
+        assert "absolute" in note

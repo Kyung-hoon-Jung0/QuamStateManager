@@ -19,6 +19,10 @@
 *.egg
 *.egg-info/
 *.png
+# ...except the knowledge packs' exemplar figures: they ARE the manual's
+# content (docs/130), re-rendered from raw with normalised, unlabelled axes
+# so they carry no absolute frequency or power.
+!quam_state_manager/knowledge/**/exemplars/**/*.png
 *.py[cod]
 .DS_Store
 .claude/

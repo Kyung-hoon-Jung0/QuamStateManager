@@ -16,6 +16,10 @@ This file and `cases.json` are generated from ONE source and say the same thing;
 
 **Exemplars:** AS_10TQ9TC/#314/q6, AS_10TQ9TC/#12/q3, AS_10TQ9TC/#348/q6, CQT/#135/q2, CQT/#192/q14, CQT/#352/q10, CQT/#996/q20
 
+![C1 — AS_10TQ9TC #314 q6](exemplars/C1/AS_10TQ9TC_314_q6.png)
+![C1 — AS_10TQ9TC #12 q3](exemplars/C1/AS_10TQ9TC_12_q3.png)
+![C1 — AS_10TQ9TC #348 q6](exemplars/C1/AS_10TQ9TC_348_q6.png)
+
 ### C2 -- ceiling-below-punch-out  (seen 12x)
 
 **Geometry:** Only the dressed branch is demonstrated: a single dip at fixed frequency through the whole power range, OR the per-row dip position just begins deflecting in the topmost rows without the bare branch ever establishing (onset clipped at the ceiling). Bare frequency and optimal power are not determined by this window; a 'punchout=true' claim from such a window is unsupported.
@@ -23,6 +27,10 @@ This file and `cases.json` are generated from ONE source and say the same thing;
 **Prescription:** Raise the power ceiling by a bounded step (roughly half the current window height) keeping the floor; do NOT repeat unchanged — three identical repeats on one chip reproduced the same verdict byte-alike. If the node wrote a ceiling-power fallback, treat that value as poisoned (F2).
 
 **Exemplars:** CQT/#41/q1, CQT/#995/q20, CQT/#255/q4, AS_10TQ9TC/#9/q9, CQT/#1350/q15
+
+![C2 — CQT #41 q1](exemplars/C2/CQT_41_q1.png)
+![C2 — CQT #995 q20](exemplars/C2/CQT_995_q20.png)
+![C2 — CQT #255 q4](exemplars/C2/CQT_255_q4.png)
 
 ### C3 -- stationary-line (no dressed branch)  (seen 13x)
 
@@ -32,6 +40,10 @@ This file and `cases.json` are generated from ONE source and say the same thing;
 
 **Exemplars:** AS_10TQ9TC/#321/q6, AS_10TQ9TC/#341/q7, CQT/#727/q12, CQT/#1351/q20, AS_10TQ9TC/#7/q8
 
+![C3 — AS_10TQ9TC #321 q6](exemplars/C3/AS_10TQ9TC_321_q6.png)
+![C3 — AS_10TQ9TC #341 q7](exemplars/C3/AS_10TQ9TC_341_q7.png)
+![C3 — CQT #727 q12](exemplars/C3/CQT_727_q12.png)
+
 ### C4a -- gradual-pull crossover  (seen 10x)
 
 **Geometry:** Both branches and the crossover visible, but the dip position drifts smoothly and continuously (S-bend / shark-fin) over a broad power band instead of snapping. Both plateaus resolvable; the transition power is a band, not a row. Fittable — sharpness of the crossover and trustworthiness are different axes.
@@ -39,6 +51,10 @@ This file and `cases.json` are generated from ONE source and say the same thing;
 **Prescription:** Accept the dressed frequency; place the operating power below the bottom of the drift band with margin (not at its foot). Optionally densify power steps around the crossover to localize the band. No re-run required for the frequency.
 
 **Exemplars:** CQT/#76/q6, CQT/#391/q1, CQT/#1117/q6, CQT/#481/q8, AS_10TQ9TC/#307/q6
+
+![C4a — CQT #76 q6](exemplars/C4a/CQT_76_q6.png)
+![C4a — CQT #391 q1](exemplars/C4a/CQT_391_q1.png)
+![C4a — CQT #1117 q6](exemplars/C4a/CQT_1117_q6.png)
 
 ### C4b -- bistable/coexisting crossover  (seen 12x)
 
@@ -48,6 +64,10 @@ This file and `cases.json` are generated from ONE source and say the same thing;
 
 **Exemplars:** AS_10TQ9TC/#335/q6, AS_10TQ9TC/#345/q6, CQT/#176/q18, AS_10TQ9TC/#8/q9, CQT/#349/q10
 
+![C4b — AS_10TQ9TC #335 q6](exemplars/C4b/AS_10TQ9TC_335_q6.png)
+![C4b — AS_10TQ9TC #345 q6](exemplars/C4b/AS_10TQ9TC_345_q6.png)
+![C4b — CQT #176 q18](exemplars/C4b/CQT_176_q18.png)
+
 ### C5 -- multi-feature window (real neighbor lines)  (seen 10x)
 
 **Geometry:** More than one genuine resonance line in the frequency window (same-feedline neighbors): multiple dip-like columns or a second sloping/broad dark band. Risk: the tracker excursions onto, or locks, the wrong line. The target line is identified geometrically as the one whose position SHIFTS with power.
@@ -55,6 +75,10 @@ This file and `cases.json` are generated from ONE source and say the same thing;
 **Prescription:** Narrow the frequency window around the power-DEPENDENT line and re-run; if the tracker still excursions at high power, narrow further or cut the ceiling just above the target's transition. Record the neighbor's position for the feedline map.
 
 **Exemplars:** CQT/#382/q18, CQT/#394/q5, CQT/#1352/q9, CQT/#347/q9
+
+![C5 — CQT #382 q18](exemplars/C5/CQT_382_q18.png)
+![C5 — CQT #394 q5](exemplars/C5/CQT_394_q5.png)
+![C5 — CQT #1352 q9](exemplars/C5/CQT_1352_q9.png)
 
 ### C6 -- empty window  (seen 4x)
 
@@ -64,6 +88,10 @@ This file and `cases.json` are generated from ONE source and say the same thing;
 
 **Exemplars:** CQT/#1089/q19, CQT/#1116/q6, CQT/#175/q18
 
+![C6 — CQT #1089 q19](exemplars/C6/CQT_1089_q19.png)
+![C6 — CQT #1116 q6](exemplars/C6/CQT_1116_q6.png)
+![C6 — CQT #175 q18](exemplars/C6/CQT_175_q18.png)
+
 ### N1 -- snr-floor (window under the noise floor)  (seen 13x)
 
 **Geometry:** The lower portion of the power window is pure speckle — the dip is untraceable there even though the line itself is healthy in the upper/mid rows (sometimes a full punch-out is visible above the speckle). The dressed-dip gate and/or the optimal-power search operate in the noise rows and fail or pick garbage. The inverse of C3(a): here the floor is too LOW, not too high.
@@ -71,6 +99,10 @@ This file and `cases.json` are generated from ONE source and say the same thing;
 **Prescription:** Raise the power floor out of the speckle by a bounded step, and/or add shots/averaging, and/or raise full-scale output while lowering amplitude for the same power. NEVER widen the frequency span to fix this — no window change converted an SNR failure into a success in any session; if the map above the speckle already shows both branches, a manual read is legitimate.
 
 **Exemplars:** CQT/#624/q9, CQT/#179/q16, CQT/#335/q9, CQT/#357/q16, AS_10TQ9TC/#9/q8
+
+![N1 — CQT #624 q9](exemplars/N1/CQT_624_q9.png)
+![N1 — CQT #179 q16](exemplars/N1/CQT_179_q16.png)
+![N1 — CQT #335 q9](exemplars/N1/CQT_335_q9.png)
 
 ### N2 -- spur-lock (false accept on a non-resonator artifact)  (seen 1x) | **PROVISIONAL P3**
 
@@ -80,6 +112,8 @@ This file and `cases.json` are generated from ONE source and say the same thing;
 
 **Exemplars:** AS_10TQ9TC/#8/q8
 
+![N2 — AS_10TQ9TC #8 q8](exemplars/N2/AS_10TQ9TC_8_q8.png)
+
 ### N3 -- unresolved-shift (sub-linewidth dispersive shift)  (seen 6x)
 
 **Geometry:** The dressed-bare separation is smaller than the dip linewidth (small chi), so the map shows a single dip sliding by less than its own width — no jump is visible even when the transition is inside the window, and punch-out claims are untestable from the figure. The qubit is alive; neither the ceiling (C2) nor the floor (C3) is at fault.
@@ -87,6 +121,10 @@ This file and `cases.json` are generated from ONE source and say the same thing;
 **Prescription:** Adopt the DRESSED frequency only -- the bare value is not required (expert Q7) and stays UNRECORDED rather than unverified-but-written. Shrink the frequency span so the linewidth covers many pixels and densify frequency steps if a punch-out verdict is still wanted; escalate to a dispersive-shift measurement only when the bare value actually matters downstream.
 
 **Exemplars:** AS_10TQ9TC/#315/q6, AS_10TQ9TC/#315/q7, AS_10TQ9TC/#347/q7, AS_10TQ9TC/#11/q9
+
+![N3 — AS_10TQ9TC #315 q6](exemplars/N3/AS_10TQ9TC_315_q6.png)
+![N3 — AS_10TQ9TC #315 q7](exemplars/N3/AS_10TQ9TC_315_q7.png)
+![N3 — AS_10TQ9TC #347 q7](exemplars/N3/AS_10TQ9TC_347_q7.png)
 
 ### N4 -- edge-clipped (frequency window mis-centered on a visible feature)  (seen 3x)
 
@@ -96,6 +134,10 @@ This file and `cases.json` are generated from ONE source and say the same thing;
 
 **Exemplars:** CQT/#350/q10, CQT/#351/q10, AS_10TQ9TC/#306/q7
 
+![N4 — CQT #350 q10](exemplars/N4/CQT_350_q10.png)
+![N4 — CQT #351 q10](exemplars/N4/CQT_351_q10.png)
+![N4 — AS_10TQ9TC #306 q7](exemplars/N4/AS_10TQ9TC_306_q7.png)
+
 ### N5 -- off-window (resonance outside the frequency span)  (seen 1x)
 
 **Geometry:** No dip in the map, but the background brightens monotonically toward one frequency edge at every power — the shoulder of a feature just outside the span (typically a stale seed frequency). Distinguishable from C6 (truly flat) and decisive: the fix is entirely different.
@@ -103,6 +145,8 @@ This file and `cases.json` are generated from ONE source and say the same thing;
 **Prescription:** Widen the frequency span severalfold (biased toward the brightening edge) or re-seed the center from the last known good value; power knobs unchanged. A pre-run sanity check of the seed against the last known resonance skips this run class entirely.
 
 **Exemplars:** CQT/#40/q1
+
+![N5 — CQT #40 q1](exemplars/N5/CQT_40_q1.png)
 
 ### N6 -- resolution-mismatch (span too wide for the branch step)  (seen 3x)
 
@@ -112,6 +156,10 @@ This file and `cases.json` are generated from ONE source and say the same thing;
 
 **Exemplars:** AS_10TQ9TC/#9/q8, AS_10TQ9TC/#318/q7, AS_10TQ9TC/#320/q6
 
+![N6 — AS_10TQ9TC #9 q8](exemplars/N6/AS_10TQ9TC_9_q8.png)
+![N6 — AS_10TQ9TC #318 q7](exemplars/N6/AS_10TQ9TC_318_q7.png)
+![N6 — AS_10TQ9TC #320 q6](exemplars/N6/AS_10TQ9TC_320_q6.png)
+
 ### N7 -- weak-contrast / asymmetric lineshape  (seen 8x) | **PROVISIONAL P2**
 
 **Geometry:** The feature is a shallow local minimum riding a strongly sloped background, often with an adjacent bright peak-like ridge (Fano-like/dispersive shape), so the 'dip position' itself is ill-defined for the tracker; per-row minima wobble by more than any systematic drift and no branch pair is resolvable.
@@ -120,6 +168,10 @@ This file and `cases.json` are generated from ONE source and say the same thing;
 
 **Exemplars:** CQT/#377/q19, CQT/#378/q19, CQT/#1033/q12, CQT/#1079/q12, CQT/#1352/q17
 
+![N7 — CQT #377 q19](exemplars/N7/CQT_377_q19.png)
+![N7 — CQT #378 q19](exemplars/N7/CQT_378_q19.png)
+![N7 — CQT #1033 q12](exemplars/N7/CQT_1033_q12.png)
+
 ### N8 -- saturation-artifact rows  (seen 4x)
 
 **Geometry:** At the highest powers, bright/dark streaks span the ENTIRE frequency axis (output-chain/amplifier saturation) — whole-row artifacts, not resonator physics. The minimum trace is meaningless there, and a fitter can misread the streaked rows as a punch-out transition; two qubits on one feedline receiving the identical 'optimal' power is the tell.
@@ -127,6 +179,10 @@ This file and `cases.json` are generated from ONE source and say the same thing;
 **Prescription:** Lower the ceiling to just below the streaked rows (or mask them); a transition claimed only at streaked rows is invalid. Annotators must not read trace excursions inside these rows as features.
 
 **Exemplars:** AS_10TQ9TC/#342/q6, AS_10TQ9TC/#342/q7, CQT/#135/q1, CQT/#76/q6
+
+![N8 — AS_10TQ9TC #342 q6](exemplars/N8/AS_10TQ9TC_342_q6.png)
+![N8 — AS_10TQ9TC #342 q7](exemplars/N8/AS_10TQ9TC_342_q7.png)
+![N8 — CQT #135 q1](exemplars/N8/CQT_135_q1.png)
 
 ## Flags (orthogonal to map geometry)
 
@@ -140,6 +196,10 @@ A flag can sit on ANY map case -- a textbook C1 can still carry F1.
 
 **Exemplars:** AS_10TQ9TC/#318/q6, AS_10TQ9TC/#10/q8, AS_10TQ9TC/#232/q5, CQT/#347/q9, CQT/#1352/q17, CQT/#378/q19
 
+![F1 — AS_10TQ9TC #318 q6](exemplars/F1/AS_10TQ9TC_318_q6.png)
+![F1 — AS_10TQ9TC #10 q8](exemplars/F1/AS_10TQ9TC_10_q8.png)
+![F1 — AS_10TQ9TC #232 q5](exemplars/F1/AS_10TQ9TC_232_q5.png)
+
 ### F2 -- fallback-write poisoning (flag)  (seen 14x)
 
 **Signature:** The node returns success with punchout=false and writes fallback values into state — ceiling power and/or the amplitude cap — degrading subsequent runs on the same feedline (huge readout amplitude can suppress the dressed dip in the very next map). 'Succeeded but wrote a sentinel' is invisible to map-only classification.
@@ -147,6 +207,10 @@ A flag can sit on ANY map case -- a textbook C1 can still carry F1.
 **Prescription:** AUTO-REVERT (expert Q4): SM reverts the fallback-written ceiling power / amplitude-cap values before the next run on that feedline -- the one-button session authorizes the write-back, and this is the poisoned-first-button class the whole loop exists to stop. Then re-run with the corrected window. Any session where a no-punch-out fallback write precedes a streak of SNR failures is re-read with this flag in mind.
 
 **Exemplars:** AS_10TQ9TC/#320/q7, AS_10TQ9TC/#321/q6, AS_10TQ9TC/#327/q6, AS_10TQ9TC/#347/q6, CQT/#41/q1
+
+![F2 — AS_10TQ9TC #320 q7](exemplars/F2/AS_10TQ9TC_320_q7.png)
+![F2 — AS_10TQ9TC #321 q6](exemplars/F2/AS_10TQ9TC_321_q6.png)
+![F2 — AS_10TQ9TC #327 q6](exemplars/F2/AS_10TQ9TC_327_q6.png)
 
 ### F3 -- branch-label swap / bare contradiction (flag)  (seen 11x)
 
@@ -156,6 +220,10 @@ A flag can sit on ANY map case -- a textbook C1 can still carry F1.
 
 **Exemplars:** AS_10TQ9TC/#326/q6, AS_10TQ9TC/#319/q6, AS_10TQ9TC/#346/q6, CQT/#1351/q14, CQT/#1213/q15
 
+![F3 — AS_10TQ9TC #326 q6](exemplars/F3/AS_10TQ9TC_326_q6.png)
+![F3 — AS_10TQ9TC #319 q6](exemplars/F3/AS_10TQ9TC_319_q6.png)
+![F3 — AS_10TQ9TC #346 q6](exemplars/F3/AS_10TQ9TC_346_q6.png)
+
 ### F4 -- off-feature fit on the correct line (flag)  (seen 4x)
 
 **Signature:** A SUCCESS whose dressed marker sits a few linewidths off the visible dip on the RIGHT line (not a wrong-line lock, not a spur): the tracker followed the feature but the fitted center landed beside it, or between branches.
@@ -163,6 +231,10 @@ A flag can sit on ANY map case -- a textbook C1 can still carry F1.
 **Prescription:** Re-read the figure before adopting; if the dip is visible, take the frequency manually or re-run once. Consecutive-run agreement (within a fraction of a linewidth) is the acceptance test.
 
 **Exemplars:** CQT/#342/q9, CQT/#1212/q15, CQT/#1352/q19, AS_10TQ9TC/#323/q6
+
+![F4 — CQT #342 q9](exemplars/F4/CQT_342_q9.png)
+![F4 — CQT #1212 q15](exemplars/F4/CQT_1212_q15.png)
+![F4 — CQT #1352 q19](exemplars/F4/CQT_1352_q19.png)
 
 ### F5 -- verdict-figure mismatch at the gate (flag)  (seen 8x)
 
@@ -172,6 +244,10 @@ A flag can sit on ANY map case -- a textbook C1 can still carry F1.
 
 **Exemplars:** CQT/#346/q9, CQT/#348/q10, CQT/#624/q9, CQT/#995/q20, AS_10TQ9TC/#326/q6
 
+![F5 — CQT #346 q9](exemplars/F5/CQT_346_q9.png)
+![F5 — CQT #348 q10](exemplars/F5/CQT_348_q10.png)
+![F5 — CQT #624 q9](exemplars/F5/CQT_624_q9.png)
+
 ### F6 -- intermittent dressing / run-to-run bistability (session-level flag)  (seen 5x) | **PROVISIONAL P1**
 
 **Signature:** The dressed feature is present in one run and completely absent in the next under identical settings, minutes apart (clean C1 followed by C3 of the same qubit). One phenomenon, not two cases — a per-figure taxonomy cannot express it; only adjacent-run comparison reveals it.
@@ -179,6 +255,14 @@ A flag can sit on ANY map case -- a textbook C1 can still carry F1.
 **Prescription:** PROVISIONAL P1 -- Re-run once with slightly PERTURBED parameters (small bounded jitter on the window edges/steps -- expert Q8), not an identical repeat: identical repeats are a coin flip here. If the feature still flickers, treat as a device/operating-point problem (flux stability, TLS) and stop calibrating this qubit; widening windows is provably useless and invites F1/F2 damage. Cross-check any adopted value against the agreement cluster of the runs where the feature was present.
 
 **Exemplars:** AS_10TQ9TC/#315/q6, AS_10TQ9TC/#321/q6, CQT/#1352/q16, CQT/#1351/q17
+
+![F6 — AS_10TQ9TC #315 q6](exemplars/F6/AS_10TQ9TC_315_q6.png)
+![F6 — AS_10TQ9TC #321 q6](exemplars/F6/AS_10TQ9TC_321_q6.png)
+![F6 — CQT #1352 q16](exemplars/F6/CQT_1352_q16.png)
+
+## Exemplar images
+
+Axes are NORMALISED and UNLABELLED: no absolute frequency or power leaves this pack, and a picture without numbers cannot teach an absolute scale (Clause B). Orientation follows the labs' own convention: frequency rightwards, readout power upwards. Overlays: orange = per-row dip track (rows where no dip clears the noise are simply absent), cyan dashed = the record's dressed frequency, magenta dotted = its bare frequency, red = its chosen power. Markers are the RECORD's claims, drawn even when they contradict the map — that contradiction is the lesson in the branch-swap and off-feature cases.
 
 ## Rules
 

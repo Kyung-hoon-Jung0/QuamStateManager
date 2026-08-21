@@ -1,0 +1,606 @@
+{
+ "schema": "smgolden/v2",
+ "family": "resonator_spectroscopy_vs_power",
+ "chip": "AS_10TQ9TC",
+ "session": "2026-08-10",
+ "session_id": "AS_2026-08-10",
+ "authored": "2026-08-21",
+ "status": "expert-round-1 + adversarial audit",
+ "provenance": "hindsight-authored answer key: the author saw the whole session and was free to judge the operator wrong. The system under test never sees past its cursor.",
+ "session_notes": "Chip AS_10TQ9TC, 29 node-05 runs, 08:21-10:19. STRUCTURAL FACTS THAT DOMINATE THIS ANSWER KEY:\n\n(1) EVERY run in the session is multiplexed=true over {q6,q7} on one shared readout line con1/8/1. There is no single-qubit node-05 run anywhere in the session, so by the batch rule no run here can serve as a first calibration on its own authority. I have applied the rule as: adoption requires cross-run agreement (>=2 runs consistent at the same operating point), which this session does supply at every epoch. Corollary artefacts of the shared line: FSP is a line-level property (moved -3 -> -11 dBm at #307 and stayed), and at #342 BOTH qubits received the byte-identical optimal_power -10.179 dBm \u2014 the tell that the pick came from shared-feedline saturation streaks (N8), not per-qubit physics.\n\n(2) THE OPERATING POINT MOVED FOUR TIMES, always caused by interleaved non-05 nodes, never by node 05. Epoch A (#306-#307): q6 ~6.0109, q7 ~6.0979. Epoch A' (#313-#327, after #308-#312): q6 ~6.0143, q7 ~6.0980. Epoch B (#333-#340, after #328-#332): q6 ~6.0100, q7 ~6.0971. Excursion (#341-#342, after #337-#340): both resonators several MHz down (q6 6.0056, q7 6.0913) AND power-independent \u2014 the qubits were flux-decoupled, not dead; they recouple by #343. Epoch C (#347-#349): q6 down to ~6.0005 dressed / 5.9972 bare, q7 ~6.1000. Any answer key value must be epoch-stamped; early-morning numbers are not wrong, they are superseded.\n\n(3) THE ROOT CAUSE OF THE 10-RUN FAILURE STREAK WAS RESOLUTION, NOT POWER. From #318 the operator widened frequency_span to 40 MHz at 0.4 MHz/step and kept it for 15 runs. q6's dispersive shift is 2.25-3.3 MHz and q7's is <=1.8 MHz \u2014 3 to 8 pixels \u2014 and the legend box covers the top-of-window rows where the transition lives. Every diagnosis the operator tried in that regime was on the power axis (floor -50 -> -60 -> -70, ceiling -20 -> 0, floor -40, ...), which cannot fix a resolution problem. The moment the span was cut to 18 MHz / 0.3 MHz step with floor -50 (#348), both qubits gave a textbook punch-out on the first try. That single knob, applied at #318 instead of #348, would have saved ~20 runs and roughly 100 minutes.\n\n(4) THE NODE'S OWN ADVICE IS ACTIVELY WRONG IN TWO PLACES. \"no punch-out: widen sweep\" printed on a C3 stationary-line map (#341) sent the operator to -70..0 (#342) where amplifier/output-chain saturation streaks were read as a punch-out and a huge-amplitude write followed. And success=true is returned with punchout=false at least 11 times, each time carrying optimal_power = ceiling (-23.0) and target_amplitude = 0.251188643150958 (the max_amp=0.5 cap converted at FSP -11) \u2014 the F2 fallback signature. A correct system should treat the exact triple (punchout=false, success=true, target_amplitude==0.2512) as an automatic refusal, and should never take an optimal_power within ~3 dB of min_power_dbm or at/above max_power_dbm.\n\n(5) ONLY ONE RUN IN THE WHOLE SESSION WROTE STATE \u2014 #327 \u2014 and it is the one run whose q6 result is provably inverted. I verified this on figures.power_dbm.png: the stationary low-power column sits at 6.0160 GHz (dressed) and the hot rows swing left toward ~6.012 (bare), yet the fit wrote f_01 = 6.011981 GHz (the hot-row/bare position) and frequency_bare = 6.015981 GHz (the cold-row/dressed column), plus the 0.2512 V amplitude cap at ceiling power. The readout was configured on the BARE branch, above the punch-out, at maximum amplitude \u2014 the worst possible combination, and it stood for the rest of the session because nothing later wrote state. Note also that all other runs record patches:[] while returning target_amplitude/target_full_scale_power_dbm; I have listed those as would-be poisoned writes and said so, rather than asserting they landed.\n\n(6) BRANCH-LABEL SWAP (F3) IS NOT RANDOM \u2014 it co-occurs exactly with the ceiling fallback and the q6 failures (#319, #322, #326, #327, #333, #335, #336, #345, #346). Geometry always decides: the power-INDEPENDENT low-power column is dressed, the hot-row position is bare. For q6 the sign is stable all session \u2014 bare sits 2.25-4 MHz BELOW dressed at every epoch (#307 3.0, #314 2.25, #327 ~4, #348 3.3, #349 3.0) \u2014 so any record with bare > dressed (#319, #322, #326, #327, #333, #335, #336, #346) is swapped on its face and needs no figure to reject.\n\n(7) THE POWER PICKER IS UNSTABLE EVEN WHEN THE FREQUENCY PICK IS STABLE. On essentially identical maps q7 got -29.2 (#333), -41.5 (#335), -42.2 (#336), -44.5 (#346); q6 got -48.2 (#313) then -36.1 (#314) one map later. Powers should therefore be adopted as \"3-6 dB below the observed knee\" and cross-checked against the figure, never taken verbatim from a single run.\n\nIdeal-vs-actual: 8 runs vs 29 for q6, 8 vs 29 for q7 (the same 8 runs serve both, since every run is multiplexed) \u2014 21 wasted runs, one poisoned real write, and at least 15 would-be poisoned writes.",
+ "adversarial_audit": "Verified every claim against the 29 run records. The key is largely well-founded on geometry, but the following are wrong or unfair as benchmark targets.\n\n**1. (e/a) \"-23.0 dBm is the window ceiling\" \u2014 false, and it breaks two prescribed rules.** Every `optimal_power` in the file equals `grid_power(k) - 3.0` with k an exact integer sweep index; -23.0 = max_power(-20) - `power_below_punchout_db`(3.0), i.e. punch-out declared at the TOP row (k=39/39), 3 dB *below* max_power. So the key's rule \"never take an optimal_power at/above max_power_dbm\" never fires on the very signature it targets, and \"target_amplitude == 0.2512\" is FSP-dependent (0.2512 = 10^((-23+11)/20), not \"the max_amp=0.5 cap\"). **Correction:** detector = `punchout==false AND optimal == max_power - power_below_punchout_db`; deep-pick detector = punch-out row index in the bottom ~15% of the sweep (catches #322 q7 -58.9 and #343 q7 -53.3, which the key calls poisoned but its \u00b13 dB-of-floor rule misses).\n\n**2. (a) Knees are derivable, and the key's eyeballed values are wrong.** q6 #348: knee = P+3 = **-35.4**, not \"~-33\"; -38.4 is exactly 3.0 dB below, not \"about 5\". q7 #349: knee = **-38.85**, not \"~-30\"; -41.85 is exactly 3.0 dB below, not \"11 dB\". Consequently the key's core rule \"adopt 3-6 dB below the observed knee\" is satisfied *by construction* by every non-fallback pick it condemns (#313 -48.2, #318 -69.2, #322 -58.9, #326 -73) and cannot discriminate. Rewrite around *which row* was called the knee.\n\n**3. (e) \"Operating point moved four times, always caused by interleaved non-05 nodes.\"** `frequency_shift` exposes the stored value (fitted \u2212 shift). It changed five times, including #342\u2192#343 (**exactly +4.846 q6 / +4.800 q7 \u2014 the excursion undone**) and #346\u2192#347 (q6 **-12.91 MHz**, q7 +2.21) between *consecutive* run numbers with no interleaved node and no patch. Also #327's write (6011.98) was overwritten before #333 (stored 6012.81) \u2014 so \"only one run wrote state\" understates the churn.\n\n**4. (c) #343 wasted, both qubits \u2014 wrong.** Steps 6 demand \"confirm the resonator responds to power again\"; #343 is that run, and the restoration is provable there (caveat \u2462 calls it an assumption). Promote to an ideal-path step.\n\n**5. (c) q6 #347 wasted while being evidence line (c) for \"high\" confidence.** Load-bearing or wasted, not both.\n\n**6. (c/d) q7 corroboration rule self-violated twice.** Step 5 adopts -29.2 from #333 alone; its corroborator #335 is marked wasted. Termination adopts #349 alone after rejecting #348 (0.9 MHz \u2248 the dispersive shift). Set q7 `unresolved: true` or add the confirming run.\n\n**7. (internal) Identical `bare` judged both ways:** q6 #348/#349 identical \u2192 \"corroboration\"; q7 #348/#349 identical \u2192 \"carried state\". One standard.\n\n**8. (e) Resolution story mis-attributed.** Step was already 0.4 MHz at #317 (annotated good C1, both qubits); #318 changed only span (8\u219240 MHz, 20\u2192100 pts). \"3 MHz compressed to ~7 pixels\" is false in samples. Don't penalise 8 MHz@0.25 or 18@0.4.\n\n**9. (e) Contradictions of the record:** \"both qubits textbook at #348\" vs the key's own q7-step-7 rejection; \"ten of eleven q7 maps unreadable\" vs C1 annotations at #324-#327/#333/#335/#336/#343/#346; \"#336 numerically identical to #335\" (q6 bare 6013.211 vs 6014.011); F3 swap list includes #345 (q6 bare is null); \"15 runs\" at 40 MHz (actually 20); \"FSP \u2026 stayed -11\" (#342 -4, #343 q7 +7); q7 #327 called 1.1 MHz off-feature though annotation is C1/high/`fit_agrees=yes`.\n\n**10. (a) Unexamined confound:** `num_shots` 150\u2192**50** at #342/#343 and 80 at #344/#345. The worst false accept had one third the averaging; the key blames the 0 dBm ceiling alone.\n\n**11. (b) Hindsight in expected outputs:** #341's case asserts \"it recouples by #343\"; #333's action prescribes exactly #348's 18 MHz/0.3 window. State liveness as unknown and the requirement (span \u2264~20 MHz) instead.\n\n**12.** q6 value quoted to 1 Hz (6000497353) under a \u00b10.5 MHz caveat with confidence \"high\" \u2014 downgrade to med.\n\n\ud55c\uad6d\uc5b4 \uc694\uc57d: \uc774 \ub2f5\uc548\uc9c0\uc758 \uae30\ud558\ud559\uc801 \ud310\ub3c5(\ube0c\ub79c\uce58 \uc2a4\uc651, #327 \uc624\uc5fc \uae30\ub85d)\uc740 \ub300\uccb4\ub85c \ud0c0\ub2f9\ud558\ub098, \ud575\uc2ec \uaddc\uce59 \ub450 \uac1c\uac00 \ub370\uc774\ud130\uc640 \uc5b4\uae0b\ub0a9\ub2c8\ub2e4. -23.0 dBm\uc740 \"\ucc9c\uc7a5\"\uc774 \uc544\ub2c8\ub77c `max_power-3`\uc774\uace0 \ubaa8\ub4e0 optimal_power\ub294 `\uaca9\uc790\uc804\ub825-3`\uc774\ubbc0\ub85c, \uc81c\uc2dc\ub41c \ud0d0\uc9c0 \uaddc\uce59\uacfc \"knee \uc544\ub798 3-6 dB\" \uaddc\uce59\uc740 \uc2e4\uc81c\ub85c \uc791\ub3d9\ud558\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4. \ub610 `frequency_shift`\ub85c \uc800\uc7a5\uac12 \ubcc0\ub3d9\uc774 5\ud68c(#342\u2192#343 \ubcf5\uc6d0, #346\u2192#347 \ub178\ub4dc \uac1c\uc785 \uc5c6\ub294 12.9 MHz \uc774\ub3d9) \uc99d\uba85\ub418\uc5b4 \"\ud56d\uc0c1 \ub2e4\ub978 \ub178\ub4dc \ud0d3\" \uc8fc\uc7a5\uc740 \ubc18\uc99d\ub429\ub2c8\ub2e4. #343\u00b7#347\u00b7#335\ub294 \ub0ad\ube44\ub85c \ubcfc \uc218 \uc5c6\uace0, q7 \uc885\ub8cc(#349 \ub2e8\uc77c \ub7f0)\ub294 \uc790\uccb4 \uaddc\uce59 \uc704\ubc18\uc774\ub77c unresolved \ucc98\ub9ac\ud574\uc57c \ud569\ub2c8\ub2e4.",
+ "qubits": [
+  {
+   "qubit": "q6",
+   "runs_in_scope": [
+    "#306_05_resonator_spectroscopy_vs_power_082103",
+    "#307_05_resonator_spectroscopy_vs_power_082220",
+    "#313_05_resonator_spectroscopy_vs_power_083344",
+    "#314_05_resonator_spectroscopy_vs_power_083651",
+    "#315_05_resonator_spectroscopy_vs_power_083747",
+    "#316_05_resonator_spectroscopy_vs_power_083837",
+    "#317_05_resonator_spectroscopy_vs_power_084003",
+    "#318_05_resonator_spectroscopy_vs_power_084115",
+    "#319_05_resonator_spectroscopy_vs_power_084215",
+    "#320_05_resonator_spectroscopy_vs_power_084555",
+    "#321_05_resonator_spectroscopy_vs_power_084719",
+    "#322_05_resonator_spectroscopy_vs_power_084830",
+    "#323_05_resonator_spectroscopy_vs_power_091018",
+    "#324_05_resonator_spectroscopy_vs_power_091107",
+    "#325_05_resonator_spectroscopy_vs_power_091257",
+    "#326_05_resonator_spectroscopy_vs_power_091442",
+    "#327_05_resonator_spectroscopy_vs_power_092011",
+    "#333_05_resonator_spectroscopy_vs_power_093829",
+    "#335_05_resonator_spectroscopy_vs_power_094100",
+    "#336_05_resonator_spectroscopy_vs_power_094218",
+    "#341_05_resonator_spectroscopy_vs_power_095400",
+    "#342_05_resonator_spectroscopy_vs_power_095606",
+    "#343_05_resonator_spectroscopy_vs_power_100154",
+    "#344_05_resonator_spectroscopy_vs_power_100314",
+    "#345_05_resonator_spectroscopy_vs_power_100519",
+    "#346_05_resonator_spectroscopy_vs_power_100614",
+    "#347_05_resonator_spectroscopy_vs_power_101626",
+    "#348_05_resonator_spectroscopy_vs_power_101830",
+    "#349_05_resonator_spectroscopy_vs_power_101941"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#306_05_resonator_spectroscopy_vs_power_082103",
+     "expected_case": "C1 clean punch-out, but demonstrated on only part of the picture: the hot rows sit on the bare position, the transition is in the upper third, the dressed branch holds to the bottom. bare_resonator_frequency is null, so the shift is asserted (0.0) rather than measured.",
+     "expected_flags": [],
+     "correct_decision": "reconfirm",
+     "correct_next_action": "Do not treat a single multiplexed run as a first calibration. Repeat once with min_power_dbm -40 -> -50 (keep frequency_span 6-8 MHz at 0.25 MHz step) so the sweep starts well below the ~-33 dBm knee and returns a measured bare value alongside the dressed one. Hold -32.7 dBm as provisional only.",
+     "operator_did": "Accepted the q6 fit (dressed 6.010662 GHz, optimal -32.7 dBm, FSP target -3 dBm) and immediately re-ran at -50..-15 with span 8 MHz \u2014 the right move, though triggered by q7's edge-clipped failure rather than by q6's missing bare value.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "#307_05_resonator_spectroscopy_vs_power_082220",
+     "expected_case": "C1 clean punch-out with both branches and a (slightly diagonal, ~5-row) transition; dressed 6.010912 GHz, bare 6.007912 GHz, split +3.0 MHz with bare BELOW dressed \u2014 the sign that holds for q6 all session.",
+     "expected_flags": [],
+     "correct_decision": "adopt",
+     "correct_next_action": "Adopt dressed 6.010912 GHz, bare 6.007912 GHz, optimal_power -34.9 dBm (amplitude 0.0639 V at the line's new FSP -11 dBm). Corroborated by #306's dressed within 0.25 MHz = one frequency step. STOP node 05 for q6 and move downstream; re-open it only if another node moves the operating point.",
+     "operator_did": "Adopted and moved on to other nodes (#308-#312) \u2014 correct.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 3,
+     "run": "#313_05_resonator_spectroscopy_vs_power_083344",
+     "expected_case": "C1, but at a NEW operating point \u2014 the q6 window centre moved ~+4 MHz during #308-#312. Two branches present, dressed plateau right of mid-window; the deepest rows have already lost the branch.",
+     "expected_flags": [
+      "F1"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Refuse the power: -48.2 dBm sits 1.8 dB above the swept floor (-50) in rows where the per-row dip trace has left the branch, and 0.0138 V is a needlessly small readout amplitude. The frequency is plausible but uncorroborated at this new point. Repeat the identical window once; if the picker again lands within 3 dB of min_power_dbm, raise min_power_dbm to -45.",
+     "operator_did": "Re-ran the identical -50..-15 window (#314) \u2014 exactly the right corrective, and the annotation shows the operator noticed the too-deep pick.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 4,
+     "run": "#314_05_resonator_spectroscopy_vs_power_083651",
+     "expected_case": "C1, the reference-quality q6 map of the session: bare dip at the low-frequency marker in the hot rows, a sharp 2-row snap, a steady dressed column all the way down, chosen power comfortably below the transition.",
+     "expected_flags": [],
+     "correct_decision": "adopt",
+     "correct_next_action": "Adopt dressed 6.014281 GHz, bare 6.012031 GHz (split 2.25 MHz), optimal_power -36.1 dBm (amplitude 0.0556 V at FSP -11). Corroborated by #313's dressed within 0.5 MHz. STOP node 05 for q6 \u2014 the knee is located, the optimum is ~6 dB under it, and nothing further is available from this measurement.",
+     "operator_did": "Did not stop. Ran thirteen more node-05 runs (#315-#327) on this same operating point, changing only the power window (-50/-15 -> -60/-20 -> -70/-20 -> -50/-20) and never the resolution.",
+     "operator_was_right": "no"
+    },
+    {
+     "step": 5,
+     "run": "#333_05_resonator_spectroscopy_vs_power_093829",
+     "expected_case": "C4a gradual-pull crossover seen through too coarse a window: one smeared band with a weak bend, both claimed branches falling inside a single feature, top rows behind the legend box. The operating point has drifted again (dressed ~6.0104) after interleaved nodes #328-#332.",
+     "expected_flags": [
+      "F2",
+      "F3",
+      "F5"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Refuse the result outright \u2014 punchout=false with success=true, optimal at the ceiling (-23 dBm) and target_amplitude at the 0.2512 V cap is the fallback signature, and bare (6.013211) > dressed (6.010411) inverts q6's established sign. The limiter is RESOLUTION, not power: narrow frequency_span 40 -> 18 MHz at 0.3 MHz step and keep -50..-20. Do not touch the power axis again.",
+     "operator_did": "Repeated the same 40 MHz window twice more (#335, #336), getting the identical fallback both times.",
+     "operator_was_right": "no"
+    },
+    {
+     "step": 6,
+     "run": "#341_05_resonator_spectroscopy_vs_power_095400",
+     "expected_case": "C3 stationary-line, cause = flux-decoupled: one narrow perfectly vertical dip across the entire power range, no bend anywhere, and the resonator has moved ~4.5 MHz down in absolute frequency (6.0056 GHz) after interleaved nodes #337-#340. Not dead \u2014 it recouples by #343.",
+     "expected_flags": [],
+     "correct_decision": "reject_and_stop",
+     "correct_next_action": "Stop node 05 and escalate to the flux/operating point. Nothing on this map can calibrate a dressed frequency or a readout power, and the node's own 'no punch-out: widen sweep' hint is wrong for this case \u2014 a stationary line is not a window problem. Restore the bias point, confirm with a single-tone check that the resonator responds to power again, and only then re-run node 05 at span 18 MHz / -50..-20.",
+     "operator_did": "Obeyed the node's hint and widened to -70..0 (#342), where top-row saturation streaks were read as a punch-out and produced a 0.4909 V / FSP -4 dBm write with both qubits handed the identical optimal power.",
+     "operator_was_right": "no"
+    },
+    {
+     "step": 7,
+     "run": "#348_05_resonator_spectroscopy_vs_power_101830",
+     "expected_case": "C1 clean punch-out, textbook, at the final operating point (span 18 MHz / 0.3 MHz step / -50..-20). Verified on the figure: the dressed column stands at ~6.0005-6.0010 GHz from -33 dBm down, the hot rows walk left to the bare marker at 5.9972 GHz, and the chosen power line lies in the darkest part of the dressed dip.",
+     "expected_flags": [],
+     "correct_decision": "adopt",
+     "correct_next_action": "Adopt dressed 6.000497 GHz, bare 5.997197 GHz (split 3.3 MHz, same sign and size as every good q6 run), optimal_power -38.4 dBm (amplitude 0.0427 V at FSP -11) \u2014 about 5 dB below the ~-33 dBm knee, inside maximum dip contrast. One tighter-window reconfirm is permitted; no further retuning.",
+     "operator_did": "Reached this window only after #347's no-punch-out verdict, by dropping the floor -40 -> -50 while keeping the 18 MHz span introduced in the same run. Correct move, arrived at ~2 hours and 20 runs late.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 8,
+     "run": "#349_05_resonator_spectroscopy_vs_power_101941",
+     "expected_case": "C1 again on a tightened -45..-25 window; the dressed column and the diagonal crossover toward the bare marker are both visible, but the chosen power sits one row above the window floor where the dip trace has already begun drifting off the column.",
+     "expected_flags": [
+      "F1"
+     ],
+     "correct_decision": "reconfirm",
+     "correct_next_action": "Take the frequency confirmation only: 6.000197 GHz is within one 0.3 MHz pixel of #348 and bare is identical at 5.997197 GHz. REFUSE the power update \u2014 -44.4 dBm is 0.6 dB above the swept floor in reduced contrast; keep #348's -38.4 dBm. Terminate node 05 for q6.",
+     "operator_did": "Let #349 stand as the session's last word on q6, taking its deeper -44.4 dBm pick along with the frequency.",
+     "operator_was_right": "partly"
+    }
+   ],
+   "termination": {
+    "at_run": "#348_05_resonator_spectroscopy_vs_power_101830",
+    "reason": "#348 is the first run at the final operating point that shows both branches, a located transition and an optimum inside maximum dip contrast. #349 is a permitted reconfirm that ratifies the frequency (within one pixel) and nothing else \u2014 its power must be refused as floor-adjacent. Everything after #314 and before #348 is either a repeat at an unchanged operating point or a run in the 40 MHz-span regime that could not resolve a 3 MHz shift; nothing in that block produced an adoptable q6 value.",
+    "final_resonator_frequency": 6000497353,
+    "final_bare_frequency": 5997197353,
+    "final_optimal_power": -38.38461538461539,
+    "value_confidence": "high",
+    "value_evidence": "Three independent lines. (a) Cross-run agreement: #348 and #349 give dressed 6.000497 and 6.000197 GHz \u2014 one 0.3 MHz frequency step apart \u2014 and give bare 5.997197 GHz identically. (b) Geometry read directly off figures.power_dbm.png for both runs: the power-independent low-power column sits at ~6.0005-6.0010 GHz and the hot rows swing left to ~5.9975 GHz, so bare < dressed by 3.3 MHz, which matches the sign and magnitude of every good q6 map in the session (#307 +3.0, #314 +2.25, #327 ~+4.0 MHz). (c) Independent corroboration of the bare line: #347, run 12 minutes earlier on a 40 MHz span, shows a single power-independent dip at 5.997097 GHz \u2014 that stationary line is the bare branch, 100 kHz from the fitted value. The power -38.4 dBm is licensed by the figure: the knee is at about -33 dBm and the red optimal line lands in the darkest part of the dressed dip, whereas #349's -44.4 dBm sits where the trace has already drifted. CAVEAT: in both figures the visible dip minimum looks 0.3-0.5 MHz ABOVE the fitted dressed marker, so quote 6.0005 GHz with a +/-0.5 MHz bar; the branch identification, the bare value and the power are not in doubt.",
+    "unresolved": false
+   },
+   "wasted_runs": [
+    {
+     "run": "#315_05_resonator_spectroscopy_vs_power_083747",
+     "why_wasted": "Identical window one minute after #314's reference-quality map. The two-branch structure had vanished (single column, sub-linewidth claimed shift) \u2014 F6 intermittency \u2014 and the fit still returned success, dragging the stored dressed frequency 1.75 MHz down. Produced no information the path needed and actively degraded the held value."
+    },
+    {
+     "run": "#316_05_resonator_spectroscopy_vs_power_083837",
+     "why_wasted": "Floor pushed to -60 to hunt a dressed branch at lower power. The branch was never missing at low power \u2014 it was intermittent \u2014 so the knob was aimed at the wrong axis; the map came back unresolved again and the -49.2 dBm pick bought only a smaller amplitude."
+    },
+    {
+     "run": "#317_05_resonator_spectroscopy_vs_power_084003",
+     "why_wasted": "A genuinely good map (C1, dressed 6.013981 within 0.3 MHz of #314, optimal -35.3 dBm) \u2014 but the path had already adopted at #314 and this run introduced no new knob and no new operating point. Acceptable as a one-off confirmation; redundant as run 5 of 14."
+    },
+    {
+     "run": "#318_05_resonator_spectroscopy_vs_power_084115",
+     "why_wasted": "The pivotal wrong turn: both axes widened at once (power to -70..-20, span 6-8 -> 40 MHz). Widening the floor invited the picker into dead-SNR rows (-69.2 dBm, amplitude 0.0012 V) and widening the span compressed q6's 3 MHz shift to ~7 pixels. Every q6 failure for the next 9 runs traces to this parameter choice."
+    },
+    {
+     "run": "#319_05_resonator_spectroscopy_vs_power_084215",
+     "why_wasted": "Failed on dressed-dip SNR (4.4 < 5) with the branch labels inverted (F3): 'bare' pinned on the low-power column. Nothing applied, nothing learned that the window change at #318 had not already caused."
+    },
+    {
+     "run": "#320_05_resonator_spectroscopy_vs_power_084555",
+     "why_wasted": "Another wide-window repeat. q6 came back as an unresolvable single column whose position coincides with the previously-established bare line \u2014 indistinguishable from a bare-only map at this span. Confirmed only that the span was wrong."
+    },
+    {
+     "run": "#321_05_resonator_spectroscopy_vs_power_084719",
+     "why_wasted": "C3 stationary line for q6 with the fallback write (ceiling power + 0.2512 V amplitude cap). The session's low point: a would-be poisoned write, and the huge readout amplitude it left in state plausibly aggravated the next run's dressed-dip SNR failure."
+    },
+    {
+     "run": "#322_05_resonator_spectroscopy_vs_power_084830",
+     "why_wasted": "Immediate repeat 'to shake off' #321. The two-branch structure returned but the fit failed on SNR (1.8 < 5) with the same F3 label swap. A repeat with no parameter change cannot fix a resolution limit."
+    },
+    {
+     "run": "#323_05_resonator_spectroscopy_vs_power_091018",
+     "why_wasted": "Retry after a 20-minute pause, still at 40 MHz span / -70..-20. Failed (SNR 3.4), recorded dressed ~1.5 MHz off the visible column and an optimal at the window floor."
+    },
+    {
+     "run": "#324_05_resonator_spectroscopy_vs_power_091107",
+     "why_wasted": "Third consecutive identical retry at the deep floor. Failed again with optimal -66.6 dBm inside the noise rows. The annotation itself identifies the cause as the floor, which the retry did not change."
+    },
+    {
+     "run": "#325_05_resonator_spectroscopy_vs_power_091257",
+     "why_wasted": "Fourth identical retry. Failed, and the fit reported optimal_power -71.7 dBm \u2014 BELOW the swept floor of -70, i.e. extrapolated outside its own window. A plain retry against a systematic limit."
+    },
+    {
+     "run": "#326_05_resonator_spectroscopy_vs_power_091442",
+     "why_wasted": "Fifth identical retry. The figure shows the clearest two-branch staircase of the whole q6 series, yet the fit reported punchout=false with inverted labels and a ceiling optimum (F5 verdict-figure mismatch). The map was good and the analysis threw it away."
+    },
+    {
+     "run": "#327_05_resonator_spectroscopy_vs_power_092011",
+     "why_wasted": "Raising the floor -70 -> -50 was the right instinct but did not address the span. The run returned punchout=false + success=true for q6 and WROTE state \u2014 the only real write of the session, and it wrote the bare branch as f_01 at ceiling power with the amplitude cap. Worse than wasted: this run is where the session's lasting damage happened."
+    },
+    {
+     "run": "#335_05_resonator_spectroscopy_vs_power_094100",
+     "why_wasted": "Repeat of #333's 40 MHz window after one interleaved node. Same C4 smear, same swapped labels, same ceiling fallback. The dip traces show a genuinely bistable crossover \u2014 real physics the window could not resolve."
+    },
+    {
+     "run": "#336_05_resonator_spectroscopy_vs_power_094218",
+     "why_wasted": "Immediate repeat of #335 returning numerically identical q6 results. Byte-identical output from a repeated measurement proves the limit is systematic, and by this point that had already been demonstrated three times."
+    },
+    {
+     "run": "#342_05_resonator_spectroscopy_vs_power_095606",
+     "why_wasted": "Harmful: following the node's 'widen sweep' hint on a flux-decoupled C3 map took the ceiling to 0 dBm, where full-row saturation streaks (N8) were read as a punch-out. Yielded a bogus -10.2 dBm optimum and a 0.4909 V amplitude; both qubits got the identical power, proving the artifact was shared-line, not per-qubit."
+    },
+    {
+     "run": "#343_05_resonator_spectroscopy_vs_power_100154",
+     "why_wasted": "Did carry one real fact \u2014 the resonators had re-coupled and returned near their earlier positions \u2014 but produced no adoptable q6 value: the analysis failed and the recorded optimal (-69.4 dBm) sat at the -70 floor. The same fact would have come free from any correctly-parameterised re-run."
+    },
+    {
+     "run": "#344_05_resonator_spectroscopy_vs_power_100314",
+     "why_wasted": "Narrowing to -40..-20 cut the noise floor away but also cut away the dressed-branch region \u2014 the inverse error to #318. Both qubits fell back to no-punch-out at the ceiling. Still 40 MHz span."
+    },
+    {
+     "run": "#345_05_resonator_spectroscopy_vs_power_100519",
+     "why_wasted": "Immediate repeat of #344 producing identical fit numbers, while the figure shows the branch change more clearly than #344 did. Another repeat against a systematic limit."
+    },
+    {
+     "run": "#346_05_resonator_spectroscopy_vs_power_100614",
+     "why_wasted": "Re-opening the floor to -50 rescued q7 but not q6, which fell into the ceiling fallback again with the 'bare' marker on the mid-power blob. Still 40 MHz span \u2014 the one knob never tried."
+    },
+    {
+     "run": "#347_05_resonator_spectroscopy_vs_power_101626",
+     "why_wasted": "Trimming back to -40..-20 for a fast confirmation backfired: no punch-out for either qubit and a ceiling-power fallback. Its one incidental value \u2014 the stationary dip at 5.997097 GHz that #348 identifies as bare \u2014 corroborates the final answer, but the run was not needed to obtain it."
+    }
+   ],
+   "poisoned_writes": [
+    {
+     "run": "#327_05_resonator_spectroscopy_vs_power_092011",
+     "path": "/quam/qubits/q6/resonator/f_01",
+     "why": "Wrote 6011981418 Hz, which the figure shows is the HOT-ROW (bare) position \u2014 the hot rows swing left toward ~6.012 GHz while the power-independent low-power column stands at 6.0160 GHz. Geometry overrides the fit label: the readout frequency was set to the punched-out bare branch. F3 branch-label swap on the session's only real write."
+    },
+    {
+     "run": "#327_05_resonator_spectroscopy_vs_power_092011",
+     "path": "/quam/qubits/q6/resonator/frequency_bare",
+     "why": "Wrote 6015981418 Hz, the low-power stationary column \u2014 i.e. the DRESSED position \u2014 as the bare frequency. The mirror image of the f_01 error and, being bare > dressed, contradicts the sign q6 shows in every good map of the session (#307, #314, #348, #349 all have bare 2.25-3.3 MHz BELOW dressed)."
+    },
+    {
+     "run": "#327_05_resonator_spectroscopy_vs_power_092011",
+     "path": "/quam/qubits/q6/resonator/operations/readout/amplitude",
+     "why": "Wrote 0.251188643150958 V \u2014 the max_amp=0.5 cap converted at FSP -11 dBm \u2014 carried in from optimal_power = -23.0 dBm, which is the window CEILING and, per the same figure, sits about 10 dB ABOVE the ~-33 dBm knee. The fallback signature (punchout=false with success=true) should have refused the write outright; instead the chip ran maximum-amplitude readout above the punch-out for the rest of the session."
+    },
+    {
+     "run": "#327_05_resonator_spectroscopy_vs_power_092011",
+     "path": "/quam/qubits/q6/resonator/RF_frequency",
+     "why": "Wrote 6011981418 Hz, propagating the swapped f_01 into the actual drive frequency \u2014 this is the write that operationally mis-tunes the readout, not merely the bookkeeping."
+    },
+    {
+     "run": "#313_05_resonator_spectroscopy_vs_power_083344",
+     "path": "/quam/qubits/q6/resonator/operations/readout/amplitude",
+     "why": "target_amplitude 0.0138 V from optimal_power -48.2 dBm, which sits 1.8 dB above the swept floor (-50) in rows where the per-row dip trace has already left the branch. F1 floor-pinned optimum \u2014 refused, never adopted."
+    },
+    {
+     "run": "#318_05_resonator_spectroscopy_vs_power_084115",
+     "path": "/quam/qubits/q6/resonator/operations/readout/amplitude",
+     "why": "target_amplitude 0.0012368 V from optimal_power -69.2 dBm against a floor of -70: the picker ran off into dead-SNR territory the moment the floor was widened. F1, and the most extreme amplitude collapse of the session."
+    },
+    {
+     "run": "#321_05_resonator_spectroscopy_vs_power_084719",
+     "path": "/quam/qubits/q6/resonator/operations/readout/amplitude",
+     "why": "F2 fallback on a C3 stationary-line map: punchout=false, success=true, optimal at ceiling -23.0 dBm, target_amplitude at the 0.2512 V cap. The node even printed 'no punch-out: widen sweep' and returned success anyway."
+    },
+    {
+     "run": "#333_05_resonator_spectroscopy_vs_power_093829",
+     "path": "/quam/qubits/q6/resonator/operations/readout/amplitude",
+     "why": "F2 fallback (ceiling -23.0 dBm, 0.2512 V cap) against a visibly smeared but real crossover, with bare > dressed (labels swapped)."
+    },
+    {
+     "run": "#335_05_resonator_spectroscopy_vs_power_094100",
+     "path": "/quam/qubits/q6/resonator/operations/readout/amplitude",
+     "why": "F2 fallback repeated (ceiling -23.0 dBm, 0.2512 V cap) while the dip traces show two coexisting dips over a band of powers \u2014 a bistable crossover the fit denied."
+    },
+    {
+     "run": "#336_05_resonator_spectroscopy_vs_power_094218",
+     "path": "/quam/qubits/q6/resonator/operations/readout/amplitude",
+     "why": "F2 fallback, numerically identical to #335 \u2014 ceiling power and amplitude cap for the third consecutive time at this operating point."
+    },
+    {
+     "run": "#341_05_resonator_spectroscopy_vs_power_095400",
+     "path": "/quam/qubits/q6/resonator/operations/readout/amplitude",
+     "why": "F2 fallback on a flux-DECOUPLED chip: the resonator had moved 4.5 MHz and stopped responding to power entirely. No readout power is derivable from a stationary line, yet ceiling power and the 0.2512 V cap were returned as success."
+    },
+    {
+     "run": "#342_05_resonator_spectroscopy_vs_power_095606",
+     "path": "/quam/qubits/q6/resonator/operations/readout/amplitude",
+     "why": "Worst class of false accept: punchout=true derived from full-row saturation streaks at the top of a -70..0 window (N8), giving optimal -10.2 dBm, target_amplitude 0.4909 V and FSP -4 dBm. Both qubits received the byte-identical power, which is the proof the feature was a shared-feedline artifact rather than either resonator."
+    },
+    {
+     "run": "#344_05_resonator_spectroscopy_vs_power_100314",
+     "path": "/quam/qubits/q6/resonator/operations/readout/amplitude",
+     "why": "F2 fallback (ceiling -23.0 dBm, 0.2512 V cap) from a window whose floor (-40) sits above the dressed-branch region \u2014 the neighbouring wider runs place the true transition below this ceiling pick."
+    },
+    {
+     "run": "#345_05_resonator_spectroscopy_vs_power_100519",
+     "path": "/quam/qubits/q6/resonator/operations/readout/amplitude",
+     "why": "F2 fallback repeated with byte-identical numbers to #344, while this run's figure shows the branch change more clearly than #344's did (F5)."
+    },
+    {
+     "run": "#346_05_resonator_spectroscopy_vs_power_100614",
+     "path": "/quam/qubits/q6/resonator/operations/readout/amplitude",
+     "why": "F2 fallback (ceiling -23.0 dBm, 0.2512 V cap) with the 'bare' marker on the mid-power blob and the chosen frequency on the hot-row branch \u2014 swap plus fallback in the same record."
+    },
+    {
+     "run": "#347_05_resonator_spectroscopy_vs_power_101626",
+     "path": "/quam/qubits/q6/resonator/operations/readout/amplitude",
+     "why": "F2 fallback (ceiling -23.0 dBm, 0.2512 V cap) on what is effectively a bare-only map \u2014 #348 proves 12 minutes later that the persistent dip written here at 5.997097 GHz IS the bare line, so this would have set the readout to the bare branch at maximum amplitude, repeating #327's error."
+    }
+   ],
+   "ideal_length": 8,
+   "actual_length": 29,
+   "confidence": "high",
+   "caveats": "\u2460 Every run is multiplexed, so the 'batch runs are re-confirmation only' rule cannot be satisfied literally \u2014 no single-qubit node-05 run exists in this session. I applied it as a corroboration requirement (>=2 agreeing runs at the same operating point) rather than as a blanket refusal to adopt; a stricter reading would make q6 unresolved for the whole session, which I judge to be the wrong answer since the physics is unambiguous by #348/#349. \u2461 The ideal path spans four operating-point epochs created by non-05 nodes, which node 05 could not have foreseen; steps 3, 5 and 6 exist only because something else moved the chip, so their run counts are not operator waste. \u2462 Step 7 assumes the flux was restored between #341's escalation and #348; the session record shows this happened (the resonators re-coupled by #343) but does not show what caused it, so a real system following step 6 would have re-entered at whatever run followed the restoration \u2014 #348 is that run in this archive. \u2463 The poisoned-write list beyond #327 is inferential: those runs record patches:[] while returning target_amplitude/target_full_scale_power_dbm. I list them as writes that must not be made rather than as writes proven to have landed. \u2464 The final dressed value carries a +/-0.5 MHz caveat (see value_evidence): the fitted marker sits at the left edge of the visible dip in both #348 and #349."
+  },
+  {
+   "qubit": "q7",
+   "runs_in_scope": [
+    "#306_05_resonator_spectroscopy_vs_power_082103",
+    "#307_05_resonator_spectroscopy_vs_power_082220",
+    "#313_05_resonator_spectroscopy_vs_power_083344",
+    "#314_05_resonator_spectroscopy_vs_power_083651",
+    "#315_05_resonator_spectroscopy_vs_power_083747",
+    "#316_05_resonator_spectroscopy_vs_power_083837",
+    "#317_05_resonator_spectroscopy_vs_power_084003",
+    "#318_05_resonator_spectroscopy_vs_power_084115",
+    "#319_05_resonator_spectroscopy_vs_power_084215",
+    "#320_05_resonator_spectroscopy_vs_power_084555",
+    "#321_05_resonator_spectroscopy_vs_power_084719",
+    "#322_05_resonator_spectroscopy_vs_power_084830",
+    "#323_05_resonator_spectroscopy_vs_power_091018",
+    "#324_05_resonator_spectroscopy_vs_power_091107",
+    "#325_05_resonator_spectroscopy_vs_power_091257",
+    "#326_05_resonator_spectroscopy_vs_power_091442",
+    "#327_05_resonator_spectroscopy_vs_power_092011",
+    "#333_05_resonator_spectroscopy_vs_power_093829",
+    "#335_05_resonator_spectroscopy_vs_power_094100",
+    "#336_05_resonator_spectroscopy_vs_power_094218",
+    "#341_05_resonator_spectroscopy_vs_power_095400",
+    "#342_05_resonator_spectroscopy_vs_power_095606",
+    "#343_05_resonator_spectroscopy_vs_power_100154",
+    "#344_05_resonator_spectroscopy_vs_power_100314",
+    "#345_05_resonator_spectroscopy_vs_power_100519",
+    "#346_05_resonator_spectroscopy_vs_power_100614",
+    "#347_05_resonator_spectroscopy_vs_power_101626",
+    "#348_05_resonator_spectroscopy_vs_power_101830",
+    "#349_05_resonator_spectroscopy_vs_power_101941"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#306_05_resonator_spectroscopy_vs_power_082103",
+     "expected_case": "N4 edge-clipped: a single dark band hugs the low-frequency edge of the window at every power, its minimum at or beyond the edge, no separable dressed dip inside the window. The node failed on dressed-dip SNR (2.0 < 5).",
+     "expected_flags": [],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Adopt nothing \u2014 with the feature clipped at the window edge neither branch position is verifiable. Re-centre the frequency window on q7's resonator (move the centre down by >=3 MHz, or widen frequency_span 6 -> 8-10 MHz) and lower min_power_dbm -40 -> -50 so the dressed branch is inside the sweep. The failure is a window-centring error, not an SNR error.",
+     "operator_did": "Re-ran immediately with span 6 -> 8 MHz and the window moved to -50..-15, explicitly because of this q7 failure.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "#307_05_resonator_spectroscopy_vs_power_082220",
+     "expected_case": "C1 with an N3 flavour: both branches present but separated by roughly one dip width (dressed 6.097921, bare 6.096921 \u2014 1.0 MHz), so the crossover reads smeared. The chosen power sits well below the transition.",
+     "expected_flags": [],
+     "correct_decision": "adopt",
+     "correct_next_action": "Adopt the DRESSED frequency 6.097921 GHz and optimal_power -42.1 dBm (amplitude 0.0277 V at FSP -11) \u2014 7.9 dB above the floor, safely below the knee. Do NOT adopt the bare value: a 1.0 MHz split at this dip width is at the resolution limit, and the sub-linewidth rule takes dressed only. Stop node 05 for q7.",
+     "operator_did": "Adopted and moved to other nodes (#308-#312).",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 3,
+     "run": "#313_05_resonator_spectroscopy_vs_power_083344",
+     "expected_case": "C1 at the post-#308-#312 operating point (dressed 6.098020, bare 6.097270 \u2014 a 0.75 MHz split, again sub-linewidth). Mid rows show large rightward zigzag excursions of the per-row trace; the chosen power is in the lower third where it re-settles.",
+     "expected_flags": [],
+     "correct_decision": "reconfirm",
+     "correct_next_action": "Take the frequency as provisional at the new operating point (it agrees with #307 within 0.1 MHz) but refuse to re-adopt the power: -45.8 dBm is only 4.2 dB above the floor and ~13 dB below the knee, buying nothing. Repeat the same window once and take a power 3-6 dB below the visible transition.",
+     "operator_did": "Repeated the identical window (#314).",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 4,
+     "run": "#314_05_resonator_spectroscopy_vs_power_083651",
+     "expected_case": "C1: bare column at the top rows, transition in the upper quarter, dressed column below with zigzag noise through the mid rows, chosen power just below the transition foot.",
+     "expected_flags": [],
+     "correct_decision": "adopt",
+     "correct_next_action": "Adopt dressed 6.098020 GHz (identical to #313 \u2014 two-run agreement at this operating point) with optimal_power -32.5 dBm (amplitude 0.0843 V at FSP -11), noting it is only a few dB under the knee, which is what power_below_punchout_db=3.0 asks for. Keep the bare value (6.097270) as low-confidence bookkeeping only. STOP node 05 for q7.",
+     "operator_did": "Did not stop; ran thirteen more node-05 runs on this operating point, during which q7's power pick wandered between -30.1 and -58.9 dBm on essentially unchanged maps.",
+     "operator_was_right": "no"
+    },
+    {
+     "step": 5,
+     "run": "#333_05_resonator_spectroscopy_vs_power_093829",
+     "expected_case": "C1 at the drifted post-#328-#332 operating point: dip band bending toward lower frequency at the highest powers with a deep dark blob through the mid powers, and the marked optimal power right at the top edge of that blob, just below the bend.",
+     "expected_flags": [],
+     "correct_decision": "adopt",
+     "correct_next_action": "Re-adopt at the new point: dressed 6.097130 GHz, optimal_power -29.2 dBm (amplitude 0.1237 V at FSP -11) \u2014 a clean punch-out read with the optimum tight under the transition. Stop; this value stays stable across #335/#336/#346, which all return 6.097130 GHz. Note the frequency and power for q7 must be re-derived per epoch, not carried.",
+     "operator_did": "Kept re-running the same 40 MHz window (#335, #336) and got the same frequency with the power wandering to -41.5 and -42.2 dBm.",
+     "operator_was_right": "no"
+    },
+    {
+     "step": 6,
+     "run": "#341_05_resonator_spectroscopy_vs_power_095400",
+     "expected_case": "C3 stationary-line, cause = flux-decoupled: one narrow vertical dip band unshifting across the full power range, and the resonator moved ~6 MHz down in absolute frequency (6.0913 GHz) after interleaved nodes #337-#340. Alive, not dead \u2014 it re-couples by #343.",
+     "expected_flags": [],
+     "correct_decision": "reject_and_stop",
+     "correct_next_action": "Stop node 05 and escalate to the flux/operating point; refuse the ceiling-power fallback write. Explicitly disregard the node's 'no punch-out: widen sweep' recommendation \u2014 a power-independent line cannot be fixed on the power axis. Re-run only after a single-tone check shows the resonator responding to power again, and then at span 18 MHz / -50..-20.",
+     "operator_did": "Followed the hint to -70..0 (#342), where top-row saturation streaks produced a false punch-out and handed q7 the same -10.18 dBm optimum as q6 with a 0.4909 V amplitude.",
+     "operator_was_right": "no"
+    },
+    {
+     "step": 7,
+     "run": "#348_05_resonator_spectroscopy_vs_power_101830",
+     "expected_case": "C1 at the final operating point on the corrected span (18 MHz / 0.3 MHz step), but with an off-feature fit: verified on the figure, the dark dressed blob is centred near 6.1000 GHz while the fitted dressed line stands ~1 MHz to its left at 6.099138, and the marked bare at 6.098238 is never reached by the hot-row trace (which only comes to ~6.0993-6.0995).",
+     "expected_flags": [
+      "F4",
+      "F1"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Refuse both numbers. The frequency is off the visible dip by about one dispersive shift, and -47.6 dBm is 2.4 dB above the swept floor in a visibly fading-contrast region. Re-run with the window bracketing the knee symmetrically \u2014 min_power -50 -> -45, max_power -20 -> -25 \u2014 so the picker cannot reach the floor and the crossover is centred.",
+     "operator_did": "Ran exactly that window at #349 (-45..-25, span 18 MHz).",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 8,
+     "run": "#349_05_resonator_spectroscopy_vs_power_101941",
+     "expected_case": "C1: a dark dressed blob through the mid-to-low powers with the marked frequency near its centre-left, the dip position shifting to the low-frequency side toward the top of the range. Branch separation stays small against the dip width, so the transition reads as a gentle drift rather than a snap.",
+     "expected_flags": [],
+     "correct_decision": "adopt",
+     "correct_next_action": "Adopt dressed 6.100038 GHz \u2014 confirmed on the figure to sit on the dark blob, unlike #348's value \u2014 and optimal_power -41.8 dBm (amplitude 0.0287 V at FSP -11), which lies inside the blob about 11 dB below the ~-30 dBm knee. Do NOT adopt a bare frequency: the marked 6.098238 GHz is off-feature in both runs. Terminate node 05 for q7.",
+     "operator_did": "Accepted #349's numbers and ended the session \u2014 the right destination, reached after 29 runs.",
+     "operator_was_right": "yes"
+    }
+   ],
+   "termination": {
+    "at_run": "#349_05_resonator_spectroscopy_vs_power_101941",
+    "reason": "#349 is the only run at the final operating point whose fitted dressed frequency actually sits on the visible dip and whose optimal power sits inside the dip's dark region rather than at a window floor. #348 located the right physics but mis-placed both values (frequency ~1 MHz left, power 2.4 dB above the floor), so it functions as the retune trigger, not the terminator. Nothing later exists, and nothing earlier survives the operating-point moves.",
+    "final_resonator_frequency": 6100037764,
+    "final_bare_frequency": null,
+    "final_optimal_power": -41.84615384615385,
+    "value_confidence": "med",
+    "value_evidence": "Direct figure evidence: on #349's figures.power_dbm.png the dressed dip blob is centred at ~6.1002 GHz and the fitted 6.100038 GHz marker lies on it, whereas on #348 the fitted 6.099138 GHz marker sits about 1 MHz to the LEFT of the same blob \u2014 the two runs are 0.9 MHz apart, which is roughly the size of q7's own dispersive shift, so the disagreement is at the resolution limit and the confidence cannot be better than medium. The power -41.8 dBm is licensed by the figure (inside the dark blob, ~11 dB below the knee at about -30 dBm, unlike #348's -47.6 dBm which sits at the fading lower edge). BARE IS DELIBERATELY NULL AND NOT A MISSING NUMBER: both runs report the identical 6.098237764 GHz, but in neither figure does the hot-row trace reach it \u2014 the high-power branch only comes to ~6.0993-6.0995 GHz before the window ceiling. q7's dressed-bare separation is at or below the dip linewidth all session (1.0 MHz at #307, 0.75 at #313/#314, 1.8 claimed at #348/#349), which is exactly the sub-linewidth case where the rule says adopt the dressed frequency only. A trustworthy q7 bare value would need a higher ceiling (about -15 dBm) at the 18 MHz span, which this session never ran.",
+    "unresolved": false
+   },
+   "wasted_runs": [
+    {
+     "run": "#315_05_resonator_spectroscopy_vs_power_083747",
+     "why_wasted": "Identical window one minute after #314. The map came back as a single stationary column (no resolvable transition), yet success was returned with a 0.5 MHz claimed shift and an optimal power -30.1 dBm chosen high in the window with no visible punch-out to be below."
+    },
+    {
+     "run": "#316_05_resonator_spectroscopy_vs_power_083837",
+     "why_wasted": "Floor to -60 hunting a dressed branch that was intermittent rather than low-power. Returned an ambiguous C4/unresolved map whose drift direction is in places OPPOSITE to the expected punch-out direction \u2014 a map that should have stopped the sequence, not continued it."
+    },
+    {
+     "run": "#317_05_resonator_spectroscopy_vs_power_084003",
+     "why_wasted": "A good map (C1, optimal -42.5 dBm safely below the transition) but redundant: the path had adopted at #314 and this run introduced no new knob or operating point."
+    },
+    {
+     "run": "#318_05_resonator_spectroscopy_vs_power_084115",
+     "why_wasted": "The 40 MHz span introduced here compresses q7's <=1.8 MHz shift to near-pixel scale \u2014 for q7 this was the most damaging parameter choice of the session, since its dispersive shift is the smaller of the two. Ten of the next eleven q7 maps are unreadable at branch level."
+    },
+    {
+     "run": "#319_05_resonator_spectroscopy_vs_power_084215",
+     "why_wasted": "C4 at the wide span with the state-carried bare marker sitting entirely off the feature (F4) \u2014 the dip never reaches it even in the hottest rows. The claimed shift is unconfirmable from this map."
+    },
+    {
+     "run": "#320_05_resonator_spectroscopy_vs_power_084555",
+     "why_wasted": "q7 lost its punch-out and took the ceiling fallback (0.2512 V cap) even though earlier runs place q7's transition well inside this power range \u2014 a fallback triggered by intermittency, not by a genuine ceiling problem."
+    },
+    {
+     "run": "#321_05_resonator_spectroscopy_vs_power_084719",
+     "why_wasted": "C3 stationary line at all powers with the same fallback write as q6. The undressed line across the whole range means the qubit was not dressing the resonator during this run; nothing calibratable was produced."
+    },
+    {
+     "run": "#322_05_resonator_spectroscopy_vs_power_084830",
+     "why_wasted": "C4 smeared crossover; the fit chose -58.9 dBm (amplitude 0.004 V), below the transition but at the cost of nearly all readout SNR. A power that deep is not a calibration result."
+    },
+    {
+     "run": "#323_05_resonator_spectroscopy_vs_power_091018",
+     "why_wasted": "Wide-window C4 with the top of the map hidden behind the legend box and the -32 dBm optimal sitting near, not clearly below, a smeared transition. Ran only because q6 was failing."
+    },
+    {
+     "run": "#324_05_resonator_spectroscopy_vs_power_091107",
+     "why_wasted": "Identical retry driven entirely by q6's failure streak; q7 reproduced the previous run's numbers exactly (-31.97 dBm, 0.0894 V) and learned nothing new."
+    },
+    {
+     "run": "#325_05_resonator_spectroscopy_vs_power_091257",
+     "why_wasted": "Second identical retry. q7's frequency estimate moved +0.8 MHz on an unchanged map \u2014 dip-centre jitter of the same order as its dispersive shift, which is itself the signal that the span was too coarse."
+    },
+    {
+     "run": "#326_05_resonator_spectroscopy_vs_power_091442",
+     "why_wasted": "Third identical retry; this time q7 failed too, with inverted branch labels AND an optimal_power of -73 dBm \u2014 below the swept floor of -70, i.e. extrapolated outside its own window."
+    },
+    {
+     "run": "#327_05_resonator_spectroscopy_vs_power_092011",
+     "why_wasted": "Raising the floor rescued q7's fit, and this is the only run that wrote state \u2014 but the values it wrote are the epoch-A' ones that three subsequent operating-point moves invalidated, and the written frequency sits ~1 MHz left of the visible dip (verified on the figure). Not needed by the correct path, which had adopted equivalent values at #314."
+    },
+    {
+     "run": "#335_05_resonator_spectroscopy_vs_power_094100",
+     "why_wasted": "Repeat of #333. Frequency reproduced exactly (6.097130 GHz) while the power pick jumped from -29.2 to -41.5 dBm on an essentially identical map \u2014 evidence about the picker's instability, not about the qubit."
+    },
+    {
+     "run": "#336_05_resonator_spectroscopy_vs_power_094218",
+     "why_wasted": "Immediate repeat of #335 reproducing it to within 0.8 dB. A third measurement of an already twice-measured value."
+    },
+    {
+     "run": "#342_05_resonator_spectroscopy_vs_power_095606",
+     "why_wasted": "Harmful: widening to -70..0 on a flux-decoupled chip produced a false punch-out off full-span horizontal artifact streaks in the top rows, yielding a 0.4909 V write. Both qubits got the identical optimal power \u2014 proof the pick came from the shared feedline, not from q7."
+    },
+    {
+     "run": "#343_05_resonator_spectroscopy_vs_power_100154",
+     "why_wasted": "Carried the real fact that the resonators had re-coupled, but its q7 numbers are unusable: the chosen frequency sits toward the high-power branch edge rather than the dressed blob centre, and the -53.3 dBm optimum was split as FSP +7 dBm with amplitude 0.00097 V \u2014 an extreme parameter split for one power."
+    },
+    {
+     "run": "#344_05_resonator_spectroscopy_vs_power_100314",
+     "why_wasted": "The -40 floor sits at or above the dressed-branch region seen in the neighbouring wider runs, so only the high-power branch was characterised and the ceiling optimum landed on it \u2014 the inverse of C2."
+    },
+    {
+     "run": "#345_05_resonator_spectroscopy_vs_power_100519",
+     "why_wasted": "Immediate repeat of #344 with identical numbers, while the figure shows the transition partially visible near the floor \u2014 the no-punch-out claim and ceiling pick contradict the map (F5)."
+    },
+    {
+     "run": "#346_05_resonator_spectroscopy_vs_power_100614",
+     "why_wasted": "The best q7 map of the 40 MHz era (both branches visible, markers on their respective branches, optimal -44.5 dBm below the blob) \u2014 but its values (6.097130 GHz) were superseded within twelve minutes by the operating-point move that #347/#348/#349 record, so nothing the final answer needs came from it."
+    },
+    {
+     "run": "#347_05_resonator_spectroscopy_vs_power_101626",
+     "why_wasted": "Narrow -40..-20 window: one fixed-position dip on a wide span, no second branch, no verifiable dressed-vs-bare distinction, and a ceiling-power fallback (-23 dBm, 0.2512 V cap) that cannot be validated as below any transition."
+    }
+   ],
+   "poisoned_writes": [
+    {
+     "run": "#327_05_resonator_spectroscopy_vs_power_092011",
+     "path": "/quam/qubits/q7/resonator/f_01 (and /RF_frequency)",
+     "why": "Marginal but real: 6098820216 Hz was written while the figure shows the dark dip column at ~6.0999 GHz \u2014 about 1.1 MHz to the right, roughly one dispersive shift off-feature (F4). The same offset recurs at #348 and is corrected at #349. Not the catastrophic wrong-branch error q6 suffered in this run, but not an adoptable value either."
+    },
+    {
+     "run": "#327_05_resonator_spectroscopy_vs_power_092011",
+     "path": "/quam/qubits/q7/resonator/operations/readout/amplitude",
+     "why": "0.0868 V from optimal_power -32.2 dBm. On the figure the red optimal line sits right where the band begins to bend, i.e. AT the knee rather than the 3 dB below it that power_below_punchout_db asks for. Marginal, and it stood as the chip's readout amplitude for the rest of the session because nothing later wrote state."
+    },
+    {
+     "run": "#315_05_resonator_spectroscopy_vs_power_083747",
+     "path": "/quam/qubits/q7/resonator/operations/readout/amplitude",
+     "why": "0.1113 V from optimal_power -30.1 dBm chosen high in the window on a map with NO resolvable transition anywhere. A power that cannot be shown to lie below a punch-out must not be written, whatever success says."
+    },
+    {
+     "run": "#320_05_resonator_spectroscopy_vs_power_084555",
+     "path": "/quam/qubits/q7/resonator/operations/readout/amplitude",
+     "why": "F2 fallback: punchout=false with success=true, optimal at the ceiling (-23.0 dBm) and target_amplitude at the 0.2512 V cap, on a C2 map where the node's own banner declared no punch-out and recommended widening. Earlier runs place q7's transition well inside this power range, so the fallback was wrong on its own terms."
+    },
+    {
+     "run": "#321_05_resonator_spectroscopy_vs_power_084719",
+     "path": "/quam/qubits/q7/resonator/operations/readout/amplitude",
+     "why": "F2 fallback repeated on a C3 stationary-line map \u2014 ceiling power and the amplitude cap derived from a resonator that was not being dressed at all during the run."
+    },
+    {
+     "run": "#322_05_resonator_spectroscopy_vs_power_084830",
+     "path": "/quam/qubits/q7/resonator/operations/readout/amplitude",
+     "why": "0.004 V from optimal_power -58.9 dBm on a smeared C4 crossover \u2014 roughly 26 dB below the knee. Technically below punch-out, but it discards almost all readout SNR; a correct system takes 3-6 dB below the observed transition, not 26."
+    },
+    {
+     "run": "#341_05_resonator_spectroscopy_vs_power_095400",
+     "path": "/quam/qubits/q7/resonator/operations/readout/amplitude",
+     "why": "F2 fallback on a flux-decoupled chip whose resonator had moved ~6 MHz and stopped responding to power. Ceiling power plus the 0.2512 V cap, returned as success from a map that can calibrate nothing."
+    },
+    {
+     "run": "#342_05_resonator_spectroscopy_vs_power_095606",
+     "path": "/quam/qubits/q7/resonator/operations/readout/amplitude",
+     "why": "False accept off saturation artifacts (N8): optimal -10.2 dBm, amplitude 0.4909 V, FSP -4 dBm, derived from full-frequency-span horizontal streaks in the top rows of a -70..0 window. q6 received the byte-identical power, which is the decisive tell that the feature belonged to the shared output chain."
+    },
+    {
+     "run": "#343_05_resonator_spectroscopy_vs_power_100154",
+     "path": "/quam/qubits/q7/resonator/operations/readout/amplitude",
+     "why": "optimal -53.3 dBm expressed as FSP +7 dBm with amplitude 0.00097 V \u2014 an extreme and fragile parameter split for one power, chosen below the deep blob where the band is already faint, on a map whose top rows also carry artifact streaks."
+    },
+    {
+     "run": "#344_05_resonator_spectroscopy_vs_power_100314",
+     "path": "/quam/qubits/q7/resonator/operations/readout/amplitude",
+     "why": "F2 fallback (ceiling -23.0 dBm, 0.2512 V cap) from a window whose -40 floor sits at or above the dressed-branch region \u2014 only the high-power branch was in view."
+    },
+    {
+     "run": "#345_05_resonator_spectroscopy_vs_power_100519",
+     "path": "/quam/qubits/q7/resonator/operations/readout/amplitude",
+     "why": "F2 fallback repeated with identical numbers, contradicted by this run's own figure, which shows the band bending into a dark blob near the floor (F5)."
+    },
+    {
+     "run": "#347_05_resonator_spectroscopy_vs_power_101626",
+     "path": "/quam/qubits/q7/resonator/operations/readout/amplitude",
+     "why": "F2 fallback (ceiling -23.0 dBm, 0.2512 V cap) on a map where the dip does not visibly move at any power \u2014 the branch structure was below the span's resolution, so no power could be validated as below-transition."
+    },
+    {
+     "run": "#348_05_resonator_spectroscopy_vs_power_101830",
+     "path": "/quam/qubits/q7/resonator/operations/readout/amplitude (and /f_01)",
+     "why": "The last poisoned pair, and the subtlest: optimal -47.6 dBm is 2.4 dB above the swept -50 floor in a region the figure shows as visibly fading contrast (F1), and the accompanying dressed frequency 6.099138 GHz sits ~1 MHz left of the actual dip blob (F4). #349 corrects both an hour-and-a-half of runs later \u2014 this is the write a correct system must refuse in order to reach the right answer."
+    }
+   ],
+   "ideal_length": 8,
+   "actual_length": 29,
+   "confidence": "med",
+   "caveats": "\u2460 Same batch-rule caveat as q6: all 29 runs are multiplexed, so 'adopt' here always means 'adopt on two-run agreement at one operating point', never on a single run's authority. \u2461 q7 is the harder qubit by construction \u2014 its dressed-bare separation is at or below the dip linewidth in every run of the session (0.75-1.8 MHz), so several maps annotated C1 are honestly N3 unresolved-shift, and I have applied the sub-linewidth rule throughout: dressed adopted, bare withheld. \u2462 The final bare frequency is reported as null on purpose. Both #348 and #349 print 6.098237764 GHz, but the hot-row trace in neither figure reaches it, so that number is carried state rather than measured geometry; asserting it would launder an unverified value into an answer key. Obtaining it needs a run this session never made: 18 MHz span with the ceiling raised to about -15 dBm. \u2463 The final dressed value rests on a 0.9 MHz disagreement between the session's two best runs, adjudicated by reading the figure \u2014 hence med, not high. \u2464 q7's optimal power is stated as #349's -41.8 dBm; anything in roughly -42 to -36 dBm is equally defensible from that figure, since the dip's darkest band runs from about -33 to -40 dBm."
+  }
+ ]
+}

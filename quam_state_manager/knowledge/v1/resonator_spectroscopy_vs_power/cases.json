@@ -21,6 +21,15 @@
     "CQT/#192/q14",
     "CQT/#352/q10",
     "CQT/#996/q20"
+   ],
+   "exemplar_images": [
+    "exemplars/C1/AS_10TQ9TC_314_q6.png",
+    "exemplars/C1/AS_10TQ9TC_12_q3.png",
+    "exemplars/C1/AS_10TQ9TC_348_q6.png",
+    "exemplars/C1/CQT_135_q2.png",
+    "exemplars/C1/CQT_192_q14.png",
+    "exemplars/C1/CQT_352_q10.png",
+    "exemplars/C1/CQT_996_q20.png"
    ]
   },
   {
@@ -38,6 +47,13 @@
     "CQT/#255/q4",
     "AS_10TQ9TC/#9/q9",
     "CQT/#1350/q15"
+   ],
+   "exemplar_images": [
+    "exemplars/C2/CQT_41_q1.png",
+    "exemplars/C2/CQT_995_q20.png",
+    "exemplars/C2/CQT_255_q4.png",
+    "exemplars/C2/AS_10TQ9TC_9_q9.png",
+    "exemplars/C2/CQT_1350_q15.png"
    ]
   },
   {
@@ -55,6 +71,13 @@
     "CQT/#727/q12",
     "CQT/#1351/q20",
     "AS_10TQ9TC/#7/q8"
+   ],
+   "exemplar_images": [
+    "exemplars/C3/AS_10TQ9TC_321_q6.png",
+    "exemplars/C3/AS_10TQ9TC_341_q7.png",
+    "exemplars/C3/CQT_727_q12.png",
+    "exemplars/C3/CQT_1351_q20.png",
+    "exemplars/C3/AS_10TQ9TC_7_q8.png"
    ]
   },
   {
@@ -72,6 +95,13 @@
     "CQT/#1117/q6",
     "CQT/#481/q8",
     "AS_10TQ9TC/#307/q6"
+   ],
+   "exemplar_images": [
+    "exemplars/C4a/CQT_76_q6.png",
+    "exemplars/C4a/CQT_391_q1.png",
+    "exemplars/C4a/CQT_1117_q6.png",
+    "exemplars/C4a/CQT_481_q8.png",
+    "exemplars/C4a/AS_10TQ9TC_307_q6.png"
    ]
   },
   {
@@ -89,6 +119,13 @@
     "CQT/#176/q18",
     "AS_10TQ9TC/#8/q9",
     "CQT/#349/q10"
+   ],
+   "exemplar_images": [
+    "exemplars/C4b/AS_10TQ9TC_335_q6.png",
+    "exemplars/C4b/AS_10TQ9TC_345_q6.png",
+    "exemplars/C4b/CQT_176_q18.png",
+    "exemplars/C4b/AS_10TQ9TC_8_q9.png",
+    "exemplars/C4b/CQT_349_q10.png"
    ]
   },
   {
@@ -105,6 +142,12 @@
     "CQT/#394/q5",
     "CQT/#1352/q9",
     "CQT/#347/q9"
+   ],
+   "exemplar_images": [
+    "exemplars/C5/CQT_382_q18.png",
+    "exemplars/C5/CQT_394_q5.png",
+    "exemplars/C5/CQT_1352_q9.png",
+    "exemplars/C5/CQT_347_q9.png"
    ]
   },
   {
@@ -120,6 +163,11 @@
     "CQT/#1089/q19",
     "CQT/#1116/q6",
     "CQT/#175/q18"
+   ],
+   "exemplar_images": [
+    "exemplars/C6/CQT_1089_q19.png",
+    "exemplars/C6/CQT_1116_q6.png",
+    "exemplars/C6/CQT_175_q18.png"
    ]
   },
   {
@@ -137,6 +185,13 @@
     "CQT/#335/q9",
     "CQT/#357/q16",
     "AS_10TQ9TC/#9/q8"
+   ],
+   "exemplar_images": [
+    "exemplars/N1/CQT_624_q9.png",
+    "exemplars/N1/CQT_179_q16.png",
+    "exemplars/N1/CQT_335_q9.png",
+    "exemplars/N1/CQT_357_q16.png",
+    "exemplars/N1/AS_10TQ9TC_9_q8.png"
    ]
   },
   {
@@ -150,6 +205,9 @@
    "prescription": "PROVISIONAL P3 -- Reject the fit outright: this is the dangerous false-accept class. Line-cut test (adopted provisionally, expert Q10): an upward SPIKE whose position never moves with power is a spur; the real dressed feature is a DIP that participates in the punch-out. Narrow the frequency window to exclude the spike and re-run; verify any accepted dressed frequency shows dip-shaped line cuts and a plausible few-linewidth separation from the bare line of sibling runs.",
    "exemplars": [
     "AS_10TQ9TC/#8/q8"
+   ],
+   "exemplar_images": [
+    "exemplars/N2/AS_10TQ9TC_8_q8.png"
    ]
   },
   {
@@ -166,6 +224,12 @@
     "AS_10TQ9TC/#315/q7",
     "AS_10TQ9TC/#347/q7",
     "AS_10TQ9TC/#11/q9"
+   ],
+   "exemplar_images": [
+    "exemplars/N3/AS_10TQ9TC_315_q6.png",
+    "exemplars/N3/AS_10TQ9TC_315_q7.png",
+    "exemplars/N3/AS_10TQ9TC_347_q7.png",
+    "exemplars/N3/AS_10TQ9TC_11_q9.png"
    ]
   },
   {
@@ -181,6 +245,11 @@
     "CQT/#350/q10",
     "CQT/#351/q10",
     "AS_10TQ9TC/#306/q7"
+   ],
+   "exemplar_images": [
+    "exemplars/N4/CQT_350_q10.png",
+    "exemplars/N4/CQT_351_q10.png",
+    "exemplars/N4/AS_10TQ9TC_306_q7.png"
    ]
   },
   {
@@ -194,6 +263,9 @@
    "prescription": "Widen the frequency span severalfold (biased toward the brightening edge) or re-seed the center from the last known good value; power knobs unchanged. A pre-run sanity check of the seed against the last known resonance skips this run class entirely.",
    "exemplars": [
     "CQT/#40/q1"
+   ],
+   "exemplar_images": [
+    "exemplars/N5/CQT_40_q1.png"
    ]
   },
   {
@@ -209,6 +281,11 @@
     "AS_10TQ9TC/#9/q8",
     "AS_10TQ9TC/#318/q7",
     "AS_10TQ9TC/#320/q6"
+   ],
+   "exemplar_images": [
+    "exemplars/N6/AS_10TQ9TC_9_q8.png",
+    "exemplars/N6/AS_10TQ9TC_318_q7.png",
+    "exemplars/N6/AS_10TQ9TC_320_q6.png"
    ]
   },
   {
@@ -226,6 +303,13 @@
     "CQT/#1033/q12",
     "CQT/#1079/q12",
     "CQT/#1352/q17"
+   ],
+   "exemplar_images": [
+    "exemplars/N7/CQT_377_q19.png",
+    "exemplars/N7/CQT_378_q19.png",
+    "exemplars/N7/CQT_1033_q12.png",
+    "exemplars/N7/CQT_1079_q12.png",
+    "exemplars/N7/CQT_1352_q17.png"
    ]
   },
   {
@@ -242,6 +326,12 @@
     "AS_10TQ9TC/#342/q7",
     "CQT/#135/q1",
     "CQT/#76/q6"
+   ],
+   "exemplar_images": [
+    "exemplars/N8/AS_10TQ9TC_342_q6.png",
+    "exemplars/N8/AS_10TQ9TC_342_q7.png",
+    "exemplars/N8/CQT_135_q1.png",
+    "exemplars/N8/CQT_76_q6.png"
    ]
   },
   {
@@ -260,6 +350,14 @@
     "CQT/#347/q9",
     "CQT/#1352/q17",
     "CQT/#378/q19"
+   ],
+   "exemplar_images": [
+    "exemplars/F1/AS_10TQ9TC_318_q6.png",
+    "exemplars/F1/AS_10TQ9TC_10_q8.png",
+    "exemplars/F1/AS_10TQ9TC_232_q5.png",
+    "exemplars/F1/CQT_347_q9.png",
+    "exemplars/F1/CQT_1352_q17.png",
+    "exemplars/F1/CQT_378_q19.png"
    ]
   },
   {
@@ -277,6 +375,13 @@
     "AS_10TQ9TC/#327/q6",
     "AS_10TQ9TC/#347/q6",
     "CQT/#41/q1"
+   ],
+   "exemplar_images": [
+    "exemplars/F2/AS_10TQ9TC_320_q7.png",
+    "exemplars/F2/AS_10TQ9TC_321_q6.png",
+    "exemplars/F2/AS_10TQ9TC_327_q6.png",
+    "exemplars/F2/AS_10TQ9TC_347_q6.png",
+    "exemplars/F2/CQT_41_q1.png"
    ]
   },
   {
@@ -294,6 +399,13 @@
     "AS_10TQ9TC/#346/q6",
     "CQT/#1351/q14",
     "CQT/#1213/q15"
+   ],
+   "exemplar_images": [
+    "exemplars/F3/AS_10TQ9TC_326_q6.png",
+    "exemplars/F3/AS_10TQ9TC_319_q6.png",
+    "exemplars/F3/AS_10TQ9TC_346_q6.png",
+    "exemplars/F3/CQT_1351_q14.png",
+    "exemplars/F3/CQT_1213_q15.png"
    ]
   },
   {
@@ -310,6 +422,12 @@
     "CQT/#1212/q15",
     "CQT/#1352/q19",
     "AS_10TQ9TC/#323/q6"
+   ],
+   "exemplar_images": [
+    "exemplars/F4/CQT_342_q9.png",
+    "exemplars/F4/CQT_1212_q15.png",
+    "exemplars/F4/CQT_1352_q19.png",
+    "exemplars/F4/AS_10TQ9TC_323_q6.png"
    ]
   },
   {
@@ -327,6 +445,13 @@
     "CQT/#624/q9",
     "CQT/#995/q20",
     "AS_10TQ9TC/#326/q6"
+   ],
+   "exemplar_images": [
+    "exemplars/F5/CQT_346_q9.png",
+    "exemplars/F5/CQT_348_q10.png",
+    "exemplars/F5/CQT_624_q9.png",
+    "exemplars/F5/CQT_995_q20.png",
+    "exemplars/F5/AS_10TQ9TC_326_q6.png"
    ]
   },
   {
@@ -343,6 +468,12 @@
     "AS_10TQ9TC/#321/q6",
     "CQT/#1352/q16",
     "CQT/#1351/q17"
+   ],
+   "exemplar_images": [
+    "exemplars/F6/AS_10TQ9TC_315_q6.png",
+    "exemplars/F6/AS_10TQ9TC_321_q6.png",
+    "exemplars/F6/CQT_1352_q16.png",
+    "exemplars/F6/CQT_1351_q17.png"
    ]
   }
  ],
@@ -426,5 +557,6 @@
    "text": "The spur-lock false accept (success on a power-independent spike far from the resonator). EXCLUDED from the verification round by expert decision -- retained here as the only known exemplar of the class.",
    "excluded_from_verification": true
   }
- ]
+ ],
+ "exemplar_note": "Axes are NORMALISED and UNLABELLED: no absolute frequency or power leaves this pack, and a picture without numbers cannot teach an absolute scale (Clause B). Orientation follows the labs' own convention: frequency rightwards, readout power upwards. Overlays: orange = per-row dip track (rows where no dip clears the noise are simply absent), cyan dashed = the record's dressed frequency, magenta dotted = its bare frequency, red = its chosen power. Markers are the RECORD's claims, drawn even when they contradict the map \u2014 that contradiction is the lesson in the branch-swap and off-feature cases."
 }
