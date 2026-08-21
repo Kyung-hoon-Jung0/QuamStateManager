@@ -1,0 +1,462 @@
+{
+ "schema": "smgolden/v2",
+ "family": "qubit_spectroscopy",
+ "chip": "AS_10TQ9TC",
+ "session": "2026-08-09",
+ "session_id": "qubit_spectroscopy__AS_10TQ9TC__2026-08-09",
+ "authored": "2026-08-21",
+ "status": "hindsight-authored + adversarial audit",
+ "provenance": "the author saw the whole session and was free to judge the operator wrong; the system under test never sees past its cursor",
+ "session_notes": "Thirteen 08_qubit_spectroscopy runs: two targets (q6, q7) for the first twelve, four targets (q5, q6, q7, q8) in the last one 14 hours later.\n\nTHE SESSION'S ONE MECHANISM: the fitter repeatedly locked onto a centre-symmetric mirror image of the qubit line rather than the line itself. The sweep centre is recoverable exactly as (frequency - relative_freq), and it identifies the image beyond doubt: at centre 4164902530 the q6 fits are -19.3 MHz (#30), -20.1 MHz (#31) and +19.2 MHz (#32); at centre 3827599930 the q7 fits are -9.8, -9.6 and +9.2 MHz. One qubit line cannot be on both sides of the centre. In each pair the POSITIVE member lands back within 0.17 MHz (q6) / 0.80 MHz (q7) of the centre the operator had been using before run #29, which identifies the negative member as the image and #29's write as the error. The image offset differs per qubit (~19.5 MHz for q6, ~9.5 MHz for q7), consistent with a per-qubit fixed IF, and the same offsets appear in the day's very first runs (q6 +19.76 at #22, +19.65 at #25, +17.4 at #26, all from an unchanged centre).\n\nWHAT SHOULD HAVE HAPPENED: raise num_shots after #22 instead of widening the span; refuse #26 despite its 'successful' flag (contrast 4.6e-07, r2 0.141); use the recentre as a deliberate discrimination - shift f_01 by a known amount and require the peak's ABSOLUTE frequency to hold - and never write f_01 from a fit whose offset from centre is ~20 MHz (q6) / ~10 MHz (q7) with fwhm comparable to that offset. Six runs per target instead of thirteen.\n\nTHE ONE POISONED WRITE: run #29 wrote f_01, xy/RF_frequency and readout integration_weights_angle for BOTH q6 and q7 from mirror-image fits, moving q6 down 19.4 MHz and q7 down 10.0 MHz. It cost three runs (#30, #31, #32) to detect and undo. Every other write in the session (#32, #33, #45, #236) is defensible; #32 is in fact the run that repaired #29.\n\nWHAT LOOKS LIKE DRIFT AND IS NOT: two centre changes have no cause inside this file. f_01 dropped ~20.75 MHz (q6) / 9.0 MHz (q7) between #26 and #27, only 19 seconds apart - a manual edit, almost certainly informed by out-of-family run #24 (08b_qubit_spectroscopy_vs_power, 04:52:43), and with hindsight the correct correction. And the ~19 MHz rise between #33 (q6 4184.0 MHz) and #45 (4203.2 MHz) is runs #34-#39, 09_qubit_spectroscopy_vs_flux, re-parking the idle point. Neither is a fit disagreement, so #33's values are not scored as wrong - they were measured at a different flux bias.\n\nDRIVE AMPLITUDE WAS NEVER TOUCHED: operation_amplitude_factor is 1.0 in all thirteen runs while fwhm sat at 3-7x the 3.0 MHz target_peak_width from #27 through #45. The node kept reporting the correction it wanted (saturation_amp 0.006-0.015) and no 08 run ever applied it. The line finally resolves at #236 (q6 fwhm 4.86 MHz) because the amplitude was changed somewhere outside this record.\n\nRECORD LIMITATION: run #236's patch list is truncated at 8 entries (q5 x3, q6 x3, q7 x2, q8 x0) where every 2-qubit run carries 6 (3 per qubit). The absence of a q8 write and of q7's xy/RF_frequency is an artefact of the record, not a missed update.\n\nFINAL VALUES HELD: q6 4203024686.6 Hz, q7 3844065508.9 Hz, q5 3943759798.8 Hz, q8 3756848300.8 Hz - all from #236, all med confidence. q6 and q7 are corroborated by #45 to within 163 kHz and 413 kHz; q5 and q8 rest on a single unreproduced run each. No figures were opened - the sweep-centre arithmetic was decisive on its own.",
+ "adversarial_audit": "Audited against the source records (`D:\\work\\dataset\\AS_10TQ9TC\\2026-08-09`, all 13 `08_` runs plus neighbours #24, #46, #47, #228\u2013#245). The key's core mechanism is right, but there are nine concrete defects.\n\n**Contradicts the record**\n\n1. **q7/q8, #236 \u2014 the \"truncated patch list\" is fabricated.** The key asserts 8 patch entries (q5\u00d73, q6\u00d73, q7\u00d72, q8\u00d70) and builds a \"RECORD LIMITATION\" note plus two caveats on it. `node.json` holds **12** entries: `/q7/xy/RF_frequency = 3844065508.860395` and all three q8 paths (`f_01`, `integration_weights_angle`, `xy/RF_frequency`) are present. Delete the note; q8's `operator_did` (\"no q8 state write appears\") is false.\n\n2. **q6/q7 termination \u2014 \"Both runs post-date the #34\u2013#39 re-park, so they describe the same idle point\" is false.** #46/#47 re-parked 84 s *after* #45 (q6 `joint_offset` 0.14715\u21920.13670, q7 0.11763\u21920.10719), and #228/#231 moved q6 again to 0.15255 then 0.11779 fifteen minutes before #236. The caveat's hedge (\"if the chip was re-parked again\") is answered by the record: it was, repeatedly. The 163/413 kHz agreement is across *different* offsets.\n\n3. **All qubits \u2014 #235 is the missing evidence.** `08b_qubit_spectroscopy_vs_power` at 20:11:13 wrote every saturation amplitude (q6 0.004016, q7 0.020255). That is the \"amplitude change made outside this record\" the key cannot locate \u2014 it is seven minutes earlier in the same archive. It also measured all four lines, so q5/q8 are **not** \"unreproduced\": #236 confirms #235 to 339/244 kHz with mixed-sign offsets, which discriminates against the centre-offset artifact the caveat says cannot be excluded.\n\n4. **q6 \u2014 the final value did not hold.** #239 (20:25) overwrote `q6/f_01` = 4203127927.26.\n\n**Unreachable / hindsight steps**\n\n5. **q6+q7 step 4 \u2014 #32 cannot exist on the ideal path.** Step 3 orders \"HOLD f_01 at 4184552530\" (q7: 3837599930), but #32's centre is 4164902530 (q7: 3827599930), created solely by #29's poisoned write. The key says of #30 \"the ideal path never creates the poisoned centre it tests\" while making a run at that centre its adopt step. Replace with the hypothetical span-100 re-run step 3 prescribes.\n\n6. **q7 step 2 \u2014 \"shift ~-9 MHz, tracking the q6 correction\" is the operator's own move** (exactly 9.000 MHz), not derivable ex ante; the q6 correction was 20.75 MHz. #24 (04:52:43) had already handed absolute candidates 4184302530 / 3837599930 \u2014 those are what a future-blind system should adopt, and #28's centres match them to the Hz.\n\n**Unfair waste**\n\n7. **#27 and #28 are each the *other* qubit's ideal step** (same multiplexed run) yet appear in the opposite qubit's wasted list. Union of both ideal paths is 7 runs, not 6.\n\n8. **#25 is not wasted:** it executed the key's own step-1 action (shots 100\u2192500) and supplies the \"third fit in a row\" (+19.65) that step 2 leans on.\n\n**Minor**\n\n9. **q7 step 1:** \u221225.25 MHz is mid-window at span 100 (\u00b150), not \"the edge\"; drop `peak_near_window_edge`. Also #236 ran 300 shots, not 500.\n\nWhat held up under hardest scrutiny: the centre-symmetric mirror diagnosis (centre = frequency \u2212 relative_freq reproduces every run exactly; \u221219.3/\u221220.1/+19.2 at 4164902530 and \u22129.8/\u22129.6/+9.2 at 3827599930), and #29 as the sole poisoned write \u2014 corroborated independently by #24.\n\n\ud55c\uad6d\uc5b4 \uc694\uc57d\n- \uc815\ub2f5 \ud0a4\uc758 \ud575\uc2ec \ub17c\ub9ac(\ubbf8\ub7ec \uc774\ubbf8\uc9c0 \uc9c4\ub2e8, #29\uc758 \uc624\uc5fc\ub41c write)\ub294 \uc2e4\uc81c \uae30\ub85d\uacfc \uc77c\uce58\ud558\uc5ec \ud0c0\ub2f9\ud569\ub2c8\ub2e4.\n- \ub2e4\ub9cc 9\uac74\uc758 \uacb0\ud568\uc744 \ucc3e\uc558\uc2b5\ub2c8\ub2e4. \uac00\uc7a5 \uc2ec\uac01\ud55c \uac83\uc740 \u2460 #236\uc758 \"patch \ubaa9\ub85d truncation\" \uc8fc\uc7a5\uc774 \uc0ac\uc2e4\ubb34\uadfc(\uc2e4\uc81c 12\uac74, q8\u00b7q7 write \ubaa8\ub450 \uc874\uc7ac), \u2461 \"#45\uc640 #236\uc774 \uac19\uc740 idle point\"\ub77c\ub294 \uc8fc\uc7a5\uc774 #46/#47\u00b7#228/#231\uc758 flux \uc7acpark \uae30\ub85d\uacfc \ubaa8\uc21c, \u2462 \uc9c4\ud3ed \ubcc0\uacbd\uc758 \ucd9c\ucc98(#235, 7\ubd84 \uc804 08b)\ub97c \ucc3e\uc9c0 \ubabb\ud55c \uc810\uc785\ub2c8\ub2e4.\n- \uacf5\uc815\uc131 \ubb38\uc81c: \uba40\ud2f0\ud50c\ub809\uc2a4 \ub7f0\uc778 #27/#28\uc744 \uc0c1\ub300 \ud050\ube57\uc758 ideal step\uc774\uba74\uc11c \ub3d9\uc2dc\uc5d0 \"\ub0ad\ube44\"\ub85c \uc774\uc911 \uacc4\uc0c1\ud588\uace0, ideal step 4(#32)\ub294 ideal path\uac00 \ud53c\ud55c\ub2e4\uace0 \ud55c \uc624\uc5fc\ub41c centre\uc5d0\uc11c\ub9cc \uc874\uc7ac\ud558\ub294 \ub7f0\uc785\ub2c8\ub2e4.",
+ "qubits": [
+  {
+   "qubit": "q6",
+   "runs_in_scope": [
+    "#22_08_qubit_spectroscopy_044933",
+    "#23_08_qubit_spectroscopy_044954",
+    "#25_08_qubit_spectroscopy_045653",
+    "#26_08_qubit_spectroscopy_045721",
+    "#27_08_qubit_spectroscopy_045740",
+    "#28_08_qubit_spectroscopy_045932",
+    "#29_08_qubit_spectroscopy_050005",
+    "#30_08_qubit_spectroscopy_050108",
+    "#31_08_qubit_spectroscopy_050147",
+    "#32_08_qubit_spectroscopy_050601",
+    "#33_08_qubit_spectroscopy_050627",
+    "#45_08_qubit_spectroscopy_061005",
+    "#236_08_qubit_spectroscopy_201850"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#22_08_qubit_spectroscopy_044933",
+     "expected_case": "Under-averaged sweep, no trustworthy line. peak_snr 4.05, r2 0.385, contrast 0.32, and fwhm 1.40 MHz is BELOW the 3.0 MHz target_peak_width - a noise spike, not a saturation-broadened qubit line. The derived saturation_amp 1.072 (>1, unphysical) and x180_amp 70.2 confirm the fit carries no information. Node itself reports failed.",
+     "expected_flags": [
+      "node_failed",
+      "low_snr",
+      "low_r2",
+      "fwhm_below_target_peak_width",
+      "derived_amp_unphysical",
+      "num_shots_too_low"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "num_shots 100 -> 500; HOLD frequency_span_in_mhz 100, frequency_step_in_mhz 0.2-0.25, operation_amplitude_factor 1.0. Do not touch f_01 (hold 4205302530.07 Hz). Averaging, not window width, is the binding constraint at snr 4.",
+     "operator_did": "Widened frequency_span_in_mhz 100 -> 500 while leaving num_shots at 100 (#23).",
+     "operator_was_right": "partly"
+    },
+    {
+     "step": 2,
+     "run": "#26_08_qubit_spectroscopy_045721",
+     "expected_case": "span 100 MHz at 500 shots. The node reports SUCCESS but contrast is 4.59e-07 and r2 0.141 - a false accept, the Lorentzian has essentially zero depth. The reported peak sits at +17.4 MHz from an UNCHANGED sweep centre (4205302530.07 Hz), the third fit in a row at +17 to +20 MHz from that same centre (#22 +19.76, #25 +19.65). A candidate pinned to a constant OFFSET from the centre rather than to an absolute frequency is not yet a qubit line.",
+     "expected_flags": [
+      "node_false_accept",
+      "contrast_collapsed",
+      "low_r2",
+      "peak_at_recurring_centre_offset",
+      "do_not_write_f_01"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Run the decisive discrimination: shift the sweep centre (f_01) by a known amount, ~-20 MHz, and re-run at frequency_span_in_mhz 100 / num_shots 500 / operation_amplitude_factor 1.0. Adopt only if the peak stays at the same ABSOLUTE frequency; if its offset from centre is preserved or mirrors sign, it is an image.",
+     "operator_did": "Moved f_01 down by 20.75 MHz by hand (4205302530.07 -> 4184552530.07, 19 s later, informed by the out-of-family #24 08b power sweep) and re-ran at span 60 MHz (#27).",
+     "operator_was_right": "partly"
+    },
+    {
+     "step": 3,
+     "run": "#27_08_qubit_spectroscopy_045740",
+     "expected_case": "Recentre test result. With the centre moved -20.75 MHz the fitted peak moved with it: 4222.70 MHz -> 4163.33 MHz, offset -21.2 MHz instead of the previous +19.7 MHz. The feature is centre-symmetric (an image), so the earlier +19.7 MHz peaks were never the qubit; the true line is at ~0 offset, essentially at the new centre 4184.55 MHz. Fit quality is still poor (r2 0.527) and fwhm 9.81 MHz is 3.3x the 3 MHz target - the drive is over-saturating.",
+     "expected_flags": [
+      "peak_tracks_sweep_centre",
+      "mirror_image_confirmed",
+      "fwhm_3x_target",
+      "power_broadened",
+      "low_r2",
+      "do_not_write_f_01"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "HOLD f_01 at 4184552530 Hz (never write a |offset| ~20 MHz fit). Re-run with frequency_span_in_mhz 100 so the candidate AND its mirror are both inside the window, num_shots 500, and cut operation_amplitude_factor 1.0 -> ~0.1 so fwhm falls from ~10-15 MHz toward the 3 MHz target_peak_width.",
+     "operator_did": "Kept operation_amplitude_factor 1.0, narrowed to span 50 (#28), repeated it de-multiplexed (#29) and WROTE f_01 = 4164902530 from the -19.4 MHz image.",
+     "operator_was_right": "no"
+    },
+    {
+     "step": 4,
+     "run": "#32_08_qubit_spectroscopy_050601",
+     "expected_case": "First span-100 MHz run covering both sides of the centre. Peak at +19.23 MHz -> 4184131887.7 Hz with peak_snr 29.0, r2 0.904, contrast 0.451 - within 0.17 MHz of the pre-#29 centre 4184302530, the value the -19/-20 MHz image had been hiding. The -19.3/-20.1 MHz peaks of #30/#31 at the identical centre are its mirror; one qubit cannot be at both.",
+     "expected_flags": [
+      "mirror_pair_resolved",
+      "peak_snr_high",
+      "r2_ok",
+      "fwhm_5.7x_target",
+      "power_broadened"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = 4184131887.7 Hz and xy/RF_frequency to match; note fwhm 17.2 MHz = 5.7x target_peak_width and hand the amplitude problem to 08b / power-Rabi rather than spending another 08 run on it. Then proceed to the flux node.",
+     "operator_did": "Adopted exactly this (patched f_01, xy/RF_frequency, integration_weights_angle), then spent one more confirmation run (#33) before moving to node 09.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 5,
+     "run": "#45_08_qubit_spectroscopy_061005",
+     "expected_case": "Re-measurement at a NEW flux idle point - runs #34-#39 (09_qubit_spectroscopy_vs_flux) re-parked the qubit, so the sweep centre is now 4204176142 Hz. Peak at -0.99 MHz -> 4203187886.4 Hz, peak_snr 31.9, r2 0.920, contrast 0.423: centred, strong, no recurring-offset signature. Still power-broadened (fwhm 19.8 MHz = 6.6x target).",
+     "expected_flags": [
+      "new_flux_point",
+      "peak_near_centre",
+      "peak_snr_high",
+      "fwhm_6.6x_target",
+      "power_broadened"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = 4203187886.4 Hz at the new idle point; reduce the saturation drive (the node's own derived saturation_amp is 0.0076) before the next spectroscopy so the line resolves near the 3 MHz target.",
+     "operator_did": "Adopted (patched f_01, xy/RF_frequency, integration_weights_angle).",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 6,
+     "run": "#236_08_qubit_spectroscopy_201850",
+     "expected_case": "Clean, resolved line: fwhm 4.86 MHz (1.6x target, 6% of the 80 MHz span - the only q6 run in the session that is not grossly power-broadened), peak 0.15 MHz from centre, peak_snr 29.8, r2 0.967, contrast 0.454. Confirms #45 to within 163 kHz across a full day of recalibration.",
+     "expected_flags": [
+      "fwhm_near_target",
+      "peak_centred",
+      "r2_high",
+      "reproduces_prior_run",
+      "converged"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = 4203024686.6 Hz and stop the qubit_spectroscopy family for q6; refine further only with Ramsey (node 11), the right instrument at this precision.",
+     "operator_did": "Adopted (patched f_01, integration_weights_angle, xy/RF_frequency) and stopped.",
+     "operator_was_right": "yes"
+    }
+   ],
+   "termination": {
+    "at_run": "#236_08_qubit_spectroscopy_201850",
+    "reason": "Two independent spectroscopy runs 14 hours apart (#45 and #236) agree to 163 kHz on a line whose fwhm is 4.86 MHz, the peak sits 0.15 MHz from a sweep centre NOT derived from the mirror image, r2 0.967 and peak_snr 29.8. The family has nothing left to add - remaining precision belongs to Ramsey.",
+    "final_frequency": 4203024686.5938153,
+    "final_sweep_value": null,
+    "unresolved": false,
+    "value_evidence": "#236 fit frequency 4203024686.594 Hz (rel -150185.9 Hz from centre 4203174872.49, r2 0.967, peak_snr 29.8, fwhm 4.86 MHz) confirmed by #45 fit 4203187886.375 Hz (rel -988255.6 Hz from centre 4204176142.02, r2 0.920, peak_snr 31.9); difference 163 kHz = 3% of the #236 linewidth. Both runs post-date the #34-#39 flux re-park, so they describe the same idle point.",
+    "value_confidence": "med"
+   },
+   "wasted_runs": [
+    {
+     "run": "#23_08_qubit_spectroscopy_044954",
+     "why_wasted": "Widened the span 5x (100 -> 500 MHz) while leaving num_shots at 100, so the SNR limit that killed #22 was untouched; returned a -206.5 MHz peak at r2 0.461 that nobody acted on."
+    },
+    {
+     "run": "#25_08_qubit_spectroscopy_045653",
+     "why_wasted": "Narrowed the span to 50 MHz before the line had been located, at the unchanged centre; simply re-found the same +19.65 MHz image (r2 0.735, snr 7.4) that #22 had already reported."
+    },
+    {
+     "run": "#28_08_qubit_spectroscopy_045932",
+     "why_wasted": "Same centre family and same amplitude as #27, span narrowed 60 -> 50 MHz; returned the same -21.0 MHz image. Its high r2 (0.958) is what made the image look adoptable, but it carried no information #27 had not already given."
+    },
+    {
+     "run": "#29_08_qubit_spectroscopy_050005",
+     "why_wasted": "Repeat of #28 except multiplexed=false; returned the same image at -19.4 MHz. Informationally redundant, and it is the run whose values were written into the state."
+    },
+    {
+     "run": "#30_08_qubit_spectroscopy_050108",
+     "why_wasted": "Only existed because #29 had moved the centre onto the image; re-found the image at the new centre (-19.3 MHz). Valuable as accidental proof of centre-tracking, but the ideal path never creates the poisoned centre it tests."
+    },
+    {
+     "run": "#31_08_qubit_spectroscopy_050147",
+     "why_wasted": "Third consecutive repeat at centre 4164902530 (-20.1 MHz); added nothing over #30 - the multiplexed/de-multiplexed flip had already been shown to change nothing at #28/#29."
+    },
+    {
+     "run": "#33_08_qubit_spectroscopy_050627",
+     "why_wasted": "Legitimate confirmation of #32 (peak returns 0.14 MHz from the newly written centre), but #32's agreement with the pre-#29 centre 4184302530 to 0.17 MHz was already the confirmation; and the value was superseded an hour later by the #34-#39 flux re-park."
+    }
+   ],
+   "poisoned_writes": [
+    {
+     "run": "#29_08_qubit_spectroscopy_050005",
+     "path": "/quam/qubits/q6/f_01",
+     "why": "Wrote 4164902530.07 Hz from a fit parked at -19.4 MHz, 78% of the +/-25 MHz half-span, with fwhm 9.96 MHz. It is the mirror image, not the line: the next runs at that new centre returned -19.3 (#30) and -20.1 MHz (#31) - the offset followed the centre - while #32's wider window found the true partner at +19.2 MHz = 4184131887.7, back within 0.17 MHz of the centre this write had abandoned. Cost three runs to undo."
+    },
+    {
+     "run": "#29_08_qubit_spectroscopy_050005",
+     "path": "/quam/qubits/q6/xy/RF_frequency",
+     "why": "Same image value 4164902530.07 Hz propagated to the drive tone, so the subsequent sweeps were physically centred ~19.4 MHz below the qubit - which is why #30/#31 could only see the image."
+    },
+    {
+     "run": "#29_08_qubit_spectroscopy_050005",
+     "path": "/quam/qubits/q6/resonator/operations/readout/integration_weights_angle",
+     "why": "Readout rotation angle 2.3865 rad was derived from the same image fit; the rotation that decides whether the line reads as peak or dip was tuned on a spurious feature."
+    }
+   ],
+   "ideal_length": 6,
+   "actual_length": 13,
+   "confidence": "high",
+   "caveats": "The image diagnosis is arithmetic from the record, not from figures: sweep centre = fit frequency - relative_freq. At centre 4164902530 the session reports peaks at -19.3 (#30), -20.1 (#31) and +19.2 MHz (#32) - a centre-symmetric pair. One qubit line cannot occupy both, and the +19.2 MHz member lands back on the pre-#29 centre, which identifies the negative member as the image. || Two centre changes are not explained by any run in this file: f_01 dropped 20.75 MHz between #26 and #27 (19 s apart - a manual edit, almost certainly informed by out-of-family run #24, 08b_qubit_spectroscopy_vs_power at 04:52:43), and rose to 4204176142 before #45 (runs #34-#39 are 09_qubit_spectroscopy_vs_flux). The ~19 MHz change between #33 (4184.0 MHz) and #45 (4203.2 MHz) is therefore a real flux re-park, NOT a fit disagreement, and #33's value is not judged wrong. || fwhm exceeds the 3.0 MHz target_peak_width by 3-7x in every run from #27 through #45; operation_amplitude_factor stayed 1.0 in all 13 runs. The narrowing to 4.86 MHz seen at #236 came from an amplitude change made outside this record. || The final value rests on #45 and #236 only. If the chip was re-parked again between them, their agreement is coincidental rather than a reproduction - hence value_confidence med rather than high."
+  },
+  {
+   "qubit": "q7",
+   "runs_in_scope": [
+    "#22_08_qubit_spectroscopy_044933",
+    "#23_08_qubit_spectroscopy_044954",
+    "#25_08_qubit_spectroscopy_045653",
+    "#26_08_qubit_spectroscopy_045721",
+    "#27_08_qubit_spectroscopy_045740",
+    "#28_08_qubit_spectroscopy_045932",
+    "#29_08_qubit_spectroscopy_050005",
+    "#30_08_qubit_spectroscopy_050108",
+    "#31_08_qubit_spectroscopy_050147",
+    "#32_08_qubit_spectroscopy_050601",
+    "#33_08_qubit_spectroscopy_050627",
+    "#45_08_qubit_spectroscopy_061005",
+    "#236_08_qubit_spectroscopy_201850"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#22_08_qubit_spectroscopy_044933",
+     "expected_case": "No line at all: peak_snr 3.36, r2 0.147, contrast 0.199, 100 shots. The reported peak at -25.25 MHz sits at the edge of the +/-50 MHz window and its fwhm 3.16 MHz coincidentally equals target_peak_width, which is not evidence of anything at r2 0.15. Node reports failed.",
+     "expected_flags": [
+      "node_failed",
+      "low_snr",
+      "low_r2",
+      "peak_near_window_edge",
+      "num_shots_too_low"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "num_shots 100 -> 500; HOLD frequency_span_in_mhz 100, frequency_step_in_mhz 0.2, operation_amplitude_factor 1.0, and hold f_01 at 3846349930.14 Hz.",
+     "operator_did": "Widened span to 500 MHz at 100 shots (#23).",
+     "operator_was_right": "partly"
+    },
+    {
+     "step": 2,
+     "run": "#26_08_qubit_spectroscopy_045721",
+     "expected_case": "span 100 MHz at 500 shots, still failed: r2 0.360, peak_snr 4.77, contrast 0.166, peak at -24.13 MHz - a near-repeat of #22's -25.25 MHz from the identical centre 3846349930.14. Averaging alone did not raise the line out of the noise; the candidate is again a fixed offset from the centre.",
+     "expected_flags": [
+      "node_failed",
+      "low_r2",
+      "low_snr",
+      "peak_at_recurring_centre_offset",
+      "do_not_write_f_01"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Move the sweep centre by a known amount (~-9 MHz, tracking the q6 correction) and re-run at frequency_span_in_mhz 100 / num_shots 500; require the peak to hold its ABSOLUTE frequency, and keep the span wide enough that a mirror partner would also be inside the window.",
+     "operator_did": "Manually moved f_01 down 9.0 MHz (3846349930 -> 3837349930) and re-ran at span 60 (#27), which returned pure noise for q7 (r2 0.143, snr 3.54).",
+     "operator_was_right": "partly"
+    },
+    {
+     "step": 3,
+     "run": "#28_08_qubit_spectroscopy_045932",
+     "expected_case": "First strong q7 fit of the session - peak_snr 21.0, r2 0.915 - but the peak sits at -10.8 MHz (43% of the +/-25 MHz half-span) and fwhm 18.56 MHz is 6.2x target_peak_width and 37% of the whole swept span: the fitted Lorentzian fills a third of the window and is off-centre. contrast 30.9 is two orders of magnitude above every earlier q7 contrast, marking a readout-rotation change rather than a better line. Strong is not the same as located.",
+     "expected_flags": [
+      "peak_off_centre",
+      "fwhm_6x_target",
+      "fwhm_37pct_of_span",
+      "contrast_scale_jump",
+      "power_broadened",
+      "do_not_write_f_01"
+     ],
+     "correct_decision": "reconfirm",
+     "correct_next_action": "Do NOT write f_01. Hold 3837599930.14 Hz, re-run at frequency_span_in_mhz 100 so both -10 MHz and +10 MHz are inside the window, and cut operation_amplitude_factor 1.0 -> ~0.1 so fwhm approaches the 3 MHz target instead of spanning a third of the sweep.",
+     "operator_did": "Repeated the run de-multiplexed (#29) and WROTE f_01 = 3827599930.14 from the -10.0 MHz fit.",
+     "operator_was_right": "no"
+    },
+    {
+     "step": 4,
+     "run": "#32_08_qubit_spectroscopy_050601",
+     "expected_case": "span 100 MHz at centre 3827599930.14 resolves the pair: +9.20 MHz -> 3836801476.6 Hz (peak_snr 30.2, r2 0.804) against the -9.8/-9.6 MHz peaks #30/#31 reported at the same centre. The positive member lands 0.80 MHz from the pre-#29 centre 3837599930, so the negative member was the mirror image and #29's write had moved q7 onto it.",
+     "expected_flags": [
+      "mirror_pair_resolved",
+      "peak_snr_high",
+      "r2_marginal",
+      "fwhm_5x_target",
+      "prior_write_identified_as_image"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = 3836801476.6 Hz and xy/RF_frequency to match, restoring the value #29 discarded; leave the 15.0 MHz fwhm (5x target) to 08b / power-Rabi and go on to the flux node.",
+     "operator_did": "Adopted exactly this, then confirmed once more at span 40 (#33, peak +0.40 MHz -> 3837196574.9).",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 5,
+     "run": "#45_08_qubit_spectroscopy_061005",
+     "expected_case": "Re-measurement after the #34-#39 flux re-park; the centre is now 3846414280 Hz, back within 64 kHz of the day-start value. Peak at -1.94 MHz -> 3844478235.0 Hz with r2 0.972, peak_snr 26.3, contrast 2.92: centred and strong, no recurring-offset signature. fwhm 19.0 MHz is still 6.3x target.",
+     "expected_flags": [
+      "new_flux_point",
+      "peak_near_centre",
+      "r2_high",
+      "fwhm_6x_target",
+      "power_broadened"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = 3844478235.0 Hz at the new idle point and reduce the saturation drive (derived saturation_amp 0.0064) before the next spectroscopy pass.",
+     "operator_did": "Adopted (patched f_01, xy/RF_frequency, integration_weights_angle).",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 6,
+     "run": "#236_08_qubit_spectroscopy_201850",
+     "expected_case": "Best-resolved q7 measurement of the session: fwhm 10.81 MHz (down from 19.0), peak 0.31 MHz from centre, peak_snr 25.2, r2 0.894, contrast 8.44. Confirms #45 to within 413 kHz after a full day of recalibration.",
+     "expected_flags": [
+      "peak_centred",
+      "reproduces_prior_run",
+      "fwhm_3.6x_target",
+      "converged"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = 3844065508.9 Hz and stop the family for q7; the line is still 3.6x wider than target_peak_width, so hand further tightening to a drive-amplitude node and the final precision to Ramsey.",
+     "operator_did": "Adopted and stopped.",
+     "operator_was_right": "yes"
+    }
+   ],
+   "termination": {
+    "at_run": "#236_08_qubit_spectroscopy_201850",
+    "reason": "#45 and #236 agree to 413 kHz - under 4% of the #236 linewidth - both with the peak within 2 MHz of a centre not derived from the mirror image, r2 0.894/0.972 and peak_snr ~25. No further 08 run can improve on this while the drive is still saturating the line.",
+    "final_frequency": 3844065508.860395,
+    "final_sweep_value": null,
+    "unresolved": false,
+    "value_evidence": "#236 fit frequency 3844065508.860 Hz (rel +312476.2 Hz from centre 3843753032.66, r2 0.894, peak_snr 25.2, fwhm 10.81 MHz), confirmed by #45 fit 3844478234.953 Hz (rel -1936045.3 Hz from centre 3846414280.25, r2 0.972, peak_snr 26.3); difference 413 kHz. Both post-date the #34-#39 flux re-park.",
+    "value_confidence": "med"
+   },
+   "wasted_runs": [
+    {
+     "run": "#23_08_qubit_spectroscopy_044954",
+     "why_wasted": "500 MHz span at 100 shots; returned a -183.9 MHz peak at r2 0.373 - the SNR limit from #22 was never addressed and nothing was learned."
+    },
+    {
+     "run": "#25_08_qubit_spectroscopy_045653",
+     "why_wasted": "span 50 MHz at the unchanged centre returned a peak 0.1 MHz from centre with r2 0.069, peak_snr 3.15, contrast 0.094 - a centred position with no statistical support, the most dangerous kind of run because the position alone looks like an answer."
+    },
+    {
+     "run": "#27_08_qubit_spectroscopy_045740",
+     "why_wasted": "First run at the manually corrected centre, but for q7 it returned pure noise (+8.03 MHz, r2 0.143, snr 3.54, fwhm 1.28 MHz), so it could neither confirm nor refute the recentre for this target."
+    },
+    {
+     "run": "#29_08_qubit_spectroscopy_050005",
+     "why_wasted": "Repeat of #28 with multiplexed=false only; same image at -10.0 MHz, and it is the run that wrote the image into the state."
+    },
+    {
+     "run": "#30_08_qubit_spectroscopy_050108",
+     "why_wasted": "Exists only because #29 poisoned the centre; re-found the image at -9.8 MHz. Accidental proof of centre-tracking, but a run the ideal path never needs."
+    },
+    {
+     "run": "#31_08_qubit_spectroscopy_050147",
+     "why_wasted": "Third repeat at centre 3827599930 (-9.6 MHz); adds nothing over #30."
+    },
+    {
+     "run": "#33_08_qubit_spectroscopy_050627",
+     "why_wasted": "Confirmation of #32 (+0.40 MHz from the freshly written centre). Reasonable practice, but #32 already agreed with the pre-#29 centre to 0.8 MHz, and the value was superseded by the flux re-park an hour later."
+    }
+   ],
+   "poisoned_writes": [
+    {
+     "run": "#29_08_qubit_spectroscopy_050005",
+     "path": "/quam/qubits/q7/f_01",
+     "why": "Wrote 3827599930.14 Hz from a peak at -10.0 MHz with fwhm 17.6 MHz - larger than its own distance from centre. It is the mirror image: at the new centre the following runs returned -9.8 (#30) and -9.6 MHz (#31), the offset following the centre, and #32's wider window found the partner at +9.2 MHz = 3836801476.6, back within 0.80 MHz of the centre this write had abandoned."
+    },
+    {
+     "run": "#29_08_qubit_spectroscopy_050005",
+     "path": "/quam/qubits/q7/xy/RF_frequency",
+     "why": "Propagated the same image value to the drive tone, physically centring the next two sweeps ~10 MHz below the qubit."
+    },
+    {
+     "run": "#29_08_qubit_spectroscopy_050005",
+     "path": "/quam/qubits/q7/resonator/operations/readout/integration_weights_angle",
+     "why": "Readout rotation 1.0473 rad derived from the image fit. q7's contrast swings from 0.09 to 69.8 across this session, showing the rotation - not the line - drives that metric; tuning it on a spurious feature is the wrong anchor."
+    }
+   ],
+   "ideal_length": 6,
+   "actual_length": 13,
+   "confidence": "high",
+   "caveats": "Same arithmetic basis as q6: centre = frequency - relative_freq. At centre 3827599930 the session reports -9.8, -9.6 and +9.2 MHz peaks - a centre-symmetric pair; the +9.2 MHz member lands back on the pre-#29 centre, identifying the negative member as the image. The image offset (~9.5 MHz) differs from q6's (~19.5 MHz), consistent with a per-qubit fixed IF rather than a shared spur. || q7's early runs (#22, #23, #25, #26, #27) are all noise (r2 0.07-0.37, snr 3.1-4.8) and none of them locates anything; unlike q6 there is no usable pre-#28 evidence for where the line was. || fwhm never reaches target_peak_width for q7: 18.6, 17.6, 15.1, 18.1, 15.0, 19.2, 19.0, 10.8 MHz against a 3.0 MHz target. Every adopted value therefore comes from a saturated line; the centroid is still meaningful but the precision the fit claims is not. || In run #236 the recorded patch list stops after q7's integration_weights_angle - there is no /quam/qubits/q7/xy/RF_frequency entry. The list holds exactly 8 entries for 4 qubits (3+3+2+0) where every 2-qubit run holds 6 (3+3), so this is record truncation, not a missed write. Do not score it as an incomplete state update."
+  },
+  {
+   "qubit": "q5",
+   "runs_in_scope": [
+    "#236_08_qubit_spectroscopy_201850"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#236_08_qubit_spectroscopy_201850",
+     "expected_case": "Single, clean measurement: peak 0.34 MHz from centre 3944098845.5 Hz, fwhm 6.15 MHz (2.0x target_peak_width but only 7.7% of the 80 MHz span - well resolved), peak_snr 27.0, r2 0.922, contrast 0.428, node successful. None of the session's failure signatures apply: the peak is not parked at a recurring offset, the fit does not fill the window, and the contrast is in the normal range.",
+     "expected_flags": [
+      "peak_centred",
+      "r2_high",
+      "peak_snr_high",
+      "fwhm_2x_target",
+      "single_run_unconfirmed"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = 3943759798.8 Hz and xy/RF_frequency to match; because this is the only spectroscopy run for q5 in the session, treat it as provisional and let the next node (Ramsey / power-Rabi) be the confirmation rather than spending a second 08 run.",
+     "operator_did": "Adopted (patched f_01, integration_weights_angle, xy/RF_frequency) and ran nothing else on q5 in this family.",
+     "operator_was_right": "yes"
+    }
+   ],
+   "termination": {
+    "at_run": "#236_08_qubit_spectroscopy_201850",
+    "reason": "The one run available is a well-formed, centred, high-SNR fit; a second identical run would only repeat it. The family's job for q5 is done in one measurement.",
+    "final_frequency": 3943759798.837611,
+    "final_sweep_value": null,
+    "unresolved": false,
+    "value_evidence": "Sole evidence is #236: frequency 3943759798.838 Hz, rel -339046.7 Hz from centre 3944098845.53, r2 0.922, peak_snr 27.0, fwhm 6.15 MHz, contrast 0.428, node outcome successful. There is no second q5 spectroscopy run in this session to reproduce it, so this is the operator's last run standing as the only evidence.",
+    "value_confidence": "med"
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "ideal_length": 1,
+   "actual_length": 1,
+   "confidence": "med",
+   "caveats": "Only one run in the session covers q5, so the value is unreproduced. Given that this same chip produced r2 ~0.95 fits on mirror images for q6 and q7, an unreproduced fit deserves med confidence even when its statistics are good. || q5's sweep centre (3944098845.5 Hz) was established by runs outside this family and outside this file, so the possibility that the fit merely sits on a centre someone else chose cannot be excluded from this record alone. The narrow fwhm/span ratio (0.077) argues against the degenerate 'fit fills the window' case, and the -0.34 MHz offset is nothing like the +/-10 to 20 MHz image offsets seen on q6/q7."
+  },
+  {
+   "qubit": "q8",
+   "runs_in_scope": [
+    "#236_08_qubit_spectroscopy_201850"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#236_08_qubit_spectroscopy_201850",
+     "expected_case": "Best fit of the four targets in the run: peak 0.24 MHz from centre 3757091918.7 Hz, fwhm 7.33 MHz (2.4x target, 9.2% of the 80 MHz span), peak_snr 32.6, r2 0.956, contrast 0.380, node successful. Centred, resolved, no image signature.",
+     "expected_flags": [
+      "peak_centred",
+      "r2_high",
+      "peak_snr_highest_in_run",
+      "fwhm_2.4x_target",
+      "single_run_unconfirmed"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = 3756848300.8 Hz and xy/RF_frequency to match; confirm downstream (Ramsey) rather than with a second 08 run.",
+     "operator_did": "Ran and accepted the fit; no q8 state write appears in the record, but the record's patch list is truncated (see caveats).",
+     "operator_was_right": "yes"
+    }
+   ],
+   "termination": {
+    "at_run": "#236_08_qubit_spectroscopy_201850",
+    "reason": "Single clean measurement with the strongest statistics of the run; nothing in the family would improve it.",
+    "final_frequency": 3756848300.791697,
+    "final_sweep_value": null,
+    "unresolved": false,
+    "value_evidence": "Sole evidence is #236: frequency 3756848300.792 Hz, rel -243617.9 Hz from centre 3757091918.68, r2 0.956, peak_snr 32.6, fwhm 7.33 MHz, contrast 0.380, node outcome successful. No second q8 spectroscopy run exists in this session, so this is a last-run-standing value.",
+    "value_confidence": "med"
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "ideal_length": 1,
+   "actual_length": 1,
+   "confidence": "med",
+   "caveats": "Only one run covers q8; the value is unreproduced, hence med confidence despite the best statistics in the run. || #236's recorded patch list contains no q8 entries at all. It holds exactly 8 entries (q5 x3, q6 x3, q7 x2, q8 x0) where every 2-qubit run in this session holds 6 (3 per qubit), so the list is truncated in the record rather than the write having been skipped. Do not score q8 as a missed state write on this evidence. || q8's sweep centre came from work outside this file, so the same 'centre chosen elsewhere' reservation as q5 applies; the small fwhm/span ratio (0.092) argues the peak is a real resolved line and not a window-filling degenerate fit."
+  }
+ ],
+ "runs": [
+  "#22_08_qubit_spectroscopy_044933",
+  "#23_08_qubit_spectroscopy_044954",
+  "#25_08_qubit_spectroscopy_045653",
+  "#26_08_qubit_spectroscopy_045721",
+  "#27_08_qubit_spectroscopy_045740",
+  "#28_08_qubit_spectroscopy_045932",
+  "#29_08_qubit_spectroscopy_050005",
+  "#30_08_qubit_spectroscopy_050108",
+  "#31_08_qubit_spectroscopy_050147",
+  "#32_08_qubit_spectroscopy_050601",
+  "#33_08_qubit_spectroscopy_050627",
+  "#45_08_qubit_spectroscopy_061005",
+  "#236_08_qubit_spectroscopy_201850"
+ ],
+ "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: judging the system on runs the key's author never examined is neither fair nor sound \u2014 it can adopt from a run the key has no opinion about, and the mismatch showed up as a 12-point score difference between two harnesses reading the same archive."
+}

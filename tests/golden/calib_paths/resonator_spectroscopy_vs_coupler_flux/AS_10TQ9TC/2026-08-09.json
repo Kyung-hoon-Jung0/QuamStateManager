@@ -1,0 +1,155 @@
+{
+ "schema": "smgolden/v2",
+ "family": "resonator_spectroscopy_vs_coupler_flux",
+ "chip": "AS_10TQ9TC",
+ "session": "2026-08-09",
+ "session_id": "resonator_spectroscopy_vs_coupler_flux__AS_10TQ9TC__2026-08-09",
+ "authored": "2026-08-21",
+ "status": "hindsight-authored + adversarial audit",
+ "provenance": "the author saw the whole session and was free to judge the operator wrong; the system under test never sees past its cursor",
+ "session_notes": "Single target (coupler_q6_q7), nine runs in two separated blocks: seven at 04:28-04:35 and two at 19:58-19:59 with ~200 unrelated nodes between them. Zero state patches in the entire session \u2014 the operator explored and never adopted, so there are no poisoned writes; but they also never recorded the answer their last two runs actually established.\n\nThe session's decisive fact is invisible in the supplied JSON and had to be recovered from node.json: the node exposes measure_qubit \u2208 {control, target}. Runs #14-#229 all read the TARGET qubit's resonator (~6.1011 GHz), whose coupler-flux modulation is only ~140-150 kHz \u2014 at or below the scatter of the extracted dip positions, which is why six successive runs on it returned six different idle_offsets spanning 0.34 V and mostly failed to fit a period at all. Run #230 flipped to measure_qubit='control', reading the other resonator at ~6.0065 GHz, whose modulation is ~1.3-1.5 MHz \u2014 a clean, high-SNR sinusoid. Read from the fit fields alone, #230 looks like a catastrophic runaway (resonator_frequency 93 MHz outside the swept window, frequency_shift 10x every sibling) and any naive gate will reject it; it is in fact the best measurement of the session and the one that closes the target.\n\nConvergence: #229 (target, 101 flux points) gives idle_offset +0.4129 V; #230 (control, same window) gives +0.4250 V \u2014 12 mV apart, ~0.3% of the ~4 V period, from independent readouts. That cross-resonator agreement is stronger evidence than any same-settings repeat. The morning cluster (-0.13 to -0.47 V) is not a chip-state difference but under-conditioned fitting: 51 flux points, a modulation at the noise floor, and in #18-#20 a coarsened 0.1 MHz frequency step on a 150 kHz feature.\n\nIdeal path is 5 runs vs 9 actual: #14 (window too narrow -> widen) -> #15 (success flag but no period, idle unanchored -> extend past one period + halve step) -> #16 (period found, self-consistent, but amplitude below dip scatter -> reconfirm, and try the pair's other resonator) -> #229 (well-conditioned, disagrees with morning, single determination -> reconfirm on the control resonator) -> #230 (strong clean modulation, agrees to 12 mV -> adopt, stop). Runs #17-#20 are wasted: four repeats on the weakly-modulated target resonator that varied shots and window while leaving flux-point density and measure_qubit untouched, one of them (#20) with a 3.7 V window shorter than the 4.7 V period it would have needed.\n\nRecommended final hold: coupler idle offset 0.4129 V (corroborated 0.4250 V), target-qubit resonator frequency 6,100,469,130 Hz at that offset; control-qubit resonator 6,007,474,711 Hz. Not unresolved, but value_confidence med \u2014 no identical-settings repeat exists on either resonator, and dv_phi0 spans 3.75-4.73 V across the three runs that fitted it, so the Phi0 voltage scale is only good to ~10%.",
+ "adversarial_audit": "Verified against the nine real run folders (`D:\\work\\dataset\\AS_10TQ9TC\\2026-08-09`), `ds_fit.h5`/`ds_raw.h5` and the b4 benchmark input. The `measure_qubit` claim is **true** (#229 `target`, #230 `control`, in `node.json > data.parameters.model`). Most of the rest does not survive.\n\n**1. Ideal path is untakeable (b).** `measure_qubit` is absent from the b4 input's `params` dict (only multiplexed/shots/span/step/min/max/npoints). Steps 3\u20135 all require flipping a knob not in the visible parameter space. Fix the harness input; don't score against it.\n\n**2. The core physics story is refuted (e).** Fitted arc peak-to-peak \u00f7 dip-residual RMS: #230 = **7.2\u00d7**, #20 = **7.3\u00d7**, #15 6.9, #18 6.0, #19 6.0, #16 3.0, **#229 = 3.8**. The target arc is 3\u20137\u00d7 the scatter in every run \u2014 never \"at or below the noise floor\" \u2014 and #230 is not \"an order of magnitude above\" anything. Real difference is absolute depth (1.28 vs 0.50\u20130.89 MHz, ~2\u00d7), not SNR. Delete `modulation_below_dip_scatter` / `weak_modulation_still`.\n\n**3. #229 \"qualitatively better than anything in the morning\" is false (e).** #20 = 86 kHz RMS on a 631 kHz arc beats #229's 132 kHz on 499 kHz. #20 is simultaneously marked wasted.\n\n**4. `value_evidence` is circular (a).** `idle_offset = min_offset \u00b1 dv_phi0/2` holds to 1e-16 in **26/26** runs across all labs \u2014 an identity of the fit parameterization. It holds equally for #309 (1.058 V). Remove it as corroboration.\n\n**5. #18's causal claim is contradicted (e).** #15/#19/#20 also ran 0.1 MHz step and returned 146/149/143 kHz. Coarsening did not cause 107.5 kHz.\n\n**6. #20 \"could not determine dv_phi0 by construction\" (c/e).** #17 and #18 swept 5.0 V \u2014 wider than the adopted 4.147 V period \u2014 at 51 points and also returned NaN. Only #16 (1.7 periods) and the 101-point runs fitted. #17 additionally executes the key's own step-3 `reconfirm` and supplies the non-reproducibility of #16; scoring it waste is unfair.\n\n**7. Unevidenced hardware claim (a).** \"[-2.5,+2.5] V = the full available coupler DC range\" \u2014 contradicted by #16 sweeping to +5.5 V.\n\n**8. Self-contradiction.** Step 3 prescribes `control`; step 4 is #229, which is `target`.\n\n**9. The write is impossible in 5 runs.** `update_flux_min=false` in all nine node.json. No run could patch; crediting \"zero poisoned writes\" as judgment and docking the operator for not writing both misread a node flag.\n\n**10. The trap is weaker than stated.** #230's 6.007475 GHz sits **inside its own** swept band (`full_freq` 6.00295\u20136.00875 GHz); an in-window gate passes it.\n\n**11. Termination (d).** Next morning, same coupler, same `target`: #309/#310 give idle 1.058/1.344 V \u2014 16\u201322% of a period from 0.413 V. `unresolved:false` + \"nothing further would sharpen that\" is too strong at `value_confidence: med`.\n\nMinor: #14 covers 27% of a 3.754 V period, not \"under a quarter\"; the five non-#18 morning runs agree to \u00b15.5 kHz, not \u00b120; \"other four morning runs\" is five.\n\n---\n\n**\ud55c\uad6d\uc5b4 \uc694\uc57d**\n\n- \ub2f5\uc548\uc9c0\uc758 \ud575\uc2ec \uc8fc\uc7a5(#230\ub9cc `measure_qubit=control`)\uc740 \uc2e4\uc81c `node.json`\uc5d0\uc11c **\uc0ac\uc2e4\ub85c \ud655\uc778**\ub428. \uadf8\ub7ec\ub098 \uadf8 \ud30c\ub77c\ubbf8\ud130\uac00 \ubca4\uce58\ub9c8\ud06c \uc785\ub825(b4 params)\uc5d0\ub294 \uc5c6\uc5b4\uc11c, 3~5\ub2e8\uacc4\uc758 \"\uc774\uc0c1 \uacbd\ub85c\"\ub294 \uc2dc\uc2a4\ud15c\uc774 \uc6d0\ub9ac\uc801\uc73c\ub85c \ubc1f\uc744 \uc218 \uc5c6\uc74c \u2014 \ub2f5\uc548\uc774 \uc544\ub2c8\ub77c \uc785\ub825\uc744 \uace0\uccd0\uc57c \ud568.\n- \uac00\uc7a5 \ud070 \uacb0\ud568: \"\ud0c0\uae43 \uacf5\uc9c4\uae30 \ubcc0\uc870\uac00 \ub178\uc774\uc988 \uc218\uc900\"\uc774\ub77c\ub294 \ubb3c\ub9ac \uc11c\uc0ac\uac00 \uc2e4\uce21\uc73c\ub85c \ubc18\ubc15\ub428. \ud53c\ud305 \uc9c4\ud3ed/\ub525 \uc0b0\ud3ec \ube44\uc728\uc740 #230\uc774 7.2\ubc30, #20\uc774 7.3\ubc30\ub85c \uc0ac\uc2e4\uc0c1 \ub3d9\uc77c\ud558\uace0 #229\ub294 3.8\ubc30\ub85c \uc624\ud788\ub824 \uc138\uc158 \ud558\uc704\uad8c.\n- `idle_offset = min_offset \u00b1 dv_phi0/2`\ub294 26/26 \ub7f0\uc5d0\uc11c 1e-16 \uc815\ubc00\ub3c4\ub85c \uc131\ub9bd\ud558\ub294 **\ud56d\ub4f1\uc2dd**\uc774\ubbc0\ub85c \uadfc\uac70\ub85c \uc778\uc6a9\ud558\uba74 \uc21c\ud658\ub17c\uc99d.\n- #18(\uc8fc\ud30c\uc218 \uc2a4\ud15d \ud0d3), #20(\uc708\ub3c4\uc6b0 \uae38\uc774 \ud0d3) \ud3d0\uae30 \uc0ac\uc720\ub294 \ub2e4\ub978 \ub7f0\ub4e4\uc774 \ubc18\uc99d\ud568. #17\uc740 \ub2f5\uc548 \uc790\uc2e0\uc758 \"\uc7ac\ud655\uc778\" \uacb0\uc815\uc744 \uc218\ud589\ud55c \ub7f0\uc774\ub77c \ud3d0\uae30 \ucc98\ub9ac\uac00 \ubd80\ub2f9.\n- 9\uac1c \ub7f0 \ubaa8\ub450 `update_flux_min=false` \u2014 \uc4f0\uae30 \uc790\uccb4\uac00 \ubd88\uac00\ub2a5\ud588\uc73c\ubbc0\ub85c \"\uc4f0\uc9c0 \uc54a\uc740 \ud310\ub2e8\ub825\" \uce6d\ucc2c\uacfc \"\uc4f0\uc9c0 \uc54a\uc558\ub2e4\" \uac10\uc810 \ub458 \ub2e4 \uadfc\uac70 \uc5c6\uc74c.\n- \uc885\ub8cc \ud310\uc815\ub3c4 \uacfc\ud568: \ub2e4\uc74c \ub0a0 \uac19\uc740 \ucee4\ud50c\ub7ec #309/#310\uc774 \uc8fc\uae30\uc758 16~22% \ub5a8\uc5b4\uc9c4 \uac12\uc744 \ub0c4.",
+ "qubits": [
+  {
+   "qubit": "coupler_q6_q7",
+   "runs_in_scope": [
+    "#14_07_resonator_spectroscopy_vs_coupler_flux_042859",
+    "#15_07_resonator_spectroscopy_vs_coupler_flux_042919",
+    "#16_07_resonator_spectroscopy_vs_coupler_flux_042946",
+    "#17_07_resonator_spectroscopy_vs_coupler_flux_043043",
+    "#18_07_resonator_spectroscopy_vs_coupler_flux_043402",
+    "#19_07_resonator_spectroscopy_vs_coupler_flux_043434",
+    "#20_07_resonator_spectroscopy_vs_coupler_flux_043518",
+    "#229_07_resonator_spectroscopy_vs_coupler_flux_195856",
+    "#230_07_resonator_spectroscopy_vs_coupler_flux_195913"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#14_07_resonator_spectroscopy_vs_coupler_flux_042859",
+     "expected_case": "Sweep window far narrower than one coupler flux period. flux=[-0.5,+0.5] V = 1.0 V total, while the coupler's period turns out to be dv_phi0 ~= 3.8-4.7 V, so under a quarter period is covered and the resonator trace is essentially flat. Every fit field is NaN and the node reports failed. This is a RANGE defect, not evidence of absent coupler-resonator coupling \u2014 a correct reader must not conclude 'no modulation' from a window this small.",
+     "expected_flags": [
+      "fit_failed",
+      "sweep_range_too_narrow",
+      "period_not_covered",
+      "no_modulation_observed_but_uninformative"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Widen min/max_flux_offset_in_v to the full available coupler DC range, [-2.5,+2.5] V, keeping num_flux_points>=51 and frequency_step_in_mhz<=0.1; do not change num_shots yet (the defect is the window, not SNR).",
+     "operator_did": "Widened the flux window to [-2.0,+2.0] V, everything else unchanged (still 50 shots, 15 MHz span, 0.1 MHz step).",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "#15_07_resonator_spectroscopy_vs_coupler_flux_042919",
+     "expected_case": "Node reports success and an idle_offset (-0.3706 V) plus frequency_shift 145.9 kHz, but dv_phi0 and min_offset are both NaN \u2014 the periodicity was never determined, so the reported idle_offset is a phase with no physical anchor. The 4.0 V window is still under one period. The modulation depth (146 kHz) is only ~1.5 bins of the 0.1 MHz frequency step, so the extremum cannot be localized. A 'successful' flag here does not mean an adoptable number.",
+     "expected_flags": [
+      "success_flag_but_no_period",
+      "dv_phi0_nan",
+      "min_offset_nan",
+      "idle_offset_unanchored",
+      "modulation_depth_near_frequency_step"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Extend the flux window past one full period (e.g. -2.5..+5.5 V) so dv_phi0 can be fitted, and halve frequency_step_in_mhz to 0.05 so a ~150 kHz modulation spans ~3 bins; raise num_shots 50 -> 100.",
+     "operator_did": "Went to flux=[-2.5,+5.5] V (8 V, ~1.7 periods), step 0.1 -> 0.05 MHz, span 15 -> 10 MHz, shots 50 -> 100.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 3,
+     "run": "#16_07_resonator_spectroscopy_vs_coupler_flux_042946",
+     "expected_case": "First run that actually determines the period: dv_phi0 = 4.7297 V, min_offset = +2.2314 V, and the fit is internally consistent (min_offset - dv_phi0/2 = -0.1335 V = the reported idle_offset exactly). BUT the figure shows the fitted sinusoid (~0.63 MHz peak-to-peak on screen; reported frequency_shift 152 kHz) is comparable to or below the scatter of the extracted dip positions (~+/-0.5 MHz), and the flux axis is only 51 points over 1.7 periods (~30 points/period). Marginal but plausible periodic arc: adoptable-looking, not yet adoptable.",
+     "expected_flags": [
+      "period_determined",
+      "fit_self_consistent",
+      "weak_modulation",
+      "modulation_below_dip_scatter",
+      "flux_sampling_sparse",
+      "single_determination"
+     ],
+     "correct_decision": "reconfirm",
+     "correct_next_action": "Do not write. Confirm with a better-conditioned repeat: num_flux_points 51 -> 101 over a one-period window [-2.5,+2.5] V at step <= 0.1 MHz; and because the modulation on this resonator sits at the dip-extraction noise floor, also flip the node's measure_qubit knob from 'target' to 'control' \u2014 the coupler pulls the two resonators of the pair by different amounts, and the stronger one localizes the same coupler sweet spot far more cheaply than more shots on the weak one.",
+     "operator_did": "Repeated at 51 flux points over the narrower [-2.5,+2.5] V window, same 0.05 MHz step, still measure_qubit=target (run #17).",
+     "operator_was_right": "partly"
+    },
+    {
+     "step": 4,
+     "run": "#229_07_resonator_spectroscopy_vs_coupler_flux_195856",
+     "expected_case": "Well-conditioned target-resonator run: 101 flux points over [-2.5,+2.5] V, 6 MHz span, 0.15 MHz step. Figure shows a smooth single-period arc with tightly clustered dip positions (~+/-0.2 MHz scatter about a ~0.5 MHz peak-to-peak arc) \u2014 qualitatively better than anything in the morning. dv_phi0 = 4.1474 V, min_offset = -1.6608 V, idle_offset = +0.4129 V (again exactly min_offset + dv_phi0/2), resonator_frequency 6.100469 GHz. Two caveats a correct reader must carry: the sign of idle_offset is opposite to the whole morning cluster (+0.41 vs -0.13..-0.47 V, i.e. ~13% of a period away), and the target resonator has moved -670 kHz since the morning (6.101139 -> 6.100469 GHz) because ~200 unrelated nodes ran in between. Still only ONE determination.",
+     "expected_flags": [
+      "well_conditioned_fit",
+      "period_determined",
+      "disagrees_with_earlier_cluster",
+      "chip_regime_changed_since_morning",
+      "single_determination",
+      "weak_modulation_still"
+     ],
+     "correct_decision": "reconfirm",
+     "correct_next_action": "Re-run identical (101 flux points, [-2.5,+2.5] V) with measure_qubit='control' and frequency_step_in_mhz <= 0.15 \u2014 an independent readout of the same coupler. Agreement of the two idle_offsets to well under a tenth of a period is the acceptance criterion.",
+     "operator_did": "Ran exactly that 17 s later with measure_qubit='control', but coarsened frequency_step_in_mhz 0.15 -> 0.2 (run #230).",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 5,
+     "run": "#230_07_resonator_spectroscopy_vs_coupler_flux_195913",
+     "expected_case": "THE TRAP OF THIS SESSION: the record shows success=true with resonator_frequency 6.007475 GHz \u2014 93 MHz outside the 6 MHz window of every other run \u2014 and frequency_shift 1.523 MHz, 10x every other run. Read from the JSON alone this looks like a runaway fit that must be rejected. It is not: node.json shows measure_qubit='control' (all eight prior runs were 'target'), so this is the OTHER qubit's readout resonator at 6.0065 GHz, and its coupler-flux modulation is genuinely ~1.3-1.5 MHz peak-to-peak \u2014 a textbook clean sinusoid in the figure, an order of magnitude above the dip scatter. Its idle_offset +0.4250 V agrees with #229's +0.4129 V to 12 mV, i.e. 0.3% of a period, from an independent resonator. That cross-check is stronger than any same-settings repeat and it closes the target. (Residual: dv_phi0 3.754 V here vs 4.147 V in #229 \u2014 the Phi0 voltage scale is only good to ~10%.)",
+     "expected_flags": [
+      "different_resonator_measure_qubit_control",
+      "strong_modulation",
+      "clean_sinusoid",
+      "cross_resonator_agreement_12mV",
+      "period_scale_disagrees_10pct"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write the coupler idle offset 0.413 V (corroborated 0.425 V) and hold the target-qubit resonator frequency 6.100469 GHz at that offset; stop the family. Do not chase dv_phi0 further here \u2014 the 10% period spread does not affect the sweet-spot value and would need a dedicated wide-window run.",
+     "operator_did": "Ran it, obtained the corroboration, and then stopped \u2014 but wrote nothing (patches empty for all nine runs).",
+     "operator_was_right": "partly"
+    }
+   ],
+   "termination": {
+    "at_run": "#230_07_resonator_spectroscopy_vs_coupler_flux_195913",
+    "reason": "Two independent readout resonators of the same pair, measured 17 s apart with the same 101-point coupler-flux window, place the coupler sweet spot at +0.4129 V (target resonator, #229) and +0.4250 V (control resonator, #230) \u2014 12 mV apart, ~0.3% of the ~4 V period \u2014 and the control-resonator measurement carries a 1.3-1.5 MHz modulation that sits an order of magnitude above the dip-extraction scatter. Nothing further in this family would sharpen that; more repeats on the weakly-modulated target resonator (which is what the operator spent runs #17-#20 on) demonstrably do not converge.",
+    "final_frequency": 6100469129.992931,
+    "final_sweep_value": 0.41286281016727305,
+    "unresolved": false,
+    "value_evidence": "final_sweep_value = idle_offset of run #229 (measure_qubit=target), reproduced by run #230's independent control-resonator determination of 0.42496 V (delta 12 mV). Both are self-consistent with their own fitted period (#229: min_offset -1.6608 + dv_phi0 4.1474/2 = +0.4129; #230: -1.4520 + 3.7539/2 = +0.4250), and both figures were inspected: smooth single-period arcs with the max at ~+0.4 V. final_frequency = resonator_frequency at that offset from #229, 6,100,469,130 Hz \u2014 the most recent target-resonator measurement; the figure's arc maximum reads ~6.1005 GHz, matching. The morning cluster's 6.101139 GHz (five runs agreeing to ~+/-20 kHz) is stale: the target readout moved -670 kHz over the ~200 intervening nodes of the day. The control resonator sits at 6.007475 GHz at the same offset (#230) if that value is also to be recorded.",
+    "value_confidence": "med"
+   },
+   "wasted_runs": [
+    {
+     "run": "#17_07_resonator_spectroscopy_vs_coupler_flux_043043",
+     "why_wasted": "Repeat of #16 at the same sparse 51 flux points on the same weakly-modulated target resonator, with the window shrunk to [-2.5,+2.5] V. Lost the periodicity entirely (dv_phi0 and min_offset back to NaN) and returned a third, different idle_offset (-0.2729 V). Confirmed nothing; the conditioning knobs (flux-point density, which resonator to read) were not touched."
+    },
+    {
+     "run": "#18_07_resonator_spectroscopy_vs_coupler_flux_043402",
+     "why_wasted": "Spent SNR on the wrong axis: shots 100 -> 200 while COARSENING frequency_step 0.05 -> 0.1 MHz, which halves the resolution of a ~150 kHz feature. Predictably the fitted shift dropped to 107.5 kHz (lowest of the session), the resonator frequency came out ~40 kHz below the other four morning runs, and idle_offset moved again to -0.4712 V. No period. Fourth mutually inconsistent answer."
+    },
+    {
+     "run": "#19_07_resonator_spectroscopy_vs_coupler_flux_043434",
+     "why_wasted": "Near-duplicate of #18 with the window merely retracted to [-2.0,+2.0] V; same 51 points, same coarse 0.1 MHz step. Fifth idle_offset (-0.3440 V), still no dv_phi0. Re-running the same under-conditioned design cannot resolve a weak-modulation fit."
+    },
+    {
+     "run": "#20_07_resonator_spectroscopy_vs_coupler_flux_043518",
+     "why_wasted": "Shots 200 -> 300 and 51 -> 61 flux points, but the window was narrowed to [-1.85,+1.85] V = 3.7 V, which is SHORTER than the 4.7 V period found in #16 \u2014 so this run could not determine dv_phi0 by construction, and did not. Sixth idle_offset (-0.3339 V). Shots were never the binding constraint; flux sampling density and the choice of which resonator to read were."
+    }
+   ],
+   "poisoned_writes": [],
+   "ideal_length": 5,
+   "actual_length": 9,
+   "confidence": "high",
+   "caveats": "No state was ever written in this session (patches empty for all nine runs), so there are literally no poisoned writes \u2014 the one thing the operator did right. Had any morning run been adopted, the chip would have taken a coupler idle offset of -0.13 to -0.47 V: wrong sign, ~13% of a period away from what the evening pair corroborates. || The single decisive fact is NOT in the supplied record: node.json's measure_qubit is 'target' for runs #14-#229 and 'control' for #230. A reader working from the fit fields alone will classify #230's 6.007475 GHz / 1.52 MHz as a runaway fit and discard the session's best measurement. Figures for #16, #229 and #230 were inspected to establish this. || Modulation depth on the TARGET resonator (~140-152 kHz) is this family's honest weak-modulation case: real (periodic, consistent depth across five runs) but comparable to the scatter of extracted dip positions, which is why six runs on it produced six different idle_offsets spanning 0.34 V. Absence of a strong arc there would have been correct physics; what was wrong was fighting it instead of reading the pair's other resonator. || dv_phi0 is determined only to ~10%: 4.7297 V (#16), 4.1474 V (#229), 3.7539 V (#230). The sweet-spot value is robust to that; any downstream use of the Phi0 voltage scale (mutual inductance, flux-to-voltage conversion) is not and would need a dedicated multi-period run. || The morning-to-evening target-resonator shift (6.101139 -> 6.100469 GHz, -670 kHz) is inferred from the ~200 unrelated nodes run in between (readout recalibration/drift), not from a recorded event. || Theoretical minimum is 4 runs, not 5: a system knowing the coupler's full DC range a priori would have started #14 at [-2.5,+2.5] V. #14 is kept in the ideal path because no prior knowledge of a ~4 V period existed at the cursor."
+  }
+ ],
+ "runs": [
+  "#14_07_resonator_spectroscopy_vs_coupler_flux_042859",
+  "#15_07_resonator_spectroscopy_vs_coupler_flux_042919",
+  "#16_07_resonator_spectroscopy_vs_coupler_flux_042946",
+  "#17_07_resonator_spectroscopy_vs_coupler_flux_043043",
+  "#18_07_resonator_spectroscopy_vs_coupler_flux_043402",
+  "#19_07_resonator_spectroscopy_vs_coupler_flux_043434",
+  "#20_07_resonator_spectroscopy_vs_coupler_flux_043518",
+  "#229_07_resonator_spectroscopy_vs_coupler_flux_195856",
+  "#230_07_resonator_spectroscopy_vs_coupler_flux_195913"
+ ],
+ "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: judging the system on runs the key's author never examined is neither fair nor sound \u2014 it can adopt from a run the key has no opinion about, and the mismatch showed up as a 12-point score difference between two harnesses reading the same archive."
+}

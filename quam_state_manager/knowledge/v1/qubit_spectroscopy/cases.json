@@ -1,0 +1,1084 @@
+{
+ "schema": "smknow/v1",
+ "family": "qubit_spectroscopy",
+ "authored": "2026-08-21",
+ "physics": "Drive the qubit while reading out; plot the rotated readout response against drive frequency and fit a Lorentzian. Whether the line appears as a peak or a dip is decided by the readout rotation, not by physics, and it differs between labs and between qubits in one run \u2014 so no rule may assume a sign.",
+ "source": "docs/131: 71 runs / 217 targets across 5 labs (AS_10TQ9TC, CQT, IQCC_QOP37, KRISS_CR, SNU_1Q), every figure viewed; blind re-classification 8/10",
+ "labs": [
+  "AS_10TQ9TC",
+  "CQT",
+  "IQCC_QOP37",
+  "KRISS_CR",
+  "SNU_1Q"
+ ],
+ "cases": [
+  {
+   "id": "Q1",
+   "name": "clean resolved peak",
+   "geometry": "One feature stands clear of the noise band with a defined crest and two monotone flanks, each of which decays onto a locally flat floor that remains visible for a stretch beyond the feature on BOTH sides. The fitted curve is centred on the crest, its wings track both flanks, and it settles onto the same floor level the data hold. No other excursion in the window has a comparable width-and-height combination. Polarity (upward peak or downward dip) is irrelevant provided the sense is the same as the panel's siblings.",
+   "prescription": "Adoptable. Before writing, take ONE reproduction at the same span/step/shots with the multiplexing flag toggled (or simply repeated) and require the absolute centre to agree to well inside the fitted width; if the previous run wrote a new centre, re-check that the fitted offset from the new window centre has SHRUNK rather than repeated. Do not narrow the span further just because the fit looks good \u2014 a tighter window buys nothing and costs the floor.",
+   "exemplars": [
+    "AS_10TQ9TC/#45_08_qubit_spectroscopy_061005/q6",
+    "CQT/#1253_08_qubit_spectroscopy_033636/q7",
+    "IQCC_QOP37/#418_08_qubit_spectroscopy_195956/qD4",
+    "KRISS_CR/#11_08_qubit_spectroscopy_041945/qA1",
+    "SNU_1Q/#52_08_qubit_spectroscopy_222641/q10"
+   ],
+   "seen_count": 90,
+   "kind": "map_case",
+   "exemplar_images": [
+    "exemplars/Q1/AS_10TQ9TC_45_q6.png",
+    "exemplars/Q1/CQT_1253_q7.png",
+    "exemplars/Q1/IQCC_QOP37_418_qD4.png",
+    "exemplars/Q1/KRISS_CR_11_qA1.png",
+    "exemplars/Q1/SNU_1Q_52_q10.png"
+   ]
+  },
+  {
+   "id": "Q2",
+   "name": "empty window",
+   "geometry": "A band of dense point-to-point scatter of essentially constant thickness runs edge to edge. No group of consecutive samples rises out of the band, there is no rounded shoulder and no local change in the band's centreline or thickness. The largest excursions are isolated single samples of similar height scattered across the whole width, i.e. the tail of the noise rather than a feature. Either no fitted curve is drawn, or a curve is drawn whose height above the local band is comparable to ordinary noise excursions.",
+   "prescription": "Never adoptable, whatever numbers the record carries. Widen the span by roughly 3-5x about the same centre at an unchanged step-per-span ratio; if still empty, raise the drive amplitude by ~2-5x on the widened span (an empty window at low drive is routinely a drive-level effect, not a missing qubit). If both moves leave the band flat, stop sweeping frequency and escalate to the resonator/readout-rotation and flux nodes \u2014 the readout, not the drive, is the likelier fault.",
+   "exemplars": [
+    "KRISS_CR/#5_08_qubit_spectroscopy_040123/qA1",
+    "IQCC_QOP37/#427_08_qubit_spectroscopy_205244/qC4",
+    "CQT/#1253_08_qubit_spectroscopy_033636/q16",
+    "SNU_1Q/#49_08_qubit_spectroscopy_222345/q10",
+    "SNU_1Q/#67_08_qubit_spectroscopy_231355/q9"
+   ],
+   "seen_count": 12,
+   "kind": "map_case",
+   "exemplar_images": [
+    "exemplars/Q2/KRISS_CR_5_qA1.png",
+    "exemplars/Q2/IQCC_QOP37_427_qC4.png",
+    "exemplars/Q2/CQT_1253_q16.png",
+    "exemplars/Q2/SNU_1Q_49_q10.png",
+    "exemplars/Q2/SNU_1Q_67_q9.png"
+   ]
+  },
+  {
+   "id": "Q3",
+   "name": "edge feature / monotonic wall",
+   "geometry": "The dominant structure touches a boundary of the swept range: either the trace is already elevated at the first plotted points and reaches its maximum within a few samples of the edge, or it climbs monotonically to the last samples and is still rising when the window closes, or a crest sits so close to a boundary that only one flank is observed. One side of the lineshape and the floor beneath it are never seen. A rising wall may coexist with a fully resolved peak elsewhere in the same panel \u2014 in that case the wall is not the case, it is a flag on the peak's case.",
+   "prescription": "Never adoptable \u2014 a centre constrained by one flank is not a measurement. Re-centre the window onto the apparent feature and widen the span by ~1.5-3x so that both flanks and a stretch of floor fall inside; keep drive and shots unchanged so the comparison is clean. If the structure is a monotonic ramp with no crest anywhere, widen in the direction of the rise by a full window before changing anything else.",
+   "exemplars": [
+    "AS_10TQ9TC/#352_08_qubit_spectroscopy_102706/q6",
+    "IQCC_QOP37/#417_08_qubit_spectroscopy_194728/qC1",
+    "CQT/#1253_08_qubit_spectroscopy_033636/q6",
+    "CQT/#1254_08_qubit_spectroscopy_035232/q17",
+    "SNU_1Q/#68_08_qubit_spectroscopy_231823/q10"
+   ],
+   "seen_count": 9,
+   "kind": "map_case",
+   "exemplar_images": [
+    "exemplars/Q3/AS_10TQ9TC_352_q6.png",
+    "exemplars/Q3/IQCC_QOP37_417_qC1.png",
+    "exemplars/Q3/CQT_1253_q6.png",
+    "exemplars/Q3/CQT_1254_q17.png",
+    "exemplars/Q3/SNU_1Q_68_q10.png"
+   ]
+  },
+  {
+   "id": "Q4",
+   "name": "multiple credible features",
+   "geometry": "Two or more separated structures each stand clear of the floor with a resolved shape \u2014 a crest plus flanks spanning several samples \u2014 and each returns to the floor between them. They may differ in width and height; what makes each credible is that it is many samples wide, not that it is tall. The fitted curve covers one of them and leaves the others entirely untraced. Includes the common asymmetric case of one dominant feature plus a lower, distinctly broader or narrower companion at a fixed offset.",
+   "prescription": "Do not adopt from this panel. Re-run at a drive amplitude reduced by ~3-5x on the SAME span: a drive-induced companion (two-photon, |1>-|2>, saturation sideband) collapses or moves while the 0-1 line persists at the same absolute frequency. Then narrow the span to ~2-3x the surviving feature's fitted width and confirm. If two features both survive the drive change with comparable prominence, escalate \u2014 this node cannot decide which is the qubit.",
+   "exemplars": [
+    "AS_10TQ9TC/#23_08_qubit_spectroscopy_044954/q6",
+    "CQT/#1250_08_qubit_spectroscopy_031805/q9",
+    "CQT/#1254_08_qubit_spectroscopy_035232/q11",
+    "SNU_1Q/#47_08_qubit_spectroscopy_222205/q9",
+    "AS_10TQ9TC/#32_08_qubit_spectroscopy_050601/q7"
+   ],
+   "seen_count": 45,
+   "kind": "map_case",
+   "exemplar_images": [
+    "exemplars/Q4/AS_10TQ9TC_23_q6.png",
+    "exemplars/Q4/CQT_1250_q9.png",
+    "exemplars/Q4/CQT_1254_q11.png",
+    "exemplars/Q4/SNU_1Q_47_q9.png",
+    "exemplars/Q4/AS_10TQ9TC_32_q7.png"
+   ]
+  },
+  {
+   "id": "Q5",
+   "name": "weak feature at the noise margin",
+   "geometry": "A group of consecutive raised samples forms a coherent rise, but its height above the surrounding band is comparable to \u2014 at most a small multiple of \u2014 the band's own largest excursions, so continuity across several samples is the only thing separating it from the background. The flanks exist but are barely traceable, and one or more unrelated excursions elsewhere in the window reach a similar height. Distinct from the merely broad case: here the problem is margin, not width.",
+   "prescription": "Do not adopt from one panel. Increase the shot count by ~4x at unchanged span, step and drive (buys ~2x in noise) and repeat; a real line grows in prominence while the floor shrinks. If the margin does not improve, step the drive DOWN by ~2x (over-drive can bury a line in a lifted floor) and repeat once more. Adopt only on two repeats agreeing on absolute centre; if the feature is only credible because earlier runs put it in the same place, record that dependency explicitly.",
+   "exemplars": [
+    "AS_10TQ9TC/#27_08_qubit_spectroscopy_045740/q7",
+    "IQCC_QOP37/#417_08_qubit_spectroscopy_194728/qC4",
+    "SNU_1Q/#72_08_qubit_spectroscopy_235240/q9",
+    "CQT/#1254_08_qubit_spectroscopy_035232/q19",
+    "IQCC_QOP37/#436_08_qubit_spectroscopy_223724/qC4"
+   ],
+   "seen_count": 22,
+   "kind": "map_case",
+   "exemplar_images": [
+    "exemplars/Q5/AS_10TQ9TC_27_q7.png",
+    "exemplars/Q5/IQCC_QOP37_417_qC4.png",
+    "exemplars/Q5/SNU_1Q_72_q9.png",
+    "exemplars/Q5/CQT_1254_q19.png",
+    "exemplars/Q5/IQCC_QOP37_436_qC4.png"
+   ]
+  },
+  {
+   "id": "Q6",
+   "name": "resolved but broadened",
+   "geometry": "One feature, correctly centred and standing well clear of the noise \u2014 margin is NOT the issue \u2014 whose flanks decay gradually over many times more samples than the same target's line elsewhere in the session, or than a sibling panel's line in the same figure. The crest is rounded or slightly ragged but is still a single crest, and the floor is reached inside the window on both sides. The fitted curve usually tracks it, and any derived drive amplitude computed from the width collapses relative to the narrow-line runs.",
+   "prescription": "The centre is usually usable; the width and everything derived from it are not. Reduce the drive amplitude by ~3-10x at unchanged span/step and repeat. Expect the width to shrink; repeat the reduction until the width stops shrinking, and adopt from THAT run. If the width does not respond to drive at all, the broadening is not power broadening \u2014 re-centre the window first (a badly off-centre window can present a line as a broad hump) and only then suspect the qubit.",
+   "exemplars": [
+    "KRISS_CR/#158_08_qubit_spectroscopy_115018/qA1",
+    "KRISS_CR/#118_08_qubit_spectroscopy_090012/qA1",
+    "CQT/#1254_08_qubit_spectroscopy_035232/q14",
+    "SNU_1Q/#52_08_qubit_spectroscopy_222641/q9",
+    "CQT/#1254_08_qubit_spectroscopy_035232/q7"
+   ],
+   "seen_count": 11,
+   "kind": "map_case",
+   "exemplar_images": [
+    "exemplars/Q6/KRISS_CR_158_qA1.png",
+    "exemplars/Q6/KRISS_CR_118_qA1.png",
+    "exemplars/Q6/CQT_1254_q14.png",
+    "exemplars/Q6/SNU_1Q_52_q9.png",
+    "exemplars/Q6/CQT_1254_q7.png"
+   ]
+  },
+  {
+   "id": "Q7",
+   "name": "saturated flat top / split line",
+   "geometry": "The feature has no single maximum: an elevated block with steep outer flanks whose top is flat, ragged or carries two crests of comparable height separated by a shallow notch. Its total width is many times that of the same target's resolved line at lower drive. A single-Lorentzian fit either lands its centre IN the notch, or picks one crest and describes the whole block's width.",
+   "prescription": "Never adopt centre or width. Cut the drive amplitude by at least 5x at unchanged span and step and re-measure; the block should resolve into one crest (or into a set of narrow lines \u2014 see the comb case). Adopt only from the low-drive run. If the split survives a large drive reduction, it is not saturation and must be escalated as a genuine doublet.",
+   "exemplars": [
+    "CQT/#1239_08_qubit_spectroscopy_030349/q10",
+    "CQT/#1240_08_qubit_spectroscopy_030414/q10",
+    "SNU_1Q/#51_08_qubit_spectroscopy_222512/q9",
+    "CQT/#1272_08_qubit_spectroscopy_041553/q18",
+    "CQT/#1279_08_qubit_spectroscopy_042132/q18"
+   ],
+   "seen_count": 9,
+   "kind": "map_case",
+   "exemplar_images": [
+    "exemplars/Q7/CQT_1239_q10.png",
+    "exemplars/Q7/CQT_1240_q10.png",
+    "exemplars/Q7/SNU_1Q_51_q9.png",
+    "exemplars/Q7/CQT_1272_q18.png",
+    "exemplars/Q7/CQT_1279_q18.png"
+   ]
+  },
+  {
+   "id": "Q8",
+   "name": "merged multi-peak (multi-peak AND power-broadened)",
+   "geometry": "Several broad rounded humps occupy one part of the window, their intervening dips no longer reaching the floor, with the tallest often flat-topped; the rest of the window is flat noise. It is the same spectrum as a comb of narrow lines seen at lower drive, with the individual lines broadened until they overlap. Neither the multi-peak nor the saturated case alone describes it: there are several features AND each is over-driven.",
+   "prescription": "Do not adopt. This shape is only diagnosable as a PAIR: re-run the identical span with the drive reduced by ~5x and read the two panels together. If the merged humps resolve into discrete narrow lines, the low-drive panel is the measurement and the count/spacing of the lines is the finding. Never fit a single Lorentzian across the merged group and never derive a drive amplitude from its width.",
+   "exemplars": [
+    "CQT/#1247_08_qubit_spectroscopy_031321/q10",
+    "CQT/#1249_08_qubit_spectroscopy_031652/q10",
+    "CQT/#1244_08_qubit_spectroscopy_030719/q10"
+   ],
+   "seen_count": 3,
+   "kind": "map_case",
+   "exemplar_images": [
+    "exemplars/Q8/CQT_1247_q10.png",
+    "exemplars/Q8/CQT_1249_q10.png",
+    "exemplars/Q8/CQT_1244_q10.png"
+   ]
+  },
+  {
+   "id": "Q9",
+   "name": "periodic comb",
+   "geometry": "Three or more narrow features of comparable width stand above a flat floor with roughly regular spacing between neighbours, occupying one side or one region of the window while the rest is featureless. Heights vary; the spacing does not. Each member is a resolved line (several samples wide with flanks), not a single-sample spike. A single-Lorentzian record can only name the tallest member.",
+   "prescription": "Do not adopt any member from this panel. Keep the drive low and widen the span by ~2-3x to map how far the comb extends and whether the spacing stays constant; a comb bounded on one side and regularly spaced points at a systematic cause (sideband/aliasing/multi-photon ladder) rather than at stray defects. Escalate: this node's single-line model cannot settle which member is the 0-1 transition.",
+   "exemplars": [
+    "CQT/#1244_08_qubit_spectroscopy_030719/q10",
+    "CQT/#1243_08_qubit_spectroscopy_030617/q10",
+    "CQT/#1254_08_qubit_spectroscopy_035232/q6",
+    "CQT/#1253_08_qubit_spectroscopy_033636/q11"
+   ],
+   "seen_count": 5,
+   "kind": "map_case",
+   "exemplar_images": [
+    "exemplars/Q9/CQT_1244_q10.png",
+    "exemplars/Q9/CQT_1243_q10.png",
+    "exemplars/Q9/CQT_1254_q6.png",
+    "exemplars/Q9/CQT_1253_q11.png"
+   ]
+  },
+  {
+   "id": "Q10",
+   "name": "narrow core on a broad pedestal",
+   "geometry": "Two width scales coexist at the SAME position: a sharp, tall crest spanning a few samples sits on top of a much wider, lower elevation whose own flanks decay over many samples before reaching the floor. A single fitted curve must choose one of them \u2014 when it takes the pedestal its crest passes visibly below the data's apex and its wings are far wider than the core; when it takes the core the reported width is a small fraction of the same target's width in a sibling run with no visible change in the data.",
+   "prescription": "Adopt the CENTRE only; refuse the width and every quantity derived from it. Refine the frequency step by ~2-3x so the core is sampled by many points, and reduce the drive by ~2x, then repeat: if the pedestal shrinks with drive and the core does not, the core is the line. Escalate to a dedicated linewidth/power measurement rather than letting this node's single-Lorentzian width propagate.",
+   "exemplars": [
+    "IQCC_QOP37/#412_08_qubit_spectroscopy_193052/qC4",
+    "IQCC_QOP37/#414_08_qubit_spectroscopy_193414/qC5",
+    "IQCC_QOP37/#417_08_qubit_spectroscopy_194728/qD1",
+    "SNU_1Q/#54_08_qubit_spectroscopy_222719/q10",
+    "SNU_1Q/#71_08_qubit_spectroscopy_235157/q10",
+    "AS_10TQ9TC/#356_08_qubit_spectroscopy_103223/q6"
+   ],
+   "seen_count": 9,
+   "kind": "map_case",
+   "exemplar_images": [
+    "exemplars/Q10/IQCC_QOP37_412_qC4.png",
+    "exemplars/Q10/IQCC_QOP37_414_qC5.png",
+    "exemplars/Q10/IQCC_QOP37_417_qD1.png",
+    "exemplars/Q10/SNU_1Q_54_q10.png",
+    "exemplars/Q10/SNU_1Q_71_q10.png",
+    "exemplars/Q10/AS_10TQ9TC_356_q6.png"
+   ]
+  },
+  {
+   "id": "Q11",
+   "name": "under-sampled line (unresolved spike)",
+   "geometry": "The feature is essentially one tall sample, with at most one or two raised neighbours and no flanks at all, standing far above a flat floor \u2014 height is not the problem, body is. The fitted curve is a rounded hump broader than the entire feature whose apex falls well short of the data's, and whose flanks sit above the data on both sides. The reported width is a fixed multiple of the sweep step and is identical to many digits across different targets in the same run; coarsening the step enlarges it proportionally.",
+   "prescription": "Refine the frequency step by at least 3x (or narrow the span at a fixed point count) until roughly 8-10 samples fall across the fitted width; do NOT change drive first \u2014 raising the drive leaves this shape unchanged, refining the step fixes it. The centre may be within a step of correct but is grid-locked, so re-derive it after the step refinement rather than adopting it.",
+   "exemplars": [
+    "IQCC_QOP37/#53_08_qubit_spectroscopy_214302/qA1",
+    "IQCC_QOP37/#54_08_qubit_spectroscopy_214347/qA2",
+    "IQCC_QOP37/#56_08_qubit_spectroscopy_214554/qA1"
+   ],
+   "seen_count": 6,
+   "kind": "map_case",
+   "exemplar_images": [
+    "exemplars/Q11/IQCC_QOP37_53_qA1.png",
+    "exemplars/Q11/IQCC_QOP37_54_qA2.png",
+    "exemplars/Q11/IQCC_QOP37_56_qA1.png"
+   ]
+  },
+  {
+   "id": "Q12",
+   "name": "window too narrow for the line",
+   "geometry": "A single well-formed feature is centred in the window and the fit sits on its crest, but BOTH flanks are still descending when they reach the panel edges \u2014 no flat floor appears on either side. The centre is well constrained by the crest; the width, the baseline and the contrast are constrained only by the fitter's assumptions, because the data never show what the line decays onto.",
+   "prescription": "Adopt the centre if it reproduces; refuse the width, baseline and contrast. Widen the span by ~2-3x about the same centre at unchanged drive and shots so that a flat floor is visible beyond both flanks, then re-fit. Distinguish from the edge case (feature against a boundary) and from the broadened case (flanks DO reach a floor, just slowly).",
+   "exemplars": [
+    "AS_10TQ9TC/#33_08_qubit_spectroscopy_050627/q6",
+    "AS_10TQ9TC/#33_08_qubit_spectroscopy_050627/q7",
+    "AS_10TQ9TC/#28_08_qubit_spectroscopy_045932/q7"
+   ],
+   "seen_count": 4,
+   "kind": "map_case",
+   "exemplar_images": [
+    "exemplars/Q12/AS_10TQ9TC_33_q6.png",
+    "exemplars/Q12/AS_10TQ9TC_33_q7.png",
+    "exemplars/Q12/AS_10TQ9TC_28_q7.png"
+   ]
+  },
+  {
+   "id": "Q13",
+   "name": "apex clipped by the value axis",
+   "geometry": "A feature rises steeply and its top runs off the upper limit of the drawn value range, so the panel shows two flanks and a gap where the crest should be. Any fitted centre is drawn inside that invisible gap. This is a VALUE-axis truncation, not a frequency-window edge, and it can coexist with fully visible features elsewhere in the same panel.",
+   "prescription": "Never adopt \u2014 the panel cannot confirm the claimed centre. First re-render with the full value range; if the clipping is in the acquired data rather than the plot, reduce the drive amplitude by ~2-5x (or the readout gain) and repeat at the same span. Re-run the target alone at full panel size if it was one tile of a many-qubit sheet, to rule out a rendering artefact of the grid.",
+   "exemplars": [
+    "CQT/#1255_08_qubit_spectroscopy_035402/q18",
+    "CQT/#1254_08_qubit_spectroscopy_035232/q18",
+    "CQT/#1253_08_qubit_spectroscopy_033636/q18"
+   ],
+   "seen_count": 3,
+   "kind": "map_case",
+   "exemplar_images": [
+    "exemplars/Q13/CQT_1255_q18.png",
+    "exemplars/Q13/CQT_1254_q18.png",
+    "exemplars/Q13/CQT_1253_q18.png"
+   ]
+  },
+  {
+   "id": "Q14",
+   "name": "fit with no lineshape at all",
+   "geometry": "The drawn fit contains no crest, no flanks and no inflection anywhere: it is a nearly straight segment that simply follows the local baseline (typically a tilted one), while the record still reports a centre and a near-zero contrast. Any marker sits on a single-sample excursion no larger than several others in the panel. Distinct from a fit that is merely mis-placed \u2014 there is nothing to place.",
+   "prescription": "Never adoptable; treat a success verdict on this shape as a defect in the acceptance rule. Re-derive the readout rotation for the target and re-run at the same settings, because this shape has been produced by a rotation flipped relative to the target's sibling runs (the response then reads as a dip while the model fits a rise). If the polarity is confirmed correct, treat the window as empty and follow that case's prescription.",
+   "exemplars": [
+    "AS_10TQ9TC/#26_08_qubit_spectroscopy_045721/q6"
+   ],
+   "seen_count": 1,
+   "kind": "map_case",
+   "exemplar_images": [
+    "exemplars/Q14/AS_10TQ9TC_26_q6.png"
+   ]
+  },
+  {
+   "id": "Q15",
+   "name": "spike forest (no resolved lineshape)",
+   "geometry": "The window's only excursions are one- or two-sample spikes standing above an otherwise flat, thin band \u2014 several of them, of varying and sometimes comparable height, with no flanks and no width. Each is narrower than any resolved line the same session produces. The window is not empty (things stand clear of the band) and the spikes are not credible features (a spectroscopic line has a width), so a fit planted on the tallest of them reports a full centre-plus-width set from something that is not a line.",
+   "prescription": "Never adopt. Repeat once at identical settings: instrumental spurs recur at exactly the same positions while noise spikes move. Then raise the drive by ~2-3x \u2014 a real, very narrow line broadens and grows flanks, a spur does not. If the spikes persist unchanged in position and width across both moves, mask them and treat the window as empty (widen the span). Never let the fitter choose among spikes by height.",
+   "exemplars": [
+    "CQT/#1253_08_qubit_spectroscopy_033636/q11",
+    "CQT/#1253_08_qubit_spectroscopy_033636/q12",
+    "SNU_1Q/#64_08_qubit_spectroscopy_230131/q10",
+    "SNU_1Q/#67_08_qubit_spectroscopy_231355/q10"
+   ],
+   "seen_count": 6,
+   "kind": "map_case",
+   "exemplar_images": [
+    "exemplars/Q15/CQT_1253_q11.png",
+    "exemplars/Q15/CQT_1253_q12.png",
+    "exemplars/Q15/SNU_1Q_64_q10.png",
+    "exemplars/Q15/SNU_1Q_67_q10.png"
+   ]
+  },
+  {
+   "id": "F01",
+   "name": "fit placed on the wrong feature",
+   "geometry": "The panel contains more than one candidate and the fitted curve sits on one of them while a broader, taller or larger-area structure elsewhere in the window is left entirely untraced. Frequently the chosen one is a narrow near-edge excursion and the ignored one is the broad hump that later runs converge on.",
+   "prescription": "Refuse the value. Re-run at a drive reduced ~3-5x on the same span and see which candidate survives; then narrow the window around the survivor to ~2-3x its width. Record the ignored candidate's position \u2014 a later node sweeping that region needs to know it exists.",
+   "exemplars": [
+    "AS_10TQ9TC/#23_08_qubit_spectroscopy_044954/q6",
+    "CQT/#1253_08_qubit_spectroscopy_033636/q10",
+    "SNU_1Q/#68_08_qubit_spectroscopy_231823/q10",
+    "SNU_1Q/#47_08_qubit_spectroscopy_222205/q9"
+   ],
+   "seen_count": 14,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F01/AS_10TQ9TC_23_q6.png",
+    "exemplars/F01/CQT_1253_q10.png",
+    "exemplars/F01/SNU_1Q_68_q10.png",
+    "exemplars/F01/SNU_1Q_47_q9.png"
+   ]
+  },
+  {
+   "id": "F02",
+   "name": "fitted centre in the dip between two crests",
+   "geometry": "The feature's top carries two crests of similar height separated by a shallow notch, and the fit's centre line lands IN the notch \u2014 i.e. at a local MINIMUM of the data \u2014 while the fitted curve cuts across the whole block, wider and lower than either crest.",
+   "prescription": "Refuse the value outright; this is not 'slightly off peak', it is a centre placed where the data are lowest. Reduce drive \u22655x and re-measure. If the split survives, fit two components or escalate.",
+   "exemplars": [
+    "CQT/#1239_08_qubit_spectroscopy_030349/q10",
+    "CQT/#1240_08_qubit_spectroscopy_030414/q10",
+    "CQT/#1241_08_qubit_spectroscopy_030532/q10",
+    "CQT/#1247_08_qubit_spectroscopy_031321/q10",
+    "CQT/#1272_08_qubit_spectroscopy_041553/q18"
+   ],
+   "seen_count": 5,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F02/CQT_1239_q10.png",
+    "exemplars/F02/CQT_1240_q10.png",
+    "exemplars/F02/CQT_1241_q10.png",
+    "exemplars/F02/CQT_1247_q10.png",
+    "exemplars/F02/CQT_1272_q18.png"
+   ]
+  },
+  {
+   "id": "F03",
+   "name": "fit planted on a noise excursion in a blank window",
+   "geometry": "A uniform noise band with no coherent group anywhere, and a hair-thin fitted sliver drawn over one or two adjacent samples \u2014 narrower than the band's own point-to-point scatter and with no supporting structure on either side. The record nevertheless carries a centre, a width and derived drive amplitudes; the reported goodness-of-fit is at or below zero.",
+   "prescription": "Never adopt, and never let the derived amplitudes leave the node. Treat as an empty window and follow that prescription. A fitter that emits a full parameter set from a flat band should be made to refuse instead.",
+   "exemplars": [
+    "AS_10TQ9TC/#25_08_qubit_spectroscopy_045653/q7",
+    "KRISS_CR/#5_08_qubit_spectroscopy_040123/qA2",
+    "SNU_1Q/#64_08_qubit_spectroscopy_230131/q9",
+    "SNU_1Q/#67_08_qubit_spectroscopy_231355/q9"
+   ],
+   "seen_count": 5,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F03/AS_10TQ9TC_25_q7.png",
+    "exemplars/F03/KRISS_CR_5_qA2.png",
+    "exemplars/F03/SNU_1Q_64_q9.png",
+    "exemplars/F03/SNU_1Q_67_q9.png"
+   ]
+  },
+  {
+   "id": "F04",
+   "name": "fit anchored on a narrow spur while a broad line is present",
+   "geometry": "A one- or two-sample excursion, far narrower than any resolved line in the session and recurring at a fixed position across runs, carries the fitted curve, while a broad rounded response with real flanks sits elsewhere in the same window untraced.",
+   "prescription": "Refuse. Mask candidates narrower than a floor set by the sweep step (require several samples across the fitted width) and re-fit. Confirm by lowering the drive: the broad response collapses into a fittable line, the spur is unchanged.",
+   "exemplars": [
+    "SNU_1Q/#47_08_qubit_spectroscopy_222205/q9",
+    "SNU_1Q/#50_08_qubit_spectroscopy_222449/q9",
+    "AS_10TQ9TC/#23_08_qubit_spectroscopy_044954/q7"
+   ],
+   "seen_count": 6,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F04/SNU_1Q_47_q9.png",
+    "exemplars/F04/SNU_1Q_50_q9.png",
+    "exemplars/F04/AS_10TQ9TC_23_q7.png"
+   ]
+  },
+  {
+   "id": "F05",
+   "name": "fitted width disagrees with the visible feature",
+   "geometry": "The fit is centred correctly but its half-height span is visibly wider (curve sits above the data on both flanks, wings extending well past where the data return to the floor) or visibly narrower than the feature it covers. In the wide case the fitted wings often absorb a stepped or sloping baseline.",
+   "prescription": "Adopt the centre only if it reproduces; refuse the width and every derived amplitude. Widen the span until a flat floor is visible on both sides so the fitter's baseline is constrained, then re-fit before believing any width.",
+   "exemplars": [
+    "AS_10TQ9TC/#27_08_qubit_spectroscopy_045740/q6",
+    "CQT/#1254_08_qubit_spectroscopy_035232/q3",
+    "IQCC_QOP37/#414_08_qubit_spectroscopy_193414/qD1",
+    "SNU_1Q/#53_08_qubit_spectroscopy_222659/q9",
+    "AS_10TQ9TC/#356_08_qubit_spectroscopy_103223/q6"
+   ],
+   "seen_count": 20,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F05/AS_10TQ9TC_27_q6.png",
+    "exemplars/F05/CQT_1254_q3.png",
+    "exemplars/F05/IQCC_QOP37_414_qD1.png",
+    "exemplars/F05/SNU_1Q_53_q9.png",
+    "exemplars/F05/AS_10TQ9TC_356_q6.png"
+   ]
+  },
+  {
+   "id": "F06",
+   "name": "fit crest below the data apex",
+   "geometry": "The fitted curve's maximum stops well short of the data's tallest samples at the same position \u2014 often reaching only a fraction of the feature's height \u2014 so the model describes a pedestal or an average while the centre is right.",
+   "prescription": "Refuse the contrast/height and anything derived from them; the centre may still be usable. Refine the step across the core and re-fit; if a broad pedestal is genuinely present, the panel needs two components, not one.",
+   "exemplars": [
+    "SNU_1Q/#54_08_qubit_spectroscopy_222719/q10",
+    "SNU_1Q/#71_08_qubit_spectroscopy_235157/q10",
+    "IQCC_QOP37/#414_08_qubit_spectroscopy_193414/qC4",
+    "IQCC_QOP37/#436_08_qubit_spectroscopy_223724/qD2"
+   ],
+   "seen_count": 16,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F06/SNU_1Q_54_q10.png",
+    "exemplars/F06/SNU_1Q_71_q10.png",
+    "exemplars/F06/IQCC_QOP37_414_qC4.png",
+    "exemplars/F06/IQCC_QOP37_436_qD2.png"
+   ]
+  },
+  {
+   "id": "F07",
+   "name": "fitted baseline disagrees with the data floor",
+   "geometry": "Away from the crest the fitted wings do not settle onto the level the data hold: they either keep descending BELOW the surrounding floor on both sides (so the curve crosses the data on each flank and only touches near the apex) or float clearly ABOVE the local band. A correct centre can coexist with either.",
+   "prescription": "Refuse width and contrast; treat the reported goodness-of-fit as describing the baseline error, not the line. Widen until a flat floor is present on both sides and re-fit before adopting anything but the centre.",
+   "exemplars": [
+    "IQCC_QOP37/#429_08_qubit_spectroscopy_212349/qD3",
+    "CQT/#1250_08_qubit_spectroscopy_031805/q9",
+    "SNU_1Q/#50_08_qubit_spectroscopy_222449/q9",
+    "CQT/#1256_08_qubit_spectroscopy_035427/q18"
+   ],
+   "seen_count": 8,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F07/IQCC_QOP37_429_qD3.png",
+    "exemplars/F07/CQT_1250_q9.png",
+    "exemplars/F07/SNU_1Q_50_q9.png",
+    "exemplars/F07/CQT_1256_q18.png"
+   ]
+  },
+  {
+   "id": "F08",
+   "name": "fit drawn over only part of the feature",
+   "geometry": "The dashed curve is rendered across a restricted stretch of frequency around its centre rather than across the structure it claims to describe, so a neighbouring crest, notch or flank of the same block lies outside the drawn fit and is silently excluded from the comparison.",
+   "prescription": "Treat the panel as unverified: the fit's agreement with the data cannot be judged where it is not drawn. Re-fit over the full feature or refuse.",
+   "exemplars": [
+    "CQT/#1242_08_qubit_spectroscopy_030553/q10"
+   ],
+   "seen_count": 2,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F08/CQT_1242_q10.png"
+   ]
+  },
+  {
+   "id": "F09",
+   "name": "fitted width pinned at a bound",
+   "geometry": "The reported width is an exactly round value, or is identical to many digits across different targets in the same run, or equals a fixed multiple of the sweep step and scales proportionally when the step is coarsened. The figure's feature is visibly narrower than that value implies.",
+   "prescription": "The record is reporting a limit, not a measurement \u2014 never adopt the width or any derived drive amplitude. Refine the step until the width moves off the bound; if it will not, the line is unresolved at this sampling.",
+   "exemplars": [
+    "IQCC_QOP37/#53_08_qubit_spectroscopy_214302/qA1",
+    "IQCC_QOP37/#56_08_qubit_spectroscopy_214554/qA2",
+    "CQT/#1244_08_qubit_spectroscopy_030719/q10"
+   ],
+   "seen_count": 7,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F09/IQCC_QOP37_53_qA1.png",
+    "exemplars/F09/IQCC_QOP37_56_qA2.png",
+    "exemplars/F09/CQT_1244_q10.png"
+   ]
+  },
+  {
+   "id": "F10",
+   "name": "centre quantised to the sweep grid",
+   "geometry": "Invisible in the figure; visible only across records. The reported centre lands exactly on a sweep sample, is bit-identical to a previous run's, reports an offset of exactly zero, or differs from the previous repeat by exactly one step or half a step. Two supposedly independent measurements are then not independent.",
+   "prescription": "Do not treat two such runs as an agreeing pair. Require an interpolated (non-grid) centre before adopting, and re-derive after refining the step. A zero-offset report on a window centred by the previous run is a seed fallback until proven otherwise.",
+   "exemplars": [
+    "IQCC_QOP37/#428_08_qubit_spectroscopy_210353/qC1",
+    "IQCC_QOP37/#429_08_qubit_spectroscopy_212349/qC1",
+    "IQCC_QOP37/#55_08_qubit_spectroscopy_214427/qA1",
+    "IQCC_QOP37/#53_08_qubit_spectroscopy_214302/qA2"
+   ],
+   "seen_count": 12,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F10/IQCC_QOP37_428_qC1.png",
+    "exemplars/F10/IQCC_QOP37_429_qC1.png",
+    "exemplars/F10/IQCC_QOP37_55_qA1.png",
+    "exemplars/F10/IQCC_QOP37_53_qA2.png"
+   ]
+  },
+  {
+   "id": "F11",
+   "name": "derived drive amplitude implausible",
+   "geometry": "Record-level, independent of the figure: the derived saturation/x180 amplitude is orders of magnitude away from the same target's accepted runs, differs by more than an order of magnitude between neighbouring runs whose panels look identical, or exceeds the normalized full-scale drive limit.",
+   "prescription": "Use as a cheap independent veto: refuse the whole target when it fires, even if the node reported success and the panel looks acceptable. It is downstream of the width, so it fires exactly when the width is garbage. Do not clamp it \u2014 refuse and re-measure.",
+   "exemplars": [
+    "AS_10TQ9TC/#25_08_qubit_spectroscopy_045653/q7",
+    "IQCC_QOP37/#436_08_qubit_spectroscopy_223724/qC1",
+    "SNU_1Q/#64_08_qubit_spectroscopy_230131/q10",
+    "SNU_1Q/#55_08_qubit_spectroscopy_222913/q10",
+    "AS_10TQ9TC/#26_08_qubit_spectroscopy_045721/q6"
+   ],
+   "seen_count": 25,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F11/AS_10TQ9TC_25_q7.png",
+    "exemplars/F11/IQCC_QOP37_436_qC1.png",
+    "exemplars/F11/SNU_1Q_64_q10.png",
+    "exemplars/F11/SNU_1Q_55_q10.png",
+    "exemplars/F11/AS_10TQ9TC_26_q6.png"
+   ]
+  },
+  {
+   "id": "F12",
+   "name": "contrast scale not comparable",
+   "geometry": "Two panels in the same figure that look equally healthy report contrast values orders of magnitude apart; the panel with the huge value is the one whose rotated baseline sits essentially on the zero of the value axis, so a ratio-style contrast diverges.",
+   "prescription": "Never gate acceptance on contrast alone, and never compare contrast across targets, runs or labs. Use peak-height-to-noise-band and flank resolution instead. If a contrast threshold exists in the acceptance rule, it must be replaced by an absolute (non-ratio) measure.",
+   "exemplars": [
+    "AS_10TQ9TC/#28_08_qubit_spectroscopy_045932/q7",
+    "CQT/#1253_08_qubit_spectroscopy_033636/q2",
+    "CQT/#1253_08_qubit_spectroscopy_033636/q14",
+    "AS_10TQ9TC/#236_08_qubit_spectroscopy_201850/q7"
+   ],
+   "seen_count": 10,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F12/AS_10TQ9TC_28_q7.png",
+    "exemplars/F12/CQT_1253_q2.png",
+    "exemplars/F12/CQT_1253_q14.png",
+    "exemplars/F12/AS_10TQ9TC_236_q7.png"
+   ]
+  },
+  {
+   "id": "F13",
+   "name": "refusal of a readable figure",
+   "geometry": "A panel showing one resolved feature with the fit centred on it, matching flanks, good margin above the noise, and the best goodness-of-fit in its own session, stamped as a failure. Often the only unusual property is that the line is broad, or that a derived amplitude is out of family.",
+   "prescription": "Do not discard the run \u2014 it is frequently the most informative one in the session. Record the centre as a candidate, identify which gate fired (width, derived amplitude, shape), and confirm with one repeat. Where the gate is a width threshold, the correct response is a drive/step change, not a re-run at the same settings.",
+   "exemplars": [
+    "CQT/#1243_08_qubit_spectroscopy_030617/q10",
+    "CQT/#1254_08_qubit_spectroscopy_035232/q7",
+    "CQT/#1254_08_qubit_spectroscopy_035232/q3",
+    "SNU_1Q/#49_08_qubit_spectroscopy_222345/q9",
+    "SNU_1Q/#53_08_qubit_spectroscopy_222659/q9"
+   ],
+   "seen_count": 9,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F13/CQT_1243_q10.png",
+    "exemplars/F13/CQT_1254_q7.png",
+    "exemplars/F13/CQT_1254_q3.png",
+    "exemplars/F13/SNU_1Q_49_q9.png",
+    "exemplars/F13/SNU_1Q_53_q9.png"
+   ]
+  },
+  {
+   "id": "F14",
+   "name": "success contradicted by the figure",
+   "geometry": "A success verdict on a panel whose geometry refutes it: a centre in a dip, a fit with no crest, a curve whose crest is a fraction of the data's, or a reported goodness-of-fit far below every sibling in the same run. The record and the drawing disagree.",
+   "prescription": "Block adoption on figure evidence regardless of the verdict. Treat the pair (verdict, geometry) as the unit of truth; a success flag alone is never sufficient to write a value to the chip.",
+   "exemplars": [
+    "AS_10TQ9TC/#26_08_qubit_spectroscopy_045721/q6",
+    "CQT/#1239_08_qubit_spectroscopy_030349/q10",
+    "IQCC_QOP37/#429_08_qubit_spectroscopy_212349/qD3",
+    "CQT/#1247_08_qubit_spectroscopy_031321/q10"
+   ],
+   "seen_count": 12,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F14/AS_10TQ9TC_26_q6.png",
+    "exemplars/F14/CQT_1239_q10.png",
+    "exemplars/F14/IQCC_QOP37_429_qD3.png",
+    "exemplars/F14/CQT_1247_q10.png"
+   ]
+  },
+  {
+   "id": "F15",
+   "name": "verdict unstable across identical repeats",
+   "geometry": "Two runs with the same span, step, shots and drive return the same fitted centre (sometimes bit-identical) and a comparable width, yet one passes and the other fails; or two panels of the same target one minute apart, geometrically indistinguishable, get opposite verdicts. The instability is in the acceptance rule, not in the data or the fit.",
+   "prescription": "Never let a single verdict decide. Require agreement of the FIGURE across two repeats, and treat a flipped verdict with unchanged geometry as a defect to be reported against the gate. Do not respond by changing the physics knobs.",
+   "exemplars": [
+    "IQCC_QOP37/#57_08_qubit_spectroscopy_214703/qA1",
+    "SNU_1Q/#49_08_qubit_spectroscopy_222345/q9",
+    "SNU_1Q/#73_08_qubit_spectroscopy_235753/q9",
+    "SNU_1Q/#74_08_qubit_spectroscopy_235908/q9"
+   ],
+   "seen_count": 6,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F15/IQCC_QOP37_57_qA1.png",
+    "exemplars/F15/SNU_1Q_49_q9.png",
+    "exemplars/F15/SNU_1Q_73_q9.png",
+    "exemplars/F15/SNU_1Q_74_q9.png"
+   ]
+  },
+  {
+   "id": "F16",
+   "name": "success with no state written",
+   "geometry": "Record-level: the target is marked successful and carries a full parameter set, but the run emits no patch for it (or emits only the readout-rotation patch and withholds the frequency), while sibling targets in the same run are patched normally.",
+   "prescription": "Treat as an unexplained partial acceptance, not as a silent pass. Determine whether the frequency was withheld deliberately (a jump the node distrusted) and, if so, surface that as a first-class verdict; a value that is good enough to report is either adoptable or must say why it is not.",
+   "exemplars": [
+    "KRISS_CR/#30_08_qubit_spectroscopy_072905/qA2",
+    "KRISS_CR/#118_08_qubit_spectroscopy_090012/qA1",
+    "SNU_1Q/#50_08_qubit_spectroscopy_222449/q10",
+    "IQCC_QOP37/#428_08_qubit_spectroscopy_210353/qD4",
+    "AS_10TQ9TC/#236_08_qubit_spectroscopy_201850/q8"
+   ],
+   "seen_count": 14,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F16/KRISS_CR_30_qA2.png",
+    "exemplars/F16/KRISS_CR_118_qA1.png",
+    "exemplars/F16/SNU_1Q_50_q10.png",
+    "exemplars/F16/IQCC_QOP37_428_qD4.png",
+    "exemplars/F16/AS_10TQ9TC_236_q8.png"
+   ]
+  },
+  {
+   "id": "F17",
+   "name": "patched value differs from the fitted centre",
+   "geometry": "Record-level: the frequency written into state is not the centre printed on the figure \u2014 the two differ by a fixed offset \u2014 so the next run's window is centred somewhere the panel never pointed at, and the two panels of that target become incomparable.",
+   "prescription": "Hard stop. The applied value must equal the fitted centre shown to the operator. Until reconciled, refuse to chain runs (each run's window will be seeded by a value the previous panel did not claim).",
+   "exemplars": [
+    "CQT/#1256_08_qubit_spectroscopy_035427/q18"
+   ],
+   "seen_count": 1,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F17/CQT_1256_q18.png"
+   ]
+  },
+  {
+   "id": "F18",
+   "name": "non-convergent re-centring",
+   "geometry": "Cross-run only: consecutive runs return the crest at nearly the SAME offset from the window centre, even though the previous run's own fitted value moved that centre. Each fit is internally consistent; the value chases itself and never lands.",
+   "prescription": "Stop re-centring after two repeats of the same offset. Instead double the span at the UNCHANGED centre and look for the feature on the other side (see mirror ambiguity), and check whether the applied value equals the fitted centre. Never keep writing.",
+   "exemplars": [
+    "AS_10TQ9TC/#30_08_qubit_spectroscopy_050108/q6",
+    "AS_10TQ9TC/#31_08_qubit_spectroscopy_050147/q6",
+    "AS_10TQ9TC/#30_08_qubit_spectroscopy_050108/q7"
+   ],
+   "seen_count": 6,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F18/AS_10TQ9TC_30_q6.png",
+    "exemplars/F18/AS_10TQ9TC_31_q6.png",
+    "exemplars/F18/AS_10TQ9TC_30_q7.png"
+   ]
+  },
+  {
+   "id": "F19",
+   "name": "mirror-offset ambiguity",
+   "geometry": "Cross-run only: at one window centre a narrow-span run finds a clean feature at an offset on one side; a wider-span run with the SAME centre finds a clean feature at a nearly equal-and-opposite offset on the other side, and the first feature is absent. No single panel can say which side is the real line.",
+   "prescription": "Before adopting from any narrow window, run once at \u22652x span with the same centre. Adopt the feature that survives the widening. If both persist, escalate \u2014 this is a drive-chain/image question, not a fitting question.",
+   "exemplars": [
+    "AS_10TQ9TC/#32_08_qubit_spectroscopy_050601/q6",
+    "AS_10TQ9TC/#32_08_qubit_spectroscopy_050601/q7"
+   ],
+   "seen_count": 2,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F19/AS_10TQ9TC_32_q6.png",
+    "exemplars/F19/AS_10TQ9TC_32_q7.png"
+   ]
+  },
+  {
+   "id": "F20",
+   "name": "cross-run intermittency",
+   "geometry": "Cross-run only: the same target under byte-identical repeats gives a resolved line, then a completely empty window, then empty again, then a resolved line, then a marginal bump. Each single panel maps cleanly to a case; the defect exists only in the sequence.",
+   "prescription": "Never adopt from a single lucky repeat. Require at least two agreeing repeats on absolute centre, and mark the target as unstable so downstream nodes know its value is provisional. Investigate the target's readout/flux rather than its drive frequency.",
+   "exemplars": [
+    "IQCC_QOP37/#427_08_qubit_spectroscopy_205244/qC4",
+    "IQCC_QOP37/#428_08_qubit_spectroscopy_210353/qC4",
+    "IQCC_QOP37/#429_08_qubit_spectroscopy_212349/qC4",
+    "IQCC_QOP37/#436_08_qubit_spectroscopy_223724/qC4"
+   ],
+   "seen_count": 5,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F20/IQCC_QOP37_427_qC4.png",
+    "exemplars/F20/IQCC_QOP37_428_qC4.png",
+    "exemplars/F20/IQCC_QOP37_429_qC4.png",
+    "exemplars/F20/IQCC_QOP37_436_qC4.png"
+   ]
+  },
+  {
+   "id": "F21",
+   "name": "width unstable across repeats with a stable centre",
+   "geometry": "Cross-run only: repeats of one recipe return widths differing by a large factor for the same target while the fitted centre barely moves, and the panels show no corresponding change \u2014 typically because the fitter alternates between a narrow core and a broader pedestal, or between a line and its own skirts.",
+   "prescription": "Refuse the width and all derived amplitudes for that target until the pedestal/core question is resolved by a step refinement or a two-component fit. A centre that is stable across the swing is still usable.",
+   "exemplars": [
+    "IQCC_QOP37/#417_08_qubit_spectroscopy_194728/qD4",
+    "IQCC_QOP37/#429_08_qubit_spectroscopy_212349/qC5",
+    "IQCC_QOP37/#415_08_qubit_spectroscopy_193532/qC4",
+    "IQCC_QOP37/#59_08_qubit_spectroscopy_215031/qA1"
+   ],
+   "seen_count": 9,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F21/IQCC_QOP37_417_qD4.png",
+    "exemplars/F21/IQCC_QOP37_429_qC5.png",
+    "exemplars/F21/IQCC_QOP37_415_qC4.png",
+    "exemplars/F21/IQCC_QOP37_59_qA1.png"
+   ]
+  },
+  {
+   "id": "F22",
+   "name": "recurring narrow spur at a fixed offset",
+   "geometry": "A one- or two-sample excursion appears at the SAME position in every panel of a target across runs with different spans, shots and drive levels, is many times narrower than any fitted linewidth in that session, and can reach or exceed the real line's height.",
+   "prescription": "Mask by width, not by height: never allow a candidate narrower than a step-derived floor. Record its position so it is not repeatedly rediscovered, and escalate once to decide whether it is instrumental (LO/clock) or a genuine very narrow transition.",
+   "exemplars": [
+    "IQCC_QOP37/#429_08_qubit_spectroscopy_212349/qD2",
+    "IQCC_QOP37/#428_08_qubit_spectroscopy_210353/qC2",
+    "SNU_1Q/#54_08_qubit_spectroscopy_222719/q9",
+    "SNU_1Q/#48_08_qubit_spectroscopy_222234/q9",
+    "KRISS_CR/#158_08_qubit_spectroscopy_115018/qA2"
+   ],
+   "seen_count": 20,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F22/IQCC_QOP37_429_qD2.png",
+    "exemplars/F22/IQCC_QOP37_428_qC2.png",
+    "exemplars/F22/SNU_1Q_54_q9.png",
+    "exemplars/F22/SNU_1Q_48_q9.png",
+    "exemplars/F22/KRISS_CR_158_qA2.png"
+   ]
+  },
+  {
+   "id": "F23",
+   "name": "spur at the window edge",
+   "geometry": "A narrow spike sits hard against a boundary of the swept range, recurring there across runs, and reaches a large fraction of the real line's height. It is exactly where a peak search that also has an edge-tolerant seed can latch on.",
+   "prescription": "Exclude a margin at each boundary from candidate selection (a fixed fraction of the span), and require both flanks to be inside the window. If the edge structure is the only candidate, re-centre and widen rather than fitting it.",
+   "exemplars": [
+    "IQCC_QOP37/#427_08_qubit_spectroscopy_205244/qC1",
+    "IQCC_QOP37/#428_08_qubit_spectroscopy_210353/qC1",
+    "IQCC_QOP37/#415_08_qubit_spectroscopy_193532/qC1",
+    "CQT/#1253_08_qubit_spectroscopy_033636/q12"
+   ],
+   "seen_count": 8,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F23/IQCC_QOP37_427_qC1.png",
+    "exemplars/F23/IQCC_QOP37_428_qC1.png",
+    "exemplars/F23/IQCC_QOP37_415_qC1.png",
+    "exemplars/F23/CQT_1253_q12.png"
+   ]
+  },
+  {
+   "id": "F24",
+   "name": "sloping or stepped instrument baseline",
+   "geometry": "The floor the feature rides on is not flat: it tilts monotonically across the whole panel, or steps between two plateaus with the feature sitting on the transition, or is lifted across one region. 'Above the noise' then means different things at the two ends, and a single-Lorentzian fit can absorb the tilt into its wings or mistake a step for the feature.",
+   "prescription": "Judge prominence against the LOCAL floor around the feature, never against the panel's overall range. Widen enough that the local floor is flat on both sides; if the tilt persists at every span, fit with a baseline term or refuse the width, and treat the tilt as an instrument finding.",
+   "exemplars": [
+    "AS_10TQ9TC/#22_08_qubit_spectroscopy_044933/q6",
+    "AS_10TQ9TC/#27_08_qubit_spectroscopy_045740/q6",
+    "AS_10TQ9TC/#353_08_qubit_spectroscopy_102744/q7",
+    "CQT/#1249_08_qubit_spectroscopy_031652/q10"
+   ],
+   "seen_count": 14,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F24/AS_10TQ9TC_22_q6.png",
+    "exemplars/F24/AS_10TQ9TC_27_q6.png",
+    "exemplars/F24/AS_10TQ9TC_353_q7.png",
+    "exemplars/F24/CQT_1249_q10.png"
+   ]
+  },
+  {
+   "id": "F25",
+   "name": "readout polarity inverted relative to siblings",
+   "geometry": "The panel's response has the opposite sense to every other run of the same target (the feature reads as a downward excursion where siblings show an upward one, and the baseline tilt is mirrored), because the readout rotation differs by about half a turn. A fitter that models one polarity then finds nothing, or fits the baseline.",
+   "prescription": "Refuse the run and re-derive the readout rotation before re-measuring. Make the fitter polarity-agnostic. Never compare contrast or height across a polarity flip. Within a consistent session, peak-vs-dip is cosmetic; a flip BETWEEN runs of one target is a defect.",
+   "exemplars": [
+    "AS_10TQ9TC/#26_08_qubit_spectroscopy_045721/q6"
+   ],
+   "seen_count": 1,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F25/AS_10TQ9TC_26_q6.png"
+   ]
+  },
+  {
+   "id": "F26",
+   "name": "one flank truncated at the window edge",
+   "geometry": "The crest and one full flank are inside the window and reach a flat floor, but the other flank is still descending when the panel ends. The centre is usually well determined; the width and the floor on the truncated side are not.",
+   "prescription": "Adopt the centre with a reproduction; refuse the width. Shift and/or widen the span by ~1.5-2x so both flanks reach the floor, then re-fit. Distinguish from the edge case (crest itself at the boundary) and from the too-narrow case (both sides truncated).",
+   "exemplars": [
+    "AS_10TQ9TC/#28_08_qubit_spectroscopy_045932/q6",
+    "AS_10TQ9TC/#29_08_qubit_spectroscopy_050005/q7",
+    "AS_10TQ9TC/#31_08_qubit_spectroscopy_050147/q7"
+   ],
+   "seen_count": 10,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F26/AS_10TQ9TC_28_q6.png",
+    "exemplars/F26/AS_10TQ9TC_29_q7.png",
+    "exemplars/F26/AS_10TQ9TC_31_q7.png"
+   ]
+  },
+  {
+   "id": "F27",
+   "name": "unmodelled edge wall beside a fitted peak",
+   "geometry": "A fully resolved peak sits well inside the window and carries the fit, while a separate structure runs off a boundary \u2014 a monotonic ramp still rising at the last sample, or a plateau entering the window already elevated \u2014 and is left entirely unaccounted for. It is often the largest excursion in the panel.",
+   "prescription": "The fitted centre may still be adoptable, but the run is incomplete: extend the span in the direction of the wall by about one window and re-measure, so the wall's own structure is identified before it is inherited by a later node.",
+   "exemplars": [
+    "CQT/#1253_08_qubit_spectroscopy_033636/q18",
+    "CQT/#1254_08_qubit_spectroscopy_035232/q15",
+    "CQT/#1239_08_qubit_spectroscopy_030349/q10",
+    "CQT/#1254_08_qubit_spectroscopy_035232/q9"
+   ],
+   "seen_count": 10,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F27/CQT_1253_q18.png",
+    "exemplars/F27/CQT_1254_q15.png",
+    "exemplars/F27/CQT_1239_q10.png",
+    "exemplars/F27/CQT_1254_q9.png"
+   ]
+  },
+  {
+   "id": "F28",
+   "name": "secondary credible feature unmodelled",
+   "geometry": "Besides the fitted feature, at least one other structure with a resolved shape (crest plus flanks over several samples) stands clear of the floor and is not mentioned anywhere in the record. The fit's own choice may well be correct; the omission is the defect.",
+   "prescription": "Allow adoption of the fitted centre if it reproduces, but record every additional credible feature's position and width alongside it. A single-line record over a multi-feature window is a silent loss of information a later sweep will pay for.",
+   "exemplars": [
+    "AS_10TQ9TC/#32_08_qubit_spectroscopy_050601/q7",
+    "CQT/#1253_08_qubit_spectroscopy_033636/q4",
+    "AS_10TQ9TC/#356_08_qubit_spectroscopy_103223/q7",
+    "CQT/#1254_08_qubit_spectroscopy_035232/q1"
+   ],
+   "seen_count": 35,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F28/AS_10TQ9TC_32_q7.png",
+    "exemplars/F28/CQT_1253_q4.png",
+    "exemplars/F28/AS_10TQ9TC_356_q7.png",
+    "exemplars/F28/CQT_1254_q1.png"
+   ]
+  },
+  {
+   "id": "F29",
+   "name": "window moved by the previous run",
+   "geometry": "Cross-run only: two panels of one target are drawn over different swept ranges because the earlier run wrote a new centre, so an apparent 'shift' of the feature is bookkeeping rather than physics, and a feature present in one panel can be simply outside the other.",
+   "prescription": "Compare absolute frequency, never offset-from-window-centre, when reasoning across runs. Before treating two runs as a repeat, confirm the swept ranges overlap; if they do not, they are not a repeat.",
+   "exemplars": [
+    "CQT/#1257_08_qubit_spectroscopy_035514/q18",
+    "CQT/#1256_08_qubit_spectroscopy_035427/q18",
+    "AS_10TQ9TC/#30_08_qubit_spectroscopy_050108/q6"
+   ],
+   "seen_count": 8,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F29/CQT_1257_q18.png",
+    "exemplars/F29/CQT_1256_q18.png",
+    "exemplars/F29/AS_10TQ9TC_30_q6.png"
+   ]
+  },
+  {
+   "id": "F30",
+   "name": "drive-dependent identity",
+   "geometry": "Cross-run only: the same target moves empty -> resolved -> broadened -> flat-topped purely as the drive amplitude is stepped, and its partner in the same run moves the opposite way, so no single panel is diagnosable in isolation. The same drive that rescues one target erases the other.",
+   "prescription": "Never diagnose a shape from one panel when a sibling at another amplitude exists; read the ladder. Where two targets need opposite drive levels, run them separately rather than choosing a compromise amplitude that satisfies neither.",
+   "exemplars": [
+    "SNU_1Q/#49_08_qubit_spectroscopy_222345/q10",
+    "SNU_1Q/#48_08_qubit_spectroscopy_222234/q9",
+    "CQT/#1243_08_qubit_spectroscopy_030617/q10",
+    "CQT/#1254_08_qubit_spectroscopy_035232/q15"
+   ],
+   "seen_count": 12,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F30/SNU_1Q_49_q10.png",
+    "exemplars/F30/SNU_1Q_48_q9.png",
+    "exemplars/F30/CQT_1243_q10.png",
+    "exemplars/F30/CQT_1254_q15.png"
+   ]
+  },
+  {
+   "id": "F31",
+   "name": "honest refusal / honest no-fit",
+   "geometry": "The record refuses the target and the panel agrees: a uniform noise band with no fit drawn and a NO-FIT stamp, or a visible feature pressed against a boundary refused for that reason, or an amber 'shape poor, not applied' verdict on an unresolved spike. Nothing is claimed that the figure does not show.",
+   "prescription": "Record as correct behaviour and do not 'fix' it. This is the majority behaviour in every lab here and is the baseline against which the two mismatch flags must be measured; suppressing it would trade honest refusals for silent bad writes.",
+   "exemplars": [
+    "CQT/#1253_08_qubit_spectroscopy_033636/q16",
+    "IQCC_QOP37/#417_08_qubit_spectroscopy_194728/qC1",
+    "KRISS_CR/#5_08_qubit_spectroscopy_040123/qA1",
+    "IQCC_QOP37/#53_08_qubit_spectroscopy_214302/qA1",
+    "AS_10TQ9TC/#23_08_qubit_spectroscopy_044954/q7"
+   ],
+   "seen_count": 20,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F31/CQT_1253_q16.png",
+    "exemplars/F31/IQCC_QOP37_417_qC1.png",
+    "exemplars/F31/KRISS_CR_5_qA1.png",
+    "exemplars/F31/IQCC_QOP37_53_qA1.png",
+    "exemplars/F31/AS_10TQ9TC_23_q7.png"
+   ]
+  },
+  {
+   "id": "F32",
+   "name": "multiplex-only single-bin spike",
+   "geometry": "Isolated one-sample spikes appear at fixed positions in panels acquired with simultaneous drive/readout of several targets, and are absent from the same target's sequential panels. They carry no width and can stand taller than the real line.",
+   "prescription": "Treat multiplexed panels as centre-confirming only after one sequential (or repeated) reproduction. Mask by width. Do not conclude 'multiplexing causes spurs' generally \u2014 in another lab a multiplex on/off A/B produced no visible difference at all.",
+   "exemplars": [
+    "IQCC_QOP37/#415_08_qubit_spectroscopy_193532/qD2",
+    "IQCC_QOP37/#415_08_qubit_spectroscopy_193532/qC5",
+    "IQCC_QOP37/#417_08_qubit_spectroscopy_194728/qC2",
+    "IQCC_QOP37/#415_08_qubit_spectroscopy_193532/qC2"
+   ],
+   "seen_count": 9,
+   "kind": "flag",
+   "exemplar_images": [
+    "exemplars/F32/IQCC_QOP37_415_qD2.png",
+    "exemplars/F32/IQCC_QOP37_415_qC5.png",
+    "exemplars/F32/IQCC_QOP37_417_qC2.png",
+    "exemplars/F32/IQCC_QOP37_415_qC2.png"
+   ]
+  }
+ ],
+ "rules": [
+  {
+   "id": "R01",
+   "name": "Adoptability is a geometry test, not a verdict",
+   "text": "A fitted centre may be written only when the panel itself shows: one feature carrying the fit, both flanks monotone and reaching a LOCALLY flat floor inside the window, the floor visible for a stretch beyond the feature on both sides, and the fitted curve settling onto that floor. The node's success/failure flag is evidence of nothing on its own \u2014 in all five labs this batch contains successes whose figures refute them AND refusals of clean, correctly centred lines."
+  },
+  {
+   "id": "R02",
+   "name": "Centre and width are separately adoptable",
+   "text": "Position and shape fail independently. A fit can be centred exactly on the crest while its width, height or baseline describe something else (a pedestal, a saturated block, a tilted floor). Adopt the centre and the width as separate decisions, and never let a rejected width silently veto a good centre or a good centre bless a bad width."
+  },
+  {
+   "id": "R03",
+   "name": "Never adopt a width from an under-sampled line",
+   "text": "A width is meaningless unless several samples (roughly 8-10) fall across the fitted FWHM and the reported value is not a fixed multiple of the sweep step, an exactly round number, or identical to many digits across different targets in the same run. When those hold, the record is reporting a fitter bound; refine the step, do not raise the drive."
+  },
+  {
+   "id": "R04",
+   "name": "Derived drive amplitudes are a veto, never an output",
+   "text": "saturation_amp / x180_amp are extrapolations from the fitted width and are unbounded by the data. Use them only as a cheap independent quality veto \u2014 refuse the target when they sit orders of magnitude off the same target's accepted runs, swing by more than an order of magnitude between neighbouring runs, or exceed normalized full scale. They should not be written to the chip from this node."
+  },
+  {
+   "id": "R05",
+   "name": "The written value must be the value on the figure",
+   "text": "The frequency applied to state must equal the fitted centre displayed for that target. A fixed offset between them breaks every subsequent run (the next window is centred where no panel pointed) and makes the target's panels mutually incomparable. Treat any mismatch as a hard stop."
+  },
+  {
+   "id": "R06",
+   "name": "Convergence is the test that a re-centring worked",
+   "text": "After a centre is written, the next run's fitted offset from the NEW window centre must shrink. Two consecutive runs returning nearly the same offset from a centre the previous run itself moved means the value is chasing itself: stop writing, and widen at the unchanged centre instead."
+  },
+  {
+   "id": "R07",
+   "name": "Widen once before adopting from a narrow window",
+   "text": "Before a value from a narrow span is written, take one run at >=2x span with the same centre. A real line stays at the same absolute frequency; a mirror/image candidate appears at the opposite offset and the original vanishes. This is the only way the equal-and-opposite ambiguity is detectable, and no single panel can show it."
+  },
+  {
+   "id": "R08",
+   "name": "Any broad, flat-topped, split or merged panel must be re-measured at lower drive",
+   "text": "Broadening, flat tops, split crests, merged humps and combs are one physical family seen at different drive strengths. Reduce the amplitude by 3-10x on the identical span and adopt from the low-drive run; keep reducing until the width stops responding. A width measured at a drive level that has not been shown to be non-broadening is not a linewidth."
+  },
+  {
+   "id": "R09",
+   "name": "Candidates are chosen by width, never by height",
+   "text": "A one- or two-sample excursion is never adoptable however tall it is: a spectroscopic line has a width. Require a candidate to span several sweep steps with monotone flanks. This one rule removes the noise-spike fits, the fixed instrumental spurs and the edge spikes that the fitters in four of the five labs latched onto."
+  },
+  {
+   "id": "R10",
+   "name": "Exclude a boundary margin from candidate selection",
+   "text": "A candidate whose fitted centre falls within a fixed fraction of the span from either boundary, or whose flanks are not both inside the window, must be refused and answered with a re-centre-and-widen, not with a fit. Edge candidates were the single most common wrong choice in the wide-span hunts."
+  },
+  {
+   "id": "R11",
+   "name": "Multiplexed runs confirm, sequential runs establish",
+   "text": "A multiplexed batch may be trusted for centres only when at least one target-by-target (or simply repeated) run reproduces them at the same absolute frequency. Multiplexed panels have been observed to carry fixed single-bin spikes absent from sequential panels \u2014 but also to make no difference at all in another lab, so neither trust nor distrust may be assumed; it must be measured per setup."
+  },
+  {
+   "id": "R12",
+   "name": "Two agreeing repeats, on absolute frequency",
+   "text": "No value is written from a single panel. Require two runs whose swept ranges overlap and whose fitted centres agree to well inside the fitted width, compared as ABSOLUTE frequency \u2014 never as offset-from-window-centre, because a previous write moves the centre. Intermittent targets (present/absent across identical repeats) need the pair plus an explicit instability mark."
+  },
+  {
+   "id": "R13",
+   "name": "Refuse anything the panel cannot show",
+   "text": "Never write from a panel whose feature apex runs off the drawn value range, whose fitted curve contains no crest at all, whose fit is drawn over only part of the structure it claims, or whose fit is drawn over the very feature whose height is in question. What is not visible cannot be confirmed, and each of these has been accepted by a node at least once."
+  },
+  {
+   "id": "R14",
+   "name": "Polarity must be handled, not assumed",
+   "text": "Peak versus dip is set by the readout rotation, not by physics, and the fitter must be polarity-agnostic. A sense flipped relative to the same target's sibling runs invalidates the run: refuse it, re-derive the rotation, re-measure. Contrast and height are never comparable across a polarity flip."
+  },
+  {
+   "id": "R15",
+   "name": "Prominence is measured against the local floor",
+   "text": "When the baseline tilts, steps or is lifted over a region, 'above the noise' means different things at the two ends of the panel. Judge a feature against the floor immediately around it, and refuse the width whenever the fitted wings can absorb the tilt. A tilted floor that survives every span is an instrument finding to report, not a fitting nuisance to hide."
+  },
+  {
+   "id": "R16",
+   "name": "Contrast is not a gate",
+   "text": "Contrast as recorded is scale-dependent \u2014 a rotated baseline sitting near zero inflates it by orders of magnitude \u2014 so it is not comparable between two targets in the same figure, let alone across runs or labs. Gate on peak-to-local-noise and on flank resolution instead, and treat any contrast threshold in an acceptance rule as a bug."
+  },
+  {
+   "id": "R17",
+   "name": "Diagnose fault before knob",
+   "text": "Match the response to the geometry: an unresolved spike is a STEP problem (raising drive does nothing); a broad or flat-topped feature is a DRIVE problem; a marginal feature is a SHOTS problem; an edge or truncated feature is a WINDOW problem; a comb or persistent doublet is an ESCALATION, not a knob. Every move must be expressed relative to the current settings, since spans, steps and drive conventions differ by more than an order of magnitude between labs."
+  },
+  {
+   "id": "R18",
+   "name": "Record what was NOT modelled",
+   "text": "Every additional credible feature (resolved shape, several samples wide) in the window must be recorded with its position even when the fit's choice is correct, and every honest refusal must be preserved as correct behaviour. A single-line record over a multi-feature window silently discards the information the next node needs, and suppressing honest refusals would trade them for silent bad writes."
+  }
+ ],
+ "signal_map": {
+  "line_clean": "Q1",
+  "line_empty": "Q2",
+  "line_edge_clipped": "Q3",
+  "line_multi_feature": "Q4",
+  "line_weak_broad": "Q5",
+  "line_split_flat_top": "Q7"
+ },
+ "signal_map_note": "",
+ "cross_lab_notes": "INVARIANT ACROSS ALL FIVE LABS (this is the chip-independence evidence).\n\n1. The reference shape is identical everywhere: one symmetric resolved feature, both flanks decaying onto a locally flat floor visible beyond the feature on both sides, fit tracking crest and both tails. AS #45, CQT #1253, IQCC #418, KRISS #11 and SNU #52 panels are interchangeable in geometry despite completely different spans, step sizes, shot counts, drive pulses and qubit-naming schemes.\n\n2. Drive amplitude is the master knob for shape in every lab: narrow line -> broad rounded hump -> flat/double-crested top -> merged humps, with the reverse ladder resolving a block back into discrete lines. Observed independently at CQT (q10 amplitude ladder), SNU (q9 ladder), KRISS (qA1 across days) and AS (#26/#52-equivalent behaviour). The taxonomy needed the same three cases (broad-resolved, saturated, merged-multi-peak) at four labs that never shared code.\n\n3. Fitters emit a full centre+width+derived-amplitude set from a blank noise band in every lab that produced a blank band (AS #25 q7, KRISS #5 qA2, SNU #64/#67 q9, CQT #1253 q19). This is not one lab's fitter.\n\n4. Derived saturation/x180 amplitudes being orders of magnitude out of family is a reliable, figure-independent garbage tell at AS, IQCC, SNU and CQT alike.\n\n5. Sample-wide spurs at FIXED positions, recurring across runs with different spans/shots/drive, appear at IQCC (per-qubit spurs incl. one hard against a window edge), SNU (q9's low-side spur in every panel), KRISS (#158 qA2) and CQT (#1253 q20). Width, not height, separates them from lines everywhere.\n\n6. Verdict/figure mismatch occurs in BOTH directions in every lab: readable centred lines refused (CQT #1243, #1254 q3/q7; SNU #49 q9; IQCC #57 qA1) and figure-refuted panels accepted (AS #26 q6; CQT #1239-#1242, #1247; IQCC #429 qD3). No lab's verdict may be trusted alone.\n\n7. The two-width-scale shape (sharp core on a broad pedestal) was invented independently by the IQCC and SNU annotators, and the broad-but-resolved case independently by the KRISS, SNU and CQT annotators \u2014 new cases converged from separate labs, which is what makes them chip-independent rather than local.\n\n8. Honest refusals dominate everywhere: no lab refused an unambiguously readable line more often than it accepted one, and NO-FIT/empty-window records were honest in all five.\n\nWHAT LOOKED UNIVERSAL BUT IS ONE LAB'S CONVENTION.\n\na. \"A broad flat-topped block means something is wrong.\" At CQT the DEFAULT 08 recipe drives with the x180 pulse at full amplitude, so saturated blocks are the normal opening panel there; AS, IQCC and KRISS open with a low-power saturation pulse and a block is exceptional. The CASE is the same; the base rate is a lab convention and must never be turned into a prior.\n\nb. \"Multiplexing produces single-bin spurs.\" True at IQCC (spikes present only in multiplexed panels). AS ran an explicit multiplex-on/off A/B at identical span and shots (#29/#30/#31) and found NO visible difference \u2014 that is what let AS rule out crosstalk. Do not generalise either result.\n\nc. \"A missing dashed curve means the node refused.\" Panel annotation is lab-specific: IQCC stamps amber titles with \"freq OK / shape poor\" and \"not applied\" while still DRAWING a fit and still reporting success; CQT and IQCC both print \"NO FIT\" but CQT also draws fits on refused runs. The presence/absence of a curve, the colour of a title and the success flag are three different channels and their coupling differs per lab.\n\nd. \"The floor is flat.\" AS panels routinely ride a strongly sloping or stepped instrument baseline that the fit can absorb into its wings; IQCC and KRISS floors are flat. Acceptance criteria must therefore be phrased as \"the floor is locally flat AROUND the feature\", never \"the panel is flat\".\n\ne. \"Contrast is a quality number.\" Its scale is set by where the rotated baseline sits: AS #28 q7 and CQT #1253 q2/q14 report contrasts orders of magnitude above their same-figure siblings purely because their baselines sit on zero. It is not comparable across targets in one figure, let alone across labs.\n\nf. \"Peak up.\" AS #26 q6 has a readout rotation flipped ~half a turn relative to its own sibling runs, making the feature a downward spike and defeating a one-polarity fitter. Peak-vs-dip is cosmetic within a consistent session and is a hard defect between runs of one target.\n\ng. \"Centres are interpolated.\" Grid-quantised centres (bit-identical across repeats, offsets of exactly zero or exactly half a step) were only DEMONSTRATED at IQCC, because only there were byte-identical repeats compared record-to-record. This is very likely a fitter property, not a lab property \u2014 the difference is detection opportunity, so the check must be run everywhere.\n\nh. Absolute settings share nothing across labs: spans differ by more than an order of magnitude (AS narrow-span/high-shot, CQT thousand-wide hunts, IQCC coarse-step ladders), as do step sizes, shot counts and drive conventions. Every prescription in this manual is therefore a RELATIVE move; any absolute number would be one lab's habit.\n\ni. Naming conventions differ completely (q1..q20, q6/q7, qA1/qA2, qC4/qD3). No rule may key on a target's name, and pair/partner reasoning must come from the run's target list, not from name adjacency.",
+ "open_questions": [
+  "Should the fitter be polarity-agnostic, or should the readout rotation be pinned before 08 runs at all? AS #26 q6 shows a half-turn rotation flip turning the response into a dip and producing an ACCEPTED fit with no lineshape. Decide whether a polarity differing from a target's sibling runs invalidates the run automatically.",
+  "Does a width gate belong in the acceptance rule? It refused clean, correctly centred, high-contrast lines at CQT (#1243, #1254 q3 and q7) and at IQCC (#53-#57 'shape poor'), while accepting centres placed in the dip of a saturated block. If the answer is yes, the gate must at minimum be drive-aware.",
+  "Should 08 ever write saturation_amp / x180_amp at all, or only frequency and readout rotation, leaving drive amplitudes to power Rabi? They are unbounded extrapolations from a width the node frequently cannot measure, and in this corpus they exceeded normalized full scale several times.",
+  "What is the minimum number of samples across the fitted FWHM for an adoptable width, and should a width from a window with no visible floor on both sides ever be adoptable?",
+  "In the pedestal+core shape (IQCC qC4/qC5/qD1, SNU q10), which component is the qubit linewidth, should the panel be fitted with two components, and which width does the downstream consumer want?",
+  "Is the AS mirror ambiguity (a feature at nearly equal-and-opposite offsets from one window centre) a drive-chain image/aliasing artefact? If so the fix is hardware or LO configuration, not fitting, and the widen-once rule is only a detector.",
+  "What produces the regularly spaced combs at CQT \u2014 a multi-photon ladder, |1>-|2>, a TLS forest, or an instrumental sideband comb? Spacing is the discriminator and this node cannot use it; decide which experiment settles it.",
+  "Are the persistent one-sample spurs at fixed offsets (IQCC per-qubit spurs, SNU q9's low-side spur, the IQCC window-edge spur) instrumental lines that must be permanently masked, or genuine very narrow transitions worth investigating once?",
+  "How many agreeing repeats does an intermittent target need before its value may be adopted, and should such a target be marked unstable for downstream nodes? IQCC qC4 gave resolved / empty / empty / resolved / marginal under byte-identical repeats.",
+  "What is the stop rule when a chip is drifting mid-session? AS #28-#31 shows four self-consistent fits each returning the same offset from a centre the previous run moved, i.e. the value chasing itself, and the operator only escaped by doubling the span.",
+  "Should contrast be redefined as an absolute rather than a ratio quantity so it is comparable across targets and labs, and should the current definition be removed from any acceptance rule until then?",
+  "Which side owns the offset seen at CQT #1256 q18, where the applied frequency was not the fitted centre printed on the figure? Until that is resolved, no chained sequence of 08 runs at that lab is interpretable.",
+  "When two targets in one multiplexed run need opposite drive levels (SNU q9 and q10), should the loop split them into separate runs automatically, and on what evidence?",
+  "Should a batch/multiplexed pass be allowed to write state at all, or only to propose candidates that a sequential confirmation run adopts?"
+ ],
+ "fit_disagreements": [
+  "AS_10TQ9TC/#25_08_qubit_spectroscopy_045653/q7 \u2014 featureless noise on a mildly tilted baseline; the fit is nearly a flat line with a small bump whose centre marker sits essentially ON the window centre (reported offset ~zero), i.e. the fitter fell back to its seed. Largest excursion in the panel is at the low-frequency edge and is not the fitted one; largest derived x180 amplitude in the batch with the lowest reported goodness-of-fit.",
+  "AS_10TQ9TC/#26_08_qubit_spectroscopy_045721/q6 \u2014 SUCCESS whose dashed curve is a nearly straight segment following a rising baseline: no crest, no flanks, no inflection anywhere. Centre marker sits on a single-sample downward excursion matched by others elsewhere; readout rotation is flipped ~half a turn versus every sibling run of this qubit, and reported contrast is at the numerical floor.",
+  "AS_10TQ9TC/#352_08_qubit_spectroscopy_102706/q7 \u2014 the dominant structure is a shoulder entering the window already at maximum and running off the left boundary; the fit is placed instead on a two-to-three-sample spike in the right half that is barely taller than several other noise excursions in the same stretch. Derived drive amplitudes far above every sibling in the session.",
+  "CQT/#1239_08_qubit_spectroscopy_030349/q10 \u2014 wide flat-topped block with two crests separated by a shallow dip; the fit's centre line lands IN the dip (a local minimum of the data) and the fitted curve is far wider and lower than either crest. Reported width more than an order of magnitude above the requested target peak width, on a success verdict.",
+  "CQT/#1240_08_qubit_spectroscopy_030414/q10 \u2014 identical repeat of the preceding panel: same double-crested block, fit centre again in the dip between the crests, fitted curve much broader and lower than the crests it straddles.",
+  "CQT/#1241_08_qubit_spectroscopy_030532/q10 \u2014 third identical repeat; the dip between the crests is deeper here and the fit centre still falls in it. Worst reported goodness-of-fit of the three repeats, and the reported centre moved between supposedly identical runs by more than the crest separation makes meaningful.",
+  "CQT/#1247_08_qubit_spectroscopy_031321/q10 \u2014 the low-drive comb has merged into three broad humps; the fit sits on the tallest, whose top is flat and double-crested, with its centre line in the dip between those two crests. Two further credible humps are left entirely unmodelled and the fitted curve is wider than the hump it covers.",
+  "CQT/#1253_08_qubit_spectroscopy_033636/q15 \u2014 no isolated peak: a shallow rise in the left third, then a steep monotonic climb to the right boundary that leaves the window still rising and holds the panel's largest values. The dashed fit lies almost flat over the shallow left region and never approaches the rising limb.",
+  "CQT/#1253_08_qubit_spectroscopy_033636/q19 \u2014 dense scatter of uniform amplitude across the whole width with no coherent raised group; the fit is a narrow blip drawn over two or three adjacent noise points left of centre. The record's own goodness-of-fit is below zero.",
+  "CQT/#1254_08_qubit_spectroscopy_035232/q16 \u2014 a scatter band with no isolated raised group anywhere and a slight overall upward drift on the right; the fit is a very narrow blip over two or three adjacent noise points left of centre. Empty in both the low-drive and full-drive passes.",
+  "KRISS_CR/#5_08_qubit_spectroscopy_040123/qA2 \u2014 dense edge-to-edge scatter of constant spread with no smooth feature; a narrow fit is drawn onto the single tallest upward excursion just left of centre, its crest barely clearing the surrounding band and its width comparable to one or two individual noise excursions. Centre, width and derived amplitudes are all reported.",
+  "SNU_1Q/#47_08_qubit_spectroscopy_222205/q9 \u2014 two entirely different features share the panel: a few-sample spike far toward the low-frequency edge and a broad rounded hump nearer the middle with flanks spanning many samples. The fit and its marker sit on the narrow spike; the broad hump \u2014 which is the qubit's response, since it changes shape with drive while the spike does not \u2014 is left completely untraced.",
+  "SNU_1Q/#50_08_qubit_spectroscopy_222449/q9 \u2014 same two-feature panel at full drive; the fit is again planted on the narrow spur AND its dashed wings sit clearly above the local scatter band on both sides rather than settling onto it, so the curve floats over the data away from its crest. Worst reported fit quality of this qubit's attempts that session.",
+  "SNU_1Q/#64_08_qubit_spectroscopy_230131/q9 \u2014 a noise band of essentially constant thickness from edge to edge with no local change in centreline or thickness; the fit is a hair-thin vertical sliver planted on one sample left of centre, narrower than the band's own point-to-point scatter, and the derived saturation and x180 amplitudes land far beyond normalized full scale.",
+  "SNU_1Q/#67_08_qubit_spectroscopy_231355/q9 \u2014 uniform flat band end to end, fit again a thin sliver standing on a single sample with no shoulders on either side; the record's own goodness-of-fit is NEGATIVE (the fitted curve describes the data worse than a flat line) yet a centre and a linewidth are reported.",
+  "SNU_1Q/#68_08_qubit_spectroscopy_231823/q10 \u2014 a tall narrow spike stands well inside the window on the low-frequency side and is ignored; the fit is planted instead on a much narrower feature close to the high-frequency boundary, drawn as a near-vertical sliver with only a sliver of baseline beyond it, while high contrast and SNR are claimed."
+ ],
+ "blind_verification": {
+  "n": 10,
+  "agreed": 8,
+  "overall": "8 of 10 agree. Method: located each run folder via the 'folder' field in b4_qubit_spectroscopy__*.json (runs live under D:\\work\\dataset\\AS_10TQ9TC\\ and D:\\work\\Customer_Codes\\CQT\\data\\), viewed figures.amplitude.png myself \u2014 cropping and upscaling the target panel out of the 5x5 20-qubit sheets for #1253/#1254 \u2014 and formed a judgment before reading the claimed case. For the two calls that hinged on a marginal feature I additionally re-derived the rotated-I trace from ds_raw.h5 (NetCDF-classic, read via scipy.io.netcdf_file) rather than trusting the eye or the node's own reported SNR. Two disagreements, both in the same direction \u2014 the claimed case is more generous to the fit than the figure supports: (1) #27/q7 claimed Q5 weak/broad is really Q2 empty window; the window is pure noise on a slope, every detrended residual is under 3 sigma and scattered, and the fit centre is not even a local maximum in the smoothed residuals, so the reported peak_snr=3.5 is not backed by anything visible. (2) #31/q6 claimed Q1 clean peak is really Q3 edge-clipped; f0 is 4.90 MHz from the left window edge against a 5.94 MHz HWHM, so the half-max point lies outside the sweep and the rising flank is never measured, even though the fit itself is good (r2=0.92) and a maximum is visible. The eight agreements include two over-driven x180 runs (#1242, #1254) where Q7 and Q4 both partly apply; I resolved them on whether the lobes return to baseline between features (they do in #1254 -> Q4, they do not in #1242 -> Q7), and the claimed labels match that rule. No NEW: case was needed \u2014 the seven draft cases covered every figure."
+ },
+ "exemplar_note": "Axes are NORMALISED and UNLABELLED: no absolute frequency, power or flux leaves this pack, and a picture without numbers cannot teach an absolute scale (Clause B). Orientation follows the labs' own convention: frequency rightwards, the swept quantity upwards. Overlays: orange = the tracked feature, cyan dashed and magenta dotted = the record's own frequency claims, red = the sweep value it chose. Markers are the RECORD's claims, drawn even when they contradict the map \u2014 that contradiction is the lesson in the mislabelled and off-feature cases. Whether the feature is a dip or a peak is MEASURED per run, because the readout rotation decides it and it differs between labs."
+}

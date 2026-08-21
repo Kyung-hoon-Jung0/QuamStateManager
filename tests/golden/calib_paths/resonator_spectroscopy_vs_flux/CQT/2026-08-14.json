@@ -1,0 +1,388 @@
+{
+ "schema": "smgolden/v2",
+ "family": "resonator_spectroscopy_vs_flux",
+ "chip": "CQT",
+ "session": "2026-08-14",
+ "session_id": "resonator_spectroscopy_vs_flux__CQT__2026-08-14",
+ "authored": "2026-08-21",
+ "status": "hindsight-authored + adversarial audit",
+ "provenance": "the author saw the whole session and was free to judge the operator wrong; the system under test never sees past its cursor",
+ "session_notes": "18 runs, 19 target-instances, 6 targets (q1 q3 q4 q5 q7 q9). Two node variants: 02e (QDAC DC bias, writes z/dc_offset) for q1/q3/q5/q7/q9 and 06 (OPX LF-FEM flux, writes z/joint_offset) for q4 - their voltage-to-flux scales are unrelated, so a flux range that is right for one says nothing about the other (+/-0.5 V was correct for q4 and far too narrow for the QDAC targets).\n\nResult: only 3 of 19 target-instances ever produced a fit (q1 #239, q4 #257, q3 #328), and one of those three (q1 #239) was never written to state. Ideal path visits 11 runs against 18 actual; 8 runs (#238, #240, #244, #323, #245, #274, #275-for-q3, #331) were pure waste. No poisoned writes occurred anywhere - the operator's write discipline was the strong part of this session; the weakness was knob selection and one missed adoption.\n\nThree cross-cutting facts a correct reader needs, all established by comparing runs within this one session:\n\n1. frequency_span_in_mhz = 80 is an ANTI-KNOB for detecting flux response. q1 #323 (span 80) prints \"FLAT - no flux response\" on the same qubit, same flux range, same day as #239/#240, whose span-15 figures show a clean ~2 MHz arch. At 80 MHz a 1-3 MHz arch is under 4% of the window and cannot be seen. Widening the span is a window-LOCATION diagnostic only; its flat verdict is never evidence about flux. This directly de-weights #323 (q1), #324 (q3, still useful for locating) and #325 (q5).\n\n2. \"flat_response = true with ridge_coverage = 1.0\" has two completely different causes and the record cannot separate them without looking at dip scatter and window position: (a) flux range too narrow - only the top of the arch is sampled (q1 #235 at +/-0.5 V); (b) the tracker has locked onto a flat NON-resonator feature because the stored readout frequency is wrong (q3 #241/#324, locked at 4.9650 GHz while q3's real resonator is at 4.9783 GHz; q5 #331, dip on the bottom edge of the window). Cure (a) with flux range, cure (b) by re-locating the resonator - and a wide flux range that still reads flat is evidence for (b), not for a dead flux line.\n\n3. ridge_coverage = 0.0 (q9 #246) is a third, unrelated case: no dip at all, i.e. a readout-frequency or readout-power fault. It must exit this family immediately rather than trigger more flux permutations.\n\nThe operator's dominant failure mode was permuting the cheap knob: 11 of 18 runs changed only min/max_flux_offset_in_v and/or num_flux_points while the actual defect (readout window on q3/q5/q9, adoption on q1) sat untouched; num_flux_points was repeatedly reduced (101 -> 61 -> 51), which can only weaken a fit. The q3 breakthrough at #328 came from a readout-chain change that is invisible in this family's parameter record - identical parameters to the immediately preceding #324, which is why the record alone makes #328 look like luck and the figures show it is not.\n\nFinal holdings the answer key asserts: q1 = 4,981,804,075 Hz at bias -0.018047 V (med confidence, currently UNWRITTEN on the chip); q3 = 4,978,327,423 Hz at -0.033788 V (high, written); q4 = 5,112,552,575 Hz at joint_offset 0.211530 V (med, written); q5, q7, q9 = unresolved, each with a named next action outside this family.",
+ "adversarial_audit": "**Not sound \u2014 9 concrete defects.**\n\n1. **q3 / #324\u2192#328 \u2014 diagnosis contradicted by the key's own arithmetic.** #328's `frequency_shift = -788 kHz` puts the stored RF at #328 at ~4.97911 GHz, while the key reads #324's window as 4.925\u20135.005 (centre 4.965). So the readout **frequency moved ~+14 MHz between the two runs** \u2014 a recorded, derivable change, not something \"invisible in this family's record\". *Correction:* name the RF re-centre; drop the evidence-free \"readout amplitude / TWPA pump / LO\" attribution.\n2. **q3 step 2 \u2014 \"resonator absent from the 80 MHz window\" is false.** 4.9783 GHz lies inside 4.925\u20135.005. Say \"not visible\", not \"absent\"; the `readout_fault` flag overstates.\n3. **Cross-cutting fact #1 (span 80 = anti-knob, \"cannot be seen by construction\") is refuted inside this session:** #328 fitted a 2.6 MHz arch at span 80, \u00b12 V. This invalidates the q1 #323 \"manufactured false negative\", q5 step 2's `verdict_not_evidence`/`span_too_wide_desensitized`, and the \"return at span 15\" prescriptions. *Correction:* reduced contrast, not impossibility; #323's flat verdict is weak evidence, not zero.\n4. **q1 #240 wrongly \"pure waste\".** It is the key's own corroboration for the adopted value, and the first record-level evidence q1 responds to flux (`flat_response=False` at \u00b12 V; #235/#236/#238 were all True). Reclassify as confirmation.\n5. **q5 #331 wrongly \"pure waste\".** It is the sole positional evidence behind the unresolved verdict and the only q5 run with `ridge_coverage` \u2260 1.0 (0.713). Reclassify as low-yield/informative.\n6. **q1 adopt at #239 \u2014 resolution test applied inconsistently.** 85.7 kHz correction is *below* the 100 kHz `frequency_step`, the same test the key uses to validate q3 (\u2212788 kHz) and q4 (425 kHz); and the key's own \u00b10.05 V apex uncertainty exceeds |\u22120.018 V|. Make it a provisional adopt confirmed by #240, or drop the test elsewhere.\n7. **q3 step 1 is future-blind-unfair.** Its verdict rests on the 4.9650 vs 4.9783 GHz contrast that first exists at #324/#328, 83 runs later; and its rule (\"\u00b12 V is wide enough that a real resonator must curve\") is falsified by q1 #236 \u2014 \u00b12 V, `flat_response=True` \u2014 already in the record before #241. Require only \"one window check\", not the window-fault verdict.\n8. **q9 scored unfairly.** Operator stopped, which *is* the key's `reject_and_stop`; ideal_length == actual_length, zero waste \u2014 yet \"partly\", because of a relocation run in a different node outside `runs_in_scope`. Should be \"yes\" (q4 got \"yes\" for the same shape).\n9. **Miscounts.** \"8 runs \u2026 pure waste\" includes #275, which the key itself puts in the ideal path (q7 step 1): 7 runs + 1 target-instance. \"11 of 18 runs changed only flux range/points\" is 8 by the record. Flags `low_snr`, `zero_dip_scatter` have no record field and no inspected figure.",
+ "qubits": [
+  {
+   "qubit": "q1",
+   "runs_in_scope": [
+    "#235_02e_resonator_spectroscopy_vs_flux_qdac_080732",
+    "#236_02e_resonator_spectroscopy_vs_flux_qdac_080819",
+    "#238_02e_resonator_spectroscopy_vs_flux_qdac_082551",
+    "#239_02e_resonator_spectroscopy_vs_flux_qdac_083002",
+    "#240_02e_resonator_spectroscopy_vs_flux_qdac_083306",
+    "#244_02e_resonator_spectroscopy_vs_flux_qdac_084012",
+    "#323_02e_resonator_spectroscopy_vs_flux_qdac_113200"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#235_02e_resonator_spectroscopy_vs_flux_qdac_080732",
+     "expected_case": "Ridge is tracked at every flux point (ridge_coverage 1.0) but the dip position moves less than the dip-position scatter over the whole +/-0.5 V sweep. Hindsight (#239/#240) shows q1's arch is only ~1 MHz over +/-1.5 V and ~2 MHz over +/-2 V, so +/-0.5 V samples nothing but the flat top. This is a flux-range problem, NOT a dead flux line and NOT a readout problem.",
+     "expected_flags": [
+      "flat_response",
+      "ridge_coverage_1.0",
+      "flux_range_too_narrow",
+      "resonator_in_window"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Hold frequency_span_in_mhz=15, frequency_step_in_mhz=0.1 and num_flux_points=101; widen min/max_flux_offset_in_v from -0.5/+0.5 to -1.5/+1.5 V. Change one knob only.",
+     "operator_did": "Widened to -2.0/+2.0 V but in the same step dropped num_flux_points 101 -> 61 (#236).",
+     "operator_was_right": "partly"
+    },
+    {
+     "step": 2,
+     "run": "#236_02e_resonator_spectroscopy_vs_flux_qdac_080819",
+     "expected_case": "Still reported flat at +/-2.0 V, but the flux sampling was coarsened to 61 points in the same step, so the flat verdict is confounded by two simultaneous knob changes. Nothing yet licenses a 'no flux response' conclusion for q1.",
+     "expected_flags": [
+      "flat_response",
+      "confounded_knob_change",
+      "coarse_flux_grid_61"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Restore num_flux_points=101 and set min/max_flux_offset_in_v to -1.5/+1.5 V, span still 15 MHz. Do not touch frequency_span_in_mhz.",
+     "operator_did": "Re-ran the exact #235 settings (+/-0.5 V, 101 pts) as #238, then ran +/-1.5 V at 101 pts as #239.",
+     "operator_was_right": "partly"
+    },
+    {
+     "step": 3,
+     "run": "#239_02e_resonator_spectroscopy_vs_flux_qdac_083002",
+     "expected_case": "The family's success case: cov 100%, dip cloud traces a clear arch, sinusoidal fit converges, apex (max offset) at -0.018 V sits well inside the +/-1.5 V sweep, resonator at the apex = 4.981804 GHz, correction to the stored value 85.7 kHz. Small correction, real arch - frequency_shift is the correction to the stored RF frequency, not the modulation depth, so its size is not a red flag.",
+     "expected_flags": [
+      "fit_success",
+      "ridge_coverage_1.0",
+      "apex_inside_sweep",
+      "arch_amplitude_about_1MHz"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write q1 resonator f_01 / RF_frequency = 4,981,804,075 Hz and the q1 QDAC flux bias (z dc_offset) = -0.018047 V, then stop this family for q1.",
+     "operator_did": "Left the successful run unwritten (zero patches) and kept sweeping (#240, #244, #323).",
+     "operator_was_right": "no"
+    }
+   ],
+   "termination": {
+    "at_run": "#239_02e_resonator_spectroscopy_vs_flux_qdac_083002",
+    "reason": "A converged sinusoidal fit with full ridge coverage and the apex inside the swept range is exactly the accept case for this family; every later q1 run either failed to fit data that shows the same arch (#240, #244) or destroyed the sensitivity by widening the frequency span (#323). Nothing after #239 improves the number.",
+    "final_frequency": 4981804074.850066,
+    "final_sweep_value": -0.01804740737937711,
+    "unresolved": false,
+    "value_evidence": "#239's own sinusoidal fit (figure inspected: cov 100%, apex marked at -0.018 V, arch spanning ~4.9808 -> 4.98180 GHz), independently corroborated by #240's raw dip track over +/-2 V (figure inspected: same arch, apex near 0 V at ~4.9820 GHz, cov 100%) even though #240's sinusoid did not converge.",
+    "value_confidence": "med"
+   },
+   "wasted_runs": [
+    {
+     "run": "#238_02e_resonator_spectroscopy_vs_flux_qdac_082551",
+     "why_wasted": "Byte-identical parameters to #235 (span 15, +/-0.5 V, 101 pts) and an identical flat result. Repeating settings already known to be too narrow adds nothing."
+    },
+    {
+     "run": "#240_02e_resonator_spectroscopy_vs_flux_qdac_083306",
+     "why_wasted": "Run after the answer was already in hand. Its raw data is actually the best q1 dataset in the session (clean arch, cov 100%) but the sinusoid failed to converge over the wider range, so it returned no number - and its 'failure' then discredited the good #239 result in the operator's mind."
+    },
+    {
+     "run": "#244_02e_resonator_spectroscopy_vs_flux_qdac_084012",
+     "why_wasted": "+/-2 V at only 51 flux points - strictly less information than #240, which had already failed to fit at 101 points. Reducing the sampling cannot rescue a fit that failed at finer sampling."
+    },
+    {
+     "run": "#323_02e_resonator_spectroscopy_vs_flux_qdac_113200",
+     "why_wasted": "frequency_span_in_mhz raised 15 -> 80 on a qubit whose arch is ~2 MHz. The figure shows the arch compressed to under 3% of the window and the node printing 'FLAT - no flux response' on the very qubit it had already fitted three hours earlier. Span widening is a window-location diagnostic, never a sensitivity improvement; here it manufactured a false negative."
+    }
+   ],
+   "poisoned_writes": [],
+   "ideal_length": 3,
+   "actual_length": 7,
+   "confidence": "high",
+   "caveats": "Figures inspected for #239, #240 and #323. #236 and #238 were judged from the record alone; if #236's flat verdict were due to something other than the coarse 61-point grid the step-2 advice would be unchanged (restore 101 points), so this does not move the answer. The adopted idle_offset carries ~0.05 V of uncertainty: the dip scatter at q1's SNR is ~+/-0.5 MHz against a ~1 MHz arch, so the apex is loosely constrained - hence med, not high. The operator wrote nothing for q1 all session, so the chip still holds the pre-session value; the answer key's adopt is a missed write, not a wrong write."
+  },
+  {
+   "qubit": "q3",
+   "runs_in_scope": [
+    "#241_02e_resonator_spectroscopy_vs_flux_qdac_083427",
+    "#245_02e_resonator_spectroscopy_vs_flux_qdac_084043",
+    "#274_02e_resonator_spectroscopy_vs_flux_qdac_094338",
+    "#275_02e_resonator_spectroscopy_vs_flux_qdac_094428",
+    "#324_02e_resonator_spectroscopy_vs_flux_qdac_113514",
+    "#328_02e_resonator_spectroscopy_vs_flux_qdac_114336"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#241_02e_resonator_spectroscopy_vs_flux_qdac_083427",
+     "expected_case": "Flat over the full +/-2 V with ridge_coverage 1.0. Unlike q1 at +/-0.5 V, this range is wide enough that a real resonator would have to curve - so the honest reading is that the tracked dip is probably not q3's resonator. Hindsight from #324's figure confirms it: the tracked line sits at 4.9650 GHz with essentially zero scatter while q3's true resonator (#328) is at 4.9783 GHz, ~13 MHz outside a 15 MHz window centred on the stored value.",
+     "expected_flags": [
+      "flat_response",
+      "ridge_coverage_1.0",
+      "zero_dip_scatter",
+      "suspect_window_off_center"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Do not permute the flux range. Test the readout window instead: one sweep at frequency_span_in_mhz=80 over the same +/-2 V (or a plain resonator-spectroscopy run) to find where q3's resonator actually is.",
+     "operator_did": "Re-ran the same +/-2 V at 51 flux points (#245), then narrowed to +/-0.5 V (#274), then re-ran +/-2 V multiplexed with q7 (#275) - three flux-range permutations, no window check.",
+     "operator_was_right": "no"
+    },
+    {
+     "step": 2,
+     "run": "#324_02e_resonator_spectroscopy_vs_flux_qdac_113514",
+     "expected_case": "With an 80 MHz window (4.925-5.005 GHz) the tracker still locks on the same perfectly featureless 4.9650 GHz line, and q3's resonator is not visible anywhere in the window - it is absent, not merely off-centre. That is a readout-chain fault (readout amplitude / TWPA pump / LO), not a flux fault. Note the run's own 'FLAT - no flux response' banner is true of the tracked feature and irrelevant to q3.",
+     "expected_flags": [
+      "flat_response",
+      "resonator_absent_from_80MHz_window",
+      "tracker_locked_on_wrong_feature",
+      "readout_fault"
+     ],
+     "correct_decision": "reject_and_stop",
+     "correct_next_action": "Stop sweeping flux for q3. Repair the readout chain (readout amplitude / TWPA pump / LO), re-locate q3's resonator with plain resonator spectroscopy and write its RF_frequency, then re-run this family once at span 15 MHz over +/-2 V at 101 points.",
+     "operator_did": "Went to q5 (#325), then re-ran q3 with parameters identical to #324 as #328 - which succeeded, so something in the readout chain was in fact changed in between (not recorded in this family's parameters).",
+     "operator_was_right": "partly"
+    },
+    {
+     "step": 3,
+     "run": "#328_02e_resonator_spectroscopy_vs_flux_qdac_114336",
+     "expected_case": "Unambiguous success: a razor-sharp high-contrast ridge at ~4.978 GHz, cov 100%, a well-conditioned ~2.6 MHz arch over +/-2 V, apex at -0.034 V well inside the sweep. The contrast against #324 at identical parameters is the readout fix, not chance.",
+     "expected_flags": [
+      "fit_success",
+      "high_snr",
+      "ridge_coverage_1.0",
+      "apex_inside_sweep",
+      "identical_params_previously_failed"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write q3 resonator f_01 / RF_frequency = 4,978,327,423 Hz and z dc_offset = -0.033788 V; stop this family for q3.",
+     "operator_did": "Adopted exactly those three patches (f_01, RF_frequency, z/dc_offset).",
+     "operator_was_right": "yes"
+    }
+   ],
+   "termination": {
+    "at_run": "#328_02e_resonator_spectroscopy_vs_flux_qdac_114336",
+    "reason": "Highest-quality fit of the session: full coverage, high contrast, apex interior to the sweep, correction (-788 kHz) far above the 100 kHz frequency step. No further run is warranted.",
+    "final_frequency": 4978327423.303395,
+    "final_sweep_value": -0.03378759491280787,
+    "unresolved": false,
+    "value_evidence": "#328's own fit plus its figure (inspected): sharp ridge peaking at 4.9783 GHz at -0.034 V and falling to ~4.9757 GHz at +/-2 V, magenta sinusoid lying on the dip track over the whole range.",
+    "value_confidence": "high"
+   },
+   "wasted_runs": [
+    {
+     "run": "#245_02e_resonator_spectroscopy_vs_flux_qdac_084043",
+     "why_wasted": "Same span and same +/-2 V as #241 with the flux grid coarsened 101 -> 51. Same flat result; no knob that could change the outcome was touched."
+    },
+    {
+     "run": "#274_02e_resonator_spectroscopy_vs_flux_qdac_094338",
+     "why_wasted": "Narrowed the flux range to +/-0.5 V while the readout window was still ~13 MHz off the resonator. Narrowing can only ever weaken flux contrast; the actual defect was untouched."
+    },
+    {
+     "run": "#275_02e_resonator_spectroscopy_vs_flux_qdac_094428",
+     "why_wasted": "Repeat of #241's settings (span 15, +/-2 V, 101 pts) with q7 multiplexed in. For q3 it is a third identical measurement; multiplexing only adds crosstalk risk to a diagnostic that was already answered."
+    }
+   ],
+   "poisoned_writes": [],
+   "ideal_length": 3,
+   "actual_length": 6,
+   "confidence": "high",
+   "caveats": "Figures inspected for #324 and #328. #241/#245/#274/#275 judged from the record, but #324's figure shows the same 4.965 GHz flat feature that a 15 MHz window centred on the pre-fix stored frequency would have contained, which is what licenses reading the earlier flats as the same window fault. What exactly was fixed between #324 and #328 is outside this family's parameter record - the answer key names it as a readout-chain change without claiming which knob."
+  },
+  {
+   "qubit": "q4",
+   "runs_in_scope": [
+    "#257_06_resonator_spectroscopy_vs_flux_092518"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#257_06_resonator_spectroscopy_vs_flux_092518",
+     "expected_case": "Single run on the OPX-flux node (06, joint_offset) rather than the QDAC twin: fit succeeds, ridge_coverage 1.0, flat_response false, apex at 0.2115 V inside the +/-0.5 V sweep, resonator 5.112553 GHz, correction 425 kHz (4x the 100 kHz frequency step). Straight accept. The +/-0.5 V range that was far too narrow for the QDAC-biased qubits is appropriate here because the OPX LF-FEM voltage-to-flux transfer is a different scale entirely.",
+     "expected_flags": [
+      "fit_success",
+      "ridge_coverage_1.0",
+      "apex_inside_sweep",
+      "opx_flux_not_qdac",
+      "single_run_no_confirmation"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write q4 resonator f_01 / RF_frequency = 5,112,552,575 Hz and z joint_offset = 0.211530 V; stop - no confirmation run is needed for a clean interior-apex fit.",
+     "operator_did": "Adopted all three patches and never revisited q4.",
+     "operator_was_right": "yes"
+    }
+   ],
+   "termination": {
+    "at_run": "#257_06_resonator_spectroscopy_vs_flux_092518",
+    "reason": "Clean first-try success with the apex interior to the sweep and a correction well above the frequency resolution; the family has nothing further to offer this target.",
+    "final_frequency": 5112552575.1452265,
+    "final_sweep_value": 0.21153025388963123,
+    "unresolved": false,
+    "value_evidence": "The node's own fit record for #257 (success, flat_response false, ridge_coverage 1.0, apex 0.2115 V interior to the +/-0.5 V sweep) and the fact that it was written to state and never contradicted anywhere later in the session. This is the only q4 evidence that exists - no repeat, and the figure was not inspected.",
+    "value_confidence": "med"
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "ideal_length": 1,
+   "actual_length": 1,
+   "confidence": "med",
+   "caveats": "The only target where operator and ideal path coincide exactly. Confidence in the VALUE is med rather than high purely because it rests on one unrepeated run whose figure I did not spend a look on (the six-figure budget went to the ambiguous targets); the analysis confidence in 'adopt at #257' is high. If q4's flux period is much larger than 1 V the apex at 0.2115 V is a weakly-curved maximum, which would show up later as a shifted sweet spot in the qubit-spectroscopy-vs-flux family."
+  },
+  {
+   "qubit": "q5",
+   "runs_in_scope": [
+    "#242_02e_resonator_spectroscopy_vs_flux_qdac_083524",
+    "#325_02e_resonator_spectroscopy_vs_flux_qdac_113737",
+    "#331_02e_resonator_spectroscopy_vs_flux_qdac_115446"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#242_02e_resonator_spectroscopy_vs_flux_qdac_083524",
+     "expected_case": "Flat over the full +/-2 V at span 15 with ridge_coverage 1.0. As with q3, +/-2 V is wide enough that a healthy resonator should curve, so a flat verdict here indicts the readout window rather than the flux line. Hindsight from #331's figure shows the window is centred ~5.265 GHz while q5's dip runs along the 5.258 GHz lower edge.",
+     "expected_flags": [
+      "flat_response",
+      "ridge_coverage_1.0",
+      "suspect_window_off_center",
+      "low_snr"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Check the readout window before touching flux again: one sweep at frequency_span_in_mhz=80 over the same +/-2 V, or a plain resonator-spectroscopy run, to establish where q5's resonator actually sits relative to the stored RF frequency.",
+     "operator_did": "Moved on to other qubits and only ran the 80 MHz check ~80 runs later as #325.",
+     "operator_was_right": "partly"
+    },
+    {
+     "step": 2,
+     "run": "#325_02e_resonator_spectroscopy_vs_flux_qdac_113737",
+     "expected_case": "80 MHz span, still 'FLAT'. At this span a 1-3 MHz arch occupies under 4% of the window and is invisible by construction - proved on q1 the same day, where #323 at span 80 reported 'FLAT - no flux response' on a qubit already fitted at span 15. So this run can only answer 'is there a dip in the neighbourhood', never 'does it move'. Its flat verdict must not be read as evidence of no flux response.",
+     "expected_flags": [
+      "flat_response",
+      "span_too_wide_desensitized",
+      "diagnostic_only",
+      "verdict_not_evidence"
+     ],
+     "correct_decision": "reject_and_stop",
+     "correct_next_action": "Stop the flux family for q5. Re-centre q5's readout RF_frequency on the dip located here (write it from a plain resonator-spectroscopy run), then return with frequency_span_in_mhz=15 over +/-2 V at 101 points.",
+     "operator_did": "Ran +/-3.0 V at span 15 (#331) without re-centring the window.",
+     "operator_was_right": "no"
+    }
+   ],
+   "termination": {
+    "at_run": "#325_02e_resonator_spectroscopy_vs_flux_qdac_113737",
+    "reason": "After a wide-flux sweep at span 15 and a window check at span 80 both returned flat, the remaining hypothesis is a mis-set readout frequency, which this family cannot fix. Continuing to permute flux range (as #331 did) cannot resolve it; the correct move is to leave the family and re-locate the resonator.",
+    "final_frequency": null,
+    "final_sweep_value": null,
+    "unresolved": true,
+    "value_evidence": "No q5 run in the session produced a converged fit - idle_offset and resonator_frequency are NaN in all three. The only positional evidence is #331's figure (inspected), where the dip track hugs the bottom edge of a 5.258-5.272 GHz window and the dark region continues below it, indicating q5's resonator is at or below ~5.258 GHz. That is enough to diagnose a mis-centred readout window and not nearly enough to state a resonator frequency or an idle offset.",
+    "value_confidence": "low"
+   },
+   "wasted_runs": [
+    {
+     "run": "#331_02e_resonator_spectroscopy_vs_flux_qdac_115446",
+     "why_wasted": "Widened flux to +/-3 V while reverting the span to 15 and leaving the readout frequency uncorrected - the wrong knob, moved after the window fault was already the leading hypothesis. It returned only shoulder noise (ridge_coverage 71%, no fit). Its one incidental value is confirming the resonator sits at or below the lower window edge, which the prescribed re-centring run would have established directly."
+    }
+   ],
+   "poisoned_writes": [],
+   "ideal_length": 2,
+   "actual_length": 3,
+   "confidence": "med",
+   "caveats": "Figure inspected for #331 only; #242 and #325 judged from the record plus the cross-target span-80 lesson established on q1 (#323 vs #239/#240). If #325's figure were to show the dip well inside the 80 MHz window with visible curvature, step 2's decision would soften from stop to one more span-15 sweep - but the value answer (unresolved) would not change, since no q5 fit exists anywhere in the session. Do not read this as 'q5 has no flux response': no run in this session was capable of showing one."
+  },
+  {
+   "qubit": "q7",
+   "runs_in_scope": [
+    "#275_02e_resonator_spectroscopy_vs_flux_qdac_094428"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#275_02e_resonator_spectroscopy_vs_flux_qdac_094428",
+     "expected_case": "The session's only q7 datum, taken multiplexed alongside q3 at settings (span 15, +/-2 V, 101 pts) that had already returned flat for q3 three times. Flat, ridge_coverage 1.0, no fit. Because it inherits q3's parameter choice and adds multiplexing crosstalk, it is uninformative about q7 - a first look, not a result.",
+     "expected_flags": [
+      "flat_response",
+      "ridge_coverage_1.0",
+      "multiplexed_confound",
+      "parameters_inherited_from_a_failing_target"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Re-run q7 alone (multiplexed=false). First confirm its readout window is centred on its resonator (plain resonator spectroscopy, or one span-80 sweep), then sweep flux at frequency_span_in_mhz=15 over +/-1.5 to +/-2 V at 101 points - the settings that produced clean arches on q1 and q3.",
+     "operator_did": "Never returned to q7 in this session.",
+     "operator_was_right": "no"
+    }
+   ],
+   "termination": {
+    "at_run": "#275_02e_resonator_spectroscopy_vs_flux_qdac_094428",
+    "reason": "The single q7 run is confounded (multiplexed, parameters borrowed from a target that was itself failing for readout reasons) and produced no fit. There is no run at which a correct system could have concluded anything about q7; it should have been re-run alone, which never happened.",
+    "final_frequency": null,
+    "final_sweep_value": null,
+    "unresolved": true,
+    "value_evidence": "One multiplexed run, fit success=false, all recorded quantities NaN, no other q7 measurement anywhere in the session. Nothing to base a value on.",
+    "value_confidence": "low"
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "ideal_length": 1,
+   "actual_length": 1,
+   "confidence": "med",
+   "caveats": "Figure not inspected (the run's figure is shared with q3 and the record is unambiguous that no fit was obtained). q7's single run is counted as legitimate rather than wasted because it was the target's first look and cost nothing extra - it rode along with a q3 run - but its parameters were chosen for q3, so it should never have been treated as q7's answer. q7 is the target left in the worst state: one confounded run and no follow-up."
+  },
+  {
+   "qubit": "q9",
+   "runs_in_scope": [
+    "#246_02e_resonator_spectroscopy_vs_flux_qdac_084220"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#246_02e_resonator_spectroscopy_vs_flux_qdac_084220",
+     "expected_case": "ridge_coverage = 0.0 with flat_response = false: no dip was found at ANY flux point. This is categorically different from every other failure in the session - it is not a flat resonator, it is no resonator. The 15 MHz window around q9's stored readout frequency contains nothing, or the readout amplitude is too low to produce a dip. A flux sweep cannot diagnose this.",
+     "expected_flags": [
+      "no_ridge",
+      "ridge_coverage_0.0",
+      "readout_frequency_wrong_or_power_too_low",
+      "not_a_flux_failure",
+      "coarse_flux_grid_51"
+     ],
+     "correct_decision": "reject_and_stop",
+     "correct_next_action": "Stop the flux family for q9 immediately. Run plain resonator spectroscopy over a wide span (and/or raise the readout amplitude) to locate q9's resonator, write its RF_frequency, then return here once with span 15 MHz over +/-2 V at 101 points.",
+     "operator_did": "Never returned to q9 in this session.",
+     "operator_was_right": "partly"
+    }
+   ],
+   "termination": {
+    "at_run": "#246_02e_resonator_spectroscopy_vs_flux_qdac_084220",
+    "reason": "A zero-coverage run is a definitive stop for this family: with no dip anywhere in the window there is no ridge to follow at any flux value, so no flux parameter can rescue it. The next action belongs to a different node.",
+    "final_frequency": null,
+    "final_sweep_value": null,
+    "unresolved": true,
+    "value_evidence": "The single q9 run reports ridge_coverage 0.0 and NaN for every fit quantity; no other q9 measurement exists in the session.",
+    "value_confidence": "low"
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "ideal_length": 1,
+   "actual_length": 1,
+   "confidence": "high",
+   "caveats": "Figure not inspected - ridge_coverage exactly 0.0 with all-NaN fields is unambiguous on its own. The operator was right not to burn further flux sweeps on q9 (unlike q1/q3/q5, where they did), but wrong to leave the diagnosis unfinished: the required relocation run was never made, so q9 ends the session unresolved."
+  }
+ ],
+ "runs": [
+  "#235_02e_resonator_spectroscopy_vs_flux_qdac_080732",
+  "#236_02e_resonator_spectroscopy_vs_flux_qdac_080819",
+  "#238_02e_resonator_spectroscopy_vs_flux_qdac_082551",
+  "#239_02e_resonator_spectroscopy_vs_flux_qdac_083002",
+  "#240_02e_resonator_spectroscopy_vs_flux_qdac_083306",
+  "#241_02e_resonator_spectroscopy_vs_flux_qdac_083427",
+  "#242_02e_resonator_spectroscopy_vs_flux_qdac_083524",
+  "#244_02e_resonator_spectroscopy_vs_flux_qdac_084012",
+  "#245_02e_resonator_spectroscopy_vs_flux_qdac_084043",
+  "#246_02e_resonator_spectroscopy_vs_flux_qdac_084220",
+  "#257_06_resonator_spectroscopy_vs_flux_092518",
+  "#274_02e_resonator_spectroscopy_vs_flux_qdac_094338",
+  "#275_02e_resonator_spectroscopy_vs_flux_qdac_094428",
+  "#323_02e_resonator_spectroscopy_vs_flux_qdac_113200",
+  "#324_02e_resonator_spectroscopy_vs_flux_qdac_113514",
+  "#325_02e_resonator_spectroscopy_vs_flux_qdac_113737",
+  "#328_02e_resonator_spectroscopy_vs_flux_qdac_114336",
+  "#331_02e_resonator_spectroscopy_vs_flux_qdac_115446"
+ ],
+ "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: judging the system on runs the key's author never examined is neither fair nor sound \u2014 it can adopt from a run the key has no opinion about, and the mismatch showed up as a 12-point score difference between two harnesses reading the same archive."
+}

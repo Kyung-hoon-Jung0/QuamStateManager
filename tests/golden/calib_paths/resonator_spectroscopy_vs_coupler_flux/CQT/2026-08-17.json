@@ -1,0 +1,255 @@
+{
+ "schema": "smgolden/v2",
+ "family": "resonator_spectroscopy_vs_coupler_flux",
+ "chip": "CQT",
+ "session": "2026-08-17",
+ "session_id": "resonator_spectroscopy_vs_coupler_flux__CQT__2026-08-17",
+ "authored": "2026-08-21",
+ "status": "hindsight-authored + adversarial audit",
+ "provenance": "the author saw the whole session and was free to judge the operator wrong; the system under test never sees past its cursor",
+ "session_notes": "9 runs, 5 pair targets, ZERO state writes anywhere - every run carries update_flux_min=False, so the node ran in measure-only mode and no patch was possible; poisoned_writes is empty for every target for structural reasons, not because the fits were trustworthy. Had that flag been on, four of the nine runs would have written a garbage coupler idle bias.\n\nThe session splits cleanly into two classes, and the discriminator is visible in the fit record alone: |frequency_shift| as a fraction of the frequency half-span. Class A - a real resonator dip is tracked and it is FLAT: #1225 (2.4%), #1238 (0.5%), #1271 (1.8%), #1226 (7.0%). These are the family's legitimate \"weak or absent modulation is correct physics\" outcome; their resonator frequencies are trustworthy and their idle_offset/dv_phi0 are the phase and period of a sinusoid fitted to a flat line and must be discarded. Class B - the dip-finder has lost the resonator and is fitting noise at a window edge: #1174 (59%), #1175 (74%), #1176 (74%), #1177 (94%), #1248 (79.5%). In these the reported \"resonator_frequency\" is essentially the swept window's edge. Six figures were read (#1174, #1175, #1225, #1238, #1248, #1271) and every one confirmed the classification.\n\nThree traps an answer-consuming system must not fall into: (1) |idle_offset - min_offset| = dv_phi0/2 holds EXACTLY in all nine fits - it is a parameterisation identity of the model, not an independent consistency check; (2) #1175 and #1176 agree on resonator_frequency to 17 kHz, which looks like reproducibility and is actually both fits landing on the same bottom window edge - agreement between two failures is not evidence; (3) the pair label does not say which resonator was probed - node.json's measure_qubit (\"control\" vs \"target\") does, and #1226 differs from #1225 by that flag alone, which is why its base frequency is 374 MHz away (q15's resonator, not a repeat of q14's).\n\nNo dv_phi0 anywhere in this session is a physical number: values range 0.118-0.954 V with no reproducibility, including 0.825 -> 0.239 V for the same coupler 60 s apart. Nothing in this session determines a coupler idle bias for any pair; those must come from 2Q nodes (CZ chevron / JAZZ / 18a zero-point).\n\nIdeal total 7 runs vs 9 actual, but the mis-spend is not uniform: q13-14 burned 4 runs where 2 sufficed (three of them varying window knobs that cannot fix an untrackable probe, while the one-parameter fix - measure_qubit=target - was never tried and is proven to work elsewhere in the same session); q14-15 spent 2 where 1 decided it; q10-15 and q14-18 were run optimally; and q9-10 was UNDER-spent - one failed probe with no retune, leaving the target unresolved.",
+ "adversarial_audit": "Verified every numeric claim against `D:\\work\\Customer_Codes\\CQT\\data\\2026-08-17\\` (node.json + data.json, all 12 runs of node 07 that day). The key is **not sound**. Defects, most severe first:\n\n**1. Scope \u2014 \"9 runs\" is a stratified sample, not the session (root of #2 and #3).** Twelve node-07 runs ran on 2026-08-17; the key's 9 are the `prep4.py::stratify` window (batch `b4_resonator_spectroscopy_vs_coupler_flux__3.json`). #1310 (04:55), #1323 (05:22) sit between/after in-scope runs \u2014 no time-gap justifies excluding them. The key nonetheless asserts \"9 runs, 5 pair targets\", \"in all nine of the session\".\n\n**2. q9-10 / #1248 \u2014 \"no retune exists in the record\" is false.** #1310 re-probes q9 (`measure_qubit=control` on q9-14): stored 5.259336052 GHz identical, fit 5.251386 vs #1248's 5.251388 \u2014 **2.5 kHz** apart, 79.5% of half-span both. q9's non-detection reproduces 1.5 h later. Correction: q9-10 is not \"under-spent/unresolved for want of a retune\"; the session already establishes q9's resonator is absent from \u00b110 MHz, and the honest target value is \"stored 5.2593 GHz is suspect\", not \"keep HOLDING\" it.\n\n**3. q14 \u2014 \"two independent runs agreeing to 60 kHz\" is cherry-picked.** #1323 is a third q14 probe (target on q9-14): 5.321887 GHz. With #1225 (5.322004) and #1271 (5.322064) the spread is **178 kHz, ~3\u00d7** the advertised 60 kHz. Lower `value_confidence` or cite all three.\n\n**4. Hindsight (q13-14 step 1).** The prescribed `measure_qubit\u2192target` is justified by \"#1225 and #1271\u2026 in this same session\" \u2014 55 min and 2.5 h *after* #1174. Future-blind at 01:46. (The parallel q9-10 citation of #1238 is legitimate \u2014 it precedes #1248.)\n\n**5. q13-14 ideal path isn't a path.** Step 2 is scored against #1175, which does **not** implement step 1 (kept `control`). And if step 1 *had* been followed the probe lands on q14 \u2014 demonstrably trackable \u2014 so the target would resolve, contradicting `unresolved:true` / \"no further setting of THIS node's knobs can produce a trustworthy number\".\n\n**6. #1177 wrongly marked wasted.** It is the decisive evidence: the fit *follows the window* (2.62 \u2192 0.28 MHz above the bottom edge when span went 20\u219210). The key leans on that (\"clipped by the window itself\") while calling it \"adding nothing\".\n\n**7. #1226 wrongly marked wasted.** It executes the very `measure_qubit=target` move the key prescribes as the high-yield fix elsewhere, and is the only probe bearing on \"was the coupler energised?\" \u2014 the risk the key calls unaddressable in q10-15's caveat.\n\n**8. Contradictions with the record.** (a) \"#1248's shift is the distance to the window edge\" \u2014 that distance is exactly 10.0 MHz (100%); the fit sits 2.05 MHz *inside*. (b) \"#1175/#1176 both landing on the same window edge\" \u2014 both are 2.6 MHz above it; they agree because the *frequency* window was unchanged (only flux moved). (c) \"four of the nine runs would have written garbage\" vs the key's own Class B of **five**. (d) q10-15 \"flat to better than 0.05 MHz\" \u2014 measured 53.1 kHz. (e) band read as 5.1717 (step 1) then 5.1725 (step 2).\n\nHeld up under hardest scrutiny: the `|idle_offset \u2212 min_offset| = dv_phi0/2` identity (exact in all 9) and every stored-frequency recovery via `resonator_frequency \u2212 frequency_shift`.\n\n\ud55c\uad6d\uc5b4 \uc694\uc57d\n- \ub2f5\uc548\ud0a4\ub294 **\ubd80\uc801\ud569**. \uc2e4\uc81c \uae30\ub85d(\uadf8\ub0a0 \ub178\ub4dc 07\uc740 9\uac1c\uac00 \uc544\ub2c8\ub77c **12\uac1c** \uc2e4\ud589)\uacfc \ub300\uc870\ud574 \uac80\uc99d\ud588\uc2b5\ub2c8\ub2e4.\n- \uac00\uc7a5 \ud070 \ubb38\uc81c: 9\uac1c\ub294 \uce35\ud654 \ud45c\ubcf8\uc778\ub370 \"\uc138\uc158 \uc804\uccb4\"\uc778 \uac83\ucc98\ub7fc \uc11c\uc220 \u2192 \uc774 \ub54c\ubb38\uc5d0 \ub450 \uac00\uc9c0 \uc815\ub7c9 \uc8fc\uc7a5\uc774 \ubb34\ub108\uc9d1\ub2c8\ub2e4. #1310\uc774 q9\ub97c \uc7ac\uce21\uc815(2.5 kHz \uc77c\uce58)\ud558\ubbc0\ub85c \"\uc7ac\uc870\uc815 \uae30\ub85d \uc5c6\uc74c/\uacfc\uc18c \uc2e4\ud589\"\uc740 \uc0ac\uc2e4\uc774 \uc544\ub2c8\uace0, #1323\uc744 \ud3ec\ud568\ud558\uba74 q14 \uc77c\uce58\ub3c4\ub294 60 kHz\uac00 \uc544\ub2c8\ub77c **178 kHz**\uc785\ub2c8\ub2e4.\n- \uadf8 \uc678: q13-14 1\ub2e8\uacc4 \uadfc\uac70\uac00 \ubbf8\ub798 \uc2e4\ud589(#1225/#1271) \uc778\uc6a9(\ud6c4\uacac\uc9c0\uba85), \uc774\uc0c1 \uacbd\ub85c\uac00 \uc2e4\uc81c \uc2e4\ud589\uacfc \uc5f0\uacb0\ub418\uc9c0 \uc54a\uc74c, #1177\u00b7#1226\uc744 \"\ub0ad\ube44\"\ub85c \uc798\ubabb \ud45c\uae30, \uadf8\ub9ac\uace0 \ucc3d \uac00\uc7a5\uc790\ub9ac \uac70\ub9ac\u00b7\"4\uac1c \uc2e4\ud589\"\u00b7\"0.05 MHz \uc774\ub0b4\" \ub4f1 \uae30\ub85d\uacfc \uc5b4\uae0b\ub098\ub294 \uc11c\uc220 5\uac74.\n- \uac80\uc99d\uc5d0\uc11c \ud1b5\uacfc\ud55c \ubd80\ubd84: dv_phi0/2 \ud56d\ub4f1\uc2dd(9\uac1c \uc804\ubd80 \uc815\ud655)\uacfc \uc800\uc7a5 \uc8fc\ud30c\uc218 \ubcf5\uc6d0 \uc0b0\uc2dd.",
+ "qubits": [
+  {
+   "qubit": "q13-14",
+   "runs_in_scope": [
+    "#1174_07_resonator_spectroscopy_vs_coupler_flux_014604",
+    "#1175_07_resonator_spectroscopy_vs_coupler_flux_014702",
+    "#1176_07_resonator_spectroscopy_vs_coupler_flux_014759",
+    "#1177_07_resonator_spectroscopy_vs_coupler_flux_014920"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#1174_07_resonator_spectroscopy_vs_coupler_flux_014604",
+     "expected_case": "The probed resonator (measure_qubit=control, i.e. q13) is NOT trackable. The amplitude map shows a flat BRIGHT band at ~5.1717 GHz - exactly the stored readout frequency (5,171,697,185 Hz, recoverable as resonator_frequency - frequency_shift) - while the node's dip-finder scatters over noise at the top and bottom of the 40 MHz window and a sinusoid is fitted to that scatter. Numeric tells available without the figure: |frequency_shift| = 11.79 MHz = 59% of the half-span (20 MHz), and dv_phi0 = 0.825 V leaves only ~1.2 periods inside the 1.0 V flux window, so no period is actually constrained.",
+     "expected_flags": [
+      "tracker_lost_resonator",
+      "shift_large_fraction_of_half_span",
+      "period_underconstrained",
+      "no_visible_modulation",
+      "node_writes_disabled(update_flux_min=False)"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Adopt nothing. One re-run: frequency_span_in_mhz 40 -> 20 centred on the stored 5.171697 GHz, AND measure_qubit control -> target so the probe sits on q14's resonator, which is demonstrably trackable in this same session (#1225 and #1271 track q14's dip cleanly at 5.3220 GHz); keep min/max_flux_offset -0.5/+0.5 V at 101 points (10 mV step). Secondary knob if the band still refuses to read as a dip: readout_amplitude_factor 1.0 -> 0.3-0.5. Rule for the next run: if the fitted line again lands within ~2 MHz of a window edge, or |shift| again exceeds ~50% of the half-span, stop - the tracker is on noise.",
+     "operator_did": "Re-ran at span 40 -> 20 MHz with the same +/-0.5 V flux window, but kept measure_qubit=control (#1175).",
+     "operator_was_right": "partly"
+    },
+    {
+     "step": 2,
+     "run": "#1175_07_resonator_spectroscopy_vs_coupler_flux_014702",
+     "expected_case": "The artifact reproduces on the better window and is now unambiguous: the resonator band sits flat at ~5.1725 GHz across the entire +/-0.5 V sweep while the fit's line hugs the bottom of the window (fitted 5.16431 GHz, 2.6 MHz above the 5.161697 GHz edge; |shift| 7.38 MHz = 74% of the half-span). dv_phi0 moved 0.825 -> 0.239 V between two runs of the same physical coupler taken ~60 s apart - a 3.5x swing in a quantity that cannot change - proving the sinusoid has no reproducible period. Physics verdict from the map: q13's resonator does not move with the q13-14 coupler flux. Fit verdict: this node produced no usable number.",
+     "expected_flags": [
+      "tracker_lost_resonator",
+      "shift_large_fraction_of_half_span",
+      "dv_phi0_unstable_across_runs",
+      "no_visible_modulation",
+      "flat_band_confirmed"
+     ],
+     "correct_decision": "reject_and_stop",
+     "correct_next_action": "Stop this node for q13-14 and record: 'q13 resonator flat at ~5.1717 GHz vs the q13-14 coupler over +/-0.5 V; no idle offset derivable from this node.' Write nothing (update_flux_min stays False). The remaining in-node knobs (frequency_span, flux window, num_flux_points) cannot rescue a resonator that is not presenting as a dip - the fix is upstream (re-run 02b/02c resonator spectroscopy for q13, or lower readout_amplitude_factor) or lateral (measure_qubit=target). The coupler idle bias for this pair must come from a 2Q node (CZ chevron / JAZZ), not from this trace.",
+     "operator_did": "Widened the flux window 4x to +/-2.0 V at unchanged 101 points (#1176), then narrowed the frequency span to 10 MHz and the flux window to +/-0.2 V (#1177). Never switched measure_qubit, never touched readout_amplitude_factor, never wrote anything.",
+     "operator_was_right": "no"
+    }
+   ],
+   "termination": {
+    "at_run": "#1175_07_resonator_spectroscopy_vs_coupler_flux_014702",
+    "reason": "Two consecutive runs show the same failure mode - a visibly flat resonator band with the dip-tracker locked onto the noise floor near a window edge - and the two fits disagree by 3.5x on dv_phi0 and by 0.30 V on idle_offset. No further setting of THIS node's knobs can produce a trustworthy number, and the node's writes are disabled anyway (update_flux_min=False), so every additional run is pure cost.",
+    "final_frequency": 5171697185,
+    "final_sweep_value": null,
+    "unresolved": true,
+    "value_evidence": "5,171,697,184.76 Hz is the chip's stored q13 readout frequency, recovered exactly and identically from all four runs as resonator_frequency - frequency_shift, and it coincides with the flat bright band visible in the #1174 and #1175 amplitude maps to within ~1-2 MHz (read off the figure axis). It is the value the target should keep HOLDING, not a new measurement - this node produced no valid resonator fit for q13. No idle_offset is derivable: the four fitted values (-0.2477, +0.0557, +0.0183, -0.0085 V) come with dv_phi0 spanning 0.118-0.825 V, i.e. no reproducible period, so final_sweep_value is null rather than a laundered pick.",
+    "value_confidence": "med"
+   },
+   "wasted_runs": [
+    {
+     "run": "#1176_07_resonator_spectroscopy_vs_coupler_flux_014759",
+     "why_wasted": "Flux window widened 4x (+/-2.0 V) at unchanged num_flux_points=101, so the step went 10 mV -> 40 mV. It reproduced the identical edge-hugging fit (-7.40 MHz vs -7.38 MHz, resonator_frequency matching #1175 to 17 kHz - the signature of both fits landing on the same window edge, not of physics repeating) and returned dv_phi0 = 0.118 V, an aliased half of the previous run's 0.239 V under a now-undersampled flux axis. Zero new information about the resonator or the coupler."
+    },
+    {
+     "run": "#1177_07_resonator_spectroscopy_vs_coupler_flux_014920",
+     "why_wasted": "Frequency span cut to 10 MHz and flux window to +/-0.2 V. This makes the diagnosis worse, not better: the fitted line ends up 0.28 MHz from the bottom window edge and |shift| = 4.72 MHz = 94% of the half-span - i.e. the reported excursion is now clipped by the window itself. Narrowing a window cannot recover a tracker that has lost the resonator, and the result contradicts the two prior runs while adding nothing."
+    }
+   ],
+   "poisoned_writes": [],
+   "ideal_length": 2,
+   "actual_length": 4,
+   "confidence": "high",
+   "caveats": "Figures read for #1174 and #1175 (this is what converts 'suspicious fit' into 'the band is flat and the tracker is on noise'); #1176 and #1177 were judged from the numeric edge-hugging signature and the shared base frequency, not from their figures. NOTE the trap: |idle_offset - min_offset| = dv_phi0/2 holds exactly in all four fits (and in all nine of the session) - that is a parameterisation identity of the sinusoidal model, NOT an independent consistency check, and must never be used as evidence that a fit is sound. Also note that no write was possible in any run (update_flux_min=False), so the operator's zero patches are structural rather than a judgement call - had the flag been on, run #1174 or #1177 would have written a garbage coupler idle bias."
+  },
+  {
+   "qubit": "q14-15",
+   "runs_in_scope": [
+    "#1225_07_resonator_spectroscopy_vs_coupler_flux_024116",
+    "#1226_07_resonator_spectroscopy_vs_coupler_flux_024527"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#1225_07_resonator_spectroscopy_vs_coupler_flux_024116",
+     "expected_case": "A clean measurement with the opposite verdict to q13-14: a real resonator dip (measure_qubit=control, q14) is tracked at ~5.3220 GHz across all 101 flux points and it is FLAT. The fitted excursion is 0.236 MHz = 2.4% of the 10 MHz half-span, which is dip-tracking scatter, not modulation. This is the family's legitimate 'weak or absent modulation is correct physics' case. The fitted idle_offset (-0.0237 V) and dv_phi0 (0.575 V, ~1.7 periods in the window) are the phase and period of a sinusoid fitted to a flat line and carry no information.",
+     "expected_flags": [
+      "resonator_dip_tracked",
+      "no_modulation_is_physics",
+      "flat_trace_fit_phase_is_noise",
+      "resonator_frequency_confirmed",
+      "node_writes_disabled(update_flux_min=False)"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Adopt the physics result and STOP: q14 readout resonator at ~5.3220 GHz, flat vs the q14-15 coupler flux to within 0.24 MHz over the full +/-0.5 V. Leave the coupler bias where it is (sweep value 0.0 V - the trace expresses no preference) and write nothing: idle_offset from a flat trace is noise, and update_flux_min must stay False. The q14-15 coupler idle bias has to be set by a 2Q node (CZ chevron / JAZZ / node 18a zero-point), not here. No knob of this node needs changing - a repeat would only re-measure a flat line.",
+     "operator_did": "Re-ran the identical settings with measure_qubit control -> target, probing q15's resonator instead (#1226).",
+     "operator_was_right": "partly"
+    }
+   ],
+   "termination": {
+    "at_run": "#1225_07_resonator_spectroscopy_vs_coupler_flux_024116",
+    "reason": "The single run already answers the question the node exists to answer, and answers it definitively: a genuine dip is tracked over all 101 coupler-flux points and does not move. There is nothing to converge to and nothing to write.",
+    "final_frequency": 5322240188,
+    "final_sweep_value": 0,
+    "unresolved": false,
+    "value_evidence": "5,322,240,187.7 Hz is q14's stored readout frequency, recovered exactly as resonator_frequency - frequency_shift and reproduced bit-identically in #1271 (a different pair, same probed qubit). The measured dip sits at 5,322,004,174 Hz here and 5,322,064,464 Hz in #1271 - two independent runs agreeing to 60 kHz, and both 0.18-0.24 MHz below the stored value, which is inside the flat-trace tracking scatter. So the target should CONTINUE to hold 5,322,240,188 Hz; this node is not the authority to move a readout frequency (that is 02b/02c) and its writes were disabled. final_sweep_value 0.0 V means 'leave the coupler bias unchanged': the swept axis is an offset about the present bias and the response is flat, so no offset is preferred - explicitly not the fitted -0.0237 V.",
+    "value_confidence": "high"
+   },
+   "wasted_runs": [
+    {
+     "run": "#1226_07_resonator_spectroscopy_vs_coupler_flux_024527",
+     "why_wasted": "Not a repeat and not worthless in absolute terms - measure_qubit=target moved the probe to q15's resonator (stored 5,696,287,177 Hz, dip fitted at 5,695,589,867 Hz) - but it could not change this target's decision, and it did not: excursion 0.697 MHz = 7% of the half-span, dv_phi0 0.448 V vs 0.575 V for the same coupler in the previous run, i.e. the same flat-trace-fitted-with-a-sinusoid result. The ideal path had already terminated on the coupler question; the partner-resonator probe is bookkeeping (it does confirm q15's readout frequency), not calibration."
+    }
+   ],
+   "poisoned_writes": [],
+   "ideal_length": 1,
+   "actual_length": 2,
+   "confidence": "high",
+   "caveats": "Figure read for #1225 (the tracked, flat dip is the whole basis of the 'no modulation is real physics' verdict). #1226's figure was NOT read - its verdict rests on its numbers (7% excursion, unreproducible dv_phi0) and on the fact that it probes a different resonator, so the confidence attached to q15's 5.69559 GHz dip is lower than to q14's. The pair label alone does not tell you which resonator was probed: measure_qubit ('control' vs 'target') in node.json does, and the difference in base frequency (5.3222 vs 5.6963 GHz) is the giveaway in the fit record."
+  },
+  {
+   "qubit": "q10-15",
+   "runs_in_scope": [
+    "#1238_07_resonator_spectroscopy_vs_coupler_flux_030255"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#1238_07_resonator_spectroscopy_vs_coupler_flux_030255",
+     "expected_case": "The cleanest 'no modulation' case in the session: a sharp resonator dip (measure_qubit=control, q10) is tracked at ~5.4227 GHz across all 101 coupler-flux points and is perfectly flat. The fitted excursion is 53 kHz - 0.5% of the 10 MHz half-span, and almost exactly ONE frequency step (50 kHz), i.e. below the measurement's own resolution. The fitted idle_offset (+0.0374 V) and dv_phi0 (0.672 V) are the phase and period of a sinusoid fitted to a flat line.",
+     "expected_flags": [
+      "resonator_dip_tracked",
+      "no_modulation_is_physics",
+      "excursion_below_frequency_step",
+      "flat_trace_fit_phase_is_noise",
+      "node_writes_disabled(update_flux_min=False)"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Adopt and STOP: q10 readout resonator ~5.4227 GHz, flat vs the q10-15 coupler flux to better than 0.05 MHz over +/-0.5 V. Leave the coupler bias unchanged (0.0 V offset) and write nothing. Only if a coupler-mediated shift is genuinely expected for this pair would one confirming run be justified - num_shots 100 -> 400 and frequency_step 0.05 -> 0.02 MHz, same +/-0.5 V window - and its only possible outcome is to bound the shift below ~20 kHz. The coupler idle bias belongs to a 2Q node.",
+     "operator_did": "Ran once and moved on to the next pair without writing anything.",
+     "operator_was_right": "yes"
+    }
+   ],
+   "termination": {
+    "at_run": "#1238_07_resonator_spectroscopy_vs_coupler_flux_030255",
+    "reason": "One run with a cleanly tracked dip over the full flux sweep settles the question; the response is flat to within one frequency step. Nothing to converge to, nothing to write.",
+    "final_frequency": 5422745376,
+    "final_sweep_value": 0,
+    "unresolved": false,
+    "value_evidence": "5,422,745,376.4 Hz is q10's stored readout frequency, recovered exactly as resonator_frequency - frequency_shift; the measured dip in the amplitude map lies at 5,422,692,234 Hz, 53 kHz below it, which is one frequency step and well inside the tracking scatter - so the stored value stands and should continue to be held. final_sweep_value 0.0 V means leave the coupler bias unchanged: the trace is flat, so the fitted +0.0374 V expresses no physical preference and must not be written.",
+    "value_confidence": "high"
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "ideal_length": 1,
+   "actual_length": 1,
+   "confidence": "high",
+   "caveats": "Figure read for this run. The verdict rests on a single unrepeated run - but the claim being made ('flat') is supported by 101 flux points within that one run, so repetition would add little; the residual risk is systematic (e.g. the coupler line not actually being driven), which no repeat of the same node would expose either. Confidence in the frequency is high; confidence that the COUPLER was genuinely energised is not something this record can establish."
+  },
+  {
+   "qubit": "q9-10",
+   "runs_in_scope": [
+    "#1248_07_resonator_spectroscopy_vs_coupler_flux_031541"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#1248_07_resonator_spectroscopy_vs_coupler_flux_031541",
+     "expected_case": "A non-measurement: there is NO resonator dip anywhere in the +/-10 MHz window around q9's stored 5,259,336,052 Hz (measure_qubit=control). The amplitude map is a smooth vertical gradient with no feature, and the 'dip positions' pin to the very bottom of the window at ~5.2512 GHz. So the reported frequency_shift of -7.95 MHz is simply the distance from the stored frequency to the window edge (79.5% of the half-span) and dv_phi0 = 0.910 V - 1.1 periods in the 1.0 V flux window - is a sinusoid fitted to that edge line. success:true here means 'the fitter returned', not 'a resonator was seen'.",
+     "expected_flags": [
+      "no_resonator_dip_in_window",
+      "tracker_lost_resonator",
+      "shift_large_fraction_of_half_span",
+      "period_underconstrained",
+      "node_writes_disabled(update_flux_min=False)"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Adopt nothing. One cheap retune, in this order: (a) measure_qubit control -> target, putting the probe on q10's resonator, which this very session tracks cleanly at 5.4227 GHz (#1238) - one parameter, high expected yield; or if q9 itself is the target of interest, (b) relocate q9's resonator first with 02b/02c and/or lower readout_amplitude_factor from 1.0, then repeat here at span 20 MHz / flux +/-0.5 V / 101 points. Do NOT simply widen frequency_span on the current setting - that only extends the same featureless gradient. Stop rule for the retune: a dip must be visible in the map before any idle_offset is considered.",
+     "operator_did": "Ran once and moved on to another pair; no retune, no write.",
+     "operator_was_right": "partly"
+    }
+   ],
+   "termination": {
+    "at_run": "#1248_07_resonator_spectroscopy_vs_coupler_flux_031541",
+    "reason": "The only run for this pair measured nothing - no resonator feature was in the window - so the target never reached a trustworthy value. A correct system stops adopting here and schedules one retune; since no retune exists in the record, the target terminates unresolved.",
+    "final_frequency": 5259336052,
+    "final_sweep_value": null,
+    "unresolved": true,
+    "value_evidence": "5,259,336,052.5 Hz is q9's stored readout frequency, recovered exactly as resonator_frequency - frequency_shift. It is what the target should keep HOLDING (unchanged), and it is explicitly NOT confirmed: this run found no dip within +/-10 MHz of it, which is itself a mild warning that the stored value or the readout setup may be off. The fitted 5,251,388,074 Hz is the bottom edge of the swept window and must never be adopted. No idle_offset is derivable at all - nothing modulating was observed.",
+    "value_confidence": "low"
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "ideal_length": 2,
+   "actual_length": 1,
+   "confidence": "high",
+   "caveats": "Figure read for this run - the featureless gradient is what proves the fit is on a window edge rather than on physics. ideal_length (2) EXCEEDS actual_length (1) here: the ideal path prescribes one follow-up run (measure_qubit=target, or a resonator relocation first) which does not exist in the record, so the second step could not be scored against a real run. This is the one target in the session where the operator under-spent rather than over-spent: stopping was harmless only because writes were disabled."
+  },
+  {
+   "qubit": "q14-18",
+   "runs_in_scope": [
+    "#1271_07_resonator_spectroscopy_vs_coupler_flux_041455"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#1271_07_resonator_spectroscopy_vs_coupler_flux_041455",
+     "expected_case": "A valid 'no modulation' measurement on q14's resonator again (measure_qubit=control): a real dip is tracked at ~5.3221 GHz across all 101 coupler-flux points and it is flat - fitted excursion 0.176 MHz = 1.8% of the 10 MHz half-span, i.e. tracking scatter. The stored base recovered here (5,322,240,187.7 Hz) is bit-identical to the one recovered in #1225, confirming the same physical resonator is being probed. idle_offset (+0.0161 V) and dv_phi0 (0.954 V - barely one period in the window) are sinusoid parameters fitted to a flat line.",
+     "expected_flags": [
+      "resonator_dip_tracked",
+      "no_modulation_is_physics",
+      "flat_trace_fit_phase_is_noise",
+      "cross_pair_resonator_reproducibility",
+      "node_writes_disabled(update_flux_min=False)"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Adopt and STOP: q14 readout resonator ~5.3221 GHz, flat vs the q14-18 coupler flux to within 0.18 MHz over +/-0.5 V. Leave the coupler bias unchanged (0.0 V offset), write nothing, and take the q14-18 coupler idle bias from a 2Q node. No knob change is warranted.",
+     "operator_did": "Ran once, wrote nothing, ended the session.",
+     "operator_was_right": "yes"
+    }
+   ],
+   "termination": {
+    "at_run": "#1271_07_resonator_spectroscopy_vs_coupler_flux_041455",
+    "reason": "One clean run over the full flux sweep shows a tracked, flat resonator: the question is answered and there is nothing to write.",
+    "final_frequency": 5322240188,
+    "final_sweep_value": 0,
+    "unresolved": false,
+    "value_evidence": "5,322,240,187.7 Hz is q14's stored readout frequency, recovered identically here and in #1225 (two different pairs, ~90 minutes apart). The measured dip is at 5,322,064,464 Hz here and 5,322,004,174 Hz in #1225 - independent agreement to 60 kHz, both ~0.2 MHz under the stored value, which is within flat-trace tracking scatter and is not this node's business to correct. final_sweep_value 0.0 V = leave the coupler bias unchanged; the fitted +0.0161 V is the phase of a sinusoid on a flat line.",
+    "value_confidence": "high"
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "ideal_length": 1,
+   "actual_length": 1,
+   "confidence": "high",
+   "caveats": "Figure read for this run. Single-run, but the flatness claim is carried by 101 flux points and is independently corroborated for the same resonator by #1225. What this run does NOT establish is anything about q18 (never probed) or whether the q14-18 coupler line is actually being driven."
+  }
+ ],
+ "runs": [
+  "#1174_07_resonator_spectroscopy_vs_coupler_flux_014604",
+  "#1175_07_resonator_spectroscopy_vs_coupler_flux_014702",
+  "#1176_07_resonator_spectroscopy_vs_coupler_flux_014759",
+  "#1177_07_resonator_spectroscopy_vs_coupler_flux_014920",
+  "#1225_07_resonator_spectroscopy_vs_coupler_flux_024116",
+  "#1226_07_resonator_spectroscopy_vs_coupler_flux_024527",
+  "#1238_07_resonator_spectroscopy_vs_coupler_flux_030255",
+  "#1248_07_resonator_spectroscopy_vs_coupler_flux_031541",
+  "#1271_07_resonator_spectroscopy_vs_coupler_flux_041455"
+ ],
+ "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: judging the system on runs the key's author never examined is neither fair nor sound \u2014 it can adopt from a run the key has no opinion about, and the mismatch showed up as a 12-point score difference between two harnesses reading the same archive."
+}

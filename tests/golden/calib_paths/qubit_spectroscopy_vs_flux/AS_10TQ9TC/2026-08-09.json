@@ -1,0 +1,440 @@
+{
+ "schema": "smgolden/v2",
+ "family": "qubit_spectroscopy_vs_flux",
+ "chip": "AS_10TQ9TC",
+ "session": "2026-08-09",
+ "session_id": "qubit_spectroscopy_vs_flux__AS_10TQ9TC__2026-08-09",
+ "authored": "2026-08-21",
+ "status": "hindsight-authored + adversarial audit",
+ "provenance": "the author saw the whole session and was free to judge the operator wrong; the system under test never sees past its cursor",
+ "session_notes": "14 runs of 09_qubit_spectroscopy_vs_flux on 2026-08-09 (AS_10TQ9TC), two blocks: a morning block (#34-#47) covering q6 and q7, and an evening block (#237-#245) covering q5, q6, q7, q8 after an out-of-band change to the flux biases (q6's joint_offset moved from 0.13670 to 0.11779 between #47 and #239 via runs outside this family). Four targets, 32 target-runs, of which 12 fits failed. An ideal system needed 9 distinct runs (#34, #37, #38, #39, #46, #47, #237, #244, #245) against the operator's 14, and 12 ideal target-steps against 32 actual.\n\nThree structural findings that hindsight makes unambiguous:\n\n(1) Fit failures on VISIBLE data. q5 (#237) and q7 (#34-#38, #237-#244) failed while their arches are plainly present in the figures. For q7 every one of 9 failures was inside a multi-target run and all 3 successes were solo \u2014 the actionable knob is the target list plus shots, not the frequency span. For q5 the blocker was a swept-flux window of only +/-0.04 V (too little curvature), opened to +/-0.085 V at #244, where it fit immediately. Neither remedy was tried until 4-5 runs had been burned.\n\n(2) The success flag and vertex_extrapolated cannot be trusted alone. #35/#36 report success for q6 with orientation 'lower', a SIGN-FLIPPED quad_term and frequency shifts of -88 and -236 MHz (wrong branch); #37 reports success with vertex_extrapolated = false while the figure shows the apex pinned to the swept-flux boundary. The reliable gates in this family are: idle_offset strictly interior to [arch_flux_min, arch_flux_max] by more than one flux step; quad_term negative and within roughly -5e9..-1e10 Hz/V^2 for this chip; |frequency_shift| small against the anchor; orientation 'upper' consistent with a negative quad_term. dv_phi0 and m_pH are NaN in every run, so no flux-period cross-check exists.\n\n(3) The joint_offset increment did not converge on first application. On q6 (#38 -14.7 mV, then #47 -10.4 mV) and q7 (#39 -9.9 mV, then #46 -10.4 mV) the residual after the correction was as large as the correction. This is the reason the one confirmation run per target is in the ideal path \u2014 and, if a third identical residual appeared, the correct response would be to flag the flux line rather than run 09 again. q5 never got that confirmation, which is why it is marked unresolved.\n\nOperator credit: the three bad early q6 fits (#34, #35, #36) and the edge-vertex #37 were correctly left unwritten. Operator debt: #243 is the one damaging run \u2014 it wrote an 11.1 mV idle_offset into q6's bias and a 7.1 mV sweet-spot flux into q8's record, both outliers against three preceding runs; and q8, the cleanest target of the session, never received f_01, xy.RF_frequency, quad_term or joint_offset at all.\n\nFigures consulted (4 of 6 allowed): #244 (q5 arch clean and interior \u2014 the basis for adopting q5's frequency while still calling the target unresolved; also shows q7's unfitted-but-visible apex at ~3.843 GHz), #37 (q6 apex pinned to the flux-sweep edge \u2014 the basis for rejecting it), #38 (q6 full parabola, interior vertex \u2014 the basis for adopting), #237 (q8 clean shallow arch with vertex at ~0 and q5's visible-but-unfitted arch).",
+ "adversarial_audit": "**Defects found (record-contradicting or unfair):**\n\n**q5 \u2014 the diagnosis and the graded \"ideal\" retune are both wrong (steps 1\u20132).** Params at #243 (fail) and #244 (success) are *identical* except the target list: both 120 shots, span 60 MHz, step 2.0, 31 flux points, serial. Nothing that could set q5's flux window changed. So \"the flux window was opened to \u00b10.085 V at #244\" is false; the operative change was dropping q6+q8 \u2014 the same co-target failure mode the key correctly identifies for q7. Corrections: step-1 `expected_flags` should drop `flux_window_too_narrow` / `stored_quad_term_too_large`; `correct_next_action` should be \"run q5 with \u22642 targets\", not \"raise span to ~60\". Note the key's own prescribed span 100\u219260 *was* tried (#238) and failed three times.\n\n**q5 \u2014 fabricated evidence.** q5's fit is NaN at #237, so `arch_flux_min/max` is NaN; \"\u00b10.04 V window\" is read off q6/q8's arch, and \"~6e10 Hz/V\u00b2\" is arithmetic on that borrowed number. Worse, `arch_flux_*` is not the swept window at all: q6 at #34 vs #37 has the same span (50 MHz) and no intervening patch, yet arch goes \u00b10.5 \u2192 \u22120.05..+0.005. Every window claim built on arch bounds (q5 step 1/2, q7 step 4's \"\u00b10.09 V\") is unsupported. Also \"corrected |quad_term| ~9e9\" is #244's answer used as a step-1 input \u2014 hindsight.\n\n**q6 \u2014 termination contradicts its own evidence.** `value_evidence` cites #237/#238/#239 residuals (\u22120.43/\u22120.33/\u22120.54 mV) as confirming the #47 bias 0.13670, while `caveats` records an out-of-band move to ~0.11779 before #239. Those residuals confirm ~0.1178, not 0.13670. Fix: either terminate later or mark q6's flux point context-dependent, not `unresolved:false, confidence:high`.\n\n**q6 \u2014 #237 is not wasted.** After a 19 mV out-of-band bias change, a re-measure is necessary information, and the key itself leans on it. Same for #238/#239 as the corroboration set.\n\n**q6 \u2014 miscounts.** \"five interior-vertex values span only 0.7 MHz\": there are six (#38,#47,#237,#238,#239,#243), spanning 1.30 MHz. #37 inflation is ~30\u201374%, not 40\u201375%.\n\n**q7 \u2014 hindsight at step 1.** #34's `expected_case` justifies itself with the #37/#38 figures, unavailable at #34. Also unnoted: q7's bias moved out of band \u22123.3 mV between #46 (0.10719) and #245 (pre-run 0.10386), which confounds \"converged residual\" and the \"2.7 MHz monotonic drift\".\n\n**q8 \u2014 unscoreable target.** \"apply it or leave the bias alone, either is defensible\" plus \"ideal_length 1 or 2 both defensible\" gives no gradeable answer.\n\n**session_notes counts.** 14 failed fits, not 12; q7 failed 10 of 13, not 9.",
+ "qubits": [
+  {
+   "qubit": "q5",
+   "runs_in_scope": [
+    "#237_09_qubit_spectroscopy_vs_flux_202229",
+    "#238_09_qubit_spectroscopy_vs_flux_202410",
+    "#239_09_qubit_spectroscopy_vs_flux_202544",
+    "#243_09_qubit_spectroscopy_vs_flux_204914",
+    "#244_09_qubit_spectroscopy_vs_flux_205311"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#237_09_qubit_spectroscopy_vs_flux_202229",
+     "expected_case": "Fit fails (all fields NaN) while two of the three co-targets fit. The figure shows a clearly resolved q5 arch with its apex at ~3.945 GHz near flux -0.01 V, so this is a FIT failure on adequate data, not an absent signal: the swept flux window is only +/-0.04 V, which covers little more than the apex region, so there is too little curvature for a parabola fit to lock. The narrow window follows from a stored quad_term that is far too large (100 MHz span / 0.04^2 implies ~6e10 Hz/V^2 vs the true -9.2e9).",
+     "expected_flags": [
+      "fit_failed",
+      "signal_visible_in_figure",
+      "flux_window_too_narrow",
+      "stored_quad_term_too_large",
+      "co_targets_succeeded"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Do not write. Re-run q5 with the flux window widened to about +/-0.08 V (raise frequency_span_in_mhz to ~60 against a corrected |quad_term| of ~9e9, or seed the smaller quad term), cut the run to at most two targets, num_shots >= 120, frequency_step 2.0 MHz, num_flux_points 31.",
+     "operator_did": "Did not write; re-ran the identical 4-qubit configuration three more times (#238 shots 30->90 and span 100->60, #239 multiplexed->serial, #243 shots 90->120) \u2014 none of which widened q5's flux window \u2014 before finally cutting the run to q5+q7 at #244.",
+     "operator_was_right": "no"
+    },
+    {
+     "step": 2,
+     "run": "#244_09_qubit_spectroscopy_vs_flux_205311",
+     "expected_case": "With only one co-target and a +/-0.085 V flux window the fit succeeds: figure-verified full clean arch, the drawn parabola tracks the data, interior vertex at -0.01459 V (well inside arch -0.084..0.054), apex 3.944653 GHz, quad_term -9.16e9 Hz/V^2, frequency_shift +893 kHz vs the anchor. All deterministic gates pass, but this is a SINGLE measurement of a target that failed four times and the -14.6 mV bias correction is large.",
+     "expected_flags": [
+      "interior_vertex",
+      "clean_arch_figure_verified",
+      "plausible_quad_term",
+      "single_measurement",
+      "large_uncorroborated_bias_correction"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = xy.RF_frequency = 3.944653218e9, freq_vs_flux_01_quad_term = -9.160e9, extras/upper_sweet_spot_flux = -0.0145862 and _frequency = 3.944653218e9, and increment z.joint_offset by -0.0145862 to 0.14673937. Then re-run q5 ONCE at these same settings (2 targets, span 60 MHz, 31 flux points, 120 shots) to check the residual idle_offset \u2014 on both q6 and q7 the first correction of this size left an equally large residual, so convergence must be verified, not assumed.",
+     "operator_did": "Wrote f_01, xy.RF_frequency, quad_term and joint_offset (0.14673937) \u2014 omitting the extras/upper_sweet_spot_* pair it wrote for the other qubits \u2014 and never measured q5 again in this session.",
+     "operator_was_right": "partly"
+    }
+   ],
+   "termination": {
+    "at_run": "#244_09_qubit_spectroscopy_vs_flux_205311",
+    "reason": "#244 is the only run in the session in which q5's fit succeeds, and its gates all pass (interior vertex, plausible quad term, sub-MHz-scale shift, figure-verified arch). A correct system stops calling the family here only because the session provides nothing further \u2014 the confirmation run this target actually needs does not exist in the record.",
+    "final_frequency": 3944653218.422523,
+    "final_sweep_value": -0.01458619689336128,
+    "unresolved": true,
+    "value_confidence": "low",
+    "value_evidence": "Single successful fit (#244), preceded by four consecutive failures (#237/#238/#239/#243). The #244 figure independently supports the number: a clean, well-sampled arch whose apex sits at ~3.945 GHz with the fitted parabola overlaying the data, vertex interior at -0.0146 V. Nothing in the session corroborates it, and the -14.6 mV joint-offset increment was never re-measured; the same-sized first corrections on q6 (-0.0147 V at #38) and q7 (-0.0099 V at #39) both left an undiminished residual on the next run, so q5's flux operating point should be treated as unverified."
+   },
+   "wasted_runs": [
+    {
+     "run": "#238_09_qubit_spectroscopy_vs_flux_202410",
+     "why_wasted": "Repeat of the #237 configuration with only shots/span/flux-point changes; q5's flux window stayed too narrow, so the fit failed identically. Nothing was learned."
+    },
+    {
+     "run": "#239_09_qubit_spectroscopy_vs_flux_202544",
+     "why_wasted": "Third identical-in-substance attempt (only multiplexed->serial changed); q5 failed again. Serialization was never the failure mode \u2014 the fit failed on visible data at #237."
+    },
+    {
+     "run": "#243_09_qubit_spectroscopy_vs_flux_204914",
+     "why_wasted": "Fourth attempt, shots 90->120 only. More shots cannot fix a flux window that carries too little curvature; q5 failed again."
+    }
+   ],
+   "poisoned_writes": [],
+   "ideal_length": 2,
+   "actual_length": 5,
+   "confidence": "med",
+   "caveats": "The frequency is the credible half of this answer; the flux operating point is not. The record contains no second q5 measurement, so 3.944653 GHz rests entirely on one run \u2014 trustworthy in shape (figure-verified arch, interior vertex) but with no repeat to bound its run-to-run spread; on q6 and q7 the same family spread 0.6-2.7 MHz between consecutive good runs, so treat q5 as 3.9447 GHz +/- ~2 MHz. quad_term -9.16e9 is 60-80% larger in magnitude than every other qubit's in this session (-5.1e9..-6.9e9); that may be genuine for q5 but is uncorroborated. The operator also skipped q5's extras/upper_sweet_spot_* write, so the chip records no sweet-spot flux for this qubit."
+  },
+  {
+   "qubit": "q6",
+   "runs_in_scope": [
+    "#34_09_qubit_spectroscopy_vs_flux_050809",
+    "#35_09_qubit_spectroscopy_vs_flux_051149",
+    "#36_09_qubit_spectroscopy_vs_flux_052344",
+    "#37_09_qubit_spectroscopy_vs_flux_052921",
+    "#38_09_qubit_spectroscopy_vs_flux_053538",
+    "#47_09_qubit_spectroscopy_vs_flux_061227",
+    "#237_09_qubit_spectroscopy_vs_flux_202229",
+    "#238_09_qubit_spectroscopy_vs_flux_202410",
+    "#239_09_qubit_spectroscopy_vs_flux_202544",
+    "#243_09_qubit_spectroscopy_vs_flux_204914"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#34_09_qubit_spectroscopy_vs_flux_050809",
+     "expected_case": "Fit reports success but is internally impossible: the arch is claimed over the entire swept range (arch_flux_min/max = -0.5/+0.5) while the frequency window is only 50 MHz wide \u2014 a real arch spanning +/-0.5 V would move the qubit by hundreds of MHz. quad_term = -3.19e7 Hz/V^2 is ~170x smaller in magnitude than the value this same qubit converges to (-5.1e9..-6.9e9), i.e. an essentially flat 'arch'. The sweet spot is being read off a flat, mostly-empty map.",
+     "expected_flags": [
+      "implausible_quad_term",
+      "arch_spans_full_flux_sweep",
+      "frequency_window_too_narrow_for_flux_span",
+      "success_flag_untrustworthy"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Do not write. Keep frequency_span_in_mhz = 50 but collapse the flux sweep to about +/-0.05 V around the present bias (num_flux_points 21) so the 50 MHz window can actually contain the arch; raise num_shots to ~100 and use frequency_step 1-2 MHz. Do NOT widen the frequency span \u2014 the map is flux-over-swept, not frequency-under-swept.",
+     "operator_did": "Correctly wrote nothing, but turned the wrong knob: widened frequency_span_in_mhz 50 -> 200 at #35 and -> 400 at #36.",
+     "operator_was_right": "partly"
+    },
+    {
+     "step": 2,
+     "run": "#37_09_qubit_spectroscopy_vs_flux_052921",
+     "expected_case": "Half-arch only. The fitted vertex (-0.048574 V) sits ON the edge of the fitted flux extent (arch_flux_min = -0.05) and the figure confirms it: only the descending branch carries signal, the map is empty for flux > ~+0.005 V, and the parabola's apex is pinned to the left boundary. quad_term -8.95e9 is inflated ~40-75% relative to the interior-vertex value. The sweet spot is a boundary extrapolation even though vertex_extrapolated reads false.",
+     "expected_flags": [
+      "vertex_at_flux_sweep_edge",
+      "half_arch_only",
+      "extrapolated_sweet_spot",
+      "quad_term_inflated",
+      "vertex_extrapolated_flag_unreliable"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Do not write. Re-center the flux sweep about -0.015 V (or make it symmetric +/-0.05 V about the new estimate) so the apex sits in the interior; hold frequency_span_in_mhz = 50, num_flux_points = 21, num_shots = 100, frequency_step 1-2 MHz.",
+     "operator_did": "Wrote nothing and re-ran with frequency_step 1.0 -> 2.0, which produced a re-centred window at #38.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 3,
+     "run": "#38_09_qubit_spectroscopy_vs_flux_053538",
+     "expected_case": "First trustworthy q6 fit. Figure shows a complete parabola with an interior vertex at -0.014721 V (inside arch -0.05..+0.035), apex 4.204176 GHz, quad_term -6.58e9 Hz/V^2 (plausible band), frequency_shift only -11.4 kHz against the anchor. Every deterministic gate passes.",
+     "expected_flags": [
+      "interior_vertex",
+      "full_arch",
+      "plausible_quad_term",
+      "small_frequency_shift",
+      "accept"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = xy.RF_frequency = 4.204176142e9, freq_vs_flux_01_quad_term = -6.5789e9, extras/upper_sweet_spot_flux = -0.0147214, extras/upper_sweet_spot_frequency = 4.204176142e9, and increment z.joint_offset by -0.0147214 to 0.14714997. Then run ONE confirmation at the same settings to verify the residual idle_offset collapses.",
+     "operator_did": "Exactly this \u2014 the full six-patch write including joint_offset 0.14714997.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 4,
+     "run": "#47_09_qubit_spectroscopy_vs_flux_061227",
+     "expected_case": "Confirmation run (80 shots, span 50, step 1.0, 21 flux points): interior vertex, apex 4.203568 GHz \u2014 0.6 MHz below #38, inside this family's own run-to-run spread \u2014 quad_term -6.86e9, consistent. But the residual idle_offset is -0.010449 V, nearly as large as the correction just applied: the #38 increment did not bring the bias to the sweet spot.",
+     "expected_flags": [
+      "confirms_frequency_within_1MHz",
+      "interior_vertex",
+      "residual_offset_not_converged"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Apply the residual (increment z.joint_offset by -0.0104486 to 0.13670138), hold f_01 = xy.RF_frequency = 4.203568046e9 and quad_term = -6.859e9, and STOP calling this family for q6. If a later run again returns |idle_offset| ~ 0.01 V, the finding is a flux-line/settling problem to investigate, not a reason to re-run 09.",
+     "operator_did": "Wrote the full six patches, then re-measured q6 four more times (#237, #238, #239, #243) and re-wrote it twice more.",
+     "operator_was_right": "partly"
+    }
+   ],
+   "termination": {
+    "at_run": "#47_09_qubit_spectroscopy_vs_flux_061227",
+    "reason": "By #47 the arch is fully sampled, the vertex is interior, two independent runs agree on the apex to 0.6 MHz and on quad_term to ~4%, and the residual bias correction has been applied. Everything after this run for q6 (#237/#238/#239/#243) re-measures an already-converged target; the last of them actively degrades it.",
+    "final_frequency": 4203568046.1417785,
+    "final_sweep_value": -0.0104485945945946,
+    "unresolved": false,
+    "value_confidence": "high",
+    "value_evidence": "Six independent successful fits after the flux window was fixed cluster tightly: 4.204920 (#37, edge-vertex, discounted), 4.204176 (#38), 4.203568 (#47), 4.203557 (#237), 4.202874 (#238), 4.203128 (#239), 4.203160 (#243) GHz \u2014 the five interior-vertex values span only 0.7 MHz. quad_term across the same runs is -5.13e9..-6.86e9. The idle_offset chosen at #47 increments z.joint_offset to 0.13670138 V; the evening runs #237/#238/#239 then report residuals of only -0.43, -0.33 and -0.54 mV, confirming q6 does sit on its sweet spot once converged."
+   },
+   "wasted_runs": [
+    {
+     "run": "#35_09_qubit_spectroscopy_vs_flux_051149",
+     "why_wasted": "Wrong knob: widening frequency_span_in_mhz 50 -> 200 while leaving the over-wide flux sweep alone. The fitter locked onto the wrong branch \u2014 orientation 'lower' with a POSITIVE quad_term (+2.68e7) and a -88.4 MHz frequency shift, both physically incompatible with the upper sweet spot this qubit actually has."
+    },
+    {
+     "run": "#36_09_qubit_spectroscopy_vs_flux_052344",
+     "why_wasted": "Same wrong knob pushed further (span 400 MHz, 51 flux points): again orientation 'lower', quad_term +3.89e9 (sign-flipped), frequency shift -236 MHz. A second confirmation that widening the frequency span cannot fix an over-wide flux sweep."
+    },
+    {
+     "run": "#237_09_qubit_spectroscopy_vs_flux_202229",
+     "why_wasted": "Re-measurement of a converged target; the fit merely restates 4.203557 GHz with a 0.43 mV residual. No write followed, so not harmful \u2014 just unnecessary for q6."
+    },
+    {
+     "run": "#238_09_qubit_spectroscopy_vs_flux_202410",
+     "why_wasted": "Second re-measurement of the same converged value (4.202874 GHz, residual 0.33 mV); no write."
+    },
+    {
+     "run": "#239_09_qubit_spectroscopy_vs_flux_202544",
+     "why_wasted": "Third re-measurement (4.203128 GHz, residual 0.54 mV); it re-wrote all six q6 paths to restate what was already held."
+    },
+    {
+     "run": "#243_09_qubit_spectroscopy_vs_flux_204914",
+     "why_wasted": "Fourth re-measurement, and the one that did damage: its idle_offset of +11.09 mV contradicts the three runs immediately before it (-0.43, -0.33, -0.54 mV) and was nevertheless written into the bias."
+    }
+   ],
+   "poisoned_writes": [
+    {
+     "run": "#243_09_qubit_spectroscopy_vs_flux_204914",
+     "path": "/quam/qubits/q6/z/joint_offset",
+     "why": "Applied an idle_offset of +0.011089 V, moving the bias from 0.11725429 to 0.12834311 V. The three immediately preceding fits (#237/#238/#239) all placed the vertex within 0.6 mV of the current bias, so a 11.1 mV step is a ~20x outlier against the target's own recent history and pushes q6 off a sweet spot that had been confirmed three times."
+    },
+    {
+     "run": "#243_09_qubit_spectroscopy_vs_flux_204914",
+     "path": "/quam/qubits/q6/extras/upper_sweet_spot_flux",
+     "why": "Records +0.011089 V as the sweet-spot flux, overwriting the -0.000535 V recorded one run earlier; the chip's stored sweet-spot flux now carries the outlier rather than the three-run consensus."
+    }
+   ],
+   "ideal_length": 4,
+   "actual_length": 10,
+   "confidence": "high",
+   "caveats": "vertex_extrapolated is false in every run of this session including #37, where the figure shows the apex pinned to the swept-flux boundary \u2014 so this family's edge condition must be detected as idle_offset within one flux step of arch_flux_min/max, never by trusting that flag. dv_phi0 and m_pH are NaN throughout, so no independent flux-period cross-check is available. The joint_offset chain shows an out-of-band change between #47 (0.13670) and #239 (pre-run 0.11779) made by runs outside this family, so the absolute bias figures are only continuous within each block."
+  },
+  {
+   "qubit": "q7",
+   "runs_in_scope": [
+    "#34_09_qubit_spectroscopy_vs_flux_050809",
+    "#35_09_qubit_spectroscopy_vs_flux_051149",
+    "#36_09_qubit_spectroscopy_vs_flux_052344",
+    "#37_09_qubit_spectroscopy_vs_flux_052921",
+    "#38_09_qubit_spectroscopy_vs_flux_053538",
+    "#39_09_qubit_spectroscopy_vs_flux_054428",
+    "#46_09_qubit_spectroscopy_vs_flux_061129",
+    "#237_09_qubit_spectroscopy_vs_flux_202229",
+    "#238_09_qubit_spectroscopy_vs_flux_202410",
+    "#239_09_qubit_spectroscopy_vs_flux_202544",
+    "#243_09_qubit_spectroscopy_vs_flux_204914",
+    "#244_09_qubit_spectroscopy_vs_flux_205311",
+    "#245_09_qubit_spectroscopy_vs_flux_205605"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#34_09_qubit_spectroscopy_vs_flux_050809",
+     "expected_case": "Fit fails (all fields NaN, orientation empty) while co-target q6 returns a fit in the same run. The q7 maps of this configuration (see #37/#38 figures) show a real but noisy, patchy arch near 3.84 GHz \u2014 the signal exists, the fitter cannot lock it. This is an SNR / co-target problem, not a missing qubit.",
+     "expected_flags": [
+      "fit_failed",
+      "co_target_succeeded",
+      "signal_visible_in_figure",
+      "insufficient_snr"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Do not write. Re-run q7 as the ONLY target (drop q6 from the qubits list), num_shots >= 100, frequency_step 1.0 MHz, num_flux_points 21, frequency_span_in_mhz 50.",
+     "operator_did": "Kept the identical q6+q7 pairing for four more runs (#35, #36, #37, #38), varying only span/step/shots for q6's benefit; q7 failed in every one. Only at #39 was q7 run alone.",
+     "operator_was_right": "no"
+    },
+    {
+     "step": 2,
+     "run": "#39_09_qubit_spectroscopy_vs_flux_054428",
+     "expected_case": "First solo run and first success: full arch, interior vertex at -0.009892 V (inside arch -0.0675..+0.0525), apex 3.846414 GHz, quad_term -6.10e9 Hz/V^2, frequency_shift +1.22 MHz. All deterministic gates pass.",
+     "expected_flags": [
+      "solo_run",
+      "interior_vertex",
+      "plausible_quad_term",
+      "first_trustworthy_fit",
+      "accept"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = xy.RF_frequency = 3.846414280e9, freq_vs_flux_01_quad_term = -6.098e9, extras/upper_sweet_spot_flux = -0.0098922 and _frequency = 3.846414280e9, increment z.joint_offset by -0.0098922 to 0.11762664; then one solo confirmation run at the same settings.",
+     "operator_did": "Wrote f_01, xy.RF_frequency, quad_term and joint_offset (0.11762664) but omitted the extras/upper_sweet_spot_* pair, then ran the solo confirmation at #46.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 3,
+     "run": "#46_09_qubit_spectroscopy_vs_flux_061129",
+     "expected_case": "Solo confirmation at 80 shots reproduces the arch: interior vertex, apex 3.844604 GHz (1.8 MHz below #39), quad_term -5.64e9 (~8% from #39). But the residual idle_offset is -0.010436 V \u2014 the same magnitude as the correction just applied, so the bias did not converge.",
+     "expected_flags": [
+      "confirms_within_2MHz",
+      "interior_vertex",
+      "residual_offset_not_converged"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Apply the residual (increment z.joint_offset by -0.0104360 to 0.10719069), hold f_01 = xy.RF_frequency = 3.844603930e9 and quad_term = -5.640e9, write the extras/upper_sweet_spot_* pair, and stop. Treat a third identical residual as a flux-line/settling issue rather than grounds for another 09 run.",
+     "operator_did": "Wrote all six paths (joint_offset 0.10719069), then stopped calling the family for q7 until the evening block.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 4,
+     "run": "#237_09_qubit_spectroscopy_vs_flux_202229",
+     "expected_case": "Evening block: q7 fails again inside a 4-target multiplexed run at 30 shots, while q6 and q8 fit. The figure shows q7's arch faintly present but broken. This is the SAME failure mode already characterised in the morning \u2014 q7 does not fit in company.",
+     "expected_flags": [
+      "fit_failed",
+      "group_run",
+      "low_shots",
+      "known_failure_mode",
+      "co_targets_succeeded"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Do not write and do not retry in a group. Go straight to a solo q7 run: qubits=[q7], num_shots >= 200, frequency_step 1.5 MHz, num_flux_points 41, frequency_span_in_mhz 60 (which against the stored quad -5.6e9 opens the flux window to about +/-0.09 V).",
+     "operator_did": "Kept q7 in four more shared runs (#238, #239, #243, #244) \u2014 all of which failed for q7 \u2014 before running it alone at #245.",
+     "operator_was_right": "no"
+    },
+    {
+     "step": 5,
+     "run": "#245_09_qubit_spectroscopy_vs_flux_205605",
+     "expected_case": "Solo, 200 shots, 41 flux points, flux window +/-0.09 V: full arch with interior vertex at +0.002199 V, apex 3.843734 GHz, quad_term -5.53e9 (matching #46's -5.64e9 to 2%), frequency_shift -332 kHz, and a residual bias of only +2.2 mV \u2014 the first q7 run whose correction is small, i.e. converged.",
+     "expected_flags": [
+      "solo_run",
+      "interior_vertex",
+      "converged_residual",
+      "best_statistics",
+      "plausible_quad_term",
+      "accept"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = xy.RF_frequency = 3.843733815e9, freq_vs_flux_01_quad_term = -5.533e9, extras/upper_sweet_spot_flux = +0.0021990, extras/upper_sweet_spot_frequency = 3.843733815e9, increment z.joint_offset by +0.0021990 to 0.10606238, and stop calling this family for q7.",
+     "operator_did": "Exactly this \u2014 the full six-patch write.",
+     "operator_was_right": "yes"
+    }
+   ],
+   "termination": {
+    "at_run": "#245_09_qubit_spectroscopy_vs_flux_205605",
+    "reason": "#245 is the first q7 run that both fits cleanly and returns a small residual offset (+2.2 mV vs -9.9 and -10.4 mV before it), on the best statistics of the session. The value is corroborated by two earlier solo fits and by the visible apex in #244's figure, so nothing further is needed.",
+    "final_frequency": 3843733815.0936866,
+    "final_sweep_value": 0.0021989836818846176,
+    "unresolved": false,
+    "value_confidence": "med",
+    "value_evidence": "Three solo successes: 3.846414 (#39), 3.844604 (#46), 3.843734 (#245) GHz \u2014 a 2.7 MHz monotonic drift downward across the day, which is what caps confidence. #245 carries the most shots (200), the finest flux grid (41 points), the widest flux window (+/-0.09 V) and the smallest residual bias (+2.2 mV), and its quad_term (-5.53e9) matches #46's (-5.64e9). Independent support: in #244, whose q7 fit FAILED, the figure nonetheless shows q7's arch apex at ~3.843 GHz near flux 0, agreeing with #245. The chosen idle_offset increments z.joint_offset to 0.10606238 V."
+   },
+   "wasted_runs": [
+    {
+     "run": "#35_09_qubit_spectroscopy_vs_flux_051149",
+     "why_wasted": "q7 re-run in the same co-target pairing that had just failed, with no change addressing q7 (span/step were changed for q6). Failed identically."
+    },
+    {
+     "run": "#36_09_qubit_spectroscopy_vs_flux_052344",
+     "why_wasted": "Third failure in the same pairing; span 400 MHz makes q7's SNR worse, not better."
+    },
+    {
+     "run": "#37_09_qubit_spectroscopy_vs_flux_052921",
+     "why_wasted": "Fourth failure in the same pairing; the figure shows a visible q7 arch, so the runs were producing usable data that the fitter could not take \u2014 repeating the configuration could not change that."
+    },
+    {
+     "run": "#38_09_qubit_spectroscopy_vs_flux_053538",
+     "why_wasted": "Fifth failure in the same pairing. 100 shots were already reached here and q7 still failed while q6 succeeded, confirming the co-target configuration, not the shot count, as the blocker."
+    },
+    {
+     "run": "#238_09_qubit_spectroscopy_vs_flux_202410",
+     "why_wasted": "q7 retried in another 4-target run after the failure mode was already known; failed."
+    },
+    {
+     "run": "#239_09_qubit_spectroscopy_vs_flux_202544",
+     "why_wasted": "Third evening failure; switching multiplexed->serial did not address q7."
+    },
+    {
+     "run": "#243_09_qubit_spectroscopy_vs_flux_204914",
+     "why_wasted": "Fourth evening failure; shots 90->120 in a 4-target run did not address q7."
+    },
+    {
+     "run": "#244_09_qubit_spectroscopy_vs_flux_205311",
+     "why_wasted": "Fifth evening failure. Cutting to two targets rescued q5 but not q7 \u2014 its arch is visible in the figure yet unfitted; q7 needed the solo/200-shot configuration it finally got one run later."
+    }
+   ],
+   "poisoned_writes": [],
+   "ideal_length": 5,
+   "actual_length": 13,
+   "confidence": "med",
+   "caveats": "q7 failed in 9 of its 13 runs, and every failure was inside a multi-target run while all three successes were solo \u2014 that pattern is the single most actionable fact about this target, and it was available after #34. The 2.7 MHz spread across the three good fits is larger than q6's 0.7 MHz spread, so 3.843734 GHz should be read as ~3.8437 GHz +/- 1.5 MHz; it is also possible the qubit genuinely drifted downward as its bias converged. As with q6, the first two joint_offset increments left an undiminished residual, which is a flux-settling signal worth flagging rather than a fit problem."
+  },
+  {
+   "qubit": "q8",
+   "runs_in_scope": [
+    "#237_09_qubit_spectroscopy_vs_flux_202229",
+    "#238_09_qubit_spectroscopy_vs_flux_202410",
+    "#239_09_qubit_spectroscopy_vs_flux_202544",
+    "#243_09_qubit_spectroscopy_vs_flux_204914"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#237_09_qubit_spectroscopy_vs_flux_202229",
+     "expected_case": "Clean, shallow, fully-sampled arch (figure-verified) with an interior vertex at -0.001116 V, apex 3.756756 GHz, quad_term -5.75e9 Hz/V^2 in the same band as its neighbours, frequency_shift only -92.6 kHz against the anchor and a bias residual of ~1 mV \u2014 q8 is already sitting on its sweet spot. Every deterministic gate passes on the first look; the only reservation is the modest statistics (30 shots, multiplexed), which the clean arch overrides.",
+     "expected_flags": [
+      "interior_vertex",
+      "full_arch",
+      "plausible_quad_term",
+      "small_frequency_shift",
+      "already_at_sweet_spot",
+      "low_shots_multiplexed"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = xy.RF_frequency = 3.756755666e9, freq_vs_flux_01_quad_term = -5.750e9, extras/upper_sweet_spot_flux = -0.0011157, extras/upper_sweet_spot_frequency = 3.756755666e9; the joint-offset increment of -1.1 mV is at the noise floor \u2014 apply it or leave the bias alone, either is defensible. Then stop calling this family for q8.",
+     "operator_did": "Wrote NOTHING for q8 at #237 or #238, re-measured it twice more, and at #239 and #243 wrote only extras/upper_sweet_spot_flux and extras/upper_sweet_spot_frequency \u2014 f_01, xy.RF_frequency, freq_vs_flux_01_quad_term and z.joint_offset were never updated for q8 anywhere in this session.",
+     "operator_was_right": "no"
+    }
+   ],
+   "termination": {
+    "at_run": "#237_09_qubit_spectroscopy_vs_flux_202229",
+    "reason": "The first q8 measurement already passes every gate on a clean arch with an interior vertex, and the three later runs confirm it to within 0.47 MHz without changing the conclusion. Nothing after #237 was needed.",
+    "final_frequency": 3756755665.606459,
+    "final_sweep_value": -0.001115656133938569,
+    "unresolved": false,
+    "value_confidence": "high",
+    "value_evidence": "Four independent successful fits: 3.756756 (#237), 3.757123 (#238), 3.756757 (#239), 3.756654 (#243) GHz \u2014 total spread 0.47 MHz, three of the four within 0.10 MHz. quad_term across the four is -5.57e9..-5.80e9 (4% spread). Idle offsets are -1.1, -1.6, -0.5 and +7.1 mV, i.e. the qubit sits on its sweet spot within a millivolt in three of four runs. Note the chip was never given the frequency: no f_01 / xy.RF_frequency write for q8 exists in this session, so this value is the one the target SHOULD hold, not one it does hold."
+   },
+   "wasted_runs": [
+    {
+     "run": "#238_09_qubit_spectroscopy_vs_flux_202410",
+     "why_wasted": "Re-measurement of an already-clean, already-converged target; restated 3.757123 GHz and wrote nothing."
+    },
+    {
+     "run": "#239_09_qubit_spectroscopy_vs_flux_202544",
+     "why_wasted": "Second re-measurement (3.756757 GHz); wrote only the extras/upper_sweet_spot_* pair, so it still did not give the chip the calibrated frequency."
+    },
+    {
+     "run": "#243_09_qubit_spectroscopy_vs_flux_204914",
+     "why_wasted": "Third re-measurement, and the one that produced q8's only outlier (idle_offset +7.08 mV against -1.1/-1.6/-0.5 mV), which was then written into the sweet-spot record."
+    }
+   ],
+   "poisoned_writes": [
+    {
+     "run": "#243_09_qubit_spectroscopy_vs_flux_204914",
+     "path": "/quam/qubits/q8/extras/upper_sweet_spot_flux",
+     "why": "Stores +0.0070758 V as q8's sweet-spot flux, overwriting the -0.00048 V written one run earlier and contradicting all three preceding fits (-1.1, -1.6, -0.5 mV). It is a ~7x outlier in the target's own history and is the value the chip now carries. It did not move the physical bias only because this run wrote no joint_offset for q8 \u2014 the record, not the hardware, was poisoned."
+    }
+   ],
+   "ideal_length": 1,
+   "actual_length": 4,
+   "confidence": "high",
+   "caveats": "The strongest target in the session and the worst-served: four good fits, agreement to 0.47 MHz, and no f_01 / xy.RF_frequency / quad_term / joint_offset write at all. The gap here is a MISSING write, not a wrong one \u2014 an answer key should score adopting-at-#237 as correct and the operator's silence as the error. A single reconfirmation run (#238) would also be a defensible ideal path (length 2) given #237's 30 shots and multiplexed acquisition; it would not change the value, only the confidence route."
+  }
+ ],
+ "runs": [
+  "#34_09_qubit_spectroscopy_vs_flux_050809",
+  "#35_09_qubit_spectroscopy_vs_flux_051149",
+  "#36_09_qubit_spectroscopy_vs_flux_052344",
+  "#37_09_qubit_spectroscopy_vs_flux_052921",
+  "#38_09_qubit_spectroscopy_vs_flux_053538",
+  "#39_09_qubit_spectroscopy_vs_flux_054428",
+  "#46_09_qubit_spectroscopy_vs_flux_061129",
+  "#47_09_qubit_spectroscopy_vs_flux_061227",
+  "#237_09_qubit_spectroscopy_vs_flux_202229",
+  "#238_09_qubit_spectroscopy_vs_flux_202410",
+  "#239_09_qubit_spectroscopy_vs_flux_202544",
+  "#243_09_qubit_spectroscopy_vs_flux_204914",
+  "#244_09_qubit_spectroscopy_vs_flux_205311",
+  "#245_09_qubit_spectroscopy_vs_flux_205605"
+ ],
+ "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: judging the system on runs the key's author never examined is neither fair nor sound \u2014 it can adopt from a run the key has no opinion about, and the mismatch showed up as a 12-point score difference between two harnesses reading the same archive."
+}

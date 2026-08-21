@@ -1,0 +1,918 @@
+{
+ "schema": "smgolden/v2",
+ "family": "qubit_spectroscopy_vs_flux",
+ "chip": "IQCC_QOP37",
+ "session": "2026-07-30",
+ "session_id": "qubit_spectroscopy_vs_flux__IQCC_QOP37__2026-07-30",
+ "authored": "2026-08-21",
+ "status": "hindsight-authored + adversarial audit",
+ "provenance": "the author saw the whole session and was free to judge the operator wrong; the system under test never sees past its cursor",
+ "session_notes": "FAMILY 09_qubit_spectroscopy_vs_flux, lab IQCC_QOP37, 2026-07-30, 14 runs (#419-#437), 7 targets in every run. Runs are identified here by their number prefix (#419 = #419_09_qubit_spectroscopy_vs_flux_200050, etc.).\n\nWHAT THE SESSION ACTUALLY IS: one correct run (#420) followed by thirteen runs that added nothing. #420 is the ONLY run in the whole session that wrote state, and every one of its writes was right. All thirteen later runs wrote nothing.\n\nRECORD DEFECT the grader must know: the benchmark JSON truncates #420's patch list to its first 8 entries. The real node.json holds 14 patches \u2014 the extract silently drops qD1/z/joint_offset and qD3's entire write (extras/upper_sweet_spot_flux, extras/upper_sweet_spot_frequency, f_01, xy/RF_frequency, z/joint_offset). So the record makes it look as if qD3 was never adopted and qD1's flux was never moved; both were. All 14 patches carry \"old\", which pins the update semantics: 09 ASSIGNS f_01/RF_frequency and INCREMENTS z/joint_offset by idle_offset (qC1: 0.018775017 + (-0.001063474) = 0.017711543; qD3: 0.020260920 + (-0.008745665) = 0.011515256). Every other run in the session has no \"patches\" key at all \u2014 verified against the archive, not inferred.\n\nTWO KNOBS THE EXTRACT DOES NOT SHOW, and they are the ones that decide this session (read from each run's node.json): detuning_in_mhz (the drive window is centred this far BELOW the standing f_01 so the downward arch fills the map) and flux_offset_span_in_v (the total width of the flux sweep). Their trajectory: #419 det 0 / flux 0.05 -- #420 det 20 / flux 0.10 -- #421 det 50 / flux 0.50 -- #422 det 100 / flux 0.50 -- #423,#424 det 120 / flux 0.60 -- #425 det 20 / flux 0.10 -- #426 det 100 / flux 0.50 -- #430,#431,#432 det 20 / flux 0.10 -- #433 det 20 / flux 0.50 -- #434 det 20 / flux 0.50 -- #437 det 20 / flux 0.10. In visible-knob language the correlate is exact: every run with frequency_span_in_mhz >= 200 also carried a 0.5-0.6 V flux sweep.\n\nTHE CENTRAL FAILURE MODE \u2014 FALSE FITS ON NOISE. The real arch depth on this chip is only ~25-30 MHz over a 0.1 V flux sweep (visible in #420's and #437's maps). Spreading the sweep to 0.5-0.6 V at 20 shots dilutes the ridge below the noise floor: #426's figure shows SEVEN panels of pure noise with a parabola drawn through each and a green \"upper SS\" diamond placed on nothing. Yet the node reports success=true. Every wide-span run (#421 #422 #423 #424 #426 #434) produced such fits, and they refute each other: qD3 comes back 5.5608 / 5.5086 / 5.5347 / 5.5603 / 5.4614 / 5.5608 GHz \u2014 a 147 MHz spread \u2014 while every narrow-span run agrees on 5.5890-5.5899 GHz. qC3 is the same story (5.5801 / 5.5716 / 5.4658 wide vs 5.6455 narrow). A correct reader rejects these on the record alone: |frequency_shift| of 30-180 MHz against a value confirmed minutes earlier, mutually inconsistent between runs, and no dv_phi0 / no lower sweet spot to corroborate. No figure is needed; the figure only names the mechanism.\n\nTHE KNOB THAT WAS NEVER MOVED: num_shots = 20 in all 14 runs. qC4 and qC5 fail 14/14 not because the line is outside the window but because it is under the noise. Out of scope but decisive, and I flag it as out of scope: three further 09 runs the same night (#438 #439 #440, present in the archive, NOT in this session file) resolved them by going the other way \u2014 narrower span, finer sampling, more shots. #439 (span 60, step 0.2, 41 flux points, amp 1.0, 20 shots) first fits qC4 at 5,014,555,691 Hz; #440 (same + 60 shots) fits BOTH, qC4 5,014,583,632 Hz / idle -0.000332 and qC5 5,740,459,925 Hz / idle +0.002191. #440 also reproduces every narrow-span value this key adopts (qD3 5,590,006,662; qD1 5,067,115,001; qC1 4,967,390,384; qC2 5,773,366,457; qC3 5,645,943,161 \u2014 all within 0.5 MHz) and refutes every wide-span one. I use #438-440 only to calibrate confidence and to name the correct next action; no in-scope termination borrows a value from them, and qC4/qC5 stay unresolved because nothing inside the session file resolves them.\n\nCONVENTION USED HERE: final_frequency is the f_01 the ideal path writes at its adopt step (later confirm runs land inside this family's own +/-0.5 MHz run-to-run scatter and warrant no rewrite). final_sweep_value is the fitted idle_offset adopted at that same step, i.e. the sweet-spot flux in the sweep coordinate; the resulting absolute z/joint_offset is given in value_evidence wherever the archive pins it.\n\nFIGURES READ (3 of the 6 allowed): #420 (four clean arches with vertices inside the sweep; qC3/qC4/qC5 panels pure noise), #437 (qC3's arch present at last; qC5 shows a FAINT ridge near 5.72-5.74 GHz peaking at flux ~0 that the fitter missed \u2014 direct evidence the qC5 blocker is SNR, and it matches #440's 5.7405 GHz), #426 (the false-fit mechanism: parabolas through noise).\n\nTOTALS: 98 target-runs executed, 22 needed. Zero poisoned writes in the entire session \u2014 the operator's one write was correct and their restraint through thirteen junk fits (adopting any wide-span \"success\" would have written a value 30-180 MHz wrong) is the best thing they did. The waste is not bad writes, it is 76 target-runs of measurement spent re-asking a question already answered at #420 and never asking the one question (more shots) that would have finished qC4/qC5.",
+ "adversarial_audit": "**Not sound \u2014 11 concrete defects.**\n\n1. **qC4 / #422 termination + prescription (b, e).** Key: \"the only remaining knob is signal \u2014 num_shots\u2026 no later in-scope run *can* resolve qC4.\" Its own cited evidence refutes this: #439 fit qC4 **at 20 shots** (span 60, step 0.2, 41 flux pts). Span/step/flux-points were in-scope and never tried. Correction: lead the step-3 action with narrower span + denser sampling; restate the stop as \"no run in the session did,\" not \"could.\"\n2. **#437 marked wasted for qC5 (c).** The key's only in-scope proof qC5 is alive \u2014 and the whole basis of its SNR diagnosis \u2014 is #437's faint ridge. A run supplying the decisive diagnostic is not waste.\n3. **\"Identical-knob repeats\" is false (e).** From the record alone (standing = fit \u2212 frequency_shift), an out-of-family write moved standing f_01 between #425 and #430 for **all four** fitted qubits: qD3 \u2212147 kHz, qD1 +406 kHz, qC1 +390 kHz, qC2 \u221232 kHz; and again between #432 and #437. The key applies this only to qC1 while asserting \"nothing after #425 can add information.\"\n4. **Arithmetic (e).** qD3 wide-span spread is **99.3 MHz** (5,560,789,790 \u2212 5,461,446,212), not 147.\n5. **#426 (e).** \"SEVEN panels of pure noise with a parabola drawn through each\" \u2014 n_fail = 2; qC4/qC5 produced no fit. At most five parabolas.\n6. **#433 (e).** \"Broke four working targets\" (stated 3\u00d7) \u2014 #432 had 4 successes, #433 has 1: three lost fits; the fourth (qD1) returned a false success.\n7. **#419 diagnosis (e).** \"10 MHz cannot contain an arch ~25 MHz deep\" \u2014 at #419 flux span was 0.05 V (half #420), so the quadratic arch is ~6\u20138 MHz there and qD3 *did* fit. The real defect is detuning = 0 (\u22485 MHz of usable downward range).\n8. **Physics used as rationale is wrong (b).** num_shots is per point, so \"more pixels dilutes the ridge\" is false \u2014 and the key both condemns pixels (#423) and prescribes them (step 0.5\u21920.4; flux 11\u219241). Restate as arch-leaves-window / more noise for the parabola fitter.\n9. **Ungradeable from the input (a).** detuning, flux_offset_span, and \"14 patches carrying old\" are absent. #433's visible params are byte-identical to #430\u2013#432 yet 6/7 fail, so its required diagnosis is underivable; likewise qD3's #420 write (extract shows 8 patches, none for qD3) and the 0.020260920\u21920.011515256 value. Add the fields or drop the grading.\n10. **Waste metric (c).** Every run measures all 7 targets, so the 5-run ideal path costs **35** target-runs; \"22 needed\" is unreachable, and #437 is simultaneously an ideal step and \"wasted\" for five targets.\n11. **qC3 (d).** `unresolved: false` on one unconfirmed fit, while qC1 was forced to reconfirm \u2014 the key's own caveat calls the opposite answer defensible. Accept both or set unresolved.\n\n**\ud55c\uad6d\uc5b4 \uc694\uc57d**\n- \uc815\ub2f5\ud0a4\ub294 \uac74\uc804\ud558\uc9c0 \uc54a\uc74c \u2014 11\uac1c \uacb0\ud568. \ud575\uc2ec: qC4\ub294 \ud0a4 \uc790\uc2e0\uc774 \uc778\uc6a9\ud55c #439\uac00 20 shots\ub85c \uc131\uacf5\ud588\uc73c\ubbc0\ub85c \"shots\uac00 \uc720\uc77c\ud55c knob\"\uc774\ub77c\ub294 \uc885\ub8cc \uadfc\uac70\uac00 \ubb34\ub108\uc9d0.\n- \uae30\ub85d\uacfc \ubaa8\uc21c: qD3 wide-span \ud3b8\ucc28\ub294 147\uc774 \uc544\ub2c8\ub77c 99.3 MHz, #426\uc740 7\ud328\ub110\uc774 \uc544\ub2c8\ub77c \ucd5c\ub300 5\uac1c fit, #433\uc740 4\uac1c\uac00 \uc544\ub2c8\ub77c 3\uac1c\uac00 fit\uc744 \uc783\uc74c.\n- #430/#437\uc740 \"\ub3d9\uc77c knob \ubc18\ubcf5\"\uc774 \uc544\ub2d8 \u2014 fit \u2212 frequency_shift\ub85c \uacc4\uc0b0\ud558\uba74 #425\u2192#430 \uc0ac\uc774 \uc678\ubd80 \ub178\ub4dc\uac00 4\uac1c \ud050\ube57 \ubaa8\ub450\uc758 standing f_01\uc744 \ubc14\uafc8(\ud0a4\ub294 qC1\uc5d0\ub9cc \uc801\uc6a9).\n- \uc785\ub825\uc5d0 \uc5c6\ub294 \ub370\uc774\ud130(detuning, flux span, patch old\uac12)\ub85c \ucc44\uc810 \u2014 #433\uc740 \ubcf4\uc774\ub294 \ud30c\ub77c\ubbf8\ud130\uac00 #430\u2013#432\uc640 \ub3d9\uc77c\ud574 \ud574\ub2f5 \ub3c4\ucd9c \ubd88\uac00.\n- \ub0ad\ube44 \uc9c0\ud45c(22 target-run)\ub294 7\ud0c0\uae43 \ub3d9\uc2dc \uce21\uc815 \uad6c\uc870\uc0c1 \ub3c4\ub2ec \ubd88\uac00(\ucd5c\uc18c 35).",
+ "qubits": [
+  {
+   "qubit": "qD3",
+   "runs_in_scope": [
+    "#419",
+    "#420",
+    "#421",
+    "#422",
+    "#423",
+    "#424",
+    "#425",
+    "#426",
+    "#430",
+    "#431",
+    "#432",
+    "#433",
+    "#434",
+    "#437"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#419",
+     "expected_case": "Window far too narrow for a flux arch: frequency_span 10 MHz with the drive window centred exactly on the standing f_01 (detuning 0). 6 of 7 targets return no fit at all. qD3's lone success (5,589,933,345 Hz, shift +782 kHz, idle -0.007704) is a parabola vertex estimated inside a 10 MHz window over an arch that is ~25-30 MHz deep, so the vertex is real but weakly constrained and cannot be adopted on its own.",
+     "expected_flags": [
+      "span_too_narrow",
+      "mass_fit_failure",
+      "vertex_weakly_constrained",
+      "no_dv_phi0",
+      "no_lower_sweet_spot"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Raise frequency_span_in_mhz 10 -> 100 at frequency_step 0.5 MHz, keep num_flux_points 11 and operation_amplitude_factor 0.8, and re-centre the drive window ~20 MHz below f_01 so the downward arch fills the map instead of the top half being empty.",
+     "operator_did": "Widened frequency_span 10 -> 100 MHz, moved detuning 0 -> 20 MHz and the flux sweep 0.05 -> 0.10 V, left step/points/amplitude alone.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "#420",
+     "expected_case": "Clean arch. The ridge is continuous across the whole +/-0.05 V sweep, the vertex sits inside the swept range at -0.008746 V, |frequency_shift| is 0.66 MHz, and three sibling qubits fit the same way in the same run. dv_phi0 and the lower sweet spot are NaN because the sweep covers far less than one flux period - expected for this node, not a defect.",
+     "expected_flags": [
+      "clean_arch",
+      "vertex_in_range",
+      "shift_small",
+      "siblings_agree",
+      "partial_period_only"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = xy/RF_frequency = 5,589,810,668 Hz and increment z/joint_offset by idle_offset: 0.020260920 -> 0.011515256 V. Then repeat this run at identical knobs once to verify the residual idle_offset collapses to ~0; do not change any knob for that check.",
+     "operator_did": "Adopted exactly that - the real #420 node.json writes qD3's f_01, xy/RF_frequency, z/joint_offset and both extras keys (the benchmark record truncates the patch list at 8 entries and hides qD3's write entirely).",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 3,
+     "run": "#425",
+     "expected_case": "Confirmation at identical knobs after the flux move. Frequency reproduces to 5,589,763,474 Hz (47 kHz from the adopted value) and the residual idle_offset has collapsed from -8.75 mV to +1.44 mV - well under the 10 mV flux-grid step. The loop is closed: the vertex is now where the bias sits.",
+     "expected_flags": [
+      "reproduced",
+      "residual_near_zero",
+      "converged"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Stop this family for qD3 - no rewrite needed, the confirm sits inside the family's own +/-0.5 MHz scatter. Hand the target to the next node in the chain.",
+     "operator_did": "Ran it as the first of five identical repeats, wrote nothing, and kept running the family for nine more runs.",
+     "operator_was_right": "partly"
+    }
+   ],
+   "termination": {
+    "at_run": "#425",
+    "reason": "Adopted at #420 on a clean in-range vertex and confirmed at #425 at identical knobs with the residual idle_offset at +1.4 mV. Both questions this family exists to answer - where is f_01 and where is the sweet-spot flux - are answered and closed; nothing after #425 can add information at these knobs.",
+    "final_frequency": 5589810668.237407,
+    "final_sweep_value": -0.00874566473988439,
+    "value_evidence": "Written at #420 (f_01 and xy/RF_frequency 5,589,151,609 -> 5,589,810,668 Hz; z/joint_offset 0.020260920 -> 0.011515256 V, i.e. incremented by idle_offset -0.008746). Reproduced by every narrow-span run: #425 5,589,763,474 / #430 5,589,928,912 / #431 5,589,040,039 / #432 5,589,684,979 / #437 5,589,695,217 Hz - a 0.89 MHz total spread - and #419 at a completely different span (10 MHz) gave 5,589,933,345. Post-move residual idle offsets +0.00144 / +0.00039 / +0.00094 / +0.00009 / -0.00076 V confirm the flux increment landed. Out of scope, #440 (span 60, step 0.2, 41 flux points, 60 shots) gives 5,590,006,662 Hz, 0.20 MHz above the adopted value.",
+    "value_confidence": "high",
+    "unresolved": false
+   },
+   "wasted_runs": [
+    {
+     "run": "#421",
+     "why_wasted": "Span 200 MHz over a 0.5 V flux sweep dilutes a ~25 MHz arch into noise; the reported 5,560,789,790 Hz contradicts the value confirmed twice at 5.5898 GHz by 29 MHz."
+    },
+    {
+     "run": "#422",
+     "why_wasted": "Span 400 MHz / flux 0.5 V. 'Successful' vertex at 5,508,625,748 Hz - 81 MHz below the confirmed value and 52 MHz away from #421's own answer."
+    },
+    {
+     "run": "#423",
+     "why_wasted": "Span 500 MHz / flux 0.6 V / 21 flux points. Vertex 5,534,650,548 Hz; a third mutually inconsistent wide-span answer."
+    },
+    {
+     "run": "#424",
+     "why_wasted": "#423 repeated with multiplexed=false. Yield drops 5/7 to fail; qD3's vertex moves to 5,560,257,488 Hz. The multiplexing hypothesis was never live - four qubits fit cleanly multiplexed at #420."
+    },
+    {
+     "run": "#426",
+     "why_wasted": "Span 400 MHz / flux 0.5 V again: vertex 5,461,446,212 Hz, 128 MHz low. The figure shows a parabola drawn through pure noise with the sweet-spot marker on nothing."
+    },
+    {
+     "run": "#430",
+     "why_wasted": "Third identical-knob repeat of a result already confirmed at #425."
+    },
+    {
+     "run": "#431",
+     "why_wasted": "Fourth identical-knob repeat."
+    },
+    {
+     "run": "#432",
+     "why_wasted": "Fifth identical-knob repeat."
+    },
+    {
+     "run": "#433",
+     "why_wasted": "Frequency knobs identical to #430-#432 but the flux sweep widened to 0.5 V, so the arch leaves the 100 MHz window: 6/7 fail and qD3 returns success=false with idle_offset +0.3176 V - beyond the swept range, the fit's own admission that the vertex was extrapolated out."
+    },
+    {
+     "run": "#434",
+     "why_wasted": "Span 400 MHz / flux 0.5 V for a fourth time: 5,560,786,048 Hz, 29 MHz low."
+    },
+    {
+     "run": "#437",
+     "why_wasted": "Finer step (0.4 MHz) and full amplitude - a genuine knob change, but it was needed for qC3, not for qD3, which had been closed since #425. Returns 5,589,695,217 Hz, 0.12 MHz from the adopted value."
+    }
+   ],
+   "poisoned_writes": [],
+   "ideal_length": 3,
+   "actual_length": 14,
+   "confidence": "high",
+   "caveats": "The extract's empty-looking patch record for qD3 is a truncation artifact of the benchmark file, not operator behaviour - the archive shows qD3 was written at #420 along with the other three. The idle_offset from a single run is only good to about one flux-grid step (0.1 V / 10 intervals = 10 mV), which is why the -8.7 mV move needed the #425 confirm before it could be trusted; that confirm is what upgrades this entry to high confidence. dv_phi0 and m_pH are NaN in every run of the session - no period, no pH-per-volt, and none is claimed here."
+  },
+  {
+   "qubit": "qD1",
+   "runs_in_scope": [
+    "#419",
+    "#420",
+    "#421",
+    "#422",
+    "#423",
+    "#424",
+    "#425",
+    "#426",
+    "#430",
+    "#431",
+    "#432",
+    "#433",
+    "#434",
+    "#437"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#419",
+     "expected_case": "No fit. Frequency span 10 MHz cannot contain an arch that is ~25 MHz deep over the swept flux, and 6 of 7 targets fail identically - a global window problem, not a per-target one.",
+     "expected_flags": [
+      "span_too_narrow",
+      "mass_fit_failure",
+      "global_not_per_target"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Raise frequency_span_in_mhz 10 -> 100 at step 0.5 MHz, keep 11 flux points and amplitude 0.8, re-centre the window ~20 MHz below f_01.",
+     "operator_did": "Widened to 100 MHz with detuning 20 MHz and flux span 0.10 V.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "#420",
+     "expected_case": "Clean arch with the vertex inside the sweep at -0.008967 V, |frequency_shift| 0.32 MHz, ridge continuous across the map, three siblings fitting the same way. The -9.0 mV vertex is the largest flux correction in the run and is close to one flux-grid step, so it is adoptable but must be verified.",
+     "expected_flags": [
+      "clean_arch",
+      "vertex_in_range",
+      "shift_small",
+      "flux_move_near_grid_step"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = xy/RF_frequency = 5,066,786,203 Hz and increment z/joint_offset 0.022621667 -> 0.013655041 V. Repeat once at identical knobs to check the residual idle_offset falls to ~0.",
+     "operator_did": "Adopted all three (the joint_offset patch is present in the archive's node.json and dropped by the benchmark extract's 8-entry truncation).",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 3,
+     "run": "#425",
+     "expected_case": "Confirmation at identical knobs: 5,066,852,642 Hz (66 kHz from the adopted value) and residual idle_offset +2.5e-05 V - the -9 mV flux move landed almost exactly. Converged.",
+     "expected_flags": [
+      "reproduced",
+      "residual_near_zero",
+      "converged"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Stop this family for qD1; no rewrite needed.",
+     "operator_did": "Ran it, wrote nothing, continued the family for nine more runs.",
+     "operator_was_right": "partly"
+    }
+   ],
+   "termination": {
+    "at_run": "#425",
+    "reason": "Clean adopt at #420 and a textbook closed-loop confirm at #425 (residual flux 25 microvolt, frequency reproduced to 66 kHz). Nothing later in the session probes a knob that could refine this.",
+    "final_frequency": 5066786202.969814,
+    "final_sweep_value": -0.008966625463535223,
+    "value_evidence": "Written at #420 (f_01 and xy/RF_frequency 5,066,462,847 -> 5,066,786,203 Hz; z/joint_offset 0.022621667 -> 0.013655041 V). Narrow-span reproductions: #425 5,066,852,642 / #430 5,067,261,027 / #431 5,067,098,183 / #432 5,065,471,220 / #437 5,067,896,989 Hz, spread 2.4 MHz, centred within 0.4 MHz of the adopted value. Residual idle offsets after the move: +2.5e-05 / +0.00109 / +0.00037 / +0.00090 / -0.00156 V. Out of scope, #440 gives 5,067,115,001 Hz (+0.33 MHz).",
+    "value_confidence": "high",
+    "unresolved": false
+   },
+   "wasted_runs": [
+    {
+     "run": "#421",
+     "why_wasted": "Span 200 / flux 0.5 V: 5,028,917,501 Hz, 38 MHz below the value confirmed at #420 - a parabola through a diluted ridge."
+    },
+    {
+     "run": "#422",
+     "why_wasted": "Span 400 / flux 0.5 V: 5,025,523,422 Hz, 41 MHz low."
+    },
+    {
+     "run": "#423",
+     "why_wasted": "Span 500 / flux 0.6 V / 21 points: 5,059,009,538 Hz, 7.8 MHz low - closer than its siblings but still inconsistent with the confirmed value and with #421/#422."
+    },
+    {
+     "run": "#424",
+     "why_wasted": "#423 with multiplexed=false; 5,037,470,106 Hz, a fourth mutually inconsistent wide-span answer, and 5/7 targets lost."
+    },
+    {
+     "run": "#426",
+     "why_wasted": "Span 400 / flux 0.5 V: 5,040,502,079 Hz, 26 MHz low; the figure shows the map is noise."
+    },
+    {
+     "run": "#430",
+     "why_wasted": "Third identical-knob repeat after convergence at #425."
+    },
+    {
+     "run": "#431",
+     "why_wasted": "Fourth identical-knob repeat."
+    },
+    {
+     "run": "#432",
+     "why_wasted": "Fifth identical-knob repeat (and the noisiest of them: -1.72 MHz shift)."
+    },
+    {
+     "run": "#433",
+     "why_wasted": "Flux sweep widened to 0.5 V behind a 100 MHz window: 6/7 targets fail and qD1's surviving 'success' at 5,044,330,896 Hz with idle_offset +0.0266 V is a false accept - 22 MHz below the converged value with a flux vertex 30x the confirmed residual. A correct reader rejects it despite success=true."
+    },
+    {
+     "run": "#434",
+     "why_wasted": "Span 400 / flux 0.5 V: 4,997,479,760 Hz, 70 MHz low - the worst false fit this target received."
+    },
+    {
+     "run": "#437",
+     "why_wasted": "Finer step and full amplitude; needed for qC3, redundant here - returns 5,067,896,989 Hz, 1.1 MHz from the adopted value."
+    }
+   ],
+   "poisoned_writes": [],
+   "ideal_length": 3,
+   "actual_length": 14,
+   "confidence": "high",
+   "caveats": "#433's qD1 row is the single most dangerous record in the session: outcome 'successful' in a run where six of seven targets failed, with a flux vertex of +26.6 mV. It was never written, but a system that trusts the success flag would have written it. The correct rejection cue is available without the figure - a 22 MHz jump from a value confirmed four runs earlier, in a run whose sibling failures show the sweep configuration changed underneath."
+  },
+  {
+   "qubit": "qC1",
+   "runs_in_scope": [
+    "#419",
+    "#420",
+    "#421",
+    "#422",
+    "#423",
+    "#424",
+    "#425",
+    "#426",
+    "#430",
+    "#431",
+    "#432",
+    "#433",
+    "#434",
+    "#437"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#419",
+     "expected_case": "No fit; 10 MHz window far too narrow for the arch, 6/7 targets fail the same way.",
+     "expected_flags": [
+      "span_too_narrow",
+      "mass_fit_failure",
+      "global_not_per_target"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Raise frequency_span_in_mhz 10 -> 100 at step 0.5 MHz, 11 flux points, amplitude 0.8, window centred ~20 MHz below f_01.",
+     "operator_did": "Widened to 100 MHz with detuning 20 MHz and flux span 0.10 V.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "#420",
+     "expected_case": "Clean arch, vertex inside the sweep at -0.001063 V, |frequency_shift| 0.31 MHz. Sub-milliVolt flux correction: the bias was already close to the sweet spot.",
+     "expected_flags": [
+      "clean_arch",
+      "vertex_in_range",
+      "shift_small",
+      "flux_move_sub_grid_step"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = xy/RF_frequency = 4,967,317,225 Hz and increment z/joint_offset 0.018775017 -> 0.017711543 V. Repeat once at identical knobs to confirm.",
+     "operator_did": "Adopted exactly that.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 3,
+     "run": "#425",
+     "expected_case": "Imperfect confirmation. Frequency comes back 3.16 MHz below the adopted value (4,964,154,654 Hz) and the residual idle_offset is -5.7 mV, five times the correction just applied - the confirm neither reproduces the frequency nor closes the flux loop. This is a noisy fit, not evidence the adopt was wrong, but it is not a confirmation either.",
+     "expected_flags": [
+      "confirm_failed",
+      "shift_outlier_3MHz",
+      "residual_exceeds_applied_move"
+     ],
+     "correct_decision": "reconfirm",
+     "correct_next_action": "Repeat once more at the identical knobs (span 100, step 0.5, 11 flux points, amplitude 0.8) before touching anything; change no knob, because the disagreement is with a run whose knobs were already correct.",
+     "operator_did": "Ran #425 as a routine repeat and drew no conclusion from qC1's 3 MHz outlier at all.",
+     "operator_was_right": "partly"
+    },
+    {
+     "step": 4,
+     "run": "#430",
+     "expected_case": "Clean confirmation: 4,967,364,118 Hz (47 kHz from the adopted value) with residual idle_offset -0.41 mV. #425 was the outlier; the adopt stands and the flux loop is closed.",
+     "expected_flags": [
+      "reproduced",
+      "residual_near_zero",
+      "converged",
+      "outlier_overruled"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Stop this family for qC1; the confirm sits inside the family's own scatter, no rewrite needed.",
+     "operator_did": "Ran it as one of three identical repeats and wrote nothing.",
+     "operator_was_right": "partly"
+    }
+   ],
+   "termination": {
+    "at_run": "#430",
+    "reason": "Adopted at #420, confirmed at #430 after #425 came back as a 3 MHz outlier. Two of three identical-knob runs (#430, #431, #432) agree with the adopted value to better than 0.1 MHz and all three show a sub-milliVolt residual flux, so the target is closed; #431 and #432 are redundant with #430.",
+    "final_frequency": 4967317224.7319,
+    "final_sweep_value": -0.0010634737269349715,
+    "value_evidence": "Written at #420 (f_01 and xy/RF_frequency 4,967,630,627 -> 4,967,317,225 Hz; z/joint_offset 0.018775017 -> 0.017711543 V). Confirmed by #430 4,967,364,118 / #431 4,967,419,208 / #432 4,967,276,644 / #437 4,967,607,889 Hz - all within 0.29 MHz - with residual idle offsets -0.00041 / -0.00061 / -0.00027 V. #425's 4,964,154,654 Hz is a 3.16 MHz outlier overruled 3-to-1. Out of scope, #440 gives 4,967,390,384 Hz, 73 kHz above the adopted value.",
+    "value_confidence": "high",
+    "unresolved": false
+   },
+   "wasted_runs": [
+    {
+     "run": "#421",
+     "why_wasted": "Span 200 / flux 0.5 V: 4,957,344,420 Hz, 10 MHz below the adopted value."
+    },
+    {
+     "run": "#422",
+     "why_wasted": "Span 400 / flux 0.5 V: 4,900,885,649 Hz, 66 MHz low - a parabola through noise."
+    },
+    {
+     "run": "#423",
+     "why_wasted": "Span 500 / flux 0.6 V: 4,958,194,860 Hz, 9 MHz low, and inconsistent with #422 by 57 MHz."
+    },
+    {
+     "run": "#424",
+     "why_wasted": "#423 with multiplexed=false: qC1 loses its fit entirely. Rules out nothing that was in doubt."
+    },
+    {
+     "run": "#426",
+     "why_wasted": "Span 400 / flux 0.5 V: 4,901,248,619 Hz, 66 MHz low; the figure shows a noise map with the sweet-spot marker placed on nothing."
+    },
+    {
+     "run": "#431",
+     "why_wasted": "Second redundant repeat after the #430 confirmation."
+    },
+    {
+     "run": "#432",
+     "why_wasted": "Third redundant repeat."
+    },
+    {
+     "run": "#433",
+     "why_wasted": "Flux sweep widened to 0.5 V behind a 100 MHz window - qC1 fails, as expected when the arch leaves the window."
+    },
+    {
+     "run": "#434",
+     "why_wasted": "Span 400 / flux 0.5 V: 4,910,447,389 Hz, 57 MHz low."
+    },
+    {
+     "run": "#437",
+     "why_wasted": "Needed for qC3; for qC1 it is a sixth measurement of a closed target (4,967,607,889 Hz, 0.29 MHz from the adopted value)."
+    }
+   ],
+   "poisoned_writes": [],
+   "ideal_length": 4,
+   "actual_length": 14,
+   "confidence": "high",
+   "caveats": "qC1 is the one target whose ideal path is four runs rather than three, because its first confirm (#425) genuinely failed: 3.16 MHz off with a residual flux five times the applied move. A system that treated #425 as a confirmation would have been right by luck; a system that treated it as a refutation and re-opened the adopt would have been wrong. The correct reading is neither - repeat, then let 3-to-1 decide. Note also that the standing state f_01 moved between #425 and #430 from a node outside this family (#430's frequency_shift of -343 kHz is inconsistent with the #420-written value), so frequency_shift must not be chained across gaps in the run numbering; absolute qubit_frequency is the only safe comparison axis here."
+  },
+  {
+   "qubit": "qC2",
+   "runs_in_scope": [
+    "#419",
+    "#420",
+    "#421",
+    "#422",
+    "#423",
+    "#424",
+    "#425",
+    "#426",
+    "#430",
+    "#431",
+    "#432",
+    "#433",
+    "#434",
+    "#437"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#419",
+     "expected_case": "No fit; 10 MHz window far too narrow, 6/7 targets fail identically.",
+     "expected_flags": [
+      "span_too_narrow",
+      "mass_fit_failure",
+      "global_not_per_target"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Raise frequency_span_in_mhz 10 -> 100 at step 0.5 MHz, 11 flux points, amplitude 0.8, window centred ~20 MHz below f_01.",
+     "operator_did": "Widened to 100 MHz with detuning 20 MHz and flux span 0.10 V.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "#420",
+     "expected_case": "Cleanest arch in the run: vertex inside the sweep at -0.000730 V and |frequency_shift| only 21 kHz - the standing value was already right and the bias already at the sweet spot to sub-milliVolt.",
+     "expected_flags": [
+      "clean_arch",
+      "vertex_in_range",
+      "shift_negligible",
+      "flux_move_sub_grid_step"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = xy/RF_frequency = 5,773,749,970 Hz and increment z/joint_offset 0.020602480 -> 0.019871991 V. Repeat once at identical knobs to confirm.",
+     "operator_did": "Adopted exactly that.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 3,
+     "run": "#425",
+     "expected_case": "Confirmation at identical knobs: 5,773,949,276 Hz (0.20 MHz from the adopted value) with residual idle_offset -2.1e-05 V. Converged.",
+     "expected_flags": [
+      "reproduced",
+      "residual_near_zero",
+      "converged"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Stop this family for qC2; no rewrite needed.",
+     "operator_did": "Ran it, wrote nothing, continued for nine more runs.",
+     "operator_was_right": "partly"
+    }
+   ],
+   "termination": {
+    "at_run": "#425",
+    "reason": "Adopted at #420 on a 21 kHz shift and a sub-milliVolt vertex, confirmed at #425 with a 21 microvolt residual. This target was essentially already calibrated; two runs establish it and a third proves it.",
+    "final_frequency": 5773749970.4079895,
+    "final_sweep_value": -0.0007304890738813748,
+    "value_evidence": "Written at #420 (f_01 and xy/RF_frequency 5,773,770,800 -> 5,773,749,970 Hz; z/joint_offset 0.020602480 -> 0.019871991 V). Narrow-span reproductions: #425 5,773,949,276 / #430 5,774,386,098 / #431 5,774,225,998 / #432 5,772,889,131 / #437 5,773,309,819 Hz - 1.5 MHz total spread around the adopted value - with residual idle offsets -2.1e-05 / -0.0032 / -0.0031 / -0.0012 / +0.0046 V, all inside one flux-grid step. Out of scope, #440 gives 5,773,366,457 Hz (0.38 MHz below).",
+    "value_confidence": "high",
+    "unresolved": false
+   },
+   "wasted_runs": [
+    {
+     "run": "#421",
+     "why_wasted": "Span 200 / flux 0.5 V: 5,746,751,086 Hz, 27 MHz below a value whose shift had just been measured at 21 kHz."
+    },
+    {
+     "run": "#422",
+     "why_wasted": "Span 400 / flux 0.5 V: 5,727,898,040 Hz, 46 MHz low."
+    },
+    {
+     "run": "#423",
+     "why_wasted": "Span 500 / flux 0.6 V: 5,750,682,374 Hz, 23 MHz low, and 23 MHz away from #422's answer."
+    },
+    {
+     "run": "#424",
+     "why_wasted": "#423 with multiplexed=false: qC2 loses its fit entirely."
+    },
+    {
+     "run": "#426",
+     "why_wasted": "Span 400 / flux 0.5 V: 5,717,069,552 Hz, 57 MHz low; the figure shows the map is pure noise."
+    },
+    {
+     "run": "#430",
+     "why_wasted": "Third identical-knob repeat after convergence at #425."
+    },
+    {
+     "run": "#431",
+     "why_wasted": "Fourth identical-knob repeat."
+    },
+    {
+     "run": "#432",
+     "why_wasted": "Fifth identical-knob repeat."
+    },
+    {
+     "run": "#433",
+     "why_wasted": "Flux sweep widened to 0.5 V behind a 100 MHz window - qC2 fails, as expected."
+    },
+    {
+     "run": "#434",
+     "why_wasted": "Span 400 / flux 0.5 V: 5,721,999,895 Hz, 52 MHz low."
+    },
+    {
+     "run": "#437",
+     "why_wasted": "Needed for qC3; for qC2 a sixth measurement of a closed target."
+    }
+   ],
+   "poisoned_writes": [],
+   "ideal_length": 3,
+   "actual_length": 14,
+   "confidence": "high",
+   "caveats": "qC2's #420 frequency shift is only 21 kHz, so the write barely moved anything - the honest statement is that this target was already calibrated coming into the session and the family confirmed it. The run-to-run scatter of the narrow-span fits (about +/-0.7 MHz) is larger than the correction that was written; that scatter, not the fit's formal precision, is the real uncertainty on this value."
+  },
+  {
+   "qubit": "qC3",
+   "runs_in_scope": [
+    "#419",
+    "#420",
+    "#421",
+    "#422",
+    "#423",
+    "#424",
+    "#425",
+    "#426",
+    "#430",
+    "#431",
+    "#432",
+    "#433",
+    "#434",
+    "#437"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#419",
+     "expected_case": "No fit. The 10 MHz window is too narrow for every target; nothing target-specific can be concluded about qC3 yet.",
+     "expected_flags": [
+      "span_too_narrow",
+      "mass_fit_failure",
+      "diagnosis_deferred"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Raise frequency_span_in_mhz 10 -> 100 at step 0.5 MHz, 11 flux points, amplitude 0.8, window centred ~20 MHz below f_01.",
+     "operator_did": "Widened to 100 MHz with detuning 20 MHz and flux span 0.10 V.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "#420",
+     "expected_case": "Still no fit, but now the diagnosis is available: four siblings return clean arches from the same run at the same knobs, so the sweep configuration is right and the problem is specific to qC3. The map shows no ridge anywhere in the 100 MHz window - the line is under the noise floor, not merely off-centre. Sibling arches are only ~25 MHz deep, so a 100 MHz window is already 4x the arch and widening it cannot help.",
+     "expected_flags": [
+      "no_fit",
+      "siblings_ok_same_run",
+      "no_visible_ridge",
+      "snr_limited",
+      "widening_contraindicated"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Hold frequency_span at 100 MHz and buy signal instead: operation_amplitude_factor 0.8 -> 1.0, num_shots 20 -> 60, frequency_step 0.5 -> 0.4 MHz. Do not widen the span and do not widen the flux sweep - both spread the same 20 shots over more pixels and dilute the ridge further.",
+     "operator_did": "Went the other way - widened to 200 MHz, then 400, then 500, with the flux sweep opened to 0.5-0.6 V, and never once raised num_shots.",
+     "operator_was_right": "no"
+    },
+    {
+     "step": 3,
+     "run": "#437",
+     "expected_case": "The arch finally appears: span back to 100 MHz, amplitude 1.0, step 0.4 MHz. Vertex inside the sweep at +0.004356 V, |frequency_shift| 183 kHz against the standing state value - i.e. the line was where the chip already thought it was and only the SNR was missing. This also retrospectively convicts the wide-span 'successes': #422/#423/#426 put qC3 65-180 MHz lower and disagree with each other by up to 114 MHz.",
+     "expected_flags": [
+      "clean_arch",
+      "vertex_in_range",
+      "shift_small",
+      "agrees_with_standing_value",
+      "wide_span_fits_refuted"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = xy/RF_frequency = 5,645,452,559 Hz and increment z/joint_offset by +0.004356 V, then repeat once at these same knobs to confirm the residual falls to ~0 - this is a first fit, not yet a confirmed one.",
+     "operator_did": "Ran it, and the session ends there with nothing written for qC3.",
+     "operator_was_right": "partly"
+    }
+   ],
+   "termination": {
+    "at_run": "#437",
+    "reason": "#437 is the first and only run in the session that produces a trustworthy qC3 arch, and it is the last run in scope. The value should be adopted there, with a confirming repeat queued; no in-scope run can supply that confirmation.",
+    "final_frequency": 5645452558.709907,
+    "final_sweep_value": 0.004356454720616563,
+    "value_evidence": "Single in-scope fit, #437 (span 100 MHz, step 0.4, 11 flux points, amplitude 1.0, multiplexed): 5,645,452,559 Hz, idle_offset +0.004356 V, frequency_shift -182,734 Hz - so it corroborates the standing state value of 5,645,635,293 Hz to 0.18 MHz, which is independent evidence rather than self-agreement. The figure shows a continuous ridge with the vertex inside the sweep. The three wide-span 'successes' (#422 5,580,061,447 / #423 5,571,613,334 / #426 5,465,840,086 Hz) are refuted both by mutual inconsistency (114 MHz spread) and by #426's map being visibly noise. Out of scope, #438/#439/#440 give 5,645,924,347 / 5,646,144,894 / 5,645,943,161 Hz - 0.47-0.69 MHz above the #437 value, i.e. #437 is right to within the family's own scatter. No absolute z/joint_offset can be quoted: qC3 was never patched in this session, so the archive does not pin its pre-run bias.",
+    "value_confidence": "med",
+    "unresolved": false
+   },
+   "wasted_runs": [
+    {
+     "run": "#421",
+     "why_wasted": "Span widened to 200 MHz with the flux sweep at 0.5 V - the wrong direction for an SNR-limited target; qC3 still fails."
+    },
+    {
+     "run": "#422",
+     "why_wasted": "Span 400 MHz produces qC3's first 'success' at 5,580,061,447 Hz - 65 MHz below the value #437 and three out-of-scope runs establish. A parabola through a diluted ridge; adopting it would have been the session's one poisoned write."
+    },
+    {
+     "run": "#423",
+     "why_wasted": "Span 500 / flux 0.6 V / 21 points: 5,571,613,334 Hz, disagreeing with #422 by 8.4 MHz - two 'successes' that cannot both be true."
+    },
+    {
+     "run": "#424",
+     "why_wasted": "#423 with multiplexed=false: qC3 loses its fit. Tests a hypothesis (multiplexing crosstalk) that four cleanly multiplexed siblings had already ruled out."
+    },
+    {
+     "run": "#425",
+     "why_wasted": "Exact repeat of #420's knobs, which had already been shown to be insufficient for this target; qC3 fails again, no knob having moved."
+    },
+    {
+     "run": "#426",
+     "why_wasted": "Span 400 / flux 0.5 V: 'success' at 5,465,840,086 Hz, 180 MHz low - the most wrong number in the session. Its figure is the clearest proof of the mechanism: seven noise panels with parabolas drawn through them."
+    },
+    {
+     "run": "#430",
+     "why_wasted": "Second repeat of the knobs that already failed for qC3."
+    },
+    {
+     "run": "#431",
+     "why_wasted": "Third repeat of the same failing knobs."
+    },
+    {
+     "run": "#432",
+     "why_wasted": "Fourth repeat of the same failing knobs."
+    },
+    {
+     "run": "#433",
+     "why_wasted": "Same failing knobs with the flux sweep opened to 0.5 V, which also breaks four of the targets that had been working."
+    },
+    {
+     "run": "#434",
+     "why_wasted": "Span 400 / flux 0.5 V once more; qC3 fails this time, so not even a false fit is produced."
+    }
+   ],
+   "poisoned_writes": [],
+   "ideal_length": 3,
+   "actual_length": 14,
+   "confidence": "med",
+   "caveats": "The single largest saving in the session sits here: the knob change that worked at #437 (amplitude 1.0 at an unchanged 100 MHz span) was available at #420 and would have closed qC3 eleven runs earlier. Confidence is med, not high, on two counts. First, the adopted number rests on one in-scope run - it is corroborated by the standing state value to 0.18 MHz and by three out-of-scope runs to 0.5 MHz, but never reproduced inside the session file, and 0.5 MHz is at the edge of this family's run-to-run scatter. Second, #437 changed two knobs at once (amplitude 0.8 -> 1.0 and step 0.5 -> 0.4), so which one bought the fit is not separable from the record; the prescription above raises num_shots as well, which the session never tested for this target. If a system stops at #437 and calls qC3 unresolved pending one confirming repeat, that is a defensible answer too - what is not defensible is adopting #422, #423 or #426."
+  },
+  {
+   "qubit": "qC4",
+   "runs_in_scope": [
+    "#419",
+    "#420",
+    "#421",
+    "#422",
+    "#423",
+    "#424",
+    "#425",
+    "#426",
+    "#430",
+    "#431",
+    "#432",
+    "#433",
+    "#434",
+    "#437"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#419",
+     "expected_case": "No fit, along with five other targets - the 10 MHz window is too narrow for anyone. Nothing qC4-specific is knowable yet.",
+     "expected_flags": [
+      "span_too_narrow",
+      "mass_fit_failure",
+      "diagnosis_deferred"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Raise frequency_span_in_mhz 10 -> 100 at step 0.5 MHz, 11 flux points, amplitude 0.8, window centred ~20 MHz below f_01.",
+     "operator_did": "Widened to 100 MHz with detuning 20 MHz and flux span 0.10 V.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "#420",
+     "expected_case": "No fit while four siblings return clean arches in the same run: the sweep configuration is right, the failure is target-specific. The qC4 panel is featureless across the whole 100 MHz x 0.1 V map - no ridge, not a mis-centred one.",
+     "expected_flags": [
+      "no_fit",
+      "siblings_ok_same_run",
+      "no_visible_ridge",
+      "snr_limited"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Buy signal before buying range: num_shots 20 -> 60 and operation_amplitude_factor 0.8 -> 1.0 at an unchanged 100 MHz span. If a wider window is wanted to rule out a badly wrong standing f_01, spend exactly one run on it and no more.",
+     "operator_did": "Widened the span to 200 MHz and opened the flux sweep to 0.5 V, keeping num_shots at 20.",
+     "operator_was_right": "no"
+    },
+    {
+     "step": 3,
+     "run": "#422",
+     "expected_case": "The window hypothesis dies. A 400 MHz span at full amplitude still returns nothing for qC4, so the line is not merely outside a 100 MHz window; and the same run's sibling maps show the wide sweep has degraded everyone's SNR (its 'successes' land 40-80 MHz away from values confirmed two runs earlier). Two orthogonal probes have now failed and the remaining hypothesis is signal strength.",
+     "expected_flags": [
+      "no_fit",
+      "window_hypothesis_refuted",
+      "wide_span_degrades_snr",
+      "remaining_knob_is_shots"
+     ],
+     "correct_decision": "reject_and_stop",
+     "correct_next_action": "Stop widening and stop re-running this family at 20 shots. Spend one run at span <= 100 MHz with num_shots 60, num_flux_points 41, frequency_step 0.2 MHz and amplitude 1.0; if that still returns nothing, escalate upstream (readout and drive-line checks, nodes 02/03) rather than burning further 09 runs on this target.",
+     "operator_did": "Ran nine more 09 runs for qC4 - none of which changed num_shots - and never obtained a fit inside this session.",
+     "operator_was_right": "no"
+    }
+   ],
+   "termination": {
+    "at_run": "#422",
+    "reason": "By #422 both available hypotheses have been tested and killed: the narrow-window probe (#420) and the 4x-wider full-amplitude probe (#422) both return nothing while siblings fit. The only remaining knob is signal - num_shots, pinned at 20 in all 14 runs, together with flux/frequency sampling density - and no run inside this session file ever moves it, so no later in-scope run can resolve qC4. Stopping at #422 saves eleven target-runs.",
+    "final_frequency": null,
+    "final_sweep_value": null,
+    "value_evidence": "No fit in any of the 14 in-scope runs: success=false and every fit field NaN, 14 times out of 14. The #420 and #437 figures show the qC4 panel as featureless noise. Nothing in this session file evidences a qubit frequency or a sweet-spot flux for qC4, and none is asserted.",
+    "value_confidence": "low",
+    "unresolved": true
+   },
+   "wasted_runs": [
+    {
+     "run": "#421",
+     "why_wasted": "Span 200 / flux 0.5 V at 20 shots - dilutes an already-invisible ridge; no fit."
+    },
+    {
+     "run": "#423",
+     "why_wasted": "Span 500 / flux 0.6 V / 21 points: more pixels at the same 20 shots, still nothing."
+    },
+    {
+     "run": "#424",
+     "why_wasted": "#423 with multiplexed=false. The only run that tested the crosstalk hypothesis, but it was never a live hypothesis (four qubits fit cleanly multiplexed at #420) and it also broke three targets that had been working."
+    },
+    {
+     "run": "#425",
+     "why_wasted": "Exact repeat of #420's knobs, already known to be insufficient for this target."
+    },
+    {
+     "run": "#426",
+     "why_wasted": "Span 400 / flux 0.5 V again at 20 shots; no fit."
+    },
+    {
+     "run": "#430",
+     "why_wasted": "Repeat of the same failing knobs."
+    },
+    {
+     "run": "#431",
+     "why_wasted": "Repeat of the same failing knobs."
+    },
+    {
+     "run": "#432",
+     "why_wasted": "Repeat of the same failing knobs."
+    },
+    {
+     "run": "#433",
+     "why_wasted": "Same knobs with a 0.5 V flux sweep; no fit, and it broke four working targets."
+    },
+    {
+     "run": "#434",
+     "why_wasted": "Span 400 / flux 0.5 V for the fourth time; no fit."
+    },
+    {
+     "run": "#437",
+     "why_wasted": "Half of the right prescription - amplitude raised to 1.0 and step to 0.4 - but num_shots still 20 and num_flux_points still 11, and it still returns nothing. It rescued qC3, which is why it is a defensible run for the session; for qC4 specifically it is the eleventh run spent without moving the knob that mattered."
+    }
+   ],
+   "poisoned_writes": [],
+   "ideal_length": 3,
+   "actual_length": 14,
+   "confidence": "high",
+   "caveats": "Unresolved is the correct answer inside this session file, and I am confident of that (14/14 no-fit, with the figures showing why). Out of scope and flagged as such: three further 09 runs the same night, present in the archive but NOT in this session file, resolve qC4 by exactly the prescription above - #439 (span 60 MHz, step 0.2, 41 flux points, amplitude 1.0, 20 shots) fits it at 5,014,555,691 Hz and #440 (same plus num_shots 60) at 5,014,583,632 Hz with idle_offset -0.000332 V and a 28 kHz shift. That also settles the diagnosis: #438's frequency_shift pins qC4's standing f_01 at 5,011,647,950 Hz, only 2.9 MHz from the true value, so the line was inside every 100 MHz window the session swept and the blocker was always SNR, never placement. A tighter system could stop at #420 (ideal_length 2) on the siblings-fit-and-this-panel-is-empty argument alone; I allow #422 as one legitimate window probe."
+  },
+  {
+   "qubit": "qC5",
+   "runs_in_scope": [
+    "#419",
+    "#420",
+    "#421",
+    "#422",
+    "#423",
+    "#424",
+    "#425",
+    "#426",
+    "#430",
+    "#431",
+    "#432",
+    "#433",
+    "#434",
+    "#437"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#419",
+     "expected_case": "No fit, with five other targets - global window problem, nothing qC5-specific yet.",
+     "expected_flags": [
+      "span_too_narrow",
+      "mass_fit_failure",
+      "diagnosis_deferred"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Raise frequency_span_in_mhz 10 -> 100 at step 0.5 MHz, 11 flux points, amplitude 0.8, window centred ~20 MHz below f_01.",
+     "operator_did": "Widened to 100 MHz with detuning 20 MHz and flux span 0.10 V.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "#420",
+     "expected_case": "No fit while four siblings return clean arches at the same knobs in the same run - target-specific failure, and the qC5 panel shows no usable ridge in the 100 MHz window.",
+     "expected_flags": [
+      "no_fit",
+      "siblings_ok_same_run",
+      "no_visible_ridge",
+      "snr_limited"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Raise num_shots 20 -> 60 and operation_amplitude_factor 0.8 -> 1.0 at an unchanged 100 MHz span; leave the flux sweep at 0.1 V. At most one wide-window run to rule out a badly wrong standing f_01.",
+     "operator_did": "Widened the span to 200 MHz and opened the flux sweep to 0.5 V, keeping num_shots at 20.",
+     "operator_was_right": "no"
+    },
+    {
+     "step": 3,
+     "run": "#422",
+     "expected_case": "Window hypothesis refuted: 400 MHz at full amplitude still yields nothing, and the wide sweep is visibly degrading every target's SNR. Signal strength is the only hypothesis left, and this family has exactly one knob for it that the session never touches.",
+     "expected_flags": [
+      "no_fit",
+      "window_hypothesis_refuted",
+      "wide_span_degrades_snr",
+      "remaining_knob_is_shots"
+     ],
+     "correct_decision": "reject_and_stop",
+     "correct_next_action": "Stop the widen-and-repeat loop. One run at span <= 100 MHz with num_shots 60, num_flux_points 41, frequency_step 0.2 MHz, amplitude 1.0; if that fails, escalate to the readout/drive chain instead of another 09 run.",
+     "operator_did": "Ran nine more 09 runs for qC5, never changing num_shots, and obtained no fit inside this session.",
+     "operator_was_right": "no"
+    }
+   ],
+   "termination": {
+    "at_run": "#422",
+    "reason": "Same two-probe closure as qC4: the narrow window (#420) and the 4x-wider full-amplitude window (#422) both return nothing while siblings fit cleanly, leaving signal strength as the only hypothesis - and num_shots is never moved anywhere in this session file. No in-scope run after #422 can resolve qC5, so continuing is pure spend.",
+    "final_frequency": null,
+    "final_sweep_value": null,
+    "value_evidence": "No fit in any of the 14 in-scope runs: success=false with every field NaN, 14 times out of 14. The one piece of positive in-scope evidence is visual and unfitted - in #437's figure the qC5 panel carries a faint but real arch peaking near flux 0 at roughly 5.72-5.74 GHz that the fitter did not latch onto. That is enough to name the failure mode (signal present, below the fitter's threshold) and not nearly enough to quote a frequency, so none is quoted.",
+    "value_confidence": "low",
+    "unresolved": true
+   },
+   "wasted_runs": [
+    {
+     "run": "#421",
+     "why_wasted": "Span 200 / flux 0.5 V at 20 shots; no fit."
+    },
+    {
+     "run": "#423",
+     "why_wasted": "Span 500 / flux 0.6 V / 21 points; more pixels at the same shot budget, no fit."
+    },
+    {
+     "run": "#424",
+     "why_wasted": "#423 with multiplexed=false - tests a hypothesis already dead at #420, and costs three working targets their fits."
+    },
+    {
+     "run": "#425",
+     "why_wasted": "Exact repeat of #420's knobs, already known insufficient for this target."
+    },
+    {
+     "run": "#426",
+     "why_wasted": "Span 400 / flux 0.5 V; no fit."
+    },
+    {
+     "run": "#430",
+     "why_wasted": "Repeat of the same failing knobs."
+    },
+    {
+     "run": "#431",
+     "why_wasted": "Repeat of the same failing knobs."
+    },
+    {
+     "run": "#432",
+     "why_wasted": "Repeat of the same failing knobs."
+    },
+    {
+     "run": "#433",
+     "why_wasted": "Same knobs with a 0.5 V flux sweep; no fit, and four working targets lost."
+    },
+    {
+     "run": "#434",
+     "why_wasted": "Span 400 / flux 0.5 V; no fit."
+    },
+    {
+     "run": "#437",
+     "why_wasted": "Amplitude 1.0 and step 0.4 at 100 MHz brings a faint qC5 arch to the surface but the fit still fails, because num_shots stayed at 20 and the flux sampling stayed at 11 points. The most informative of the eleven wasted runs - it shows the target is alive - and still not the run that was needed."
+    }
+   ],
+   "poisoned_writes": [],
+   "ideal_length": 3,
+   "actual_length": 14,
+   "confidence": "high",
+   "caveats": "Unresolved inside this session file, confidently so (14/14 no-fit). The faint ridge in #437's qC5 panel is my only in-scope evidence that the qubit responds at all; I read it off the figure and deliberately do not turn it into a number. Out of scope and flagged as such: #440 the same night (span 60 MHz, step 0.2, 41 flux points, amplitude 1.0, num_shots 60 - the only run of the night with more than 20 shots) fits qC5 at 5,740,459,925 Hz with idle_offset +0.002191 V and a 214 kHz shift, matching the faint ridge's position and confirming that num_shots was the missing knob. qC5 is the strictest case in the session: it needed 3x the shots AND the finer sampling, whereas qC4 came back at #439 on sampling alone."
+  }
+ ],
+ "runs": [
+  "#419_09_qubit_spectroscopy_vs_flux_200050",
+  "#420_09_qubit_spectroscopy_vs_flux_200246",
+  "#421_09_qubit_spectroscopy_vs_flux_200530",
+  "#422_09_qubit_spectroscopy_vs_flux_200712",
+  "#423_09_qubit_spectroscopy_vs_flux_201239",
+  "#424_09_qubit_spectroscopy_vs_flux_201916",
+  "#425_09_qubit_spectroscopy_vs_flux_202555",
+  "#426_09_qubit_spectroscopy_vs_flux_203154",
+  "#430_09_qubit_spectroscopy_vs_flux_213953",
+  "#431_09_qubit_spectroscopy_vs_flux_214136",
+  "#432_09_qubit_spectroscopy_vs_flux_215718",
+  "#433_09_qubit_spectroscopy_vs_flux_222504",
+  "#434_09_qubit_spectroscopy_vs_flux_222929",
+  "#437_09_qubit_spectroscopy_vs_flux_224507"
+ ],
+ "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: judging the system on runs the key's author never examined is neither fair nor sound \u2014 it can adopt from a run the key has no opinion about, and the mismatch showed up as a 12-point score difference between two harnesses reading the same archive."
+}

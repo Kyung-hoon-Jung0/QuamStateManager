@@ -1,7 +1,7 @@
 {
  "schema": "smknowex/v1",
  "family": "resonator_spectroscopy_vs_power",
- "note": "Axes are NORMALISED and UNLABELLED: no absolute frequency or power leaves this pack, and a picture without numbers cannot teach an absolute scale (Clause B). Orientation follows the labs' own convention: frequency rightwards, readout power upwards. Overlays: orange = per-row dip track (rows where no dip clears the noise are simply absent), cyan dashed = the record's dressed frequency, magenta dotted = its bare frequency, red = its chosen power. Markers are the RECORD's claims, drawn even when they contradict the map \u2014 that contradiction is the lesson in the branch-swap and off-feature cases.",
+ "note": "Axes are NORMALISED and UNLABELLED: no absolute frequency, power or flux leaves this pack, and a picture without numbers cannot teach an absolute scale (Clause B). Orientation follows the labs' own convention: frequency rightwards, the swept quantity upwards. Overlays: orange = the tracked feature, cyan dashed and magenta dotted = the record's own frequency claims, red = the sweep value it chose. Markers are the RECORD's claims, drawn even when they contradict the map \u2014 that contradiction is the lesson in the mislabelled and off-feature cases. Whether the feature is a dip or a peak is MEASURED per run, because the readout rotation decides it and it differs between labs.",
  "rendered": [
   {
    "case": "C1",
@@ -10,17 +10,20 @@
    "chip": "AS_10TQ9TC",
    "run": "#314",
    "qubit": "q6",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     32,
     30
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 30,
-   "rows_total": 30
+   "traceable": 23,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "C1",
@@ -29,17 +32,20 @@
    "chip": "AS_10TQ9TC",
    "run": "#12",
    "qubit": "q3",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     107,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 40,
-   "rows_total": 40
+   "traceable": 29,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "C1",
@@ -48,17 +54,20 @@
    "chip": "AS_10TQ9TC",
    "run": "#348",
    "qubit": "q6",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     60,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 40,
-   "rows_total": 40
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "C1",
@@ -67,17 +76,20 @@
    "chip": "CQT",
    "run": "#135",
    "qubit": "q2",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     150,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 92,
-   "rows_total": 100
+   "traceable": 44,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
   },
   {
    "case": "C1",
@@ -86,17 +98,20 @@
    "chip": "CQT",
    "run": "#192",
    "qubit": "q14",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     150,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 100,
-   "rows_total": 100
+   "traceable": 89,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "C1",
@@ -105,17 +120,20 @@
    "chip": "CQT",
    "run": "#352",
    "qubit": "q10",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
     167,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 88,
-   "rows_total": 100
+   "traceable": 68,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "C1",
@@ -124,17 +142,20 @@
    "chip": "CQT",
    "run": "#996",
    "qubit": "q20",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     50,
     50
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 50,
-   "rows_total": 50
+   "traceable": 25,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "moving"
   },
   {
    "case": "C2",
@@ -143,17 +164,20 @@
    "chip": "CQT",
    "run": "#41",
    "qubit": "q1",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
     200,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 84,
-   "rows_total": 100
+   "traceable": 100,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "C2",
@@ -162,17 +186,20 @@
    "chip": "CQT",
    "run": "#995",
    "qubit": "q20",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     38,
     50
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 37,
-   "rows_total": 50
+   "traceable": 33,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "C2",
@@ -181,17 +208,20 @@
    "chip": "CQT",
    "run": "#255",
    "qubit": "q4",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     150,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 98,
-   "rows_total": 100
+   "traceable": 70,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "C2",
@@ -200,16 +230,19 @@
    "chip": "AS_10TQ9TC",
    "run": "#9",
    "qubit": "q9",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     800,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "optimal_power"
-   ],
-   "rows_traceable": 40,
-   "rows_total": 40
+   "traceable": 39,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "C2",
@@ -218,17 +251,20 @@
    "chip": "CQT",
    "run": "#1350",
    "qubit": "q15",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     41
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 41,
-   "rows_total": 41
+   "traceable": 38,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "C3",
@@ -237,16 +273,19 @@
    "chip": "AS_10TQ9TC",
    "run": "#321",
    "qubit": "q6",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "optimal_power"
-   ],
-   "rows_traceable": 40,
-   "rows_total": 40
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "C3",
@@ -255,16 +294,19 @@
    "chip": "AS_10TQ9TC",
    "run": "#341",
    "qubit": "q7",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "optimal_power"
-   ],
-   "rows_traceable": 40,
-   "rows_total": 40
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "C3",
@@ -273,17 +315,20 @@
    "chip": "CQT",
    "run": "#727",
    "qubit": "q12",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     150,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 27,
-   "rows_total": 40
+   "traceable": 20,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "moving"
   },
   {
    "case": "C3",
@@ -292,17 +337,20 @@
    "chip": "CQT",
    "run": "#1351",
    "qubit": "q20",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     41
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 29,
-   "rows_total": 41
+   "traceable": 27,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "C3",
@@ -311,16 +359,19 @@
    "chip": "AS_10TQ9TC",
    "run": "#7",
    "qubit": "q8",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare"
-   ],
-   "rows_traceable": 40,
-   "rows_total": 40
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "C4a",
@@ -329,17 +380,20 @@
    "chip": "CQT",
    "run": "#76",
    "qubit": "q6",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     150,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 87,
-   "rows_total": 100
+   "traceable": 72,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "C4a",
@@ -348,17 +402,20 @@
    "chip": "CQT",
    "run": "#391",
    "qubit": "q1",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     167,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 95,
-   "rows_total": 100
+   "traceable": 84,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "C4a",
@@ -367,16 +424,19 @@
    "chip": "CQT",
    "run": "#1117",
    "qubit": "q6",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     150,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "optimal_power"
-   ],
-   "rows_traceable": 98,
-   "rows_total": 100
+   "traceable": 48,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
   },
   {
    "case": "C4a",
@@ -385,16 +445,19 @@
    "chip": "CQT",
    "run": "#481",
    "qubit": "q8",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     400,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "optimal_power"
-   ],
-   "rows_traceable": 92,
-   "rows_total": 100
+   "traceable": 91,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "C4a",
@@ -403,17 +466,20 @@
    "chip": "AS_10TQ9TC",
    "run": "#307",
    "qubit": "q6",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     32,
     30
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 26,
-   "rows_total": 30
+   "traceable": 15,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "moving"
   },
   {
    "case": "C4b",
@@ -422,17 +488,20 @@
    "chip": "AS_10TQ9TC",
    "run": "#335",
    "qubit": "q6",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 40,
-   "rows_total": 40
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "C4b",
@@ -441,16 +510,19 @@
    "chip": "AS_10TQ9TC",
    "run": "#345",
    "qubit": "q6",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "optimal_power"
-   ],
-   "rows_traceable": 40,
-   "rows_total": 40
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "C4b",
@@ -459,16 +531,19 @@
    "chip": "CQT",
    "run": "#176",
    "qubit": "q18",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
     150,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare"
-   ],
-   "rows_traceable": 96,
-   "rows_total": 100
+   "traceable": 50,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
   },
   {
    "case": "C4b",
@@ -477,16 +552,19 @@
    "chip": "AS_10TQ9TC",
    "run": "#8",
    "qubit": "q9",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     800,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "optimal_power"
-   ],
-   "rows_traceable": 40,
-   "rows_total": 40
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "C4b",
@@ -495,16 +573,19 @@
    "chip": "CQT",
    "run": "#349",
    "qubit": "q10",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     200,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare"
-   ],
-   "rows_traceable": 87,
-   "rows_total": 100
+   "traceable": 83,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "C5",
@@ -513,17 +594,20 @@
    "chip": "CQT",
    "run": "#382",
    "qubit": "q18",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     167,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 100,
-   "rows_total": 100
+   "traceable": 100,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "C5",
@@ -532,17 +616,20 @@
    "chip": "CQT",
    "run": "#394",
    "qubit": "q5",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     167,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 99,
-   "rows_total": 100
+   "traceable": 92,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "C5",
@@ -551,17 +638,20 @@
    "chip": "CQT",
    "run": "#1352",
    "qubit": "q9",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     41
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 41,
-   "rows_total": 41
+   "traceable": 40,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "C5",
@@ -570,17 +660,20 @@
    "chip": "CQT",
    "run": "#347",
    "qubit": "q9",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     200,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 95,
-   "rows_total": 100
+   "traceable": 87,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "C6",
@@ -589,17 +682,20 @@
    "chip": "CQT",
    "run": "#1089",
    "qubit": "q19",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     300,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 61,
-   "rows_total": 100
+   "traceable": 49,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
   },
   {
    "case": "C6",
@@ -608,17 +704,20 @@
    "chip": "CQT",
    "run": "#1116",
    "qubit": "q6",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
     150,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 24,
-   "rows_total": 100
+   "traceable": 34,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
   },
   {
    "case": "C6",
@@ -627,16 +726,19 @@
    "chip": "CQT",
    "run": "#175",
    "qubit": "q18",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     150,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "optimal_power"
-   ],
-   "rows_traceable": 99,
-   "rows_total": 100
+   "traceable": 47,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
   },
   {
    "case": "N1",
@@ -645,17 +747,20 @@
    "chip": "CQT",
    "run": "#624",
    "qubit": "q9",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     150,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 26,
-   "rows_total": 40
+   "traceable": 20,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "moving"
   },
   {
    "case": "N1",
@@ -664,17 +769,20 @@
    "chip": "CQT",
    "run": "#179",
    "qubit": "q16",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     150,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 43,
-   "rows_total": 100
+   "traceable": 43,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
   },
   {
    "case": "N1",
@@ -683,16 +791,19 @@
    "chip": "CQT",
    "run": "#335",
    "qubit": "q9",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     150,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "optimal_power"
-   ],
-   "rows_traceable": 32,
-   "rows_total": 40
+   "traceable": 25,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "N1",
@@ -701,17 +812,20 @@
    "chip": "CQT",
    "run": "#357",
    "qubit": "q16",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     167,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 72,
-   "rows_total": 100
+   "traceable": 60,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "N1",
@@ -720,17 +834,20 @@
    "chip": "AS_10TQ9TC",
    "run": "#9",
    "qubit": "q8",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     800,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 39,
-   "rows_total": 40
+   "traceable": 36,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "N2",
@@ -739,17 +856,20 @@
    "chip": "AS_10TQ9TC",
    "run": "#8",
    "qubit": "q8",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     800,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 40,
-   "rows_total": 40
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "N3",
@@ -758,17 +878,20 @@
    "chip": "AS_10TQ9TC",
    "run": "#315",
    "qubit": "q6",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     32,
     30
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 30,
-   "rows_total": 30
+   "traceable": 26,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "N3",
@@ -777,17 +900,20 @@
    "chip": "AS_10TQ9TC",
    "run": "#315",
    "qubit": "q7",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     32,
     30
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 30,
-   "rows_total": 30
+   "traceable": 29,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "N3",
@@ -796,16 +922,19 @@
    "chip": "AS_10TQ9TC",
    "run": "#347",
    "qubit": "q7",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "optimal_power"
-   ],
-   "rows_traceable": 40,
-   "rows_total": 40
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "N3",
@@ -814,17 +943,20 @@
    "chip": "AS_10TQ9TC",
    "run": "#11",
    "qubit": "q9",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     107,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 40,
-   "rows_total": 40
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "N4",
@@ -833,17 +965,20 @@
    "chip": "CQT",
    "run": "#350",
    "qubit": "q10",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
     167,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 88,
-   "rows_total": 100
+   "traceable": 72,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "N4",
@@ -852,16 +987,19 @@
    "chip": "CQT",
    "run": "#351",
    "qubit": "q10",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
     167,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare"
-   ],
-   "rows_traceable": 87,
-   "rows_total": 100
+   "traceable": 76,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "N4",
@@ -870,16 +1008,19 @@
    "chip": "AS_10TQ9TC",
    "run": "#306",
    "qubit": "q7",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     24,
     30
    ],
-   "markers_drawn": [
-    "dressed",
-    "optimal_power"
-   ],
-   "rows_traceable": 30,
-   "rows_total": 30
+   "traceable": 15,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "moving"
   },
   {
    "case": "N5",
@@ -888,16 +1029,19 @@
    "chip": "CQT",
    "run": "#40",
    "qubit": "q1",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     150,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare"
-   ],
-   "rows_traceable": 97,
-   "rows_total": 100
+   "traceable": 49,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
   },
   {
    "case": "N6",
@@ -906,17 +1050,20 @@
    "chip": "AS_10TQ9TC",
    "run": "#9",
    "qubit": "q8",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     800,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 39,
-   "rows_total": 40
+   "traceable": 36,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "N6",
@@ -925,17 +1072,20 @@
    "chip": "AS_10TQ9TC",
    "run": "#318",
    "qubit": "q7",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 40,
-   "rows_total": 40
+   "traceable": 38,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "N6",
@@ -944,17 +1094,20 @@
    "chip": "AS_10TQ9TC",
    "run": "#320",
    "qubit": "q6",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 38,
-   "rows_total": 40
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "N7",
@@ -963,17 +1116,20 @@
    "chip": "CQT",
    "run": "#377",
    "qubit": "q19",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     167,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 72,
-   "rows_total": 100
+   "traceable": 49,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
   },
   {
    "case": "N7",
@@ -982,17 +1138,20 @@
    "chip": "CQT",
    "run": "#378",
    "qubit": "q19",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     167,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 85,
-   "rows_total": 100
+   "traceable": 71,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "N7",
@@ -1001,17 +1160,20 @@
    "chip": "CQT",
    "run": "#1033",
    "qubit": "q12",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
     50,
     50
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 44,
-   "rows_total": 50
+   "traceable": 41,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "N7",
@@ -1020,16 +1182,19 @@
    "chip": "CQT",
    "run": "#1079",
    "qubit": "q12",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
     50,
     50
    ],
-   "markers_drawn": [
-    "dressed",
-    "optimal_power"
-   ],
-   "rows_traceable": 45,
-   "rows_total": 50
+   "traceable": 38,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "N7",
@@ -1038,17 +1203,20 @@
    "chip": "CQT",
    "run": "#1352",
    "qubit": "q17",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
     100,
     41
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 39,
-   "rows_total": 41
+   "traceable": 38,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "N8",
@@ -1057,16 +1225,19 @@
    "chip": "AS_10TQ9TC",
    "run": "#342",
    "qubit": "q6",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "optimal_power"
-   ],
-   "rows_traceable": 36,
-   "rows_total": 40
+   "traceable": 37,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "N8",
@@ -1075,16 +1246,19 @@
    "chip": "AS_10TQ9TC",
    "run": "#342",
    "qubit": "q7",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "optimal_power"
-   ],
-   "rows_traceable": 37,
-   "rows_total": 40
+   "traceable": 35,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "N8",
@@ -1093,17 +1267,20 @@
    "chip": "CQT",
    "run": "#135",
    "qubit": "q1",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     150,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 81,
-   "rows_total": 100
+   "traceable": 47,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
   },
   {
    "case": "N8",
@@ -1112,17 +1289,20 @@
    "chip": "CQT",
    "run": "#76",
    "qubit": "q6",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     150,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 87,
-   "rows_total": 100
+   "traceable": 72,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "F1",
@@ -1131,17 +1311,20 @@
    "chip": "AS_10TQ9TC",
    "run": "#318",
    "qubit": "q6",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 40,
-   "rows_total": 40
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "F1",
@@ -1150,17 +1333,20 @@
    "chip": "AS_10TQ9TC",
    "run": "#10",
    "qubit": "q8",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     107,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 40,
-   "rows_total": 40
+   "traceable": 30,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "F1",
@@ -1169,17 +1355,20 @@
    "chip": "AS_10TQ9TC",
    "run": "#232",
    "qubit": "q5",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
     30,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 39,
-   "rows_total": 40
+   "traceable": 24,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "moving"
   },
   {
    "case": "F1",
@@ -1188,17 +1377,20 @@
    "chip": "CQT",
    "run": "#347",
    "qubit": "q9",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     200,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 95,
-   "rows_total": 100
+   "traceable": 87,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "F1",
@@ -1207,17 +1399,20 @@
    "chip": "CQT",
    "run": "#1352",
    "qubit": "q17",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
     100,
     41
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 39,
-   "rows_total": 41
+   "traceable": 38,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "F1",
@@ -1226,17 +1421,20 @@
    "chip": "CQT",
    "run": "#378",
    "qubit": "q19",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     167,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 85,
-   "rows_total": 100
+   "traceable": 71,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "F2",
@@ -1245,16 +1443,19 @@
    "chip": "AS_10TQ9TC",
    "run": "#320",
    "qubit": "q7",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "optimal_power"
-   ],
-   "rows_traceable": 40,
-   "rows_total": 40
+   "traceable": 38,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "F2",
@@ -1263,16 +1464,19 @@
    "chip": "AS_10TQ9TC",
    "run": "#321",
    "qubit": "q6",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "optimal_power"
-   ],
-   "rows_traceable": 40,
-   "rows_total": 40
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "F2",
@@ -1281,17 +1485,20 @@
    "chip": "AS_10TQ9TC",
    "run": "#327",
    "qubit": "q6",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 40,
-   "rows_total": 40
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "F2",
@@ -1300,16 +1507,19 @@
    "chip": "AS_10TQ9TC",
    "run": "#347",
    "qubit": "q6",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "optimal_power"
-   ],
-   "rows_traceable": 40,
-   "rows_total": 40
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "F2",
@@ -1318,17 +1528,20 @@
    "chip": "CQT",
    "run": "#41",
    "qubit": "q1",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
     200,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 84,
-   "rows_total": 100
+   "traceable": 100,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "F3",
@@ -1337,17 +1550,20 @@
    "chip": "AS_10TQ9TC",
    "run": "#326",
    "qubit": "q6",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 38,
-   "rows_total": 40
+   "traceable": 39,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "F3",
@@ -1356,17 +1572,20 @@
    "chip": "AS_10TQ9TC",
    "run": "#319",
    "qubit": "q6",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 37,
-   "rows_total": 40
+   "traceable": 37,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "F3",
@@ -1375,17 +1594,20 @@
    "chip": "AS_10TQ9TC",
    "run": "#346",
    "qubit": "q6",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 40,
-   "rows_total": 40
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "F3",
@@ -1394,17 +1616,20 @@
    "chip": "CQT",
    "run": "#1351",
    "qubit": "q14",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     41
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 41,
-   "rows_total": 41
+   "traceable": 41,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "F3",
@@ -1413,17 +1638,20 @@
    "chip": "CQT",
    "run": "#1213",
    "qubit": "q15",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
     400,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 100,
-   "rows_total": 100
+   "traceable": 50,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
   },
   {
    "case": "F4",
@@ -1432,17 +1660,20 @@
    "chip": "CQT",
    "run": "#342",
    "qubit": "q9",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     200,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 95,
-   "rows_total": 100
+   "traceable": 86,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "F4",
@@ -1451,17 +1682,20 @@
    "chip": "CQT",
    "run": "#1212",
    "qubit": "q15",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
     400,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 80,
-   "rows_total": 100
+   "traceable": 71,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "F4",
@@ -1470,17 +1704,20 @@
    "chip": "CQT",
    "run": "#1352",
    "qubit": "q19",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     41
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 34,
-   "rows_total": 41
+   "traceable": 20,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "moving"
   },
   {
    "case": "F4",
@@ -1489,17 +1726,20 @@
    "chip": "AS_10TQ9TC",
    "run": "#323",
    "qubit": "q6",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 35,
-   "rows_total": 40
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "F5",
@@ -1508,16 +1748,19 @@
    "chip": "CQT",
    "run": "#346",
    "qubit": "q9",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     200,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare"
-   ],
-   "rows_traceable": 96,
-   "rows_total": 100
+   "traceable": 89,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "F5",
@@ -1526,17 +1769,20 @@
    "chip": "CQT",
    "run": "#348",
    "qubit": "q10",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     200,
     100
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 85,
-   "rows_total": 100
+   "traceable": 84,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "F5",
@@ -1545,17 +1791,20 @@
    "chip": "CQT",
    "run": "#624",
    "qubit": "q9",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     150,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 26,
-   "rows_total": 40
+   "traceable": 20,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "moving"
   },
   {
    "case": "F5",
@@ -1564,17 +1813,20 @@
    "chip": "CQT",
    "run": "#995",
    "qubit": "q20",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     38,
     50
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 37,
-   "rows_total": 50
+   "traceable": 33,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "F5",
@@ -1583,17 +1835,20 @@
    "chip": "AS_10TQ9TC",
    "run": "#326",
    "qubit": "q6",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 38,
-   "rows_total": 40
+   "traceable": 39,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "F6",
@@ -1602,17 +1857,20 @@
    "chip": "AS_10TQ9TC",
    "run": "#315",
    "qubit": "q6",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     32,
     30
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 30,
-   "rows_total": 30
+   "traceable": 26,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "F6",
@@ -1621,16 +1879,19 @@
    "chip": "AS_10TQ9TC",
    "run": "#321",
    "qubit": "q6",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     40
    ],
-   "markers_drawn": [
-    "dressed",
-    "optimal_power"
-   ],
-   "rows_traceable": 40,
-   "rows_total": 40
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "F6",
@@ -1639,17 +1900,20 @@
    "chip": "CQT",
    "run": "#1352",
    "qubit": "q16",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     41
    ],
-   "markers_drawn": [
-    "dressed",
-    "bare",
-    "optimal_power"
-   ],
-   "rows_traceable": 37,
-   "rows_total": 41
+   "traceable": 27,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "static"
   },
   {
    "case": "F6",
@@ -1658,16 +1922,19 @@
    "chip": "CQT",
    "run": "#1351",
    "qubit": "q17",
-   "grid_freq_x_power": [
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
     100,
     41
    ],
-   "markers_drawn": [
-    "dressed",
-    "optimal_power"
-   ],
-   "rows_traceable": 38,
-   "rows_total": 41
+   "traceable": 34,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "static"
   }
  ],
  "missing": []
