@@ -2884,7 +2884,15 @@ window.applyEditsToLive = function () {
         if (!host) return;
         fetch("/state/drift/view", { cache: "no-store" })
             .then(function (r) { return r.text(); })
-            .then(function (html) { host.innerHTML = html; if (window.htmx) htmx.process(host); })
+            .then(function (html) {
+                host.innerHTML = html;
+                // Same one-liner the version-diff overlay needs (docs/128
+                // review found this sibling carrying the identical defect):
+                // no htmx swap event fires here, so _live_drift.html's
+                // "baseline: <ts>" would render as an invisible blank.
+                if (window.applyLocalTimes) window.applyLocalTimes(host);
+                if (window.htmx) htmx.process(host);
+            })
             .catch(function () {
                 host.innerHTML = '<p class="muted" style="padding:1.5rem">Could not read the live chip.</p>';
             });
@@ -16357,6 +16365,12 @@ window.StateVersions = (function () {
             .then(function (html) {
                 if (gen !== _diffGen) return;
                 host.innerHTML = html;
+                // `.ts-local` ships visibility:hidden and is revealed only by
+                // applyLocalTimes stamping data-localized. A raw fetch+
+                // innerHTML fires no htmx swap event, so without this call the
+                // ONE line naming which version you are looking at renders as
+                // a blank gap (docs/128 review, measured in real Chrome).
+                if (window.applyLocalTimes) window.applyLocalTimes(host);
                 if (window.htmx) htmx.process(host);
             })
             .catch(function () {

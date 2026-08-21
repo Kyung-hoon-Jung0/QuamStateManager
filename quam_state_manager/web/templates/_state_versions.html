@@ -88,14 +88,12 @@
                     <span class="sv-id">{{ r.ts }}</span>
                 </span>
             </label>
-            <span class="sv-meta">
-                <span class="sv-trigger sv-trigger-{{ r.trigger }}">{{ r.trigger }}</span>
-                {% if r.pinned %}<span class="sv-pin" title="Pinned — exempt from pruning">&#128204;</span>{% endif %}
-                {% if r.current %}<span class="sv-now" title="The live chip currently holds exactly this content">on this now</span>{% endif %}
-                {% if r.label %}<span class="sv-label">{{ r.label }}</span>{% endif %}
-                {% if r.experiment %}<span class="sv-exp muted">after {{ r.experiment }}{% if r.run_id %} #{{ r.run_id }}{% endif %}</span>{% endif %}
-                {% if r.note %}<span class="sv-note muted">{{ r.note }}</span>{% endif %}
-            </span>
+            {# Actions sit DIRECTLY after the date (customer, 2026-08-21: "the
+               gap between the button and the date column is too wide"). They
+               were right-pinned across a 46rem panel, which put ~20rem of
+               nothing between the two things the row is used for. Ordered
+               here rather than by CSS `order` so tab order matches what the
+               eye sees: checkbox -> Diff -> Pull to Live -> next row. #}
             <span class="sv-row-actions">
                 {# Read-only preview FIRST (docs/128, customer): what this
                    version holds against NOW, one click, nothing written —
@@ -124,6 +122,14 @@
                            overwrite style (docs/86/97). #}
                         title="Overwrite the LIVE chip with this version. Unsaved edits and a wiring-topology mismatch each ask first, and the current live state is snapshotted so this is reversible.">&#8593; Pull to Live</button>
                 {% endif %}
+            </span>
+            <span class="sv-meta">
+                <span class="sv-trigger sv-trigger-{{ r.trigger }}">{{ r.trigger }}</span>
+                {% if r.pinned %}<span class="sv-pin" title="Pinned — exempt from pruning">&#128204;</span>{% endif %}
+                {% if r.current %}<span class="sv-now" title="The live chip currently holds exactly this content">on this now</span>{% endif %}
+                {% if r.label %}<span class="sv-label">{{ r.label }}</span>{% endif %}
+                {% if r.experiment %}<span class="sv-exp muted">after {{ r.experiment }}{% if r.run_id %} #{{ r.run_id }}{% endif %}</span>{% endif %}
+                {% if r.note %}<span class="sv-note muted">{{ r.note }}</span>{% endif %}
             </span>
         </li>
         {% endfor %}

@@ -1854,6 +1854,7 @@ class HistoryManager:
         timestamp: str,
         *,
         current_store: QuamStore | None = None,
+        ignore_keys: set[str] | None = None,
     ) -> list[DiffEntry]:
         """Diff a historical snapshot against the current loaded state.
 
@@ -1861,11 +1862,19 @@ class HistoryManager:
         in-memory store (the working copy the user sees), so the live files
         are never opened.  When omitted, falls back to reading
         ``quam_state_path`` directly (non-web callers / tests).
+
+        ``ignore_keys`` — passed through to :meth:`Differ.diff`; ``None``
+        keeps its default (``__class__`` ignored). A caller whose surface
+        tells the user the two states MATCH should pass ``set()``: a class
+        migration (docs/94) is a real difference, and calling it a match is
+        a lie (docs/128 review).
         """
         path = Path(quam_state_path)
         snap_dir = self._history_dir(path) / timestamp
         target = current_store if current_store is not None else path
-        return _differ.diff(snap_dir, target)
+        if ignore_keys is None:
+            return _differ.diff(snap_dir, target)
+        return _differ.diff(snap_dir, target, ignore_keys=ignore_keys)
 
     # ------------------------------------------------------------------
     # Live-tracking baseline — an accumulating "what the live chip changed
