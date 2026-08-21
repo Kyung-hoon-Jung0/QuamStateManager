@@ -52,6 +52,8 @@ if _DATASET.exists():
 # node-name prefixes that belong to each family (a run number alone is NOT a
 # key — see find_run)
 FAMILY_NODES = {
+    "resonator_spectroscopy": ["03_resonator_spectroscopy_single",
+                               "02_resonator_spectroscopy"],
     "resonator_spectroscopy_vs_power": ["05_resonator_spectroscopy_vs_power"],
     "qubit_spectroscopy": ["08_qubit_spectroscopy"],
     "qubit_spectroscopy_vs_flux": ["09_qubit_spectroscopy_vs_flux",
@@ -64,6 +66,7 @@ FAMILY_NODES = {
 
 # which fit fields to draw as markers, per family: (field, colour, style)
 MARKERS = {
+    "resonator_spectroscopy": [("frequency", "#38bdf8", "--")],
     "resonator_spectroscopy_vs_power": [
         ("resonator_frequency", "#38bdf8", "--"),
         ("bare_resonator_frequency", "#e879f9", ":")],

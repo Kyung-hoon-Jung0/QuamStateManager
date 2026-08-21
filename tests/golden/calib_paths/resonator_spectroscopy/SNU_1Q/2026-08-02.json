@@ -1,0 +1,1212 @@
+{
+ "schema": "smgolden/v2",
+ "family": "resonator_spectroscopy",
+ "chip": "SNU_1Q",
+ "session": "2026-08-02",
+ "session_id": "SNU_1Q__2026-08-02",
+ "authored": "2026-08-21",
+ "status": "hindsight-authored + adversarial audit",
+ "runs": [
+  "#1_03_resonator_spectroscopy_single_145900",
+  "#2_03_resonator_spectroscopy_single_145938",
+  "#5_03_resonator_spectroscopy_single_162158",
+  "#12_03_resonator_spectroscopy_single_174834",
+  "#13_03_resonator_spectroscopy_single_175113",
+  "#17_03_resonator_spectroscopy_single_181243",
+  "#19_03_resonator_spectroscopy_single_182257",
+  "#20_03_resonator_spectroscopy_single_182500",
+  "#23_03_resonator_spectroscopy_single_183659",
+  "#24_03_resonator_spectroscopy_single_183956",
+  "#27_03_resonator_spectroscopy_single_192554",
+  "#31_03_resonator_spectroscopy_single_201103",
+  "#33_03_resonator_spectroscopy_single_201528",
+  "#35_03_resonator_spectroscopy_single_201943",
+  "#41_03_resonator_spectroscopy_single_202826",
+  "#42_03_resonator_spectroscopy_single_203014"
+ ],
+ "runs_note": "The exact run set this key was authored from; scoring must replay these and only these.",
+ "audit_challenged": true,
+ "audit_note": "The adversarial pass challenged this family's keys harder than any other's. A key flagged audit_challenged carries load-bearing defects its own auditor found; a score computed against it measures the key as much as the system.",
+ "session_notes": "SCOPE AND NOTATION. 16 runs of 03_resonator_spectroscopy_single, referenced here by their run number (\"#5\" = #5_03_resonator_spectroscopy_single_162158). All 16 are the NEW node generation: every params block carries min_dip_snr=6.0, dip_dominance=2.0, escalate_on_no_dip, max_escalation_span_in_mhz, and every fit carries dip_snr / ambiguous / candidates / success_shape. There is no old-generation run in this session, so \"generation\" never has to be disambiguated per case.\n\nTHE SINGLE BIGGEST STRUCTURAL FACT. escalate_on_no_dip was False in all 16 runs and max_escalation_span_in_mhz (800, later 1000) was therefore never spent once. The operator escalated instead by hand-editing the resonator RF_frequency in the live state between runs, which moves the sweep CENTRE. That manoeuvre is the source of nearly every wasted run and of both poisoned writes: this node fits the notch nearest the centre, so moving the centre onto a different notch produces a healthy-looking fit (success=True, success_shape=True, dip_snr in the teens, ambiguous=False) of the wrong resonance, with no flag raised anywhere.\n\nTWO ENVIRONMENT FACTS THE CURSOR CANNOT SEE, WHICH HINDSIGHT SUPPLIES.\n(1) Runs #8-#13 executed against a TRIMMED 4-qubit QUAM: quam_state/state.json in #12 and #13 contains only q10, q11, q15, q17. #14 onward reverts to the 13-qubit state in which those four are still at their design guesses (7000/6570/6800/7260 MHz). So #12's and #13's writes never reached the surviving state; they are a discarded branch.\n(2) The flux operating point changed mid-session. The configuration in force from #29 to the end of the day (joint_offset: q9 -0.0850, q11 -0.0540, q15 -0.0540, q17 +0.1003 V) is the one the day's final state uses. #27 ran at a DIFFERENT configuration (q17 -0.0330, q5 +0.0270), which is why its q10/q15/q17 values sit 15-23 MHz below every neighbouring run; those writes were reverted before #29. #27's numbers are not wrong, they are not comparable, and treating them as a drift signal is the trap that run contains.\n\nMETHOD. I re-derived, from each run's ds_raw.h5, the amplitude trace, its background-divided prominence, the linear-detrended phase excursion and the IQ trajectory, for every run/qubit in scope; and I re-derived the flux-dependence maps from #26. That numeric cross-check is what settles which amplitude features are real resonances, and it is stronger than eyeballing. Figure budget used: 2 of 6 (#42 figures.amplitude.png and #42 figures.iq_circle.png), spent on the q15 adjudication.\n\nWHAT THE FOUR-PANEL CROSS-CHECK ACTUALLY SHOWED. Both of q15's candidates (6801.3 and 6844.8 MHz) carry a genuine phase wrap (linear phase slope 15.0 and 16.4 deg/MHz) and both reach the IQ origin - so q15 is a true two-resonance ambiguity, not an amplitude artefact, and no setting of this node can resolve it. q17's two recurring values are the OPPOSITE case: in each individual panel only one of them exists (at #27 the 7313.1 position is flat, background-divided depth 0.03; at #41/#42 the 7290 position is flat, depth 0.11), so 7290/7313 is one flux-tunable resonator at two operating points, and the node was right never to flag q17 ambiguous.\n\nTHE FANO WARNING IS REAL HERE. In #42's amplitude panel the tallest excursion in the q4 sub-plot is the left-hand background at 7.46 GHz (~0.20 mV), not the notch at 7.5049 GHz (which reaches ~0.00 mV); q15 shows a 1.35 mV peak 6 MHz above its 6.802 GHz notch. This is why success_shape=False recurs for q4/q5/q6/q15 while the frequency is fine: it is a sloped-background artefact, not a wrong centre. A reader must not treat success_shape=False as \"reject\" - it is \"the Lorentzian is a poor description\", which is a different claim.\n\nWHAT THE SESSION NEVER GOT. q15's and q11's own 06_resonator_spectroscopy_vs_flux failed on every attempt (#9, #10, #18, #25, #26). That is the measurement that would have assigned each of the paired notches to its owner by flux-tunability. Its absence is why q15 terminates unresolved and why q11's 49 MHz excursion was adjudicable only by SNR and reproducibility.\n\nTOTALS. 13 targets. Ideal total 34 target-runs against an actual 106; two targets (q15, q2) end unresolved; 5 poisoned writes across q11, q15, q10 and q17, all of them traceable to a hand-moved sweep centre or to an abandoned flux configuration rather than to a bad fit.",
+ "adversarial_audit": "**Not sound. 17 defects; the load-bearing ones:**\n\n**1. Session notes \u2014 the stated fit-selection mechanism is wrong.** \"This node fits the notch nearest the centre.\" Six runs have >1 candidate; the only one where *nearest* and *strongest* disagree is #2/q4, and the node took idx 68 (prom 34.81, 8.2 MHz off centre) over idx 176 (prom 8.19, 2.6 MHz off centre). Selection is **max prom_snr**. Correct the mechanism; the poisoning is window *membership and edge distance*, not a proximity tie-break.\n\n**2. q11 #33/#35 \u2014 consequent misdiagnosis.** Derived centres are 6633.761 / 6634.209, so 6585.161 sat **1.40 / 0.95 MHz inside the window edge** and drew **no candidate at all** \u2014 the same edge exclusion the key correctly diagnoses at #1/q3, not \"passed over because it was not nearest the centre.\" Also #35's centre **equals #33's written value byte-exactly**: the poison propagated itself; no second hand-move occurred.\n\n**3. Environment fact (2) is contradicted.** At #27 every centre is displaced and **restored byte-identically at #41**: q4 \u221216.000/+16.000, q6 \u221212.800/+12.800, q10 \u221222.000/+22.000, q5 \u22121.400, q9 \u22120.600. Each fit shift equals its own centre shift (q4 \u221215.54, q6 \u221212.84, q17 \u221223.18, q10 \u221221.01). A flux config \"differing in q17 and q5\" cannot do that. #27 is the key's own hand-moved-centre failure, exempted from its own diagnosis \u2014 which then excuses two poisoned writes as \"correct measurements.\"\n\n**4. Same claim, numerically false.** \"#27's q10/q15/q17 sit 15-23 MHz below every neighbouring run\": q15's #27 value is **+0.47 MHz** above #24's; q4 (\u221215.5) and q6 (\u221212.8) are omitted.\n\n**5. #27 wrongly marked wasted.** For q9 it is 100 MHz/200 shots, shape True, unambiguous, offset unchanged \u2014 it meets every criterion used to terminate at #41, so **termination should be #27**, making #41 *and* #42 redundant. For q5 it is the **only** run ever to flag the 6782 MHz twin, which the key's own caveat calls the decisive gap.\n\n**6. Totals.** Actual target-runs = **88**, not 106 (matches the key's own actual_length sum). Poisoned writes listed = **12** (10 excluding pre-run edits), not 5. q11 ran **eight** more times after #20, not nine.\n\n**7. q10 #12 \u2014 unfair.** Step 1 prescribes \"adopt / write,\" scores the operator \"yes,\" then counts that write poisoned for a branch abandonment no future-blind operator could see. q11 and q17 wrote at the same #12 into the same branch and are not counted.\n\n**8. q10/q11 ideal step 2 = #13.** #13 exists only from the forbidden hand-move; an ideal path cannot contain it. Ideal lengths \u2192 2 and 3.\n\n**9. Factual slips.** #42/q11 is not \"the highest-quality fit in the session\" (#2/q9: snr 165.6, r\u00b2 0.998 \u2014 the key says so itself). #1/q3's 612 kHz is not \"4\u00d7 narrower than every genuine candidate (2.1\u20133.3 MHz)\": primaries run 1.844\u20133.340, and the key's own adopted q17 value (#20) is 1.844. The Fano paragraph lists q15 under \"success_shape=False recurs\" while citing #42, where q15 is **True** (also #17, #41).\n\n**10. q17 story broken by #13.** Same trimmed branch, three minutes after #12, no flux calibration: centre 7289.8\u21927313.7, fit 7290.102\u21927314.900. Both positions in one flux configuration \u2014 dismissed as \"contributed nothing.\"\n\n**11. q2 free ride.** #5 serves the q1/q3/q7/q8 group whose power fix was #3/#4; the key puts q2's group's fix at #14\u2013#16, i.e. after #5.\n\n---\n\n## \ud55c\uad6d\uc5b4 \uc694\uc57d\n\n- \uc774 answer key\ub294 **\ubd80\uc801\ud569**\uc785\ub2c8\ub2e4. \ud575\uc2ec \uacb0\ud568 17\uac74 \uc911 \ud2b9\ud788 \uce58\uba85\uc801\uc778 \uac83\ub4e4:\n  - **\ud53c\ud305 \uc120\ud0dd \uaddc\uce59\uc774 \ud2c0\ub838\uc2b5\ub2c8\ub2e4.** \"\uc911\uc2ec\uc5d0 \uac00\uc7a5 \uac00\uae4c\uc6b4 notch\ub97c \ud53c\ud305\ud55c\ub2e4\"\uac00 \uc544\ub2c8\ub77c **prom_snr \ucd5c\ub300\uac12**\uc744 \uace0\ub985\ub2c8\ub2e4(#2/q4\uac00 \uc720\uc77c\ud55c \ud310\ubcc4 \uc0ac\ub840\uc774\uba70 \ubc18\ub300 \uacb0\uacfc).\n  - **#27\uc744 \"flux \uc124\uc815 \ubcc0\uacbd\"\uc73c\ub85c \uc124\uba85\ud55c \uac83\uc774 \uae30\ub85d\uacfc \ucda9\ub3cc\ud569\ub2c8\ub2e4.** #27\uc758 sweep \uc911\uc2ec\uc774 \uc804 \ud0c0\uae43\uc5d0\uc11c \uc774\ub3d9\ud588\ub2e4\uac00 #41\uc5d0\uc11c **\uc18c\uc218\uc810\uae4c\uc9c0 \ub3d9\uc77c\ud558\uac8c \ubcf5\uc6d0**\ub418\uc5c8\uace0(q4 \u00b116.000, q10 \u00b122.000 \ub4f1), \uac01 \ud53c\ud305 \uc774\ub3d9\ub7c9\uc774 \uc790\uae30 \uc911\uc2ec \uc774\ub3d9\ub7c9\uacfc \uc77c\uce58\ud569\ub2c8\ub2e4. \uc989 key \uc790\uc2e0\uc774 \uc9c0\ubaa9\ud55c \"\uc190\uc73c\ub85c \uc911\uc2ec \uc62e\uae30\uae30\" \uc2e4\ud328\uc774\uba70, \uc774\ub97c \uadfc\uac70\ub85c poisoned write 2\uac74\uc744 \uba74\ucc45\ud574 \uc8fc\uc5c8\uc2b5\ub2c8\ub2e4.\n  - **#27\uc744 \ub0ad\ube44\ub85c \ucc98\ub9ac\ud55c \uac83\uc774 \uc624\ub958**\uc785\ub2c8\ub2e4. q9\uc5d0\ub294 \uc885\ub8cc \uc870\uac74\uc744 \ubaa8\ub450 \ub9cc\uc871\ud558\ub294 \uc720\uc77c\ud55c \ucd08\uae30 \uace0\uac10\ub3c4 \ub7f0\uc774\uace0, q5\uc758 \uc30d\ub465\uc774 notch(6782 MHz)\ub97c \uc720\uc77c\ud558\uac8c flag\ud55c \ub7f0\uc785\ub2c8\ub2e4.\n  - **\uc0b0\uc220 \uc624\ub958**: \uc2e4\uc81c target-run\uc740 106\uc774 \uc544\ub2c8\ub77c **88**, poisoned write\ub294 5\uac00 \uc544\ub2c8\ub77c **12**, q11\uc740 9\ud68c\uac00 \uc544\ub2c8\ub77c **8\ud68c** \ucd94\uac00 \uc2e4\ud589.\n  - **\ubd88\uacf5\uc815 \ud310\uc815**: q10 #12\uc740 ideal path\uac00 \"\uc4f0\ub77c\"\uace0 \uc9c0\uc2dc\ud55c \ud589\uc704\ub97c poisoned\ub85c \uacc4\uc0b0\ud588\uace0, \ub3d9\uc77c \ub7f0\uc758 q11/q17 write\ub294 \uacc4\uc0b0\ud558\uc9c0 \uc54a\uc558\uc2b5\ub2c8\ub2e4.\n- \uac00\uc7a5 \uac15\ud558\uac8c \uac80\uc99d\ud55c \ub450 \uac00\uc9c0: \u2460 \ud6c4\ubcf4 \ub9ac\uc2a4\ud2b8\uc5d0\uc11c **\uc911\uc2ec \uadfc\uc811 vs prominence** \ud310\ubcc4, \u2461 `candidate.idx`/`f`/span/step\uc73c\ub85c \uc5ed\uc0b0\ud55c **\ubaa8\ub4e0 \ub7f0\uc758 sweep \uc911\uc2ec \uada4\uc801**(#27\u2192#41 \uc815\ud655 \ubcf5\uc6d0 \ubc0f #33/#35\uc758 window \uac00\uc7a5\uc790\ub9ac 1.40/0.95 MHz \ubc30\uc81c).",
+ "qubits": [
+  {
+   "qubit": "q1",
+   "runs_in_scope": [
+    "#1",
+    "#5"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#1",
+     "expected_case": "No dip anywhere in the 7115.0-7144.9 MHz window. dip_snr=0.0, frequency=NaN, candidates empty. The raw trace confirms it: the largest background-divided excursion is 16 sigma at 7139.5 MHz with no accompanying phase wrap. Critically, the true notch (7140.2 MHz, found at #5) IS inside this window and is invisible - so this is a readout-drive failure, not a wrong frequency guess.",
+     "expected_flags": [
+      "no_dip",
+      "dip_snr_zero",
+      "group_wide_failure",
+      "truth_inside_window"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Do not spend the escalation ladder. Three of the four targets in this one multiplexed group (q1, q7 dead; q3 a threshold artefact) fail simultaneously, which points at the readout drive, not at three independently wrong frequency guesses. Calibrate readout amplitude with 05_resonator_spectroscopy_vs_power, then re-run 03 with the parameters unchanged: qubits=[q1,q3,q7,q8], frequency_span_in_mhz=30, frequency_step_in_mhz=0.1, num_shots=100.",
+     "operator_did": "Wrote nothing (patches empty) and ran #3/#4 = 05_resonator_spectroscopy_vs_power before returning to 03.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "#5",
+     "expected_case": "Single dominant notch at 7140.2 MHz - background-divided prominence 64 sigma against 18 sigma for the next feature, and it is the only feature with a phase wrap. dip_snr=27.89, r2=0.993, success_shape=True, ambiguous=False, single candidate 0.7 MHz off the window centre.",
+     "expected_flags": [
+      "clean_single_dip",
+      "shape_ok",
+      "unambiguous",
+      "well_centred"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = RF_frequency = 7.140187973 GHz and stop. No further 03 run is warranted for q1: one unambiguous shape-True fit at dip_snr 28 with a 4x prominence margin over the runner-up needs no confirmation.",
+     "operator_did": "Patched /quam/qubits/q1/resonator/f_01 and RF_frequency to 7140187972.57 Hz and never ran q1 again.",
+     "operator_was_right": "yes"
+    }
+   ],
+   "termination": {
+    "at_run": "#5",
+    "reason": "An unambiguous, shape-True, dip_snr=27.9 fit with a 4x prominence margin over the next feature, obtained immediately after the readout-power fix that #1 correctly demanded. Nothing further to learn from this node.",
+    "final_frequency": 7140187972.57,
+    "final_sweep_value": null,
+    "unresolved": false,
+    "value_confidence": "high",
+    "value_evidence": "#5 fit 7140187972.571933 Hz, dip_snr 27.894, r2 0.9930, success_shape True, ambiguous False, one candidate at 7140.2 MHz width 2.29 MHz. Independently re-derived from #5 ds_raw.h5: single notch at 7140.20 MHz, prominence 64 sigma vs 18 sigma for the runner-up. This value survives unchanged in the chip state through the last run of the day (#74)."
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "ideal_length": 2,
+   "actual_length": 2,
+   "confidence": "high",
+   "caveats": "Measured at joint_offset 0, before any flux calibration, and never re-checked at the operating point the chip actually ended the day in. q1 was dropped from the active set after #5, so the 7140.188 MHz carried in the final state is a flux-point-zero number. Within this family that is not a defect - it is simply the scope of what was measured."
+  },
+  {
+   "qubit": "q2",
+   "runs_in_scope": [
+    "#2"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#2",
+     "expected_case": "No dip at all in the 6675.0-6704.9 MHz window: dip_snr=0.0, frequency=NaN, candidates empty, and the raw trace's only notable features are PEAKS (largest 15 sigma at 6684.0 MHz) - the tallest excursion in the panel is emphatically not a resonance. q2 fails inside the same under-powered multiplexed group that killed q5 and q6 (both dip_snr 0) and left q4 ambiguous.",
+     "expected_flags": [
+      "no_dip",
+      "dip_snr_zero",
+      "peaks_only",
+      "group_wide_failure"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Fix readout power first (05_resonator_spectroscopy_vs_power on this group), then re-run 03 with q2 included in the next multiplexed set - it costs nothing, since #5 was already going to run. If q2 is still dead after the power fix, this is the one target in the whole session that genuinely warrants the escalation ladder: set escalate_on_no_dip=True, or raise frequency_span_in_mhz from 30 to 200 (max_escalation_span_in_mhz was 800 and was never used).",
+     "operator_did": "Dropped q2 from every subsequent run of the session. Its resonator frequency stayed at the 6.690000 GHz design guess in the chip state for the rest of the day.",
+     "operator_was_right": "no"
+    }
+   ],
+   "termination": {
+    "at_run": "#2",
+    "reason": "The single measurement of q2 contains no resonance and no candidate; the target was abandoned rather than resolved. There is no run in the session from which a q2 frequency can be evidenced.",
+    "final_frequency": null,
+    "final_sweep_value": null,
+    "unresolved": true,
+    "value_confidence": "low",
+    "value_evidence": "#2 is the only 03 run containing q2: dip_snr 0.0, frequency NaN, r2 0.0, zero candidates. Re-derived from #2 ds_raw.h5, the 6675.0-6704.9 MHz window contains no notch - the ranked features are peaks at 6684.0 (15 sigma) and 6676.4 (12 sigma). The state's 6690000000 Hz is the untouched design guess, not a measurement, and it is still the value at #74.",
+    "unresolved_note": "legitimate no-value answer"
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "ideal_length": 2,
+   "actual_length": 1,
+   "confidence": "high",
+   "caveats": "This is the one target whose ideal path is LONGER than the operator's. Abandoning after a single under-powered run is what left it unresolved, and the retry was free - q2 could have ridden along in #5's multiplexed group at zero extra cost. Note also that 6690 MHz is where the operator never looked again, so no other family in the day's archive supplies a value either."
+  },
+  {
+   "qubit": "q3",
+   "runs_in_scope": [
+    "#1",
+    "#5"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#1",
+     "expected_case": "A FALSE ACCEPT. The node reports success=True at 6885.788 MHz, but every shape signal contradicts it: dip_snr=6.0010 against min_dip_snr=6.0 (the margin is in the fourth significant figure), success_shape=False, r2=0.806, and the single candidate sits at index 8 of 300 - 0.8 MHz from the LEFT EDGE of the 6885.0-6914.9 MHz window - with width_hz=612 kHz, roughly 4x narrower than every genuine candidate in this session (2.1-3.3 MHz). The raw trace shows the strongest feature is only 29 sigma at the very edge, with no phase wrap.",
+     "expected_flags": [
+      "false_accept",
+      "edge_candidate",
+      "snr_at_threshold",
+      "success_shape_false",
+      "anomalous_narrow_width"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Discard the value - do not write it. The new-generation node hands you the reasons for free: success_shape=False plus a candidate one window-edge-width from the boundary plus dip_snr sitting on the floor. Same group-wide power problem as q1/q7: run 05_resonator_spectroscopy_vs_power, then re-run 03 unchanged so the resonance can appear inside the window it is already in.",
+     "operator_did": "Did not patch #1 (patches empty) and went to 05_resonator_spectroscopy_vs_power.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "#5",
+     "expected_case": "Dominant, well-centred notch at 6904.7 MHz - prominence 42 sigma against 8 sigma for the runner-up, candidate at index 151 of 300 (dead centre), dip_snr=6.78, ambiguous=False. But r2=0.660 and success_shape=False: the CENTRE is trustworthy, the Lorentzian is not, because the background under this notch is strongly sloped.",
+     "expected_flags": [
+      "dominant_dip",
+      "well_centred",
+      "shape_poor",
+      "low_r2",
+      "snr_modest"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write 6.904796670 GHz. The frequency is carried by prominence and centring, not by r2, and the 5x margin over the runner-up is the evidence. If q3 were to stay in the active set, one confirmation at num_shots 200 / frequency_span_in_mhz 100 would lift dip_snr from 6.8 into the low teens and settle the shape question - but it is not required to write the number.",
+     "operator_did": "Patched f_01 and RF_frequency to 6904796670.27 Hz and never ran q3 again.",
+     "operator_was_right": "yes"
+    }
+   ],
+   "termination": {
+    "at_run": "#5",
+    "reason": "The centre is dominant, centred and unambiguous; the only open question is the lineshape, which no further run of this node at these settings would answer and which does not change the frequency.",
+    "final_frequency": 6904796670.27,
+    "final_sweep_value": null,
+    "unresolved": false,
+    "value_confidence": "med",
+    "value_evidence": "#5 fit 6904796670.266376 Hz, dip_snr 6.779, r2 0.6604, success_shape False, ambiguous False, single candidate at 6904.7 MHz (window centre). Re-derived from #5 ds_raw.h5: notch at 6904.70 MHz, prominence 42 sigma vs 8 sigma for the runner-up at 6907.4 MHz, phase slope +70 deg across the feature. Value persists unchanged in state to #74. Confidence is med, not high, because dip_snr 6.8 is close to the floor and the number was never independently reproduced.",
+    "note": "the #1 value of 6885.788 MHz is 19.0 MHz away and is an edge artefact, not a competing measurement"
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "ideal_length": 2,
+   "actual_length": 2,
+   "confidence": "med",
+   "caveats": "success_shape=False with r2 0.66 means the Lorentzian is a poor model of this notch; the frequency rests on prominence and centring. Measured at joint_offset 0 and never reproduced. The near-miss worth recording is #1: had the operator written that fit (the node said success=True), q3 would have carried a 19 MHz error all day - the only thing that stopped it was the operator declining to patch."
+  },
+  {
+   "qubit": "q7",
+   "runs_in_scope": [
+    "#1",
+    "#5"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#1",
+     "expected_case": "No dip: dip_snr=0.0, frequency=NaN, no candidates; the raw trace's best feature is 13 sigma with no phase wrap. Unlike q1, here BOTH failure modes are present - hindsight shows the true notch (6717.8 MHz) lies 22.9 MHz ABOVE the window's upper edge (6665.0-6694.9 MHz), so the drive power was wrong and the frequency guess was wrong.",
+     "expected_flags": [
+      "no_dip",
+      "dip_snr_zero",
+      "truth_outside_window",
+      "group_wide_failure"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "After the group-wide power fix (05_resonator_spectroscopy_vs_power), q7 is the one #1 target that also needs reach: set escalate_on_no_dip=True, or raise frequency_span_in_mhz from 30 to 100. A 100 MHz span on the 6.680 GHz design guess spans 6630-6730 MHz and reaches 6717.8 MHz; the ladder had 800 MHz of head-room and was never used.",
+     "operator_did": "Hand-moved the q7 sweep centre by about +37 MHz (the #5 window is 6702.6-6732.5 MHz) instead of using the ladder, and re-ran as #5.",
+     "operator_was_right": "partly"
+    },
+    {
+     "step": 2,
+     "run": "#5",
+     "expected_case": "Single dominant notch at 6717.7 MHz and the strongest feature in that panel - prominence 72 sigma against 5 sigma for the runner-up. dip_snr=27.71, r2=0.982, success_shape=True, ambiguous=False.",
+     "expected_flags": [
+      "clean_single_dip",
+      "shape_ok",
+      "unambiguous",
+      "high_margin"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write 6.717783850 GHz and stop. A 14x prominence margin with shape True needs no confirmation.",
+     "operator_did": "Patched f_01 and RF_frequency to 6717783849.99 Hz and never ran q7 again.",
+     "operator_was_right": "yes"
+    }
+   ],
+   "termination": {
+    "at_run": "#5",
+    "reason": "Unambiguous shape-True fit at dip_snr 27.7 with the largest prominence margin of any target in the session's early phase.",
+    "final_frequency": 6717783849.99,
+    "final_sweep_value": null,
+    "unresolved": false,
+    "value_confidence": "high",
+    "value_evidence": "#5 fit 6717783849.987028 Hz, dip_snr 27.710, r2 0.9817, success_shape True, ambiguous False, one candidate at 6717.8 MHz width 2.39 MHz. Re-derived from #5 ds_raw.h5: notch at 6717.70 MHz, prominence 72 sigma vs 5 sigma runner-up. Unchanged in state through #74.",
+    "note": "37.8 MHz above the 6.680 GHz design guess - the largest design-to-measured offset on this chip"
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "ideal_length": 2,
+   "actual_length": 2,
+   "confidence": "high",
+   "caveats": "The operator reached the right answer by hand-moving the sweep centre. It worked here, but it is exactly the manoeuvre that later produced the two poisoned q11 writes at #33/#35 - the escalation ladder does the same job with a recorded, bounded, reviewable escalation and leaves the state untouched. Measured at joint_offset 0 and never re-checked."
+  },
+  {
+   "qubit": "q8",
+   "runs_in_scope": [
+    "#1",
+    "#5"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#1",
+     "expected_case": "The node reports success=True at 7415.909 MHz with dip_snr=15.02 and r2=0.981 and success_shape=True - but ambiguous=True, with a second candidate at 7429.1 MHz (prom_snr 10.05). The dominance ratio is 15.02/10.05 = 1.49, below the run's OWN declared dip_dominance=2.0. Hindsight: neither candidate is the resonator - the true notch is at 7437.5 MHz, 2.6 MHz above the window's upper edge (7405.0-7434.9 MHz).",
+     "expected_flags": [
+      "ambiguous",
+      "dominance_below_declared_floor",
+      "truth_just_outside_window",
+      "looks_healthy"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "An ambiguous verdict whose dominance ratio is 1.49 against a floor the run itself declares as 2.0 is precisely the escalation trigger - do not accept either candidate. Set escalate_on_no_dip=True or raise frequency_span_in_mhz 30 -> 100; a 100 MHz window on the 7.420 GHz guess reaches 7437.5 MHz. This is the case where reading the flags rather than the headline number is worth 21.5 MHz.",
+     "operator_did": "Did not patch #1; hand-moved the centre to give the #5 window 7423.1-7453.0 MHz.",
+     "operator_was_right": "partly"
+    },
+    {
+     "step": 2,
+     "run": "#5",
+     "expected_case": "Single dominant notch at 7437.5 MHz - prominence 55 sigma against 7 sigma for the runner-up. dip_snr=10.83, ambiguous=False, r2=0.826 and success_shape=False (sloped background, the same Fano artefact that marks q4/q5/q6 later in the session).",
+     "expected_flags": [
+      "dominant_dip",
+      "unambiguous",
+      "shape_poor",
+      "background_sloped"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write 7.437404441 GHz. The 8x prominence margin and the unambiguous single candidate carry the frequency; success_shape=False here reports the background, not the centre.",
+     "operator_did": "Patched f_01 and RF_frequency to 7437404440.67 Hz and never ran q8 again.",
+     "operator_was_right": "yes"
+    }
+   ],
+   "termination": {
+    "at_run": "#5",
+    "reason": "An unambiguous dominant notch with an 8x prominence margin, obtained on the first run after the window was corrected. The residual shape complaint does not move the centre.",
+    "final_frequency": 7437404440.67,
+    "final_sweep_value": null,
+    "unresolved": false,
+    "value_confidence": "high",
+    "value_evidence": "#5 fit 7437404440.670796 Hz, dip_snr 10.829, r2 0.8259, success_shape False, ambiguous False, one candidate at 7437.4 MHz width 2.24 MHz. Re-derived from #5 ds_raw.h5: notch at 7437.50 MHz, prominence 55 sigma vs 7 sigma runner-up. Unchanged in state through #74.",
+    "note": "the #1 pair (7415.9 / 7429.1 MHz) are both spurious; the resonator was outside that window"
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "ideal_length": 2,
+   "actual_length": 2,
+   "confidence": "high",
+   "caveats": "q8 is the session's cleanest illustration that a new-generation success=True with dip_snr 15, r2 0.98 and success_shape True can still be 21.5 MHz wrong - the only signal against it is ambiguous=True with a dominance ratio below the run's own floor. Measured at joint_offset 0 and never re-checked."
+  },
+  {
+   "qubit": "q9",
+   "runs_in_scope": [
+    "#2",
+    "#17",
+    "#19",
+    "#20",
+    "#23",
+    "#24",
+    "#27",
+    "#41",
+    "#42"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#2",
+     "expected_case": "Textbook clean notch at 6894.20 MHz: dip_snr=165.59 - the highest in the entire session - r2=0.998, success_shape=True, ambiguous=False, single candidate. Raw trace: 66 sigma prominence against 13 sigma for the next feature. Valid, but provisional: this is the un-biased chip (joint_offset 0), and a flux calibration is still ahead.",
+     "expected_flags": [
+      "clean_single_dip",
+      "very_high_snr",
+      "shape_ok",
+      "provisional_flux_point"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write 6.894197526 GHz as the flux-zero value, then go set the flux operating point (06_resonator_spectroscopy_vs_flux). Expect the resonator to move when it does - re-measuring q9 after the flux point changes is not a repeat, it is a different measurement.",
+     "operator_did": "Wrote nothing at #2 (patches empty) and proceeded to power and flux calibration.",
+     "operator_was_right": "partly"
+    },
+    {
+     "step": 2,
+     "run": "#19",
+     "expected_case": "First 03 run at the operating point that survives to the end of the day (joint_offset -0.0850). A notch is found at 6935.247 MHz, but dip_snr=6.15 against a floor of 6.0, r2=0.833, success_shape=False - a barely-passing fit. The 30 MHz / 100-shot configuration is simply not sensitive enough for q9: every later run at 100 MHz / 200 shots returns dip_snr 10-11.5 on the same feature.",
+     "expected_flags": [
+      "snr_at_threshold",
+      "shape_poor",
+      "sensitivity_limited",
+      "flux_point_changed"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "The knob is sensitivity, not centre. Raise num_shots 100 -> 200 and frequency_span_in_mhz 30 -> 100, keeping the centre where it is. Do NOT re-run at 30 MHz / 100 shots again - a threshold-grazing fit repeated at identical settings produces another threshold-grazing fit, which is what happened four times.",
+     "operator_did": "Re-ran the identical 30 MHz / 100-shot configuration at #20, #23 and #24 (#23 returned NaN outright) and only reached 100 MHz / 200 shots at #27.",
+     "operator_was_right": "no"
+    },
+    {
+     "step": 3,
+     "run": "#41",
+     "expected_case": "100 MHz / 200 shots at the settled flux point: notch at 6935.585 MHz, dip_snr=11.45, r2=0.886, success_shape=True, ambiguous=False, single candidate. Raw trace: 114 sigma prominence against 29 sigma for the runner-up, with the only phase wrap in the panel.",
+     "expected_flags": [
+      "clean_single_dip",
+      "shape_ok",
+      "unambiguous",
+      "sensitivity_adequate"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write 6.935584884 GHz and stop. Note the honest precision: the seven measurements of q9 at this flux point span 6935.25-6936.03 MHz, so the reproducibility floor is about 0.8 MHz and no additional run buys resolution below it.",
+     "operator_did": "Ran #42 as well, obtaining 6935.485 MHz (0.10 MHz away), and committed that.",
+     "operator_was_right": "partly"
+    }
+   ],
+   "termination": {
+    "at_run": "#41",
+    "reason": "First shape-True, unambiguous fit at adequate sensitivity (100 MHz / 200 shots) at the operating point the chip keeps. Further runs land inside the 0.8 MHz reproducibility spread and cannot improve on it.",
+    "final_frequency": 6935584884.26,
+    "final_sweep_value": null,
+    "unresolved": false,
+    "value_confidence": "high",
+    "value_evidence": "#41 fit 6935584884.257564 Hz, dip_snr 11.450, r2 0.886, success_shape True, ambiguous False. #42 independently reproduces 6935485283.14 Hz (0.10 MHz apart, dip_snr 10.315, r2 0.911, shape True). Re-derived from both ds_raw.h5 files: single notch at 6935.56 MHz, prominence 114/118 sigma, the only feature in the 100 MHz window with a phase wrap. The operator's committed value 6935485283.14 Hz sits in state from #43 to #74.",
+    "note": "the earlier 6894.2 (#2) and 6919.3 (#17) values are the same resonator at different flux/readout-power conditions, not competing candidates"
+   },
+   "wasted_runs": [
+    {
+     "run": "#17",
+     "why_wasted": "Re-measured q9 at joint_offset 0 after the sweep centre had been hand-moved by about +25 MHz, returning 6919.220 MHz (dip_snr 11.26, r2 0.798, shape False). The flux calibration at #18 superseded it two runs later, so the number had a two-run lifetime."
+    },
+    {
+     "run": "#20",
+     "why_wasted": "Identical 30 MHz / 100-shot configuration to #19; returned 6935.959 MHz at dip_snr 6.24 - another threshold-grazing, shape-False fit. Repeating a configuration that has already been shown to be sensitivity-limited cannot resolve the sensitivity limit."
+    },
+    {
+     "run": "#23",
+     "why_wasted": "Same configuration a third time; q9 returned NaN (dip_snr 0.0). A total loss for this target, and predictable from #19/#20's SNR margin."
+    },
+    {
+     "run": "#24",
+     "why_wasted": "Same configuration a fourth time; 6935.577 MHz at dip_snr 6.92. Inside the scatter of #19/#20 and adds no information."
+    },
+    {
+     "run": "#27",
+     "why_wasted": "First 100 MHz / 200-shot run, but executed at the flux configuration that was abandoned two runs later (q5 +0.0270, q17 -0.0330). Its 6936.027 MHz is not comparable with the surrounding cluster, so it neither confirms nor refutes."
+    },
+    {
+     "run": "#42",
+     "why_wasted": "Redundant confirmation of #41 - 0.10 MHz apart, well inside the 0.8 MHz reproducibility spread already visible in the archive."
+    }
+   ],
+   "poisoned_writes": [],
+   "ideal_length": 3,
+   "actual_length": 9,
+   "confidence": "high",
+   "caveats": "The 25 MHz shift between #2 (6894.2 MHz) and #17 (6919.3 MHz) at nominally identical joint_offset 0 is most plausibly the readout-power recalibration at #14-#16 pushing the resonator toward its bare frequency (punch-out), but this family cannot prove that on its own - it is an inference from the 05 runs sitting between them, not from anything inside a 03 panel. The 0.8 MHz spread across seven runs at one flux point is the real precision of this measurement and should bound any downstream tolerance."
+  },
+  {
+   "qubit": "q4",
+   "runs_in_scope": [
+    "#2",
+    "#17",
+    "#19",
+    "#20",
+    "#23",
+    "#24",
+    "#27",
+    "#41",
+    "#42"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#2",
+     "expected_case": "The node reports success=True at 7491.794 MHz with dip_snr=34.81 and r2=0.951 and success_shape=True - but ambiguous=True with THREE candidates (7491.8 / 7489.2 / 7502.6 MHz) and a dominance ratio of 34.81/18.18 = 1.91, just under the declared dip_dominance=2.0. The raw trace explains why: two adjacent shallow dips (25 and 22 sigma) and no dominant notch. The whole multiplexed group is under-powered - q2, q5 and q6 all return dip_snr 0 in this same run.",
+     "expected_flags": [
+      "ambiguous",
+      "three_candidates",
+      "dominance_below_declared_floor",
+      "group_wide_failure"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Do not write an ambiguous fit whose dominance sits below the run's own floor, however healthy dip_snr 34.8 looks. Fix readout power (05_resonator_spectroscopy_vs_power) for this group and re-run; the group-wide dip_snr 0 on three siblings is the corroborating evidence that this is a drive problem.",
+     "operator_did": "Did not patch #2; ran 05_resonator_spectroscopy_vs_power at #14-#16 before returning.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "#19",
+     "expected_case": "At the settled flux point, a notch at 7505.279 MHz - but dip_snr=6.29 against the 6.0 floor, r2=0.823, success_shape=False. Same sensitivity ceiling as q9: 30 MHz / 100 shots puts q4 on the threshold, while 100 MHz / 200 shots later returns dip_snr 11-13 on the same feature.",
+     "expected_flags": [
+      "snr_at_threshold",
+      "shape_poor",
+      "sensitivity_limited"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "num_shots 100 -> 200 and frequency_span_in_mhz 30 -> 100, centre unchanged. Do not re-run at the same settings.",
+     "operator_did": "Re-ran the same 30 MHz / 100-shot configuration at #20, #23 and #24 (7505.058 / 7505.425 / 7505.204 MHz, all dip_snr 6.4-7.3, all shape False).",
+     "operator_was_right": "no"
+    },
+    {
+     "step": 3,
+     "run": "#41",
+     "expected_case": "100 MHz / 200 shots: notch at 7505.346 MHz, dip_snr=11.15, ambiguous=False, single candidate - but r2=0.841 and success_shape=False again. This is the session's clearest Fano case and must be read correctly: in #42's amplitude panel the tallest excursion of the q4 sub-plot is the LEFT-HAND BACKGROUND at 7.46 GHz (about 0.20 mV), while the notch at 7.5049 GHz reaches about 0.00 mV. Raw prominence 165 sigma against 32 sigma for the runner-up. success_shape=False here is the sloped background, not a wrong centre.",
+     "expected_flags": [
+      "dominant_dip",
+      "unambiguous",
+      "shape_poor_by_background",
+      "fano_asymmetric",
+      "tallest_excursion_is_not_the_resonance"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write 7.505345866 GHz. Record explicitly that success_shape=False is expected to persist for q4 at every setting because of the background slope, so it must not be used as a rejection criterion for this target in future runs.",
+     "operator_did": "Ran #42 as well (7504.897 MHz, dip_snr 12.70) and committed that value.",
+     "operator_was_right": "partly"
+    }
+   ],
+   "termination": {
+    "at_run": "#41",
+    "reason": "First adequately-sensitive, unambiguous fit with a 5x prominence margin at the operating point that survives. The persistent shape complaint is a background property that no further run of this node will remove.",
+    "final_frequency": 7505345865.77,
+    "final_sweep_value": null,
+    "unresolved": false,
+    "value_confidence": "high",
+    "value_evidence": "#41 fit 7505345865.772395 Hz, dip_snr 11.152, r2 0.841, success_shape False, ambiguous False. #42 reproduces 7504897486.82 Hz, 0.45 MHz away, dip_snr 12.703. Re-derived from ds_raw.h5: notch at 7505.06-7505.26 MHz, prominence 158-165 sigma vs 32 sigma runner-up, sole phase wrap in the window. #19/#20/#23/#24 all land in 7505.06-7505.43 MHz, so seven independent runs agree within 0.55 MHz. #42's value sits in state from #43 to #62.",
+    "note": "#27's 7489.663 MHz belongs to the abandoned flux configuration and is not a competing measurement"
+   },
+   "wasted_runs": [
+    {
+     "run": "#17",
+     "why_wasted": "Interim measurement at joint_offset 0 after a hand-moved centre (7498.811 MHz, dip_snr 7.72, shape False); superseded by the flux calibration at #18."
+    },
+    {
+     "run": "#20",
+     "why_wasted": "Repeat of #19's sensitivity-limited configuration; 7505.058 MHz at dip_snr 6.85, inside #19's own scatter."
+    },
+    {
+     "run": "#23",
+     "why_wasted": "Third repeat at the same settings; 7505.425 MHz at dip_snr 6.36. No new information."
+    },
+    {
+     "run": "#24",
+     "why_wasted": "Fourth repeat; 7505.204 MHz at dip_snr 7.31. No new information."
+    },
+    {
+     "run": "#27",
+     "why_wasted": "Measured at the abandoned flux configuration; its 7489.663 MHz is not comparable to the surrounding cluster and reads as a spurious 15.6 MHz drift if taken at face value."
+    },
+    {
+     "run": "#42",
+     "why_wasted": "Redundant confirmation of #41, 0.45 MHz apart, inside the seven-run spread."
+    }
+   ],
+   "poisoned_writes": [],
+   "ideal_length": 3,
+   "actual_length": 9,
+   "confidence": "high",
+   "caveats": "q4 never achieves success_shape=True at any setting in the session; a gate that requires shape True would reject this target permanently despite a perfectly determined centre. The correct reading of the four-panel evidence is that the amplitude background is steeply sloped (Fano) while the phase wrap and the IQ excursion are unambiguous and single."
+  },
+  {
+   "qubit": "q5",
+   "runs_in_scope": [
+    "#2",
+    "#17",
+    "#19",
+    "#20",
+    "#23",
+    "#24",
+    "#27",
+    "#41",
+    "#42"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#2",
+     "expected_case": "Failure: dip_snr=0.0, frequency=NaN, no candidates. The raw trace's best feature is 20 sigma at 6728.0 MHz with no phase wrap - and the true notch (6740.7 MHz) IS inside the 6725.0-6754.9 MHz window, so this is drive power, not frequency. q2 and q6 fail dip_snr 0 in the same multiplexed group and q4 comes back ambiguous.",
+     "expected_flags": [
+      "no_dip",
+      "dip_snr_zero",
+      "truth_inside_window",
+      "group_wide_failure"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Calibrate readout amplitude for this group (05_resonator_spectroscopy_vs_power), then re-run 03 unchanged. Do not touch the sweep centre - the resonance is already inside the window.",
+     "operator_did": "Did not patch; ran 05_resonator_spectroscopy_vs_power at #14-#16.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "#17",
+     "expected_case": "Dominant notch at 6740.8 MHz - prominence 40 sigma against 12 sigma for the runner-up, sitting essentially on the 6.740 GHz design value. dip_snr=8.75, ambiguous=False, but r2=0.696 and success_shape=False. Credible centre, unconvincing lineshape, and - decisively - a 30 MHz window physically cannot see whether anything else nearby competes.",
+     "expected_flags": [
+      "dominant_dip",
+      "shape_poor",
+      "low_r2",
+      "window_too_narrow_to_adjudicate"
+     ],
+     "correct_decision": "reconfirm",
+     "correct_next_action": "One confirmation at num_shots 200 / frequency_span_in_mhz 100, centre unchanged. Expect the same centre at dip_snr in the low teens. Go in knowing what the wide window is for: it will expose whatever else lives within 50 MHz, which a 30 MHz sweep has been hiding.",
+     "operator_did": "Re-ran the same 30 MHz / 100-shot configuration four more times (#19, #20, #23, #24: 6740.673 / 6740.281 / 6740.224 / 6740.662 MHz, dip_snr 8.1-9.7, all shape False).",
+     "operator_was_right": "no"
+    },
+    {
+     "step": 3,
+     "run": "#41",
+     "expected_case": "100 MHz / 200 shots at the settled flux point: 6741.006 MHz, dip_snr=13.84, r2=0.804, success_shape=False, ambiguous=False, ONE candidate. The flag is wrong. The raw trace over the widened window carries a SECOND notch at 6783.68 MHz with prominence 87.5 sigma against the resonator's own 85.0 sigma - essentially equal depth, 42.7 MHz away, with its own strong phase wrap - and the candidate finder does not list it. (At #27, where the same pair was in view, the node did raise ambiguous=True with 6738.68 vs 6782.08 MHz at a dominance ratio of 1.84, below the declared floor of 2.0.) So a reader who only reads flags will not see the competitor here.",
+     "expected_flags": [
+      "dominant_dip",
+      "shape_poor",
+      "unflagged_second_notch",
+      "competitor_of_equal_depth",
+      "flag_unreliable"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write 6.741005838 GHz, but record the twin explicitly: the 6740.8 MHz notch is chosen because it sits within 1 MHz of the 6.740 GHz design value and reproduces across seven runs at two flux configurations, not because it is deeper - it is not. If q5 matters downstream, adjudicate the twin the same way q15 must be adjudicated (a working 06 flux sweep, or a state-dependent readout contrast at each candidate); do not spend another 03 run on it.",
+     "operator_did": "Ran #42 as well (6740.784 MHz, dip_snr 13.14) and never adjudicated the 6783 MHz twin.",
+     "operator_was_right": "partly"
+    }
+   ],
+   "termination": {
+    "at_run": "#41",
+    "reason": "The centre is as well determined as this node can make it, and the one remaining question - the equal-depth twin 42.7 MHz away - is outside what 03 can answer at any setting.",
+    "final_frequency": 6741005837.75,
+    "final_sweep_value": null,
+    "unresolved": false,
+    "value_confidence": "med",
+    "value_evidence": "#41 fit 6741005837.746278 Hz, dip_snr 13.835, r2 0.804, success_shape False, ambiguous False. #42 reproduces 6740783813.08 Hz (0.22 MHz). Seven runs across two flux configurations span 6738.66-6741.01 MHz. Supporting assignment: 6.740 GHz is q5's design value; the #26 flux map ranks 6738.88 MHz as the strongest feature in q5's band. Confidence is med, not high, because the 6783.4 MHz notch is of equal amplitude depth and was never adjudicated.",
+    "note": "6783.4 MHz is the named alternative, not a noise feature - it has a real phase wrap"
+   },
+   "wasted_runs": [
+    {
+     "run": "#19",
+     "why_wasted": "Repeat of #17's sensitivity-limited 30 MHz / 100-shot configuration; 6740.673 MHz, shape False. Inside the scatter."
+    },
+    {
+     "run": "#20",
+     "why_wasted": "Second repeat; 6740.281 MHz. No new information."
+    },
+    {
+     "run": "#23",
+     "why_wasted": "Third repeat; 6740.224 MHz. No new information."
+    },
+    {
+     "run": "#24",
+     "why_wasted": "Fourth repeat; 6740.662 MHz. No new information."
+    },
+    {
+     "run": "#27",
+     "why_wasted": "Ran at the abandoned flux configuration (q5 joint_offset +0.0270); its 6738.663 MHz is not comparable, and although it usefully raised ambiguous=True on the 6782 MHz twin, that flag was then not acted on."
+    },
+    {
+     "run": "#42",
+     "why_wasted": "Redundant confirmation of #41, 0.22 MHz apart."
+    }
+   ],
+   "poisoned_writes": [],
+   "ideal_length": 3,
+   "actual_length": 9,
+   "confidence": "med",
+   "caveats": "The ambiguous flag is demonstrably unreliable for q5: at #41/#42 it reads False while the raw trace carries a second notch of equal depth 42.7 MHz away, because the candidate finder did not list it. Any consumer of this family that gates on ambiguous alone will over-trust q5. q5's own 06 flux sweep failed at #18, #25 and #26, so the tunability cross-check that would assign the pair is absent, exactly as for q15 and q11."
+  },
+  {
+   "qubit": "q6",
+   "runs_in_scope": [
+    "#2",
+    "#17",
+    "#19",
+    "#20",
+    "#23",
+    "#24",
+    "#27",
+    "#41",
+    "#42"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#2",
+     "expected_case": "Failure: dip_snr=0.0, frequency=NaN. The raw trace shows the resonance IS in the window - a 8.5 sigma depression at 6730.6... at 7230.6 MHz - but too shallow to be found; the panel's most prominent feature is a PEAK at 7225.3 MHz (21 sigma). Textbook case of the tallest excursion not being the resonance, on an under-powered readout.",
+     "expected_flags": [
+      "no_dip",
+      "dip_snr_zero",
+      "truth_inside_window",
+      "peak_dominates_panel",
+      "group_wide_failure"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Readout power (05_resonator_spectroscopy_vs_power), then re-run 03 unchanged. Do not move the centre and do not escalate the span - the notch is already in view, it is only 8 sigma deep.",
+     "operator_did": "Did not patch; ran 05_resonator_spectroscopy_vs_power at #14-#16.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "#19",
+     "expected_case": "At the settled operating point: 7230.520 MHz, dip_snr=12.13, ambiguous=False, single candidate - but r2=0.813 and success_shape=False. Raw prominence 141 sigma against 64 sigma for a peak 6 MHz higher (the Fano partner). Credible centre, unconvincing lineshape.",
+     "expected_flags": [
+      "dominant_dip",
+      "unambiguous",
+      "shape_poor",
+      "fano_partner_peak"
+     ],
+     "correct_decision": "reconfirm",
+     "correct_next_action": "One repeat at the same centre to establish reproducibility. If it lands within a megahertz, adopt and stop - do not chase success_shape=True, because the peak sitting 6 MHz above the notch will keep the Lorentzian r2 near 0.8 at any setting.",
+     "operator_did": "Re-ran at #20.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 3,
+     "run": "#20",
+     "expected_case": "7230.627 MHz, dip_snr=10.93, shape False - reproduces #19 to 0.11 MHz.",
+     "expected_flags": [
+      "reproduced",
+      "dominant_dip",
+      "shape_poor"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write 7.230626587 GHz and stop. Two agreeing unambiguous fits 0.11 MHz apart is the whole of what this node can deliver for q6.",
+     "operator_did": "Continued running q6 in #23, #24, #27, #41 and #42.",
+     "operator_was_right": "no"
+    }
+   ],
+   "termination": {
+    "at_run": "#20",
+    "reason": "Two consecutive unambiguous fits agreeing to 0.11 MHz at the operating point that survives to the end of the day. Everything after this lands inside the same half-megahertz.",
+    "final_frequency": 7230626587.39,
+    "final_sweep_value": null,
+    "unresolved": false,
+    "value_confidence": "high",
+    "value_evidence": "#20 fit 7230626587.390483 Hz, dip_snr 10.931, r2 0.813, success_shape False, ambiguous False; #19 gives 7230519612.17 Hz (0.11 MHz away). #23/#24/#41/#42 subsequently give 7230.218 / 7230.740 / 7230.450 / 7230.627 MHz - six runs inside a 0.52 MHz band. Re-derived from #41/#42 ds_raw.h5: single notch at 7230.53 MHz, prominence 137-141 sigma, sole phase wrap. Value 7230627011.90 Hz sits in state from #43 to #62.",
+    "note": "#27's 7217.896 MHz is the abandoned flux configuration"
+   },
+   "wasted_runs": [
+    {
+     "run": "#17",
+     "why_wasted": "Interim measurement at joint_offset 0 after a hand-moved centre (7222.737 MHz); superseded within two runs by the flux calibration at #18."
+    },
+    {
+     "run": "#23",
+     "why_wasted": "7230.218 MHz - inside the already-established 0.5 MHz band."
+    },
+    {
+     "run": "#24",
+     "why_wasted": "7230.740 MHz - inside the band."
+    },
+    {
+     "run": "#27",
+     "why_wasted": "Abandoned flux configuration; 7217.896 MHz is not comparable and reads as a 12.7 MHz drift if taken at face value."
+    },
+    {
+     "run": "#41",
+     "why_wasted": "7230.450 MHz at higher SNR, but the number was already settled to better than the reproducibility floor."
+    },
+    {
+     "run": "#42",
+     "why_wasted": "7230.627 MHz - a sixth measurement of a value fixed at #20."
+    }
+   ],
+   "poisoned_writes": [],
+   "ideal_length": 3,
+   "actual_length": 9,
+   "confidence": "high",
+   "caveats": "q6 never reaches success_shape=True except at #23 and #41; like q4 this is the background, not the centre. The persistent peak 6 MHz above the notch is the Fano partner the family warns about and is why r2 sits near 0.81 in every run."
+  },
+  {
+   "qubit": "q10",
+   "runs_in_scope": [
+    "#12",
+    "#13",
+    "#17",
+    "#19",
+    "#20",
+    "#23",
+    "#24",
+    "#27",
+    "#41",
+    "#42"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#12",
+     "expected_case": "Clean single notch at 6997.628 MHz: dip_snr=15.60, r2=0.935, success_shape=True, ambiguous=False, one candidate. Raw prominence 61 sigma against 8 sigma. Nothing in the panel argues against it.",
+     "expected_flags": [
+      "clean_single_dip",
+      "shape_ok",
+      "unambiguous"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write 6.997628216 GHz. Treat it as provisional until the flux operating point is fixed, since this resonator is flux-tunable.",
+     "operator_did": "Patched f_01 and RF_frequency to 6997628216.47 Hz.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "#13",
+     "expected_case": "A 21.8 MHz jump to 7019.478 MHz, three minutes after #12, with NO calibration of any kind in between - and the jump coincides exactly with the sweep window having been hand-moved from 6982.3-7012.2 MHz to 7003.0-7032.9 MHz. dip_snr=8.44 (down from 15.60), r2=0.839, success_shape=False, ambiguous=False - the flag is False only because the new window contains just one notch. This is the centre moving, not the resonator.",
+     "expected_flags": [
+      "window_moved_by_hand",
+      "unflagged_jump",
+      "snr_degraded",
+      "shape_poor",
+      "no_intervening_calibration"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Do not accept a 21.8 MHz shift whose only correlate is a hand-moved centre. Put both features in ONE window and let the candidate list adjudicate: num_shots 200, frequency_span_in_mhz 100, centre near 7008 MHz. That single run answers the question that #12 and #13 between them cannot.",
+     "operator_did": "Did not patch #13; but did not adjudicate either - the whole 4-qubit branch was dropped and q10 restarted from the 7.000 GHz design guess at #17.",
+     "operator_was_right": "partly"
+    },
+    {
+     "step": 3,
+     "run": "#41",
+     "expected_case": "100 MHz / 200 shots at the settled flux point (window 6968.2-7068.1 MHz, which contains BOTH 6997.5 and 7018.5): notch at 7018.419 MHz, dip_snr=28.14, r2=0.873, success_shape=True, ambiguous=False, ONE candidate. And the adjudication arrives for free - at the 6997.5 MHz position the background-divided trace is flat, no notch, no phase wrap. So 6997.5 and 7018.4 are the SAME flux-tunable resonator at two operating points, never two resonators, and the #12/#13 pair is retroactively explained.",
+     "expected_flags": [
+      "clean_single_dip",
+      "shape_ok",
+      "unambiguous",
+      "competitor_position_now_empty",
+      "one_resonator_two_flux_points"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write 7.018418851 GHz and stop. Record that q10 has exactly one resonator and that its apparent 21 MHz bimodality across the session is the flux point, so future runs should be compared only within a fixed flux configuration.",
+     "operator_did": "Also ran #42 (7018.295 MHz) and committed that.",
+     "operator_was_right": "partly"
+    }
+   ],
+   "termination": {
+    "at_run": "#41",
+    "reason": "A single unambiguous shape-True fit at dip_snr 28 in a window wide enough to prove there is no competing notch. That last property is what makes it a stopping point rather than another data point.",
+    "final_frequency": 7018418851.35,
+    "final_sweep_value": null,
+    "unresolved": false,
+    "value_confidence": "high",
+    "value_evidence": "#41 fit 7018418851.350476 Hz, dip_snr 28.140, r2 0.873, success_shape True, ambiguous False. #42 reproduces 7018294963.62 Hz (0.12 MHz). #19/#20/#23/#24 give 7018.716 / 7018.207 / 7018.373 / 7018.633 MHz - six runs inside 0.51 MHz. Re-derived from #41/#42 ds_raw.h5: single notch at 7018.51 MHz, prominence 185-188 sigma vs 40 sigma runner-up; the 6997.5 MHz position is flat in the same panel. #42's value sits in state from #43 to #62.",
+    "note": "#12's 6997.628 and #27's 6997.627 MHz are the same resonator at a different flux configuration"
+   },
+   "wasted_runs": [
+    {
+     "run": "#17",
+     "why_wasted": "Restarted q10 from the design guess after the 4-qubit branch was dropped; 7017.024 MHz at joint_offset 0, superseded by the flux calibration at #18 one run later."
+    },
+    {
+     "run": "#19",
+     "why_wasted": "7018.716 MHz, dip_snr 11.81, shape False - inside the band that #41 later fixes at four times the SNR."
+    },
+    {
+     "run": "#20",
+     "why_wasted": "7018.207 MHz - inside the band."
+    },
+    {
+     "run": "#23",
+     "why_wasted": "7018.373 MHz - inside the band."
+    },
+    {
+     "run": "#24",
+     "why_wasted": "7018.633 MHz - inside the band."
+    },
+    {
+     "run": "#27",
+     "why_wasted": "Abandoned flux configuration; 6997.627 MHz at dip_snr 32.0 looks authoritative and is not comparable to its neighbours - the most dangerous wasted run for this target."
+    },
+    {
+     "run": "#42",
+     "why_wasted": "Redundant confirmation of #41, 0.12 MHz apart."
+    }
+   ],
+   "poisoned_writes": [
+    {
+     "run": "#27",
+     "path": "/quam/qubits/q10/resonator/f_01 and /quam/qubits/q10/resonator/RF_frequency",
+     "why": "Wrote 6997626976.74 Hz - a correct measurement of a flux configuration that was abandoned two runs later. The state was reverted to the 7018.2 MHz branch before #29, so the write's only effect was to place a 20.8 MHz-displaced value in the live state during #28. Its dip_snr of 32.0 and success_shape True make it indistinguishable from a good write on its face; only the flux offsets reveal it."
+    },
+    {
+     "run": "#12",
+     "path": "/quam/qubits/q10/resonator/f_01 and /quam/qubits/q10/resonator/RF_frequency",
+     "why": "Not wrong as physics, but written into the trimmed 4-qubit QUAM used by #8-#13, which is abandoned at #14. The surviving 13-qubit state still held the 7.000 GHz design guess, so the calibration was silently lost and q10 had to be re-derived from scratch at #17."
+    }
+   ],
+   "ideal_length": 3,
+   "actual_length": 10,
+   "confidence": "high",
+   "caveats": "The #12/#13 pair is the cleanest window-chasing example in the session and the one that could most easily be mis-read as resonator drift. Note the asymmetry with q15: for q10 the wide window PROVES there is one resonator (the rival position goes flat), whereas for q15 the identical wide window proves the opposite. The same diagnostic, opposite verdicts - which is exactly why the wide sweep is worth running before writing."
+  },
+  {
+   "qubit": "q11",
+   "runs_in_scope": [
+    "#12",
+    "#13",
+    "#17",
+    "#19",
+    "#20",
+    "#23",
+    "#24",
+    "#27",
+    "#31",
+    "#33",
+    "#35",
+    "#41",
+    "#42"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#12",
+     "expected_case": "Clean notch at 6585.363 MHz: dip_snr=21.65, r2=0.959, success_shape=True, ambiguous=False, single candidate. Raw prominence 62 sigma against 8 sigma. Solid.",
+     "expected_flags": [
+      "clean_single_dip",
+      "shape_ok",
+      "unambiguous"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write 6.585363281 GHz, provisionally - q11's resonator is flux-tunable and the operating point is not yet fixed.",
+     "operator_did": "Patched f_01 and RF_frequency to 6585363281.45 Hz.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "#13",
+     "expected_case": "A 31.5 MHz jump to 6616.910 MHz three minutes after #12, with no calibration in between, and with the window hand-moved from 6570.0-6599.9 MHz to 6601.6-6631.5 MHz - a window that no longer even contains #12's answer. dip_snr=6.45 (down from 21.65, and effectively on the 6.0 floor), r2=0.769, success_shape=False, ambiguous=False. Every quality metric degraded while the number moved by 31.5 MHz.",
+     "expected_flags": [
+      "window_moved_by_hand",
+      "unflagged_jump",
+      "snr_at_threshold",
+      "shape_poor",
+      "previous_answer_excluded_from_window"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Reject. A 31.5 MHz shift accompanied by a 3.4x collapse in dip_snr and a window that has been moved off the previous answer is a centre problem, not a physics problem. Restore the centre to 6585 MHz, or better run num_shots 200 / frequency_span_in_mhz 100 so both features sit in one panel and the candidate list adjudicates.",
+     "operator_did": "Did not patch #13; the 4-qubit branch was then abandoned and q11 restarted from the 6.570 GHz design guess at #17.",
+     "operator_was_right": "partly"
+    },
+    {
+     "step": 3,
+     "run": "#19",
+     "expected_case": "First measurement at the operating point that survives to the end of the day (joint_offset -0.0540): 6585.225 MHz, dip_snr=21.45, r2=0.953, success_shape=True, ambiguous=False, single candidate. Raw prominence 148 sigma. Strong, and it lands within 0.14 MHz of #12's independent pre-branch answer.",
+     "expected_flags": [
+      "clean_single_dip",
+      "shape_ok",
+      "unambiguous",
+      "agrees_with_prior_branch"
+     ],
+     "correct_decision": "reconfirm",
+     "correct_next_action": "One repeat at the same settings to establish reproducibility, then stop. Note in advance that the 100 MHz window will show a second notch near 6634 MHz - it is real and it is not q11's; do not let a later run centred on it overwrite this.",
+     "operator_did": "Re-ran at #20.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 4,
+     "run": "#20",
+     "expected_case": "6585.161 MHz, dip_snr=19.76, r2=0.939, success_shape=True - reproduces #19 to 0.064 MHz.",
+     "expected_flags": [
+      "reproduced",
+      "clean_single_dip",
+      "shape_ok"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write 6.585161120 GHz and STOP running 03 on q11. Two agreeing shape-True fits at dip_snr ~20, 64 kHz apart, at the operating point that is going to persist. From here every further 03 run is either redundant or, as it turned out, actively harmful.",
+     "operator_did": "Ran q11 nine more times (#23, #24, #27, #31, #33, #35, #41, #42), including two dedicated single-qubit runs, and wrote 6634.2 MHz into the state twice.",
+     "operator_was_right": "no"
+    }
+   ],
+   "termination": {
+    "at_run": "#20",
+    "reason": "Two consecutive unambiguous shape-True fits agreeing to 64 kHz at the settled flux point, corroborated by an independent measurement on the earlier branch (#12, 0.20 MHz away). Nothing measured afterwards improves on this; the session's later excursion to 6634 MHz cost four runs and two poisoned writes and ended by returning to exactly this value.",
+    "final_frequency": 6585161120.02,
+    "final_sweep_value": null,
+    "unresolved": false,
+    "value_confidence": "high",
+    "value_evidence": "#20 fit 6585161120.021322 Hz, dip_snr 19.759, r2 0.9389, success_shape True, ambiguous False. Corroboration: #19 6585224889.25, #12 6585363281.45, #23 6585368595.92, #24 6585261052.39, #27 6585426292.64 (dip_snr 31.5), #31 6584761272.15, #42 6585329555.80 (dip_snr 54.258, r2 0.990 - the highest-quality fit in the entire session). Eight independent measurements spanning 6584.76-6585.43 MHz, a 0.67 MHz band. Re-derived from #42 ds_raw.h5: notch at 6585.36 MHz, prominence 148 sigma, phase slope +12.9 deg/MHz. The value 6585329555.80 Hz sits in the chip state from #43 to #74.",
+    "note": "stated at the #20 termination; if the best single number is wanted rather than the earliest sufficient one, #42's 6585329555.80 Hz is 0.17 MHz away and inside the reproducibility band"
+   },
+   "wasted_runs": [
+    {
+     "run": "#17",
+     "why_wasted": "Restart from the design guess at joint_offset 0 after the branch was dropped; 6597.507 MHz, superseded by the flux calibration at #18 one run later."
+    },
+    {
+     "run": "#23",
+     "why_wasted": "6585.369 MHz - inside the 0.67 MHz band already established by #19/#20."
+    },
+    {
+     "run": "#24",
+     "why_wasted": "6585.261 MHz - inside the band."
+    },
+    {
+     "run": "#27",
+     "why_wasted": "6585.426 MHz at dip_snr 31.5 - a higher-SNR confirmation of a number that no longer needed confirming."
+    },
+    {
+     "run": "#31",
+     "why_wasted": "A dedicated single-qubit 100 MHz / 200-shot run purely for q11; returned 6584.761 MHz, i.e. re-confirmed the answer a fifth time. This is the run that immediately precedes the excursion, and it makes the excursion harder to excuse: the correct value had just been re-measured."
+    },
+    {
+     "run": "#33",
+     "why_wasted": "Ran at a hand-displaced centre and produced a poisoned write (see below). Worse than wasted."
+    },
+    {
+     "run": "#35",
+     "why_wasted": "Repeated #33 at the same displaced centre, which confirmed the wrong answer by repetition instead of catching it. Worse than wasted."
+    },
+    {
+     "run": "#41",
+     "why_wasted": "q11 returned NaN - a self-inflicted failure. The state's q11 frequency had been hand-set to 6686.561 MHz after #35/#36 with no measurement behind it, so the 100 MHz window (6636.6-6736.5 MHz) excluded the resonator entirely. Costly only because the excursion happened."
+    },
+    {
+     "run": "#42",
+     "why_wasted": "Recovery run after the state was reverted to 6585.161 MHz; it produced the session's best fit but only restored a value that had been correct since #19."
+    }
+   ],
+   "poisoned_writes": [
+    {
+     "run": "#33",
+     "path": "/quam/qubits/q11/resonator/f_01 and /quam/qubits/q11/resonator/RF_frequency",
+     "why": "Wrote 6634209342.36 Hz, 49.0 MHz above the correct value. Mechanism: the sweep centre had been hand-moved to about 6633.8 MHz (window 6583.8-6683.7 MHz) while q11's flux barely moved (joint_offset -0.0540 -> -0.0570, a 3 mV change that cannot produce a 49 MHz shift). The node fitted the OTHER notch in the panel and reported dip_snr 13.09, r2 0.933, success_shape True, ambiguous False - i.e. it looked entirely healthy. The true q11 notch was in the SAME window at 6585.16 MHz with a prominence of 117 sigma and was passed over because it was not nearest the centre. Nothing in the node's output flags this; only the run-to-run history and the absent flux change do."
+    },
+    {
+     "run": "#35",
+     "path": "/quam/qubits/q11/resonator/f_01 and /quam/qubits/q11/resonator/RF_frequency",
+     "why": "Wrote 6634140991.68 Hz - the same wrong notch, re-measured at the same displaced centre and agreeing with #33 to 68 kHz. This is the most instructive poisoned write in the session: reproducibility confirmed the error rather than exposing it, because both runs asked the same badly-posed question."
+    },
+    {
+     "run": "#41 (pre-run state edit)",
+     "path": "/quam/qubits/q11/resonator/RF_frequency",
+     "why": "Between #36 and #37 the live state's q11 frequency was moved again by hand to 6686561120 Hz - a further +52.4 MHz with no measurement of any kind behind it. That edit is what made #41's window exclude the resonator and produce the NaN. It is recorded here because it is a write into the calibration state that no run supports."
+    }
+   ],
+   "ideal_length": 4,
+   "actual_length": 13,
+   "confidence": "high",
+   "caveats": "Both notches are GENUINE: 6585.3 and 6634.4 MHz are 49.1 MHz apart and each carries a real phase wrap in ds_raw (phase slopes +12.9 and +10.9 deg/MHz). So #33/#35 are not 'the node fitted noise' - they are the node faithfully fitting the notch nearest a centre a human had moved. The cross-check that would have assigned the pair by ownership - q11's own 06_resonator_spectroscopy_vs_flux - failed at every attempt (#9, #10, #18, #25, #26), so the adjudication rests on SNR (54.3 vs 13.1), on eight-run reproducibility, on proximity to the 6.570 GHz design value (+15.3 MHz versus +64.4 MHz), and on the operator's own eventual reversion. That is strong but it is circumstantial, and it is the honest description of the evidence."
+  },
+  {
+   "qubit": "q15",
+   "runs_in_scope": [
+    "#12",
+    "#13",
+    "#17",
+    "#19",
+    "#20",
+    "#23",
+    "#24",
+    "#27",
+    "#41",
+    "#42"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#12",
+     "expected_case": "6801.888 MHz at dip_snr=8.27, r2=0.754, success_shape=False, ambiguous=False, one candidate, in a 30 MHz window (6785.9-6815.8 MHz). The ambiguous=False is uninformative here: the window is too narrow to contain any competitor, so the node cannot flag what it cannot see. Marginal SNR plus poor shape plus a window that forecloses the question.",
+     "expected_flags": [
+      "snr_modest",
+      "shape_poor",
+      "window_too_narrow_to_adjudicate",
+      "flag_uninformative"
+     ],
+     "correct_decision": "reconfirm",
+     "correct_next_action": "Do not write this yet. Widen before writing: num_shots 200, frequency_span_in_mhz 100, centre unchanged. For a target whose only fit is shape-poor at dip_snr 8, one wide sweep costs one run and settles whether the window has been hiding anything.",
+     "operator_did": "Patched f_01 and RF_frequency to 6801888289.22 Hz.",
+     "operator_was_right": "no"
+    },
+    {
+     "step": 2,
+     "run": "#27",
+     "expected_case": "THE DECIDING RUN. First 100 MHz sweep: two candidates, 6802.064 MHz (prom_snr 12.93) and 6844.900 MHz (prom_snr 11.61). Dominance ratio 1.11, far below the declared dip_dominance=2.0; ambiguous=True; success_shape=False; r2=0.818. The raw data makes it worse, not better: the two notches have background-divided prominences of 108 and 100 sigma - genuinely equal - and BOTH carry a real phase wrap (linear phase slopes 15.5 and 15.3 deg/MHz) and both reach the IQ origin. This is not amplitude structure and it is not a Fano partner: it is two co-existing resonances 42.8 MHz apart, neither dominant. #42's amplitude panel is labelled [AMBIG] by the node itself and shows both notches reaching zero with a 1.35 mV peak between them.",
+     "expected_flags": [
+      "ambiguous",
+      "two_equal_candidates",
+      "dominance_far_below_floor",
+      "both_pass_phase_and_iq_crosscheck",
+      "shape_poor"
+     ],
+     "correct_decision": "reject_and_stop",
+     "correct_next_action": "Stop running 03 on q15. No setting of frequency_span_in_mhz, frequency_step_in_mhz, num_shots, min_dip_snr or dip_dominance can choose between two notches of equal depth that both wrap the phase - the discriminating information is not in this node's data. The adjudication is elsewhere and must be obtained first: (a) get 06_resonator_spectroscopy_vs_flux to work for q15 - it failed at #9, #10, #18, #25 and #26, every single attempt - so the notch that tunes with q15's own flux line identifies itself; or (b) take a qubit-state-dependent readout contrast at each candidate and keep the one that responds. Until one of those exists, write NOTHING for q15.",
+     "operator_did": "Ran 03 on q15 four more times and, across the session, wrote six different values into the state - 6801.888 (#12), 6852.252 (#17), 6801.564 (#19), 6844.646 (#20), 6802.064 (#27), 6844.761 (#43, from #42's fit) - flip-flopping between the two branches on consecutive runs. The day ended with 6802.5 MHz in the state after 6844.761 had been committed.",
+     "operator_was_right": "no"
+    }
+   ],
+   "termination": {
+    "at_run": "#27",
+    "reason": "#27 is the first run that puts both notches in one window, and it fully exposes the ambiguity: equal prominence, equal phase response, dominance 1.11 against a declared floor of 2.0, node flag ambiguous=True. Every subsequent 03 run re-raises the same flag and picks a different winner - #27 chose 6802.064, #41 and #42 chose 6844.78/6844.76 - so the node itself is not stable on this target. Continuing was not merely wasteful, it was incapable of converging.",
+    "final_frequency": null,
+    "final_sweep_value": null,
+    "unresolved": true,
+    "value_confidence": "low",
+    "value_evidence": "Two co-equal candidates, neither evidenced above the other by anything this family measures. Candidate A: 6801.25-6802.06 MHz - chosen at #12 (dip_snr 8.27), #19 (7.86), #24 (6.79) and #27 (12.93, primary); sits 1.3-2.1 MHz from the 6.800 GHz design value; raw prominence 125-127 sigma at #41/#42, phase slope 15.0 deg/MHz. Candidate B: 6844.65-6844.90 MHz - chosen at #20 (dip_snr 14.83), #41 (36.04) and #42 (32.27, r2 0.982, success_shape True); raw prominence 129-130 sigma at #41/#42, phase slope 16.4 deg/MHz. Both are listed as candidates of each other whenever the window is wide enough to contain both, at dominance ratios of 1.11 (#27) and 1.56 (#41) - never reaching the declared 2.0. If a single number must be quoted it is #42's 6844761405.13 Hz, because that is what was committed and because it carries the higher SNR - but it is one of two, not the answer, and the operator's own final state edit later that night moved q15 to 6802.5 MHz, i.e. to the other branch.",
+    "note": "a legitimate no-value answer: the session never obtained the measurement that discriminates"
+   },
+   "wasted_runs": [
+    {
+     "run": "#13",
+     "why_wasted": "q15 returned NaN after the centre was hand-moved +17 MHz (window 6803.7-6833.6 MHz, straddling neither notch cleanly). A window placed between two known features is the worst of both."
+    },
+    {
+     "run": "#17",
+     "why_wasted": "Produced a THIRD value, 6852.252 MHz at dip_snr 22.95 and success_shape True, from a window (6835.3-6865.2 MHz) that contained neither established notch at its centre. High SNR and shape True made it look like the best q15 measurement yet; it was written to state and is 7.5 MHz from candidate B and 50 MHz from candidate A."
+    },
+    {
+     "run": "#19",
+     "why_wasted": "6801.564 MHz - branch A again, at dip_snr 7.86 and shape False, in a 30 MHz window that could not see branch B."
+    },
+    {
+     "run": "#20",
+     "why_wasted": "6844.646 MHz - branch B, the very next run, from a window moved 43 MHz. Two consecutive runs, two different branches, neither flagged."
+    },
+    {
+     "run": "#23",
+     "why_wasted": "q15 returned NaN."
+    },
+    {
+     "run": "#24",
+     "why_wasted": "6801.591 MHz at dip_snr 6.79, on the floor - branch A again."
+    },
+    {
+     "run": "#41",
+     "why_wasted": "6844.783 MHz, ambiguous=True with branch A listed at prom_snr 23.1 (dominance 1.56, still below 2.0). Re-raises the #27 ambiguity without resolving it."
+    },
+    {
+     "run": "#42",
+     "why_wasted": "6844.761 MHz, ambiguous=True with branch A listed at prom_snr 21.8. Third statement of the same unresolved question."
+    }
+   ],
+   "poisoned_writes": [
+    {
+     "run": "#17",
+     "path": "/quam/qubits/q15/resonator/f_01 and /quam/qubits/q15/resonator/RF_frequency",
+     "why": "Wrote 6852252227.69 Hz - a third, off-branch value produced by a hand-moved window, carrying dip_snr 22.95 and success_shape True so that nothing in the node's output marks it as suspect. It is 7.5 MHz from the nearest genuine notch."
+    },
+    {
+     "run": "#19",
+     "path": "/quam/qubits/q15/resonator/f_01 and /quam/qubits/q15/resonator/RF_frequency",
+     "why": "Wrote 6801564317.82 Hz - one of two unadjudicated alternatives, written as though it were the answer, from a 30 MHz window structurally incapable of seeing the competitor."
+    },
+    {
+     "run": "#20",
+     "path": "/quam/qubits/q15/resonator/f_01 and /quam/qubits/q15/resonator/RF_frequency",
+     "why": "Wrote 6844646101.14 Hz on the very next run - the OTHER branch, 43.1 MHz away, with no flag raised in either run. The state's q15 frequency changed branch twice in four minutes on the strength of where the window happened to sit."
+    },
+    {
+     "run": "#27",
+     "path": "/quam/qubits/q15/resonator/f_01 and /quam/qubits/q15/resonator/RF_frequency",
+     "why": "Wrote 6802064206.67 Hz from a run that itself reported ambiguous=True with a dominance ratio of 1.11 against a declared floor of 2.0, and that additionally belongs to the abandoned flux configuration. Writing the primary candidate of an explicitly ambiguous fit is the single clearest doctrine violation in the session."
+    },
+    {
+     "run": "#12",
+     "path": "/quam/qubits/q15/resonator/f_01 and /quam/qubits/q15/resonator/RF_frequency",
+     "why": "Wrote 6801888289.22 Hz on a dip_snr 8.27 / shape-False fit into the trimmed 4-qubit QUAM that was abandoned at #14 - so the value was both under-evidenced and lost."
+    }
+   ],
+   "ideal_length": 2,
+   "actual_length": 10,
+   "confidence": "high",
+   "caveats": "High confidence that q15 is unresolved; medium confidence on the physical interpretation of the pair. What is certain from the raw data is that both 6801.3 and 6844.8 MHz are real resonances present simultaneously at every flux configuration in the session, with comparable depth and comparable phase response - I verified this numerically in #27, #41 and #42 and visually in #42's amplitude and IQ-circle panels. What is NOT determinable from this family is which of them is q15's readout resonator; the chip carries more resonators than active qubits, and q15's flux sweep - the natural discriminator - failed five times out of five. Note the contrast with q17, where the same wide window shows only one notch present at a time: identical-looking history, opposite underlying cause."
+  },
+  {
+   "qubit": "q17",
+   "runs_in_scope": [
+    "#12",
+    "#13",
+    "#17",
+    "#19",
+    "#20",
+    "#23",
+    "#24",
+    "#27",
+    "#41",
+    "#42"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#12",
+     "expected_case": "Clean notch at 7290.102 MHz: dip_snr=16.19, r2=0.870, success_shape=True, ambiguous=False, single candidate; raw prominence 55 sigma against 9 sigma. Valid at the flux point then in force (joint_offset -0.0250) and provisional until the operating point is fixed.",
+     "expected_flags": [
+      "clean_single_dip",
+      "shape_ok",
+      "unambiguous",
+      "provisional_flux_point"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write 7.290102 GHz provisionally and set the flux operating point next. Expect this resonator to move - it is strongly flux-tunable.",
+     "operator_did": "Patched f_01 and RF_frequency to 7290101999.18 Hz.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "#19",
+     "expected_case": "First run at the operating point that survives (joint_offset +0.1003): 7313.023 MHz, dip_snr=15.67, r2=0.976, success_shape=True, ambiguous=False, one candidate. The 23 MHz difference from #12 is the flux point moving, not a fit failure - and the proof is available in the wide sweeps: in #41/#42's 100 MHz window (7263.2-7363.1 MHz), which contains 7290, the 7290 position is FLAT (background-divided depth 0.11, no phase wrap), while in #27's window, which contains 7313, the 7313 position is flat (depth 0.03). Only ever one notch at a time. The node was correct never to flag q17 ambiguous.",
+     "expected_flags": [
+      "clean_single_dip",
+      "shape_ok",
+      "unambiguous",
+      "flux_point_changed",
+      "single_resonator_confirmed"
+     ],
+     "correct_decision": "reconfirm",
+     "correct_next_action": "One repeat at the same centre and settings to establish reproducibility, then stop.",
+     "operator_did": "Re-ran at #20.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 3,
+     "run": "#20",
+     "expected_case": "7313.224 MHz, dip_snr=15.83, r2=0.976, success_shape=True - reproduces #19 to 0.20 MHz.",
+     "expected_flags": [
+      "reproduced",
+      "clean_single_dip",
+      "shape_ok",
+      "unambiguous"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write 7.313224212 GHz and stop running 03 on q17. Two agreeing shape-True fits at r2 0.976 with a 0.20 MHz spread is the end of what this node can contribute. Guard the state value: the failures that follow are caused by the sweep centre being moved off this number, not by the measurement.",
+     "operator_did": "Ran q17 five more times (#23 and #24 both returned NaN; #27 at the abandoned flux configuration; #41 and #42 at 100 MHz).",
+     "operator_was_right": "no"
+    }
+   ],
+   "termination": {
+    "at_run": "#20",
+    "reason": "Two consecutive unambiguous shape-True fits agreeing to 0.20 MHz at the operating point that persists to the end of the day, on a target the wide sweeps later prove has exactly one resonance per flux point. The subsequent 100 MHz runs land 0.05-0.20 MHz away at higher SNR, confirming that nothing was left to find.",
+    "final_frequency": 7313224211.7,
+    "final_sweep_value": null,
+    "unresolved": false,
+    "value_confidence": "high",
+    "value_evidence": "#20 fit 7313224211.703758 Hz, dip_snr 15.825, r2 0.9761, success_shape True, ambiguous False; #19 gives 7313023420.43 Hz (0.20 MHz away, r2 0.976). Later corroboration at four times the SNR: #41 7313171224.16 (dip_snr 35.87, r2 0.989) and #42 7313123727.47 (dip_snr 35.83, r2 0.984), both shape True, both unambiguous - the whole cluster spans 0.20 MHz. Re-derived from #41/#42 ds_raw.h5: single notch at 7313.12-7313.22 MHz, prominence 179 sigma vs 44 sigma runner-up, and the 7290 position flat in the same panel. #42's value sits in state from #43 to #62.",
+    "note": "7290.05-7290.10 MHz (#12, #27) is the same resonator at a different flux point, not a rival candidate"
+   },
+   "wasted_runs": [
+    {
+     "run": "#13",
+     "why_wasted": "7314.900 MHz from a hand-moved window on the branch that was about to be abandoned; agrees with the eventual answer to 1.7 MHz but contributed nothing."
+    },
+    {
+     "run": "#17",
+     "why_wasted": "Restart from the design guess after the branch was dropped; 7292.353 MHz at joint_offset 0, superseded by the flux calibration at #18 one run later."
+    },
+    {
+     "run": "#23",
+     "why_wasted": "q17 returned NaN - entirely self-inflicted. The live state's q17 frequency had been changed out of band to 7291.6 MHz before this run, so the 30 MHz window (7276.6-7306.5 MHz) simply did not contain the 7313.1 MHz resonance. The node behaved correctly; the input was wrong."
+    },
+    {
+     "run": "#24",
+     "why_wasted": "NaN again, from the same displaced centre - the failure was repeated rather than diagnosed."
+    },
+    {
+     "run": "#27",
+     "why_wasted": "Abandoned flux configuration (joint_offset -0.0330); returned 7290.048 MHz at dip_snr 22.64 with success_shape True, which reads as a clean 23 MHz drift and is not comparable to its neighbours."
+    },
+    {
+     "run": "#41",
+     "why_wasted": "7313.171 MHz at dip_snr 35.87 - a high-quality confirmation of a value fixed at #20."
+    },
+    {
+     "run": "#42",
+     "why_wasted": "7313.124 MHz - a second high-quality confirmation of the same."
+    }
+   ],
+   "poisoned_writes": [
+    {
+     "run": "#27",
+     "path": "/quam/qubits/q17/resonator/f_01 and /quam/qubits/q17/resonator/RF_frequency",
+     "why": "Wrote 7290048480.46 Hz - a correct measurement of a flux configuration abandoned two runs later, written over the 7313.2 MHz value belonging to the configuration the chip actually keeps. dip_snr 22.6 and success_shape True make it look better than the value it replaced. The state was reverted before #29."
+    },
+    {
+     "run": "#23 (pre-run state edit)",
+     "path": "/quam/qubits/q17/resonator/RF_frequency",
+     "why": "Before #23 the live state's q17 frequency was changed out of band from 7313.224 to 7291.6 MHz with no run in this family behind it. That edit alone caused the NaN outcomes at both #23 and #24 by moving the sweep window off the resonance - two runs destroyed by a state write, which is the mirror image of the q11 failure at #41."
+    }
+   ],
+   "ideal_length": 3,
+   "actual_length": 10,
+   "confidence": "high",
+   "caveats": "q17 and q15 present the same surface history - two recurring values about 23 and 43 MHz apart, alternating between runs - and have opposite causes. For q17 the wide sweep settles it: only one notch exists in any given panel, so it is one flux-tunable resonator and the correct answer is simply 'whichever flux point you intend to operate at'. For q15 the identical wide sweep shows two notches simultaneously. Nothing short of looking at whether the rival position is empty distinguishes these two situations, and the node's own ambiguous flag does exactly that correctly here (False for q17, True for q15)."
+  }
+ ]
+}

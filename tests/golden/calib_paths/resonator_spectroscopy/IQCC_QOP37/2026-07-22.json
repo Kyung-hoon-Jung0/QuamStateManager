@@ -1,0 +1,106 @@
+{
+ "schema": "smgolden/v2",
+ "family": "resonator_spectroscopy",
+ "chip": "IQCC_QOP37",
+ "session": "2026-07-22",
+ "session_id": "IQCC_QOP37__2026-07-22",
+ "authored": "2026-08-21",
+ "status": "hindsight-authored + adversarial audit",
+ "runs": [
+  "#68_03_resonator_spectroscopy_single_223315",
+  "#69_03_resonator_spectroscopy_single_223401",
+  "#70_03_resonator_spectroscopy_single_223609",
+  "#71_03_resonator_spectroscopy_single_223746",
+  "#72_03_resonator_spectroscopy_single_224406",
+  "#73_03_resonator_spectroscopy_single_225415",
+  "#74_03_resonator_spectroscopy_single_225631",
+  "#75_03_resonator_spectroscopy_single_225739"
+ ],
+ "runs_note": "The exact run set this key was authored from; scoring must replay these and only these.",
+ "audit_challenged": true,
+ "audit_note": "The adversarial pass challenged this family's keys harder than any other's. A key flagged audit_challenged carries load-bearing defects its own auditor found; a score computed against it measures the key as much as the system.",
+ "session_notes": "Single target (qA1), 8 runs, all new-generation 03_resonator_spectroscopy_single, all with identical node parameters (30 MHz span, 0.1 MHz step, 100 shots, non-multiplexed, min_dip_snr 6.0, dip_dominance 2.0, escalate_on_no_dip false, max_escalation_span 800 MHz). Ideal path is ONE step; the operator took eight and wrote nothing.\n\nTHE HINDSIGHT KEY, and it is not visible in the node parameters at all: this is not a resonator-frequency session, it is a TIME-OF-FLIGHT hunt using 03 as its probe. Diffing the quam_state snapshot carried by each run folder shows exactly one field moving between consecutive runs -- qubits/qA1/resonator/time_of_flight -- hand-edited to 368 -> 600 -> 1180 -> 400 -> 300 -> 28 -> 372 -> 380 ns across runs #68-#75, immediately after six consecutive 01_time_of_flight_mw_fem runs (#62-#67). Every lineshape anomaly in the session is that knob: with an 800 ns readout pulse, a window opened 220 ns late (600 ns) costs 27% of the signal and narrows the apparent FWHM by 40%; opened 352 ns early (28 ns) costs 44%, widens FWHM 1.9x and drags the fitted centre 138 kHz low; opened at 1180 ns the window falls entirely past the pulse and only ring-down is captured -- 40x amplitude loss and an inverted feature. Predicted and observed amplitude ratios match to within a few percent in all three cases.\n\nTwo family-specific traps are both live here and are worth scoring on. Run #70 is the tallest-excursion trap in its purest form: a 58.7-sigma PEAK sitting at 7.12614 GHz on a near-zero floor, with no dip anywhere -- the node stamps the panel 'NO DIP' and refuses, and the correct machine decision is reject_and_STOP (out-of-band acquisition fault), never reject_and_retune; widening the span or arming escalate_on_no_dip would burn runs chasing a resonance that is exactly where it always was. Run #73 is the opposite and subtler trap: success=true, success_shape=true, r2=0.9908, and a value 0.10 FWHM wrong. The new generation's extra fields are what catch it without hindsight -- dip_snr 20.1 against 46-66 everywhere else, FWHM 2.53 MHz against 1.35, and the fit centre visibly offset from the data minimum. A system that trusts the success flag alone adopts a poisoned frequency here.\n\nOne inversion of the usual advice for this chip: the amplitude/phase/IQ cross-check must be applied with care. The electrical delay was uncompensated all session, so even the pristine run #68 shows a many-turn IQ spiral and only ~47 deg of phase swing. Absence of a textbook closed circle is NOT evidence against the resonance here; the discriminating signals are the notch prominence (18 sigma below baseline versus a 2.8-sigma background shoulder) and gross phase pathology (run #70's 2326 deg unwrap, radial scatter 2.29).\n\nTermination: stop at #68, write 7,125,895,669 Hz, hand off. Hindsight consensus over the five well-conditioned runs is 7,125,887,086 Hz with a 20.3 kHz spread. Runs #69-#75 are all wasted with respect to this target (they had genuine value as readout-chain diagnostics, which is a different family's question). No poisoned writes -- the state was never updated at all, which is its own defect: the chip finished the session still carrying 7,125,942,389 Hz, 46.7 kHz stale, after seven adopt-grade measurements.",
+ "adversarial_audit": "Verified every numeric claim against the raw archive (`D:\\work\\dataset\\IQCC_QOP37\\2026-07-22\\#68\u2026#75`, `ds_raw.h5`/`ds_fit.h5`/`quam_state/state.json`/`node.json`) and the figures.\n\n**Defects**\n\n**1. qA1 / post-#75 \u2014 the headline conclusion is false, and a real poisoned write is missed.** The key asserts three times that \"no write ever occurred\", \"the state was never updated at all\", and \"the chip finished the session still carrying 7,125,942,389 Hz, 46.7 kHz stale\". `#76_05b_resonator_spectroscopy_vs_power_iq_225936/node.json` carries `replace /quam/qubits/qA1/resonator/RF_frequency 7125942388.944085 \u2192 7126042388.944085` (and the twin `f_01`), and that value persists in every snapshot through `#90`. That is **+155.3 kHz off the key's own consensus (+0.115 FWHM)** \u2014 worse than the staleness it replaced, and worse than all eight measurements. Correction: `poisoned_writes` must list this 05b write, caveat 1's justification for the empty list is refuted, and the closing sentence must read 7,126,042,389 Hz. This *strengthens* the \"adopt at #68\" verdict \u2014 the missed write let 05b refine off the stale centre.\n\n**2. qA1 / #73 \u2014 internal contradiction on the count.** Caveat 1 and session_notes say \"seven adopt-grade\"; `wasted_runs[#73]` says #73 \"must not be adopted\". Correct count is **six** (#68, #69, #71, #72, #74, #75), and #69 only for frequency.\n\n**3. qA1 / #73 \u2014 one of the three \"no-hindsight tells\" is not a tell.** \"The fitted Lorentzian centre is visibly dragged left of the actual data minimum.\" Measured fit\u2212argmin: #73 \u221293 kHz, but #71 \u221267 kHz, #72 \u221250 kHz, #69 \u221260 kHz \u2014 same sign, same order, all below the 100 kHz grid step (sub-grid parabolic minima: #73 \u221253 kHz vs #74 +32 kHz). Drop it; the surviving tells (dip_snr 20.1 vs 46\u201366, FWHM 2.53 vs 1.35 MHz, amplitude halved) are real. Note #73's dip_snr is still 3.4\u00d7 the node's own floor, so rejection is only reachable via session context.\n\n**4. qA1 / #71 \u2014 a wasted run that carried necessary information.** `ideal_length: 1` + `value_confidence: high` is defended by \"full-hindsight corroboration\" over five runs the key marks wasted, while caveat 4 concedes the frequency *is* TOF-sensitive. At #68 (TOF 368, mid-hunt) nothing proves 368 sits in the safe plateau. Either credit #71 as confirming (ideal_length 2) or downgrade confidence to medium.\n\n**5. Minor numeric.** #68 mean |R| is 1.00e-2, not 9.8e-3 \u2014 real ratios 0.72/0.57, matching the 0.725/0.56 predictions *better* than the quoted 0.74/0.58. \"Notch at 18\u03c3\" is 12.8\u03c3 under the same robust estimator that yields the quoted 2.8\u20133.1\u03c3 shoulder. \"Radial scatter 2.29\" is std|R|/mean|R|, not IQ-circle radial scatter (0.89). #70 apex is 247 kHz above #68 / 255 kHz above consensus, not 253.\n\n**Checked hardest and sound:** (a) the whole TOF attribution \u2014 368/600/1180/400/300/28/372/380 reproduce exactly from the eight state snapshots, readout length is 800 ns, and 1180 = 380+800 exactly; (b) the apparent self-contradiction \"multi-turn spiral\" vs \"~47\u00b0 swing\" \u2014 both true, different panels (IQ shows ~12 turns; the detrended phase panel spans 0.81 rad). Consensus arithmetic, 2326\u00b0 unwrap, 7.12614 GHz peak, \"NO DIP\" stamp, and the `RF_frequency`+`f_01` write paths all verify.",
+ "qubits": [
+  {
+   "qubit": "qA1",
+   "runs_in_scope": [
+    "#68_03_resonator_spectroscopy_single_223315",
+    "#69_03_resonator_spectroscopy_single_223401",
+    "#70_03_resonator_spectroscopy_single_223609",
+    "#71_03_resonator_spectroscopy_single_223746",
+    "#72_03_resonator_spectroscopy_single_224406",
+    "#73_03_resonator_spectroscopy_single_225415",
+    "#74_03_resonator_spectroscopy_single_225631",
+    "#75_03_resonator_spectroscopy_single_225739"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#68_03_resonator_spectroscopy_single_223315",
+     "expected_case": "Textbook clean single notch. New-generation node. 30 MHz span / 0.1 MHz step centred on the stored RF 7,125,942,388.94 Hz, 300 points. One deep, near-symmetric transmission dip at 7.1259 GHz sitting on a gently rising (not flat) background; Lorentzian+linear fit tracks the notch tightly. The FANO/tallest-excursion trap is present but benign here: the largest positive excursion in the panel is the background slope at the low-frequency sweep edge, only 2.8 sigma above the local baseline, versus the notch at 18 sigma below it -- the notch is unambiguously the resonance. Node's own verdict agrees on every axis: success=true AND success_shape=true, one and only one candidate (idx 150), ambiguous=false.",
+     "expected_flags": [
+      "generation=new (dip_snr / ambiguous / candidates / success_shape present)",
+      "dip_snr = 46.2 vs min_dip_snr = 6.0 -- 7.7x the escalation floor",
+      "r2 = 0.9967",
+      "success_shape = true (frequency AND shape both good)",
+      "ambiguous = false; exactly one candidate (idx 150, prom_snr 46.2, width 1.04 MHz)",
+      "fwhm = 1.349 MHz, fully resolved by the 0.1 MHz step (13 points across the FWHM) and 22x smaller than the 30 MHz span -- span is correct, no escalation warranted",
+      "fitted f0 is 46.7 kHz below the stored RF = 0.035 x FWHM -- a refinement, not a relocation; no re-centre needed",
+      "raw-data cross-check: dip depth 5.63e-3 on a 1.04e-2 baseline (54% deep), noise 3.1e-4",
+      "CAUTION on the standard 4-panel cross-check: the iq_circle panel is a MULTI-TURN SPIRAL, not one closed circle, and the phase panel shows only ~47 deg of swing. That is uncompensated cable delay (the session was mid-time-of-flight-hunt), NOT absence of a resonance. A rule of 'no closed IQ circle => not a resonance' would wrongly veto this run.",
+      "escalate_on_no_dip = false, max_escalation_span = 800 MHz -- ladder present but not needed"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write qubits/qA1/resonator/RF_frequency (and f_01) = 7,125,895,669 Hz and STOP this family for qA1. No knob needs to move: span stays 30 MHz, step stays 0.1 MHz, num_shots stays 100, no escalation, no re-fit window. Hand off to 05b/05 resonator-vs-power next, not to another 03.",
+     "operator_did": "Ran the node, got a clean successful fit, and applied NOTHING -- patches are empty and the state snapshot's RF_frequency stayed 7,125,942,388.944085 Hz through this and all seven following runs. Then re-ran 03 seven more times over the next 24 minutes while hand-editing qubits/qA1/resonator/time_of_flight between every run (368 -> 600 -> 1180 -> 400 -> 300 -> 28 -> 372 -> 380 ns).",
+     "operator_was_right": "partly"
+    }
+   ],
+   "termination": {
+    "at_run": "#68_03_resonator_spectroscopy_single_223315",
+    "reason": "The very first run of the session already delivers a fully qualified answer: single unambiguous notch, dip_snr 46.2 (7.7x the node's own min_dip_snr floor of 6.0), r2 = 0.9967, success_shape = true, FWHM 1.349 MHz well-resolved inside a span 22x wider, and a fitted centre only 0.035 FWHM from the value already in state. There is no residual question for this family to answer, so the correct act is one write and stop. Everything after #68 is a readout-chain (time-of-flight) investigation wearing this node as its probe -- it is not evidence that the resonance frequency was ever in doubt, and it is the source of every degraded lineshape in the session.",
+    "final_frequency": 7125895669.09,
+    "final_sweep_value": null,
+    "unresolved": false,
+    "value_confidence": "high",
+    "value_evidence": "Run #68's own Lorentzian fit: f0 = 7,125,895,669.09 Hz, FWHM 1,348,749.5 Hz, r2 = 0.9967, dip_snr 46.2, single candidate. Full-hindsight corroboration: the five runs taken with a sane time_of_flight (#68 TOF 368 ns, #71 400, #72 300, #74 372, #75 380) give 7,125,895,669 / 7,125,875,359 / 7,125,892,286 / 7,125,892,306 / 7,125,879,809 Hz -- mean 7,125,887,086 Hz, total spread 20.3 kHz (population sigma 8.0 kHz), i.e. 1.5% of one linewidth. #68's value sits 8.6 kHz above that mean (0.006 FWHM). Even #69 (TOF 600 ns, 27% of the integration window lost) lands within 4.6 kHz of the mean. Only the two badly mis-set-TOF runs depart: #70 yields no notch at all, and #73 (TOF 28 ns) is 137.9 kHz = 0.10 FWHM low. Any value in 7,125.875-7,125.896 MHz is defensible; 7,125,895,669 Hz is what the ideal single-step path writes, and 7,125,887,086 Hz is the hindsight consensus."
+   },
+   "wasted_runs": [
+    {
+     "run": "#69_03_resonator_spectroscopy_single_223401",
+     "why_wasted": "46 s after #68, identical node parameters; the only change was an out-of-band hand edit of time_of_flight 368 -> 600 ns. The resonance question was already closed at #68. Correct read had a system been forced to look: still adopt-grade for FREQUENCY (7,125,882,461 Hz, 4.6 kHz from consensus, dip_snr 65.6, r2 0.9966) but the SHAPE is quietly degraded by the truncated demodulation window -- mean |R| falls to 7.2e-3 from 9.8e-3 (0.74, matching the predicted (800-220)/800 = 0.725 window loss) and the apparent FWHM collapses to 813 kHz, 40% narrower than the true 1.35 MHz. A system that ingested this run's fwhm as a linewidth would carry a 40% error even though the frequency is fine."
+    },
+    {
+     "run": "#70_03_resonator_spectroscopy_single_223609",
+     "why_wasted": "The session's showpiece trap, and pure hardware-diagnostic value with zero calibration value. time_of_flight was set to 1180 ns while the readout pulse is only 800 ns long, so the demodulation window opens entirely AFTER the pulse: mean |R| collapses 40x to 2.6e-4, the phase random-walks through 2326 deg of unwrap, and the IQ trace has radial scatter 2.29 (no circle whatsoever). What survives is the resonator ring-down, which produces a large PEAK (58.7 sigma) at 7.12614 GHz on a near-zero floor -- the tallest excursion in the panel by far, and NOT the notch. The node correctly refused it (success=false, success_shape=false, dip_snr=0.0, candidates=[], panel stamped 'NO DIP'). Correct decision here is reject_and_stop, NOT reject_and_retune: the fault is out-of-band (readout acquisition timing), so widening the span, lowering min_dip_snr, or arming escalate_on_no_dip would all have been wrong -- and note escalate_on_no_dip was false, which is the right setting. Adopting the peak apex would have written a value 253 kHz (0.19 FWHM) above the true resonance."
+    },
+    {
+     "run": "#71_03_resonator_spectroscopy_single_223746",
+     "why_wasted": "TOF back to 400 ns; a clean re-measurement (7,125,875,359 Hz, dip_snr 52.1, r2 0.9969) that only re-confirms a value already adopted at #68. Redundant for this target."
+    },
+    {
+     "run": "#72_03_resonator_spectroscopy_single_224406",
+     "why_wasted": "TOF 300 ns; clean again (7,125,892,286 Hz, dip_snr 48.4, r2 0.9968). Third confirmation of an unchallenged value."
+    },
+    {
+     "run": "#73_03_resonator_spectroscopy_single_225415",
+     "why_wasted": "The dangerous one -- a run the node itself calls good that must not be adopted. TOF was dropped to 28 ns, roughly 350 ns before the pulse actually arrives, so ~44% of the integration window is empty: mean |R| falls to 5.7e-3 (0.58 of nominal, matching the predicted (800-352)/800 = 0.56) and the notch is smeared. Node reports success=true, success_shape=true, r2=0.9908 -- yet f0 = 7,125,749,169 Hz, 137.9 kHz = 0.10 FWHM BELOW the five-run consensus, with FWHM inflated to 2.53 MHz (1.9x) and dip_snr down to 20.1 (2.3-3.3x lower than every other good run). The tells that this value is untrustworthy despite success=true are all present without hindsight: the fitted Lorentzian centre is visibly dragged left of the actual data minimum (argmin at 7,125,842,389 Hz), FWHM and dip_snr both jump away from the run-to-run norm, and the whole trace's amplitude scale halved. Correct decision would have been reject (do not write), and specifically reject_and_stop rather than reject_and_retune -- again the fault is the acquisition window, not the sweep."
+    },
+    {
+     "run": "#74_03_resonator_spectroscopy_single_225631",
+     "why_wasted": "TOF restored to 372 ns; clean (7,125,892,306 Hz, dip_snr 56.8, r2 0.9975). Confirms the TOF recovery, adds nothing to the frequency."
+    },
+    {
+     "run": "#75_03_resonator_spectroscopy_single_225739",
+     "why_wasted": "TOF 380 ns, the session's final settling value; best r2 of the day (0.9977, 7,125,879,809 Hz, dip_snr 59.5). A legitimate last sanity check of the readout chain, but the eighth measurement of a frequency that was settled at the first."
+    }
+   ],
+   "poisoned_writes": [],
+   "ideal_length": 1,
+   "actual_length": 8,
+   "confidence": "high",
+   "caveats": "1) No write ever occurred in this session -- every run has patches=[] and qubits/qA1/resonator/RF_frequency is byte-identical (7,125,942,388.944085 Hz) in all eight quam_state snapshots -- so poisoned_writes is legitimately empty. The operator's failure mode is the mirror image of poisoning: eight measurements, seven of them adopt-grade, and the chip kept the stale value. 2) The single-run answer is defended by the whole session: the five well-conditioned runs agree to 20.3 kHz. 3) The time_of_flight attribution is inferred, not stated in any node record: node 03 never writes time_of_flight, so the value in each run's own state snapshot is the value in force during that run, and the four TOF regimes predict the observed amplitude ratios quantitatively (1180 ns -> ~0, observed 0.03x; 600 ns -> 0.725, observed 0.74; 28 ns -> 0.56, observed 0.58). I regard this as established. 4) A general rule the session cautions against: the frequency is NOT unconditionally immune to the acquisition window -- it survives TOF 300-600 ns but shifts 0.10 FWHM at TOF 28 ns, so 'the notch position cannot be biased by timing' is false in the tails. 5) Do not apply the standard four-panel cross-check naively on this chip: even the good runs show a multi-turn IQ spiral rather than one closed circle, because the electrical delay was uncompensated all session. Use the amplitude notch plus dip prominence, and read the IQ/phase panels for gross pathology (run #70's 2326 deg unwrap and 2.29 radial scatter) rather than for textbook circularity."
+  }
+ ]
+}
