@@ -56,6 +56,7 @@ FAMILY_NODES = {
                                "02_resonator_spectroscopy"],
     "resonator_spectroscopy_vs_power": ["05_resonator_spectroscopy_vs_power"],
     "qubit_spectroscopy": ["08_qubit_spectroscopy"],
+    "qubit_spectroscopy_vs_power": ["08b_qubit_spectroscopy_vs_power"],
     "qubit_spectroscopy_vs_flux": ["09_qubit_spectroscopy_vs_flux",
                                    "03c_qubit_spectroscopy_vs_flux_qdac"],
     "resonator_spectroscopy_vs_flux": ["06_resonator_spectroscopy_vs_flux",
@@ -71,6 +72,10 @@ MARKERS = {
         ("resonator_frequency", "#38bdf8", "--"),
         ("bare_resonator_frequency", "#e879f9", ":")],
     "qubit_spectroscopy": [("frequency", "#38bdf8", "--")],
+    # the two-photon partner is drawn because telling it from the fundamental
+    # IS the question this family asks
+    "qubit_spectroscopy_vs_power": [("frequency", "#38bdf8", "--"),
+                                    ("twophoton_freq", "#e879f9", ":")],
     "qubit_spectroscopy_vs_flux": [
         ("qubit_frequency", "#38bdf8", "--"),
         ("upper_sweet_spot_frequency", "#e879f9", ":")],
@@ -82,6 +87,7 @@ MARKERS = {
 # a horizontal marker on the SWEEP axis (the value the node picked there)
 SWEEP_MARKERS = {
     "resonator_spectroscopy_vs_power": "optimal_power",
+    "qubit_spectroscopy_vs_power": "optimal_power",
     "qubit_spectroscopy_vs_flux": "idle_offset",
     "resonator_spectroscopy_vs_flux": "idle_offset",
     "resonator_spectroscopy_vs_coupler_flux": "idle_offset",
@@ -98,7 +104,15 @@ SWEEP_ON_X = {
     "resonator_spectroscopy_vs_flux": True,
     "resonator_spectroscopy_vs_coupler_flux": True,
     "resonator_spectroscopy_vs_power": False,
+    # verified against the lab's own power_dbm figures: frequency on x,
+    # drive power on y, same as the punch-out plots
+    "qubit_spectroscopy_vs_power": False,
 }
+
+# The qubit-power maps carry almost nothing in the magnitude and a clean line
+# in the rotated projection, so an exemplar rendered from the default would
+# teach a picture the reader never sees.
+FAMILY_VALUE_VARS = {"qubit_spectroscopy_vs_power": ("I_rot",)}
 
 
 def find_run(lab: str, run_no: str, family: str) -> tuple[Path | None, str]:
@@ -144,7 +158,8 @@ def render(run_folder: Path, target: str, out_png: Path, *, family: str,
     import numpy as np
     from quam_state_manager.core.autofit import mapshapes as MS
 
-    cube = MS.read_cube(run_folder, target)
+    cube = MS.read_cube(run_folder, target,
+                        value_vars=FAMILY_VALUE_VARS.get(family, MS.VALUE_VARS))
     if cube is None:
         return {"ok": False, "why": "cube unreadable or target absent"}
     sign = MS.orient(cube)

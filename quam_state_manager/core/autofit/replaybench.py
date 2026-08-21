@@ -32,13 +32,104 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+import re
+
 from quam_state_manager.core.autofit import knowledge, mapcases as MC
+from quam_state_manager.core.autofit.families import normalize_node_name
 from quam_state_manager.core.autofit.pathreplay import (
     FutureBlindError, RunView, Session, load_run)
 
 logger = logging.getLogger(__name__)
 
 FREQ_TOL_HZ = 2e6
+
+_RUN_PREFIX = re.compile(r"^#\d+_")
+_RUN_SUFFIX = re.compile(r"_\d{6}$")
+# node names that are the same measurement under a different spelling
+_PACK_ALIASES = {
+    "resonator_spectroscopy_single": "resonator_spectroscopy",
+    "resonator_spectroscopy_wide_pyloop": "resonator_spectroscopy",
+    "resonator_spectroscopy_wide_python_loop": "resonator_spectroscopy",
+}
+
+
+def pack_family_for(run_id: str) -> str:
+    """Knowledge-pack family for an archived run folder name."""
+    name = _RUN_SUFFIX.sub("", _RUN_PREFIX.sub("", run_id or ""))
+    norm = normalize_node_name(name)
+    return _PACK_ALIASES.get(norm, norm)
+
+
+# Where a session mixes node types, the frequency answer of one is checkable
+# against the other. These two are ONE workflow in the lab: the power sweep
+# chooses the frequency AND the drive power, the 1-D sweep then measures at
+# that power. So a 1-D value can be tested against what the power runs of the
+# same session established — which is the only way to catch the trap below.
+JOINT_QUBIT_SPEC = ("qubit_spectroscopy", "qubit_spectroscopy_vs_power")
+# how close to (held frequency minus half the anharmonicity) a candidate must
+# sit before it is called the two-photon line rather than the fundamental
+TWO_PHOTON_GUARD = 0.20
+# How much colder (dB) a run must be before its claim is exempted from the
+# guard. A multi-photon line only exists ABOVE a drive threshold, so a value
+# measured at LESS drive than the one already held cannot be that artifact —
+# refusing it would be refusing the better measurement of the two.
+COLDER_BY_DB = 1.0
+
+
+def drive_power_dbm(view: Any, target: str) -> float | None:
+    """Physical drive power for one target of one run, from its own snapshot.
+
+    P = full_scale_power + 20*log10|amplitude|. Reading the amplitude alone
+    gets the SIGN of a change wrong, and demonstrably so in this corpus: on
+    one real day a qubit's stored drive amplitude rose by half again between
+    two runs while the port's full-scale power was written down further, so
+    the power at the qubit FELL — and the line duly came back narrower, which
+    is nonsense if amplitude is all you read.
+    """
+    import json as _json
+    import math as _math
+    from pathlib import Path as _Path
+
+    snap = getattr(view, "snapshot", None) or {}
+    q = (snap.get("qubits") or {}).get(target) or {}
+    xy = q.get("xy") or {}
+    op = ((xy.get("operations") or {}).get("saturation") or {})
+    amp = op.get("amplitude")
+    factor = (view.params or {}).get("operation_amplitude_factor")
+    if isinstance(factor, (int, float)) and not isinstance(factor, bool):
+        amp = (amp or 0) * factor
+    if not isinstance(amp, (int, float)) or isinstance(amp, bool) or not amp:
+        return None
+
+    # The port reference is a chain that crosses FILES: state.json points into
+    # wiring.json, which points at the port entry back in state.json. Reading
+    # only the state snapshot resolves none of it.
+    merged = dict(snap)
+    try:
+        wpath = _Path(view.folder) / "quam_state" / "wiring.json"
+        wiring = _json.loads(wpath.read_text(encoding="utf-8"))
+        merged["wiring"] = wiring.get("wiring", wiring)
+    except (OSError, ValueError, TypeError):
+        pass
+
+    node: Any = xy.get("opx_output")
+    for _hop in range(4):
+        if not isinstance(node, str) or not node.startswith("#/"):
+            break
+        cur: Any = merged
+        for part in node[2:].split("/"):
+            if not isinstance(cur, dict):
+                cur = None
+                break
+            cur = cur.get(part)
+        node = cur
+    fsp = node.get("full_scale_power_dbm") if isinstance(node, dict) else None
+    if not isinstance(fsp, (int, float)) or isinstance(fsp, bool):
+        fsp = xy.get("full_scale_power_dbm")
+    if not isinstance(fsp, (int, float)) or isinstance(fsp, bool):
+        return None
+    import math as _math
+    return float(fsp) + 20.0 * _math.log10(abs(float(amp)))
 SWEEP_TOL_FRAC = 0.10          # of the swept range
 
 # What the READER is willing to vouch for, per shape it measured. Not read
@@ -46,6 +137,16 @@ SWEEP_TOL_FRAC = 0.10          # of the swept range
 ADOPT_FREQ = "adopt_frequency"
 ADOPT_BOTH = "adopt_frequency_and_sweep_value"
 RETUNE = "retune"
+
+# Where the reader's own value is strong enough to outrank a flag that says
+# the RECORD is wrong. Only the shapes measured across many slices qualify:
+# a power plateau is a stationary line agreed on by at least eight independent
+# drive powers, whereas the corrected value on a 1-D trace is one peak of one
+# trace. Measured, and the distinction is not cosmetic — relaxing the veto for
+# 1-D traces too converted an abstention into a wrong answer on the readout
+# benchmark and gained nothing anywhere.
+_MEASURED_ACROSS_SLICES = {"power_stationary_then_broadening",
+                           "power_second_line_below"}
 
 _ACTIONS: dict[str, str] = {
     MC.LINE_CLEAN: ADOPT_FREQ,
@@ -63,6 +164,11 @@ _ACTIONS: dict[str, str] = {
     # shape was uninformative about the sweep threw away 8 of 11 coupler
     # frequencies the answer keys call adoptable.
     MC.CURVE_FLAT: ADOPT_FREQ,
+    # A power map that shows a stationary low-power stretch has answered BOTH
+    # of its questions: where the line is, and how hard to drive it. Every
+    # other power shape has not seen the onset, so neither answer is derivable.
+    MC.POWER_PLATEAU: ADOPT_BOTH,
+    MC.POWER_TWO_RIDGES: ADOPT_BOTH,
 }
 
 # Bounded knob moves, per shape. Every one is a fraction of the CURRENT
@@ -70,6 +176,28 @@ _ACTIONS: dict[str, str] = {
 _FREQ_SPAN = ("frequency_span_in_mhz", "frequency_step_in_mhz")
 _FLUX_RANGE = ("min_flux_offset_in_v", "max_flux_offset_in_v")
 _CURRENT_RANGE = ("min_current", "max_current")
+_POWER_RANGE = ("min_power_dbm", "max_power_dbm")
+
+
+def _extend_power_down(p: dict, frac: float) -> dict:
+    """Push the bottom of the power sweep down by a fraction of its own span.
+
+    A fraction of the current range, not a step in dB: the manual's
+    chip-independence rule applies to prescriptions as much as to cases, and
+    what counts as "a bit lower" depends on the attenuation in front of the
+    line, which differs by lab.
+    """
+    lo, hi = p.get(_POWER_RANGE[0]), p.get(_POWER_RANGE[1])
+    if not isinstance(lo, (int, float)) or not isinstance(hi, (int, float)):
+        return {}
+    span = abs(hi - lo)
+    if span <= 0:
+        return {}
+    out = {_POWER_RANGE[0]: lo - frac * span}
+    n = p.get("num_power_points")
+    if isinstance(n, int) and n > 0:
+        out["num_power_points"] = int(round(n * (1.0 + frac)))
+    return out
 
 
 def _widen_freq(p: dict, factor: float) -> dict:
@@ -130,6 +258,15 @@ def _moves(key: str, params: dict) -> dict:
         return _more_shots(params)
     if key == MC.CURVE_MULTI:
         return _widen_sweep(params, 1 / 3.0)
+    if key == MC.POWER_EMPTY:
+        return {**_widen_freq(params, 3.0), **_more_shots(params)}
+    if key == MC.POWER_TOP_ONLY:
+        # the only feature sits at the top of the drive range, where a
+        # two-photon partner lives; widen the frequency window so the
+        # fundamental half an anharmonicity above it comes into view
+        return _widen_freq(params, 2.0)
+    if key == MC.POWER_NO_ANCHOR:
+        return _extend_power_down(params, 1 / 3.0)
     return {}
 
 
@@ -185,11 +322,19 @@ def replay(family: str, session: Session, target: str, *,
            pack: dict | None = None,
            signal_fn: Callable[..., MC.ShapeSignal] = MC.signal_for) -> Result:
     """Walk one target of one session, future-blind."""
-    if pack is None:
-        pack = knowledge.load_family(family) or {}
-    smap = pack.get("signal_map") or {}
-    by_id = {c.get("id"): c for c in (pack.get("cases") or [])}
-    value_field, sweep_field = MC.VALUE_FIELDS.get(family, (None, None))
+    # ``family`` may be a callable, so one session can mix node types: the
+    # qubit-spectroscopy pair is one workflow and reading either half alone
+    # throws away the only cross-check either has.
+    joint = callable(family)
+    packs: dict[str, dict] = {}
+    if not joint:
+        packs[family] = pack if pack is not None else (
+            knowledge.load_family(family) or {})
+
+    def pack_for(f: str) -> dict:
+        if f not in packs:
+            packs[f] = knowledge.load_family(f) or {}
+        return packs[f]
 
     steps: list[Step] = []
     state: dict[str, Any] = {}
@@ -198,14 +343,27 @@ def replay(family: str, session: Session, target: str, *,
     first_at: str | None = None
     runs_to_first = 0
     held: float | None = None
+    held_power: float | None = None
+    anh: float | None = None
     revisions: list[dict] = []
     unscoreable = 0
     idxs = session.runs_for(target)
+    seen_families: list[str] = []
 
     for pos, k in enumerate(idxs):
         view = session.at(k)                    # guarded: never past k
+        fam = pack_family_for(view.run_id) if joint else family
+        seen_families.append(fam)
+        fpack = pack_for(fam)
+        smap = fpack.get("signal_map") or {}
+        by_id = {c.get("id"): c for c in (fpack.get("cases") or [])}
+        value_field, sweep_field = MC.VALUE_FIELDS.get(fam, (None, None))
         fit = view.fit(target)
-        sig = signal_fn(family, view.folder, target, fit=fit,
+        # the anharmonicity the RUN carries, never one this module chose
+        a = fit.get("anharmonicity_stored")
+        if isinstance(a, (int, float)) and not isinstance(a, bool) and a > 0:
+            anh = float(a)
+        sig = signal_fn(fam, view.folder, target, fit=fit,
                         params=view.params, outcomes=view.outcomes,
                         prior_keys=prior_keys)
         prior_keys.append(sig.key or "")
@@ -216,16 +374,58 @@ def replay(family: str, session: Session, target: str, *,
         refused: list[str] = []
         reasons = list(sig.reasons)
 
-        # flags that veto an adoption outright
-        if (MC.FLAG_BATCH_MOSTLY_FAILED in sig.flags
-                or MC.FLAG_OFF_FEATURE in sig.flags
-                or MC.FLAG_OVER_BROADENED in sig.flags
-                or MC.FLAG_FIT_ON_WRONG_SIDE in sig.flags):
+        # Flags that veto an adoption. "The record is off the feature" and
+        # "the record fell for the companion" are statements about the RECORD,
+        # so they stop vetoing the moment the reader has measured the answer
+        # itself — otherwise the reader is silenced in exactly the cases where
+        # it knows better, which is the whole failure this round is about.
+        vetoes = [f for f in (MC.FLAG_BATCH_MOSTLY_FAILED,
+                              MC.FLAG_OFF_FEATURE,
+                              MC.FLAG_OVER_BROADENED,
+                              MC.FLAG_FIT_ON_WRONG_SIDE) if f in sig.flags]
+        about_the_record = {MC.FLAG_OFF_FEATURE, MC.FLAG_FIT_ON_WRONG_SIDE}
+        if (sig.key in _MEASURED_ACROSS_SLICES and value_field
+                and isinstance(sig.corrected.get(value_field), (int, float))):
+            vetoes = [f for f in vetoes if f not in about_the_record]
+        if vetoes:
             action = RETUNE
         if action in (ADOPT_FREQ, ADOPT_BOTH) and value_field:
-            v = fit.get(value_field)
+            # WHICH value, not merely whether to accept one. Where the reader
+            # measured the answer itself it outranks the record: on the
+            # power family the node's own frequency is right on 52 of 103
+            # targets with an independent consensus truth and the reader's
+            # vouched plateau on 31 of the 38 it will speak for at all.
+            own = sig.corrected.get(value_field)
+            v = own if isinstance(own, (int, float)) else fit.get(value_field)
             if isinstance(v, (int, float)) and not isinstance(v, bool):
-                adopted[value_field] = float(v)
+                # THE trap of this pair of node types. The two-photon 0->2
+                # transition sits half an anharmonicity BELOW the fundamental
+                # and grows faster with drive, so at too much power a 1-D fit
+                # lands on it and looks perfect — narrow, high SNR, high r2.
+                # Nothing inside that single run can tell the two apart; what
+                # can is the anharmonicity a power run of the same session
+                # already reported, which is why these two are replayed
+                # together.
+                this_power = drive_power_dbm(view, target)
+                colder = (isinstance(this_power, float)
+                          and isinstance(held_power, float)
+                          and this_power < held_power - COLDER_BY_DB)
+                if (anh and isinstance(held, (int, float)) and not colder
+                        and abs((held - anh / 2) - float(v))
+                        <= TWO_PHOTON_GUARD * anh / 2
+                        and abs(held - float(v)) > TWO_PHOTON_GUARD * anh / 2):
+                    action = RETUNE
+                    refused.append(value_field)
+                    reasons.append("refusing this frequency: it sits half the "
+                                   "reported anharmonicity below the value "
+                                   "this session already established, which "
+                                   "is where the two-photon transition lives")
+                else:
+                    adopted[value_field] = float(v)
+                    if isinstance(own, (int, float)):
+                        reasons.append(f"adopting the {value_field} the map "
+                                       f"carries, not the one the record "
+                                       f"claims")
             else:
                 action = RETUNE
                 reasons.append(f"the record carries no usable {value_field}")
@@ -272,6 +472,7 @@ def replay(family: str, session: Session, target: str, *,
                                          "so the held value is re-measured"})
             if isinstance(got, (int, float)):
                 held = float(got)
+                held_power = drive_power_dbm(view, target)
             state.update(adopted)
 
         steps.append(Step(
@@ -283,7 +484,9 @@ def replay(family: str, session: Session, target: str, *,
             prescription=(case.get("prescription") or "")[:400],
             reasons=reasons[:4]))
 
-    return Result(family=family, session_id=session.session_id, target=target,
+    return Result(family=("+".join(sorted(set(seen_families))) if joint
+                          else family),
+                  session_id=session.session_id, target=target,
                   steps=steps, final_state=state, first_value=first_value,
                   first_value_at=first_at, runs_to_first_value=runs_to_first,
                   runs_consumed=len(steps), unresolved=first_at is None,
@@ -323,8 +526,14 @@ def score(result: Result, key: dict) -> dict:
     elif not isinstance(got_f, (int, float)):
         out["frequency_verdict"] = "missed_no_value_adopted"
     else:
+        # A key may state how close counts as right for ITS target, derived
+        # from the linewidth that target actually showed. Where it does, that
+        # beats a module-wide constant; where it does not, nothing changes.
+        tol = key.get("frequency_tolerance_hz")
+        tol = float(tol) if isinstance(tol, (int, float)) and tol > 0             else FREQ_TOL_HZ
+        out["frequency_tolerance_hz"] = tol
         out["frequency_delta_hz"] = abs(got_f - want_f)
-        out["frequency_verdict"] = ("match" if abs(got_f - want_f) <= FREQ_TOL_HZ
+        out["frequency_verdict"] = ("match" if abs(got_f - want_f) <= tol
                                     else "wrong_value")
 
     if isinstance(want_s, (int, float)) and isinstance(got_s, (int, float)):

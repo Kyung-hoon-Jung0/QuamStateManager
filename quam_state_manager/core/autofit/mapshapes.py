@@ -636,3 +636,266 @@ def shape_line(cube: CubeRead, *, sign: int = -1) -> LineShape:
         near_edge=bool(j <= EDGE_PX or j >= col.size - 1 - EDGE_PX),
         secondaries=strong, n_significant=(1 if d >= bar else 0) + len(strong),
         flat_top=flat_top)
+
+
+# ---------------------------------------------------------------------------
+# the power axis
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PowerShape:
+    """One qubit-spectroscopy-versus-drive-power map.
+
+    The second axis being DRIVE POWER changes what every part of a ridge
+    means, so the flux vocabulary does not transfer. A flux ridge is expected
+    to span the whole sweep and its SHAPE carries the answer; a power ridge is
+    expected to be ABSENT below the onset, VERTICAL just above it, and then to
+    broaden and bend as the drive saturates the transition. The answer is the
+    frequency of the vertical part — the lowest-power stretch where the
+    position stops moving — and the brightest part of the map, at the top, is
+    the wrong place to read it.
+    """
+    n_sweep: int
+    coverage: float
+    background: str
+    # the contiguous stretch of swept powers over which the line is traceable
+    block_lo: int | None
+    block_hi: int | None
+    onset_at_floor: bool          # traceable already at the lowest swept power
+    top_only: bool                # traceable only in the last few slices
+    # the stationary stretch inside that block, lowest-power one preferred
+    plateau_lo: int | None
+    plateau_hi: int | None
+    plateau_freq: float | None
+    plateau_scatter_hz: float | None
+    plateau_power: float | None
+    plateau_len: int                # how many swept powers the plateau spans
+    plateau_depth_z: float | None   # median ridge significance inside it
+    below_coverage: float           # traceable fraction BELOW the onset
+    # how far the line has moved, and how much it has widened, by the top
+    drift_hz: float | None
+    drift_monotonic: bool
+    width_ratio: float | None
+    # a persistent rival line, and whether it only shows up at high drive
+    second_offset_hz: float | None
+    second_slices: int
+    second_high_only: bool
+    # the median frequency of the tracked block, and a SEPARATE line found in
+    # the powers below it — the rung the walk could not step down to
+    block_freq: float | None
+    lower_freq: float | None
+    lower_len: int
+    lower_power: float | None
+
+
+ONSET_COVERAGE = 0.6
+
+
+def _onset(ok: np.ndarray, floor: float = ONSET_COVERAGE,
+           max_gap: int = 3) -> tuple[int, int] | None:
+    """The contiguous stretch of swept powers over which the line is present.
+
+    Not the longest contiguous run of traceable slices — that test put four
+    real maps' answer at the BOTTOM of the power sweep, where a handful of
+    noise slices happened to line up. Nor a SUFFIX of the sweep: assuming the
+    line stays visible to the top reads a multi-photon ladder as empty, and
+    the ladder is precisely the case worth catching. On one real map the
+    fundamental is tracked cleanly over the lowest 22 of 50 drive powers and
+    then disappears as the response moves onto the next rung; a suffix test
+    scores that map as carrying nothing at all.
+
+    So: anchor at the topmost traced slice, walk DOWN while the line keeps
+    reappearing, and require the coverage to hold up over the stretch that
+    walk defines. ``max_gap`` is what makes a fringing null a missing slice
+    rather than the bottom of the stretch. Whether the stretch is long enough
+    to vouch for a frequency is a separate question, asked later.
+    """
+    n = ok.size
+    if n == 0 or not ok.any():
+        return None
+    top = int(np.max(np.flatnonzero(ok)))
+    m, misses = top, 0
+    for p in range(top - 1, -1, -1):
+        if ok[p]:
+            m, misses = p, 0
+            continue
+        misses += 1
+        if misses > max_gap:
+            break
+    if float(np.mean(ok[m:top + 1])) < floor:
+        return None
+    return m, top
+
+
+def _plateau(pos: np.ndarray, lo: int, hi: int, tol_px: float,
+             max_gap: int = 2) -> tuple[int, int] | None:
+    """Longest stationary run inside [lo, hi]; ties keep the LOWEST-power one.
+
+    Lowest, not longest-at-any-power: the whole reason to look for a plateau
+    is that the low-power limit is where the AC Stark shift has not yet moved
+    the line, so a tie broken upward would hand back a shifted frequency that
+    merely happened to be stationary over a wider stretch.
+    """
+    best = None
+    for a in range(lo, hi + 1):
+        if not np.isfinite(pos[a]):
+            continue
+        b, gap = a, 0
+        while b + 1 <= hi:
+            if not np.isfinite(pos[b + 1]):
+                # a fringing null is a missing slice, not the end of the
+                # plateau; a long blank is
+                gap += 1
+                if gap > max_gap:
+                    break
+                b += 1
+                continue
+            seg = pos[a:b + 2]
+            if float(np.nanmax(seg) - np.nanmin(seg)) > tol_px:
+                break
+            gap = 0
+            b += 1
+        while b > a and not np.isfinite(pos[b]):
+            b -= 1
+        if b > a and (best is None or (b - a) > (best[1] - best[0])):
+            best = (a, b)
+    return best
+
+
+def shape_power(cube: CubeRead, tr: Track, *, sign: int = -1) -> PowerShape:
+    """Measure a power map: onset, stationary plateau, drift, broadening,
+    and a persistent second line."""
+    n = cube.n_sweep
+    empty = PowerShape(
+        n_sweep=n, coverage=tr.coverage, background=tr.background,
+        block_lo=None, block_hi=None, onset_at_floor=False, top_only=False,
+        plateau_lo=None, plateau_hi=None, plateau_freq=None,
+        plateau_scatter_hz=None, plateau_power=None, plateau_len=0,
+        plateau_depth_z=None, below_coverage=0.0, drift_hz=None,
+        drift_monotonic=False, width_ratio=None, second_offset_hz=None,
+        second_slices=0, second_high_only=False, block_freq=None,
+        lower_freq=None, lower_len=0, lower_power=None)
+    if n <= 1 or tr.n_traceable == 0:
+        return empty
+    ok = np.isfinite(tr.pos)
+    blk = _onset(ok)
+    if blk is None:
+        return empty
+    lo, hi = blk
+    step = cube.freq_step()
+    tol_px = max(1.0, 0.5 * float(tr.width_px or 1.0))
+    pl = _plateau(tr.pos, lo, hi, tol_px)
+
+    plateau_freq = plateau_scatter = plateau_power = plateau_depth = None
+    plateau_len = 0
+    if pl is not None:
+        plateau_len = pl[1] - pl[0] + 1
+        dz = tr.depth[pl[0]:pl[1] + 1]
+        dz = dz[np.isfinite(dz)]
+        plateau_depth = float(np.median(dz)) if dz.size else None
+        seg = tr.pos[pl[0]:pl[1] + 1]
+        plateau_freq = cube.freq_at(float(np.nanmedian(seg)))
+        plateau_scatter = float(np.nanmax(seg) - np.nanmin(seg)) * step
+        if cube.sweep is not None:
+            plateau_power = float(cube.sweep[pl[0]])
+
+    drift = None
+    monotonic = False
+    if plateau_freq is not None:
+        fin = [p for p in range(hi, lo - 1, -1) if np.isfinite(tr.pos[p])]
+        top = cube.freq_at(tr.pos[fin[0]]) if fin else None
+        if top is not None:
+            drift = top - plateau_freq
+        tail = tr.pos[pl[1]:hi + 1]
+        tail = tail[np.isfinite(tail)]
+        if tail.size >= 3:
+            d = np.diff(tail)
+            nz = d[d != 0]
+            monotonic = bool(nz.size >= 2 and
+                             (np.all(nz > 0) or np.all(nz < 0)))
+
+    # per-slice widths, and rivals, only where the ridge is actually traced
+    widths: dict[int, float] = {}
+    rivals: list[tuple[int, float]] = []
+    for p in range(lo, hi + 1):
+        if not ok[p]:
+            continue
+        j, d, w, others, _t = slice_features(cube.z[:, p], sign=sign)
+        widths[p] = w
+        # The slice's OWN strongest feature counts as a rival too. It is not
+        # necessarily the tracked ridge: at high drive the two-photon partner
+        # is frequently the brighter of the two, and the walk stays on the
+        # ridge it anchored to. Looking only at the runner-up list therefore
+        # misses the partner in exactly the slices where it matters.
+        for k, _d2 in [(j, d)] + list(others):
+            off = float(k) - float(tr.pos[p])
+            if abs(off) > 2.0 * max(1.0, w):
+                rivals.append((p, off))
+
+    width_ratio = None
+    if pl is not None and widths:
+        base = [widths[p] for p in range(pl[0], pl[1] + 1) if p in widths]
+        ntop = max(1, int(round(0.2 * (hi - lo + 1))))
+        top_w = [widths[p] for p in range(hi - ntop + 1, hi + 1) if p in widths]
+        if base and top_w and np.median(base) > 0:
+            width_ratio = float(np.median(top_w) / np.median(base))
+
+    second_offset = None
+    second_slices = 0
+    second_high_only = False
+    if len(rivals) >= 3:
+        offs = np.array([o for _p, o in rivals])
+        med = float(np.median(offs))
+        keep = [(p, o) for p, o in rivals if abs(o - med) <= max(2.0, tol_px)]
+        if len(keep) >= 3:
+            second_slices = len(keep)
+            second_offset = float(np.median([o for _p, o in keep])) * step
+            mid = lo + 0.5 * (hi - lo)
+            second_high_only = all(p >= mid for p, _o in keep)
+
+    fin_all = tr.pos[lo:hi + 1]
+    fin_all = fin_all[np.isfinite(fin_all)]
+    block_freq = (cube.freq_at(float(np.nanmedian(fin_all)))
+                  if fin_all.size else None)
+
+    # The rung the walk could not step down to. A multi-photon ladder moves
+    # the strongest response DOWN in frequency by a fixed step as the drive
+    # rises, and the step is far wider than the local search window the walk
+    # uses — so the walk simply ends at the jump. Re-anchoring below it is
+    # what turns "the line stops here" into "there is another line under it",
+    # and on the real corpus that difference is a whole rung of the ladder.
+    lower_freq = lower_power = None
+    lower_len = 0
+    if lo >= 4:
+        sub = CubeRead(freq=cube.freq,
+                       sweep=(cube.sweep[:lo] if cube.sweep is not None else None),
+                       sweep_name=cube.sweep_name, z=cube.z[:, :lo],
+                       value_name=cube.value_name)
+        tr2 = track_ridge(sub, sign=sign)
+        blk2 = _onset(np.isfinite(tr2.pos))
+        if blk2 is not None:
+            tol2 = max(1.0, 0.5 * float(tr2.width_px or 1.0))
+            pl2 = _plateau(tr2.pos, blk2[0], blk2[1], tol2)
+            if pl2 is not None:
+                seg2 = tr2.pos[pl2[0]:pl2[1] + 1]
+                lower_freq = cube.freq_at(float(np.nanmedian(seg2)))
+                lower_len = pl2[1] - pl2[0] + 1
+                if cube.sweep is not None:
+                    lower_power = float(cube.sweep[pl2[0]])
+
+    span = hi - lo + 1
+    return PowerShape(
+        n_sweep=n, coverage=tr.coverage, background=tr.background,
+        block_lo=lo, block_hi=hi, onset_at_floor=(lo == 0),
+        top_only=bool(span <= max(2, int(round(0.1 * n)))
+                      and hi >= n - 1 - max(2, int(round(0.1 * n)))),
+        plateau_lo=(pl[0] if pl else None), plateau_hi=(pl[1] if pl else None),
+        plateau_freq=plateau_freq, plateau_scatter_hz=plateau_scatter,
+        plateau_power=plateau_power, plateau_len=plateau_len,
+        plateau_depth_z=plateau_depth,
+        below_coverage=(float(np.mean(ok[:lo])) if lo > 0 else 0.0),
+        drift_hz=drift, drift_monotonic=monotonic,
+        width_ratio=width_ratio, second_offset_hz=second_offset,
+        second_slices=second_slices, second_high_only=second_high_only,
+        block_freq=block_freq, lower_freq=lower_freq, lower_len=lower_len,
+        lower_power=lower_power)

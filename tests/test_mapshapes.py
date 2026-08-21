@@ -389,3 +389,141 @@ class TestJudgingARunAgainstItsOwnIntent:
             f["RF_frequency"] = np.arange(300).astype(float) * 1e5 + 7e9
         cube = MS.read_cube(d, "qA1")
         assert cube is not None and cube.n_freq == 300
+
+
+# ---------------------------------------------------------------------------
+# the drive-power axis (docs/133)
+# ---------------------------------------------------------------------------
+
+def _write_power(path: Path, target: str, freq, power, z):
+    """A power cube, stored the way the real ones are: (qubit, freq, power)
+    with the value on the ROTATED projection."""
+    h5py = pytest.importorskip("h5py")
+    with h5py.File(path, "w") as f:
+        f["qubit"] = np.array([target.encode()])
+        f["I_rot"] = z[None, ...]
+        f["full_freq"] = np.asarray(freq)[None, :]
+        f["power"] = np.asarray(power)
+
+
+def _power_map(n_freq=300, n_sweep=50, onset=18, bend=38, pos=150.0,
+               height=9.0, width=3.0, noise=0.3, drift=14.0, broaden=4.0,
+               partner_px=None, partner_from=None, seed=3):
+    """A textbook qubit-vs-power map.
+
+    Nothing below the onset; a narrow stationary line just above it; then the
+    line drifts and broadens as the drive saturates the transition. A partner
+    line can be planted at a fixed offset, appearing only at high drive —
+    which is how the two-photon transition actually shows up.
+    """
+    rng = np.random.default_rng(seed)
+    f = np.arange(n_freq, dtype=float)
+    z = np.zeros((n_freq, n_sweep))
+    for p in range(n_sweep):
+        col = np.zeros(n_freq)
+        if p >= onset:
+            grow = 0.0 if p < bend else (p - bend) / max(1, n_sweep - 1 - bend)
+            c = pos + drift * grow
+            w = width * (1.0 + broaden * grow)
+            col += height * np.exp(-0.5 * ((f - c) / w) ** 2)
+            if partner_px is not None and p >= (partner_from or bend):
+                col += height * 1.1 * np.exp(
+                    -0.5 * ((f - (pos + partner_px)) / width) ** 2)
+        z[:, p] = col
+    z += rng.normal(0, noise, z.shape)
+    return f * 1e6 + 4.5e9, np.linspace(-55.0, 0.0, n_sweep), z
+
+
+class TestThePowerAxis:
+    """A power ridge is not a flux arch: the answer is the frequency of the
+    stationary low-power stretch, and the brightest part is the wrong place."""
+
+    def test_it_finds_the_onset_and_the_stationary_stretch(self, tmp_path):
+        freq, power, z = _power_map()
+        _write_power(tmp_path / "ds_raw.h5", "q0", freq, power, z)
+        cube = MS.read_cube(tmp_path, "q0", value_vars=("I_rot",))
+        ps = MS.shape_power(cube, MS.track_ridge(cube, sign=+1), sign=+1)
+        assert ps.block_lo is not None and 14 <= ps.block_lo <= 22
+        assert not ps.onset_at_floor and not ps.top_only
+        assert ps.plateau_len >= MC.MIN_PLATEAU_SLICES
+        assert abs(ps.plateau_freq - (4.5e9 + 150e6)) <= 3e6
+
+    def test_the_line_broadens_and_drifts_by_the_top(self, tmp_path):
+        freq, power, z = _power_map()
+        _write_power(tmp_path / "ds_raw.h5", "q0", freq, power, z)
+        cube = MS.read_cube(tmp_path, "q0", value_vars=("I_rot",))
+        ps = MS.shape_power(cube, MS.track_ridge(cube, sign=+1), sign=+1)
+        assert ps.width_ratio is not None and ps.width_ratio > 1.5
+        assert ps.drift_hz is not None and ps.drift_hz > 5e6
+
+    def test_a_feature_only_at_the_very_top_is_not_a_plateau(self, tmp_path):
+        freq, power, z = _power_map(onset=47, bend=47)
+        _write_power(tmp_path / "ds_raw.h5", "q0", freq, power, z)
+        cube = MS.read_cube(tmp_path, "q0", value_vars=("I_rot",))
+        ps = MS.shape_power(cube, MS.track_ridge(cube, sign=+1), sign=+1)
+        assert ps.top_only
+
+    def test_present_at_the_lowest_power_means_the_onset_was_never_bracketed(
+            self, tmp_path):
+        freq, power, z = _power_map(onset=0, bend=30)
+        _write_power(tmp_path / "ds_raw.h5", "q0", freq, power, z)
+        cube = MS.read_cube(tmp_path, "q0", value_vars=("I_rot",))
+        ps = MS.shape_power(cube, MS.track_ridge(cube, sign=+1), sign=+1)
+        assert ps.onset_at_floor
+
+    def test_an_empty_map_yields_nothing_rather_than_a_frequency(self, tmp_path):
+        rng = np.random.default_rng(0)
+        freq = np.arange(300, dtype=float) * 1e6 + 4.5e9
+        z = rng.normal(0, 0.3, (300, 50))
+        _write_power(tmp_path / "ds_raw.h5", "q0", freq,
+                     np.linspace(-55.0, 0.0, 50), z)
+        cube = MS.read_cube(tmp_path, "q0", value_vars=("I_rot",))
+        ps = MS.shape_power(cube, MS.track_ridge(cube, sign=+1), sign=+1)
+        assert ps.plateau_freq is None or ps.plateau_len < MC.MIN_PLATEAU_SLICES
+
+
+class TestTheTwoPhotonPartner:
+    """The 0->2 transition sits half an anharmonicity BELOW the fundamental
+    and grows faster with drive, so at high power it can be the strongest
+    thing in the map."""
+
+    def _sig(self, tmp_path, partner_px, anh_hz, record=None):
+        freq, power, z = _power_map(partner_px=partner_px)
+        _write_power(tmp_path / "ds_raw.h5", "q0", freq, power, z)
+        fit = {"anharmonicity_stored": anh_hz,
+               "frequency": record if record is not None else 4.5e9 + 150e6}
+        return MC.signal_for("qubit_spectroscopy_vs_power", tmp_path, "q0",
+                             fit=fit)
+
+    def test_a_partner_below_confirms_the_identification(self, tmp_path):
+        sig = self._sig(tmp_path, -100, 200e6)
+        assert sig.key == MC.POWER_TWO_RIDGES
+        assert MC.FLAG_TWO_PHOTON_PRIMARY not in sig.flags
+        assert abs(sig.corrected["frequency"] - (4.5e9 + 150e6)) <= 3e6
+
+    def test_a_partner_above_means_the_tracked_line_is_the_two_photon(
+            self, tmp_path):
+        sig = self._sig(tmp_path, +100, 200e6)
+        assert MC.FLAG_TWO_PHOTON_PRIMARY in sig.flags
+        # the value handed on is the PARTNER, not the line that was brightest
+        assert sig.corrected["frequency"] > 4.5e9 + 200e6
+
+    def test_the_offset_is_read_against_the_runs_own_anharmonicity(
+            self, tmp_path):
+        # same map, a run that reports a different anharmonicity: the partner
+        # no longer sits at half of it, so no two-photon claim is made
+        sig = self._sig(tmp_path, +100, 400e6)
+        assert MC.FLAG_TWO_PHOTON_PRIMARY not in sig.flags
+
+    def test_a_record_at_the_untouched_centre_of_an_empty_sweep_is_flagged(
+            self, tmp_path):
+        rng = np.random.default_rng(1)
+        freq = np.arange(300, dtype=float) * 1e6 + 4.5e9
+        z = rng.normal(0, 0.3, (300, 50))
+        _write_power(tmp_path / "ds_raw.h5", "q0", freq,
+                     np.linspace(-55.0, 0.0, 50), z)
+        centre = 0.5 * (freq.min() + freq.max())
+        sig = MC.signal_for("qubit_spectroscopy_vs_power", tmp_path, "q0",
+                            fit={"frequency": centre, "success": True})
+        assert MC.FLAG_RECORD_AT_SWEEP_CENTRE in sig.flags
+        assert "frequency" not in sig.corrected

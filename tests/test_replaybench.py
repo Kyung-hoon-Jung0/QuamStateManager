@@ -327,3 +327,185 @@ class TestTheFourFamilyBenchmarkDoesNotRegress:
                if r["frequency_verdict"] == "adopted_where_key_says_unresolved"]
         assert len(bad) / max(1, len(rows)) <= 0.25, \
             f"{len(bad)}/{len(rows)} over-adopted (measured 12/73)"
+
+
+# ---------------------------------------------------------------------------
+# reading the two qubit-spectroscopy node types together (docs/133)
+# ---------------------------------------------------------------------------
+
+class TestTheFamilyOfARun:
+    """One session can mix node types, so the family is resolved per run."""
+
+    def test_it_names_both_qubit_spectroscopy_node_types(self):
+        assert RB.pack_family_for(
+            "#724_08b_qubit_spectroscopy_vs_power_165701") \
+            == "qubit_spectroscopy_vs_power"
+        assert RB.pack_family_for("#693_08_qubit_spectroscopy_162029") \
+            == "qubit_spectroscopy"
+
+    def test_the_readout_spellings_all_land_on_one_pack(self):
+        for name in ("#1_03_resonator_spectroscopy_single_010101",
+                     "#2_02_resonator_spectroscopy_wide_pyloop_010101",
+                     "#3_1Q_03_resonator_spectroscopy_wide_python_loop_010101"):
+            assert RB.pack_family_for(name) == "resonator_spectroscopy", name
+
+
+class TestTheTwoPhotonGuard:
+    """The trap this round exists for: at too much drive a 1-D fit lands on
+    the 0->2 transition half an anharmonicity below the fundamental, and
+    nothing inside that single run can tell the two apart."""
+
+    @staticmethod
+    def _meta(d: Path, fit: dict, params: dict | None = None) -> None:
+        (d / "data.json").write_text(json.dumps({"fit_results": fit}),
+                                     encoding="utf-8")
+        (d / "node.json").write_text(json.dumps({
+            "data": {"outcomes": {q: "successful" for q in fit},
+                     "parameters": {"model": params or {}}},
+            "patches": []}), encoding="utf-8")
+        (d / "quam_state").mkdir(exist_ok=True)
+        (d / "quam_state" / "state.json").write_text("{}", encoding="utf-8")
+
+    def _session(self, tmp_path, claim_hz, held_hz, anh_hz=200e6):
+        """A power run that establishes the frequency and the anharmonicity,
+        then a 1-D run claiming ``claim_hz``."""
+        import numpy as np
+        h5py = pytest.importorskip("h5py")
+        views = []
+        # 1) the power run: a clean stationary line at held_hz
+        pw = tmp_path / "#1_08b_qubit_spectroscopy_vs_power_000001"
+        pw.mkdir()
+        n_f, n_p = 300, 50
+        f = np.arange(n_f, dtype=float) * 1e6 + (held_hz - 150e6)
+        rng = np.random.default_rng(5)
+        z = rng.normal(0, 0.3, (n_f, n_p))
+        for p in range(14, n_p):
+            z[:, p] += 9.0 * np.exp(-0.5 * ((np.arange(n_f) - 150) / 3.0) ** 2)
+        with h5py.File(pw / "ds_raw.h5", "w") as h:
+            h["qubit"] = np.array([b"q0"])
+            h["I_rot"] = z[None, ...]
+            h["full_freq"] = f[None, :]
+            h["power"] = np.linspace(-55.0, 0.0, n_p)
+        self._meta(pw, {"q0": {"frequency": held_hz,
+                               "anharmonicity_stored": anh_hz,
+                               "optimal_power": -20.0, "success": True}},
+                   {"min_power_dbm": -55, "max_power_dbm": 0,
+                    "num_power_points": 50})
+        views.append(load_run(pw))
+        # 2) the 1-D run: one clean line, at whatever it claims
+        one = tmp_path / "#2_08_qubit_spectroscopy_000002"
+        one.mkdir()
+        n = 400
+        f1 = np.arange(n, dtype=float) * 1e5 + (claim_hz - 20e6)
+        z1 = rng.normal(0, 0.3, n)
+        z1 += 9.0 * np.exp(-0.5 * ((np.arange(n) - 200) / 4.0) ** 2)
+        with h5py.File(one / "ds_raw.h5", "w") as h:
+            h["qubit"] = np.array([b"q0"])
+            h["IQ_abs"] = z1[None, :]
+            h["full_freq"] = f1[None, :]
+        self._meta(one, {"q0": {"frequency": claim_hz, "success": True,
+                                "peak_snr": 20.0, "r2": 0.95}},
+                   {"frequency_span_in_mhz": 40.0,
+                    "frequency_step_in_mhz": 0.1})
+        views.append(load_run(one))
+        return Session("s", [v for v in views if v])
+
+    def test_a_claim_half_an_anharmonicity_low_is_refused(self, tmp_path):
+        held = 4.65e9
+        s = self._session(tmp_path, claim_hz=held - 100e6, held_hz=held)
+        res = RB.replay(RB.pack_family_for, s, "q0")
+        last = res.steps[-1]
+        assert last.action != "adopt"
+        assert any("two-photon" in r for r in last.reasons)
+        assert abs(res.final_state["frequency"] - held) <= 3e6
+
+    def test_a_claim_at_the_established_frequency_is_adopted(self, tmp_path):
+        held = 4.65e9
+        s = self._session(tmp_path, claim_hz=held + 0.4e6, held_hz=held)
+        res = RB.replay(RB.pack_family_for, s, "q0")
+        assert res.steps[-1].action == "adopt"
+
+    def test_a_claim_far_from_both_is_left_alone(self, tmp_path):
+        held = 4.65e9
+        s = self._session(tmp_path, claim_hz=held - 40e6, held_hz=held)
+        res = RB.replay(RB.pack_family_for, s, "q0")
+        assert res.steps[-1].action == "adopt"
+
+    def test_the_guard_needs_the_runs_own_anharmonicity(self, tmp_path):
+        # no anharmonicity reported anywhere: the guard cannot fire, and it
+        # invents no number of its own
+        held = 4.65e9
+        s = self._session(tmp_path, claim_hz=held - 100e6, held_hz=held,
+                          anh_hz=0.0)
+        res = RB.replay(RB.pack_family_for, s, "q0")
+        assert res.steps[-1].action == "adopt"
+
+
+class TestAMeasuredValueOutranksTheRecord:
+    """Which value to use, not merely whether to accept one — but only where
+    the reader measured it across many slices."""
+
+    def test_the_relaxation_is_scoped_to_multi_slice_shapes(self):
+        assert RB._MEASURED_ACROSS_SLICES == {MC.POWER_PLATEAU,
+                                              MC.POWER_TWO_RIDGES}
+        assert MC.LINE_CLEAN not in RB._MEASURED_ACROSS_SLICES
+        assert MC.LINE_FANO not in RB._MEASURED_ACROSS_SLICES
+
+
+class TestPhysicalDrivePower:
+    """Reading the amplitude without the port gets the SIGN of a change wrong."""
+
+    def _run(self, tmp_path, amp, fsp, factor=None):
+        d = tmp_path / "2026-08-20" / "#1_08_qubit_spectroscopy_000001"
+        (d / "quam_state").mkdir(parents=True)
+        state = {
+            "qubits": {"q0": {"xy": {
+                "opx_output": "#/wiring/qubits/q0/xy/opx_output",
+                "operations": {"saturation": {"amplitude": amp}}}}},
+            "ports": {"mw_outputs": {"con1": {"1": {"5": {
+                "full_scale_power_dbm": fsp}}}}},
+        }
+        (d / "quam_state" / "state.json").write_text(json.dumps(state),
+                                                     encoding="utf-8")
+        (d / "quam_state" / "wiring.json").write_text(json.dumps({"wiring": {
+            "qubits": {"q0": {"xy": {
+                "opx_output": "#/ports/mw_outputs/con1/1/5"}}}}}),
+            encoding="utf-8")
+        params = {} if factor is None else {"operation_amplitude_factor": factor}
+        (d / "data.json").write_text(json.dumps({"fit_results": {}}),
+                                     encoding="utf-8")
+        (d / "node.json").write_text(json.dumps({
+            "data": {"outcomes": {}, "parameters": {"model": params}},
+            "patches": []}), encoding="utf-8")
+        return load_run(d)
+
+    def test_it_follows_the_pointer_chain_across_both_files(self, tmp_path):
+        v = self._run(tmp_path, 0.03981071705534972, 11)
+        assert abs(RB.drive_power_dbm(v, "q0") - (-17.0)) < 0.02
+
+    def test_the_amplitude_factor_counts(self, tmp_path):
+        v = self._run(tmp_path, 0.1, 0, factor=2.0)
+        # 20*log10(0.2) = -13.98
+        assert abs(RB.drive_power_dbm(v, "q0") - (-13.979)) < 0.02
+
+    def test_amplitude_up_but_power_down(self, tmp_path):
+        """The real case: the stored amplitude rose by half again while the
+        port's full-scale power was written down further, so the drive at the
+        qubit FELL. Amplitude alone reports the opposite."""
+        a = self._run(tmp_path / "a", 0.10, 11)
+        b = self._run(tmp_path / "b", 0.15, 4)
+        assert 0.15 > 0.10                                   # amplitude rose
+        assert RB.drive_power_dbm(b, "q0") < RB.drive_power_dbm(a, "q0")
+
+    def test_a_run_with_no_port_reports_nothing(self, tmp_path):
+        d = tmp_path / "2026-08-20" / "#2_08_qubit_spectroscopy_000002"
+        (d / "quam_state").mkdir(parents=True)
+        (d / "quam_state" / "state.json").write_text(
+            json.dumps({"qubits": {"q0": {"xy": {"operations": {}}}}}),
+            encoding="utf-8")
+        (d / "data.json").write_text(json.dumps({"fit_results": {}}),
+                                     encoding="utf-8")
+        (d / "node.json").write_text(json.dumps({
+            "data": {"outcomes": {}, "parameters": {"model": {}}},
+            "patches": []}), encoding="utf-8")
+        assert RB.drive_power_dbm(load_run(d), "q0") is None

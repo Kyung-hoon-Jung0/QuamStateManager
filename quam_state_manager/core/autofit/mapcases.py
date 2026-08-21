@@ -49,6 +49,16 @@ CURVE_FULL_SWING = "curve_full_swing"
 CURVE_MULTI = "curve_multi_period"
 CURVE_EMPTY = "curve_empty"
 
+# Along a DRIVE-POWER axis the question is not what shape the ridge traces but
+# where along the axis it can be believed: below the onset there is nothing,
+# just above it the line is narrow and stationary, and higher still it
+# broadens, Stark-shifts, and grows a two-photon partner below it.
+POWER_PLATEAU = "power_stationary_then_broadening"
+POWER_NO_ANCHOR = "power_no_stationary_stretch"
+POWER_TOP_ONLY = "power_feature_only_at_the_top"
+POWER_TWO_RIDGES = "power_second_line_below"
+POWER_EMPTY = "power_empty"
+
 # flags, all cross-family
 FLAG_OFF_FEATURE = "fit_off_feature"
 FLAG_OUT_OF_WINDOW = "value_outside_swept_range"
@@ -61,6 +71,12 @@ FLAG_UNSTABLE = "unstable_across_identical_runs"
 FLAG_LOW_COVERAGE = "ridge_lost_over_much_of_the_sweep"
 FLAG_FIT_ON_WRONG_SIDE = "fit_on_the_companion_not_the_notch"
 FLAG_OVER_BROADENED = "line_far_wider_than_the_node_asked_for"
+# --- the power axis (docs/133) ---
+FLAG_TWO_PHOTON_PRIMARY = "tracked_line_is_the_two_photon_not_the_fundamental"
+FLAG_RECORD_AT_SWEEP_CENTRE = "record_sits_at_the_untouched_sweep_centre"
+FLAG_NO_LOW_POWER_ANCHOR = "frequency_taken_with_no_stationary_low_power_stretch"
+FLAG_SWEEP_NEVER_BELOW_ONSET = "sweep_never_reached_below_the_onset"
+FLAG_POWER_BROADENED = "line_broadened_by_the_drive_at_the_chosen_power"
 # How many times its own declared target width a line may be before its
 # centre stops being worth adopting. The node states the target it is trying
 # to reach (``target_peak_width``), so this is the node's own yardstick and
@@ -68,11 +84,38 @@ FLAG_OVER_BROADENED = "line_far_wider_than_the_node_asked_for"
 # the failure it catches is 5-16x, not 3.1x.
 BROADEN_FACTOR = 3.0
 
+# How many swept powers a stationary stretch must span before its frequency is
+# worth vouching for. Measured, not chosen: against 103 targets carrying an
+# independently derived consensus truth, this floor is the ONLY gate that
+# moved the number — a 2-slice stretch is right on 51% of the answers it
+# gives (the node's own rate), 4 slices 62%, 8 slices 73%, and 12 slices falls
+# back to 69% while answering far less often. Ridge depth and below-onset coverage were swept
+# alongside it and never bound at any setting, so they are measured and
+# reported but deliberately NOT gated on: a gate that never fires is a
+# constraint invented rather than found.
+MIN_PLATEAU_SLICES = 8
+# How close a rival line must sit to half the run's OWN reported anharmonicity
+# to be called the two-photon partner. A fraction of that anharmonicity, never
+# a frequency: the number comes from the run, so the rule stays chip-independent.
+TWO_PHOTON_TOLERANCE = 0.25
+
+# The qubit-power maps are read on the rotated projection. Measured against the
+# same 103 targets: the rotated projection alone answers 38 right / 14 wrong,
+# the magnitude alone 35/15, and falling back from one to the other 41/18 —
+# three more right answers for four more wrong ones. That is the wrong trade
+# for a loop that ratchets on its own output, where a wrong value poisons every
+# run after it and an abstention costs one repeat. So there is no fallback: an
+# unreadable projection stays unread.
+FAMILY_VALUE_VARS: dict[str, tuple[str, ...]] = {
+    "qubit_spectroscopy_vs_power": ("I_rot",),
+}
+
 # Which fit field carries the frequency answer, and which carries the swept
 # value the node picked. Both are family facts, taken from the records.
 VALUE_FIELDS = {
     "resonator_spectroscopy": ("frequency", None),
     "qubit_spectroscopy": ("frequency", None),
+    "qubit_spectroscopy_vs_power": ("frequency", "optimal_power"),
     "qubit_spectroscopy_vs_flux": ("qubit_frequency", "idle_offset"),
     "resonator_spectroscopy_vs_flux": ("resonator_frequency", "idle_offset"),
     "resonator_spectroscopy_vs_coupler_flux": ("resonator_frequency", "idle_offset"),
@@ -119,7 +162,8 @@ def signal_for(family: str, folder, target: str, *, fit: dict | None = None,
     """Read one run for one target and say what shape it carries."""
     fit = fit or {}
     params = params or {}
-    cube = MS.read_cube(folder, target)
+    cube = MS.read_cube(folder, target,
+                        value_vars=FAMILY_VALUE_VARS.get(family, MS.VALUE_VARS))
     if cube is None:
         return ShapeSignal(key=None, confidence="low",
                            reasons=["raw map unreadable — nothing to read"])
@@ -129,7 +173,9 @@ def signal_for(family: str, folder, target: str, *, fit: dict | None = None,
     sig.measured["feature"] = "dip" if sign < 0 else "peak"
     sig.measured["sign_source"] = "physics" if forced is not None else "measured"
 
-    if cube.n_sweep <= 1:
+    if family in FAMILY_VALUE_VARS and cube.n_sweep > 1:
+        _power(cube, sign, fit, sig)
+    elif cube.n_sweep <= 1:
         _line(cube, sign, fit, sig)
         if forced is not None:
             # The companion check belongs to the families whose feature
@@ -246,6 +292,113 @@ def _companion(cube, sign, fit, sig: ShapeSignal) -> None:
                            "companion than to the notch — the taller "
                            "excursion is not the resonance")
         sig.corrected["frequency"] = seen_hz
+
+
+def _power(cube, sign, fit, sig: ShapeSignal) -> None:
+    """Read a qubit-spectroscopy-versus-drive-power map.
+
+    The answer is the frequency of the stationary low-power stretch, and the
+    brightest part of the map — the top — is the wrong place to read it. Two
+    distinct things go wrong there and both are in this corpus: the line
+    broadens and Stark-shifts, and the two-photon 0->2 partner grows faster
+    with drive than the fundamental does, so at high power it can be the
+    STRONGEST feature in the sweep. A tracker anchored on the strongest slice
+    lands on it, and everything downstream inherits a frequency half an
+    anharmonicity too low.
+    """
+    tr = MS.track_ridge(cube, sign=sign)
+    ps = MS.shape_power(cube, tr, sign=sign)
+    sig.measured.update({
+        "coverage": round(ps.coverage, 3), "background": ps.background,
+        "onset_at_floor": ps.onset_at_floor, "top_only": ps.top_only,
+        "plateau_len": ps.plateau_len,
+        "plateau_freq": ps.plateau_freq,
+        "plateau_depth_z": (round(ps.plateau_depth_z, 2)
+                            if ps.plateau_depth_z is not None else None),
+        "below_coverage": round(ps.below_coverage, 3),
+        "drift_hz": ps.drift_hz, "width_ratio": ps.width_ratio,
+        "second_offset_hz": ps.second_offset_hz,
+    })
+
+    anh = _num(fit.get("anharmonicity_stored"))
+    rec = _num(fit.get("frequency"))
+    step = cube.freq_step()
+    vouched = (ps.plateau_freq is not None
+               and ps.plateau_len >= MIN_PLATEAU_SLICES)
+
+    # Which line did the tracker actually follow? A rival ABOVE the ridge by
+    # about half the run's own anharmonicity means the ridge is the two-photon
+    # partner and the fundamental is the rival; a rival BELOW by the same
+    # amount is the ordinary, correct picture and confirms the identification.
+    partner = None
+    if ps.second_offset_hz is not None and anh:
+        if abs(abs(ps.second_offset_hz) - anh / 2) <= TWO_PHOTON_TOLERANCE * anh:
+            partner = "above" if ps.second_offset_hz > 0 else "below"
+    sig.measured["two_photon_partner"] = partner
+
+    if ps.plateau_freq is None and ps.coverage < 0.1:
+        sig.key, sig.confidence = POWER_EMPTY, "high"
+        sig.reasons.append("no line anywhere in the map at any drive power")
+    elif ps.top_only:
+        sig.key, sig.confidence = POWER_TOP_ONLY, "high"
+        sig.reasons.append("a feature appears only in the last few drive "
+                           "powers — too little of the sweep to tell the "
+                           "fundamental from a multi-photon partner")
+    elif not vouched:
+        sig.key, sig.confidence = POWER_NO_ANCHOR, "low"
+        sig.reasons.append("the tracked line never holds still over enough of "
+                           "the sweep to give a low-power limit")
+    elif partner == "below":
+        sig.key, sig.confidence = POWER_TWO_RIDGES, "high"
+        sig.reasons.append("a stationary line with its two-photon partner "
+                           "below it at half the reported anharmonicity — the "
+                           "identification is confirmed by the partner")
+    else:
+        sig.key, sig.confidence = POWER_PLATEAU, "high"
+        sig.reasons.append("the line holds still over the lower drive powers "
+                           "and broadens above them")
+
+    value = ps.plateau_freq if vouched else None
+    if value is not None and partner == "above":
+        value += ps.second_offset_hz
+        sig.flags.append(FLAG_TWO_PHOTON_PRIMARY)
+        sig.reasons.append("the strongest line has a partner ABOVE it at half "
+                           "the reported anharmonicity, so the strongest line "
+                           "is the two-photon transition and the fundamental "
+                           "is the partner")
+    if value is not None:
+        sig.corrected["frequency"] = value
+
+    if ps.onset_at_floor:
+        sig.flags.append(FLAG_SWEEP_NEVER_BELOW_ONSET)
+        sig.reasons.append("the line is already present at the lowest drive "
+                           "power swept, so the sweep never bracketed the "
+                           "onset from below")
+    if not vouched and rec is not None:
+        sig.flags.append(FLAG_NO_LOW_POWER_ANCHOR)
+    if rec is not None and cube.freq.size:
+        centre = 0.5 * (float(cube.freq.min()) + float(cube.freq.max()))
+        if abs(rec - centre) <= 2.0 * max(step, 1.0):
+            sig.measured["record_at_centre"] = True
+            if not vouched:
+                # the sweep is centred on the value the chip already had, so a
+                # record sitting exactly there, on a map with nothing in it,
+                # is the previous estimate handed back rather than a measurement
+                sig.flags.append(FLAG_RECORD_AT_SWEEP_CENTRE)
+                sig.reasons.append("the recorded frequency is the untouched "
+                                   "centre of a sweep whose map carries no "
+                                   "believable line")
+    fw, intr = _num(fit.get("fwhm")), _num(fit.get("intrinsic_fwhm"))
+    if fw and intr and intr > 0 and fw / intr > BROADEN_FACTOR:
+        sig.flags.append(FLAG_POWER_BROADENED)
+        sig.reasons.append("the line at the chosen power is several times its "
+                           "own intrinsic width — the node's two numbers "
+                           "disagree about how sharp this transition is")
+    if vouched and rec is not None and abs(rec - value) > 3.0 * max(
+            step * max(1.0, tr.width_px), step):
+        sig.flags.append(FLAG_OFF_FEATURE)
+        sig.reasons.append("the recorded frequency sits well away from the "
+                           "stationary line the map carries")
 
 
 def _curve(cube, sign, fit, params, family, sig: ShapeSignal) -> None:
