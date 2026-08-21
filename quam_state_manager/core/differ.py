@@ -176,11 +176,27 @@ class Differ:
         a≉c at the 1e-12 relative tolerance) can in principle list a row
         whose ``changed`` flags are all False — accepted, the same
         tolerance semantics as :meth:`diff` itself.
-        Equality is :meth:`diff`'s: same float tolerance, same ``__class__``
-        ignore, so 2 sides here and a 2-way ``diff`` never disagree about
-        whether a leaf changed.
+
+        Equality is :meth:`diff`'s float tolerance, with ONE deliberate
+        departure: two NaNs are treated as agreeing. ``_values_equal`` says
+        NaN != NaN (IEEE), which would list a leaf as "differing" on a
+        surface whose whole promise is that listed rows differ, showing the
+        reader ``nan`` beside ``nan`` (docs/128 review). docs/118 already
+        settled that question for comparison surfaces in
+        :func:`compare_equal`; this follows it rather than inventing a third
+        answer. ``ignore_keys`` defaults to :meth:`diff`'s ``__class__``
+        ignore, but callers that claim completeness to a user should pass
+        ``set()`` — a class migration (docs/94) is a real difference and
+        hiding it makes "identical content" a lie.
         """
         flats = [self._flatten_side(s) for s in sides]
+
+        def _agree(a: Any, b: Any) -> bool:
+            if _values_equal(a, b, float_tolerance):
+                return True
+            return (isinstance(a, float) and isinstance(b, float)
+                    and math.isnan(a) and math.isnan(b))
+
         ignore = ignore_keys if ignore_keys is not None else _DEFAULT_IGNORE
         all_keys: set[str] = set()
         for flat in flats:
@@ -197,8 +213,7 @@ class Differ:
                 if present[i] != present[base_i]:
                     differs = True
                     break
-                if present[i] and not _values_equal(
-                        values[base_i], values[i], float_tolerance):
+                if present[i] and not _agree(values[base_i], values[i]):
                     differs = True
                     break
             if not differs:
@@ -207,8 +222,7 @@ class Differ:
             for i in range(1, len(flats)):
                 if present[i] != present[i - 1]:
                     changed[i] = True
-                elif present[i] and not _values_equal(
-                        values[i - 1], values[i], float_tolerance):
+                elif present[i] and not _agree(values[i - 1], values[i]):
                     changed[i] = True
             rows.append({"dot_path": key, "values": values,
                          "present": present, "changed": changed})

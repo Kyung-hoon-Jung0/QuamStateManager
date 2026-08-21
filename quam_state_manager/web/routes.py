@@ -9124,7 +9124,11 @@ def state_version_diff(timestamp: str):
             message=f"This version belongs to chip '{asked_chip}' but "
                     f"'{chip_key}' is open — open that chip first.")
     try:
-        entries = hm.diff_current(path, timestamp, current_store=ctx.get("store"))
+        # ignore_keys=set(): this overlay says "No differences — the current
+        # working state matches this version" when empty, so it must not skip
+        # `__class__` (docs/94 class migration; docs/128 review).
+        entries = hm.diff_current(path, timestamp, current_store=ctx.get("store"),
+                                  ignore_keys=set())
     except Exception as exc:  # noqa: BLE001 — a missing snapshot must explain, not 500
         return render_template("_status.html",
                                message=f"Diff failed: {exc}", level="error")
@@ -13344,7 +13348,12 @@ def diff_versions():
         ts_list = ts_list[-_VERSION_COMPARE_COL_CAP:]
     try:
         stores = [hm.load_snapshot(path, ts) for ts in ts_list]
-        rows = Differ().diff_n(stores)
+        # ignore_keys=set(): this page TELLS the user every other leaf agrees,
+        # so it must not quietly skip `__class__`. A lab's class migration
+        # (docs/94) is exactly the difference a physicist opens this for, and
+        # the 2-tick button on the same panel (the /diff workbench) already
+        # reports it — the two must not disagree about the same two versions.
+        rows = Differ().diff_n(stores, ignore_keys=set())
     except Exception as exc:      # noqa: BLE001 — a pruned snapshot must explain, not 500
         return _fail(f"Compare failed: {exc}")
     try:

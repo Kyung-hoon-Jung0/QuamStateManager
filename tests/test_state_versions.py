@@ -692,6 +692,62 @@ class TestVersionsCompareNway:
         assert "qubits.q1.f_01" in page
         assert "vc-null" in page and ">null<" in page
 
+    def test_a_class_migration_is_a_difference_not_a_silence(self, client, tmp_path):
+        """docs/94: a lab's out-of-band class migration is exactly what a
+        physicist opens this page for. `Differ.diff`'s default drops
+        `__class__`, so the page was rendering "No differences — these N
+        versions hold identical content on every leaf" over a real migration
+        — while the 2-tick button on the SAME panel (the /diff workbench)
+        reported it. Two buttons, one pair of versions, opposite answers."""
+        live = tmp_path / "quam_state" / "state.json"
+        client.post("/state/archive", data={"tag": "before"})
+        doc = json.loads(live.read_text(encoding="utf-8"))
+        doc["qubits"]["q1"]["__class__"] = "quam_config.components.Transmon"
+        live.write_text(json.dumps(doc), encoding="utf-8")
+        client.post("/state/archive", data={"tag": "after"})
+        body = client.get("/state/versions").get_data(as_text=True)
+        q = "&".join(f"ts={t}" for t in
+                     re.findall(r'sv-check" value="(\d{8}_\d{6}\S*?)"', body))
+        page = client.get(f"/diff/versions?{q}").get_data(as_text=True)
+        assert "__class__" in page
+        assert "identical content on every leaf" not in page
+
+    def test_two_nans_are_not_a_difference(self, client, tmp_path):
+        """The page's promise is that every listed key DIFFERS. IEEE says
+        NaN != NaN, which listed a leaf whose cells then both read `nan` —
+        the row itself falsifying the sentence above it. docs/118 already
+        settled this for comparison surfaces; diff_n follows it."""
+        from quam_state_manager.core.differ import Differ
+        a = ({"qubits": {"q1": {"T1": float("nan"), "f_01": 6.1e9}}},
+             {"network": {"host": "h"}})
+        b = ({"qubits": {"q1": {"T1": float("nan"), "f_01": 6.1e9}}},
+             {"network": {"host": "h"}})
+        assert Differ().diff_n([a, b]) == []
+        # ...and a NaN that genuinely becomes a number still differs
+        c = ({"qubits": {"q1": {"T1": 3.2e-5, "f_01": 6.1e9}}},
+             {"network": {"host": "h"}})
+        paths = [r["dot_path"] for r in Differ().diff_n([a, c])]
+        assert paths == ["qubits.q1.T1"]
+
+    def test_the_per_row_diff_does_not_call_a_class_migration_a_match(
+            self, client, tmp_path):
+        """Same sentence, same fix, on the other new surface: its empty state
+        says the working state MATCHES this version."""
+        live = tmp_path / "quam_state" / "state.json"
+        client.post("/state/archive", data={"tag": "before"})
+        body = client.get("/state/versions").get_data(as_text=True)
+        ts = re.search(r'sv-check" value="(\d{8}_\d{6}\S*?)"', body).group(1)
+        doc = json.loads(live.read_text(encoding="utf-8"))
+        doc["qubits"]["q1"]["__class__"] = "quam_config.components.Transmon"
+        live.write_text(json.dumps(doc), encoding="utf-8")
+        # Pull the migrated live state into the working copy — SM never adopts
+        # it behind the user's back (docs/87), so the test must take the same
+        # explicit door the user does.
+        client.post("/state/sync", data={"mode": "discard"})
+        d = client.get(f"/state/versions/{ts}/diff").get_data(as_text=True)
+        assert "__class__" in d
+        assert "No differences" not in d
+
     def test_the_compare_button_lands_here_not_on_the_hub(self):
         block = _app_js_stateversions_block()
         assert "'/diff/versions?'" in block
@@ -725,25 +781,95 @@ class TestVersionsCompareNway:
 
 
 class TestCompactRows:
-    """Customer (2026-08-21): the gap between the date column and the row
-    actions was most of the panel — 46rem of width for ~26rem of content.
-    The panel is narrower and the actions are a tight cluster, so a row
-    reads as one line instead of two far-apart columns."""
+    """Customer (2026-08-21): "the gap between the button and the date column
+    is too wide — make it compact."
+
+    The FIRST fix narrowed the panel 46rem → 36rem, and the heavy review
+    measured that as a regression, not a fix: the docs/126 quick-diff table
+    shares this width, and at 36rem its key column fell to ~4.8 characters
+    per line and the table grew 3.7× taller, pushing the version list the
+    customer was trying to reach off-screen. The gap was never the width —
+    it was ``margin-left: auto`` on the actions across a growing ``.sv-meta``.
+    So the width is restored and the ROW is compacted instead.
+    """
 
     def _css(self):
         import quam_state_manager
         return (Path(quam_state_manager.__file__).parent / "web" / "static"
                 / "style.css").read_text(encoding="utf-8")
 
-    def test_the_panel_is_narrower(self):
-        css = self._css()
-        i = css.index(".state-version-panel {")
-        block = css[i:css.index("}", i)]
-        assert "36rem" in block
-        assert "46rem" not in block
-
-    def test_the_actions_are_a_tight_cluster(self):
+    def test_the_actions_are_not_pinned_to_the_far_edge(self):
+        """The gap's actual cause. `margin-left:auto` pushes the cluster to
+        the panel's right edge no matter how wide the panel is, so narrowing
+        the panel could only ever shrink the symptom."""
         css = self._css()
         i = css.index(".sv-row-actions")
         block = css[i:css.index("}", i)]
+        assert "margin-left: auto" not in block
         assert "display: flex" in block and "gap" in block
+
+    def test_the_actions_render_between_the_date_and_the_meta(self, client):
+        """Compact means ADJACENT: checkbox+date, then the buttons. Pinned on
+        the rendered row, not the stylesheet, because DOM order is also tab
+        order — the buttons must be reachable right after the row's checkbox
+        rather than after every label and note."""
+        client.post("/state/archive", data={"tag": "t"})
+        body = client.get("/state/versions").get_data(as_text=True)
+        row = body.split('<li class="state-version-row')[1]
+        assert row.index("sv-pick") < row.index("sv-row-actions") < row.index("sv-meta")
+
+    def test_the_panel_keeps_the_width_the_quick_diff_needs(self):
+        """The quick-diff table lives in this panel; 36rem measured as one
+        character per ~4.8 of path. Restored, with the regression named so a
+        future "compact" pass does not re-take the same shortcut."""
+        css = self._css()
+        i = css.index(".state-version-panel {")
+        block = css[i:css.index("}", i)]
+        assert "46rem" in block
+        assert "36rem" not in block
+
+    def test_the_nway_key_column_cannot_be_squeezed_to_nothing(self):
+        """Same mechanism on the N-way table, measured in real Chrome on the
+        real 20Q chip: at 4 columns / 1280px the key column was 44px wide,
+        one letter per line, rows 337px tall. The table is allowed to be
+        wider than the viewport — .vc-scroll scrolls it — but the key column
+        may not collapse."""
+        css = self._css()
+        i = css.index(".vc-key-col {")
+        block = css[i:css.index("}", i)]
+        assert "min-width" in block
+
+    def test_the_nway_table_is_a_real_scrollport(self):
+        """Without a height bound .vc-scroll never overflows vertically, so
+        `position: sticky` on its header row is inert (the real scroller is
+        #table-pane) and the horizontal scrollbar sits at the bottom of a
+        130,000px-tall box. A max-height is what makes both work — the same
+        pattern .bulk-table-wrap uses."""
+        css = self._css()
+        i = css.index(".vc-scroll {")
+        block = css[i:css.index("}", i)]
+        assert "max-height" in block
+        assert "overflow" in block
+
+    def test_the_nway_table_cannot_be_collapsed_out_of_existence(self):
+        """#table-pane is draggable (Split.js — its own comment says the
+        inspector may cover the page). The flex chain that sizes .vc-scroll
+        to the pane was first written with the reflex `min-height: 0`, and
+        measured: at ≤25% pane the scroller went to 0.0px and the entire
+        892-row table vanished under an intact heading, unrecoverable by
+        scrolling. A floor is what keeps the overflow on the pane instead."""
+        css = self._css()
+        i = css.index(".vc-scroll {")
+        block = css[i:css.index("}", i)]
+        assert "min-height" in block
+        assert "min-height: 0" not in block
+
+    def test_the_quick_diff_key_column_cannot_be_squeezed_to_nothing(self):
+        """`word-break: break-all` gives the key cell a ONE-character
+        min-content, and the nowrap value column beside it takes the rest —
+        so without a floor the path renders as a vertical letter-tower at any
+        panel width the values happen to outgrow."""
+        css = self._css()
+        i = css.index(".sv-q-path {")
+        block = css[i:css.index("}", i)]
+        assert "min-width" in block

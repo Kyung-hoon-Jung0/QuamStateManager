@@ -8522,9 +8522,21 @@ button.diag-badge { cursor: pointer; }
     background: var(--pico-card-background-color, transparent); }
 .sv-quick-head { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap;
     font-size: .78rem; margin-bottom: .25rem; }
-.sv-quick-table { width: 100%; margin: 0; font-size: .74rem; }
+/* width:auto, not 100%: a full-width two-column table with a right-aligned
+   value column parks all the leftover width BETWEEN the path and its value —
+   measured 264px of dead gutter per line once the panel went back to 46rem,
+   which is the customer's original "the gap is too wide" complaint moved
+   from the rows into the table above them. Shrink-to-fit keeps the columns
+   aligned (it is still a table) with the pair readable as one line. */
+.sv-quick-table { width: auto; max-width: 100%; margin: 0; font-size: .74rem; }
 .sv-quick-table td { padding: .1rem .3rem; border: none; vertical-align: top;
     overflow-wrap: anywhere; }
+/* The key column must not be squeezable to nothing: `word-break: break-all`
+   gives it a one-character min-content, and a nowrap value column next to
+   it in an auto-layout table takes everything else — which is how a 48-char
+   path became a vertical letter-tower when the panel narrowed (docs/128
+   review). A floor here keeps the path readable whatever the panel width. */
+.sv-q-path { min-width: 12rem; }
 .sv-q-path code { font-size: .95em; word-break: break-all; }
 .sv-q-vals { white-space: nowrap; text-align: right; }
 .sv-q-old { color: var(--pico-muted-color); text-decoration: line-through; }
@@ -10840,11 +10852,16 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
    the whole truth. */
 .state-version-edits { font-weight: 700; line-height: 1;
     color: var(--color-warning, var(--pico-primary)); }
-/* docs/128 (customer): 46rem wide for ~26rem of row content put most of the
-   panel's width into the gap between the date column and the right-aligned
-   actions. 36rem keeps the quick-diff table readable and the rows compact. */
+/* docs/128 (customer): the gap between the date column and the actions was
+   most of the panel. The first fix narrowed the panel 46rem->36rem, which
+   measured WORSE: the docs/126 quick-diff shares this width, and at 36rem
+   its key column fell to ~4.8 chars per line and the table grew 3.7x taller,
+   pushing the version list itself off-screen. The gap was never the width —
+   it was `margin-left:auto` on the actions plus a growing .sv-meta. So the
+   width is restored and the ROW is compacted instead (actions now sit
+   directly after the date; .sv-meta absorbs the slack at the right). */
 .state-version-panel { position: absolute; top: calc(100% + 0.35rem); left: 0;
-    z-index: 40; width: min(36rem, 92vw); max-height: 70vh; overflow-y: auto;
+    z-index: 40; width: min(46rem, 92vw); max-height: 70vh; overflow-y: auto;
     background: var(--pico-card-background-color);
     border: 1px solid var(--pico-muted-border-color); border-radius: 0.4rem;
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18); padding: 0.6rem 0.8rem;
@@ -10878,7 +10895,10 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .sv-now { font-size: 0.66rem; color: var(--pico-primary); }
 .sv-label { font-weight: 600; }
 .sv-exp, .sv-note { font-size: 0.72rem; }
-.sv-row-actions { flex: 0 0 auto; margin-left: auto;
+/* Compact per the customer: NOT right-pinned. The actions follow the date
+   directly (they are what the row is reached for), and .sv-meta takes the
+   slack after them, so the empty space lands where nothing is being read. */
+.sv-row-actions { flex: 0 0 auto;
     display: flex; align-items: center; gap: 0.3rem; }
 /* The version-diff overlay's "now" side — the counterpart of .review-old.
    The review modal's now-side is an editable input; this one is read-only
@@ -10895,14 +10915,33 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
    A cell wears .vc-changed exactly when diff_n's own `changed` verdict says
    it moved from the column before it — same tokens as the run-comparison
    .cell-diff so "this cell moved" reads identically app-wide. */
-.version-compare { padding: 0.5rem 0.75rem; }
+/* Fill the pane rather than the viewport where the browser can resolve it:
+   the viewport-constant below cannot know how tall the (wrapping) topbar and
+   this page's own header are, and measured it under-counts by 155-281px, so
+   the horizontal scrollbar starts just below the fold. When #table-pane
+   gives a definite height this chain sizes .vc-scroll exactly; when it does
+   not, height:100% computes to auto and the calc() cap still applies. */
+.version-compare { padding: 0.5rem 0.75rem;
+    height: 100%; min-height: 0; display: flex; flex-direction: column; }
 .vc-head { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap;
     margin-bottom: 0.4rem; }
 .vc-actions { margin-left: auto; }
 .vc-note, .vc-empty { font-size: 0.8rem; margin: 0.25rem 0; }
 /* The table can be wide (8 columns) and long — it scrolls inside its own
-   container, never the page body. */
-.vc-scroll { overflow-x: auto; max-width: 100%; }
+   container, never the page body. A max-height is what MAKES it a scrollport:
+   without one it never overflows vertically, so `position:sticky` on the
+   header row is inert (the real scroller is #table-pane) and the horizontal
+   scrollbar sits at the bottom of a 130,000px-tall box, unreachable. Same
+   pattern as .bulk-table-wrap, which is why that table's headers do stick. */
+/* The floor is load-bearing. `min-height: 0` is the usual flex-item idiom,
+   but #table-pane is DRAGGABLE (its own comment: the inspector may cover the
+   page), and with a zero floor the scroller collapsed to 0.0px at ≤25% pane
+   — the whole 892-row table gone, heading still there, and not recoverable
+   by scrolling, only by dragging the gutter back. A floor keeps the flex
+   sizing and makes the overflow land on the pane, which scrolls. */
+.vc-scroll { overflow: auto; max-width: 100%;
+    flex: 1 1 auto; min-height: 8rem;
+    max-height: calc(100vh - 185px); }
 .vc-table { width: auto; margin: 0; font-size: 0.78rem; border-collapse: collapse; }
 .vc-table th, .vc-table td { padding: 0.25rem 0.55rem; vertical-align: top;
     border-bottom: 1px solid var(--pico-muted-border-color); text-align: left; }
@@ -10914,7 +10953,15 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .vc-col-label { font-size: 0.7rem; font-weight: 600; }
 .vc-col-ts { display: block; font-family: var(--font-mono); font-size: 0.66rem;
     opacity: 0.55; }
-.vc-key-col { max-width: 26rem; overflow-wrap: anywhere; }
+/* min-width is load-bearing, not cosmetic: `overflow-wrap: anywhere` gives
+   this cell a ONE-CHARACTER min-content, and .vc-val's nowrap makes every
+   value column incompressible, so auto table layout hands the key column its
+   minimum the moment the values stop fitting — measured on the real 20Q chip
+   at 4 columns / 1280px wide: 44px, one letter per line, rows 337px tall
+   (docs/128 review). The table is allowed to be wider than the viewport;
+   .vc-scroll scrolls it. An unreadable key column is not a trade worth
+   making for avoiding that scrollbar. */
+.vc-key-col { min-width: 18rem; max-width: 26rem; overflow-wrap: anywhere; }
 .vc-val { white-space: nowrap; }
 .vc-delta { display: block; }
 .vc-changed { background: var(--diff-cell-bg);
