@@ -1,0 +1,21 @@
+{
+ "chip": "AS_10TQ9TC",
+ "session": "AS_2026-08-09",
+ "qubits": "q3-q9",
+ "narrative": "Morning: five-run window hunt for q8/q9 \u2014 floor too high (#7), then a spur false-accept + chaotic ceiling (#8), then a noise-drowned wide span (#9); only the narrow-span pair #10/#11 answered. The settled recipe then swept q3-q7 clean in one run (#12). Evening: bias drift moved q5-q8; #232's deep floor pinned two optima to the scan edge, #233 fixed them a minute later. Half the day's runs were window-tuning overhead.",
+ "ideal_sequence": "#7 (survey) -> #10 (narrow spans, both fit) -> #11 (floor raised, confirm) -> #12 (five-qubit sweep) -> evening #233 only",
+ "wasted_runs": "#8 (ceiling extension bought only the bistable region for q9; its q8 'success' is a spur false-accept \u2014 exclude from any answer key); #9 (floor -70 + wide span drowned both targets, fully redundant); #232 half-wasted (deep floor reproduced the bottom-edge-optimum pathology, redone one minute later)",
+ "final_truth": "q3 5.948468 GHz @ -41.8 dBm, q4 6.100153 GHz @ -39.5 dBm (run #12, morning bias state); q5 6.002704 GHz @ -37.1 dBm, q6 6.008323 GHz @ -36.5 dBm, q7 6.100350 GHz @ -36.5 dBm, q8 5.957756 GHz @ -35.2 dBm (run #233, evening state \u2014 supersedes #12 for these four); q9 6.168617 GHz @ -29.5 dBm (run #11, morning state only, never re-verified in the evening). #10's q8 -61.7 dBm and #232's q5/q6 -57.9/-56.8 dBm are scan-edge artifacts.",
+ "confidence": "high",
+ "family": "resonator_spectroscopy_vs_power",
+ "schema": "smgolden/v1",
+ "authored": "2026-08-21",
+ "status": "draft-expert-round-1",
+ "exclusions": [
+  {
+   "run": "#8",
+   "qubit": "q8",
+   "reason": "spur-lock false accept -- excluded from the verification round by expert decision (ER-0)"
+  }
+ ]
+}

@@ -1,0 +1,14 @@
+{
+ "chip": "CQT",
+ "session": "CQT_2026-08-14_part1",
+ "qubits": "q3, q4, q7, q8, q9, q10, q11",
+ "narrative": "Morning singles were clean, then an 8-qubit batch at a lowered ceiling (#335) failed 7 of 8 on dressed-dip SNR and the whole afternoon became one-at-a-time recovery: q11 in one run, q9 in three (a success with the marker off the dip, then a '5.4 < 5' refusal), q10 in five (four marginal-gate refusals on figures that showed a textbook punch-out from the first attempt).",
+ "ideal_sequence": "#254 + #256 (q4) -> #322 (q8) -> #327 (q3) -> #330 (q7) -> #337 (q11) -> one good q9 run -> one q10 run with more averaging or a raised floor \u2014 roughly half the executed runs",
+ "wasted_runs": "#255 (ceiling-clipped q4 window; its bare 5.1107 is wrong); the #335 batch (7/8 SNR failures; its one success duplicated #330 while contradicting its bare); #342 (q9 'success' with the dressed marker off the dip) and #346 (marginal refusal) \u2014 three runs to get #347; q10's #348-#351 (four marginal-gate retries when #348's figure already showed the answer)",
+ "final_truth": "q4: 5.1121 GHz, optimal -29.7 dBm (amp 0.0052 @ FSP 16) [#256]; q8: 4.9895 / bare 4.9690 / -27.5 dBm (amp 0.0528 @ FSP -2) [#322]; q3: 4.9791 / 4.9651 / -19.7 dBm [#327]; q7: ~5.5524-5.5526 / -16.8 dBm [#335, bare inconsistent with #330]; q11: 5.5595 / 5.5349 / -19.7 dBm [#337]; q9: 5.2508 / 5.2367 / -45.1 dBm [#347 \u2014 the optimum is over-conservative vs a punch-out near -8 dBm and sits in the noisy floor; review]; q10: resolved at #352 (figures say dressed ~5.422, bare ~5.400-5.404).",
+ "confidence": "med",
+ "family": "resonator_spectroscopy_vs_power",
+ "schema": "smgolden/v1",
+ "authored": "2026-08-21",
+ "status": "draft-expert-round-1"
+}

@@ -1,0 +1,14 @@
+{
+ "chip": "CQT",
+ "session": "CQT_2026-08-15",
+ "qubits": "q9, q12",
+ "narrative": "Three runs, three SNR-gate failures, zero adopted fits \u2014 yet q9's single acquisition (#624) contained a perfectly readable punch-out that the gate rejected because it hunts the dressed dip in the noise-floor rows. The wasted effort was trusting the fit outputs rather than any acquisition: the session needed a RE-READ, not a re-run, for q9. q12's window shift-up (#728) was the right instinct but resolved nothing, and its two fits contradict each other in shift sign.",
+ "ideal_sequence": "#624 -> manual read of its figure (no q9 re-run needed); q12: #727 -> #728 -> more averaging/shots at low power (not a third window change)",
+ "wasted_runs": "None of the acquisitions per se; the waste is adopting nothing from #624 (good data, wrong gate) and the risk of a third window-only q12 retry. All three fit OUTPUTS are unusable.",
+ "final_truth": "q9 (manual read of #624): bare ~5.2511 GHz, dressed ~5.252-5.2525 GHz visible roughly -35..-10 dBm, punch-out near -8..-5 dBm, sensible optimal ~-20..-30 dBm; the node's 5.2543 GHz / -43 dBm are both wrong. q12: undetermined \u2014 only a fixed line at ~5.8397-5.840 GHz is solid; neither #727's +7.8 MHz nor #728's -14 MHz shift is trustworthy.",
+ "confidence": "med",
+ "family": "resonator_spectroscopy_vs_power",
+ "schema": "smgolden/v1",
+ "authored": "2026-08-21",
+ "status": "draft-expert-round-1"
+}

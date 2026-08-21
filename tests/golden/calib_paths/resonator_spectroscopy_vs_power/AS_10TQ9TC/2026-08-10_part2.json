@@ -1,0 +1,14 @@
+{
+ "chip": "AS_10TQ9TC",
+ "session": "AS_2026-08-10_part2",
+ "qubits": "q6, q7",
+ "narrative": "The operator answered a FIT-side defect with window changes, which cannot fix it: q6's resonator sits beside a bright interference peak with a broad bistable crossover, and every q6 'success' in the batch is a false success (punchout=false claimed against visible branches, labels swapped, ceiling power on the bare branch). Interleaved nodes decoupled both qubits by moving the flux point (#341/#342 \u2014 #342's writes were saturation artifacts and bogus for both qubits). q7 was correctly calibrated twice (#327, #346); q6 never.",
+ "ideal_sequence": "One -50..-20-shaped sweep per operating point plus one confirm: #327 -> (flux point moved and returned) -> #346. Roughly 3 runs instead of ~14.",
+ "wasted_runs": "#325/#326 (blind retries of an analysis-limited failure \u2014 the figure already showed the noise floor); #333/#335/#336 (triple confirmations of near-identical fits); #344/#345 (duplicates at a floor-clipped window); #341 and especially #342 (run at a decoupled flux point \u2014 readout calibration meaningless; #342's writes of -10.2 dBm optimal / FSP -4 / amp 0.49 V for BOTH qubits had to be undone)",
+ "final_truth": "q7 at the final operating point: resonator ~6.0971 GHz, bare ~6.0959 GHz, optimal -44.5 dBm (arguably -35..-40 dBm is the better point under the ~-30 dBm punch-out), FSP -11 dBm / amp 0.021 V (#346). q6 NEVER got a valid result: every q6 'S' (6.0100-6.0120 GHz @ -23 dBm) configures readout on the bare branch above the true punch-out at ~-30..-33 dBm; from the figures the correct q6 values are dressed ~6.0135-6.0140 GHz, bare ~6.0100-6.0110 GHz, optimal ~-35..-40 dBm.",
+ "confidence": "med",
+ "family": "resonator_spectroscopy_vs_power",
+ "schema": "smgolden/v1",
+ "authored": "2026-08-21",
+ "status": "draft-expert-round-1"
+}

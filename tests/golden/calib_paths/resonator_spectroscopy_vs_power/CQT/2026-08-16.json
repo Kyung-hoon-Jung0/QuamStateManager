@@ -1,0 +1,14 @@
+{
+ "chip": "CQT",
+ "session": "CQT_2026-08-16",
+ "qubits": "q6, q7, q12, q15, q19, q20",
+ "narrative": "The raise-the-window correction worked 3/3 (q15 #910->#914, q20 #995->#996, q6 #1116->#1117 \u2014 all fixed within minutes), and every successful map put its transition between roughly +4 and -10 dBm; all failures came from windows biased 15-25 dB too low. The one true failure was q19, whose second attempt moved the window DOWN instead of up. q12 shows only a weak asymmetric feature in both runs, with the node nonetheless succeeding and placing its optimum in noise rows.",
+ "ideal_sequence": "A first-guess window of about [-30, +14] dBm per qubit would likely have made #910, #995, #1116 and #1089 unnecessary: #914, #996, #1033, #1117 as first attempts, plus a HIGHER-ceiling q19 attempt that was never tried",
+ "wasted_runs": "#910 (ceiling clipped the punch-out, ~15 dB spent under the noise floor); #995 (floor too low, superseded in one minute); #1116 (entire window under the noise floor); #1089 (window lowered after an already-marginal #985 \u2014 the opposite of the correction that worked everywhere else); #1079 (near-duplicate of #1033, defensible only as a consistency check)",
+ "final_truth": "q15: 5.69639 GHz / bare 5.69389 / -9.4 dBm (FSP 11, amp 0.0959) [#914]; q20: 5.76204 / 5.75804 / -6.5 dBm (FSP 0, amp 0.4726) [#996]; q6: 5.42177 / -11.8 dBm (FSP 16, amp 0.0408) [#1117]; q7: 5.55228 / 5.55078 / -16.0 dBm (FSP 2, amp 0.1259) [#1033]; q12: 5.84076 / -29.0 dBm nominally final but LOW TRUST (marginal contrast, optimum in noise rows); q19: no trustworthy result \u2014 the unexplored fix was a ceiling above +10 dBm.",
+ "confidence": "high",
+ "family": "resonator_spectroscopy_vs_power",
+ "schema": "smgolden/v1",
+ "authored": "2026-08-21",
+ "status": "draft-expert-round-1"
+}

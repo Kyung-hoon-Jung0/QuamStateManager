@@ -1,0 +1,14 @@
+{
+ "chip": "CQT",
+ "session": "CQT_2026-08-13",
+ "qubits": "q1, q2, q6, q12, q14, q16, q18",
+ "narrative": "One lesson learned twice: q1 failed on a stale seed (#40), was re-found (#41), then two identical repeats (#43/#44) ignored the node's explicit 'widen sweep' advice; the high-ceiling/high-FSP combined run (#135) finally produced textbook punch-outs. Evening: q12/q18/q16 all failed the dressed-dip SNR gate \u2014 noise-floor failures answered with window changes, which fixed nothing; no window change all day converted an SNR failure into a success. q14 was a clean first-try success.",
+ "ideal_sequence": "Per qubit: one wide-power high-FSP sweep first (the #135/#192 template), escalating SNR-gate failures with more averaging / higher low-power drive, never window moves. The 14 runs could have been ~7-8.",
+ "wasted_runs": "#43, #44 (identical repeats of #41 \u2014 node twice advised widening); #40 (stale seed \u2014 a pre-run sanity check of the state value would have skipped it); #90 (widened FREQUENCY to fix an SNR problem); #213 (optional confirmation whose punch-out/bare claims are window artifacts); one of #75/#76 (the pair is redundant)",
+ "final_truth": "q1: 4.98062 GHz, bare 4.97942, optimal -33.3 dBm (FSP 16, amp 0.0034 V) [#135]; q2: 5.11561, bare 5.11211, -22.7 dBm [#135]; q6: 5.40087, bare 5.39967, -28.8 dBm [#76]; q14: 5.32275, bare 5.31925, -27.8 dBm (FSP -7, amp 0.0913 V) [#192; #213 confirms f only]. Unresolved: q12 (only bare ~5.836-5.8385 credible), q18 (dressed ~5.523-5.5245 / bare ~5.5314 suggested but SNR-failed), q16 (only bare 5.7208 visible).",
+ "confidence": "high",
+ "family": "resonator_spectroscopy_vs_power",
+ "schema": "smgolden/v1",
+ "authored": "2026-08-21",
+ "status": "draft-expert-round-1"
+}

@@ -1,0 +1,14 @@
+{
+ "chip": "CQT",
+ "session": "CQT_2026-08-17",
+ "qubits": "q9-q12, q14-q20",
+ "narrative": "Hand-tuning produced the day's one textbook fit (q15: wide survey #1212 with an off-dip fit and noise-floor optimum, corrected 90 s later by re-windowing in #1213). Production mode then ran a fixed shared window over 11 qubits twice back-to-back: the well-coupled set reproduced beautifully, but the marginal-SNR set (q16/q17/q19/q20) flip-flopped S/F on identical settings \u2014 the repeat reshuffled the failures rather than resolving them. Repetition without changing averaging or per-qubit windows was never going to converge.",
+ "ideal_sequence": "#1213 (q15 keeper) + ONE full-group pass, with more averaging or per-qubit windows / higher full-scale-lower-amplitude for q16/q17/q19/q20",
+ "wasted_runs": "#1212's FIT (survey acquisition legitimate, but its 5.6991 GHz / -37.8 dBm output is unusable); #1350 (5-qubit subset superseded within a minute by the full passes \u2014 a smoke test at best); #1352 (identical repeat of #1351 \u2014 predictably a coin-flip on exactly the four marginal qubits; q16 flipped S->F, q20 stayed F)",
+ "final_truth": "q15: 5.6963 GHz, optimal -7.5 dBm at FSP 13 (bare visibly ~5.6935-5.694; the fit's 5.6825 is wrong) [#1213]; stable set from one pass: q10 5.4232 / -19 dBm; q11 5.5586-5.5591 / -18..-20 dBm; q14 5.3217-5.3222 / -23 dBm (bare claim 5.3077 dubious \u2014 figure pulls the other way); q18 5.5459-5.5464 / -10..-14 dBm; q9 5.2513-5.2518 / -12..-14 dBm (beware the second resonance ~18 MHz above). Marginal set untrustworthy: q12 ~5.839-5.840, q16 ~5.832-5.833 (S/S/F flicker), q17 ~5.710 with floor-pinned optimum, q19 unusable (2 MHz wander), q20 never fit (bare ~5.759-5.762 clearly visible).",
+ "confidence": "med",
+ "family": "resonator_spectroscopy_vs_power",
+ "schema": "smgolden/v1",
+ "authored": "2026-08-21",
+ "status": "draft-expert-round-1"
+}

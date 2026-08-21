@@ -369,3 +369,34 @@ figures + 1 blind verifier + 1 synthesizer), 2026-08-21. Raw outputs in
 `docs/129_res_power_pilot_data/` (annotations.json / annotations_table.md /
 synthesis.json / verify.json). Source archives (read-only):
 `D:\work\dataset\AS_10TQ9TC` and `D:\work\Customer_Codes\CQT\data`.
+
+## 8. Expert review -- round 1 (2026-08-21)
+
+Answers to SS5, verbatim decisions:
+
+1. CONFIRMED: `frequency_shift` = update delta vs the previously stored value.
+2. Gate-message wording: out of scope for now.
+3. Floor-pinned optimum: refuse the value, re-run with an adjusted floor --
+   noting the current verification is archive-only, so unmatched re-runs are
+   recorded unscoreable rather than simulated.
+4. Fallback writes: SM AUTO-REVERTS them -- the one-button session authorizes
+   state write-back, that is the point of the loop.
+5. Branch-label swap: geometry overrides fit labels ("the figure IS the
+   physics"); file the fitter defect upstream.
+6. Batch punch-out: conditionally allowed (re-confirmation only, abort to
+   singles on majority failure -- condition set by the implementer).
+7. Sub-linewidth chi: adopt the dressed frequency only; bare is not required.
+8. Run-to-run flicker: re-run with slightly perturbed parameters. -> P1.
+9. Fano/low-contrast: re-measure with a raised ceiling for now. -> P2.
+10. Spur line-cut test: adopted provisionally. -> P3.
+    (8-10 are managed as a separate PROVISIONAL category -- expected to be
+    updated or deleted as evidence accumulates.)
+11. C4a/C4b ambiguous 7: recorded, skipped for now.
+12. Post-bias-move adoption: allowed + ONE sanity re-measurement.
+
+SS3 verdicts (key cases): AS/#8/q8 EXCLUDED from this verification round;
+AS/#326 -> edge-case reference (SM must self-correct via geometry); AS/#347 ->
+node wrong, SM must correct; CQT/#1212 -> edge-case reference; CQT/#624 -> SM
+must re-catch from data. "Reference material" means entries in the manual
+(edge-case references), not model-training data. Remaining 25 rows: verdicts
+extrapolated from these patterns; uncertain ones will be re-asked.

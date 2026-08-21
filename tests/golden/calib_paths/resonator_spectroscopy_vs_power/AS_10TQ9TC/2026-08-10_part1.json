@@ -1,0 +1,14 @@
+{
+ "chip": "AS_10TQ9TC",
+ "session": "AS_2026-08-10_part1",
+ "qubits": "q6, q7 (shared feedline)",
+ "narrative": "After re-centering fixed an edge-clipped q7, runs #313/#314 produced textbook maps \u2014 but back-to-back repeats exposed run-to-run intermittency of q6's dressed feature (#315 vanished one minute after a clean #314). The operator chased it with ever-wider windows (-60, then -70 floor + 5x span), which invited floor-picked optima, SNR failures with swapped branch labels, and poisonous no-punch-out fallback writes.",
+ "ideal_sequence": "#306 (survey; q7 edge-clipped) -> #307 (floor lowered, both fit) -> #313/#314 (re-fit at moved frequency) -> STOP at #314, or #317 as one confirm",
+ "wasted_runs": "#315-#316 (repeats fitting sub-linewidth pseudo-shifts, dragging stored q6 frequency down ~1.75 MHz); the entire wide-window block #318-#326 (nine runs: floor-picked optima like -69.2 dBm/0.0012 V, repeated SNR failures, and the harmful -23 dBm/0.2512 V fallback writes of #320/#321)",
+ "final_truth": "q6: rr 6.014281 GHz, bare 6.012031 GHz, optimal -36.1 dBm, amp 0.0556 V (#314) or rr 6.013981/bare 6.011981/-35.3 dBm (#317); q7: rr 6.098420 GHz, bare 6.097220 GHz, optimal -42.5 dBm (#317). FSP -11 dBm on shared line con1/8/1. Caveat: q6's dressed feature is genuinely intermittent \u2014 cross-check any single-run q6 value against the ~6.014-6.016 GHz agreement cluster.",
+ "confidence": "med",
+ "family": "resonator_spectroscopy_vs_power",
+ "schema": "smgolden/v1",
+ "authored": "2026-08-21",
+ "status": "draft-expert-round-1"
+}

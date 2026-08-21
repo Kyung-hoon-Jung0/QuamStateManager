@@ -1,0 +1,430 @@
+{
+ "schema": "smknow/v1",
+ "family": "resonator_spectroscopy_vs_power",
+ "authored": "2026-08-21",
+ "source": "docs/129 pilot (95 runs / 172 targets, AS_10TQ9TC + CQT) + expert review round 1",
+ "cases": [
+  {
+   "id": "C1",
+   "name": "clean punch-out",
+   "kind": "map_case",
+   "status": "stable",
+   "provisional_id": null,
+   "seen_count": 77,
+   "geometry": "Two branches with a visible transition inside the window: at high power the dip sits at the power-independent bare position; below a knee it jumps (or steps within a few rows) to the dressed position and holds it over a wide power span; the node's chosen frequency sits on the dressed branch and the chosen power below the knee, above the noise onset. Line cuts show two distinct dip locations for hot vs cold rows.",
+   "prescription": "Accept. No re-run needed unless the chosen power is flagged floor-pinned (see F1) \u2014 then re-run once with the floor raised by a bounded fraction of the window height. Optionally one identical confirm if the device is known to be intermittent (F6).",
+   "exemplars": [
+    "AS_10TQ9TC/#314/q6",
+    "AS_10TQ9TC/#12/q3",
+    "AS_10TQ9TC/#348/q6",
+    "CQT/#135/q2",
+    "CQT/#192/q14",
+    "CQT/#352/q10",
+    "CQT/#996/q20"
+   ]
+  },
+  {
+   "id": "C2",
+   "name": "ceiling-below-punch-out",
+   "kind": "map_case",
+   "status": "stable",
+   "provisional_id": null,
+   "seen_count": 12,
+   "geometry": "Only the dressed branch is demonstrated: a single dip at fixed frequency through the whole power range, OR the per-row dip position just begins deflecting in the topmost rows without the bare branch ever establishing (onset clipped at the ceiling). Bare frequency and optimal power are not determined by this window; a 'punchout=true' claim from such a window is unsupported.",
+   "prescription": "Raise the power ceiling by a bounded step (roughly half the current window height) keeping the floor; do NOT repeat unchanged \u2014 three identical repeats on one chip reproduced the same verdict byte-alike. If the node wrote a ceiling-power fallback, treat that value as poisoned (F2).",
+   "exemplars": [
+    "CQT/#41/q1",
+    "CQT/#995/q20",
+    "CQT/#255/q4",
+    "AS_10TQ9TC/#9/q9",
+    "CQT/#1350/q15"
+   ]
+  },
+  {
+   "id": "C3",
+   "name": "stationary-line (no dressed branch)",
+   "kind": "map_case",
+   "status": "stable",
+   "provisional_id": null,
+   "seen_count": 13,
+   "geometry": "One feature whose position does not shift with power anywhere in the window \u2014 typically pinned at the bare position, with identical dip shape in every line cut. Distinguish four causes ONLY from session context, never from the single figure: (a) power floor above the band where the dressed branch is visible; (b) qubit decoupled by the current flux operating point (feature also displaced from its usual position); (c) run-to-run intermittency (an adjacent identical run resolved two branches); (d) genuinely dead/far-detuned qubit.",
+   "prescription": "Check adjacent evidence before touching knobs: if a sibling run minutes away showed two branches, repeat once unchanged (intermittency); if interleaved nodes just moved the flux point, fix the operating point first \u2014 widening the sweep is the wrong move; else lower the power floor by a bounded step. If two bounded window moves fail, escalate to qubit spectroscopy to test detuning.",
+   "exemplars": [
+    "AS_10TQ9TC/#321/q6",
+    "AS_10TQ9TC/#341/q7",
+    "CQT/#727/q12",
+    "CQT/#1351/q20",
+    "AS_10TQ9TC/#7/q8"
+   ]
+  },
+  {
+   "id": "C4a",
+   "name": "gradual-pull crossover",
+   "kind": "map_case",
+   "status": "stable",
+   "provisional_id": null,
+   "seen_count": 10,
+   "geometry": "Both branches and the crossover visible, but the dip position drifts smoothly and continuously (S-bend / shark-fin) over a broad power band instead of snapping. Both plateaus resolvable; the transition power is a band, not a row. Fittable \u2014 sharpness of the crossover and trustworthiness are different axes.",
+   "prescription": "Accept the dressed frequency; place the operating power below the bottom of the drift band with margin (not at its foot). Optionally densify power steps around the crossover to localize the band. No re-run required for the frequency.",
+   "exemplars": [
+    "CQT/#76/q6",
+    "CQT/#391/q1",
+    "CQT/#1117/q6",
+    "CQT/#481/q8",
+    "AS_10TQ9TC/#307/q6"
+   ]
+  },
+  {
+   "id": "C4b",
+   "name": "bistable/coexisting crossover",
+   "kind": "map_case",
+   "status": "stable",
+   "provisional_id": null,
+   "seen_count": 12,
+   "geometry": "Over a several-dB power band BOTH branches' dips coexist in the same line cut, the tracked dip hops between them, and consecutive identical runs disagree on the bare frequency by several linewidths. Often accompanied by chaotic/asymmetric swings in the rows above the transition. This is exactly what breaks single-dip-per-row fitters.",
+   "prescription": "Densify power steps and add averaging around the coexistence band; place readout power well below the band; take the bare frequency by agreement across at least two runs, never from one. Pushing the ceiling further into the chaotic region buys nothing.",
+   "exemplars": [
+    "AS_10TQ9TC/#335/q6",
+    "AS_10TQ9TC/#345/q6",
+    "CQT/#176/q18",
+    "AS_10TQ9TC/#8/q9",
+    "CQT/#349/q10"
+   ]
+  },
+  {
+   "id": "C5",
+   "name": "multi-feature window (real neighbor lines)",
+   "kind": "map_case",
+   "status": "stable",
+   "provisional_id": null,
+   "seen_count": 10,
+   "geometry": "More than one genuine resonance line in the frequency window (same-feedline neighbors): multiple dip-like columns or a second sloping/broad dark band. Risk: the tracker excursions onto, or locks, the wrong line. The target line is identified geometrically as the one whose position SHIFTS with power.",
+   "prescription": "Narrow the frequency window around the power-DEPENDENT line and re-run; if the tracker still excursions at high power, narrow further or cut the ceiling just above the target's transition. Record the neighbor's position for the feedline map.",
+   "exemplars": [
+    "CQT/#382/q18",
+    "CQT/#394/q5",
+    "CQT/#1352/q9",
+    "CQT/#347/q9"
+   ]
+  },
+  {
+   "id": "C6",
+   "name": "empty window",
+   "kind": "map_case",
+   "status": "stable",
+   "provisional_id": null,
+   "seen_count": 4,
+   "geometry": "No credible feature anywhere: flat or smoothly-graded background at every power, dip trace scattering across the full span. Must first be distinguished from N5 off-window (monotonic brightening toward one frequency edge) and N1 snr-floor (structure present in the upper rows only).",
+   "prescription": "Check the edges for an off-window shoulder first; if truly featureless, widen the frequency span severalfold, then raise the ceiling by a bounded step. If still empty, escalate to a wide feedline spectroscopy scan rather than iterating this node.",
+   "exemplars": [
+    "CQT/#1089/q19",
+    "CQT/#1116/q6",
+    "CQT/#175/q18"
+   ]
+  },
+  {
+   "id": "N1",
+   "name": "snr-floor (window under the noise floor)",
+   "kind": "map_case",
+   "status": "stable",
+   "provisional_id": null,
+   "seen_count": 13,
+   "geometry": "The lower portion of the power window is pure speckle \u2014 the dip is untraceable there even though the line itself is healthy in the upper/mid rows (sometimes a full punch-out is visible above the speckle). The dressed-dip gate and/or the optimal-power search operate in the noise rows and fail or pick garbage. The inverse of C3(a): here the floor is too LOW, not too high.",
+   "prescription": "Raise the power floor out of the speckle by a bounded step, and/or add shots/averaging, and/or raise full-scale output while lowering amplitude for the same power. NEVER widen the frequency span to fix this \u2014 no window change converted an SNR failure into a success in any session; if the map above the speckle already shows both branches, a manual read is legitimate.",
+   "exemplars": [
+    "CQT/#624/q9",
+    "CQT/#179/q16",
+    "CQT/#335/q9",
+    "CQT/#357/q16",
+    "AS_10TQ9TC/#9/q8"
+   ]
+  },
+  {
+   "id": "N2",
+   "name": "spur-lock (false accept on a non-resonator artifact)",
+   "kind": "map_case",
+   "status": "provisional",
+   "provisional_id": "P3",
+   "seen_count": 1,
+   "geometry": "The analysis latches onto a narrow, power-INDEPENDENT spike far from the real resonator and reports success. Distinguishing test in the line cuts: the real dressed feature is a DIP that participates in the punch-out; a spur is an upward spike (peak) whose position never moves with power. Distinct from C5, which is real neighbor resonators.",
+   "prescription": "PROVISIONAL P3 -- Reject the fit outright: this is the dangerous false-accept class. Line-cut test (adopted provisionally, expert Q10): an upward SPIKE whose position never moves with power is a spur; the real dressed feature is a DIP that participates in the punch-out. Narrow the frequency window to exclude the spike and re-run; verify any accepted dressed frequency shows dip-shaped line cuts and a plausible few-linewidth separation from the bare line of sibling runs.",
+   "exemplars": [
+    "AS_10TQ9TC/#8/q8"
+   ]
+  },
+  {
+   "id": "N3",
+   "name": "unresolved-shift (sub-linewidth dispersive shift)",
+   "kind": "map_case",
+   "status": "stable",
+   "provisional_id": null,
+   "seen_count": 6,
+   "geometry": "The dressed-bare separation is smaller than the dip linewidth (small chi), so the map shows a single dip sliding by less than its own width \u2014 no jump is visible even when the transition is inside the window, and punch-out claims are untestable from the figure. The qubit is alive; neither the ceiling (C2) nor the floor (C3) is at fault.",
+   "prescription": "Adopt the DRESSED frequency only -- the bare value is not required (expert Q7) and stays UNRECORDED rather than unverified-but-written. Shrink the frequency span so the linewidth covers many pixels and densify frequency steps if a punch-out verdict is still wanted; escalate to a dispersive-shift measurement only when the bare value actually matters downstream.",
+   "exemplars": [
+    "AS_10TQ9TC/#315/q6",
+    "AS_10TQ9TC/#315/q7",
+    "AS_10TQ9TC/#347/q7",
+    "AS_10TQ9TC/#11/q9"
+   ]
+  },
+  {
+   "id": "N4",
+   "name": "edge-clipped (frequency window mis-centered on a visible feature)",
+   "kind": "map_case",
+   "status": "stable",
+   "provisional_id": null,
+   "seen_count": 3,
+   "geometry": "The resonance hugs or crosses the frequency-window edge so the dip shape is cut off; neither branch position is verifiable, and the fitter may promote a spurious mid-window feature to 'bare'. A window-placement failure, not a power-window one.",
+   "prescription": "Re-center the frequency window on the visible feature and re-run once \u2014 identical retries cannot succeed (four were burned on one qubit before the re-center fixed it in one shot). Keep the power window unchanged.",
+   "exemplars": [
+    "CQT/#350/q10",
+    "CQT/#351/q10",
+    "AS_10TQ9TC/#306/q7"
+   ]
+  },
+  {
+   "id": "N5",
+   "name": "off-window (resonance outside the frequency span)",
+   "kind": "map_case",
+   "status": "stable",
+   "provisional_id": null,
+   "seen_count": 1,
+   "geometry": "No dip in the map, but the background brightens monotonically toward one frequency edge at every power \u2014 the shoulder of a feature just outside the span (typically a stale seed frequency). Distinguishable from C6 (truly flat) and decisive: the fix is entirely different.",
+   "prescription": "Widen the frequency span severalfold (biased toward the brightening edge) or re-seed the center from the last known good value; power knobs unchanged. A pre-run sanity check of the seed against the last known resonance skips this run class entirely.",
+   "exemplars": [
+    "CQT/#40/q1"
+   ]
+  },
+  {
+   "id": "N6",
+   "name": "resolution-mismatch (span too wide for the branch step)",
+   "kind": "map_case",
+   "status": "stable",
+   "provisional_id": null,
+   "seen_count": 3,
+   "geometry": "The frequency span is so wide that a real few-linewidth branch step spans about one pixel, so a true two-branch map reads as a stationary line (false C3). Same physics, wrong magnification \u2014 narrow-window sibling runs of the same qubit show the step plainly.",
+   "prescription": "Narrow the frequency span per-resonator (to a small multiple of the expected separation) before concluding bare-only; never classify C3 from a survey-width map. Wide spans are for FINDING lines, not for punch-out verdicts.",
+   "exemplars": [
+    "AS_10TQ9TC/#9/q8",
+    "AS_10TQ9TC/#318/q7",
+    "AS_10TQ9TC/#320/q6"
+   ]
+  },
+  {
+   "id": "N7",
+   "name": "weak-contrast / asymmetric lineshape",
+   "kind": "map_case",
+   "status": "provisional",
+   "provisional_id": "P2",
+   "seen_count": 8,
+   "geometry": "The feature is a shallow local minimum riding a strongly sloped background, often with an adjacent bright peak-like ridge (Fano-like/dispersive shape), so the 'dip position' itself is ill-defined for the tracker; per-row minima wobble by more than any systematic drift and no branch pair is resolvable.",
+   "prescription": "PROVISIONAL P2 -- Re-measure once with the power ceiling raised by a bounded step (expert Q9; several of these qubits never had the ceiling raise tried). If the lineshape stays asymmetric/low-contrast, flag for expert review -- possibly weak coupling by design, in which case this prescription will be revised. Do not trust the automatic dip pick, any claimed shift, or a floor-pinned optimum on these qubits meanwhile.",
+   "exemplars": [
+    "CQT/#377/q19",
+    "CQT/#378/q19",
+    "CQT/#1033/q12",
+    "CQT/#1079/q12",
+    "CQT/#1352/q17"
+   ]
+  },
+  {
+   "id": "N8",
+   "name": "saturation-artifact rows",
+   "kind": "map_case",
+   "status": "stable",
+   "provisional_id": null,
+   "seen_count": 4,
+   "geometry": "At the highest powers, bright/dark streaks span the ENTIRE frequency axis (output-chain/amplifier saturation) \u2014 whole-row artifacts, not resonator physics. The minimum trace is meaningless there, and a fitter can misread the streaked rows as a punch-out transition; two qubits on one feedline receiving the identical 'optimal' power is the tell.",
+   "prescription": "Lower the ceiling to just below the streaked rows (or mask them); a transition claimed only at streaked rows is invalid. Annotators must not read trace excursions inside these rows as features.",
+   "exemplars": [
+    "AS_10TQ9TC/#342/q6",
+    "AS_10TQ9TC/#342/q7",
+    "CQT/#135/q1",
+    "CQT/#76/q6"
+   ]
+  },
+  {
+   "id": "F1",
+   "name": "floor-pinned optimum (flag, orthogonal to map case)",
+   "kind": "flag",
+   "status": "stable",
+   "provisional_id": null,
+   "seen_count": 15,
+   "geometry": "The map may be a clean C1, yet the reported optimal power sits at/near the scan's bottom edge, typically 15-35 dB below the knee, in rows where the dip contrast is fading or gone \u2014 a boundary artifact of the power-choice rule, not a physics statement. Also covers optima reported BELOW the swept floor (impossible extrapolations from failed fits).",
+   "prescription": "The reported power value is REFUSED -- never written (expert Q3). Re-run once with the floor raised by a bounded fraction of the window so the picker cannot reach the edge; a reported optimum outside the swept range invalidates that field unconditionally. (In archive replay, where re-running is impossible, the refusal is scored and the re-run is recorded unscoreable.)",
+   "exemplars": [
+    "AS_10TQ9TC/#318/q6",
+    "AS_10TQ9TC/#10/q8",
+    "AS_10TQ9TC/#232/q5",
+    "CQT/#347/q9",
+    "CQT/#1352/q17",
+    "CQT/#378/q19"
+   ]
+  },
+  {
+   "id": "F2",
+   "name": "fallback-write poisoning (flag)",
+   "kind": "flag",
+   "status": "stable",
+   "provisional_id": null,
+   "seen_count": 14,
+   "geometry": "The node returns success with punchout=false and writes fallback values into state \u2014 ceiling power and/or the amplitude cap \u2014 degrading subsequent runs on the same feedline (huge readout amplitude can suppress the dressed dip in the very next map). 'Succeeded but wrote a sentinel' is invisible to map-only classification.",
+   "prescription": "AUTO-REVERT (expert Q4): SM reverts the fallback-written ceiling power / amplitude-cap values before the next run on that feedline -- the one-button session authorizes the write-back, and this is the poisoned-first-button class the whole loop exists to stop. Then re-run with the corrected window. Any session where a no-punch-out fallback write precedes a streak of SNR failures is re-read with this flag in mind.",
+   "exemplars": [
+    "AS_10TQ9TC/#320/q7",
+    "AS_10TQ9TC/#321/q6",
+    "AS_10TQ9TC/#327/q6",
+    "AS_10TQ9TC/#347/q6",
+    "CQT/#41/q1"
+   ]
+  },
+  {
+   "id": "F3",
+   "name": "branch-label swap / bare contradiction (flag)",
+   "kind": "flag",
+   "status": "stable",
+   "provisional_id": null,
+   "seen_count": 11,
+   "geometry": "The fit's dressed/bare assignment contradicts the figure's geometry: 'bare' pinned on the low-power branch (the power-independent hot-row position is bare by definition), or the reported bare frequency lands in featureless background or on the opposite side from where the high-power dip visibly moves. Independent of data quality \u2014 the map can be textbook.",
+   "prescription": "OFFICIAL RULE (expert Q5 -- \"the figure IS the physics\"): geometry overrides fit labels. The power-independent hot-row position is bare by definition; re-derive branch identity from geometry and adopt the corrected values. FILE UPSTREAM: this is a fitter defect report -- window changes and retries provably cannot repair a labeling defect. Suspect an adjacent bright interference peak as a root cause where present.",
+   "exemplars": [
+    "AS_10TQ9TC/#326/q6",
+    "AS_10TQ9TC/#319/q6",
+    "AS_10TQ9TC/#346/q6",
+    "CQT/#1351/q14",
+    "CQT/#1213/q15"
+   ]
+  },
+  {
+   "id": "F4",
+   "name": "off-feature fit on the correct line (flag)",
+   "kind": "flag",
+   "status": "stable",
+   "provisional_id": null,
+   "seen_count": 4,
+   "geometry": "A SUCCESS whose dressed marker sits a few linewidths off the visible dip on the RIGHT line (not a wrong-line lock, not a spur): the tracker followed the feature but the fitted center landed beside it, or between branches.",
+   "prescription": "Re-read the figure before adopting; if the dip is visible, take the frequency manually or re-run once. Consecutive-run agreement (within a fraction of a linewidth) is the acceptance test.",
+   "exemplars": [
+    "CQT/#342/q9",
+    "CQT/#1212/q15",
+    "CQT/#1352/q19",
+    "AS_10TQ9TC/#323/q6"
+   ]
+  },
+  {
+   "id": "F5",
+   "name": "verdict-figure mismatch at the gate (flag)",
+   "kind": "flag",
+   "status": "stable",
+   "provisional_id": null,
+   "seen_count": 8,
+   "geometry": "The node refuses a visually fittable map at the gate margin (including messages that read as arithmetic nonsense after rounding, e.g. 'SNR 5.4 < 5'), or accepts a map that supports nothing. Marginal-SNR features flip S/F across identical back-to-back runs \u2014 verdict instability is the session-level signature.",
+   "prescription": "On a marginal refusal with a good-looking map: add averaging rather than re-running unchanged (identical retries are a coin flip); a manual read of a clear map is legitimate. On S/F flicker across identical runs, stop repeating \u2014 change the SNR (shots, full-scale/amplitude split), not the window.",
+   "exemplars": [
+    "CQT/#346/q9",
+    "CQT/#348/q10",
+    "CQT/#624/q9",
+    "CQT/#995/q20",
+    "AS_10TQ9TC/#326/q6"
+   ]
+  },
+  {
+   "id": "F6",
+   "name": "intermittent dressing / run-to-run bistability (session-level flag)",
+   "kind": "flag",
+   "status": "provisional",
+   "provisional_id": "P1",
+   "seen_count": 5,
+   "geometry": "The dressed feature is present in one run and completely absent in the next under identical settings, minutes apart (clean C1 followed by C3 of the same qubit). One phenomenon, not two cases \u2014 a per-figure taxonomy cannot express it; only adjacent-run comparison reveals it.",
+   "prescription": "PROVISIONAL P1 -- Re-run once with slightly PERTURBED parameters (small bounded jitter on the window edges/steps -- expert Q8), not an identical repeat: identical repeats are a coin flip here. If the feature still flickers, treat as a device/operating-point problem (flux stability, TLS) and stop calibrating this qubit; widening windows is provably useless and invites F1/F2 damage. Cross-check any adopted value against the agreement cluster of the runs where the feature was present.",
+   "exemplars": [
+    "AS_10TQ9TC/#315/q6",
+    "AS_10TQ9TC/#321/q6",
+    "CQT/#1352/q16",
+    "CQT/#1351/q17"
+   ]
+  }
+ ],
+ "rules": [
+  {
+   "id": "R-semantics",
+   "name": "fit-record semantics (expert Q1, CONFIRMED)",
+   "text": "frequency_shift in this node's fit record is the UPDATE DELTA versus the previously stored resonator frequency -- it is NOT the dressed-bare separation. bare_resonator_frequency is sometimes absent and sometimes contradicts the figure; never treat it as authoritative without the map."
+  },
+  {
+   "id": "R-batch",
+   "name": "multiplexed batch punch-out (expert Q6, conditional)",
+   "text": "Batch (multi-qubit) punch-out runs are allowed ONLY as re-confirmation of qubits previously calibrated individually, at windows individually validated -- never for first calibration or failure recovery (one 8-qubit batch failed 7/8 and cost an afternoon of feedline-by-feedline repair). If more than a third of batch members fail, abort to per-feedline singles instead of retrying the batch."
+  },
+  {
+   "id": "R-bias",
+   "name": "cross-session adoption after a bias move (expert Q12)",
+   "text": "Adopting a value measured before a known flux/bias move is allowed, but SM runs ONE sanity re-measurement before dependent nodes execute -- adoption without re-verification is what left a stale evening state unchecked in the pilot corpus."
+  },
+  {
+   "id": "R-c4split",
+   "name": "C4a/C4b ambiguity (expert Q11, recorded-skip)",
+   "text": "The gradual-pull vs bistable split was assigned retroactively; about 7 of 29 original C4 annotations are ambiguous between C4a and C4b. Recorded, not yet expert-resolved -- do not quote the C4a/C4b counts as settled."
+  },
+  {
+   "id": "R-gatemsg",
+   "name": "gate-margin message wording (expert Q2, deferred)",
+   "text": "The 'SNR 5.4 < 5'-style refusal message (rounding vs real comparison) is explicitly out of scope for this manual version."
+  }
+ ],
+ "provisional_registry": [
+  {
+   "id": "P1",
+   "note": "run-to-run flicker: perturb-and-retry (from F6, expert Q8)",
+   "lifecycle": "may be revised or deleted as evidence accumulates; re-review each release"
+  },
+  {
+   "id": "P2",
+   "note": "Fano/low-contrast: raise-ceiling re-measure (from N7, expert Q9)",
+   "lifecycle": "may be revised or deleted as evidence accumulates; re-review each release"
+  },
+  {
+   "id": "P3",
+   "note": "spur line-cut test (from N2, expert Q10; n=1 evidence)",
+   "lifecycle": "may be revised or deleted as evidence accumulates; re-review each release"
+  }
+ ],
+ "edge_case_references": [
+  {
+   "id": "ER-1",
+   "run": "AS_10TQ9TC/#326 (q6, q7)",
+   "classes": "F3",
+   "text": "Textbook punch-out step on the figure; the node reports punchout=false with inverted branch labels, a ceiling optimum above the step, and (q7) an optimum below the swept floor. SM must adopt the geometry-corrected values on its own -- this is the reference case for the figure-overrides-labels rule.",
+   "excluded_from_verification": false
+  },
+  {
+   "id": "ER-2",
+   "run": "AS_10TQ9TC/#347 (q6)",
+   "classes": "F2/F3",
+   "text": "success=true alongside the node's own 'no punch-out: widen sweep' banner and a nonzero frequency_shift -- an internally inconsistent record. The node is wrong; SM must catch the self-contradiction from the record alone, before any figure is consulted.",
+   "excluded_from_verification": false
+  },
+  {
+   "id": "ER-3",
+   "run": "CQT/#1212 (q15)",
+   "classes": "F4",
+   "text": "A SUCCESS whose fitted frequency sits off the visible dip and above where every later run converges, with the optimum below the SNR floor. SM must catch this from data (figure + record), unaided.",
+   "excluded_from_verification": false
+  },
+  {
+   "id": "ER-4",
+   "run": "CQT/#624 (q9)",
+   "classes": "N1/F5",
+   "text": "A usable punch-out map refused at the gate margin; the recorded numbers sit off the visible dip and the optimum lands in pure noise. SM must re-read the map and recover the value the refusal threw away.",
+   "excluded_from_verification": false
+  },
+  {
+   "id": "ER-0",
+   "run": "AS_10TQ9TC/#8 (q8)",
+   "classes": "N2",
+   "text": "The spur-lock false accept (success on a power-independent spike far from the resonator). EXCLUDED from the verification round by expert decision -- retained here as the only known exemplar of the class.",
+   "excluded_from_verification": true
+  }
+ ]
+}
