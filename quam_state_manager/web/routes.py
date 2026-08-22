@@ -19658,7 +19658,13 @@ def generate_allocate():
     if errors:
         return jsonify({"ok": False, "errors": errors}), 400
 
-    python_path = config_generator.get_selected_env(current_app.instance_path)
+    # docs/134: the wizard may carry the interpreter explicitly — an
+    # auto-picked env is client-side only (persisting a machine-wide
+    # selection + rebinding the open chip's type policy must stay behind an
+    # explicit act), and this dry run must not depend on one being persisted.
+    # Same trust level as /generate/select-env, which accepts any path.
+    python_path = (str(data.get("python") or "").strip()
+                   or config_generator.get_selected_env(current_app.instance_path))
     if not python_path:
         return jsonify({"ok": False, "error": "No environment selected."}), 400
 
