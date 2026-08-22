@@ -46,6 +46,10 @@ function bridge(name, value) {
 }
 bridge('navigator', window.navigator);
 bridge('location', window.location);
+// bare `history` — compare() calls history.pushState inside a try/catch, so
+// an unbridged global fails SILENTLY and the sidebar-active assertions test
+// nothing (found while writing section 9).
+bridge('history', window.history);
 const memStore = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
 bridge('localStorage', memStore);
 bridge('sessionStorage', memStore);
@@ -245,6 +249,123 @@ function partial(ts, extra) {
     await tick();
     ok(seen.length === 1 && seen[0].indexOf('/diff/snapshots?') === 0,
        '2 ticks still open the docs/84 workbench: ' + seen[0]);
+
+    // ---- 9. Compare lights the sidebar's Compare item (docs/132) -------
+    // compare() pushState's manually, so no htmx history event fires — it
+    // must call syncSidebarNavActive itself, and the matcher must map the
+    // /diff/* entry routes onto the /diff link.
+    document.body.insertAdjacentHTML('beforeend',
+        '<nav class="sidebar-nav"><a href="/qubits">Qubits</a>' +
+        '<a href="/diff">Compare</a></nav>');
+    window.history.pushState({}, '', '/qubits');
+    window.syncSidebarNavActive();
+    ok(document.querySelector('.sidebar-nav a[href="/qubits"]')
+        .classList.contains('active'), 'precondition: Qubits is active');
+    panel().innerHTML = ['20260821_010203_0001', '20260821_010204_0002',
+                         '20260821_010205_0003']
+        .map((t) => '<input type="checkbox" class="sv-check" value="' + t + '" checked>')
+        .join('');
+    SV.compare('CHIP_A');
+    await tick();
+    ok(document.querySelector('.sidebar-nav a[href="/diff"]')
+        .classList.contains('active'),
+       'after a 3-tick Compare press, the sidebar Compare item is active');
+    ok(!document.querySelector('.sidebar-nav a[href="/qubits"]')
+        .classList.contains('active'),
+       'and the previous page item is cleared');
+
+    // ---- 10. the changes-only filter mode rides every refetch ----------
+    ok(String(SV.setChanges).length > 0, 'setChanges is exported');
+    global.localStorage = window.localStorage;   // the memStore stub
+    var stored = {};
+    bridge('localStorage', { getItem: function (k) { return stored[k] || null; },
+                             setItem: function (k, v) { stored[k] = String(v); },
+                             removeItem: function (k) { delete stored[k]; } });
+    seen.length = 0;
+    SV.more(80);
+    await tick();
+    ok(seen.length === 1
+        && seen[0].indexOf('/state/versions?changes=only') === 0
+        && seen[0].indexOf('limit=80') > -1,
+       'paging carries the default changes=only mode: ' + seen[0]);
+    seen.length = 0;
+    stored['quam_versions_changes'] = 'all';
+    SV.more(40);
+    await tick();
+    ok(seen[0].indexOf('/state/versions?changes=all') === 0,
+       'a stored "all" choice rides the refetch: ' + seen[0]);
+
+    // ---- 10b. the live refresh preserves an expanded page (docs/132
+    // review: a bare refetch collapsed "Show more" back to 40 and silently
+    // dropped Compare ticks beyond the first page) --------------------
+    delete stored['quam_versions_changes'];
+    panel().hidden = false;
+    var many = [];
+    for (var i2 = 0; i2 < 50; i2++) {
+        many.push('<input type="checkbox" class="sv-check" value="20260821_0102'
+            + String(10 + i2) + '_0001">');
+    }
+    panel().innerHTML = many.join('');
+    seen.length = 0;
+    document.body.dispatchEvent(new window.CustomEvent('stateHistoryChanged',
+        { bubbles: true }));
+    await new Promise(function (r) { setTimeout(r, 1000); });   // 900ms debounce
+    ok(seen.length === 1 && seen[0].indexOf('limit=50') > -1,
+       'the stateHistoryChanged refresh keeps the expanded 50-row page: '
+       + seen[0]);
+
+    // ---- 11. per-value take (docs/132 #7) ------------------------------
+    window.__chipToken = 'CHIPTOK';
+    host().innerHTML =
+        '<div class="review-row" data-dot-path="qubits.q1.f_01"' +
+        ' data-value="6100000000.0" data-create="0">' +
+        '<button type="button" class="btn-xs sv-take"' +
+        ' onclick="StateVersions.take(this)">✓</button></div>';
+    resetCalls();
+    var takeBtn = host().querySelector('.sv-take');
+    var posted = [];
+    global.fetch = window.fetch = function (url, opts) {
+        posted.push({ url: url, opts: opts });
+        return new Promise(function (resolve) {
+            posted[posted.length - 1].resolve = resolve;
+        });
+    };
+    SV.take(takeBtn);
+    await tick();
+    ok(posted.length === 1 && posted[0].url === '/field/edit-batch',
+       'take posts to the one edit door: ' + (posted[0] && posted[0].url));
+    var body = JSON.parse(posted[0].opts.body);
+    ok(body.updates && body.updates.length === 1
+        && body.updates[0].dot_path === 'qubits.q1.f_01'
+        && body.updates[0].value === 6100000000.0
+        && body.updates[0].create === false,
+       'the POST body carries dot_path + the JSON value + create');
+    ok(body.expect_chip === 'CHIPTOK',
+       'expect_chip rides along (docs/120 — unlike the old reviewAccept)');
+    ok(takeBtn.disabled === true, 'the button locks while in flight');
+    // a FAILED response must unlock and NOT mark the row
+    posted[0].resolve({ json: function () {
+        return Promise.resolve({ ok: false, results: [{ error: 'nope' }] });
+    } });
+    await tick(); await tick();
+    ok(takeBtn.disabled === false, 'a failed take unlocks the button');
+    ok(!host().querySelector('.review-row').classList.contains('review-accepted'),
+       'a failed take does not mark the row accepted');
+    // a SUCCESSFUL take marks the row and swaps the tray via the choke point
+    var traySwaps = [];
+    window._swapPendingTray = function (html) { traySwaps.push(html); };
+    posted.length = 0;
+    SV.take(takeBtn);
+    await tick();
+    posted[0].resolve({ json: function () {
+        return Promise.resolve({ ok: true, tray_html: '<div id="pending-tray"></div>',
+                                 results: [{ dot_path: 'qubits.q1.f_01', applied: true }] });
+    } });
+    await tick(); await tick();
+    ok(host().querySelector('.review-row').classList.contains('review-accepted'),
+       'a successful take marks the row accepted');
+    ok(traySwaps.length === 1,
+       'the Review tray is swapped through the single choke point');
 
     process.exit(fails ? 1 : 0);
 })();

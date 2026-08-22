@@ -5768,6 +5768,11 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
     from { opacity: 0; transform: translateY(-20px) scale(0.95); }
     to   { opacity: 1; transform: translateY(0) scale(1); }
 }
+.new-run-popup-x { position: absolute; top: 0.5rem; right: 0.7rem;
+    background: none; border: none; width: auto; margin: 0; padding: 0.1rem 0.3rem;
+    font-size: 1.3rem; line-height: 1; color: var(--pico-muted-color);
+    cursor: pointer; }
+.new-run-popup-x:hover { color: var(--pico-color); }
 .new-run-popup-title {
     font-size: 1.3em; font-weight: 700; margin-bottom: 1rem;
     color: var(--pico-primary);
@@ -6329,6 +6334,8 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
 .trigger-pill-manual      { color: var(--trigger-manual); }
 .trigger-pill-auto        { color: var(--trigger-auto); }
 .trigger-pill-experiment  { color: var(--trigger-experiment); }
+/* restore = a deliberate user act; wears the manual hue (docs/132) */
+.trigger-pill-restore     { color: var(--trigger-manual); }
 
 .trigger-dot {
     display: inline-block; width: 8px; height: 8px; border-radius: 50%;
@@ -6338,6 +6345,7 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
 .trigger-dot-manual      { background: var(--trigger-manual); }
 .trigger-dot-auto        { background: var(--trigger-auto); }
 .trigger-dot-experiment  { background: var(--trigger-experiment); }
+.trigger-dot-restore     { background: var(--trigger-manual); }
 
 .param-history-empty {
     padding: 2rem; text-align: center;
@@ -10883,9 +10891,74 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
     padding: 0.2rem 0.25rem; border-radius: 0.25rem; }
 .state-version-row:hover { background: var(--pico-card-sectioning-background-color, transparent); }
 .state-version-row.sv-current { outline: 1px solid var(--pico-primary); }
-.sv-pick { display: flex; align-items: baseline; gap: 0.35rem; margin: 0;
+/* center, not baseline (customer, 2026-08-22): under baseline the
+   appearance-none checkbox sits on the DATE line's baseline — half a line
+   above the visual middle of the two-line date+id block. */
+.sv-pick { display: flex; align-items: center; gap: 0.35rem; margin: 0;
     cursor: pointer; flex: 0 0 auto; }
 .sv-pick input { margin: 0; }
+/* docs/132 — the three-kind chip (EXP / MANUAL / BACKUP) + the run chip. */
+.sv-kind { font-size: 0.62rem; font-weight: 700; letter-spacing: 0.05em;
+    padding: 0.05rem 0.3rem; border-radius: 0.6rem; border: 1px solid; }
+.sv-kind-exp { color: var(--trigger-experiment);
+    border-color: var(--trigger-experiment); }
+.sv-kind-manual { color: var(--trigger-manual);
+    border-color: var(--trigger-manual); }
+.sv-kind-backup { color: var(--pico-muted-color);
+    border-color: var(--pico-muted-border-color); }
+/* Pre-kind snapshots: the mapping is a likely reading, not a record — the
+   chip is muted and the tooltip says so. */
+.sv-kind-legacy { opacity: 0.6; border-style: dashed; }
+/* "After #run" — the clickable linkage chip (docs/132, the customer's
+   most-wanted). Two stacked lines: the id, then the truncated name; the
+   full name rides the title. Reads as a chip, not a button — it OPENS a
+   panel, it never writes. */
+.sv-run { display: inline-flex; flex-direction: column; align-items: flex-start;
+    padding: 0.1rem 0.45rem; border-radius: 0.45rem; line-height: 1.25;
+    border: 1px solid var(--trigger-experiment); text-decoration: none;
+    max-width: 11rem; }
+/* Hover text = the CARD BACKGROUND color, not primary-inverse: the dark
+   theme's --trigger-experiment is a pastel (#c084fc) and white-on-pastel
+   measured 2.6:1 (docs/132 review) — the card bg is dark there and light
+   in light theme, giving readable contrast on both grounds. */
+.sv-run:hover { background: var(--trigger-experiment);
+    color: var(--pico-card-background-color); }
+.sv-run:hover .sv-run-id, .sv-run:hover .sv-run-name {
+    color: var(--pico-card-background-color); }
+.sv-run-id { font-size: 0.68rem; font-weight: 700;
+    color: var(--trigger-experiment); white-space: nowrap; }
+.sv-run-name { font-size: 0.62rem; color: var(--pico-muted-color);
+    max-width: 10rem; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+/* The ✓ take button — one look on all three compare surfaces. Blue like
+   Diff (it stages, never writes live); hover-revealed inside N-way cells so
+   the table stays scannable. */
+.sv-take { color: var(--pico-primary); border: 1px solid var(--pico-primary);
+    background: transparent; border-radius: 0.35rem; cursor: pointer;
+    width: auto; margin: 0; padding: 0 0.35rem; }
+.sv-take:hover { background: var(--pico-primary);
+    color: var(--pico-primary-inverse); }
+.sv-take:disabled { opacity: 0.55; cursor: default; }
+.sv-take.sv-taken, .sv-take.sv-taken:hover {
+    background: transparent; color: var(--color-success-text);
+    border-color: var(--color-success-text); }
+/* opacity, not visibility: a visibility:hidden button leaves the tab
+   order entirely, making the N-way take mouse-only (docs/132 review; the
+   docs/64 doctrine keeps every action keyboard-reachable). */
+.vc-take { opacity: 0; font-size: 0.68rem; margin-left: 0.3rem; }
+td.vc-cell-takeable:hover .vc-take,
+td.vc-cell-takeable:focus-within .vc-take,
+.vc-take:focus { opacity: 1; }
+.review-row.review-accepted { opacity: 0.75; }
+.state-versions-foot { display: flex; gap: 0.6rem; flex-wrap: wrap;
+    font-size: 0.72rem; padding-top: 0.3rem; margin-top: 0.25rem;
+    border-top: 1px solid var(--pico-muted-border-color); }
+/* Row ordinal (#1 newest) — the anchor the quick-diff header's "#2 → #1"
+   points at. Fixed width so the checkboxes stay in a column to #99. */
+.sv-ord { font-family: var(--font-mono); font-size: 0.68rem; opacity: 0.55;
+    min-width: 2.2em; text-align: right; }
+.sv-quick-ord { font-family: var(--font-mono); font-size: 0.78rem;
+    color: var(--pico-primary); }
 .sv-when { display: flex; flex-direction: column; line-height: 1.25; }
 .sv-id { font-family: var(--font-mono); font-size: 0.68rem; opacity: 0.6; }
 .sv-meta { display: flex; align-items: baseline; gap: 0.35rem; flex-wrap: wrap;
@@ -10969,6 +11042,16 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 /* A STORED null is a value, distinct from the en-dash of an absent leaf. */
 .vc-null { font-style: italic; opacity: 0.65; }
 .vc-error { color: var(--color-error-text); font-size: 0.85rem; }
+/* The row's two buttons must answer hover in ONE language (customer,
+   2026-08-22): Pull to Live inverts to its error tint; Diff inverts to the
+   primary tint. Paired with the shipped base classes — a bare .sv-diff
+   loses to Pico's .outline:hover, which only shifts text color (the same
+   specificity trap documented at the overwrite-button block). */
+.btn-xs.outline.sv-diff,
+.sv-diff { color: var(--pico-primary); border-color: var(--pico-primary); }
+.btn-xs.outline.sv-diff:hover,
+.sv-diff:hover { background: var(--pico-primary);
+    color: var(--pico-primary-inverse); border-color: var(--pico-primary); }
 
 /* ── docs/120 item 8: the Auto-Sync popup ──────────────────────────────── */
 .auto-sync-wrap { position: relative; display: inline-block; }

@@ -1092,6 +1092,11 @@
     <div id="new-run-popup" class="new-run-popup" style="display:none">
         <div class="new-run-popup-backdrop" onclick="dismissNewRunPopup()"></div>
         <div class="new-run-popup-card">
+            {# docs/132 (heavy UX feedback): every quick-dismiss path — the
+               ✕ here, Esc, and the backdrop click — not just the Dismiss
+               button at the bottom. #}
+            <button type="button" class="new-run-popup-x" onclick="dismissNewRunPopup()"
+                    aria-label="Dismiss">&times;</button>
             <div class="new-run-popup-title">New Experiment Run</div>
             <div class="new-run-popup-info">
                 <div class="new-run-popup-id" id="new-run-popup-id"></div>

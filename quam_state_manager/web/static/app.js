@@ -183,7 +183,7 @@ var UI_CONFIG = {
     autoRefreshInterval: 60,   /* seconds between automatic workspace tree polls */
 
     /* The open Datasets table's delta poll (/datasets/changes-since) defaults
-     * to 15 s instead, so a run that just finished appears promptly (docs/104
+     * to 5 s instead, so a run that just finished appears promptly (docs/132;
      * #3; a tick is ~3.5 ms server-side per docs/103). Add a
      * `datasetPollInterval` key here (seconds) to pin that poll explicitly;
      * without one, an `autoRefreshInterval` tuned away from its shipped 60
@@ -2765,6 +2765,23 @@ window.applyEditsToLive = function () {
         fetch("/state/drift", { cache: "no-store" })
             .then(function (r) { return r.ok ? r.json() : null; })
             .then(function (d) {
+                // docs/132 — hist_seq rides this every-page poll: when the
+                // chip's snapshot store moved (a capture in another window,
+                // the background EXP ingest, a prune), announce it once. The
+                // topbar Versions chip and the open panel both listen for
+                // stateHistoryChanged; 0 means "unknown" and is never a
+                // signal. Dispatched on document.body because the chip's
+                // hx-trigger is `stateHistoryChanged from:body`.
+                if (d && d.hist_seq && d.hist_seq !== window._histSeqSeen) {
+                    var first = window._histSeqSeen === undefined;
+                    window._histSeqSeen = d.hist_seq;
+                    if (!first && document.body) {
+                        try {
+                            document.body.dispatchEvent(new CustomEvent(
+                                'stateHistoryChanged', { bubbles: true }));
+                        } catch (e) {}
+                    }
+                }
                 // (docs/87) The "✓ Live chip updated — N params pulled" toast lived
                 // here. It announced a silent auto-pull after the fact; the user-facing
                 // path now ASKS first through the live-diverged banner, which carries
@@ -7716,6 +7733,12 @@ window.clearDetailPanelSearch = function(btnEl) {
  * clears everything and re-derives the active set from the URL. */
 window.syncSidebarNavActive = function() {
     var path = window.location.pathname;
+    // The diff family is ONE destination in the sidebar: /diff/versions and
+    // /diff/snapshots are entry routes into the same Compare surface, and the
+    // server's own full render marks Compare for page="diff" — the client
+    // matcher must agree or a Versions-panel Compare press leaves the
+    // PREVIOUS page's item lit (customer, 2026-08-22).
+    if (path.indexOf('/diff/') === 0) path = '/diff';
     var view = null;
     try { view = new URLSearchParams(window.location.search).get("view"); } catch (e) {}
     var matches = [];
@@ -7741,6 +7764,14 @@ window.syncSidebarNavActive = function() {
         var twin = matches.some(function(o) { return o !== m && o.href === m.href && o.sub; });
         if (!(m.sub === false && twin)) m.a.classList.add("active");
     });
+    // Bring the active item into the sidebar's own scrollport (the sidebar
+    // is overflow-y:auto; a Compare press from the topbar can land on an item
+    // scrolled out of sight). block:'nearest' keeps this a sidebar-only
+    // scroll — it never moves the page.
+    var act = document.querySelector('.sidebar-nav a.active');
+    if (act && act.scrollIntoView) {
+        try { act.scrollIntoView({ block: 'nearest' }); } catch (e) {}
+    }
 };
 /* Workspace Refresh feedback (docs/126 r3, second round): the CSS-only
  * .htmx-request spin is invisible on a SMALL workspace — the rescan settles
@@ -12581,6 +12612,25 @@ document.addEventListener('htmx:afterSwap', function(evt) {
         if (popup) popup.style.display = 'none';
     };
 
+    // docs/132 (heavy UX feedback): Esc dismisses too — the backdrop click
+    // and the new ✕ already do. Bound on document (app.js runs from <head>);
+    // stopPropagation so the modal beneath (if any) doesn't also close on
+    // the same press.
+    document.addEventListener('keydown', function (e) {
+        if (e.key !== 'Escape') return;
+        var popup = document.getElementById('new-run-popup');
+        if (!popup || popup.style.display === 'none') return;
+        // stopImmediatePropagation, not stopPropagation: trapFocus modals
+        // register their own CAPTURE listener on this same node, and
+        // stopPropagation does not suppress same-node listeners — one Esc
+        // was closing both the popup AND the modal beneath it (docs/132
+        // review). This handler registers at load, before any trap, so it
+        // runs first.
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        window.dismissNewRunPopup();
+    }, true);
+
     window.showNewRun = function() {
         window.dismissNewRunPopup();
         if (!_pendingRun) return;
@@ -16230,34 +16280,84 @@ window.StateVersions = (function () {
        must follow them. The tray swaps on every flush, so ride that (the
        docs/117 observation: every commit path ends in a tray swap), debounced;
        ticked rows survive the refresh exactly like more() preserves them. */
+    /* docs/132 — the changes-only filter mode. Server default is 'only'
+       (users don't care about unchanged copies); the choice persists per
+       browser and rides every refetch this module makes. */
+    function _changesMode() {
+        try { return localStorage.getItem('quam_versions_changes') || 'only'; }
+        catch (e) { return 'only'; }
+    }
+    function _versionsUrl(limit) {
+        var u = '/state/versions?changes=' + encodeURIComponent(_changesMode());
+        if (limit) u += '&limit=' + encodeURIComponent(limit);
+        return u;
+    }
+    /* One refetch used by paging, the filter toggle and both live-refresh
+       listeners — ticked rows always survive by value. */
+    function _refetch(limit) {
+        if (!window.htmx) return;
+        var keep = _checked();
+        htmx.ajax('GET', _versionsUrl(limit),
+                  { target: '#state-version-panel', swap: 'innerHTML' })
+            .then(function () {
+                keep.forEach(function (ts) {
+                    var el = document.querySelector(
+                        '#state-version-panel .sv-check[value="' + ts + '"]');
+                    if (el) el.checked = true;
+                });
+                pick();
+            });
+    }
+    function setChanges(mode) {
+        try { localStorage.setItem('quam_versions_changes', mode); } catch (e) {}
+        _refetch();
+    }
     var _svLiveTimer = null;
+    function _debouncedRefetch() {
+        clearTimeout(_svLiveTimer);
+        _svLiveTimer = setTimeout(function () {
+            var pp = panel();
+            if (!pp || pp.hidden) return;
+            // Preserve the expanded page: a bare refetch rendered the
+            // 40-row default, collapsing "Show more" and silently dropping
+            // Compare ticks beyond the first page the moment ANY other
+            // window captured a snapshot (docs/132 review).
+            var shown = pp.querySelectorAll('.sv-check').length;
+            _refetch(shown > 40 ? shown : undefined);
+        }, 900);
+    }
     // on document, not document.body: app.js runs from <head>, where body is
     // still null — and a throw here would take the whole IIFE (toggle incl.)
     // down with it. htmx events bubble to document anyway.
     document.addEventListener('htmx:afterSwap', function (evt) {
         var p = panel();
         if (!p || p.hidden) return;
-        if (!document.querySelector('.auto-apply-pill.auto-apply-on')) return;
         var t = evt.detail && evt.detail.target;
+        // The chip's own initial fill renders the server-default filter mode;
+        // if this browser chose 'all', reconcile once (data-changes carries
+        // the rendered mode, so this can never loop).
+        if (t && t.id === 'state-version-panel') {
+            var root = p.querySelector('.state-versions');
+            if (root && root.getAttribute('data-changes')
+                    && root.getAttribute('data-changes') !== _changesMode()) {
+                _refetch();
+            }
+            return;
+        }
+        if (!document.querySelector('.auto-apply-pill.auto-apply-on')) return;
         var isTray = t && (t.id === 'pending-tray'
             || (t.querySelector && t.querySelector('#pending-tray')));
         if (!isTray) return;
-        clearTimeout(_svLiveTimer);
-        _svLiveTimer = setTimeout(function () {
-            var pp = panel();
-            if (!pp || pp.hidden || !window.htmx) return;
-            var keep = _checked();
-            htmx.ajax('GET', '/state/versions',
-                      { target: '#state-version-panel', swap: 'innerHTML' })
-                .then(function () {
-                    keep.forEach(function (ts) {
-                        var el = document.querySelector(
-                            '#state-version-panel .sv-check[value="' + ts + '"]');
-                        if (el) el.checked = true;
-                    });
-                    pick();
-                });
-        }, 900);
+        _debouncedRefetch();
+    });
+    /* docs/132 — the every-page /state/drift poll dispatches
+       stateHistoryChanged when the chip's history dir moved (a capture in
+       ANOTHER window, the background EXP ingest, a prune). The topbar chip
+       already refetches on this event; the open panel follows too. */
+    document.addEventListener('stateHistoryChanged', function () {
+        var p = panel();
+        if (!p || p.hidden) return;
+        _debouncedRefetch();
     });
     function _checked() {
         return Array.prototype.slice
@@ -16270,18 +16370,7 @@ window.StateVersions = (function () {
        must not lose it just for scrolling further back. So the selection is
        carried across the swap and re-applied by value. */
     function more(limit) {
-        if (!window.htmx) return;
-        var keep = _checked();
-        htmx.ajax('GET', '/state/versions?limit=' + encodeURIComponent(limit),
-                  { target: '#state-version-panel', swap: 'innerHTML' })
-            .then(function () {
-                keep.forEach(function (ts) {
-                    var el = document.querySelector(
-                        '#state-version-panel .sv-check[value="' + ts + '"]');
-                    if (el) el.checked = true;
-                });
-                pick();
-            });
+        _refetch(limit);
     }
     /* The button says what the current selection will actually do, rather than
        being enabled-and-then-explaining afterwards. */
@@ -16324,6 +16413,10 @@ window.StateVersions = (function () {
         if (window.htmx) {
             htmx.ajax('GET', url, { target: '#table-pane', swap: 'innerHTML' });
             try { history.pushState({}, '', url); } catch (e) {}
+            // Manual pushState fires no htmx history event, so nothing else
+            // re-derives the sidebar's active item — call the canonical
+            // setter ourselves (customer, 2026-08-22: Compare didn't light).
+            if (window.syncSidebarNavActive) window.syncSidebarNavActive();
         } else {
             window.location.href = url;
         }
@@ -16379,8 +16472,62 @@ window.StateVersions = (function () {
                     + 'Could not compute the diff.</p>';
             });
     }
+    /* ── per-value take (docs/132, feedback #7) ─────────────────────────
+       The ✓ beside a value on ANY of the three compare surfaces (the
+       version-diff overlay, the N-way table, the workbench's gated rows)
+       stages that value into the WORKING copy through /field/edit-batch —
+       the same door the sync review's ✓ uses. Nothing here touches the
+       live chip: the edit lands in the Review tray, where Apply-to-live
+       stays the one gated write. Unlike reviewAccept, expect_chip rides
+       along (docs/120: two windows share one server context — a press must
+       name the chip it believes it is editing). */
+    function take(btn) {
+        var holder = btn.closest('[data-dot-path]');
+        if (!holder || btn.disabled) return;
+        var dot = holder.getAttribute('data-dot-path');
+        var raw = holder.getAttribute('data-value');
+        var val;
+        try { val = JSON.parse(raw); } catch (e) { val = raw; }
+        var create = holder.getAttribute('data-create') === '1';
+        btn.disabled = true;
+        fetch('/field/edit-batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                updates: [{ dot_path: dot, value: val, create: create }],
+                expect_chip: window.__chipToken || '' })
+        })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                var res = d && d.results && d.results[0];
+                if (d && d.ok && res && !res.error) {
+                    var row = btn.closest('.review-row, tr');
+                    if (row) row.classList.add('review-accepted');
+                    btn.textContent = '✓ staged';
+                    btn.classList.add('sv-taken');
+                    if (d.tray_html && window._swapPendingTray) {
+                        window._swapPendingTray(d.tray_html);
+                    }
+                } else {
+                    btn.disabled = false;
+                    var msg = (res && res.error) || (d && d.error)
+                        || 'Could not stage the value.';
+                    // window.showToast, called THROUGH window: the bare-call
+                    // guard trap (CLAUDE.md standing harness rule) — caught
+                    // by version_diff_selfcheck the day this was written.
+                    if (window.showToast) window.showToast(msg, 'error');
+                }
+            })
+            .catch(function () {
+                btn.disabled = false;
+                if (window.showToast) {
+                    window.showToast('Could not stage the value (network).', 'error');
+                }
+            });
+    }
     return { toggle: toggle, close: close, pick: pick, compare: compare,
-             more: more, diff: diff, closeDiff: closeDiff };
+             more: more, diff: diff, closeDiff: closeDiff,
+             setChanges: setChanges, take: take };
 })();
 
 /* ── the top bar's REAL height (docs/120 item 23) ─────────────────────────

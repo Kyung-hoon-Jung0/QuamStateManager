@@ -15,6 +15,7 @@
         <input type="checkbox" class="sh-cb" value="{{ s.timestamp }}"
                onchange="StateHistory.toggleSelect(this)" aria-label="Select for compare">
         <span class="sh-time">{{ s.timestamp | ts_local }}</span>
+        {% set _k = kind_for(s) %}<span class="sv-kind sv-kind-{{ _k[0] }}{% if _k[1] %} sv-kind-legacy{% endif %}" title="{% if _k[0] == 'exp' %}A run produced this state{% elif _k[0] == 'backup' %}Protective copy taken right before a write{% else %}A deliberate user change{% endif %}{% if _k[1] %} (recorded before kinds existed; likely reading){% endif %}">{{ {'exp': 'EXP', 'manual': 'MANUAL', 'backup': 'BACKUP'}[_k[0]] }}</span>
         <span class="history-trigger-badge history-trigger-{{ s.trigger }}">{{ s.trigger }}</span>
         {# Project lens (docs/63): which qualibrate project the chip was scoped
            to when this snapshot was captured. Display-only — never filters. #}

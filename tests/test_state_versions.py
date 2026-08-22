@@ -153,7 +153,10 @@ class TestVersionsPanel:
         body = client.get("/state/versions").get_data(as_text=True)
         assert 'class="sv-check"' in body        # the checkbox the user asked for
         assert "sv-time" in body                 # WHEN it was updated
-        assert "sv-trigger" in body              # what produced it
+        # docs/132: rows speak the user's vocabulary (EXP/MANUAL/BACKUP kind
+        # chip) instead of the raw capture trigger; the trigger lives in the
+        # chip's tooltip.
+        assert "sv-kind" in body                 # what produced it
         assert "before-cz" in body               # its label
 
     def test_the_current_version_is_marked(self, client):
@@ -385,19 +388,26 @@ class TestQuickDiff:
         src = (Path(quam_state_manager.__file__).parent / "web" / "static"
                / "app.js").read_text(encoding="utf-8")
         i = src.index("window.StateVersions")
-        block = src[i:i + 4000]
+        # 8000: the block grew the docs/132 filter/refresh helpers above the
+        # listener; the docstring's point (document, never document.body) is
+        # unchanged.
+        block = src[i:i + 8000]
         assert "document.addEventListener('htmx:afterSwap'" in block
         assert "document.body.addEventListener" not in block
         assert "auto-apply-on" in block        # armed sessions only
-        assert "'/state/versions'" in block    # what it refetches
+        assert "'/state/versions?changes='" in block   # what it refetches
 
 
 def _app_js_stateversions_block() -> str:
+    """The WHOLE StateVersions IIFE — bounded by its own terminator, not a
+    char count (a fixed slice silently truncated as the module grew and the
+    exports fell outside the window)."""
     import quam_state_manager
     src = (Path(quam_state_manager.__file__).parent / "web" / "static"
            / "app.js").read_text(encoding="utf-8")
     i = src.index("window.StateVersions")
-    return src[i:i + 14000]
+    j = src.index("})();", i) + 5
+    return src[i:j]
 
 
 class TestVersionDiff:
@@ -873,3 +883,340 @@ class TestCompactRows:
         i = css.index(".sv-q-path {")
         block = css[i:css.index("}", i)]
         assert "min-width" in block
+
+
+def _hm_of(client):
+    return client.application.config["history_manager"]
+
+
+def _panel_ts_list(client, changes="all"):
+    body = client.get(f"/state/versions?changes={changes}").get_data(as_text=True)
+    return re.findall(r'sv-check" value="(\d{8}_\d{6}\S*?)"', body), body
+
+
+class TestKindChips:
+    """docs/132: rows wear the user's vocabulary — EXP / MANUAL / BACKUP —
+    with the raw trigger + a legacy note in the tooltip."""
+
+    def test_a_bookmark_wears_manual(self, client):
+        client.post("/state/archive", data={"tag": "t"})
+        body = client.get("/state/versions").get_data(as_text=True)
+        assert "sv-kind-manual" in body and ">MANUAL<" in body
+        assert "recorded trigger: manual" in body
+
+    def test_a_pre_kind_auto_row_reads_backup_and_says_legacy(
+            self, client, tmp_path):
+        """Old snapshots predate `kind`. The mapping (auto → BACKUP) is the
+        statistically honest reading, and the chip SAYS it is a reading."""
+        client.post("/state/archive", data={"tag": "t"})
+        hm = _hm_of(client)
+        path = tmp_path / "quam_state"
+        snap = hm.list_snapshots(path)[0]
+        meta_p = hm._history_dir(path) / snap.timestamp / "meta.json"
+        data = json.loads(meta_p.read_text(encoding="utf-8"))
+        data["trigger"] = "auto"
+        data.pop("kind", None)
+        meta_p.write_text(json.dumps(data), encoding="utf-8")
+        hm.clear_cache()
+        body = client.get("/state/versions").get_data(as_text=True)
+        assert "sv-kind-backup" in body and ">BACKUP<" in body
+        assert "sv-kind-legacy" in body
+        assert "recorded before kinds existed" in body
+
+
+class TestExpRow:
+    """docs/132 (the customer's most-wanted): the version row NAMES the run
+    that produced it — 'After #id' (qualibrate saves state post-fit), full
+    experiment name on hover, click opens the run's data panel."""
+
+    def _ingest(self, client, tmp_path, run_id=42, name="qubit_spectroscopy"):
+        from types import SimpleNamespace
+        run = tmp_path / "ws" / "2026-12-01" / f"#{run_id}_{name}_120000"
+        qs = run / "quam_state"
+        qs.mkdir(parents=True)
+        live = tmp_path / "quam_state"
+        doc = json.loads((live / "state.json").read_text(encoding="utf-8"))
+        doc["qubits"]["q1"]["f_01"] = 6.777e9
+        (qs / "state.json").write_text(json.dumps(doc), encoding="utf-8")
+        (qs / "wiring.json").write_text(
+            (live / "wiring.json").read_text(encoding="utf-8"), encoding="utf-8")
+        entry = SimpleNamespace(
+            quam_state_path=qs, run_id=run_id, experiment_name=name,
+            folder_path=run, date_str="2026-12-01",
+            timestamp="2026-12-01T12:00:00")
+        return _hm_of(client).ingest_run(live, entry)
+
+    def test_the_row_carries_the_clickable_after_chip(self, client, tmp_path):
+        assert self._ingest(client, tmp_path)["ingested"] == 1
+        body = client.get("/state/versions").get_data(as_text=True)
+        assert "sv-kind-exp" in body and ">EXP<" in body
+        assert "After #42" in body
+        assert 'class="sv-run"' in body
+        # full name on hover; truncated name under the id
+        assert "qubit_spectroscopy — open this run" in body
+        assert '<span class="sv-run-name">qubit_spectroscopy</span>' in body
+        # no dataset root registered for tmp ws → the bare-run-id fallback
+        assert 'hx-get="/dataset/by-run/42"' in body
+        assert 'hx-target="#inspector-pane"' in body
+
+    def test_no_run_no_chip_never_a_guess(self, client):
+        client.post("/state/archive", data={"tag": "t"})
+        body = client.get("/state/versions").get_data(as_text=True)
+        assert "sv-run" not in body and "After #" not in body
+
+
+class TestChangesOnlyFilter:
+    """docs/132 #4: users don't care about unchanged copies — hidden by
+    default, counted honestly, one click back."""
+
+    def _mint(self, client, tmp_path):
+        """v1(first) · v2(real change) · v3(identical copy of v2) · v4(real
+        change). Only v3 is hideable: v1 is the chip's original state
+        (zeros mean not-computed — exempt per the docs/132 review), v4 is
+        current, v2 has a real diff."""
+        live = tmp_path / "quam_state" / "state.json"
+
+        def bump(f):
+            doc = json.loads(live.read_text(encoding="utf-8"))
+            doc["qubits"]["q1"]["f_01"] = f
+            live.write_text(json.dumps(doc), encoding="utf-8")
+        client.post("/api/history/snapshot")     # v1 — first ever
+        bump(6.3e9)
+        client.post("/api/history/snapshot")     # v2 — real change
+        client.post("/api/history/snapshot")     # v3 — identical copy
+        bump(6.5e9)
+        client.post("/api/history/snapshot")     # v4 — current
+
+    def test_default_hides_zero_diff_copies_and_says_so(
+            self, client, tmp_path):
+        self._mint(client, tmp_path)
+        ts_all, _ = _panel_ts_list(client, changes="all")
+        assert len(ts_all) == 4
+        ts_only, body = _panel_ts_list(client, changes="only")
+        assert len(ts_only) == 3
+        assert "1 unchanged copy hidden" in body
+        assert "show all" in body
+
+    def test_the_first_snapshot_is_never_called_an_unchanged_copy(
+            self, client, tmp_path):
+        """Its zeros mean NOTHING-EARLIER, not no-change (docs/132 review:
+        the filter was hiding the chip's original state)."""
+        self._mint(client, tmp_path)
+        ts_only, _ = _panel_ts_list(client, changes="only")
+        ts_all, _ = _panel_ts_list(client, changes="all")
+        assert sorted(ts_all)[0] in ts_only      # the oldest stays visible
+
+    def test_the_default_mode_is_only(self, client, tmp_path):
+        self._mint(client, tmp_path)
+        body = client.get("/state/versions").get_data(as_text=True)
+        assert body.count('class="sv-check"') == 3
+        assert 'data-changes="only"' in body
+
+    def test_pinned_and_labeled_rows_are_exempt(self, client):
+        """A deliberate bookmark of identical content is still a bookmark."""
+        client.post("/state/archive", data={"tag": "a"})
+        client.post("/state/archive", data={"tag": "b"})   # same content, pinned
+        body = client.get("/state/versions").get_data(as_text=True)
+        assert body.count('class="sv-check"') == 2
+        assert "unchanged" not in body
+
+    def test_the_kept_note_states_the_true_total(self, client):
+        client.post("/api/history/snapshot")
+        client.post("/api/history/snapshot")
+        body = client.get("/state/versions").get_data(as_text=True)
+        assert "All 2 versions are kept" in body
+        assert "State History" in body
+
+
+class TestPanelFollowsIngest:
+    """docs/132: the every-page drift poll carries hist_seq; the JS turns a
+    movement into stateHistoryChanged, which the chip AND the open panel
+    consume."""
+
+    def test_drift_json_carries_hist_seq(self, client):
+        client.post("/state/archive", data={"tag": "t"})
+        d = client.get("/state/drift").get_json()
+        assert isinstance(d.get("hist_seq"), int)
+        assert d["hist_seq"] > 0
+
+    def test_hist_seq_moves_after_a_capture(self, client):
+        d1 = client.get("/state/drift").get_json()
+        client.post("/state/archive", data={"tag": "t"})
+        d2 = client.get("/state/drift").get_json()
+        assert d2["hist_seq"] != d1.get("hist_seq")
+
+    def test_the_js_wiring_exists(self):
+        from pathlib import Path
+        import quam_state_manager
+        src = (Path(quam_state_manager.__file__).parent / "web" / "static"
+               / "app.js").read_text(encoding="utf-8")
+        # the drift handler dispatches...
+        assert "hist_seq" in src
+        assert "stateHistoryChanged" in src
+        # ...and the panel listens (inside the StateVersions block)
+        block = _app_js_stateversions_block()
+        assert "document.addEventListener('stateHistoryChanged'" in block
+
+
+class TestPerValueTake:
+    """docs/132 #7: ✓ stages ONE value from a version into the working copy
+    through /field/edit-batch — the live chip is untouched (covenant)."""
+
+    def test_modified_rows_offer_take_with_the_version_value(
+            self, client, tmp_path):
+        client.post("/state/archive", data={"tag": "v"})
+        ts, _ = _panel_ts_list(client)
+        client.post("/field/edit",
+                    data={"dot_path": "qubits.q1.f_01", "value": "6.2e9"})
+        d = client.get(f"/state/versions/{ts[0]}/diff").get_data(as_text=True)
+        assert 'class="btn-xs sv-take"' in d
+        assert 'data-dot-path="qubits.q1.f_01"' in d
+        # SINGLE-quoted attr (docs/132 review critical: Flask tojson does
+        # not escape double quotes — a string value's own JSON quotes were
+        # terminating the attribute and staging "")
+        assert "data-value='6100000000.0'" in d       # the VERSION's value
+        assert 'data-value="' not in d
+        assert 'data-create="0"' in d
+        assert "StateVersions.take(this)" in d
+
+    def test_added_rows_offer_no_take(self, client, tmp_path):
+        """A now-only leaf: taking the version would mean DELETING, which
+        this door cannot do — no button, an honest dash instead."""
+        client.post("/state/archive", data={"tag": "v"})
+        ts, _ = _panel_ts_list(client)
+        r = client.post("/field/edit-batch", json={
+            "updates": [{"dot_path": "qubits.q1.brand_new", "value": 7,
+                         "create": True}]})
+        assert r.status_code == 200
+        d = client.get(f"/state/versions/{ts[0]}/diff").get_data(as_text=True)
+        row = d.split("diff-row-added")[1][:900]
+        assert "sv-take-na" in row
+        assert "StateVersions.take(this)" not in row
+
+    def test_taking_stages_into_working_never_live(self, client, tmp_path):
+        client.post("/state/archive", data={"tag": "v"})
+        ts, _ = _panel_ts_list(client)
+        client.post("/field/edit",
+                    data={"dot_path": "qubits.q1.f_01", "value": "6.2e9"})
+        live_before = (tmp_path / "quam_state" / "state.json").read_text(
+            encoding="utf-8")
+        # what the ✓ posts (see StateVersions.take)
+        r = client.post("/field/edit-batch", json={
+            "updates": [{"dot_path": "qubits.q1.f_01", "value": 6.1e9,
+                         "create": False}]})
+        assert r.status_code == 200 and r.get_json()["ok"]
+        # the working copy now matches the version on that leaf...
+        d = client.get(f"/state/versions/{ts[0]}/diff").get_data(as_text=True)
+        assert "qubits.q1.f_01" not in d
+        # ...and the LIVE chip was not touched (covenant: only Apply writes)
+        live_after = (tmp_path / "quam_state" / "state.json").read_text(
+            encoding="utf-8")
+        assert live_after == live_before
+
+
+class TestWorkbenchTake:
+    """docs/132 #7 on the Full view: gated to exactly-one-working-side and
+    chip-state tabs; the button names which side it takes."""
+
+    def _two(self, client, tmp_path):
+        client.post("/state/archive", data={"tag": "v"})
+        ts, body = _panel_ts_list(client)
+        m = re.search(r"StateVersions\.compare\('([^']+)'\)", body)
+        chip_key = m.group(1)
+        client.post("/field/edit",
+                    data={"dot_path": "qubits.q1.f_01", "value": "6.2e9"})
+        return ts[0], chip_key, str(tmp_path / "quam_state")
+
+    def test_hist_vs_working_offers_use_a(self, client, tmp_path):
+        ts, chip, path = self._two(client, tmp_path)
+        body = client.get(
+            f"/diff?a=hist:{chip}/{ts}&b=working:{path}&view=list"
+        ).get_data(as_text=True)
+        assert "Use A" in body
+        assert 'data-dot-path="qubits.q1.f_01"' in body
+
+    def test_working_vs_hist_offers_use_b(self, client, tmp_path):
+        ts, chip, path = self._two(client, tmp_path)
+        body = client.get(
+            f"/diff?a=working:{path}&b=hist:{chip}/{ts}&view=list"
+        ).get_data(as_text=True)
+        assert "Use B" in body
+
+    def test_hist_vs_hist_offers_nothing(self, client, tmp_path):
+        client.post("/state/archive", data={"tag": "a"})
+        client.post("/field/edit",
+                    data={"dot_path": "qubits.q1.f_01", "value": "6.2e9"})
+        client.post("/state/apply-to-live")
+        ts, body = _panel_ts_list(client)
+        m = re.search(r"StateVersions\.compare\('([^']+)'\)", body)
+        chip = m.group(1)
+        page = client.get(
+            f"/diff?a=hist:{chip}/{sorted(ts)[0]}&b=hist:{chip}/{sorted(ts)[1]}&view=list"
+        ).get_data(as_text=True)
+        assert "Use A" not in page and "Use B" not in page
+
+
+class TestTakeValueFidelity:
+    """docs/132 heavy-review critical: double-quoted tojson attributes let a
+    string value's own JSON quotes terminate the attribute — every string
+    take silently staged "". Single-quoted attrs + the NaN gate, pinned."""
+
+    def test_a_string_value_survives_the_attribute(self, client, tmp_path):
+        live = tmp_path / "quam_state" / "state.json"
+        doc = json.loads(live.read_text(encoding="utf-8"))
+        doc["qubits"]["q1"]["flux_point"] = "joint"
+        live.write_text(json.dumps(doc), encoding="utf-8")
+        client.post("/state/sync", data={"mode": "discard"})
+        client.post("/state/archive", data={"tag": "v"})
+        ts, _ = _panel_ts_list(client)
+        r0 = client.post("/field/edit-batch", json={
+            "updates": [{"dot_path": "qubits.q1.flux_point",
+                         "value": "independent"}]})
+        assert r0.status_code == 200 and r0.get_json()["ok"], r0.get_json()
+        d = client.get(f"/state/versions/{ts[0]}/diff").get_data(as_text=True)
+        # the STRING value rides the attr as real JSON, quotes intact
+        assert "data-value='\"joint\"'" in d
+        # ...and what the ✓ posts round-trips to the working copy verbatim
+        r = client.post("/field/edit-batch", json={
+            "updates": [{"dot_path": "qubits.q1.flux_point",
+                         "value": "joint", "create": False}]})
+        assert r.status_code == 200 and r.get_json()["ok"]
+        d2 = client.get(f"/state/versions/{ts[0]}/diff").get_data(as_text=True)
+        assert "flux_point" not in d2      # matches the version again
+
+    def test_nan_rows_offer_no_take(self, client, tmp_path):
+        """json.dumps emits bare NaN (not JSON) — the review found an
+        enabled ✓ that could never succeed. Gated to an honest dash."""
+        live = tmp_path / "quam_state" / "state.json"
+        doc = json.loads(live.read_text(encoding="utf-8"))
+        doc["qubits"]["q1"]["T2"] = float("nan")
+        live.write_text(json.dumps(doc), encoding="utf-8")
+        client.post("/state/sync", data={"mode": "discard"})
+        client.post("/state/archive", data={"tag": "v"})
+        ts, _ = _panel_ts_list(client)
+        client.post("/field/edit-batch", json={
+            "updates": [{"dot_path": "qubits.q1.T2", "value": 1.5e-5}]})
+        d = client.get(f"/state/versions/{ts[0]}/diff").get_data(as_text=True)
+        assert 'data-dot-path="qubits.q1.T2"' in d
+        assert "Non-finite value" in d          # the honest dash's title
+        # the only diff row is the NaN one — no take payload, no ✓ anywhere
+        assert "data-value" not in d
+        assert 'class="btn-xs sv-take"' not in d
+
+
+class TestWorkbenchTakeActiveGate:
+    """docs/132 heavy-review: a pushed /diff URL survives a chip switch and
+    working: resolves for EVERY loaded chip — the take must render only when
+    the working side IS the open chip (the write always lands there)."""
+
+    def test_route_computes_the_gate_and_template_consumes_it(self):
+        from quam_state_manager.web import routes as R
+        src = Path(R.__file__).read_text(encoding="utf-8")
+        i = src.index("take_active_ok = False")
+        body = src[i:i + 900]
+        assert "_active_path()" in body
+        assert 'getattr(src, "origin", "") == "working"' in body
+        import quam_state_manager
+        tpl = (Path(quam_state_manager.__file__).parent / "web" / "templates"
+               / "_diff_workbench.html").read_text(encoding="utf-8")
+        assert "take_active_ok and tab in ('state', 'wiring')" in tpl

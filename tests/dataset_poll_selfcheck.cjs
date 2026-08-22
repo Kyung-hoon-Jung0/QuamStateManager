@@ -362,16 +362,16 @@ function jsonResponse(body, status) {
     // ------------------------------------------------------------------
     {
         const a = boot(() => jsonResponse({ updated: [], vanished: [], now: 2000 }));
-        ok(a.intervals.indexOf(15000) !== -1,
-           `default dataset poll interval is 15s (got ${a.intervals})`);
+        ok(a.intervals.indexOf(5000) !== -1,
+           `default dataset poll interval is 5s (docs/132) (got ${a.intervals})`);
         const b = boot(() => jsonResponse({ updated: [], vanished: [], now: 2000 }),
                        { autoRefreshInterval: 120 });
         ok(b.intervals.indexOf(120000) !== -1,
-           'a lab-tuned autoRefreshInterval still wins over the 15s default');
+           'a lab-tuned autoRefreshInterval still wins over the 5s default');
         const c = boot(() => jsonResponse({ updated: [], vanished: [], now: 2000 }),
                        { autoRefreshInterval: 60 });
-        ok(c.intervals.indexOf(15000) !== -1,
-           'the shipped autoRefreshInterval=60 is not a choice — default 15s applies');
+        ok(c.intervals.indexOf(5000) !== -1,
+           'the shipped autoRefreshInterval=60 is not a choice — default 5s applies');
         const d = boot(() => jsonResponse({ updated: [], vanished: [], now: 2000 }),
                        { datasetPollInterval: 45, autoRefreshInterval: 120 });
         ok(d.intervals.indexOf(45000) !== -1,

@@ -397,6 +397,26 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # highlighted while both values were NaN.
     from quam_state_manager.core.differ import compare_equal as _cmp_equal
     app.jinja_env.globals["cmp_equal"] = _cmp_equal
+    # `kind_for` — the docs/132 EXP/MANUAL/BACKUP display mapping for
+    # SnapshotMeta rows (legacy snapshots included), shared by every
+    # history surface so no template invents a second reading.
+    from quam_state_manager.core.history import kind_for as _kind_for
+    app.jinja_env.globals["kind_for"] = _kind_for
+    # `json_attr_safe` — may this value ride a data-value JSON attribute for
+    # the per-value take? json.dumps emits bare NaN/Infinity (not JSON), so a
+    # non-finite float renders an unparseable attribute and a ✓ that can
+    # never succeed (docs/132 review) — gate the button instead.
+    import math as _math
+
+    def _json_attr_safe(v):
+        if isinstance(v, float):
+            return _math.isfinite(v)
+        if isinstance(v, (list, tuple)):
+            return all(_json_attr_safe(x) for x in v)
+        if isinstance(v, dict):
+            return all(_json_attr_safe(x) for x in v.values())
+        return True
+    app.jinja_env.globals["json_attr_safe"] = _json_attr_safe
     app.jinja_env.filters["value_delta"] = _value_delta.compute
     app.jinja_env.filters["delta_describe"] = _value_delta.describe
 
