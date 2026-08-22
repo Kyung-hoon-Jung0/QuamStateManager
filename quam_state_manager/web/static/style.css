@@ -10916,9 +10916,13 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
    panel, it never writes. */
 /* Tight (customer, 2026-08-22): the first cut's padding + 11rem max made
    the chip crowd the Diff / Pull buttons beside it. */
+/* Corner radius = the SAME token Diff/Pull inherit from Pico (customer,
+   2026-08-22 r3: "diff와 pull하고 sync를 맞추게") — synced by construction,
+   not by a copied number. */
 .sv-run { display: inline-flex; flex-direction: column; align-items: center;
     text-align: center;
-    padding: 0.05rem 0.3rem; border-radius: 0.45rem; line-height: 1.15;
+    padding: 0.05rem 0.3rem; line-height: 1.15;
+    border-radius: var(--pico-border-radius, 0.25rem);
     border: 1px solid var(--trigger-experiment); text-decoration: none;
     max-width: 8.5rem; flex: 0 1 auto; min-width: 0; }
 /* Hover text = the CARD BACKGROUND color, not primary-inverse: the dark

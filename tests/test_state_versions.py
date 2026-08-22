@@ -886,6 +886,16 @@ class TestCompactRows:
         block = css[i:css.index("}", i)]
         assert "margin: 0" in block
 
+    def test_the_chip_radius_is_the_buttons_token(self):
+        """docs/132 r3 (customer): the After-chip's corners must match Diff
+        and Pull — synced by using the SAME Pico token they inherit, never a
+        copied number (verified equal computed 5px in real Chrome)."""
+        css = self._css()
+        i = css.index(".sv-run {")
+        block = css[i:css.index("}", i)]
+        assert "var(--pico-border-radius" in block
+        assert "0.45rem" not in block
+
     def test_the_row_centers_its_children(self):
         """docs/132 r2: baseline alignment staggered the two-line After-chip
         against the one-line buttons — borders visually collided and the row
