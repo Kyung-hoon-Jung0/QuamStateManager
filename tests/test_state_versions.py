@@ -886,6 +886,19 @@ class TestCompactRows:
         block = css[i:css.index("}", i)]
         assert "margin: 0" in block
 
+    def test_the_take_button_matches_the_review_control_height(self):
+        """docs/132 r4 (customer): inside the version-diff overlay the ✓ /
+        '✓ staged' button sits at the SAME height as the Δ difference box
+        beside it — via the row's existing --review-ctl-h token, never a
+        copied pixel value (measured 24 vs 25px, centers 0.0px apart, in
+        real Chrome)."""
+        css = self._css()
+        i = css.index(".state-review .sv-take {")
+        block = css[i:css.index("}", i)]
+        assert "var(--review-ctl-h)" in block
+        assert "font-size: 15px" in block         # the bigger glyph
+        assert "padding: 0 10px" in block         # the wider sides
+
     def test_the_chip_radius_is_the_buttons_token(self):
         """docs/132 r3 (customer): the After-chip's corners must match Diff
         and Pull — synced by using the SAME Pico token they inherit, never a

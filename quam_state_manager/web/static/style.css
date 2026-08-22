@@ -10940,10 +10940,22 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
     white-space: nowrap; }
 /* The ✓ take button — one look on all three compare surfaces. Blue like
    Diff (it stages, never writes live); hover-revealed inside N-way cells so
-   the table stays scannable. */
+   the table stays scannable. Sized up per the customer (2026-08-22 r4):
+   bigger glyph, wider sides. */
 .sv-take { color: var(--pico-primary); border: 1px solid var(--pico-primary);
     background: transparent; border-radius: 0.35rem; cursor: pointer;
-    width: auto; margin: 0; padding: 0 0.35rem; }
+    width: auto; margin: 0; padding: 0 0.55rem; font-size: 0.85rem;
+    line-height: 1.4; }
+/* Inside the version-diff overlay the row already carries a control-height
+   token (--review-ctl-h, the sync modal's input/✓ height) and the Δ chip
+   renders as a 14px boxed pill — the take button matches BOTH by using the
+   same token, so button, "✓ staged" state and the difference box sit at one
+   height (customer, 2026-08-22 r4). */
+.state-review .sv-take {
+    height: var(--review-ctl-h); box-sizing: border-box;
+    display: inline-flex; align-items: center;
+    padding: 0 10px; font-size: 15px; line-height: 1;
+    border-radius: 7px; }
 .sv-take:hover { background: var(--pico-primary);
     color: var(--pico-primary-inverse); }
 .sv-take:disabled { opacity: 0.55; cursor: default; }
@@ -10953,7 +10965,8 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 /* opacity, not visibility: a visibility:hidden button leaves the tab
    order entirely, making the N-way take mouse-only (docs/132 review; the
    docs/64 doctrine keeps every action keyboard-reachable). */
-.vc-take { opacity: 0; font-size: 0.68rem; margin-left: 0.3rem; }
+.vc-take { opacity: 0; font-size: 0.8rem; margin-left: 0.3rem;
+    padding: 0 0.45rem; }
 td.vc-cell-takeable:hover .vc-take,
 td.vc-cell-takeable:focus-within .vc-take,
 .vc-take:focus { opacity: 1; }
