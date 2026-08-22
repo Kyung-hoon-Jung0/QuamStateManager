@@ -737,6 +737,39 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
     controllers = [{"con": con, "fems": [{"slot": s, "fem": ft} for s, ft in sorted(sl)]}
                    for con, sl in sorted(fems.items())]
 
+    # QDAC-II bias inversion (docs/134 review [11]): a docs/119 build marks a
+    # QDAC-biased qubit by its `z` component's class (QdacBiasLine from the
+    # customer's quam_config.qdac_components) and attaches a top-level `qdac`
+    # instrument entry. Reconstruct used to drop the whole story — the wizard
+    # then showed every qubit as not-QDAC and a rebuild silently lost the bias
+    # (before docs/134 it instead invented OPX z lines and failed allocation
+    # loudly, which at least blocked the flow).
+    state_qubits = state.get("qubits") if isinstance(state.get("qubits"), dict) else {}
+    qdac_qubits: dict = {}
+    for q in qubits:
+        qd = state_qubits.get(q)
+        z = qd.get("z") if isinstance(qd, dict) else None
+        cls = str(z.get("__class__") or "") if isinstance(z, dict) else ""
+        if "qdacbias" in cls.replace("_", "").lower():
+            qdac_qubits[q] = {k: z[k] for k in (
+                "channel", "dc_offset", "trigger_port", "dwell", "slew_rate",
+                "output_range", "output_filter", "settle_time") if k in z}
+    qdac_spec = None
+    if qdac_qubits:
+        inst = state.get("qdac") if isinstance(state.get("qdac"), dict) else {}
+        qdac_spec = {
+            "communication_type": inst.get("communication_type") or "Ethernet",
+            "ip_address": inst.get("ip_address") or "",
+            "port": inst.get("port", 5025),
+            "usb_device": inst.get("usb_device"),
+            "lib": inst.get("lib", "@py"),
+            "qubits": qdac_qubits,
+        }
+        notes.append(
+            f"{len(qdac_qubits)} QDAC-biased qubit(s) carried into the spec "
+            f"({', '.join(sorted(qdac_qubits))}) — the rebuild needs an env "
+            "with quam_config.qdac_components.")
+
     spec = {
         "network": {"host": net.get("host"), "cluster_name": net.get("cluster_name"),
                     "port": net.get("port")},
@@ -748,6 +781,8 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
         "pair_gate": pair_gate,
         "populate": populate,   # pre-fills the wizard; merge still owns fidelity
     }
+    if qdac_spec:
+        spec["qdac"] = qdac_spec
     # Shared-port detection (docs/54): when EVERY CR line rides its control's
     # xy port, the chip is the customer's dual-upconverter layout — record the
     # mode so a rebuild keeps the port plan (mixed layouts stay unset: the

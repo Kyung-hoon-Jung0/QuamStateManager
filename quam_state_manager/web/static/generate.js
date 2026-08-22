@@ -402,12 +402,17 @@
   function loadEnvs() {
     var list = document.getElementById("gen-env-list");
     if (!list) return;
+    _envNoneUsable = false;   // a rescan re-opens the question
     fetch("/generate/envs")
       .then(function (r) { return r.json(); })
       .then(renderEnvList)
       .catch(function () {
         list.innerHTML =
           '<p class="muted">Could not scan conda environments.</p>';
+        // The Wiring step's "selected automatically…" promise can no longer
+        // be kept — tell it (docs/134).
+        _envNoneUsable = true;
+        if (state.step === 5) renderWiringDiagram();
       });
   }
 
@@ -420,6 +425,10 @@
     list.innerHTML = "";
     if (!envs.length) {
       if (empty) empty.hidden = false;
+      // Zero envs discovered — the Wiring step's "selected automatically…"
+      // promise can never be kept (docs/134 review [15]).
+      _envNoneUsable = true;
+      if (state.step === 5) renderWiringDiagram();
       return;
     }
     if (empty) empty.hidden = true;
@@ -453,6 +462,7 @@
     });
 
     if (data.selected) {
+      _envPersisted = true;   // the server already knows this selection
       applySelection(data.selected);
     } else if (state.env) {
       // Restored draft — re-highlight the env the server didn't report.
@@ -463,14 +473,48 @@
   function checkAnyUsable() {
     var list = document.getElementById("gen-env-list");
     if (!list || !list.querySelector(".gen-env-row")) return;
-    if (!list.querySelector('.gen-env-status[data-state="ok"]')) {
+    var okStatus = list.querySelector('.gen-env-status[data-state="ok"]');
+    if (!okStatus) {
       showMessage(
         "None of these environments has the QM stack (qualang_tools, " +
         "quam_builder, quam). Install it in one, then reload this page.",
         "warn"
       );
+      // Stop the Wiring step promising an automatic selection that every
+      // probe just ruled out (docs/134).
+      _envNoneUsable = true;
+      if (state.step === 5) renderWiringDiagram();
+      return;
+    }
+    // docs/134: config generation is auto-by-default — when probing finishes
+    // and nothing is selected yet, pick the first usable env (belt-and-braces
+    // behind probeEnv's first-usable hook, which normally fires first).
+    // CLIENT-SIDE only — see the probeEnv hook for why no POST happens here.
+    if (!state.env && !_envAutoPicked && !_envUserClaimed) {
+      var row = okStatus.closest(".gen-env-row");
+      if (row && row.dataset.python) {
+        _envAutoPicked = true;
+        applySelection(row.dataset.python);
+      }
     }
   }
+
+  // docs/134: one-shot latch so the first-usable auto-select below fires once
+  // per page mount, not once per probe. checkAnyUsable() remains the fallback
+  // (it re-checks state.env after ALL probes, covering a failed select POST).
+  var _envAutoPicked = false;
+  // True once probing has RULED OUT every discovered env (or the scan itself
+  // failed) — the Wiring step's waiting placeholder switches from "selected
+  // automatically…" (a promise) to the honest install instruction.
+  var _envNoneUsable = false;
+  // A user clicked/typed an env — auto-pick stands down permanently for the
+  // mount, even while the click's POST is still in flight (review [1]).
+  var _envUserClaimed = false;
+  // Last-issued user selection wins the UI when responses cross.
+  var _envSelectSeq = 0;
+  // The server knows the current selection (data.selected or a user click).
+  // An auto-picked env is client-side only until a build persists it.
+  var _envPersisted = false;
 
   function probeEnv(python, statusEl, done) {
     fetch("/generate/probe?python=" + encodeURIComponent(python))
@@ -483,6 +527,20 @@
             "✓ qualang_tools " + (v.qualang_tools || "?") +
             " · quam_builder " + (v.quam_builder || "?") +
             " · quam " + (v.quam || "?");
+          // Auto-select the FIRST env that probes usable when none is chosen
+          // — don't wait for the slowest env on the machine to finish probing
+          // (the Wiring step's auto-allocation is waiting on this).
+          // CLIENT-SIDE only (review [7]): /generate/select-env persists a
+          // machine-wide selection, clears the pulse-catalog env overlay and
+          // rebinds the open chip's type policy — side effects a mere page
+          // view must not trigger. The allocate dry run carries the env
+          // explicitly; a build persists it at that explicit act (runBuild);
+          // a user click persists exactly as before. _envUserClaimed: a click
+          // in flight owns the choice — never hop the radio off it.
+          if (!state.env && !_envAutoPicked && !_envUserClaimed) {
+            _envAutoPicked = true;
+            applySelection(python);
+          }
         } else if (info && info.missing && info.missing.length) {
           statusEl.dataset.state = "bad";
           statusEl.textContent = "✗ missing: " + info.missing.join(", ");
@@ -501,14 +559,27 @@
 
   function applySelection(python) {
     state.env = python;
+    _allocAutoBlocked = false;   // a new env deserves a fresh auto attempt
     var list = document.getElementById("gen-env-list");
-    if (!list) return;
-    list.querySelectorAll(".gen-env-row").forEach(function (row) {
-      row.classList.toggle("selected", row.dataset.python === python);
-    });
+    if (list) {
+      list.querySelectorAll(".gen-env-row").forEach(function (row) {
+        row.classList.toggle("selected", row.dataset.python === python);
+      });
+    }
+    // The user may already be LOOKING at the Wiring step (the /instrument
+    // "Modify wiring…" deep link lands there before env probing finishes) —
+    // the moment an env exists, deliver the diagram it was waiting for.
+    if (state.step === 5) maybeAutoAllocate();
   }
 
   function selectEnv(python) {
+    // A USER selection (row click / custom path). Claim it synchronously so
+    // no probe-callback auto-pick can hop the radio off it while the POST is
+    // in flight (review [1]); the sequence token makes the LAST click win
+    // even when two responses cross.
+    _envUserClaimed = true;
+    _envAutoPicked = true;
+    var mySeq = ++_envSelectSeq;
     fetch("/generate/select-env", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -516,7 +587,9 @@
     })
       .then(function (r) { return r.json(); })
       .then(function (res) {
+        if (mySeq !== _envSelectSeq) return;   // a later click superseded this one
         if (res && res.ok) {
+          _envPersisted = true;
           applySelection(python);
           showMessage(null);
         } else {
@@ -524,6 +597,7 @@
         }
       })
       .catch(function () {
+        if (mySeq !== _envSelectSeq) return;
         showMessage("Could not select environment.", "error");
       });
   }
@@ -985,6 +1059,26 @@
         nqd[map[qid] || qid] = sp.qdac.qubits[qid];
       });
       sp.qdac.qubits = nqd;
+    }
+    // The frozen regen line inventory follows renames too (docs/134 review) —
+    // else a renamed element reads as wizard-added and re-derives lines the
+    // source chip does not have. Pair keys are space-joined sorted qubit ids
+    // (names can't contain spaces), so they decompose cleanly.
+    var rli = state.regenLineInventory;
+    if (rli) {
+      var remapKey = function (k) {
+        if (k.indexOf(" ") < 0) return map[k] || k;
+        return k.split(" ").map(function (q) { return map[q] || q; })
+                .sort().join(" ");
+      };
+      var nEls = {}, nLns = {};
+      Object.keys(rli.elements).forEach(function (k) { nEls[remapKey(k)] = true; });
+      Object.keys(rli.lines).forEach(function (k) {
+        var i = k.lastIndexOf("|");
+        nLns[remapKey(k.slice(0, i)) + k.slice(i)] = true;
+      });
+      rli.elements = nEls;
+      rli.lines = nLns;
     }
     state.allocation = null;        // old element-id keys are stale → re-allocate
     state.pairsTouched = true;
@@ -1634,6 +1728,15 @@
         } else {
           delete qd.qubits[qid];
         }
+        // Switching a qubit's bias source is an explicit act on its flux
+        // line — teach the frozen regen inventory (docs/134 review [4]):
+        // un-QDAC'ing a qubit must (re)create its OPX z line even when the
+        // source chip, biased via QDAC, had none.
+        var rli = state.regenLineInventory;
+        if (rli) {
+          if (chk.checked) delete rli.lines[qid + "|flux"];
+          else rli.lines[qid + "|flux"] = true;
+        }
         deriveLines();          // the qubit's flux line must appear/disappear
         renderQdacBand();       // re-render to show/hide the field grid
       });
@@ -2201,6 +2304,36 @@
       if (ln.line === "resonator" && ln.group) groupOf[ln.element] = ln.group;
     });
 
+    // docs/134: a re-generated chip's OPTIONAL line inventory (qubit z, pair
+    // coupler/CR) is the SOURCE CHIP's truth, not a per-element derivation —
+    // a real 20Q chip flux-biases only 9 of its qubits from the OPX, and
+    // deriving the other 11 z lines ran the allocator out of DC channels
+    // (NotEnoughChannels) before any diagram could render. The inventory is
+    // FROZEN at hydrate (state.regenLineInventory), so a step-3 chassis
+    // round-trip can never ratchet real lines away. An element the wizard
+    // ADDS is absent from it and still gets the full derived set; generate
+    // mode (no inventory) derives exactly as before.
+    //
+    // An explicit ARCHITECTURE SWITCH away from the source's 2Q gate is a user
+    // act that asks for new line classes — the gate must not veto it (review
+    // [2]): the pair line derives ungated then, and flux too when the source
+    // was fixed-frequency (its flux class never existed, so the inventory has
+    // nothing true to say about it). Switching back re-applies the source
+    // truth — no ratchet.
+    var inv = state.mode === "regenerate" ? state.regenLineInventory : null;
+    var srcGate = state.regenSourcePairGate;
+    // NB: read state.pairGate directly — the local `pairGate` var below is
+    // declared later in this function (hoisted undefined here).
+    var gateChanged = !!(inv && srcGate &&
+                         (state.pairGate || "cz_tunable") !== srcGate);
+    var bypassFlux = gateChanged && srcGate === "cr";
+    function keepOptional(el, lineType) {
+      if (!inv) return true;
+      if (lineType === "flux" ? bypassFlux : gateChanged) return true;
+      if (!inv.elements[el]) return true;
+      return !!inv.lines[el + "|" + lineType];
+    }
+
     // Which line types are enabled — derived from hardware (Step 3) + user
     // toggles (Step 4). MW-FEM (or OPX+) → resonator + drive;
     // LF-FEM → flux/coupler are *possible*, but each needs its toggle on.
@@ -2256,7 +2389,7 @@
       if (wantDrive) {
         lines.push({ element: q, line: "drive", channel: pinned[q + "|drive"] || null });
       }
-      if (wantFlux && !isQdacBiased(q)) {
+      if (wantFlux && !isQdacBiased(q) && keepOptional(q, "flux")) {
         lines.push({ element: q, line: "flux", channel: pinned[q + "|flux"] || null });
       }
     });
@@ -2269,7 +2402,14 @@
       state.spec.qubit_pairs.forEach(function (p) {
         if (p[0] && p[1]) {
           var el = p[0] + "-" + p[1];
-          lines.push({ element: el, line: pairLine, channel: pinned[el + "|" + pairLine] || null });
+          // Inventory pair keys are sorted-within-pair (space-joined), so a
+          // flip or control/target swap hits the same entry.
+          if (keepOptional(p.slice().sort().join(" "), pairLine)) {
+            lines.push({ element: el, line: pairLine, channel: pinned[el + "|" + pairLine] || null });
+          }
+          // zz_drive stays UNGATED: the ZZ toggle is an explicit add-lines
+          // act, and gating it on the source inventory would make the
+          // checkbox silently dead for every pre-existing pair.
           if (wantCR && state.zzEnabled) {
             lines.push({ element: el, line: "zz_drive",
                          channel: pinned[el + "|zz_drive"] || null });
@@ -2499,8 +2639,22 @@
     _monitorState.hover = null;   // a re-render invalidates any hovered port
     renderMonitor();
     if (!state.allocation || !window.renderInstrumentWiring) {
-      host.innerHTML =
-        '<p class="muted">Run Auto-allocate to see the wiring diagram.</p>';
+      // Honest waiting states (docs/134): allocating right now, nothing to
+      // allocate yet, waiting for an env (auto-selected once probing
+      // finishes), or manual fallback (an auto attempt failed — the button
+      // is the retry).
+      host.innerHTML = _allocInFlight
+        ? '<p class="muted">Allocating channels&hellip;</p>'
+        : (!state.spec.qubits || !state.spec.qubits.length)
+          ? '<p class="muted">Add qubits in step 4 first.</p>'
+          : !state.env
+            ? (_envNoneUsable
+               ? '<p class="muted">No usable Python environment &mdash; install ' +
+                 'the QM stack (qualang_tools, quam_builder, quam) in one, ' +
+                 'then pick it in step 1.</p>'
+               : '<p class="muted">Waiting for a Python environment &mdash; the ' +
+                 'first usable env from step 1 is selected automatically&hellip;</p>')
+            : '<p class="muted">Run Auto-allocate to see the wiring diagram.</p>';
       return;
     }
     renderInstrumentWiring("gen-wiring-diagram",
@@ -2927,35 +3081,141 @@
     deriveLines();
     renderWiringTable();
     renderWiringDiagram();
+    maybeAutoAllocate();
   }
 
-  function runAutoAllocate() {
-    if (!state.env) {
-      showMessage("Select an environment in step 1 first.", "warn");
-      return;
+  // docs/134: allocation is AUTO by default — entering the Wiring step runs
+  // the allocator once on its own, so the diagram appears without a press
+  // (user directive: generated configs default to auto-allocated wiring).
+  // Guards: never while a run is in flight; never loop after a failed auto
+  // attempt (the button stays for manual retry — a manual success re-arms);
+  // never before an env exists (env auto-select / applySelection re-arms).
+  var _allocInFlight = false;
+  var _allocAutoBlocked = false;
+  var _allocFailSig = null;    // topoSig at the failed attempt — an input change re-arms
+  // Monotonic run token (docs/134 review, CRITICAL): every allocate request
+  // captures it, and its handlers stand down if a newer run OR a wizard-content
+  // swap (hydrateFromSpec / resetWizard / a fresh mount) bumped it since — a
+  // response computed for one spec must never adopt into another, and the
+  // stored signature is always the REQUEST-time one, never re-read at
+  // response time (a mid-flight step-4 edit used to get certified as current).
+  var _allocRunSeq = 0;
+  // Topology signature of the LAST successful allocation, so an allocator-
+  // relevant edit auto-re-allocates on the next Wiring entry instead of
+  // silently showing the stale diagram.
+  var _allocTopoSig = null;
+
+  // Allocator-relevant signature of the spec: entity membership, the derived
+  // line set with pins, hardware layout, gate, QDAC bias, TWPAs. Pair ids are
+  // normalized (sorted within the pair) both in the pair list and in line
+  // elements — a czAutoOrient flip renames "a-b" to "b-a" while remapping the
+  // allocation in place, and a flip alone must not read as a topology change.
+  // NOT a per-line coverage check: a shared-xy CR line legitimately allocates
+  // no channels of its own, and coverage would re-run forever on those chips.
+  function topoSig() {
+    var sp = state.spec;
+    var pairNorm = {};
+    (sp.qubit_pairs || []).forEach(function (p) {
+      if (!p || !p[0] || !p[1]) return;
+      var norm = p.slice().sort().join("-");
+      pairNorm[p[0] + "-" + p[1]] = norm;
+      pairNorm[p[1] + "-" + p[0]] = norm;
+    });
+    return JSON.stringify([
+      (sp.qubits || []).slice().sort(),
+      (sp.qubit_pairs || []).map(function (p) {
+        return (p || []).slice().sort().join("-");
+      }).sort(),
+      (sp.lines || []).map(function (ln) {
+        return [pairNorm[ln.element] || ln.element, ln.line, ln.channel || null];
+      }).sort(),
+      (sp.instruments && sp.instruments.controllers) || [],
+      sp.pair_gate || null,
+      (sp.qdac && sp.qdac.qubits && Object.keys(sp.qdac.qubits).sort()) || [],
+      (sp.twpas || []).map(function (t) {
+        return (t && typeof t === "object") ? t.id : t;
+      }).sort()
+    ]);
+  }
+
+  // Strand any in-flight allocate and forget per-content latches — called when
+  // the wizard's CONTENT is replaced (hydrate / reset / fresh mount).
+  function resetAllocRuntime() {
+    _allocRunSeq++;
+    _allocInFlight = false;
+    _allocAutoBlocked = false;
+    _allocFailSig = null;
+    _allocTopoSig = null;
+  }
+
+  function maybeAutoAllocate() {
+    if (_allocInFlight) return;
+    // A failed AUTO attempt latches — but only for the input that failed:
+    // fixing the spec (or switching env, via applySelection) re-arms.
+    if (_allocAutoBlocked) {
+      if (_allocFailSig !== null && topoSig() !== _allocFailSig) {
+        _allocAutoBlocked = false;
+      } else {
+        return;
+      }
     }
+    if (state.allocation &&
+        (_allocTopoSig === null || _allocTopoSig === topoSig())) return;
+    if (!state.spec.qubits || !state.spec.qubits.length) return;
+    // jsdom harness worlds have no native fetch — without a bridged win.fetch
+    // an auto-run here would throw on step-5 entry. Harnesses that claim to
+    // exercise the auto path MUST bridge fetch and assert the POST happened
+    // (this guard turns a missing bridge into a silent skip, not a failure).
+    if (typeof fetch !== "function") return;
+    if (!state.env) return;   // renderWiringDiagram shows the waiting line
+    runAutoAllocate(true);
+  }
+
+  function runAutoAllocate(auto) {
     var btn = document.getElementById("gen-allocate-btn");
     var status = document.getElementById("gen-allocate-status");
+    if (!state.env) {
+      // Answer AT the button too — #gen-message can be scrolled out of view,
+      // which made this press look completely dead (docs/134).
+      var noEnv = "Select an environment in step 1 first.";
+      if (status) status.textContent = "✗ " + noEnv;
+      showMessage(noEnv, "warn");
+      return;
+    }
+    if (_allocInFlight) return;
+    var myRun = ++_allocRunSeq;
+    var sigAtRequest = topoSig();
+    _allocInFlight = true;
     if (btn) btn.disabled = true;
     if (status) status.textContent = "Allocating…";
+    if (!state.allocation) renderWiringDiagram();   // "Allocating channels…"
 
     fetch("/generate/allocate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ spec: state.spec })
+      // python rides along: an auto-picked env is client-side only (see
+      // probeEnv) and the dry run must not depend on a persisted selection.
+      body: JSON.stringify({ spec: state.spec, python: state.env })
     })
       .then(function (r) { return r.json(); })
       .then(function (res) {
+        if (myRun !== _allocRunSeq) return;   // superseded — a newer run or content swap owns the wizard
+        _allocInFlight = false;
         if (btn) btn.disabled = false;
         if (res.ok && res.result) {
+          _allocAutoBlocked = false;
+          _allocFailSig = null;
           state.allocation = res.result.allocation || {};
+          _allocTopoSig = sigAtRequest;   // the spec this response was computed FOR
           if (status) status.textContent = "Allocated.";
           renderWiringTable();
           renderWiringDiagram();
           var warns = res.result.warnings || [];
           if (warns.length) showMessage(warns.join(" "), "warn");
         } else {
-          if (status) status.textContent = "";
+          if (auto) { _allocAutoBlocked = true; _allocFailSig = sigAtRequest; }
+          if (status) status.textContent = "✗ allocation failed";
+          renderWiringDiagram();   // back to the manual placeholder
           showMessage(
             res.error || (res.errors || []).join("; ") || "Allocation failed.",
             "error"
@@ -2963,15 +3223,21 @@
         }
       })
       .catch(function () {
+        if (myRun !== _allocRunSeq) return;
+        _allocInFlight = false;
+        if (auto) { _allocAutoBlocked = true; _allocFailSig = sigAtRequest; }
         if (btn) btn.disabled = false;
-        if (status) status.textContent = "";
+        if (status) status.textContent = "✗ allocation failed";
+        renderWiringDiagram();
         showMessage("Allocation request failed.", "error");
       });
   }
 
   function bindWiringStep() {
     var btn = document.getElementById("gen-allocate-btn");
-    if (btn) btn.addEventListener("click", runAutoAllocate);
+    // Wrapped: addEventListener would pass the click EVENT as runAutoAllocate's
+    // `auto` flag, and a manual press must never arm the auto-failure latch.
+    if (btn) btn.addEventListener("click", function () { runAutoAllocate(false); });
   }
 
   // -- step 6: populate ------------------------------------------------
@@ -6491,6 +6757,33 @@
       showMessage("Select an environment in step 1.", "warn");
       return;
     }
+    // An auto-picked env lives client-side only (review [7]) — the BUILD is
+    // the explicit act that persists it (the server-side build reads the
+    // persisted selection). One round-trip, then re-enter with identical args.
+    if (!_envPersisted) {
+      fetch("/generate/select-env", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ python: state.env })
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          if (res && res.ok) {
+            _envPersisted = true;
+            runBuild(force, ackDegrades);
+          } else {
+            showMessage((res && res.error) ||
+              "Could not select the build environment — pick one in step 1.",
+              "error");
+          }
+        })
+        .catch(function () {
+          showMessage(
+            "Could not select the build environment — pick one in step 1.",
+            "error");
+        });
+      return;
+    }
     // Accumulate acknowledgements across confirm round-trips — the build has two
     // independent gates (capability degrades, stray-JSON) and acking one must not
     // drop the other. enterReviewStep()/a successful build reset these.
@@ -6658,6 +6951,7 @@
       sessionStorage.setItem(DRAFT_KEY, JSON.stringify({
         v: DRAFT_VERSION, step: state.step, env: state.env,
         spec: state.spec, allocation: state.allocation,
+        allocSig: _allocTopoSig,
         pairsTouched: state.pairsTouched, wiringTouched: state.wiringTouched,
         naming: state.naming, namesTouched: state.namesTouched,
         populateUnits: state.populateUnits,
@@ -6699,6 +6993,11 @@
     state.allocation = d.allocation || null;
     state.pairsTouched = !!d.pairsTouched;
     state.wiringTouched = !!d.wiringTouched;
+    // The restored allocation's request-time signature rides the draft
+    // (docs/134 review): without it, a reloaded session's allocation was
+    // exempt from topology-staleness forever. An old draft lacks the field —
+    // null keeps the previous trust-the-draft behavior for those only.
+    _allocTopoSig = d.allocation ? (d.allocSig || null) : null;
     // Naming scheme — old drafts lack it: default = the historical q1…qN.
     var nm = (d.naming && typeof d.naming === "object") ? d.naming : {};
     state.naming = {
@@ -6822,6 +7121,15 @@
     state.scriptsEnabled = true;      // r16 ⓪-4 default
     state.scriptsPath = "";
     state._scriptsPathTouched = false;
+    // Starting over inside a regen page leaves regen mode too — a fresh
+    // empty spec must never post to /regenerate/build with a stale
+    // sourcePath ("Load different…" re-hydrates when regen is wanted).
+    state.mode = "generate";
+    state.buildEndpoint = "/generate/build";
+    state.sourcePath = null;
+    state.regenLineInventory = null;
+    state.regenSourcePairGate = null;
+    resetAllocRuntime();   // strand any in-flight allocate for the old content
     try {
       localStorage.removeItem("quam_gen_output_path");
       localStorage.removeItem("quam_gen_scripts_path");
@@ -6871,6 +7179,17 @@
       var outEl = document.getElementById("gen-output-path");
       if (outEl && state.outputPath) outEl.value = state.outputPath;
     }
+
+    // Mode is NEVER restored from a draft (regen sessions don't persist one),
+    // so a fresh mount is always a plain Generate wizard until a hydrate says
+    // otherwise. Without this, a regen session's mode/endpoint/source
+    // survived into a later Generate mount — a "Generate" press then posted
+    // to /regenerate/build with a stale sourcePath (docs/134).
+    state.mode = "generate";
+    state.buildEndpoint = "/generate/build";
+    state.sourcePath = null;
+    state.regenLineInventory = null;
+    state.regenSourcePairGate = null;
 
     // Bottom nav + the top header mirror share the same handlers.
     ["gen-back", "gen-back-top"].forEach(function (id) {
@@ -7062,8 +7381,49 @@
     var arch = pg === "cr" ? "fixed_frequency"
              : pg === "cz_fixed" ? "flux_tunable_fixed_coupler"
              : "flux_tunable_coupler";
+    // docs/134: mode + the frozen source-chip line inventory must exist BEFORE
+    // applyDraft — hydration re-derives spec.lines on the way through, and an
+    // ungated early derive used to overwrite the source lines (inventing a z
+    // line per qubit) before the inventory could be read from them. Read the
+    // INCOMING spec, the one surface that is still the reconstruct's truth.
+    resetAllocRuntime();   // strand any in-flight allocate for the OLD content
+    state.mode = o.mode || "regenerate";
+    state.buildEndpoint = o.buildEndpoint || "/regenerate/build";
+    state.sourcePath = o.sourcePath || null;
+    // The source's 2Q gate — an in-wizard architecture switch away from it is
+    // an explicit act the inventory gate must not veto (review [2]).
+    state.regenSourcePairGate = pg;
+    // Inventory keys: qubits/TWPAs by id; pairs by a sorted-within-pair
+    // space-joined key (qubit names can't contain spaces; flips and
+    // control/target swaps hit the same key; decomposable under rename).
+    // KNOWN-ness is asymmetric by design: a QUBIT is known when it carries
+    // any line (a real reconstruct always emits rr/xy — a truly line-less
+    // qubit has no wiring at all and SHOULD derive fresh), while a PAIR is
+    // known from the entity list — its only possible line is the optional
+    // one, so a line-less source pair (mixed cz_fixed, QDAC-coupler) must
+    // read as "known with no line", never as wizard-added (review [5]/[10]).
+    var _inv = { elements: {}, lines: {} };
+    var _pairKey = {};
+    ((spec && spec.qubit_pairs) || []).forEach(function (p) {
+      if (!p || !p[0] || !p[1]) return;
+      var key = p.slice().sort().join(" ");
+      _pairKey[p[0] + "-" + p[1]] = key;
+      _pairKey[p[1] + "-" + p[0]] = key;
+      _inv.elements[key] = true;
+    });
+    ((spec && spec.lines) || []).forEach(function (ln) {
+      var el = _pairKey[ln.element] || ln.element;
+      _inv.elements[el] = true;
+      _inv.lines[el + "|" + ln.line] = true;
+    });
+    state.regenLineInventory = _inv;
     applyDraft({
-      v: DRAFT_VERSION, step: o.step || 1, env: o.env || null,
+      // env: KEEP an already-made selection (docs/134) — loadEnvs() applies
+      // the server-persisted env as soon as /generate/envs answers, and the
+      // regenerate hydrate used to null it right back whenever the
+      // reconstruct fetch resolved later (always, on real chips), leaving
+      // Auto-allocate dead on a machine that had an env selected all along.
+      v: DRAFT_VERSION, step: o.step || 1, env: o.env || state.env || null,
       spec: spec, allocation: o.allocation || null,
       outputPath: o.outputPath || "",
       pairGate: pg, chipArch: arch,
@@ -7073,9 +7433,6 @@
       namesTouched: true
     });
     applyChipArch(state.chipArch);            // sync qubitFlux / couplerFlux / pairGate
-    state.mode = o.mode || "regenerate";
-    state.buildEndpoint = o.buildEndpoint || "/regenerate/build";
-    state.sourcePath = o.sourcePath || null;
     // Populate-protect baseline (docs/72): snapshot EXACTLY what this wizard
     // session displays. The build POST ships it back verbatim; the server
     // diffs it against the edited populate so only the user's in-wizard edits

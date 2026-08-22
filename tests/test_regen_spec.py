@@ -365,3 +365,62 @@ def test_wiring_only_pair_fem_reaches_controllers():
         "#/ports/analog_outputs/con1/6/7"
     r = reconstruct_spec(state, wiring)
     assert (1, 6, "lf") in _fems_of(r.spec)         # coupler-only FEM present
+
+
+class TestQdacInversion:
+    """docs/134 review [11]: a docs/119 QDAC-biased chip must reconstruct WITH
+    its bias story — before this, reconstruct dropped it entirely and the
+    rebuild silently produced qubits with neither an OPX z line nor a QDAC
+    bias component."""
+
+    def _qdac_state_wiring(self):
+        state = {
+            "qubits": {
+                "q1": {"z": {"__class__":
+                             "quam_config.qdac_components.QdacBiasLine",
+                             "channel": 13, "dc_offset": -0.09,
+                             "trigger_port": "ext1", "dwell": 2e-6,
+                             "slew_rate": 2e7, "output_range": "high",
+                             "output_filter": "med", "settle_time": 20000}},
+                "q2": {},
+            },
+            "qdac": {"__class__": "quam_config.qdac_components.QdacInstrument",
+                     "communication_type": "Ethernet",
+                     "ip_address": "192.168.88.244", "port": 5025,
+                     "usb_device": None, "lib": "@py"},
+        }
+        wiring = {
+            "network": {"host": "1.2.3.4", "cluster_name": "C", "port": None},
+            "wiring": {"qubits": {
+                "q1": {"rr": {"opx_input": "#/ports/mw_inputs/con1/1/1",
+                              "opx_output": "#/ports/mw_outputs/con1/1/1"},
+                       "xy": {"opx_output": "#/ports/mw_outputs/con1/1/2"}},
+                # q1 deliberately has NO z wiring channel — bias is QDAC.
+                "q2": {"rr": {"opx_input": "#/ports/mw_inputs/con1/1/1",
+                              "opx_output": "#/ports/mw_outputs/con1/1/1"},
+                       "xy": {"opx_output": "#/ports/mw_outputs/con1/1/3"},
+                       "z": {"opx_output": "#/ports/analog_outputs/con1/4/1"}},
+            }},
+        }
+        return state, wiring
+
+    def test_qdac_bias_carried_into_spec(self):
+        state, wiring = self._qdac_state_wiring()
+        rec = reconstruct_spec(state, wiring)
+        qd = rec.spec.get("qdac")
+        assert isinstance(qd, dict), "spec.qdac missing for a QDAC-biased chip"
+        assert qd["ip_address"] == "192.168.88.244"
+        assert set(qd["qubits"]) == {"q1"}
+        assert qd["qubits"]["q1"]["channel"] == 13
+        assert qd["qubits"]["q1"]["trigger_port"] == "ext1"
+        assert qd["qubits"]["q1"]["dc_offset"] == -0.09
+        # No OPX flux line invented for the QDAC qubit; q2 keeps its real one.
+        flux = [ln["element"] for ln in rec.spec["lines"] if ln["line"] == "flux"]
+        assert flux == ["q2"]
+        # The carry is announced, never silent.
+        assert any("QDAC-biased" in n for n in rec.notes)
+
+    def test_plain_chip_gets_no_qdac_key(self):
+        state, wiring = _tiny()
+        rec = reconstruct_spec(state, wiring)
+        assert "qdac" not in rec.spec
