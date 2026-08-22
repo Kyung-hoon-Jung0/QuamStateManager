@@ -874,6 +874,28 @@ class TestCompactRows:
         assert "min-height" in block
         assert "min-height: 0" not in block
 
+    def test_pico_nav_link_margins_cannot_reach_the_panel_anchors(self):
+        """docs/132 r2, measured in real Chrome: the panel lives inside the
+        topbar <nav>, so Pico's `nav li :where(a)` gave the After-chip its
+        NEGATIVE nav-link margins (-10px all round) — the chip's true box
+        overlapped Diff and Pull by 2px while the flex gap said 8. Same
+        Pico-nav-reach family as the display:block fix, same cure: one
+        class-level rule (Pico's :where() carries zero specificity)."""
+        css = self._css()
+        i = css.index(".state-versions a {")
+        block = css[i:css.index("}", i)]
+        assert "margin: 0" in block
+
+    def test_the_row_centers_its_children(self):
+        """docs/132 r2: baseline alignment staggered the two-line After-chip
+        against the one-line buttons — borders visually collided and the row
+        read as twisted. Center is the contract now."""
+        css = self._css()
+        i = css.index(".state-version-row {")
+        block = css[i:css.index("}", i)]
+        assert "align-items: center" in block
+        assert "baseline" not in block
+
     def test_the_quick_diff_key_column_cannot_be_squeezed_to_nothing(self):
         """`word-break: break-all` gives the key cell a ONE-character
         min-content, and the nowrap value column beside it takes the rest —
