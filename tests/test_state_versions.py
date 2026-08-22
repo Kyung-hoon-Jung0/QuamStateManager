@@ -893,8 +893,11 @@ class TestCompactRows:
         copied pixel value (measured 24 vs 25px, centers 0.0px apart, in
         real Chrome)."""
         css = self._css()
-        i = css.index(".state-review .sv-take {")
+        # the rule grew a grouped .sv-take-edit sibling (docs/132 r5) — both
+        # share the control-height box
+        i = css.index(".state-review .sv-take,")
         block = css[i:css.index("}", i)]
+        assert ".sv-take-edit" in block
         assert "var(--review-ctl-h)" in block
         assert "font-size: 15px" in block         # the bigger glyph
         assert "padding: 0 10px" in block         # the wider sides
@@ -1265,3 +1268,49 @@ class TestWorkbenchTakeActiveGate:
         tpl = (Path(quam_state_manager.__file__).parent / "web" / "templates"
                / "_diff_workbench.html").read_text(encoding="utf-8")
         assert "take_active_ok and tab in ('state', 'wiring')" in tpl
+
+
+class TestEditBeforeAccept:
+    """docs/132 r5 (customer): the ✓ says "accept"; an ✎ edit beside it lets
+    the value be tweaked before staging; Ctrl+Z / Ctrl+Shift+Z step accepts
+    back and forth from a RAM stack (manual accepts are rare and few — one
+    POST each, no server group machinery; the row's own data-prev carries
+    the working value the undo restores)."""
+
+    def _diff(self, client, tmp_path):
+        client.post("/state/archive", data={"tag": "v"})
+        body = client.get("/state/versions").get_data(as_text=True)
+        ts = re.search(r'sv-check" value="(\d{8}_\d{6}\S*?)"', body).group(1)
+        client.post("/field/edit",
+                    data={"dot_path": "qubits.q1.f_01", "value": "6.2e9"})
+        return client.get(f"/state/versions/{ts}/diff").get_data(as_text=True)
+
+    def test_overlay_rows_carry_accept_edit_and_prev(self, client, tmp_path):
+        d = self._diff(client, tmp_path)
+        assert "&#10003; accept" in d or "✓ accept" in d
+        assert "sv-take-edit" in d and "StateVersions.editTake(this)" in d
+        assert "data-prev='6200000000.0'" in d      # the working value
+        assert 'class="review-old sv-take-src"' in d
+
+    def test_workbench_take_rows_carry_edit_and_prev(self, client, tmp_path):
+        client.post("/state/archive", data={"tag": "v"})
+        body = client.get("/state/versions").get_data(as_text=True)
+        ts = re.search(r'sv-check" value="(\d{8}_\d{6}\S*?)"', body).group(1)
+        m = re.search(r"StateVersions\.compare\('([^']+)'\)", body)
+        chip = m.group(1)
+        client.post("/field/edit",
+                    data={"dot_path": "qubits.q1.f_01", "value": "6.2e9"})
+        page = client.get(
+            f"/diff?a=hist:{chip}/{ts}&b=working:{tmp_path / 'quam_state'}&view=list"
+        ).get_data(as_text=True)
+        assert "sv-take-edit" in page
+        assert "data-prev='6200000000.0'" in page
+        assert "sv-take-src" in page
+
+    def test_the_js_stack_is_wired(self):
+        block = _app_js_stateversions_block()
+        assert "editTake" in block and "editTake: editTake" in block
+        assert "_tkUndo" in block and "_tkRedo" in block
+        # capture phase — preempts the bubble-phase docs/107 chain
+        assert "stopImmediatePropagation" in block
+        assert "}, true);" in block

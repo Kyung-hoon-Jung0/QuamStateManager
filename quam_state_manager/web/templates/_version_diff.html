@@ -71,17 +71,22 @@
        double quotes let a string value's own JSON quotes terminate the
        attribute, silently staging "" (docs/132 review, critical). #}
     {% set _takeable = e.change_type != 'added' and json_attr_safe(e.old_value) %}
+    {# data-prev = the CURRENT working value, the row's own "now" side — the
+       RAM undo stack (docs/132 r5) restores it with one POST, no server
+       group machinery. A 'removed' row has no prev (undoing a creation is
+       the server tier's job — the take is simply not RAM-recorded). #}
     <div class="review-row diff-row-{{ e.change_type }}"
          data-dot-path="{{ e.dot_path }}"
          {% if _takeable %}data-value='{{ e.old_value | tojson }}'
-         data-create="{{ '1' if e.change_type == 'removed' else '0' }}"{% endif %}>
+         data-create="{{ '1' if e.change_type == 'removed' else '0' }}"{% endif %}
+         {% if _takeable and e.new_value is not none and json_attr_safe(e.new_value) %}data-prev='{{ e.new_value | tojson }}'{% endif %}>
       <div class="review-row-path">
         <span class="diff-type-badge diff-type-{{ e.change_type }}" aria-label="{{ e.change_type }}" title="{{ e.change_type }} since this version">{{ _glyph }}</span>
         <code class="dot-path" title="{{ e.dot_path }}">{%- if _parts | length == 2 -%}<span class="dp-dirs">{{ _parts[0] }}.</span><span class="dp-leaf">{{ _parts[1] }}</span>{%- else -%}<span class="dp-leaf">{{ e.dot_path }}</span>{%- endif -%}</code>
       </div>
       <div class="review-row-vals">
         {% if e.old_value is none %}<span class="muted review-old">-</span>
-        {% else %}<span class="review-old" title="this version: {{ e.old_value | groupdigits }}">{{ e.old_value | groupdigits }}</span>{% endif %}
+        {% else %}<span class="review-old sv-take-src" title="this version: {{ e.old_value | groupdigits }}">{{ e.old_value | groupdigits }}</span>{% endif %}
         <span class="review-arrow" aria-hidden="true">&rarr;</span>
         {% if e.new_value is none %}<span class="muted">-</span>
         {% else %}<span class="review-now" title="now (working state): {{ e.new_value | groupdigits }}">{{ e.new_value | groupdigits }}</span>
@@ -89,7 +94,9 @@
         {% endif %}
         {% if _takeable %}
         <button type="button" class="btn-xs sv-take" onclick="StateVersions.take(this)"
-                title="Stage THIS VERSION's value into your working state (Review tray). Reaches the live chip only via Apply — or automatically if an Auto-Sync push session is armed.">&#10003;</button>
+                title="Stage THIS VERSION's value into your working state (Review tray). Reaches the live chip only via Apply — or automatically if an Auto-Sync push session is armed. Ctrl+Z / Ctrl+Shift+Z step your accepts back and forth.">&#10003; accept</button>
+        <button type="button" class="btn-xs sv-take-edit" onclick="StateVersions.editTake(this)"
+                title="Edit the value first — accept then stages what you typed instead of the version's exact value.">&#9998; edit</button>
         {% elif e.change_type == 'added' %}
         <span class="muted sv-take-na" title="This leaf exists only NOW — taking the version here would mean deleting it, which this surface cannot do.">&ndash;</span>
         {% else %}

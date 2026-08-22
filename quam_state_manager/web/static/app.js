@@ -16465,53 +16465,162 @@ window.StateVersions = (function () {
        stays the one gated write. Unlike reviewAccept, expect_chip rides
        along (docs/120: two windows share one server context — a press must
        name the chip it believes it is editing). */
-    function take(btn) {
+    /* Edit-before-accept (docs/132 r5): swaps the taken-side value display
+       (.sv-take-src) for an inline input pre-filled with the display text —
+       groupdigits is round-trip exact by contract, and /field/edit-batch
+       parses strings for the target's type, so posting the typed text is
+       the same door every grid cell already uses. */
+    function editTake(btn) {
         var holder = btn.closest('[data-dot-path]');
-        if (!holder || btn.disabled) return;
-        var dot = holder.getAttribute('data-dot-path');
-        var raw = holder.getAttribute('data-value');
-        var val;
-        try { val = JSON.parse(raw); } catch (e) { val = raw; }
-        var create = holder.getAttribute('data-create') === '1';
-        btn.disabled = true;
+        if (!holder) return;
+        var existing = holder.querySelector('.sv-take-input');
+        if (existing) { existing.focus(); existing.select(); return; }
+        var src = holder.querySelector('.sv-take-src');
+        if (!src) return;
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'sv-take-input';
+        input.value = src.textContent.trim();
+        input.setAttribute('aria-label', 'Edited value to accept');
+        input.size = Math.max(input.value.length + 1, 8);
+        src.replaceChildren(input);
+        input.focus();
+        input.select();
+        // Enter = accept with the edited value; Escape = back to the plain
+        // display (the version's own value).
+        input.addEventListener('keydown', function (ev) {
+            if (ev.key === 'Enter') {
+                ev.preventDefault();
+                var t = holder.querySelector('.sv-take');
+                if (t) take(t);
+            } else if (ev.key === 'Escape') {
+                ev.preventDefault();
+                ev.stopPropagation();
+                src.textContent = input.defaultValue;
+            }
+        });
+    }
+    /* ── the RAM undo stack (docs/132 r5) ────────────────────────────────
+       Manual accepts are rare and few (the user's own read), so each one
+       records {dot_path, prev, taken} in memory — prev being the working
+       value the row itself displayed. Ctrl+Z / Ctrl+Shift+Z then step
+       accepts back and forth with ONE POST each, no server group machinery.
+       Scope: only while the version-diff overlay is open or a workbench
+       with take rows is on screen; an empty stack falls through to the
+       docs/107 global tiers. Takes onto CREATED leaves (no prev) are not
+       RAM-recorded — un-creating is the server tier's job. */
+    var _tkUndo = [], _tkRedo = [], _tkBusy = false;
+    function _tkPost(dot, value, create, done) {
         fetch('/field/edit-batch', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                updates: [{ dot_path: dot, value: val, create: create }],
+                updates: [{ dot_path: dot, value: value, create: !!create }],
                 expect_chip: window.__chipToken || '' })
         })
             .then(function (r) { return r.json(); })
             .then(function (d) {
                 var res = d && d.results && d.results[0];
-                if (d && d.ok && res && !res.error) {
-                    var row = btn.closest('.review-row, tr');
-                    if (row) row.classList.add('review-accepted');
-                    btn.textContent = '✓ staged';
-                    btn.classList.add('sv-taken');
-                    if (d.tray_html && window._swapPendingTray) {
-                        window._swapPendingTray(d.tray_html);
-                    }
-                } else {
-                    btn.disabled = false;
-                    var msg = (res && res.error) || (d && d.error)
-                        || 'Could not stage the value.';
-                    // window.showToast, called THROUGH window: the bare-call
-                    // guard trap (CLAUDE.md standing harness rule) — caught
-                    // by version_diff_selfcheck the day this was written.
-                    if (window.showToast) window.showToast(msg, 'error');
+                var ok = !!(d && d.ok && res && !res.error);
+                if (ok && d.tray_html && window._swapPendingTray) {
+                    window._swapPendingTray(d.tray_html);
                 }
+                done(ok, (res && res.error) || (d && d.error));
             })
-            .catch(function () {
-                btn.disabled = false;
-                if (window.showToast) {
-                    window.showToast('Could not stage the value (network).', 'error');
+            .catch(function () { done(false, 'network error'); });
+    }
+    function _tkMark(rec, accepted) {
+        var h = rec.holder;
+        if (!h || !h.isConnected) return;
+        h.classList.toggle('review-accepted', accepted);
+        var b = h.querySelector('.sv-take');
+        if (b) {
+            b.disabled = accepted;
+            b.classList.toggle('sv-taken', accepted);
+            b.textContent = accepted ? '✓ staged' : rec.origLabel;
+        }
+    }
+    function takeUndo(redo) {
+        if (_tkBusy) return true;
+        var rec = (redo ? _tkRedo : _tkUndo).pop();
+        if (!rec) return false;             // empty → fall through to global
+        _tkBusy = true;
+        _tkPost(rec.dot, redo ? rec.taken : rec.prev, redo && rec.create,
+            function (ok, err) {
+                _tkBusy = false;
+                if (ok) {
+                    (redo ? _tkUndo : _tkRedo).push(rec);
+                    _tkMark(rec, !!redo);
+                } else {
+                    (redo ? _tkRedo : _tkUndo).push(rec);   // keep the record
+                    if (window.showToast) {
+                        window.showToast((redo ? 'Redo' : 'Undo')
+                            + ' failed: ' + (err || 'unknown'), 'error');
+                    }
                 }
             });
+        return true;
+    }
+    document.addEventListener('keydown', function (e) {
+        if (!((e.ctrlKey || e.metaKey) && !e.altKey
+              && (e.key === 'z' || e.key === 'Z'))) return;
+        // typing INSIDE the edit input keeps the browser's own text undo
+        if (e.target && e.target.classList
+                && e.target.classList.contains('sv-take-input')) return;
+        var o = _diffOverlay();
+        var scoped = (o && o.style.display !== 'none')
+            || !!document.querySelector('#diff-root [data-dot-path] .sv-take');
+        if (!scoped) return;
+        if (!takeUndo(e.shiftKey)) return;   // empty stack → global tiers
+        // capture phase, so this preempts the bubble-phase docs/107 chain
+        e.preventDefault();
+        e.stopImmediatePropagation();
+    }, true);
+    function take(btn) {
+        var holder = btn.closest('[data-dot-path]');
+        if (!holder || btn.disabled) return;
+        var dot = holder.getAttribute('data-dot-path');
+        var input = holder.querySelector('.sv-take-input');
+        var val;
+        if (input) {
+            // the edited text — the server parses strings for the target type
+            val = input.value;
+        } else {
+            var raw = holder.getAttribute('data-value');
+            try { val = JSON.parse(raw); } catch (e) { val = raw; }
+        }
+        var create = holder.getAttribute('data-create') === '1';
+        var origLabel = btn.textContent;
+        btn.disabled = true;
+        _tkPost(dot, val, create, function (ok, err) {
+            if (ok) {
+                var row = btn.closest('.review-row, tr');
+                if (row) row.classList.add('review-accepted');
+                btn.textContent = '✓ staged';
+                btn.classList.add('sv-taken');
+                var prevRaw = holder.getAttribute('data-prev');
+                if (prevRaw !== null) {
+                    var prev;
+                    try { prev = JSON.parse(prevRaw); } catch (e2) { prev = prevRaw; }
+                    _tkUndo.push({ dot: dot, prev: prev, taken: val,
+                                   create: create, holder: row || holder,
+                                   origLabel: origLabel });
+                    _tkRedo.length = 0;
+                }
+            } else {
+                btn.disabled = false;
+                // window.showToast, called THROUGH window: the bare-call
+                // guard trap (CLAUDE.md standing harness rule) — caught
+                // by version_diff_selfcheck the day this was written.
+                if (window.showToast) {
+                    window.showToast(err || 'Could not stage the value.', 'error');
+                }
+            }
+        });
     }
     return { toggle: toggle, close: close, pick: pick, compare: compare,
              more: more, diff: diff, closeDiff: closeDiff,
-             setChanges: setChanges, take: take };
+             setChanges: setChanges, take: take, editTake: editTake };
 })();
 
 /* ── the top bar's REAL height (docs/120 item 23) ─────────────────────────

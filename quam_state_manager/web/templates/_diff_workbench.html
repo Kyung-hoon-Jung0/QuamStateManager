@@ -123,14 +123,21 @@
           {% set _absent = (_take_from == 'a' and r.kind == 'added')
                            or (_take_from == 'b' and r.kind == 'removed')
                            or not json_attr_safe(_tv) %}
-          {# single-quoted tojson attr — see _version_diff.html #}
+          {# single-quoted tojson attr — see _version_diff.html.
+             data-prev = the WORKING side's current value (the take's RAM
+             undo restores it, docs/132 r5); absent when the working side
+             lacks the leaf (undoing a creation is the server tier's job). #}
+          {% set _pv = r.b if _take_from == 'a' else r.a %}
+          {% set _pv_absent = (_take_from == 'a' and r.kind == 'removed')
+                              or (_take_from == 'b' and r.kind == 'added') %}
           <tr class="diff-row-{{ r.kind }}"
               {% if _take_from and not _absent %}data-dot-path="{{ r.path }}"
-              data-value='{{ _tv | tojson }}' data-create="1"{% endif %}>
+              data-value='{{ _tv | tojson }}' data-create="1"
+              {% if not _pv_absent and json_attr_safe(_pv) %}data-prev='{{ _pv | tojson }}'{% endif %}{% endif %}>
             <td class="diff-list-path"><code>{{ r.path }}</code></td>
-            <td class="diff-list-a">{% if r.kind == 'added' %}<span class="muted">—</span>{% else %}<code>{{ r.a | groupdigits }}</code>{% endif %}</td>
+            <td class="diff-list-a">{% if r.kind == 'added' %}<span class="muted">—</span>{% else %}<code{% if _take_from == 'a' and not _absent %} class="sv-take-src"{% endif %}>{{ r.a | groupdigits }}</code>{% endif %}</td>
             <td class="diff-list-arrow">&rarr;</td>
-            <td class="diff-list-b">{% if r.kind == 'removed' %}<span class="muted">—</span>{% else %}<code>{{ r.b | groupdigits }}</code>{% endif %}</td>
+            <td class="diff-list-b">{% if r.kind == 'removed' %}<span class="muted">—</span>{% else %}<code{% if _take_from == 'b' and not _absent %} class="sv-take-src"{% endif %}>{{ r.b | groupdigits }}</code>{% endif %}</td>
             <td class="diff-list-delta">
               {%- if r.kind == 'changed' %}{{ delta_chip(r.a, r.b) }}
               {%- else %}<span class="tree-sidetag tree-tag-{{ r.kind }}">{{ r.kind }}</span>{% endif -%}
@@ -139,7 +146,9 @@
             <td class="diff-list-take">
               {% if not _absent %}
               <button type="button" class="btn-xs sv-take" onclick="StateVersions.take(this)"
-                      title="Stage {{ _take_from | upper }}'s value into your working state (Review tray). Reaches the live chip only via Apply — or automatically if an Auto-Sync push session is armed.">Use {{ _take_from | upper }}</button>
+                      title="Stage {{ _take_from | upper }}'s value into your working state (Review tray). Reaches the live chip only via Apply — or automatically if an Auto-Sync push session is armed. Ctrl+Z / Ctrl+Shift+Z step your accepts back and forth.">Use {{ _take_from | upper }}</button>
+              <button type="button" class="btn-xs sv-take-edit" onclick="StateVersions.editTake(this)"
+                      title="Edit the value first — the Use button then stages what you typed.">&#9998;</button>
               {% endif %}
             </td>
             {% endif %}
