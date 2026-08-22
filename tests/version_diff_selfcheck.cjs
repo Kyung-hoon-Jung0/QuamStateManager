@@ -318,9 +318,13 @@ function partial(ts, extra) {
     window.__chipToken = 'CHIPTOK';
     host().innerHTML =
         '<div class="review-row" data-dot-path="qubits.q1.f_01"' +
-        ' data-value="6100000000.0" data-create="0">' +
+        ' data-value="6100000000.0" data-create="0"' +
+        " data-prev='6200000000.0'>" +
+        '<span class="review-old sv-take-src">6,100,000,000.0</span>' +
         '<button type="button" class="btn-xs sv-take"' +
-        ' onclick="StateVersions.take(this)">✓</button></div>';
+        ' onclick="StateVersions.take(this)">✓ accept</button>' +
+        '<button type="button" class="btn-xs sv-take-edit"' +
+        ' onclick="StateVersions.editTake(this)">✎ edit</button></div>';
     resetCalls();
     var takeBtn = host().querySelector('.sv-take');
     var posted = [];
@@ -366,6 +370,81 @@ function partial(ts, extra) {
        'a successful take marks the row accepted');
     ok(traySwaps.length === 1,
        'the Review tray is swapped through the single choke point');
+
+    // ---- 12. the RAM undo stack (docs/132 r5) --------------------------
+    // The successful take above recorded {prev: 6200000000.0}. Ctrl+Z must
+    // restore prev with ONE POST, unmark the row, and preempt the global
+    // docs/107 chain; Ctrl+Shift+Z re-applies.
+    var overlayEl = document.getElementById('version-diff-overlay');
+    overlayEl.style.display = 'flex';
+    function ctrlZ(shift) {
+        document.body.dispatchEvent(new window.KeyboardEvent('keydown',
+            { key: 'z', ctrlKey: true, shiftKey: !!shift, bubbles: true,
+              cancelable: true }));
+    }
+    posted.length = 0;
+    ctrlZ(false);
+    await tick();
+    ok(posted.length === 1, 'Ctrl+Z with a recorded take posts once');
+    var ub = JSON.parse(posted[0].opts.body);
+    ok(ub.updates[0].dot_path === 'qubits.q1.f_01'
+        && ub.updates[0].value === 6200000000.0,
+       'undo restores the PREV working value the row itself displayed');
+    posted[0].resolve({ json: function () {
+        return Promise.resolve({ ok: true, tray_html: '<div id="pending-tray"></div>',
+                                 results: [{ dot_path: 'qubits.q1.f_01' }] });
+    } });
+    await tick(); await tick();
+    ok(!host().querySelector('.review-row').classList.contains('review-accepted'),
+       'undo un-marks the accepted row');
+    ok(host().querySelector('.sv-take').textContent === '✓ accept',
+       'undo restores the accept label: '
+       + host().querySelector('.sv-take').textContent);
+
+    posted.length = 0;
+    ctrlZ(true);                     // redo
+    await tick();
+    ok(posted.length === 1 && JSON.parse(posted[0].opts.body)
+        .updates[0].value === 6100000000.0,
+       'Ctrl+Shift+Z re-applies the taken value');
+    posted[0].resolve({ json: function () {
+        return Promise.resolve({ ok: true, results: [{}] });
+    } });
+    await tick(); await tick();
+    ok(host().querySelector('.review-row').classList.contains('review-accepted'),
+       'redo re-marks the row');
+
+    // scope: with the overlay closed and no workbench takes, Ctrl+Z is NOT
+    // consumed here (the docs/107 global chain owns it)
+    overlayEl.style.display = 'none';
+    posted.length = 0;
+    ctrlZ(false);
+    await tick();
+    ok(posted.length === 0,
+       'out of scope, the RAM stack never consumes the press');
+    overlayEl.style.display = 'flex';
+
+    // ---- 13. edit-before-accept ---------------------------------------
+    var editBtn = host().querySelector('.sv-take-edit');
+    SV.editTake(editBtn);
+    var einput = host().querySelector('.sv-take-input');
+    ok(!!einput, 'edit swaps the version value for an inline input');
+    ok(einput.value === '6,100,000,000.0',
+       'the input starts from the displayed (round-trip-exact) text: '
+       + einput.value);
+    einput.value = '6150000000.0';
+    var takeBtn2 = host().querySelector('.sv-take');
+    takeBtn2.disabled = false;       // fresh press
+    posted.length = 0;
+    SV.take(takeBtn2);
+    await tick();
+    ok(posted.length === 1 && JSON.parse(posted[0].opts.body)
+        .updates[0].value === '6150000000.0',
+       'accept posts the EDITED text (the server parses it for the target)');
+    posted[0].resolve({ json: function () {
+        return Promise.resolve({ ok: true, results: [{}] });
+    } });
+    await tick(); await tick();
 
     process.exit(fails ? 1 : 0);
 })();
