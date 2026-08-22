@@ -64,7 +64,7 @@
 <button type="button"
         class="state-status-badge {{ 'state-status-archive' if _archive else 'state-status-dirty' if _dirty else 'state-status-drifted' if _drifted else 'state-status-synced' }}"
         onclick="openReview()"
-        title="{% if _archive %}Opened from a dataset run archive (read-only) — load the live folder to edit/apply{% elif _dirty %}Local edits live in the working state — click to review and apply to the live chip{% elif _drifted %}The live chip changed on disk since your working state was synced — click to review and choose which side wins{% else %}Working state matches the live chip — click to review{% endif %}">
+        title="{% if _archive %}Opened from a dataset run archive (read-only) — load the live folder to edit/apply{% elif _dirty %}Local edits live in the working state — click to review and apply to the live chip{% elif _drifted %}The live chip changed on disk since your working state was synced — click to review and choose which side wins{% else %}Working state matches the live chip — click to review{% endif %}{% if not _archive %}{{ ' · How this works: edits stay in your working state (a private copy) until you press Apply to live — reversible with ↺ Revert last apply.' }}{% endif %}">
     <span class="state-status-dot" aria-hidden="true">&#9679;</span>
     {% if _archive %}Archive (read-only)
     {% elif change_count > 0 %}Working state · {{ change_count }} unsaved
@@ -76,25 +76,9 @@
     {% if active_name %}<span class="state-status-name" title="{{ active_name }}">{{ active_name }}</span>{% endif %}
 </button>
 {% endif %}
-{% if active_name %}
-  {# docs/115 (#14): the working-copy model, taught while the user is still
-     forming it — shown from the first chip open until dismissed once. #}
-  <span class="tray-teach" id="tray-teach" hidden>
-    {# docs/117: while auto-apply is ON this sentence would be FALSE — the
-       whole point of the mode is that leaving a field writes the chip. The
-       teaching follows the mode rather than contradicting it. #}
-    {% if auto_apply %}
-    <b>Auto-apply is ON:</b> leaving an edited field writes it straight to the
-    <b>live chip</b>. Every change is listed below and revertible with its <b>&#10005;</b>.
-    {% else %}
-    <b>How this works:</b> edits stay in your <b>working state</b> (a private copy)
-    until you press <b>Apply to live</b> — reversible with <b>&#8634; Revert last apply</b>.
-    {% endif %}
-    <a href="/help" hx-get="/help" hx-target="#table-pane" hx-push-url="true">more&nbsp;&rarr;</a>
-    <button type="button" class="tray-teach-x" onclick="window.dismissTrayTeach &amp;&amp; window.dismissTrayTeach()"
-            aria-label="Got it">&#10005;</button>
-  </span>
-{% endif %}
+{# docs/115's always-on "How this works" banner is GONE (customer,
+   2026-08-22: "사람들 실제로 안읽는다") — the same teaching now lives in the
+   sync badge's hover title below, where a curious user actually looks. #}
 {% if active_name and not _archive %}
 {# docs/117 — auto-apply. Pressing this IS the consent the covenant asks for:
    one labelled act, no dialog (docs/104 #1). While armed it is deliberately

@@ -8780,17 +8780,6 @@ a.sidebar-tool-btn { text-decoration: none; color: inherit; }
 /* docs/115 (#14): onboarding — help page, landing CTA, tray teaching */
 .landing-cta { display: flex; gap: .5rem; flex-wrap: wrap; margin: .8rem 0 .4rem; }
 .landing-cta-open { font-weight: 600; }
-/* audit: flex-basis:100% claimed its own row inside the topbar's
-   inline-flex tray cluster and pushed the Apply bar down on every page.
-   It is an inline chip that wraps only if it must, capped so a long
-   sentence can never dominate the bar. */
-/* The topbar strip is a flex ROW: a paragraph here sets the height of the
-   header on EVERY page. 34ch wrapped the sentence to four lines on a real
-   1680px window — the width is now the window's to give. */
-.tray-teach { display: inline-block; max-width: min(92ch, 46vw); margin-left: .5rem; font-size: .78em; opacity: .8; line-height: 1.25; vertical-align: middle; }
-.tray-teach[hidden] { display: none; }
-.tray-teach-x { border: 0; background: none; cursor: pointer; opacity: .6; margin-left: .4rem; padding: 0 .2rem; }
-.tray-teach-x:hover { opacity: 1; }
 .help-page { max-width: 60rem; }
 .help-shortcuts { margin-top: 1.5rem; }
 .help-sc-grid { display: grid; grid-template-columns: max-content 1fr; gap: .3rem 1rem; align-items: baseline; }
@@ -10913,10 +10902,12 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
    most-wanted). Two stacked lines: the id, then the truncated name; the
    full name rides the title. Reads as a chip, not a button — it OPENS a
    panel, it never writes. */
+/* Tight (customer, 2026-08-22): the first cut's padding + 11rem max made
+   the chip crowd the Diff / Pull buttons beside it. */
 .sv-run { display: inline-flex; flex-direction: column; align-items: flex-start;
-    padding: 0.1rem 0.45rem; border-radius: 0.45rem; line-height: 1.25;
+    padding: 0.05rem 0.3rem; border-radius: 0.45rem; line-height: 1.2;
     border: 1px solid var(--trigger-experiment); text-decoration: none;
-    max-width: 11rem; }
+    max-width: 8.5rem; flex: 0 1 auto; min-width: 0; }
 /* Hover text = the CARD BACKGROUND color, not primary-inverse: the dark
    theme's --trigger-experiment is a pastel (#c084fc) and white-on-pastel
    measured 2.6:1 (docs/132 review) — the card bg is dark there and light
@@ -10928,7 +10919,7 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .sv-run-id { font-size: 0.68rem; font-weight: 700;
     color: var(--trigger-experiment); white-space: nowrap; }
 .sv-run-name { font-size: 0.62rem; color: var(--pico-muted-color);
-    max-width: 10rem; overflow: hidden; text-overflow: ellipsis;
+    max-width: 7.8rem; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; }
 /* The ✓ take button — one look on all three compare surfaces. Blue like
    Diff (it stages, never writes live); hover-revealed inside N-way cells so

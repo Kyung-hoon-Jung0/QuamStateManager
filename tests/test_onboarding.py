@@ -68,22 +68,29 @@ class TestLandingCta:
 
 
 class TestTrayTeaching:
-    def test_tray_carries_the_working_copy_teaching(self, client, tmp_path):
+    """docs/132 follow-up (customer): the always-on "How this works" banner
+    is GONE — nobody read it. The same teaching now rides the sync badge's
+    hover title, where a curious user actually looks."""
+
+    def test_the_banner_is_gone_and_the_badge_hover_teaches(
+            self, client, tmp_path):
         live = tmp_path / "chip2"
         live.mkdir()
         (live / "state.json").write_text(json.dumps(_STATE), encoding="utf-8")
         (live / "wiring.json").write_text(json.dumps(_WIRING), encoding="utf-8")
         assert client.post("/load", data={"folder": str(live)}).status_code in (200, 302)
         html = client.get("/state/tray").data.decode("utf-8")
-        assert "tray-teach" in html
-        assert "working state" in html
+        assert "tray-teach" not in html          # the band never renders
+        assert "How this works" in html          # ...but the words survive,
+        assert "state-status-badge" in html      # inside the badge's title
+        i = html.index("state-status-badge")
+        assert "How this works" in html[i - 2000:i + 2000]
         assert "Apply to live" in html
-        assert "Revert last apply" in html      # says it is reversible
-        assert "dismissTrayTeach" in html       # dismissible once
+        assert "Revert last apply" in html       # still says it is reversible
 
 
-def test_client_dismiss_is_localstorage_gated():
+def test_the_dead_teach_js_is_gone():
     app_js = (Path(__file__).resolve().parent.parent / "quam_state_manager"
               / "web" / "static" / "app.js").read_text(encoding="utf-8")
-    assert "quam_tray_teach_done" in app_js
-    assert "window.dismissTrayTeach" in app_js
+    assert "quam_tray_teach_done" not in app_js
+    assert "window.dismissTrayTeach" not in app_js

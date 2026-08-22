@@ -4235,25 +4235,9 @@ window.PaneState = (function () {
 /* docs/115 (#14): the tray's teaching line — shown until dismissed ONCE.
    A new user forms the working-copy model in their first minutes; hiding
    the explanation until they already understand it is backwards. */
-(function () {
-    var KEY = 'quam_tray_teach_done';
-    function done() {
-        try { return localStorage.getItem(KEY) === '1'; } catch (e) { return false; }
-    }
-    window.dismissTrayTeach = function () {
-        try { localStorage.setItem(KEY, '1'); } catch (e) {}
-        var el = document.getElementById('tray-teach');
-        if (el) el.hidden = true;
-    };
-    function sync() {
-        var el = document.getElementById('tray-teach');
-        if (el) el.hidden = done();
-    }
-    document.addEventListener('DOMContentLoaded', sync);
-    document.addEventListener('htmx:afterSwap', sync);
-    document.addEventListener('htmx:oobAfterSwap', sync);
-    if (document.readyState !== 'loading') sync();
-})();
+/* The docs/115 tray-teach banner is gone (docs/132 follow-up, customer:
+   nobody read the always-on explainer) — the teaching lives in the sync
+   badge's hover title now, rendered server-side in _pending_tray.html. */
 
 /* docs/115 (#14) — the landing CTA opens the SAME folder browser the
    sidebar's State Load uses, bound to that form's input (the audit caught
