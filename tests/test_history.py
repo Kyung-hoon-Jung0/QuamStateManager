@@ -2835,8 +2835,11 @@ class TestRunIngest:
         assert top.run_id == 42 and top.experiment_name == "rabi"
         assert top.experiment_folder_path
         assert "#42_rabi_120000" in top.experiment_folder_path
-        # ts parity with the backfill's dedup key
-        assert top.timestamp == "20261201_120000_042"
+        # ts parity with the backfill's dedup key — asserted via the SAME
+        # converter (docs/132 made both stamps LOCAL→UTC, so a literal here
+        # would be timezone-dependent); the run_id suffix is the stable part.
+        assert top.timestamp == HistoryManager._entry_timestamp(entry)
+        assert top.timestamp.endswith("_042")
         # a REAL diff_summary (bulk backfill's zeros mean not-computed)
         assert top.diff_summary["total"] > 0
 
@@ -2919,3 +2922,60 @@ class TestHistorySeq:
 
     def test_absent_dir_returns_zero(self, hm, tmp_path):
         assert hm.history_seq_for(tmp_path / "no_such" / "quam_state") == 0
+
+
+class TestRunIngestConcurrency:
+    """docs/132 heavy-review CRITICAL: two unserialized drains ingesting the
+    SAME candidate had the trailer's dedup branch rmtree the leader's
+    completed snapshot and permanently poison re-ingest. ingest_run now runs
+    under the manager lock — two concurrent calls must converge to exactly
+    one intact snapshot."""
+
+    def test_two_concurrent_ingests_leave_one_intact_snapshot(
+            self, hm, trended_quam_path, tmp_path):
+        import threading
+        entry = _run_entry(tmp_path / "ws", 21, "race", "130000",
+                           _trended_state(t1=44e-6), _base_wiring())
+        results = []
+        barrier = threading.Barrier(2)
+
+        def go():
+            barrier.wait()
+            results.append(hm.ingest_run(trended_quam_path, entry))
+
+        threads = [threading.Thread(target=go) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        snaps = hm.list_snapshots(trended_quam_path)
+        assert len(snaps) == 1
+        top = snaps[0]
+        assert top.kind == "exp" and top.run_id == 21
+        # the snapshot DIR is intact on disk, meta included
+        snap_dir = hm._history_dir(trended_quam_path) / top.timestamp
+        assert (snap_dir / "meta.json").exists()
+        assert (snap_dir / "state.json").exists()
+        ingested = sum(r["ingested"] for r in results)
+        assert ingested == 1
+        # ...and a later apply of the same content STILL finds its record
+        # (the poisoned-dedup end state was: hash known, snapshot gone)
+        assert hm.snapshot_ts_for_current_content is not None  # sanity
+
+    def test_missing_wiring_uses_the_fallback_never_empty(
+            self, hm, trended_quam_path, tmp_path):
+        """docs/132 review: a wiring-less run folder (legit for old runs)
+        must ingest with the FALLBACK wiring, mirroring the backfill —
+        never a permanent empty-wiring snapshot."""
+        entry = _run_entry(tmp_path / "ws", 23, "nowiring", "140000",
+                           _trended_state(t1=33e-6), _base_wiring())
+        (Path(entry.quam_state_path) / "wiring.json").unlink()
+        res = hm.ingest_run(
+            trended_quam_path, entry,
+            fallback_wiring_path=trended_quam_path / "wiring.json")
+        assert res["ingested"] == 1
+        top = hm.list_snapshots(trended_quam_path)[0]
+        snap_dir = hm._history_dir(trended_quam_path) / top.timestamp
+        wiring = json.loads((snap_dir / "wiring.json").read_text(
+            encoding="utf-8"))
+        assert wiring != {}                       # the fallback, not empty

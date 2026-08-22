@@ -969,21 +969,47 @@ class TestChangesOnlyFilter:
     """docs/132 #4: users don't care about unchanged copies — hidden by
     default, counted honestly, one click back."""
 
-    def test_default_hides_zero_diff_copies_and_says_so(self, client):
-        client.post("/api/history/snapshot")     # v1 (manual force, unpinned)
-        client.post("/api/history/snapshot")     # v2 — identical content
+    def _mint(self, client, tmp_path):
+        """v1(first) · v2(real change) · v3(identical copy of v2) · v4(real
+        change). Only v3 is hideable: v1 is the chip's original state
+        (zeros mean not-computed — exempt per the docs/132 review), v4 is
+        current, v2 has a real diff."""
+        live = tmp_path / "quam_state" / "state.json"
+
+        def bump(f):
+            doc = json.loads(live.read_text(encoding="utf-8"))
+            doc["qubits"]["q1"]["f_01"] = f
+            live.write_text(json.dumps(doc), encoding="utf-8")
+        client.post("/api/history/snapshot")     # v1 — first ever
+        bump(6.3e9)
+        client.post("/api/history/snapshot")     # v2 — real change
+        client.post("/api/history/snapshot")     # v3 — identical copy
+        bump(6.5e9)
+        client.post("/api/history/snapshot")     # v4 — current
+
+    def test_default_hides_zero_diff_copies_and_says_so(
+            self, client, tmp_path):
+        self._mint(client, tmp_path)
         ts_all, _ = _panel_ts_list(client, changes="all")
-        assert len(ts_all) == 2
+        assert len(ts_all) == 4
         ts_only, body = _panel_ts_list(client, changes="only")
-        assert len(ts_only) == 1
+        assert len(ts_only) == 3
         assert "1 unchanged copy hidden" in body
         assert "show all" in body
 
-    def test_the_default_mode_is_only(self, client):
-        client.post("/api/history/snapshot")
-        client.post("/api/history/snapshot")
+    def test_the_first_snapshot_is_never_called_an_unchanged_copy(
+            self, client, tmp_path):
+        """Its zeros mean NOTHING-EARLIER, not no-change (docs/132 review:
+        the filter was hiding the chip's original state)."""
+        self._mint(client, tmp_path)
+        ts_only, _ = _panel_ts_list(client, changes="only")
+        ts_all, _ = _panel_ts_list(client, changes="all")
+        assert sorted(ts_all)[0] in ts_only      # the oldest stays visible
+
+    def test_the_default_mode_is_only(self, client, tmp_path):
+        self._mint(client, tmp_path)
         body = client.get("/state/versions").get_data(as_text=True)
-        assert body.count('class="sv-check"') == 1
+        assert body.count('class="sv-check"') == 3
         assert 'data-changes="only"' in body
 
     def test_pinned_and_labeled_rows_are_exempt(self, client):
@@ -1045,7 +1071,11 @@ class TestPerValueTake:
         d = client.get(f"/state/versions/{ts[0]}/diff").get_data(as_text=True)
         assert 'class="btn-xs sv-take"' in d
         assert 'data-dot-path="qubits.q1.f_01"' in d
-        assert 'data-value="6100000000.0"' in d       # the VERSION's value
+        # SINGLE-quoted attr (docs/132 review critical: Flask tojson does
+        # not escape double quotes — a string value's own JSON quotes were
+        # terminating the attribute and staging "")
+        assert "data-value='6100000000.0'" in d       # the VERSION's value
+        assert 'data-value="' not in d
         assert 'data-create="0"' in d
         assert "StateVersions.take(this)" in d
 
@@ -1124,3 +1154,69 @@ class TestWorkbenchTake:
             f"/diff?a=hist:{chip}/{sorted(ts)[0]}&b=hist:{chip}/{sorted(ts)[1]}&view=list"
         ).get_data(as_text=True)
         assert "Use A" not in page and "Use B" not in page
+
+
+class TestTakeValueFidelity:
+    """docs/132 heavy-review critical: double-quoted tojson attributes let a
+    string value's own JSON quotes terminate the attribute — every string
+    take silently staged "". Single-quoted attrs + the NaN gate, pinned."""
+
+    def test_a_string_value_survives_the_attribute(self, client, tmp_path):
+        live = tmp_path / "quam_state" / "state.json"
+        doc = json.loads(live.read_text(encoding="utf-8"))
+        doc["qubits"]["q1"]["flux_point"] = "joint"
+        live.write_text(json.dumps(doc), encoding="utf-8")
+        client.post("/state/sync", data={"mode": "discard"})
+        client.post("/state/archive", data={"tag": "v"})
+        ts, _ = _panel_ts_list(client)
+        r0 = client.post("/field/edit-batch", json={
+            "updates": [{"dot_path": "qubits.q1.flux_point",
+                         "value": "independent"}]})
+        assert r0.status_code == 200 and r0.get_json()["ok"], r0.get_json()
+        d = client.get(f"/state/versions/{ts[0]}/diff").get_data(as_text=True)
+        # the STRING value rides the attr as real JSON, quotes intact
+        assert "data-value='\"joint\"'" in d
+        # ...and what the ✓ posts round-trips to the working copy verbatim
+        r = client.post("/field/edit-batch", json={
+            "updates": [{"dot_path": "qubits.q1.flux_point",
+                         "value": "joint", "create": False}]})
+        assert r.status_code == 200 and r.get_json()["ok"]
+        d2 = client.get(f"/state/versions/{ts[0]}/diff").get_data(as_text=True)
+        assert "flux_point" not in d2      # matches the version again
+
+    def test_nan_rows_offer_no_take(self, client, tmp_path):
+        """json.dumps emits bare NaN (not JSON) — the review found an
+        enabled ✓ that could never succeed. Gated to an honest dash."""
+        live = tmp_path / "quam_state" / "state.json"
+        doc = json.loads(live.read_text(encoding="utf-8"))
+        doc["qubits"]["q1"]["T2"] = float("nan")
+        live.write_text(json.dumps(doc), encoding="utf-8")
+        client.post("/state/sync", data={"mode": "discard"})
+        client.post("/state/archive", data={"tag": "v"})
+        ts, _ = _panel_ts_list(client)
+        client.post("/field/edit-batch", json={
+            "updates": [{"dot_path": "qubits.q1.T2", "value": 1.5e-5}]})
+        d = client.get(f"/state/versions/{ts[0]}/diff").get_data(as_text=True)
+        assert 'data-dot-path="qubits.q1.T2"' in d
+        assert "Non-finite value" in d          # the honest dash's title
+        # the only diff row is the NaN one — no take payload, no ✓ anywhere
+        assert "data-value" not in d
+        assert 'class="btn-xs sv-take"' not in d
+
+
+class TestWorkbenchTakeActiveGate:
+    """docs/132 heavy-review: a pushed /diff URL survives a chip switch and
+    working: resolves for EVERY loaded chip — the take must render only when
+    the working side IS the open chip (the write always lands there)."""
+
+    def test_route_computes_the_gate_and_template_consumes_it(self):
+        from quam_state_manager.web import routes as R
+        src = Path(R.__file__).read_text(encoding="utf-8")
+        i = src.index("take_active_ok = False")
+        body = src[i:i + 900]
+        assert "_active_path()" in body
+        assert 'getattr(src, "origin", "") == "working"' in body
+        import quam_state_manager
+        tpl = (Path(quam_state_manager.__file__).parent / "web" / "templates"
+               / "_diff_workbench.html").read_text(encoding="utf-8")
+        assert "take_active_ok and tab in ('state', 'wiring')" in tpl

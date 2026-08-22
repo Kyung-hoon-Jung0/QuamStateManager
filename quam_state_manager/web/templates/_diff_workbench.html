@@ -97,8 +97,14 @@
        /field/edit-batch door as every ✓ in the app. A row whose taken side
        has no value (its 'added'/'removed' end) offers nothing — a take can
        set or create, never delete. #}
+    {# take_active_ok: the working ref must BE the open chip. A pushed
+       /diff URL survives a chip switch (browser Back / restored pane) and
+       _hub_working_lookup resolves working: for EVERY loaded chip — the
+       docs/132 review wrote chip Y's value into chip X's working copy
+       through that gap, and expect_chip structurally cannot catch it (the
+       token names the ACTIVE chip, which is the one being written). #}
     {% set _take_from = None %}
-    {% if tab in ('state', 'wiring') and src_a and src_b %}
+    {% if take_active_ok and tab in ('state', 'wiring') and src_a and src_b %}
       {% if src_b.origin == 'working' and src_a.origin != 'working' %}
         {% set _take_from = 'a' %}
       {% elif src_a.origin == 'working' and src_b.origin != 'working' %}
@@ -115,10 +121,12 @@
         {% for r in rows %}
           {% set _tv = r.a if _take_from == 'a' else r.b %}
           {% set _absent = (_take_from == 'a' and r.kind == 'added')
-                           or (_take_from == 'b' and r.kind == 'removed') %}
+                           or (_take_from == 'b' and r.kind == 'removed')
+                           or not json_attr_safe(_tv) %}
+          {# single-quoted tojson attr — see _version_diff.html #}
           <tr class="diff-row-{{ r.kind }}"
               {% if _take_from and not _absent %}data-dot-path="{{ r.path }}"
-              data-value="{{ _tv | tojson }}" data-create="1"{% endif %}>
+              data-value='{{ _tv | tojson }}' data-create="1"{% endif %}>
             <td class="diff-list-path"><code>{{ r.path }}</code></td>
             <td class="diff-list-a">{% if r.kind == 'added' %}<span class="muted">—</span>{% else %}<code>{{ r.a | groupdigits }}</code>{% endif %}</td>
             <td class="diff-list-arrow">&rarr;</td>
@@ -131,7 +139,7 @@
             <td class="diff-list-take">
               {% if not _absent %}
               <button type="button" class="btn-xs sv-take" onclick="StateVersions.take(this)"
-                      title="Stage {{ _take_from | upper }}'s value into the working state (Review tray) — the live chip is untouched until you Apply.">Use {{ _take_from | upper }}</button>
+                      title="Stage {{ _take_from | upper }}'s value into your working state (Review tray). Reaches the live chip only via Apply — or automatically if an Auto-Sync push session is armed.">Use {{ _take_from | upper }}</button>
               {% endif %}
             </td>
             {% endif %}

@@ -901,3 +901,114 @@ class TestSchedulerHookOrder:
         assert body.index("_enqueue_exp_ingest") \
             < body.index('_reconcile_cached_quam_ctx(ctx["path"], ctx, auto_adopt=True)')
         assert "rescan_if_stale" in body[:body.index("_reconcile_cached_quam_ctx")]
+
+
+class TestIngestGateHardening:
+    """docs/132 heavy-review fixes on the gate, each pinned."""
+
+    def _boot(self, app_client, tmp_path):
+        app, client = app_client
+        chip = _write_chip(tmp_path / "quam_state")
+        client.post("/load", data={"folder": str(chip)})
+        w = RunWriter(tmp_path / "data_root")
+        _add_folder(client, w.root)
+        return app, client, chip, w
+
+    def test_state_only_run_waits_for_wiring(self, app_client, tmp_path):
+        """'s' < 'w': state.json routinely lands before wiring.json. The
+        review found this window minting a PERMANENT empty-wiring EXP
+        snapshot; now the candidate parks until the pair is whole."""
+        app, client, chip, w = self._boot(app_client, tmp_path)
+        p = Poller(client)
+        p.poll()
+        run = w.write(11, mode="complete", hhmmss="050000")
+        qs = run / "quam_state"
+        qs.mkdir(parents=True)
+        (qs / "state.json").write_text(
+            (chip / "state.json").read_text(encoding="utf-8"),
+            encoding="utf-8")                    # wiring NOT yet written
+        _touch_tree(w.root)
+        p.poll()
+        hm = app.config["history_manager"]
+        assert all(s_.kind != "exp" for s_ in hm.list_snapshots(chip))
+        (qs / "wiring.json").write_text(
+            (chip / "wiring.json").read_text(encoding="utf-8"),
+            encoding="utf-8")
+        _touch_tree(w.root)
+        p.poll()
+        exp = [s_ for s_ in hm.list_snapshots(chip) if s_.kind == "exp"]
+        assert len(exp) == 1 and exp[0].run_id == 11
+        snap_dir = hm._history_dir(chip) / exp[0].timestamp
+        wiring = json.loads((snap_dir / "wiring.json").read_text(
+            encoding="utf-8"))
+        assert wiring != {}
+
+    def test_a_stored_different_decision_blocks_ingest_even_without_a_data_segment(
+            self, app_client, tmp_path):
+        """The review's gate bypass: with the loaded chip OUTSIDE any data/
+        segment (the canonical qualibrate layout) the decision layer was
+        dead — an explicit 'different' answer was ignored. The rule now
+        mirrors the backfill exactly."""
+        from quam_state_manager.core.history import save_chip_decision
+        app, client = app_client
+        # loaded chip lives under project/ — no data/ segment anywhere
+        chip = _write_chip(tmp_path / "project" / "quam_state")
+        client.post("/load", data={"folder": str(chip)})
+        w = RunWriter(tmp_path / "data" / "ChipB")
+        _add_folder(client, w.root)
+        p = Poller(client)
+        p.poll()
+        hm = app.config["history_manager"]
+        chip_key = Path(hm.resolve_chip_dir(chip)[0]).name
+        save_chip_decision(app.instance_path, chip_key, "ChipB", "different")
+        run = w.write(12, mode="complete", hhmmss="060000")
+        _write_chip(run / "quam_state", t1=5.5e-6)   # fingerprint-aligned
+        _touch_tree(w.root)
+        p.poll()
+        assert all(s_.kind != "exp" for s_ in hm.list_snapshots(chip))
+        # flipping the decision to 'same' lets the next pass ingest
+        save_chip_decision(app.instance_path, chip_key, "ChipB", "same")
+        run2 = w.write(13, mode="complete", hhmmss="070000")
+        _write_chip(run2 / "quam_state", t1=4.4e-6)
+        _touch_tree(w.root)
+        p.poll()
+        exp = [s_ for s_ in hm.list_snapshots(chip) if s_.kind == "exp"]
+        assert [e.run_id for e in exp] == [13] or 13 in [e.run_id for e in exp]
+
+    def test_ingest_routes_by_matched_content_not_live_files(self):
+        """Source pin for the gate/route identity split (the review wrote a
+        chip-A run into chip-B's history after live was replaced): the drain
+        must resolve the target dir from the CONTENT the gate matched."""
+        from quam_state_manager.web import routes as R
+        src = Path(R.__file__).read_text(encoding="utf-8")
+        i = src.index("def _process_exp_candidate")
+        body = src[i:src.index("def _perform_divergence_scan")]
+        assert "resolve_chip_dir_for_content" in body
+        assert "hist_dir=hist_dir" in body
+
+    def test_drains_are_claimed_and_serialized(self):
+        """Source pin beside the executed proof in
+        test_history.TestRunIngestConcurrency: candidates are POPPED before
+        processing and drains hold the drain lock."""
+        from quam_state_manager.web import routes as R
+        src = Path(R.__file__).read_text(encoding="utf-8")
+        i = src.index("def _drain_exp_ingest_once")
+        body = src[i:src.index("def _exp_ingest_worker")]
+        assert 'with st["drain_lock"]' in body
+        assert "popitem(last=False)" in body     # claim-before-process
+
+    def test_the_drift_rider_is_two_stats_and_an_edge(self):
+        """The review measured the first fallback at 94x the poll cost, on
+        the request thread, re-firing every 10s. The rider is now an mtime
+        EDGE that enqueues a scan REQUEST for the worker; the scan itself
+        is budgeted and fast=True."""
+        from quam_state_manager.web import routes as R
+        src = Path(R.__file__).read_text(encoding="utf-8")
+        i = src.index("def _note_live_write_for_ingest")
+        body = src[i:i + 3500]
+        assert "st_mtime_ns" in body
+        assert "rescan_if_stale" not in body      # no I/O on the request path
+        j = src.index("def _perform_divergence_scan")
+        scan = src[j:src.index("def _drain_exp_ingest_once")]
+        assert "_active_dataset_stores(fast=True)" in scan
+        assert "deadline" in scan

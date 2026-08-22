@@ -7,7 +7,7 @@ Versions surfaces (8 items, one session) · **Pinned by**:
 `TestChangesOnlyFilter`/`TestPanelFollowsIngest`/`TestPerValueTake`/
 `TestWorkbenchTake`), `tests/test_poll_stability.py`
 (`TestExpIngestOnPoll`/`TestSchedulerHookOrder`),
-`tests/version_diff_selfcheck.cjs` (37 assertions, mutation-checked).
+`tests/version_diff_selfcheck.cjs` (38 assertions, mutation-checked), plus the review-round pins: `TestRunIngestConcurrency`, `TestIngestGateHardening`, `TestTakeValueFidelity`, `TestWorkbenchTakeActiveGate`, `TestKindChips` legacy cases.
 
 The customer's core diagnosis, verbatim intent: *"versions를 눌러도 대체 이게
 왜, 언제, 누가 변경했는지는 빠져있기 때문에 meaningful information이라고
@@ -57,12 +57,15 @@ right before a write). Implementation:
 No live capture path ever filled `experiment_name`/`run_id`; only the
 backfill did. Now, when a NEW run with a `quam_state` copy appears:
 
-- **Detection is enqueue-only** — zero file I/O added to any poll.
-  Three enqueue sites: the `/datasets/changes-since` aggregation loop
-  (`DatasetStore.changes_since` byte-untouched; the docs/105 budget pins
-  stay green), the scheduler post-node hook, and a debounced
-  clean→diverged transition on `/state/drift` (the fallback that catches
-  qualibrate runs finishing while no Datasets page is polling).
+- **Detection is enqueue-only.** Three enqueue sites: the
+  `/datasets/changes-since` aggregation loop (dict lookups only;
+  `DatasetStore.changes_since` byte-untouched, the docs/105 budget pins
+  stay green), the scheduler post-node hook, and a **live-write mtime
+  EDGE** on `/state/drift` (two `os.stat`; the fallback that catches
+  qualibrate runs finishing while no Datasets page is polling — and it
+  works on a dirty working copy too, where `live_diverged` deliberately
+  never escalates). The edge enqueues a scan REQUEST; the budgeted rescan
+  (`fast=True` + deadline) runs on the worker, never a request thread.
 - **The worker** (daemon thread; synchronous drain under TESTING) gates each
   candidate with the `_runs_field_series` identity gate verbatim
   (extras-name definitive, else network pre-gate + fingerprint alignment)
@@ -92,8 +95,9 @@ backfill did. Now, when a NEW run with a `quam_state` copy appears:
 
 ## Panel freshness across processes
 
-`HistoryManager.history_seq_for(path)` (one os.stat of the chip's history
-dir) rides the every-page `/state/drift` poll as `hist_seq`; the JS turns a
+`HistoryManager.history_seq_for(path)` (a stat of the chip's history dir;
+the identity-ladder resolution behind it is TTL-memoized — see the review
+section) rides the every-page `/state/drift` poll as `hist_seq`; the JS turns a
 movement into `stateHistoryChanged` on body — the topbar chip already
 listened, and the open panel now does too (debounced, ticked rows preserved).
 A moved seq also drops the per-process snapshot-list cache, **healing the
@@ -118,8 +122,9 @@ pre-existing two-window staleness** (window B never saw window A's captures).
 `StateVersions.take(btn)` — ONE implementation for all three compare
 surfaces — stages a single value into the WORKING copy through
 `/field/edit-batch` (JSON `updates[] + create`), exactly the sync review's ✓
-door; the response's `tray_html` flows through `_swapPendingTray`, and the
-live chip stays untouched until Apply (covenant intact, pinned).
+door; the response's `tray_html` flows through `_swapPendingTray`. It
+reaches the live chip only via Apply — or automatically inside an armed
+Auto-Sync push session (docs/117; the UI copy says so, review-corrected).
 `expect_chip` rides along — unlike the older `reviewAccept` (docs/120).
 
 - **Version-diff overlay**: ✓ per row stages the VERSION's value; `removed`
@@ -153,17 +158,88 @@ unbridged global inside its try/catch).
   guard, hidden-tab skip); the new-run popup gained ✕ / Esc / the backdrop
   click it already had.
 
+## Heavy review, same day — 27 confirmed findings + 4 from the critic, all fixed
+
+The docs/128-pattern red team (6 lenses, per-finding adversarial refutation,
+completeness critic; 35 agents) ran against the implementation commit. One
+rejection in 28 — the findings were almost all real. The load-bearing ones:
+
+- **CRITICAL — the double-drain race.** The scheduler hook enqueues (waking
+  the worker) then drains on its own thread; with no drain serialization and
+  no claim step, both threads ingested the same candidate and the trailer's
+  hash-dedup branch `rmtree`'d the LEADER's completed snapshot — leaving the
+  hash registered, the SQLite rows orphaned, and re-ingest permanently
+  blocked, so the state transition was recorded NOWHERE (executed proof).
+  Fix: per-app `drain_lock` + claim-before-process (`popitem` then re-park on
+  retry), and `ingest_run` now runs under the manager lock like
+  `check_and_snapshot` always has. Pinned by an executed two-thread race
+  test.
+- **CRITICAL — take staged `""` for every string value.** Flask's `tojson`
+  escapes `<>&'` but NOT double quotes (its contract is single-quoted
+  attributes — the house pattern everywhere else); all three take surfaces
+  used double quotes, so a string value's own JSON quotes terminated the
+  attribute and the ✓ silently staged an empty string. Single-quoted now,
+  round-trip pinned.
+- **CRITICAL — local wall-clock in the UTC timestamp space.** Run folders
+  carry local time; captures are stamped UTC; one lexically-sorted namespace
+  mixed both, floating a fresh EXP row hours "into the future" on any
+  non-UTC machine (panel mis-ordered, times wrong by the offset).
+  `_entry_timestamp` + `_run_ts_stamp` now convert LOCAL→UTC together
+  (parity kept; re-keyed re-ingests are hash-dedup-safe).
+- **The stamping claim was false**: the first 14-site patch script validated
+  per-edit but only wrote the file at the end — its assertion failure
+  discarded the first seven edits SILENTLY, and every surface those sites
+  mint was rendering "recorded before kinds existed" about snapshots created
+  seconds ago. All 14 verified stamped now by an audit loop, not a claim.
+- **Wrong-chip ingest, three ways, all closed**: the chip-decision layer was
+  dead when the loaded chip's path had no `data/` segment (the canonical
+  qualibrate layout — mirror the backfill's rule exactly, legacy chip key
+  included); the gate matched the WORKING copy but ingest routed by the LIVE
+  files' identity (mid-divergence those differ — now routes by
+  `resolve_chip_dir_for_content` of the matched content); and the workbench
+  take rendered for ANY loaded chip's `working:` ref while the write lands
+  on the ACTIVE chip (now gated `take_active_ok`; `expect_chip` structurally
+  cannot catch that one — the token names the chip being written).
+- **The drift fallback was neither an edge nor budgeted**: it re-ran an
+  unbudgeted rescan on the request thread every 10s while divergence
+  persisted (5.7ms poll → 535ms measured), and was DEAD whenever the working
+  copy held any pending edit (docs/87 keeps `live_diverged` from escalating
+  on a dirty ctx — including an edit staged by this feature's own ✓).
+  Replaced with the mtime edge described above.
+- **Mid-pair-write mint**: state.json lands before wiring.json (`'s' < 'w'`);
+  the ingest minted a PERMANENT empty-wiring EXP snapshot the run-derived
+  key then protected forever. The gate now requires the pair (bounded retry;
+  the final attempt falls back to the live wiring like the backfill), and a
+  torn state.json parks for retry instead of dropping the run.
+- Also fixed: per-app ingest state (module globals crossed Flask apps — one
+  app's parked candidate ingested into another app's history, reproduced);
+  the panel refresh collapsing "Show more" and dropping Compare ticks
+  beyond page one; the filter hiding the chip's FIRST snapshot as an
+  "unchanged copy" (zeros mean nothing-earlier); enrich leaving the SQLite
+  rows unattributed (Versions said "After #N" while the 🕘 popover
+  disagreed); the covenant copy ("nothing here writes") being false inside
+  an armed Auto-Sync push session — reworded honestly on all four spots;
+  the create-branch error prescribing "use Pull" where Pull cannot help;
+  NaN rows offering a ✓ that could never succeed; the dark-theme After-chip
+  hover at 2.6:1 contrast; the N-way ✓ being mouse-only
+  (visibility→opacity, focus rules); Esc on the new-run popup also closing
+  the modal beneath (same-node capture listeners need
+  `stopImmediatePropagation`); the spurious per-ingest WARNING about its
+  own half-written snapshot; and `hist_seq`'s cost understatement (the
+  identity-ladder resolution is now TTL-memoized and the docstring tells
+  the truth).
+
 ## Known limits, stated
 
 - EXP coverage needs a signal: the delta poll (Datasets page open), the
-  scheduler hook (SM-launched runs), or the drift transition (outside runs
-  while SM is on any page). A run finishing while NO SM window exists is the
-  backfill's job, as before.
+  scheduler hook (SM-launched runs), or the live-write mtime edge (outside
+  runs while SM is on any page — dirty working copies included). A run
+  finishing while NO SM window exists is the backfill's job, as before.
 - Legacy `auto` rows stay ambiguous forever — the chip says so rather than
   guessing confidently.
-- The drift-transition fallback ingests only the newest 5 runs per folder
-  per debounce window (divergence means "just now"; older runs are the
-  backfill's).
+- The live-write edge's scan collects only the newest 5 runs per folder per
+  debounce window (a write edge means "just now"; older runs are the
+  backfill's), under a 2s budget.
 - `ingest_run`'s diff_summary is computed against the chronologically
   previous snapshot; a backdated import with nothing earlier keeps honest
   zeros.

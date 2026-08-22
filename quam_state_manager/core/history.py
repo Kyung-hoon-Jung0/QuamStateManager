@@ -331,6 +331,9 @@ def _ts_stamp() -> str:
 # ``timestamp`` route/URL segments are JOINED onto the history root, so any
 # value outside this shape (e.g. a ``..\..``-shaped segment, which escapes the
 # root on Windows where backslash is a separator) must be rejected pre-join.
+# history_seq_for re-resolves the identity ladder at most this often (docs/132).
+_HIST_SEQ_RESOLVE_TTL_S = 10.0
+
 _HIST_TS_RE = re.compile(r"^\d{8}_\d{6}(_\d{1,6})?$")
 
 
@@ -845,6 +848,8 @@ class HistoryManager:
         self._content_ts_cache: dict[str, tuple[object, dict[str, str]]] = {}
         # history_seq_for's last-seen chip-dir mtimes (docs/132)
         self._hist_seq_seen: dict[str, int] = {}
+        # history_seq_for's TTL memo of resolved chip dirs (see its docstring)
+        self._hist_seq_dir_memo: dict[str, tuple[Path, float]] = {}
         self._lock = threading.RLock()
 
         # Param-history performance caches (see docs/23_param_history_performance.md)
@@ -3823,9 +3828,27 @@ class HistoryManager:
         rewrites (annotate/enrich) don't move the dir mtime; they invalidate
         their caches directly, and a label edit doesn't need to repaint a
         panel in another window urgently. Returns 0 when the dir is absent.
+
+        Cost honesty (docs/132 review): resolving the chip dir walks the
+        identity ladder — ~3 stats hot, plus a live-file CONTENT re-read
+        whenever the live pair's mtimes moved, which is continuously true
+        during a writing experiment. So the RESOLVED DIR is memoized for
+        ``_HIST_SEQ_RESOLVE_TTL_S``: chip identity changing under an open
+        context is rare, and a ≤10s-stale dir is harmless (the next tick
+        heals).
         """
+        now_t = time.time()
+        key_src = str(quam_state_path)
+        memo = self._hist_seq_dir_memo.get(key_src)
+        if memo is not None and now_t - memo[1] < _HIST_SEQ_RESOLVE_TTL_S:
+            hist_dir = memo[0]
+        else:
+            try:
+                hist_dir = self._history_dir(Path(quam_state_path))
+            except OSError:
+                return 0
+            self._hist_seq_dir_memo[key_src] = (hist_dir, now_t)
         try:
-            hist_dir = self._history_dir(Path(quam_state_path))
             seq = hist_dir.stat().st_mtime_ns
         except OSError:
             return 0
@@ -3891,6 +3914,28 @@ class HistoryManager:
                     logger.warning("Could not enrich snapshot %s with run #%s",
                                    snap.timestamp, run_id, exc_info=True)
                     return False
+                # The SQLite index rows carry their own run_id/experiment
+                # columns, read by field-history and column-history — leave
+                # them NULL and the Versions row says "After #N" while the 🕘
+                # popover shows the same transition unattributed (docs/132
+                # review). Best-effort: the meta is the source of truth and a
+                # reindex heals this anyway.
+                try:
+                    idx = target_dir / "index.sqlite"
+                    if idx.exists():
+                        conn = sqlite3.connect(str(idx), timeout=10.0)
+                        try:
+                            conn.execute(
+                                "UPDATE param_history SET run_id = ?, "
+                                "experiment_name = ? WHERE timestamp = ?",
+                                (run_id, getattr(entry, "experiment_name", None),
+                                 snap.timestamp))
+                            conn.commit()
+                        finally:
+                            conn.close()
+                except Exception:  # noqa: BLE001
+                    logger.warning("Enrich index update failed for %s",
+                                   snap.timestamp, exc_info=True)
                 # Same invalidation annotate_snapshot does — but keyed by the
                 # CHIP DIR (multiple source paths can resolve here), and
                 # RESOLVED on both sides like the ingest tail, so trailing
@@ -3925,6 +3970,8 @@ class HistoryManager:
         *,
         compute_diff: bool = True,
         enrich_duplicates: bool = True,
+        hist_dir: Path | None = None,
+        fallback_wiring_path: Path | None = None,
     ) -> dict[str, int]:
         """Ingest ONE run's state copy as an EXP version, near-real-time
         (docs/132).
@@ -3944,14 +3991,35 @@ class HistoryManager:
         ``run_id``, ``experiment_name``, ``folder_path`` attributes, plus
         whatever :meth:`_entry_timestamp` reads.
 
+        ``hist_dir`` — the pre-resolved target chip dir. The docs/132 review
+        found the gate/route identity split: the caller's gate matches the
+        run against the WORKING copy, but resolving here from
+        ``quam_state_path`` re-reads the LIVE files — which, in exactly the
+        diverged state the drift fallback exists for, can name a DIFFERENT
+        chip (a foreign process replaced live). Callers that gated on
+        content must route by that same content
+        (:meth:`resolve_chip_dir_for_content`) and pass the dir in.
+
+        ``fallback_wiring_path`` — mirrors the backfill's: used when the run
+        folder carries no wiring.json (legit for older runs).
+
+        Runs under the manager lock: ``check_and_snapshot`` serializes its
+        whole capture on ``self._lock``, and an unserialized ingest racing it
+        (or another ingest) around the shared hash set was the docs/132
+        review's CRITICAL — the trailing thread's dedup branch deleted the
+        leader's completed snapshot.
+
         Returns ``{ingested, skipped_duplicate, enriched}``.
         """
-        hist_dir = self._history_dir(Path(quam_state_path))
-        return self._ingest_entries_into(
-            hist_dir, [entry],
-            compute_diff=compute_diff,
-            enrich_duplicates=enrich_duplicates,
-        )
+        if hist_dir is None:
+            hist_dir = self._history_dir(Path(quam_state_path))
+        with self._lock:
+            return self._ingest_entries_into(
+                hist_dir, [entry],
+                fallback_wiring_path=fallback_wiring_path,
+                compute_diff=compute_diff,
+                enrich_duplicates=enrich_duplicates,
+            )
 
     def _ingest_entries_into(
         self,
@@ -4073,6 +4141,18 @@ class HistoryManager:
                     _tick(i)
                     continue
 
+                # Prior lookup BEFORE the new dir exists: listing after
+                # mkdir logged a spurious "Skipping snapshot dir without
+                # meta.json" WARNING about our own half-written snapshot on
+                # every ingest (docs/132 review) — wolf-crying for a signal
+                # that elsewhere means real corruption.
+                prior = None
+                if compute_diff:
+                    for s in self._list_snapshots_in_dir(target_dir):
+                        if s.timestamp < ts:
+                            prior = s
+                            break
+
                 snap_dir = target_dir / ts
                 snap_dir.mkdir(parents=True, exist_ok=True)
                 # Route through safe_io: workspace experiment folders can still
@@ -4123,11 +4203,6 @@ class HistoryManager:
                 # changes-only filter and the quick-diff (docs/132).
                 diff_summary = {"added": 0, "removed": 0, "modified": 0, "total": 0}
                 if compute_diff:
-                    prior = None
-                    for s in self._list_snapshots_in_dir(target_dir):
-                        if s.timestamp < ts:
-                            prior = s
-                            break
                     if prior is not None:
                         try:
                             entries_d = _differ.diff(
@@ -4429,7 +4504,22 @@ class HistoryManager:
         time_str = (time_str + "000000")[:6]  # pad if missing seconds
         run_id = getattr(entry, "run_id", 0) or 0
         suffix = f"{run_id % 1000:03d}"
-        return f"{date}_{time_str}_{suffix}"
+        # LOCAL → UTC (docs/132 review, critical): run folders carry local
+        # wall-clock (qualibrate's convention) while every captured snapshot
+        # is stamped UTC (_ts_stamp) — mixing the two in one lexically-sorted
+        # namespace floated a fresh EXP row hours "into the future" on any
+        # non-UTC machine (panel mis-ordered, ts_local displaying the wrong
+        # time, ordinals lying). Interpreting the run stamp as this machine's
+        # local time is the honest reading — the run was produced here.
+        # Previously-ingested rows keyed under the old local-time string are
+        # safe: a re-ingest under the UTC key content-hash-dedups.
+        try:
+            naive = datetime.strptime(f"{date}_{time_str}", "%Y%m%d_%H%M%S")
+            stamp = naive.astimezone().astimezone(
+                timezone.utc).strftime("%Y%m%d_%H%M%S")
+        except ValueError:
+            stamp = f"{date}_{time_str}"
+        return f"{stamp}_{suffix}"
 
 
 # ----------------------------------------------------------------------

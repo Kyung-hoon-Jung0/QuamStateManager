@@ -10917,10 +10917,14 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
     padding: 0.1rem 0.45rem; border-radius: 0.45rem; line-height: 1.25;
     border: 1px solid var(--trigger-experiment); text-decoration: none;
     max-width: 11rem; }
+/* Hover text = the CARD BACKGROUND color, not primary-inverse: the dark
+   theme's --trigger-experiment is a pastel (#c084fc) and white-on-pastel
+   measured 2.6:1 (docs/132 review) — the card bg is dark there and light
+   in light theme, giving readable contrast on both grounds. */
 .sv-run:hover { background: var(--trigger-experiment);
-    color: var(--pico-primary-inverse); }
+    color: var(--pico-card-background-color); }
 .sv-run:hover .sv-run-id, .sv-run:hover .sv-run-name {
-    color: var(--pico-primary-inverse); }
+    color: var(--pico-card-background-color); }
 .sv-run-id { font-size: 0.68rem; font-weight: 700;
     color: var(--trigger-experiment); white-space: nowrap; }
 .sv-run-name { font-size: 0.62rem; color: var(--pico-muted-color);
@@ -10938,8 +10942,13 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .sv-take.sv-taken, .sv-take.sv-taken:hover {
     background: transparent; color: var(--color-success-text);
     border-color: var(--color-success-text); }
-.vc-take { visibility: hidden; font-size: 0.68rem; margin-left: 0.3rem; }
-td.vc-cell-takeable:hover .vc-take { visibility: visible; }
+/* opacity, not visibility: a visibility:hidden button leaves the tab
+   order entirely, making the N-way take mouse-only (docs/132 review; the
+   docs/64 doctrine keeps every action keyboard-reachable). */
+.vc-take { opacity: 0; font-size: 0.68rem; margin-left: 0.3rem; }
+td.vc-cell-takeable:hover .vc-take,
+td.vc-cell-takeable:focus-within .vc-take,
+.vc-take:focus { opacity: 1; }
 .review-row.review-accepted { opacity: 0.75; }
 .state-versions-foot { display: flex; gap: 0.6rem; flex-wrap: wrap;
     font-size: 0.72rem; padding-top: 0.3rem; margin-top: 0.25rem;

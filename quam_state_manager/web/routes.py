@@ -1057,6 +1057,7 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict, *,
             # Param History snapshot like the explicit /state/sync does.
             try:
                 _history().check_and_snapshot(ctx.get("path"), "auto",
+                                              kind="exp",
                                               project=_scope_for(ctx.get("path"), ctx))
             except Exception:
                 logger.warning("History snapshot after auto-sync failed",
@@ -6004,7 +6005,13 @@ def _trim_run_caches() -> None:
 def _run_ts_stamp(run: Any) -> str:
     """RunInfo → the ingested-snapshot timestamp format
     (``YYYYMMDD_HHMMSS_NNN``, ``_entry_timestamp`` parity — the dedup key
-    against already-ingested snapshot rows)."""
+    against already-ingested snapshot rows).
+
+    LOCAL → UTC like ``_entry_timestamp`` (docs/132 review): run folders
+    carry local wall-clock while captured snapshots are stamped UTC — one
+    lexically-sorted namespace must speak one clock or fresh EXP rows float
+    hours "into the future" on any non-UTC machine.
+    """
     folder = Path(getattr(run, "folder_path", "") or "")
     m = re.search(r"_(\d{6})$", folder.name)
     hhmmss = m.group(1) if m else "000000"
@@ -6012,7 +6019,13 @@ def _run_ts_stamp(run: Any) -> str:
     if not re.match(r"^\d{8}$", date):
         date = "19700101"
     rid = getattr(run, "run_id", 0) or 0
-    return f"{date}_{hhmmss}_{rid % 1000:03d}"
+    try:
+        naive = datetime.strptime(f"{date}_{hhmmss}", "%Y%m%d_%H%M%S")
+        stamp = naive.astimezone().astimezone(
+            timezone.utc).strftime("%Y%m%d_%H%M%S")
+    except ValueError:
+        stamp = f"{date}_{hhmmss}"
+    return f"{stamp}_{rid % 1000:03d}"
 
 
 def _runs_field_series(ctx: dict, dot_path: str, *,
@@ -7239,12 +7252,19 @@ def field_edit_batch():
                         entry = modifier.create_subtree(target_path, parsed,
                                                         group_id=_batch_gid)
                     except KeyError as ce:
-                        # The PARENT is also absent — a wholly-new subtree, not a
-                        # new leaf. Guide to a full Pull rather than half-build it.
+                        # The PARENT is also absent — a wholly-new subtree, not
+                        # a new leaf. Surface-neutral wording (docs/132 review):
+                        # on the sync review the other side is the live chip
+                        # and Pull genuinely brings the structure in, but on
+                        # the version-take surfaces the structure lives only
+                        # in a SNAPSHOT — the old message prescribed a dead
+                        # end there ("use Pull" cannot help).
                         raise KeyError(
-                            f"{dot_path} is new structure on the live chip — use "
-                            f"Pull to bring it in (can't add a field whose parent "
-                            f"doesn't exist yet)"
+                            f"{dot_path}'s parent structure doesn't exist in "
+                            f"the working state — this control can set or "
+                            f"create a single leaf, not rebuild structure. "
+                            f"Bring the structure in first (Pull from live, "
+                            f"or stage the version from State History)."
                         ) from ce
                 applied_entries.append(entry)
                 # Echo the COMMITTED value (type-coerced by set_value) + its display
@@ -8289,7 +8309,7 @@ def history_snapshot():
         return render_template("_status.html", message="No state loaded", level="warning")
 
     hm = _history()
-    hm.check_and_snapshot(_active_path(), "manual", force=True,
+    hm.check_and_snapshot(_active_path(), "manual", force=True, kind="manual",
                           project=_scope_for(_active_path(), _active_ctx()))
 
     return history_list()
@@ -8579,6 +8599,7 @@ def state_history_restore_live(timestamp: str):
         with _active_wc_lock(ctx):
             try:
                 backup_meta = hm.check_and_snapshot(path, "manual", force=True,
+                                                    kind="backup",
                                                     project=_scope_for(path, ctx))
             except Exception as exc:
                 logger.warning("Pre-restore snapshot failed", exc_info=True)
@@ -8626,7 +8647,8 @@ def state_history_restore_live(timestamp: str):
     # the restored bytes are identical to an existing snapshot, so content-hash
     # dedup should recognise it and skip a redundant ~1MB write.
     try:
-        hm.check_and_snapshot(path, "restore", project=_scope_for(path, ctx))
+        hm.check_and_snapshot(path, "restore", kind="manual",
+                                 project=_scope_for(path, ctx))
     except Exception:
         logger.warning("Post-restore snapshot failed", exc_info=True)
     logger.info("State History: restored snapshot %s to live", timestamp)
@@ -8673,6 +8695,7 @@ def state_history_snapshot():
         return render_template("_status.html", message="No state loaded", level="warning")
     try:
         _history().check_and_snapshot(ctx["path"], "manual", force=True,
+                                      kind="manual",
                                       project=_scope_for(ctx["path"], ctx))
     except Exception as exc:
         return render_template("_status.html",
@@ -9068,11 +9091,18 @@ def state_versions_panel():
     roots = _uid_roots()
     hidden_unchanged = 0
     visible: list = []
+    # The chronologically FIRST snapshot has zeros because there was nothing
+    # earlier to diff against — the same zeros-mean-not-computed ambiguity
+    # the EXP exemption covers. Hiding the chip's original state as an
+    # "unchanged copy" was the docs/132 review's finding; snaps is
+    # newest-first, so the first-ever snapshot is the LAST element.
+    first_ts = snaps[-1].timestamp if snaps else None
     for m in snaps:
         knd, knd_legacy = kind_for(m)
         if changes_only and knd != "exp" and not m.pinned \
                 and not m.label and not m.note \
                 and m.timestamp != ver["ts"] \
+                and m.timestamp != first_ts \
                 and isinstance(m.diff_summary, dict) \
                 and m.diff_summary.get("total") == 0:
             hidden_unchanged += 1
@@ -9208,6 +9238,7 @@ def state_archive():
         note = ((note + " — ") if note else "") + "captured the LIVE chip; unapplied working-copy edits not included"
     try:
         meta = _history().check_and_snapshot(ctx["path"], "manual", force=True,
+                                             kind="manual",
                                              project=_scope_for(ctx["path"], ctx))
         if meta is None:
             return '<span class="archive-status archive-err">Could not capture state</span>'
@@ -11666,7 +11697,7 @@ def auto_sync_pull():
             if discarding:
                 try:
                     _history().check_and_snapshot(
-                        ctx["path"], "manual", force=True,
+                        ctx["path"], "manual", force=True, kind="backup",
                         project=_scope_for(ctx["path"], ctx))
                 except Exception:      # noqa: BLE001 — never block the pull
                     logger.warning("pre-pull snapshot failed", exc_info=True)
@@ -12257,46 +12288,6 @@ def _auto_pull_due(ctx: dict | None) -> bool:
     return True
 
 
-# docs/132 item 11e — the drift-poll ingest fallback's debounce state.
-_divergence_ingest_last: dict[str, float] = {}
-_DIVERGENCE_INGEST_DEBOUNCE_S = 10.0
-
-
-def _maybe_ingest_on_divergence(ctx: dict | None) -> None:
-    """On a clean→diverged transition, enqueue one rescan+ingest pass.
-
-    Catches runs produced OUTSIDE SM while no Datasets page is polling.
-    Debounced per chip; the rescan itself is budgeted (`rescan_if_stale`),
-    and everything downstream is the ordinary enqueue path.
-    """
-    if not ctx or ctx.get("type") != "quam" or not ctx.get("path"):
-        return
-    if not ctx.get("live_diverged"):
-        _divergence_ingest_last.pop(str(ctx.get("path")), None)
-        return
-    key = str(ctx.get("path"))
-    now_t = time.monotonic()
-    last = _divergence_ingest_last.get(key)
-    if last is not None and now_t - last < _DIVERGENCE_INGEST_DEBOUNCE_S:
-        return
-    _divergence_ingest_last[key] = now_t
-    cands: list = []
-    for fol in _active_dataset_stores():
-        try:
-            fol["store"].rescan_if_stale()
-            with fol["store"]._scan_lock:
-                runs = list(fol["store"].runs.values())
-        except Exception:  # noqa: BLE001
-            continue
-        # Newest few only — divergence means "just now"; older runs are the
-        # backfill's job, and an unbounded sweep here would grow with the
-        # workspace.
-        runs.sort(key=lambda r: (r.date or "", r.time or ""), reverse=True)
-        cands.extend(r for r in runs[:5] if getattr(r, "has_quam_state", False))
-    if cands:
-        _enqueue_exp_ingest(cands)
-
-
 @bp.route("/state/drift")
 def state_drift():
     """Cheap poll: how many params the live chip changed since the baseline.
@@ -12323,12 +12314,14 @@ def state_drift():
     #  * hist_seq: one os.stat of the chip's history dir, so an OPEN Versions
     #    panel can follow captures made by another process / the background
     #    ingest (the JS dispatches stateHistoryChanged when it moves).
-    #  * the drift-transition ingest fallback: the dataset delta poll only
-    #    runs while a Datasets page is open, so a qualibrate run finishing
-    #    while SM sits on any other page would go un-ingested until the next
-    #    Param-History backfill. A clean→diverged transition is exactly the
-    #    "something outside SM wrote state" moment — enqueue ONE debounced
-    #    rescan+ingest pass, never blocking this response.
+    #  * the live-write ingest edge: the dataset delta poll only runs while
+    #    a Datasets page is open, so a qualibrate run finishing while SM sits
+    #    on any other page would go un-ingested until the next backfill. A
+    #    MOVEMENT of the live pair's mtimes is the "something wrote state"
+    #    moment (works on a dirty working copy too, where live_diverged
+    #    deliberately never escalates — docs/87); the edge enqueues ONE
+    #    debounced scan REQUEST that the worker executes off-request with a
+    #    budget. This poll pays two os.stat for it, nothing else.
     hist_seq = 0
     if ctx and ctx.get("type") == "quam" and ctx.get("path"):
         try:
@@ -12341,9 +12334,9 @@ def state_drift():
     # for chips that happen to be tracked.
     auto_pull = _auto_pull_due(ctx)
     try:
-        _maybe_ingest_on_divergence(ctx)
+        _note_live_write_for_ingest(ctx)
     except Exception:   # noqa: BLE001
-        logger.debug("drift-transition ingest enqueue failed", exc_info=True)
+        logger.debug("live-write ingest edge failed", exc_info=True)
     if not _drift_tracked(ctx):
         return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull,
                        hist_seq=hist_seq)
@@ -13349,12 +13342,24 @@ def diff_view():
             logger.warning("diff build failed: %s", exc, exc_info=True)
             error = "Could not build this diff."
 
+    # docs/132: the per-row take renders only when the working: side IS the
+    # open chip — a pushed URL survives a chip switch, and the write always
+    # lands on the ACTIVE chip's working copy (see the template comment).
+    take_active_ok = False
+    try:
+        active = _active_path()
+        for src in (src_a, src_b):
+            if src is not None and getattr(src, "origin", "") == "working"                     and active and Path(str(src.path)).resolve()                     == Path(str(active)).resolve():
+                take_active_ok = True
+    except Exception:      # noqa: BLE001 — no take is the safe default
+        take_active_ok = False
     template = "_diff_workbench.html" if _is_htmx() else "diff_workbench.html"
     return render_template(
         template,
         **_ctx(page="diff", a_ref=a_ref, b_ref=b_ref, tab=tab, view=view,
                src_a=src_a, src_b=src_b, payload=payload, error=error,
                rows=rows, more=more, next_rows=limit + _DIFF_LIST_PAGE,
+               take_active_ok=take_active_ok,
                tabs=_DIFF_TABS, options=_diff_source_options()))
 
 
@@ -17879,20 +17884,56 @@ def _datasets_view(view_mode: str):
 # into the chip's snapshot store as an EXP version (kind="exp", run fields
 # stamped), near-real-time. Detection is ENQUEUE-ONLY inside surfaces that
 # already saw the run (the delta poll's aggregation loop, the scheduler's
-# post-node hook, the drift transition) — zero file I/O added to any poll;
-# the gate + copy run on a daemon worker. Failures are silent-but-logged: a
-# skipped ingest is recoverable (the Param-History backfill remains the
-# catch-all), a noisy 5s poll is not. Idempotent across processes: the
-# run-derived timestamp key + content-hash dedup + INSERT OR REPLACE
-# converge two SM windows onto one snapshot.
+# post-node hook, the live-write edge on the drift poll) — the heavy work
+# (identity gate + copy) runs on a per-app daemon worker. Failures are
+# silent-but-logged: a skipped ingest is recoverable (the Param-History
+# backfill remains the catch-all), a noisy poll is not.
+#
+# Review-hardened (docs/132 heavy review):
+#  * All state is PER-APP (app.config), never module-global — the review
+#    reproduced one app's parked candidate being ingested into another
+#    app's chip history.
+#  * Drains are serialized (drain_lock) AND candidates are CLAIMED
+#    (popped) before processing — the hook thread + worker thread double
+#    -drain deleted the leader's completed snapshot via the dedup rmtree
+#    and permanently poisoned re-ingest (the review's critical).
+#  * The gate is three-state (match / skip / retry): a torn state.json or
+#    a not-yet-written wiring.json parks the candidate for bounded retry
+#    instead of minting a permanent empty-wiring snapshot; the final
+#    attempt falls back to the live wiring, mirroring the backfill.
+#  * Ingest routes by the CONTENT the gate matched
+#    (resolve_chip_dir_for_content), never by re-reading the live files —
+#    which, mid-divergence, can name a different chip.
+#  * The chip-decision check mirrors the backfill exactly (loaded folder
+#    None still requires a decision; the legacy chip key is honored).
 # ======================================================================
 
 _EXP_INGEST_MAX_ATTEMPTS = 5
-_exp_ingest_lock = threading.Lock()
-_exp_ingest_pending: OrderedDict = OrderedDict()   # ts_key -> candidate dict
-_exp_ingest_event = threading.Event()
-_exp_ingest_thread: threading.Thread | None = None
-_exp_ingest_app = None
+_EXP_SCAN_BUDGET_S = 2.0
+_EXP_SCAN_DEBOUNCE_S = 10.0
+_exp_state_init_lock = threading.Lock()
+
+
+def _exp_ingest_state(app=None) -> dict:
+    """This APP's ingest state (queue, locks, worker, edge stamps)."""
+    app = app or current_app._get_current_object()
+    st = app.config.get("_exp_ingest_state")
+    if st is None:
+        with _exp_state_init_lock:
+            st = app.config.get("_exp_ingest_state")
+            if st is None:
+                st = {
+                    "lock": threading.Lock(),          # guards pending
+                    "drain_lock": threading.Lock(),    # serializes drains
+                    "pending": OrderedDict(),          # ts_key -> candidate
+                    "event": threading.Event(),
+                    "thread": None,
+                    "scan_requested": False,
+                    "live_stamp": {},                  # path -> (mtime_ns, mtime_ns)
+                    "scan_last": {},                   # path -> monotonic ts
+                }
+                app.config["_exp_ingest_state"] = st
+    return st
 
 
 def _exp_entry_for_run(run: Any) -> Any:
@@ -17915,23 +17956,30 @@ def _exp_entry_for_run(run: Any) -> Any:
     )
 
 
-def _run_matches_open_chip(ctx: dict, qs_dir: Path) -> bool:
-    """The `_runs_field_series` identity gate, verbatim semantics, for one run.
+def _run_matches_open_chip(ctx: dict, qs_dir: Path) -> tuple[str, Any, Any]:
+    """The `_runs_field_series` identity gate for one run.
+
+    Returns ``(verdict, run_state, run_wiring)`` with verdict one of:
+    ``"match"`` (state/wiring are the parsed dicts — reuse them, don't
+    re-read), ``"skip"`` (foreign chip / refused decision), ``"retry"``
+    (state.json unreadable mid-write — park and try again).
 
     extras chip-name equality is DEFINITIVE when both sides declare one;
     otherwise the cheap wiring-network pre-gate then fingerprint alignment.
-    Additionally respects the user's persisted chip decisions for a run whose
-    data_folder differs from the loaded chip's — "different" or undecided
-    means SKIP (the backfill banner stays the surface that asks; ambient
-    ingest must never answer that question for the user).
+    The chip-decision rule mirrors the backfill EXACTLY (history.py's
+    aligned-entry ingest rule): a run whose data_folder differs from the
+    loaded chip's — including when the loaded chip has NO data folder —
+    ingests only after an explicit "same"; "different" or undecided means
+    SKIP (the backfill banner stays the surface that asks). The legacy
+    path-derived chip key is honored like the backfill honors it.
     """
     from quam_state_manager.core.history import (
         ALIGN_ALIGNED, ChipFingerprint, _data_folder_name, _decision_key,
-        _normalised_network, align, extras_chip_name, fingerprint_from_dicts,
-        load_chip_decisions)
+        _normalised_network, _sanitize_name, align, chip_name_for,
+        extras_chip_name, fingerprint_from_dicts, load_chip_decisions)
     store = ctx.get("store")
     if store is None:
-        return False
+        return "skip", None, None
     with store._lock:
         loaded_name = extras_chip_name(store.state)
         loaded_fp = fingerprint_from_dicts(store.state, store.wiring)
@@ -17943,39 +17991,49 @@ def _run_matches_open_chip(ctx: dict, qs_dir: Path) -> bool:
         (wiring if isinstance(wiring, dict) else {}).get("network"))
     if (not loaded_name and loaded_fp.network and run_net
             and run_net != loaded_fp.network):
-        return False
+        return "skip", None, None
     try:
         state = safe_io.read_json(qs_dir / "state.json")
     except (OSError, ValueError):
-        return False
+        # A torn/half-written state.json is the mid-write window, not a
+        # verdict — park for retry rather than dropping the run forever.
+        return "retry", None, None
     if not isinstance(state, dict):
-        return False
+        return "retry", None, None
     run_name = extras_chip_name(state)
     if loaded_name and run_name:
         if run_name != loaded_name:
-            return False
+            return "skip", None, None
     else:
         run_fp = ChipFingerprint(
             network=run_net,
             qubits=frozenset((state.get("qubits") or {}).keys()),
             pairs=frozenset((state.get("qubit_pairs") or {}).keys()))
         if align(loaded_fp, run_fp) != ALIGN_ALIGNED:
-            return False
-    # Chip-decision check (the backfill's own rule): a run whose data_folder
-    # differs from the loaded chip's ingests only after an explicit "same".
+            return "skip", None, None
+    # Chip-decision check — the backfill's own rule, mirrored exactly:
+    # required whenever the run's folder differs from the loaded one,
+    # INCLUDING loaded=None (the canonical qualibrate layout keeps the live
+    # quam_state outside any data/ segment — the review found the whole
+    # decision layer dead there).
     try:
-        run_df = _data_folder_name(qs_dir)
+        run_df = _data_folder_name(qs_dir) or "(unknown)"
         loaded_df = _data_folder_name(Path(ctx["path"]))
-        if run_df and loaded_df and run_df != loaded_df:
+        if run_df != "(unknown)" and run_df != loaded_df:
             hm = _history()
             chip_key = Path(hm.resolve_chip_dir(Path(ctx["path"]))[0]).name
             decisions = load_chip_decisions(current_app.instance_path)
-            if decisions.get(_decision_key(chip_key, run_df)) != "same":
-                return False
+            dec = decisions.get(_decision_key(chip_key, run_df))
+            if dec is None:
+                legacy_key = _sanitize_name(chip_name_for(Path(ctx["path"])))
+                if legacy_key != chip_key:
+                    dec = decisions.get(_decision_key(legacy_key, run_df))
+            if dec != "same":
+                return "skip", None, None
     except Exception:  # noqa: BLE001 — an unreadable decision must not ingest
         logger.debug("exp-ingest decision check failed", exc_info=True)
-        return False
-    return True
+        return "skip", None, None
+    return "match", state, wiring if isinstance(wiring, dict) else {}
 
 
 def _open_live_quam_ctxs() -> list[dict]:
@@ -17989,104 +18047,223 @@ def _open_live_quam_ctxs() -> list[dict]:
     return out
 
 
-def _drain_exp_ingest_once() -> None:
-    """Process every pending candidate. Runs under an app context."""
-    with _exp_ingest_lock:
-        items = list(_exp_ingest_pending.items())
-    for key, cand in items:
-        done = False
-        try:
-            qs_dir = Path(cand["folder_path"]) / "quam_state"
-            if not (qs_dir / "state.json").exists():
-                # Mid-write run (docs/80: it just isn't finished yet) —
-                # bounded retry, then one warning and drop.
-                cand["attempts"] = int(cand.get("attempts") or 0) + 1
-                if cand["attempts"] >= _EXP_INGEST_MAX_ATTEMPTS:
-                    logger.warning(
-                        "exp-ingest: run #%s never produced a readable "
-                        "quam_state — giving up (backfill will catch it)",
-                        cand.get("run_id"))
-                    done = True
-                continue
-            entry = _exp_entry_for_run(cand["run"])
-            matched = False
-            for ctx in _open_live_quam_ctxs():
-                if not _run_matches_open_chip(ctx, qs_dir):
-                    continue
-                matched = True
-                res = _history().ingest_run(ctx["path"], entry)
-                logger.debug("exp-ingest run #%s -> %s: %s",
-                             cand.get("run_id"), ctx.get("path"), res)
-            done = True
-            if not matched:
-                logger.debug("exp-ingest: run #%s matched no open chip",
-                             cand.get("run_id"))
-        except Exception:  # noqa: BLE001 — never let one candidate stall the queue
-            logger.warning("exp-ingest failed for run #%s",
-                           cand.get("run_id"), exc_info=True)
-            done = True
-        finally:
-            if done:
-                with _exp_ingest_lock:
-                    _exp_ingest_pending.pop(key, None)
-
-
-def _exp_ingest_worker() -> None:
-    while True:
-        _exp_ingest_event.wait(timeout=30.0)
-        _exp_ingest_event.clear()
-        app = _exp_ingest_app
-        if app is None:
+def _process_exp_candidate(cand: dict) -> bool:
+    """Gate + ingest ONE claimed candidate. Returns True to re-park (retry)."""
+    qs_dir = Path(cand["folder_path"]) / "quam_state"
+    attempts = int(cand.get("attempts") or 0)
+    last_try = attempts >= _EXP_INGEST_MAX_ATTEMPTS - 1
+    have_state = (qs_dir / "state.json").exists()
+    have_wiring = (qs_dir / "wiring.json").exists()
+    # Mid-write window (docs/80: the run just isn't finished yet). Requiring
+    # wiring too — until the FINAL attempt — is what stops a permanent
+    # empty-wiring snapshot: 's' < 'w', so state.json routinely lands first.
+    if not have_state or (not have_wiring and not last_try):
+        cand["attempts"] = attempts + 1
+        if cand["attempts"] >= _EXP_INGEST_MAX_ATTEMPTS:
+            logger.warning(
+                "exp-ingest: run #%s never produced a readable quam_state "
+                "pair — giving up (backfill will catch it)", cand.get("run_id"))
+            return False
+        return True
+    entry = _exp_entry_for_run(cand["run"])
+    matched = False
+    retry = False
+    for ctx in _open_live_quam_ctxs():
+        verdict, run_state, run_wiring = _run_matches_open_chip(ctx, qs_dir)
+        if verdict == "retry":
+            retry = True
             continue
-        with _exp_ingest_lock:
-            has_work = bool(_exp_ingest_pending)
+        if verdict != "match":
+            continue
+        matched = True
+        hm = _history()
+        try:
+            # Route by the CONTENT the gate matched — never by re-reading
+            # the live files, which mid-divergence can name another chip.
+            hist_dir = hm.resolve_chip_dir_for_content(
+                ctx["path"], run_state, run_wiring or {})[0]
+        except Exception:  # noqa: BLE001
+            logger.warning("exp-ingest identity resolution failed for run #%s",
+                           cand.get("run_id"), exc_info=True)
+            continue
+        fb = (Path(ctx["path"]) / "wiring.json") if not have_wiring else None
+        res = hm.ingest_run(ctx["path"], entry, hist_dir=hist_dir,
+                            fallback_wiring_path=fb)
+        logger.debug("exp-ingest run #%s -> %s: %s",
+                     cand.get("run_id"), hist_dir, res)
+    if retry and not matched:
+        cand["attempts"] = attempts + 1
+        if cand["attempts"] >= _EXP_INGEST_MAX_ATTEMPTS:
+            logger.warning("exp-ingest: run #%s state stayed unreadable — "
+                           "giving up (backfill will catch it)",
+                           cand.get("run_id"))
+            return False
+        return True
+    if not matched:
+        logger.debug("exp-ingest: run #%s matched no open chip",
+                     cand.get("run_id"))
+    return False
+
+
+def _perform_divergence_scan() -> None:
+    """One budgeted rescan+collect pass (runs on the worker / TESTING drain,
+    never on a request thread). fast=True skips the token stat-walk; the
+    deadline bounds the walk the way the delta poll bounds its own."""
+    deadline = time.monotonic() + _EXP_SCAN_BUDGET_S
+    cands: list = []
+    for fol in _active_dataset_stores(fast=True):
+        if time.monotonic() >= deadline:
+            break
+        try:
+            fol["store"].rescan_if_stale(deadline=deadline)
+            with fol["store"]._scan_lock:
+                runs = list(fol["store"].runs.values())
+        except Exception:  # noqa: BLE001
+            continue
+        # Newest few only — a live-write edge means "just now"; older runs
+        # are the backfill's job.
+        runs.sort(key=lambda r: (r.date or "", r.time or ""), reverse=True)
+        cands.extend(r for r in runs[:5]
+                     if getattr(r, "has_quam_state", False))
+    if cands:
+        _enqueue_exp_ingest(cands, _from_worker=True)
+
+
+def _drain_exp_ingest_once(app=None) -> None:
+    """Process the queue. Serialized (drain_lock) + claim-before-process:
+    the review's critical was two drains ingesting the same candidate, the
+    trailer's dedup branch rmtree-ing the leader's completed snapshot."""
+    st = _exp_ingest_state(app)
+    with st["drain_lock"]:
+        if st["scan_requested"]:
+            st["scan_requested"] = False
+            try:
+                _perform_divergence_scan()
+            except Exception:  # noqa: BLE001
+                logger.warning("exp-ingest divergence scan failed",
+                               exc_info=True)
+        while True:
+            with st["lock"]:
+                if not st["pending"]:
+                    break
+                key, cand = st["pending"].popitem(last=False)   # CLAIM
+            requeue = False
+            try:
+                requeue = _process_exp_candidate(cand)
+            except Exception:  # noqa: BLE001 — one candidate never stalls the queue
+                logger.warning("exp-ingest failed for run #%s",
+                               cand.get("run_id"), exc_info=True)
+            if requeue:
+                with st["lock"]:
+                    # A fresh enqueue of the same run wins over the parked
+                    # retry copy (it carries a newer RunInfo).
+                    st["pending"].setdefault(key, cand)
+                # Parked work drains again on the worker's periodic wake
+                # (or the next TESTING enqueue) — stop claiming now or this
+                # loop would spin on the same candidate.
+                break
+
+
+def _exp_ingest_worker(app) -> None:
+    st = _exp_ingest_state(app)
+    while True:
+        st["event"].wait(timeout=30.0)
+        st["event"].clear()
+        with st["lock"]:
+            has_work = bool(st["pending"]) or st["scan_requested"]
         if not has_work:
             continue
         try:
             with app.app_context():
-                _drain_exp_ingest_once()
+                _drain_exp_ingest_once(app)
         except Exception:  # noqa: BLE001
             logger.warning("exp-ingest worker pass failed", exc_info=True)
 
 
-def _enqueue_exp_ingest(runs: list) -> None:
-    """Queue RunInfo candidates for EXP ingest. Request-context only; O(runs),
-    no file I/O. Under TESTING the queue drains synchronously so tests see
-    the snapshot in the same request (the ``defer_index`` pattern)."""
-    global _exp_ingest_thread, _exp_ingest_app
-    added = False
-    with _exp_ingest_lock:
+def _ensure_exp_worker(st: dict) -> None:
+    if st["thread"] is None or not st["thread"].is_alive():
+        app = current_app._get_current_object()
+        st["thread"] = threading.Thread(
+            target=_exp_ingest_worker, args=(app,),
+            name="exp-ingest", daemon=True)
+        st["thread"].start()
+    st["event"].set()
+
+
+def _enqueue_exp_ingest(runs: list, *, _from_worker: bool = False) -> None:
+    """Queue RunInfo candidates. O(runs), no file I/O. Under TESTING the
+    queue drains synchronously (the ``defer_index`` pattern) so tests see
+    the snapshot in the same request."""
+    st = _exp_ingest_state()
+    with st["lock"]:
         for run in runs:
             if run is None or not getattr(run, "has_quam_state", False):
                 continue
             key = _run_ts_stamp(run)
-            if key in _exp_ingest_pending:
+            if key in st["pending"]:
+                # Refresh the RunInfo but keep the retry count.
+                st["pending"][key]["run"] = run
+                st["pending"][key]["folder_path"] = str(
+                    getattr(run, "folder_path", "") or "")
                 continue
-            _exp_ingest_pending[key] = {
+            st["pending"][key] = {
                 "run": run,
                 "run_id": getattr(run, "run_id", None),
                 "folder_path": str(getattr(run, "folder_path", "") or ""),
                 "attempts": 0,
             }
-            added = True
+    if _from_worker:
+        return          # the worker's own drain loop handles it
     if current_app.config.get("TESTING"):
-        # Drain whenever anything is pending, not only on fresh adds — a
-        # mid-write candidate parked for retry must get its next attempt on
-        # the next poll, exactly as the worker's periodic wake gives it.
-        with _exp_ingest_lock:
-            has_pending = bool(_exp_ingest_pending)
+        with st["lock"]:
+            has_pending = bool(st["pending"]) or st["scan_requested"]
         if has_pending:
             _drain_exp_ingest_once()
         return
-    if not added:
+    with st["lock"]:
+        has_pending = bool(st["pending"]) or st["scan_requested"]
+    if has_pending:
+        _ensure_exp_worker(st)
+
+
+def _note_live_write_for_ingest(ctx: dict | None) -> None:
+    """The drift-poll rider: an EDGE detector on the live pair's mtimes.
+
+    The review found the first version of this fallback was (a) not an edge
+    detector — it re-ran a full unbudgeted rescan on the REQUEST thread
+    every 10s for as long as divergence persisted (5.7ms poll → 535ms
+    measured), and (b) dead whenever the working copy held any pending edit
+    (live_diverged deliberately never escalates on a dirty ctx, docs/87).
+    So: watch the live files' mtimes directly — a write is a write, dirty
+    working copy or not — and on movement enqueue ONE debounced scan
+    REQUEST that the worker executes off-request with fast=True + a
+    deadline. Cost here: two os.stat, nothing else.
+    """
+    if not ctx or ctx.get("type") != "quam" or not ctx.get("path"):
         return
-    if _exp_ingest_app is None:
-        _exp_ingest_app = current_app._get_current_object()
-    if _exp_ingest_thread is None or not _exp_ingest_thread.is_alive():
-        _exp_ingest_thread = threading.Thread(
-            target=_exp_ingest_worker, name="exp-ingest", daemon=True)
-        _exp_ingest_thread.start()
-    _exp_ingest_event.set()
+    if (ctx.get("origin") or "live") != "live":
+        return
+    p = Path(ctx["path"])
+    try:
+        stamp = ((p / "state.json").stat().st_mtime_ns,
+                 (p / "wiring.json").stat().st_mtime_ns)
+    except OSError:
+        return
+    st = _exp_ingest_state()
+    key = str(p)
+    last = st["live_stamp"].get(key)
+    st["live_stamp"][key] = stamp
+    if last is None or last == stamp:
+        return                       # first sight, or no movement
+    now_t = time.monotonic()
+    if now_t - st["scan_last"].get(key, 0.0) < _EXP_SCAN_DEBOUNCE_S:
+        return
+    st["scan_last"][key] = now_t
+    st["scan_requested"] = True
+    if current_app.config.get("TESTING"):
+        _drain_exp_ingest_once()
+    else:
+        _ensure_exp_worker(st)
 
 
 @bp.route("/datasets/changes-since")

@@ -48,9 +48,13 @@
   {# The Pull-to-Live sentence only where that button actually exists on the
      row (the panel hides it on archives and on the current version) — the
      overlay must never instruct a press the panel deliberately withholds. #}
-  <p class="state-review-note muted">Nothing here writes the live chip.
-     <b>&#10003;</b> stages that row's version value into your working state
-     (Review tray) &mdash; exactly like the sync review's &#10003;.{%
+  {# Honest about docs/117: with an armed Auto-Sync push session, staged
+     edits flush to live automatically — the absolute "nothing writes"
+     sentence was false there (docs/132 review). #}
+  <p class="state-review-note muted"><b>&#10003;</b> stages that row's
+     version value into your working state (Review tray) &mdash; exactly
+     like the sync review's &#10003;. It reaches the live chip only when
+     you Apply, or automatically if an Auto-Sync push session is armed.{%
      if offers_pull %} <b>&#8593; Pull to Live</b> on this row would put the
      live chip back on the left-hand values wholesale.{% endif %}</p>
   <div class="state-review-cards">
@@ -62,9 +66,14 @@
        leaf no longer exists NOW ('removed' = in the version, absent now).
        'added' rows (now-only) offer no ✓ — taking the version there would
        mean DELETING the leaf, which /field/edit-batch cannot do. #}
+    {# SINGLE-quoted data-value: Flask's tojson escapes <>&' but NOT the
+       double quote (its documented contract is single-quoted attributes) —
+       double quotes let a string value's own JSON quotes terminate the
+       attribute, silently staging "" (docs/132 review, critical). #}
+    {% set _takeable = e.change_type != 'added' and json_attr_safe(e.old_value) %}
     <div class="review-row diff-row-{{ e.change_type }}"
          data-dot-path="{{ e.dot_path }}"
-         {% if e.change_type != 'added' %}data-value="{{ e.old_value | tojson }}"
+         {% if _takeable %}data-value='{{ e.old_value | tojson }}'
          data-create="{{ '1' if e.change_type == 'removed' else '0' }}"{% endif %}>
       <div class="review-row-path">
         <span class="diff-type-badge diff-type-{{ e.change_type }}" aria-label="{{ e.change_type }}" title="{{ e.change_type }} since this version">{{ _glyph }}</span>
@@ -78,11 +87,13 @@
         {% else %}<span class="review-now" title="now (working state): {{ e.new_value | groupdigits }}">{{ e.new_value | groupdigits }}</span>
         {{ delta_chip(e.old_value, e.new_value, 'review-delta') }}
         {% endif %}
-        {% if e.change_type != 'added' %}
+        {% if _takeable %}
         <button type="button" class="btn-xs sv-take" onclick="StateVersions.take(this)"
-                title="Stage THIS VERSION's value into the working state (Review tray) — the live chip is untouched until you Apply.">&#10003;</button>
-        {% else %}
+                title="Stage THIS VERSION's value into your working state (Review tray). Reaches the live chip only via Apply — or automatically if an Auto-Sync push session is armed.">&#10003;</button>
+        {% elif e.change_type == 'added' %}
         <span class="muted sv-take-na" title="This leaf exists only NOW — taking the version here would mean deleting it, which this surface cannot do.">&ndash;</span>
+        {% else %}
+        <span class="muted sv-take-na" title="Non-finite value (NaN/Infinity) — this door cannot stage it.">&ndash;</span>
         {% endif %}
       </div>
     </div>

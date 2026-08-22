@@ -295,6 +295,25 @@ function partial(ts, extra) {
     ok(seen[0].indexOf('/state/versions?changes=all') === 0,
        'a stored "all" choice rides the refetch: ' + seen[0]);
 
+    // ---- 10b. the live refresh preserves an expanded page (docs/132
+    // review: a bare refetch collapsed "Show more" back to 40 and silently
+    // dropped Compare ticks beyond the first page) --------------------
+    delete stored['quam_versions_changes'];
+    panel().hidden = false;
+    var many = [];
+    for (var i2 = 0; i2 < 50; i2++) {
+        many.push('<input type="checkbox" class="sv-check" value="20260821_0102'
+            + String(10 + i2) + '_0001">');
+    }
+    panel().innerHTML = many.join('');
+    seen.length = 0;
+    document.body.dispatchEvent(new window.CustomEvent('stateHistoryChanged',
+        { bubbles: true }));
+    await new Promise(function (r) { setTimeout(r, 1000); });   // 900ms debounce
+    ok(seen.length === 1 && seen[0].indexOf('limit=50') > -1,
+       'the stateHistoryChanged refresh keeps the expanded 50-row page: '
+       + seen[0]);
+
     // ---- 11. per-value take (docs/132 #7) ------------------------------
     window.__chipToken = 'CHIPTOK';
     host().innerHTML =

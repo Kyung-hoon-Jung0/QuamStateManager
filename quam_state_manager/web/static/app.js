@@ -12620,7 +12620,14 @@ document.addEventListener('htmx:afterSwap', function(evt) {
         if (e.key !== 'Escape') return;
         var popup = document.getElementById('new-run-popup');
         if (!popup || popup.style.display === 'none') return;
-        e.stopPropagation();
+        // stopImmediatePropagation, not stopPropagation: trapFocus modals
+        // register their own CAPTURE listener on this same node, and
+        // stopPropagation does not suppress same-node listeners — one Esc
+        // was closing both the popup AND the modal beneath it (docs/132
+        // review). This handler registers at load, before any trap, so it
+        // runs first.
+        e.stopImmediatePropagation();
+        e.preventDefault();
         window.dismissNewRunPopup();
     }, true);
 
@@ -16311,7 +16318,12 @@ window.StateVersions = (function () {
         _svLiveTimer = setTimeout(function () {
             var pp = panel();
             if (!pp || pp.hidden) return;
-            _refetch();
+            // Preserve the expanded page: a bare refetch rendered the
+            // 40-row default, collapsing "Show more" and silently dropping
+            // Compare ticks beyond the first page the moment ANY other
+            // window captured a snapshot (docs/132 review).
+            var shown = pp.querySelectorAll('.sv-check').length;
+            _refetch(shown > 40 ? shown : undefined);
         }, 900);
     }
     // on document, not document.body: app.js runs from <head>, where body is
