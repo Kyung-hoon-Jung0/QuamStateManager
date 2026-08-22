@@ -764,6 +764,38 @@ class SnapshotMeta:
     # standalone chips, workspace backfill ingests, and every pre-lens
     # snapshot. meta.json-only — no SQLite column.
     project: str | None = None
+    # WHY this snapshot exists, in the user's vocabulary (docs/132):
+    # "exp" (a run produced this state), "manual" (the user changed state on
+    # purpose — apply, pull, restore, take-snapshot, bookmark), or "backup"
+    # (a protective copy taken right before something overwrote). Additive:
+    # the raw ``trigger`` is untouched for compatibility; old builds ignore
+    # this via _SNAPSHOT_META_FIELDS; old snapshots without it go through
+    # kind_for()'s legacy mapping. meta.json-only — no SQLite column.
+    kind: str | None = None
+
+
+# Legacy display mapping for snapshots captured before ``kind`` existed
+# (docs/132). Returns (kind, is_legacy). The honest fallback for old "auto"
+# rows is BACKUP — pre-apply backups fire on every apply while pulls/adopts
+# are occasional — but is_legacy=True lets the UI say "recorded before kinds
+# existed" instead of claiming certainty the data does not hold. Old
+# "manual" rows map MANUAL because that is what the word claimed at the
+# time (some were internal forced backups; the tooltip carries the raw
+# trigger for exactly this reason).
+_LEGACY_KIND_FOR_TRIGGER = {
+    "save": "manual",
+    "manual": "manual",
+    "restore": "manual",
+    "experiment": "exp",
+    "auto": "backup",
+}
+
+
+def kind_for(meta: "SnapshotMeta") -> tuple[str, bool]:
+    """The (kind, is_legacy) a surface should display for *meta*."""
+    if meta.kind in ("exp", "manual", "backup"):
+        return meta.kind, False
+    return _LEGACY_KIND_FOR_TRIGGER.get(meta.trigger, "manual"), True
 
 
 # Sentinel for annotate_snapshot's ``note``: "argument not provided" so a label-
@@ -805,6 +837,14 @@ class HistoryManager:
         # Hashes of (state+wiring) per chip dir, lazily populated on first access.
         # Used to dedup snapshots whose content matches one already on disk.
         self._hash_cache: dict[str, set[str]] = {}
+        # hash -> newest timestamp, per source path — the O(1) side of
+        # snapshot_ts_for_current_content (docs/132: the linear scan was the
+        # named 1,000+-snapshot scaling risk). Keyed by the cached snapshot
+        # LIST OBJECT's identity, so it can never outlive the list it was
+        # derived from and needs no invalidation hooks of its own.
+        self._content_ts_cache: dict[str, tuple[object, dict[str, str]]] = {}
+        # history_seq_for's last-seen chip-dir mtimes (docs/132)
+        self._hist_seq_seen: dict[str, int] = {}
         self._lock = threading.RLock()
 
         # Param-history performance caches (see docs/23_param_history_performance.md)
@@ -895,10 +935,22 @@ class HistoryManager:
             return None
         if h is None:
             return None
-        for meta in self.list_snapshots(path):
-            if meta.state_hash == h:
-                return meta.timestamp
-        return None
+        # O(1) lookup instead of the linear scan (docs/132). The mapping is
+        # rebuilt exactly when list_snapshots hands back a NEW cached list
+        # object — same lifetime, no separate invalidation to get wrong.
+        # Built oldest→newest so the NEWEST matching snapshot wins, which is
+        # the documented contract (the A-B-A property above).
+        snaps = self.list_snapshots(path)
+        key = str(path)
+        cached = self._content_ts_cache.get(key)
+        if cached is None or cached[0] is not snaps:
+            mapping: dict[str, str] = {}
+            for meta in reversed(snaps):
+                if meta.state_hash:
+                    mapping[meta.state_hash] = meta.timestamp
+            cached = (snaps, mapping)
+            self._content_ts_cache[key] = cached
+        return cached[1].get(h)
 
     def _known_hashes_for_chip(self, hist_dir: Path) -> set[str]:
         """Return the set of state_hashes already present in a chip dir.
@@ -1563,8 +1615,13 @@ class HistoryManager:
         new_experiments: list[str] | None = None,
         defer_index: bool = False,
         project: str | None = None,
+        kind: str | None = None,
     ) -> SnapshotMeta | None:
         """Create a snapshot if the state files changed (or if *force* is True).
+
+        ``kind`` — the user-vocabulary reason ("exp"/"manual"/"backup",
+        docs/132) stamped into the meta; ``None`` leaves legacy display
+        mapping to :func:`kind_for`.
 
         Returns the new ``SnapshotMeta``, or ``None`` if nothing changed.
 
@@ -1680,6 +1737,7 @@ class HistoryManager:
                 data_folder=_data_folder_name(path),
                 chip_swap_detected=swap_info,
                 project=project,
+                kind=kind,
             )
             # Cache the new hash so subsequent calls in the same session see it,
             # and flush the sidecar so a fresh process starts hot (Phase 3 §2.3).
@@ -3752,6 +3810,149 @@ class HistoryManager:
             self._chip_histories_cache = (current_version, result)
         return result
 
+    def history_seq_for(self, quam_state_path: str | Path) -> int:
+        """A cheap change signal for this chip's snapshot store (docs/132).
+
+        One ``os.stat`` of the chip's history dir: its mtime moves whenever a
+        snapshot dir is created or pruned. Rides the every-page /state/drift
+        poll so an open Versions panel can follow captures made by ANOTHER
+        process (or this one's background ingest). When movement is seen the
+        per-process snapshot-list cache for this chip is dropped and the
+        chip version bumped — which also heals the pre-existing two-window
+        staleness (window B never saw window A's captures). Meta-only
+        rewrites (annotate/enrich) don't move the dir mtime; they invalidate
+        their caches directly, and a label edit doesn't need to repaint a
+        panel in another window urgently. Returns 0 when the dir is absent.
+        """
+        try:
+            hist_dir = self._history_dir(Path(quam_state_path))
+            seq = hist_dir.stat().st_mtime_ns
+        except OSError:
+            return 0
+        key = str(hist_dir)
+        with self._lock:
+            last = self._hist_seq_seen.get(key)
+            if last != seq:
+                self._hist_seq_seen[key] = seq
+                if last is not None:
+                    try:
+                        target_resolved = hist_dir.resolve()
+                    except OSError:
+                        target_resolved = hist_dir
+                    for k in list(self._snapshot_list_cache):
+                        d = self._safe_history_dir(k)
+                        if d is None:
+                            continue
+                        try:
+                            if d.resolve() == target_resolved:
+                                self._snapshot_list_cache.pop(k, None)
+                        except OSError:
+                            continue
+                    self._bump_chip_version(hist_dir)
+        return seq
+
+    def _enrich_run_fields(
+        self, target_dir: Path, content_hash: str, entry: Any,
+    ) -> bool:
+        """Annotate run linkage onto the EXISTING snapshot holding *content_hash*.
+
+        The docs/132 reverse-order case: the user applied a run's fit values
+        before the near-real-time ingest saw the run, so the content already
+        lives in a (typically MANUAL) snapshot. Silently dropping the run
+        info would lose the linkage forever; instead the run fields are
+        written onto that snapshot's meta — its ``kind`` is deliberately NOT
+        changed (the user DID pull it), it just gains the "After #run" chip.
+        Only fills a row whose run_id is empty: never overwrite an existing
+        attribution. Returns True when a meta was rewritten.
+        """
+        run_id = getattr(entry, "run_id", None)
+        if run_id is None:
+            return False
+        with self._lock:
+            for snap in self._list_snapshots_in_dir(target_dir):
+                if snap.state_hash != content_hash:
+                    continue
+                if snap.run_id is not None:
+                    return False
+                meta_p = target_dir / snap.timestamp / "meta.json"
+                try:
+                    data = json.loads(meta_p.read_text(encoding="utf-8"))
+                    data["run_id"] = run_id
+                    exp_name = getattr(entry, "experiment_name", None)
+                    if exp_name:
+                        data["experiment_name"] = exp_name
+                    run_folder = getattr(entry, "folder_path", None)
+                    if run_folder:
+                        data["experiment_folder_path"] = str(run_folder)
+                    tmp = meta_p.with_suffix(".json.tmp")
+                    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                    tmp.replace(meta_p)
+                except (OSError, ValueError):
+                    logger.warning("Could not enrich snapshot %s with run #%s",
+                                   snap.timestamp, run_id, exc_info=True)
+                    return False
+                # Same invalidation annotate_snapshot does — but keyed by the
+                # CHIP DIR (multiple source paths can resolve here), and
+                # RESOLVED on both sides like the ingest tail, so trailing
+                # slashes / drive-letter casing can't leave a stale entry.
+                try:
+                    target_resolved = target_dir.resolve()
+                except OSError:
+                    target_resolved = target_dir
+                for k in list(self._snapshot_list_cache):
+                    d = self._safe_history_dir(k)
+                    if d is None:
+                        continue
+                    try:
+                        if d.resolve() == target_resolved:
+                            self._snapshot_list_cache.pop(k, None)
+                    except OSError:
+                        continue
+                return True
+        return False
+
+    def _safe_history_dir(self, source_key: str) -> Path | None:
+        """_history_dir for a cache key, never raising (cache upkeep only)."""
+        try:
+            return self._history_dir(Path(source_key))
+        except Exception:  # noqa: BLE001
+            return None
+
+    def ingest_run(
+        self,
+        quam_state_path: str | Path,
+        entry: Any,
+        *,
+        compute_diff: bool = True,
+        enrich_duplicates: bool = True,
+    ) -> dict[str, int]:
+        """Ingest ONE run's state copy as an EXP version, near-real-time
+        (docs/132).
+
+        A thin single-entry wrapper over :meth:`_ingest_entries_into`,
+        routed through the SAME chip-dir ladder as ``check_and_snapshot``
+        (they must agree — the backfill's own rule). Unlike the bulk
+        backfill it computes a real ``diff_summary`` (fresh EXP rows are
+        first-class citizens of the changes-only filter) and, when the
+        run's content hash already exists — i.e. the user applied the run's
+        own fit values BEFORE this ingest caught up — it annotates the run
+        fields onto the existing snapshot instead of silently dropping the
+        linkage (the row keeps its kind; it just gains the "After #run"
+        chip).
+
+        ``entry`` is duck-typed like the backfill's: ``quam_state_path``,
+        ``run_id``, ``experiment_name``, ``folder_path`` attributes, plus
+        whatever :meth:`_entry_timestamp` reads.
+
+        Returns ``{ingested, skipped_duplicate, enriched}``.
+        """
+        hist_dir = self._history_dir(Path(quam_state_path))
+        return self._ingest_entries_into(
+            hist_dir, [entry],
+            compute_diff=compute_diff,
+            enrich_duplicates=enrich_duplicates,
+        )
+
     def _ingest_entries_into(
         self,
         target_dir: Path,
@@ -3762,12 +3963,25 @@ class HistoryManager:
         progress_offset: int = 0,
         progress_total: int = 0,
         failures: list[dict[str, Any]] | None = None,
+        compute_diff: bool = False,
+        enrich_duplicates: bool = False,
     ) -> dict[str, int]:
         """Ingest a list of workspace entries into a specific chip dir.
 
         Mirrors the per-entry logic from ``backfill_from_workspace``'s main
         loop but routes file copies + meta + SQLite rows to ``target_dir``.
-        Returns ``{ingested, skipped_duplicate}``.
+        Returns ``{ingested, skipped_duplicate, enriched}``.
+
+        ``compute_diff`` — fill a real ``diff_summary`` against the prior
+        snapshot instead of the bulk-backfill zeros (zeros mean
+        NOT-COMPUTED, never "no changes"). Single-run ingest only; the bulk
+        backfill keeps zeros for speed.
+
+        ``enrich_duplicates`` — on a content-hash duplicate, find the
+        snapshot already holding that hash and, if it carries no run_id,
+        atomically annotate the run fields onto its meta (docs/132: the
+        reverse-order case — the user applied a run's fit values before the
+        ingest caught up; the linkage must not be dropped forever).
 
         ``progress_cb`` is invoked once per entry with cumulative
         ``(progress_offset + i + 1, progress_total)`` so the UI's progress
@@ -3819,6 +4033,7 @@ class HistoryManager:
 
         ingested = 0
         skipped_duplicate = 0
+        enriched = 0
         in_txn = False
 
         # Phase 3 §4.2 — throttle progress to every ``_BACKFILL_PROGRESS_EVERY``
@@ -3894,15 +4109,38 @@ class HistoryManager:
                     if content_hash in known:
                         shutil.rmtree(snap_dir, ignore_errors=True)
                         skipped_duplicate += 1
+                        if enrich_duplicates and self._enrich_run_fields(
+                                target_dir, content_hash, entry):
+                            enriched += 1
                         _tick(i)
                         continue
 
                 run_folder = getattr(entry, "folder_path", None)
                 exp_name = getattr(entry, "experiment_name", None)
+                # Bulk backfill keeps the zeroed summary (zeros = NOT
+                # COMPUTED); the single-run near-real-time path computes the
+                # real thing so the row participates honestly in the
+                # changes-only filter and the quick-diff (docs/132).
+                diff_summary = {"added": 0, "removed": 0, "modified": 0, "total": 0}
+                if compute_diff:
+                    prior = None
+                    for s in self._list_snapshots_in_dir(target_dir):
+                        if s.timestamp < ts:
+                            prior = s
+                            break
+                    if prior is not None:
+                        try:
+                            entries_d = _differ.diff(
+                                target_dir / prior.timestamp, snap_dir)
+                            diff_summary = Differ.summary(entries_d)
+                        except Exception:  # noqa: BLE001 — zeros stay honest (= not computed)
+                            logger.warning(
+                                "Ingest diff failed for %s", ts, exc_info=True)
                 meta = SnapshotMeta(
                     timestamp=ts,
                     trigger="experiment",
-                    diff_summary={"added": 0, "removed": 0, "modified": 0, "total": 0},
+                    kind="exp",
+                    diff_summary=diff_summary,
                     new_experiments=[exp_name] if exp_name else [],
                     source_path=str(src_state.resolve()),
                     state_size=(snap_dir / "state.json").stat().st_size,
@@ -3981,7 +4219,8 @@ class HistoryManager:
                         continue
                 for k in stale_keys:
                     self._snapshot_list_cache.pop(k, None)
-        return {"ingested": ingested, "skipped_duplicate": skipped_duplicate}
+        return {"ingested": ingested, "skipped_duplicate": skipped_duplicate,
+                "enriched": enriched}
 
     def backfill_from_workspace(
         self,

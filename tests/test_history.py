@@ -2747,3 +2747,175 @@ def test_disk_stats_tell_the_truth_about_retention(
     hm2.check_and_snapshot(quam_path, "manual", force=True)
     st2 = hm2.history_disk_stats(quam_path)
     assert st2["prune_active"] is False
+
+
+# ======================================================================
+# docs/132 — kind stamping + the single-run EXP ingest
+# ======================================================================
+
+
+def _run_entry(ws_root: Path, run_id: int, name: str, when: str,
+               state: dict, wiring: dict, date: str = "2026-04-30"):
+    """A workspace run folder + the duck-typed entry ingest_run expects."""
+    from types import SimpleNamespace
+    run = ws_root / date / f"#{run_id}_{name}_{when}"
+    qs = run / "quam_state"
+    _write_quam_state(qs, state, wiring)
+    return SimpleNamespace(
+        quam_state_path=qs,
+        run_id=run_id,
+        experiment_name=name,
+        folder_path=run,
+        date_str=date,
+        timestamp=f"{date}T{when[:2]}:{when[2:4]}:{when[4:]}",
+    )
+
+
+class TestKindStamping:
+    """docs/132: `kind` is the user-vocabulary reason a snapshot exists —
+    additive next to the raw trigger, legacy-mapped for old snapshots."""
+
+    def test_kind_round_trips_through_meta_json(self, hm, trended_quam_path):
+        meta = hm.check_and_snapshot(trended_quam_path, "auto", kind="backup")
+        assert meta is not None and meta.kind == "backup"
+        hm.clear_cache()
+        snaps = hm.list_snapshots(trended_quam_path)
+        assert snaps[0].kind == "backup"
+
+    def test_old_meta_without_kind_still_loads(self, hm, trended_quam_path):
+        meta = hm.check_and_snapshot(trended_quam_path, "save", kind="manual")
+        snap_dir = hm._history_dir(trended_quam_path) / meta.timestamp
+        data = json.loads((snap_dir / "meta.json").read_text(encoding="utf-8"))
+        del data["kind"]
+        (snap_dir / "meta.json").write_text(json.dumps(data), encoding="utf-8")
+        hm.clear_cache()
+        snaps = hm.list_snapshots(trended_quam_path)
+        assert snaps[0].kind is None       # absent, never invented
+
+    def test_legacy_mapping_pinned_exactly(self):
+        """The display fallback for pre-kind snapshots. `auto` maps BACKUP
+        (pre-apply backups dominate) but is flagged legacy — the tooltip
+        says 'likely reading', never certainty the data doesn't hold."""
+        from quam_state_manager.core.history import SnapshotMeta, kind_for
+
+        def m(trigger, kind=None):
+            return SnapshotMeta(timestamp="20260101_000000", trigger=trigger,
+                                diff_summary={}, new_experiments=[],
+                                source_path="", kind=kind)
+        assert kind_for(m("save")) == ("manual", True)
+        assert kind_for(m("manual")) == ("manual", True)
+        assert kind_for(m("restore")) == ("manual", True)
+        assert kind_for(m("experiment")) == ("exp", True)
+        assert kind_for(m("auto")) == ("backup", True)
+        # an explicit kind always wins, and is never marked legacy
+        assert kind_for(m("auto", kind="exp")) == ("exp", False)
+        assert kind_for(m("save", kind="backup")) == ("backup", False)
+
+
+class TestRunIngest:
+    """docs/132: one run's state copy becomes an EXP version, near-real-time,
+    idempotently, with a REAL diff_summary — and the reverse order (the user
+    applied the run's values first) enriches instead of dropping linkage."""
+
+    def test_ingest_creates_an_attributed_exp_snapshot(
+            self, hm, trended_quam_path, tmp_path):
+        hm.check_and_snapshot(trended_quam_path, "save", kind="manual")
+        # Dated AFTER the capture above: the ordinary near-real-time case
+        # is a run that just happened, so it is the newest snapshot and its
+        # diff_summary is computed against the chronologically previous one.
+        # (A backdated import with no earlier snapshot keeps honest zeros.)
+        entry = _run_entry(tmp_path / "ws", 42, "rabi", "120000",
+                           _trended_state(t1=99e-6), _base_wiring(),
+                           date="2026-12-01")
+        res = hm.ingest_run(trended_quam_path, entry)
+        assert res["ingested"] == 1
+        snaps = hm.list_snapshots(trended_quam_path)
+        top = snaps[0]
+        assert top.trigger == "experiment" and top.kind == "exp"
+        assert top.run_id == 42 and top.experiment_name == "rabi"
+        assert top.experiment_folder_path
+        assert "#42_rabi_120000" in top.experiment_folder_path
+        # ts parity with the backfill's dedup key
+        assert top.timestamp == "20261201_120000_042"
+        # a REAL diff_summary (bulk backfill's zeros mean not-computed)
+        assert top.diff_summary["total"] > 0
+
+    def test_ingest_is_idempotent_across_calls_and_instances(
+            self, hm, trended_quam_path, tmp_path):
+        entry = _run_entry(tmp_path / "ws", 7, "ramsey", "121000",
+                           _trended_state(t1=88e-6), _base_wiring())
+        assert hm.ingest_run(trended_quam_path, entry)["ingested"] == 1
+        assert hm.ingest_run(trended_quam_path, entry)["ingested"] == 0
+        # a SECOND process (fresh HistoryManager over the same instance dir)
+        hm2 = HistoryManager(hm._root.parent)
+        assert hm2.ingest_run(trended_quam_path, entry)["ingested"] == 0
+        assert len(hm2.list_snapshots(trended_quam_path)) == 1
+
+    def test_forward_order_no_duplicate_manual_row(
+            self, hm, trended_quam_path, tmp_path):
+        """Run ingested first; the user then applies the run's own fit values
+        — the save capture must dedup by hash: ONE row total, the EXP one."""
+        run_state = _trended_state(t1=77e-6)
+        entry = _run_entry(tmp_path / "ws", 9, "t1", "122000",
+                           run_state, _base_wiring())
+        assert hm.ingest_run(trended_quam_path, entry)["ingested"] == 1
+        _write_quam_state(trended_quam_path, run_state, _base_wiring())
+        assert hm.check_and_snapshot(trended_quam_path, "save",
+                                     kind="manual") is None
+        snaps = hm.list_snapshots(trended_quam_path)
+        assert len(snaps) == 1 and snaps[0].kind == "exp"
+
+    def test_reverse_order_enriches_the_existing_row(
+            self, hm, trended_quam_path, tmp_path):
+        """The user applied first (MANUAL row holds hash H); the ingest then
+        finds H known and ANNOTATES run fields onto that row — the linkage
+        is never dropped, and the kind stays what the user did."""
+        run_state = _trended_state(t1=66e-6)
+        _write_quam_state(trended_quam_path, run_state, _base_wiring())
+        meta = hm.check_and_snapshot(trended_quam_path, "save", kind="manual")
+        assert meta is not None and meta.run_id is None
+        entry = _run_entry(tmp_path / "ws", 13, "power_rabi", "123000",
+                           run_state, _base_wiring())
+        res = hm.ingest_run(trended_quam_path, entry)
+        assert res["ingested"] == 0
+        assert res["skipped_duplicate"] == 1
+        assert res["enriched"] == 1
+        snaps = hm.list_snapshots(trended_quam_path)
+        assert len(snaps) == 1
+        assert snaps[0].run_id == 13
+        assert snaps[0].experiment_name == "power_rabi"
+        assert snaps[0].kind == "manual"     # what the user did, unchanged
+
+    def test_missing_state_never_raises(self, hm, trended_quam_path, tmp_path):
+        from types import SimpleNamespace
+        ghost = SimpleNamespace(
+            quam_state_path=tmp_path / "nowhere" / "quam_state",
+            run_id=1, experiment_name="ghost",
+            folder_path=tmp_path / "nowhere",
+            date_str="2026-04-30", timestamp="2026-04-30T01:00:00")
+        res = hm.ingest_run(trended_quam_path, ghost)
+        assert res["ingested"] == 0
+
+
+class TestHistorySeq:
+    """docs/132: the cheap change signal the every-page drift poll carries —
+    and the cross-process staleness heal that rides it."""
+
+    def test_seq_moves_on_capture_and_heals_a_second_manager(
+            self, hm, trended_quam_path):
+        hm.check_and_snapshot(trended_quam_path, "save", kind="manual")
+        hm2 = HistoryManager(hm._root.parent)
+        assert len(hm2.list_snapshots(trended_quam_path)) == 1   # now cached
+        seq1 = hm2.history_seq_for(trended_quam_path)
+        assert seq1 > 0
+        time.sleep(0.02)
+        (trended_quam_path / "state.json").write_text(
+            json.dumps(_trended_state(t1=55e-6), indent=2), encoding="utf-8")
+        hm.check_and_snapshot(trended_quam_path, "save", kind="manual")
+        seq2 = hm2.history_seq_for(trended_quam_path)
+        assert seq2 != seq1
+        # the moved seq dropped hm2's stale list cache
+        assert len(hm2.list_snapshots(trended_quam_path)) == 2
+
+    def test_absent_dir_returns_zero(self, hm, tmp_path):
+        assert hm.history_seq_for(tmp_path / "no_such" / "quam_state") == 0

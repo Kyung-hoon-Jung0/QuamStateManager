@@ -1,5 +1,7 @@
 {# Param History dashboard — sparkline grid of trended state.json fields. #}
-{% set TRIGGER_LABELS = {'save':'Save','manual':'Manual','auto':'Auto','experiment':'Experiment'} %}
+{# 'restore' was unmapped ANYWHERE in the app (docs/132 review) — restore
+   snapshots were silently unfilterable and uncounted on this page. #}
+{% set TRIGGER_LABELS = {'save':'Save','manual':'Manual','auto':'Auto','experiment':'Experiment','restore':'Restore'} %}
 
 <div id="param-history-root" class="param-history"
      data-since="{{ since }}"
@@ -290,7 +292,7 @@
     <div class="phf-row">
       <label class="phf-label">Source</label>
       <div class="phf-chips">
-        {% for tk in ['save','manual','auto','experiment'] %}
+        {% for tk in ['save','manual','auto','experiment','restore'] %}
           {# Default (no filter) shows all four as active.
              A non-empty triggers_filter list overrides — only those listed are active. #}
           {% set is_active = (tk in triggers_filter) or (not triggers_filter) %}
@@ -365,7 +367,7 @@
     {% if summary.total %}<span class="muted">({{ summary.total }} total in index)</span>{% endif %}
     {% if summary.by_trigger %}
       &nbsp;|&nbsp;
-      {% for tk in ['save','manual','auto','experiment'] %}
+      {% for tk in ['save','manual','auto','experiment','restore'] %}
         {% if tk in summary.by_trigger %}
           <span class="trigger-pill trigger-pill-{{ tk }}">
             {{ TRIGGER_LABELS[tk] }}: {{ summary.by_trigger[tk] }}

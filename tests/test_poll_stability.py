@@ -784,3 +784,120 @@ class TestIncompleteIsBounded:
         store.rescan_if_stale()
         assert store.runs[1].status == "successful", (
             "giving up must not be permanent — a changed fingerprint re-parses")
+
+
+# ======================================================================
+# docs/132 — near-real-time run→version ingest riding the delta poll
+# ======================================================================
+
+
+def _write_chip(folder: Path, t1: float = 8.0e-6) -> Path:
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "state.json").write_text(json.dumps(
+        {"qubits": {"q1": {"id": "q1", "T1": t1}},
+         "qubit_pairs": {}, "active_qubit_names": ["q1"]}), encoding="utf-8")
+    (folder / "wiring.json").write_text(json.dumps(
+        {"network": {"host": "9.8.7.6"}, "wiring": {"qubits": {}}}),
+        encoding="utf-8")
+    return folder
+
+
+class TestExpIngestOnPoll:
+    """A new run WITH a quam_state copy, seen by the delta poll, becomes an
+    EXP version of the matching open chip — enqueue-only in the poll, gate +
+    copy on the worker (synchronous under TESTING); a mid-write run retries
+    and NEVER fails the poll."""
+
+    def _boot(self, app_client, tmp_path):
+        app, client = app_client
+        chip = _write_chip(tmp_path / "quam_state")
+        client.post("/load", data={"folder": str(chip)})
+        w = RunWriter(tmp_path / "data_root")
+        _add_folder(client, w.root)
+        return app, client, chip, w
+
+    def test_new_run_becomes_an_attributed_exp_version(
+            self, app_client, tmp_path):
+        app, client, chip, w = self._boot(app_client, tmp_path)
+        p = Poller(client)
+        p.poll()
+        run = w.write(7, mode="complete", hhmmss="020000")
+        # the post-fit state copy, fingerprint-aligned with the open chip
+        _write_chip(run / "quam_state", t1=9.9e-6)
+        _touch_tree(w.root)
+        body = p.poll()
+        assert any(r.get("id") == 7 for r in body.get("updated", []))
+        hm = app.config["history_manager"]
+        snaps = hm.list_snapshots(chip)
+        exp = [s for s in snaps if s.kind == "exp"]
+        assert len(exp) == 1
+        assert exp[0].run_id == 7
+        assert exp[0].experiment_name == "test_experiment"
+        assert exp[0].trigger == "experiment"
+
+    def test_a_foreign_chip_run_is_never_ingested(self, app_client, tmp_path):
+        """The fingerprint gate: a run from a DIFFERENT chip in the same
+        watched folder must not enter this chip's history."""
+        app, client, chip, w = self._boot(app_client, tmp_path)
+        p = Poller(client)
+        p.poll()
+        run = w.write(8, mode="complete", hhmmss="030000")
+        qs = run / "quam_state"
+        qs.mkdir(parents=True)
+        (qs / "state.json").write_text(json.dumps(
+            {"qubits": {"zz9": {"id": "zz9"}}, "qubit_pairs": {},
+             "active_qubit_names": ["zz9"]}), encoding="utf-8")
+        (qs / "wiring.json").write_text(json.dumps(
+            {"network": {"host": "1.1.1.1"}, "wiring": {}}), encoding="utf-8")
+        _touch_tree(w.root)
+        p.poll()
+        hm = app.config["history_manager"]
+        assert all(s.kind != "exp" for s in hm.list_snapshots(chip))
+
+    def test_a_midwrite_run_retries_and_never_fails_the_poll(
+            self, app_client, tmp_path):
+        app, client, chip, w = self._boot(app_client, tmp_path)
+        p = Poller(client)
+        p.poll()
+        run = w.write(9, mode="complete", hhmmss="040000")
+        # quam_state advertised (dir exists) but state.json not yet written —
+        # the docs/80 mid-write shape
+        (run / "quam_state").mkdir(parents=True)
+        _touch_tree(w.root)
+        body = p.poll()                      # never 500s (Poller asserts 200)
+        hm = app.config["history_manager"]
+        assert all(s.kind != "exp" for s in hm.list_snapshots(chip))
+        # the writer finishes; the next poll's drain retries the candidate
+        _write_chip(run / "quam_state", t1=7.7e-6)
+        _touch_tree(w.root)
+        p.poll()
+        exp = [s for s in hm.list_snapshots(chip) if s.kind == "exp"]
+        assert len(exp) == 1 and exp[0].run_id == 9
+
+    def test_the_poll_response_shape_is_unchanged(self, app_client, tmp_path):
+        """The ingest is enqueue-only: /datasets/changes-since keeps its
+        pinned contract keys exactly (docs/80/105)."""
+        app, client, chip, w = self._boot(app_client, tmp_path)
+        run = w.write(3, mode="complete")
+        _write_chip(run / "quam_state")
+        _touch_tree(w.root)
+        body = Poller(client).poll()
+        assert set(body.keys()) == {"updated", "vanished", "now", "partial",
+                                    "skipped", "scan_ms", "folders"}
+
+
+class TestSchedulerHookOrder:
+    """docs/132 item 11c: the post-node hook ingests the run BEFORE the
+    adopt reconcile, so the adopt capture hash-dedups into a no-op and the
+    surviving row is the attributed EXP one. Pinned on source ORDER (the
+    behavioural collapse itself is pinned by
+    TestRunIngest::test_forward_order_no_duplicate_manual_row)."""
+
+    def test_ingest_precedes_the_reconcile_in_the_hook(self):
+        from quam_state_manager.web import routes as R
+        src = Path(R.__file__).read_text(encoding="utf-8")
+        i = src.index("def _scheduler_refresh_hook")
+        body = src[i:i + 6000]
+        assert body.index("_enqueue_exp_ingest") \
+            < body.index('_reconcile_cached_quam_ctx(ctx["path"], ctx, auto_adopt=True)')
+        assert "rescan_if_stale" in body[:body.index("_reconcile_cached_quam_ctx")]

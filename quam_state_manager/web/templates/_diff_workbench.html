@@ -90,15 +90,35 @@
       </span>
     </div>
 
+    {# docs/132 #7 — the gated per-row take. ONLY when exactly one side is
+       the loaded working copy (CompareSource.origin == 'working') and the
+       tab is chip state (node/data aren't state at all): "Use A/B" stages
+       the OTHER side's value into the working copy through the same
+       /field/edit-batch door as every ✓ in the app. A row whose taken side
+       has no value (its 'added'/'removed' end) offers nothing — a take can
+       set or create, never delete. #}
+    {% set _take_from = None %}
+    {% if tab in ('state', 'wiring') and src_a and src_b %}
+      {% if src_b.origin == 'working' and src_a.origin != 'working' %}
+        {% set _take_from = 'a' %}
+      {% elif src_a.origin == 'working' and src_b.origin != 'working' %}
+        {% set _take_from = 'b' %}
+      {% endif %}
+    {% endif %}
     {% if c.total == 0 %}
       <p class="diff-wb-msg muted">These two are identical
         ({{ '{:,}'.format(c.same) }} values compared).</p>
     {% elif view == 'list' %}
       <table class="diff-wb-list">
-        <thead><tr><th>Parameter</th><th>A</th><th></th><th>B</th><th>Δ</th></tr></thead>
+        <thead><tr><th>Parameter</th><th>A</th><th></th><th>B</th><th>Δ</th>{% if _take_from %}<th></th>{% endif %}</tr></thead>
         <tbody>
         {% for r in rows %}
-          <tr class="diff-row-{{ r.kind }}">
+          {% set _tv = r.a if _take_from == 'a' else r.b %}
+          {% set _absent = (_take_from == 'a' and r.kind == 'added')
+                           or (_take_from == 'b' and r.kind == 'removed') %}
+          <tr class="diff-row-{{ r.kind }}"
+              {% if _take_from and not _absent %}data-dot-path="{{ r.path }}"
+              data-value="{{ _tv | tojson }}" data-create="1"{% endif %}>
             <td class="diff-list-path"><code>{{ r.path }}</code></td>
             <td class="diff-list-a">{% if r.kind == 'added' %}<span class="muted">—</span>{% else %}<code>{{ r.a | groupdigits }}</code>{% endif %}</td>
             <td class="diff-list-arrow">&rarr;</td>
@@ -107,6 +127,14 @@
               {%- if r.kind == 'changed' %}{{ delta_chip(r.a, r.b) }}
               {%- else %}<span class="tree-sidetag tree-tag-{{ r.kind }}">{{ r.kind }}</span>{% endif -%}
             </td>
+            {% if _take_from %}
+            <td class="diff-list-take">
+              {% if not _absent %}
+              <button type="button" class="btn-xs sv-take" onclick="StateVersions.take(this)"
+                      title="Stage {{ _take_from | upper }}'s value into the working state (Review tray) — the live chip is untouched until you Apply.">Use {{ _take_from | upper }}</button>
+              {% endif %}
+            </td>
+            {% endif %}
           </tr>
         {% endfor %}
         </tbody>

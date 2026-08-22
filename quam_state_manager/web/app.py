@@ -397,6 +397,11 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # highlighted while both values were NaN.
     from quam_state_manager.core.differ import compare_equal as _cmp_equal
     app.jinja_env.globals["cmp_equal"] = _cmp_equal
+    # `kind_for` — the docs/132 EXP/MANUAL/BACKUP display mapping for
+    # SnapshotMeta rows (legacy snapshots included), shared by every
+    # history surface so no template invents a second reading.
+    from quam_state_manager.core.history import kind_for as _kind_for
+    app.jinja_env.globals["kind_for"] = _kind_for
     app.jinja_env.filters["value_delta"] = _value_delta.compute
     app.jinja_env.filters["delta_describe"] = _value_delta.describe
 

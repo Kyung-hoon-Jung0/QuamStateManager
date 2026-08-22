@@ -19,7 +19,8 @@
                       It wears the ONE overwrite-live language (docs/86/97),
                       because that is what it does.
 #}
-<div class="state-versions" role="dialog" aria-label="State versions">
+<div class="state-versions" role="dialog" aria-label="State versions"
+     data-changes="{{ 'only' if changes_only else 'all' }}">
     <div class="state-versions-head">
         <strong>Versions</strong>
         {% if total %}<span class="muted">{{ rows | length }} of {{ total }}</span>{% endif %}
@@ -43,8 +44,15 @@
        swaps). The tick-two + Compare flow below still covers ANY pairing. #}
     {% if quick %}
     <div class="sv-quick">
+        {# The #2 → #1 ordinals anchor this header to the numbered rows below
+           (customer, 2026-08-22: the times alone didn't say WHICH two rows
+           this diff is). quick.a_ts/b_ts are exactly rows[1]/rows[0], so the
+           ordinals are literal. They shift when a new snapshot lands — but
+           every such event re-renders the whole panel, so header and list
+           always renumber together. #}
         <div class="sv-quick-head">
             <b>Since the previous version</b>
+            <span class="sv-quick-ord">#2 → #1</span>
             <span class="muted">{{ quick.a_ts | ts_local }} → {{ quick.b_ts | ts_local }} ·
                 {{ quick.n }} change{{ '' if quick.n == 1 else 's' }}</span>
         </div>
@@ -79,6 +87,10 @@
         {% for r in rows %}
         <li class="state-version-row{% if r.current %} sv-current{% endif %}">
             <label class="sv-pick">
+                {# Ordinal, newest = #1 — what the quick-diff header's
+                   "#2 → #1" points at. Server-loop index, so paging and the
+                   Auto-Sync refresh renumber consistently with the header. #}
+                <span class="sv-ord">#{{ loop.index }}</span>
                 <input type="checkbox" class="sv-check" value="{{ r.ts }}"
                        onchange="StateVersions.pick()">
                 <span class="sv-when">
@@ -102,7 +114,33 @@
                    (comparing is always safe where restoring is not). #}
                 <button type="button" class="btn-xs outline sv-diff"
                         onclick="StateVersions.diff('{{ r.ts }}', '{{ chip_key }}')"
-                        title="Compare this version with the current working state — read-only, nothing is written.">Diff</button>
+                        title="Compare this version with the current working state. Opening writes nothing; inside, ✓ can stage single values into your working state (Review tray).">Diff</button>
+                {% if r.run_id is not none %}
+                {# docs/132 (the customer's most-wanted): WHICH RUN produced
+                   this state. "After #id" is the honest word — qualibrate
+                   saves the state copy AFTER the fit updates land. Click
+                   opens that run's data panel (the house hx pattern every
+                   history surface uses); hover carries the full name. Only
+                   rendered where a run is actually RECORDED — never a
+                   time-based guess. #}
+                {% if r.run_uid %}
+                <a class="sv-run" href="/dataset/{{ r.run_uid }}"
+                   hx-get="/dataset/{{ r.run_uid }}" hx-target="#inspector-pane"
+                   hx-swap="innerHTML" onclick="StateVersions.close()"
+                   title="{{ r.experiment or 'experiment' }} — open this run's data panel">
+                    <span class="sv-run-id">After #{{ r.run_id }}</span>
+                    {% if r.experiment %}<span class="sv-run-name">{{ r.experiment }}</span>{% endif %}
+                </a>
+                {% else %}
+                <a class="sv-run" href="/dataset/by-run/{{ r.run_id }}"
+                   hx-get="/dataset/by-run/{{ r.run_id }}" hx-target="#inspector-pane"
+                   hx-swap="innerHTML" onclick="StateVersions.close()"
+                   title="{{ r.experiment or 'experiment' }} — open this run's data panel (resolved by run id)">
+                    <span class="sv-run-id">After #{{ r.run_id }}</span>
+                    {% if r.experiment %}<span class="sv-run-name">{{ r.experiment }}</span>{% endif %}
+                </a>
+                {% endif %}
+                {% endif %}
                 {% if not archive and not r.current %}
                 {# The same route State History uses, gates and all — but it
                    WRITES THE LIVE CHIP, and docs/86/97 established one visual
@@ -124,11 +162,19 @@
                 {% endif %}
             </span>
             <span class="sv-meta">
-                <span class="sv-trigger sv-trigger-{{ r.trigger }}">{{ r.trigger }}</span>
+                {# docs/132: the user's vocabulary, not the capture plumbing's.
+                   EXP = a run produced this state · MANUAL = you changed it
+                   on purpose (apply / pull / restore / snapshot / bookmark) ·
+                   BACKUP = a protective copy taken right before a write.
+                   The raw trigger + a legacy note live in the tooltip — old
+                   snapshots predate the kind field, and certainty the data
+                   doesn't hold is never claimed. #}
+                <span class="sv-kind sv-kind-{{ r.kind }}{% if r.kind_legacy %} sv-kind-legacy{% endif %}"
+                      title="{% if r.kind == 'exp' %}A run produced this state{% elif r.kind == 'backup' %}Protective copy taken right before a write{% else %}You changed the state on purpose (apply / pull / restore / snapshot / bookmark){% endif %} — recorded trigger: {{ r.trigger }}{% if r.kind_legacy %} (recorded before kinds existed; this is the likely reading){% endif %}">{{ {'exp': 'EXP', 'manual': 'MANUAL', 'backup': 'BACKUP'}[r.kind] }}</span>
                 {% if r.pinned %}<span class="sv-pin" title="Pinned — exempt from pruning">&#128204;</span>{% endif %}
                 {% if r.current %}<span class="sv-now" title="The live chip currently holds exactly this content">on this now</span>{% endif %}
                 {% if r.label %}<span class="sv-label">{{ r.label }}</span>{% endif %}
-                {% if r.experiment %}<span class="sv-exp muted">after {{ r.experiment }}{% if r.run_id %} #{{ r.run_id }}{% endif %}</span>{% endif %}
+                {% if r.experiment and r.run_id is none %}<span class="sv-exp muted">after {{ r.experiment }}</span>{% endif %}
                 {% if r.note %}<span class="sv-note muted">{{ r.note }}</span>{% endif %}
             </span>
         </li>
@@ -141,19 +187,36 @@
        survive the fetch (StateVersions.more re-applies the selection), so
        comparing an old version against a recent one does not mean starting the
        selection over. #}
-    {% if total and rows | length < total %}
+    {% if visible_total and rows | length < visible_total %}
     <div class="state-versions-more">
         <button type="button" class="btn-xs outline"
                 onclick="StateVersions.more({{ rows | length + 40 }})">Show 40 more</button>
         <button type="button" class="btn-xs outline"
-                onclick="StateVersions.more({{ cap }})">All {{ total if total <= cap else cap }}</button>
-        {% if total > cap %}
-        <span class="muted sv-cap-note">of {{ total }} — open
+                onclick="StateVersions.more({{ cap }})">All {{ visible_total if visible_total <= cap else cap }}</button>
+        {% if visible_total > cap %}
+        <span class="muted sv-cap-note">of {{ visible_total }} — open
             <a href="/state-history" hx-get="/state-history" hx-target="#table-pane"
                hx-push-url="true" onclick="StateVersions.close()">State History</a>
             for the full list</span>
         {% endif %}
     </div>
     {% endif %}
+    {# docs/132 — the two honesty lines. Retention: users kept asking what
+       the MAXIMUM is; the true answer is "all of them" (prune fires at
+       100,000, which no chip approaches), so say it. Filter: hiding rows
+       silently would be a lie about the history — the count and the toggle
+       make it visible and reversible. #}
+    <div class="state-versions-foot muted">
+        {% if hidden_unchanged %}
+        <span class="sv-hidden-note">{{ hidden_unchanged }} unchanged {{ 'copy' if hidden_unchanged == 1 else 'copies' }} hidden —
+            <a href="#" onclick="StateVersions.setChanges('all'); return false;">show all</a></span>
+        {% elif not changes_only %}
+        <span class="sv-hidden-note">showing unchanged copies too —
+            <a href="#" onclick="StateVersions.setChanges('only'); return false;">hide them</a></span>
+        {% endif %}
+        <span class="sv-kept-note">All {{ total }} {{ 'version is' if total == 1 else 'versions are' }} kept — full list in
+            <a href="/state-history" hx-get="/state-history" hx-target="#table-pane"
+               hx-push-url="true" onclick="StateVersions.close()">State History</a>.</span>
+    </div>
     {% endif %}
 </div>

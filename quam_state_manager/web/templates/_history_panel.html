@@ -35,6 +35,7 @@
         <input type="checkbox" class="history-compare-cb" value="{{ s.timestamp }}"
                onchange="selectHistoryEntry(this)">
         <span class="history-entry-time">{{ s.timestamp | ts_local }}</span>
+        {% set _k = kind_for(s) %}<span class="sv-kind sv-kind-{{ _k[0] }}{% if _k[1] %} sv-kind-legacy{% endif %}" title="{% if _k[0] == 'exp' %}A run produced this state{% elif _k[0] == 'backup' %}Protective copy taken right before a write{% else %}A deliberate user change{% endif %}{% if _k[1] %} (recorded before kinds existed; likely reading){% endif %}">{{ {'exp': 'EXP', 'manual': 'MANUAL', 'backup': 'BACKUP'}[_k[0]] }}</span>
         <span class="history-trigger-badge history-trigger-{{ s.trigger }}">{{ s.trigger }}</span>
         {% if s.diff_summary.total > 0 %}
         <span class="diff-badge diff-added" title="Added">+{{ s.diff_summary.added }}</span>

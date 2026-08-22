@@ -61,7 +61,8 @@
           <th>
             <span class="vc-col-time">{{ c.ts | ts_local }}</span>
             <span class="vc-col-meta">
-              {% if c.trigger %}<span class="sv-trigger sv-trigger-{{ c.trigger }}">{{ c.trigger }}</span>{% endif %}
+              {% if c.kind %}<span class="sv-kind sv-kind-{{ c.kind }}{% if c.kind_legacy %} sv-kind-legacy{% endif %}"
+                    title="recorded trigger: {{ c.trigger }}{% if c.kind_legacy %} (recorded before kinds existed){% endif %}">{{ {'exp': 'EXP', 'manual': 'MANUAL', 'backup': 'BACKUP'}[c.kind] }}</span>{% endif %}
               {% if c.label %}<span class="vc-col-label">{{ c.label }}</span>{% endif %}
             </span>
             <span class="vc-col-ts">{{ c.ts }}</span>
@@ -76,7 +77,14 @@
           <td class="vc-key-col"><code class="dot-path" title="{{ r.dot_path }}">{%- if _parts | length == 2 -%}<span class="dp-dirs">{{ _parts[0] }}.</span><span class="dp-leaf">{{ _parts[1] }}</span>{%- else -%}<span class="dp-leaf">{{ r.dot_path }}</span>{%- endif -%}</code></td>
           {% for v in r["values"] %}
           {% set i = loop.index0 %}
-          <td class="{% if r.changed[i] %}vc-changed{% endif %}">
+          {# Present cells carry the TAKE payload (docs/132 #7): hover reveals
+             a ✓ that stages THAT column's value into the working copy via
+             /field/edit-batch — create:true because this table cannot know
+             whether the working copy still has the leaf (creation is
+             declared-only server-side and lands in the tray for review). #}
+          <td class="{% if r.changed[i] %}vc-changed{% endif %}{% if r.present[i] %} vc-cell-takeable{% endif %}"
+              {% if r.present[i] %}data-dot-path="{{ r.dot_path }}"
+              data-value="{{ v | tojson }}" data-create="1"{% endif %}>
             {% if not r.present[i] %}
             <span class="muted" title="this leaf does not exist in this version">&ndash;</span>
             {% elif v is none %}
@@ -89,6 +97,11 @@
             {% if r.changed[i] and i > 0 and r.present[i - 1] %}
             <span class="vc-delta">{{ delta_chip(r["values"][i - 1], v) }}</span>
             {% endif %}
+            {% endif %}
+            {% if r.present[i] %}
+            <button type="button" class="btn-xs sv-take vc-take"
+                    onclick="StateVersions.take(this)"
+                    title="Stage this column's value into the working state (Review tray) — the live chip is untouched until you Apply.">&#10003;</button>
             {% endif %}
           </td>
           {% endfor %}

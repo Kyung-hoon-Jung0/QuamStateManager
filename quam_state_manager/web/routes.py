@@ -79,6 +79,7 @@ from quam_state_manager.core.history import (
     HistoryManager,
     _HIST_TS_RE,
     chip_name_for,
+    kind_for,
 )
 from quam_state_manager.core.loader import QuamStore
 from quam_state_manager.core.modifier import Modifier
@@ -9041,8 +9042,9 @@ def state_versions_panel():
     ctx = _active_ctx()
     if not ctx or ctx.get("type") != "quam" or not ctx.get("path"):
         return render_template("_state_versions.html", rows=[], ver=_state_version_now(None),
-                               chip_key="", total=0, cap=_STATE_VERSIONS_CAP,
-                               archive=True)
+                               chip_key="", total=0, visible_total=0,
+                               hidden_unchanged=0, changes_only=True,
+                               cap=_STATE_VERSIONS_CAP, archive=True)
     hm = _history()
     path = Path(ctx["path"])
     try:
@@ -9055,16 +9057,44 @@ def state_versions_panel():
         chip_key = ""
     ver = _state_version_now(ctx)
     limit = min(_int_arg("limit", 40, minimum=1), _STATE_VERSIONS_CAP)
+    # docs/132 — the changes-only filter (default ON: "유저는 diff가 없는건
+    # 관심없거든"). A row is hidden iff its capture-time diff_summary is a
+    # true zero AND nothing marks it as individually meaningful: pinned rows,
+    # EXP rows (their zeros mean NOT-COMPUTED on backfilled ones), the
+    # current row, and labeled/noted bookmarks always show. Filtered BEFORE
+    # the limit slice so a page of 40 is 40 rows the user cares about; the
+    # hidden count is stated, never silent.
+    changes_only = (request.args.get("changes") or "only") != "all"
+    roots = _uid_roots()
+    hidden_unchanged = 0
+    visible: list = []
+    for m in snaps:
+        knd, knd_legacy = kind_for(m)
+        if changes_only and knd != "exp" and not m.pinned \
+                and not m.label and not m.note \
+                and m.timestamp != ver["ts"] \
+                and isinstance(m.diff_summary, dict) \
+                and m.diff_summary.get("total") == 0:
+            hidden_unchanged += 1
+            continue
+        visible.append((m, knd, knd_legacy))
     rows = [{
         "ts": m.timestamp,
         "trigger": m.trigger,
+        "kind": knd,
+        "kind_legacy": knd_legacy,
         "label": m.label,
         "note": m.note,
         "pinned": bool(m.pinned),
         "experiment": m.experiment_name,
         "run_id": m.run_id,
+        # The clickable "After #run" chip's target (docs/132): folder-scoped
+        # uid when the run folder is inside a registered root, else the
+        # bare-run-id fallback route.
+        "run_uid": (_uid_for_run_ref(m.experiment_folder_path, m.run_id, roots)
+                    if m.run_id is not None else None),
         "current": m.timestamp == ver["ts"],
-    } for m in snaps[:limit]]
+    } for m, knd, knd_legacy in visible[:limit]]
     # docs/126: the ordinary question at this button is "what just changed?",
     # and answering it used to cost tick-two + Compare. When the newest two
     # versions differ by ≤ 50 leaves the panel now shows the table IMMEDIATELY
@@ -9081,6 +9111,9 @@ def state_versions_panel():
             quick = None
     return render_template("_state_versions.html", rows=rows, ver=ver,
                            chip_key=chip_key, total=len(snaps),
+                           visible_total=len(visible),
+                           hidden_unchanged=hidden_unchanged,
+                           changes_only=changes_only,
                            cap=_STATE_VERSIONS_CAP, quick=quick,
                            archive=(ctx.get("origin") or "live") != "live")
 
@@ -11747,7 +11780,7 @@ def auto_apply_disarm():
     if sess and sess.get("flushes"):
         try:
             _history().check_and_snapshot(
-                ctx["path"], "save",
+                ctx["path"], "save", kind="manual",
                 defer_index=not current_app.config.get("TESTING"),
                 project=_scope_for(ctx["path"], ctx))
         except Exception:
@@ -12224,6 +12257,46 @@ def _auto_pull_due(ctx: dict | None) -> bool:
     return True
 
 
+# docs/132 item 11e — the drift-poll ingest fallback's debounce state.
+_divergence_ingest_last: dict[str, float] = {}
+_DIVERGENCE_INGEST_DEBOUNCE_S = 10.0
+
+
+def _maybe_ingest_on_divergence(ctx: dict | None) -> None:
+    """On a clean→diverged transition, enqueue one rescan+ingest pass.
+
+    Catches runs produced OUTSIDE SM while no Datasets page is polling.
+    Debounced per chip; the rescan itself is budgeted (`rescan_if_stale`),
+    and everything downstream is the ordinary enqueue path.
+    """
+    if not ctx or ctx.get("type") != "quam" or not ctx.get("path"):
+        return
+    if not ctx.get("live_diverged"):
+        _divergence_ingest_last.pop(str(ctx.get("path")), None)
+        return
+    key = str(ctx.get("path"))
+    now_t = time.monotonic()
+    last = _divergence_ingest_last.get(key)
+    if last is not None and now_t - last < _DIVERGENCE_INGEST_DEBOUNCE_S:
+        return
+    _divergence_ingest_last[key] = now_t
+    cands: list = []
+    for fol in _active_dataset_stores():
+        try:
+            fol["store"].rescan_if_stale()
+            with fol["store"]._scan_lock:
+                runs = list(fol["store"].runs.values())
+        except Exception:  # noqa: BLE001
+            continue
+        # Newest few only — divergence means "just now"; older runs are the
+        # backfill's job, and an unbounded sweep here would grow with the
+        # workspace.
+        runs.sort(key=lambda r: (r.date or "", r.time or ""), reverse=True)
+        cands.extend(r for r in runs[:5] if getattr(r, "has_quam_state", False))
+    if cands:
+        _enqueue_exp_ingest(cands)
+
+
 @bp.route("/state/drift")
 def state_drift():
     """Cheap poll: how many params the live chip changed since the baseline.
@@ -12246,27 +12319,50 @@ def state_drift():
     # session is armed — so an idle chip pays two `os.stat` calls, exactly as
     # this route did before.
     _refresh_live_diverged(ctx)
+    # docs/132 — two riders on the poll every page already pays for:
+    #  * hist_seq: one os.stat of the chip's history dir, so an OPEN Versions
+    #    panel can follow captures made by another process / the background
+    #    ingest (the JS dispatches stateHistoryChanged when it moves).
+    #  * the drift-transition ingest fallback: the dataset delta poll only
+    #    runs while a Datasets page is open, so a qualibrate run finishing
+    #    while SM sits on any other page would go un-ingested until the next
+    #    Param-History backfill. A clean→diverged transition is exactly the
+    #    "something outside SM wrote state" moment — enqueue ONE debounced
+    #    rescan+ingest pass, never blocking this response.
+    hist_seq = 0
+    if ctx and ctx.get("type") == "quam" and ctx.get("path"):
+        try:
+            hist_seq = _history().history_seq_for(ctx["path"])
+        except Exception:   # noqa: BLE001 — a poll must never 500
+            hist_seq = 0
     # The Auto-Sync pull signal rides this poll. It is carried on EVERY branch,
     # including the untracked ones — a chip with no drift baseline can still
     # have diverged, and dropping the flag there would make auto-pull work only
     # for chips that happen to be tracked.
     auto_pull = _auto_pull_due(ctx)
+    try:
+        _maybe_ingest_on_divergence(ctx)
+    except Exception:   # noqa: BLE001
+        logger.debug("drift-transition ingest enqueue failed", exc_info=True)
     if not _drift_tracked(ctx):
-        return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull)
+        return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull,
+                       hist_seq=hist_seq)
     try:
         info = _compute_drift(ctx)
     except Exception:   # noqa: BLE001 — a poll must never 500
         logger.debug("drift compute failed", exc_info=True)
-        return jsonify(ok=True, tracked=True, count=0, auto_pull=auto_pull)
+        return jsonify(ok=True, tracked=True, count=0, auto_pull=auto_pull,
+                       hist_seq=hist_seq)
     if info is None:
-        return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull)
+        return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull,
+                       hist_seq=hist_seq)
     # (docs/87) ``auto_pulled`` used to ride along here as a one-shot so the
     # silent clean auto-pull became a visible toast. The user-facing path no
     # longer pulls without asking, so there is nothing to announce after the
     # fact — the banner asks BEFORE, and names the same count.
     return jsonify({"ok": True, "tracked": True, "count": info["count"],
                     "baseline_utc": info["baseline_utc"],
-                    "auto_pull": auto_pull})
+                    "auto_pull": auto_pull, "hist_seq": hist_seq})
 
 
 @bp.route("/state/drift/view")
@@ -12511,7 +12607,7 @@ def state_sync():
 
     # Record a Param History snapshot of the now-current live state.
     try:
-        _history().check_and_snapshot(ctx["path"], "auto",
+        _history().check_and_snapshot(ctx["path"], "auto", kind="manual",
                                       project=_scope_for(ctx["path"], ctx))
     except Exception:
         logger.warning("History snapshot after sync failed", exc_info=True)
@@ -12575,7 +12671,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     try:
         _hm = _history()
         _pre = _hm.check_and_snapshot(
-            ctx["path"], "auto",
+            ctx["path"], "auto", kind="backup",
             defer_index=not current_app.config.get("TESTING"),
             project=_scope_for(ctx["path"], ctx))
         if _pre is not None:
@@ -12640,7 +12736,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     # + self-healing. Synchronous under TESTING for deterministic assertions.
     try:
         _history().check_and_snapshot(
-            ctx["path"], "save",
+            ctx["path"], "save", kind="manual",
             defer_index=not current_app.config.get("TESTING"),
             project=_scope_for(ctx["path"], ctx))
     except Exception:
@@ -12729,7 +12825,7 @@ def state_apply_to_live():
         try:
             _hm = _history()
             _pre = _hm.check_and_snapshot(
-                ctx["path"], "auto",
+                ctx["path"], "auto", kind="backup",
                 defer_index=not current_app.config.get("TESTING"),
                 project=_scope_for(ctx["path"], ctx))
             if _pre is not None:
@@ -12805,7 +12901,7 @@ def state_apply_to_live():
     if _snap_now:
         try:
             _history().check_and_snapshot(
-                ctx["path"], "save",
+                ctx["path"], "save", kind="manual",
                 defer_index=not current_app.config.get("TESTING"),
                 project=_scope_for(ctx["path"], ctx))
             if _auto is not None:
@@ -13363,6 +13459,10 @@ def diff_versions():
     cols = [{
         "ts": ts,
         "trigger": getattr(meta_by_ts.get(ts), "trigger", "") or "",
+        # docs/132: column headers speak the same EXP/MANUAL/BACKUP
+        # vocabulary as the Versions panel rows.
+        "kind": (kind_for(meta_by_ts[ts])[0] if ts in meta_by_ts else ""),
+        "kind_legacy": (kind_for(meta_by_ts[ts])[1] if ts in meta_by_ts else False),
         "label": getattr(meta_by_ts.get(ts), "label", "") or "",
     } for ts in ts_list]
     hub_url = "/compare-hub?" + urlencode(
@@ -17771,6 +17871,224 @@ def _datasets_view(view_mode: str):
     )
 
 
+# ======================================================================
+# docs/132 — near-real-time run→version ingest (EXP rows)
+#
+# The Versions panel must answer "언제 어떤 실험이 state를 바꿨나": when a
+# NEW run lands in a watched dataset folder, its quam_state copy is ingested
+# into the chip's snapshot store as an EXP version (kind="exp", run fields
+# stamped), near-real-time. Detection is ENQUEUE-ONLY inside surfaces that
+# already saw the run (the delta poll's aggregation loop, the scheduler's
+# post-node hook, the drift transition) — zero file I/O added to any poll;
+# the gate + copy run on a daemon worker. Failures are silent-but-logged: a
+# skipped ingest is recoverable (the Param-History backfill remains the
+# catch-all), a noisy 5s poll is not. Idempotent across processes: the
+# run-derived timestamp key + content-hash dedup + INSERT OR REPLACE
+# converge two SM windows onto one snapshot.
+# ======================================================================
+
+_EXP_INGEST_MAX_ATTEMPTS = 5
+_exp_ingest_lock = threading.Lock()
+_exp_ingest_pending: OrderedDict = OrderedDict()   # ts_key -> candidate dict
+_exp_ingest_event = threading.Event()
+_exp_ingest_thread: threading.Thread | None = None
+_exp_ingest_app = None
+
+
+def _exp_entry_for_run(run: Any) -> Any:
+    """A duck-typed ingest entry from a RunInfo — timestamp-parity with
+    ``_entry_timestamp`` (the same key ``_run_ts_stamp`` derives), so the
+    near-real-time path and the backfill dedup against each other."""
+    from types import SimpleNamespace
+    folder = Path(getattr(run, "folder_path", "") or "")
+    date_str = folder.parent.name          # YYYY-MM-DD date dir
+    m = re.search(r"_(\d{6})$", folder.name)
+    hhmmss = m.group(1) if m else "000000"
+    iso_time = f"{hhmmss[0:2]}:{hhmmss[2:4]}:{hhmmss[4:6]}"
+    return SimpleNamespace(
+        quam_state_path=folder / "quam_state",
+        run_id=getattr(run, "run_id", None),
+        experiment_name=getattr(run, "experiment_name", None),
+        folder_path=folder,
+        date_str=date_str,
+        timestamp=f"{date_str}T{iso_time}",
+    )
+
+
+def _run_matches_open_chip(ctx: dict, qs_dir: Path) -> bool:
+    """The `_runs_field_series` identity gate, verbatim semantics, for one run.
+
+    extras chip-name equality is DEFINITIVE when both sides declare one;
+    otherwise the cheap wiring-network pre-gate then fingerprint alignment.
+    Additionally respects the user's persisted chip decisions for a run whose
+    data_folder differs from the loaded chip's — "different" or undecided
+    means SKIP (the backfill banner stays the surface that asks; ambient
+    ingest must never answer that question for the user).
+    """
+    from quam_state_manager.core.history import (
+        ALIGN_ALIGNED, ChipFingerprint, _data_folder_name, _decision_key,
+        _normalised_network, align, extras_chip_name, fingerprint_from_dicts,
+        load_chip_decisions)
+    store = ctx.get("store")
+    if store is None:
+        return False
+    with store._lock:
+        loaded_name = extras_chip_name(store.state)
+        loaded_fp = fingerprint_from_dicts(store.state, store.wiring)
+    try:
+        wiring = safe_io.read_json(qs_dir / "wiring.json")
+    except (OSError, ValueError):
+        wiring = {}
+    run_net = _normalised_network(
+        (wiring if isinstance(wiring, dict) else {}).get("network"))
+    if (not loaded_name and loaded_fp.network and run_net
+            and run_net != loaded_fp.network):
+        return False
+    try:
+        state = safe_io.read_json(qs_dir / "state.json")
+    except (OSError, ValueError):
+        return False
+    if not isinstance(state, dict):
+        return False
+    run_name = extras_chip_name(state)
+    if loaded_name and run_name:
+        if run_name != loaded_name:
+            return False
+    else:
+        run_fp = ChipFingerprint(
+            network=run_net,
+            qubits=frozenset((state.get("qubits") or {}).keys()),
+            pairs=frozenset((state.get("qubit_pairs") or {}).keys()))
+        if align(loaded_fp, run_fp) != ALIGN_ALIGNED:
+            return False
+    # Chip-decision check (the backfill's own rule): a run whose data_folder
+    # differs from the loaded chip's ingests only after an explicit "same".
+    try:
+        run_df = _data_folder_name(qs_dir)
+        loaded_df = _data_folder_name(Path(ctx["path"]))
+        if run_df and loaded_df and run_df != loaded_df:
+            hm = _history()
+            chip_key = Path(hm.resolve_chip_dir(Path(ctx["path"]))[0]).name
+            decisions = load_chip_decisions(current_app.instance_path)
+            if decisions.get(_decision_key(chip_key, run_df)) != "same":
+                return False
+    except Exception:  # noqa: BLE001 — an unreadable decision must not ingest
+        logger.debug("exp-ingest decision check failed", exc_info=True)
+        return False
+    return True
+
+
+def _open_live_quam_ctxs() -> list[dict]:
+    """Every OPEN live quam context with a loaded store (gate targets)."""
+    out = []
+    for c in (current_app.config.get("contexts") or {}).values():
+        if (isinstance(c, dict) and c.get("type") == "quam" and c.get("path")
+                and (c.get("origin") or "live") == "live"
+                and c.get("store") is not None):
+            out.append(c)
+    return out
+
+
+def _drain_exp_ingest_once() -> None:
+    """Process every pending candidate. Runs under an app context."""
+    with _exp_ingest_lock:
+        items = list(_exp_ingest_pending.items())
+    for key, cand in items:
+        done = False
+        try:
+            qs_dir = Path(cand["folder_path"]) / "quam_state"
+            if not (qs_dir / "state.json").exists():
+                # Mid-write run (docs/80: it just isn't finished yet) —
+                # bounded retry, then one warning and drop.
+                cand["attempts"] = int(cand.get("attempts") or 0) + 1
+                if cand["attempts"] >= _EXP_INGEST_MAX_ATTEMPTS:
+                    logger.warning(
+                        "exp-ingest: run #%s never produced a readable "
+                        "quam_state — giving up (backfill will catch it)",
+                        cand.get("run_id"))
+                    done = True
+                continue
+            entry = _exp_entry_for_run(cand["run"])
+            matched = False
+            for ctx in _open_live_quam_ctxs():
+                if not _run_matches_open_chip(ctx, qs_dir):
+                    continue
+                matched = True
+                res = _history().ingest_run(ctx["path"], entry)
+                logger.debug("exp-ingest run #%s -> %s: %s",
+                             cand.get("run_id"), ctx.get("path"), res)
+            done = True
+            if not matched:
+                logger.debug("exp-ingest: run #%s matched no open chip",
+                             cand.get("run_id"))
+        except Exception:  # noqa: BLE001 — never let one candidate stall the queue
+            logger.warning("exp-ingest failed for run #%s",
+                           cand.get("run_id"), exc_info=True)
+            done = True
+        finally:
+            if done:
+                with _exp_ingest_lock:
+                    _exp_ingest_pending.pop(key, None)
+
+
+def _exp_ingest_worker() -> None:
+    while True:
+        _exp_ingest_event.wait(timeout=30.0)
+        _exp_ingest_event.clear()
+        app = _exp_ingest_app
+        if app is None:
+            continue
+        with _exp_ingest_lock:
+            has_work = bool(_exp_ingest_pending)
+        if not has_work:
+            continue
+        try:
+            with app.app_context():
+                _drain_exp_ingest_once()
+        except Exception:  # noqa: BLE001
+            logger.warning("exp-ingest worker pass failed", exc_info=True)
+
+
+def _enqueue_exp_ingest(runs: list) -> None:
+    """Queue RunInfo candidates for EXP ingest. Request-context only; O(runs),
+    no file I/O. Under TESTING the queue drains synchronously so tests see
+    the snapshot in the same request (the ``defer_index`` pattern)."""
+    global _exp_ingest_thread, _exp_ingest_app
+    added = False
+    with _exp_ingest_lock:
+        for run in runs:
+            if run is None or not getattr(run, "has_quam_state", False):
+                continue
+            key = _run_ts_stamp(run)
+            if key in _exp_ingest_pending:
+                continue
+            _exp_ingest_pending[key] = {
+                "run": run,
+                "run_id": getattr(run, "run_id", None),
+                "folder_path": str(getattr(run, "folder_path", "") or ""),
+                "attempts": 0,
+            }
+            added = True
+    if current_app.config.get("TESTING"):
+        # Drain whenever anything is pending, not only on fresh adds — a
+        # mid-write candidate parked for retry must get its next attempt on
+        # the next poll, exactly as the worker's periodic wake gives it.
+        with _exp_ingest_lock:
+            has_pending = bool(_exp_ingest_pending)
+        if has_pending:
+            _drain_exp_ingest_once()
+        return
+    if not added:
+        return
+    if _exp_ingest_app is None:
+        _exp_ingest_app = current_app._get_current_object()
+    if _exp_ingest_thread is None or not _exp_ingest_thread.is_alive():
+        _exp_ingest_thread = threading.Thread(
+            target=_exp_ingest_worker, name="exp-ingest", daemon=True)
+        _exp_ingest_thread.start()
+    _exp_ingest_event.set()
+
+
 @bp.route("/datasets/changes-since")
 def datasets_changes_since():
     """Delta poll endpoint for the dataset table.
@@ -17828,6 +18146,7 @@ def datasets_changes_since():
     skipped = 0
     partial_scans = 0
     scan_ms_total = 0.0
+    _exp_candidates: list = []
     for fol in active:
         if time.monotonic() >= deadline:
             skipped += 1
@@ -17842,6 +18161,14 @@ def datasets_changes_since():
             for row in delta.get("updated", []):
                 row["f"] = fol["key"]
                 updated.append(row)
+                # docs/132: a new/updated run WITH a quam_state copy is an
+                # EXP-version candidate. Enqueue-only — the RunInfo lookup
+                # is one dict get; the gate + copy run on the worker, so
+                # this adds zero file I/O to the poll.
+                if row.get("hs"):
+                    _r = fol["store"].runs.get(row.get("id"))
+                    if _r is not None:
+                        _exp_candidates.append(_r)
             for rid in delta.get("vanished", []):
                 vanished.append(_dataset_uid(fol["key"], rid))
             sample = delta.get("now", 0.0)
@@ -17853,6 +18180,13 @@ def datasets_changes_since():
             skipped += 1
             sample = ts
         now = sample if now is None else min(now, sample)
+    # Unconditional: with no new candidates this is a no-op in production
+    # (the 30s worker wake owns retries), while under TESTING it gives a
+    # parked mid-write candidate its next attempt on the next poll.
+    try:
+        _enqueue_exp_ingest(_exp_candidates)
+    except Exception:  # noqa: BLE001 — the poll must never pay for the ingest
+        logger.warning("exp-ingest enqueue failed", exc_info=True)
     return jsonify({"updated": updated, "vanished": vanished, "now": now or 0.0,
                     "partial": bool(skipped or partial_scans),
                     "skipped": skipped,
@@ -21103,10 +21437,13 @@ def scheduler_preset_delete(preset_id: str):
     return jsonify({"ok": True})
 
 
-def _latest_run_ref() -> dict | None:
-    """The globally-latest dataset run as ``{uid, run_id, name}`` (or None)."""
+def _latest_run_info() -> tuple[Any, dict] | None:
+    """The globally-latest dataset run as ``(RunInfo, ref_dict)`` (or None).
+
+    The ref dict is ``{uid, run_id, name}`` — what the scheduler attributes
+    to its item; the RunInfo is what the docs/132 EXP ingest needs."""
     latest_key: tuple[str, str] | None = None
-    ref = None
+    out = None
     for fol in _active_dataset_stores():
         store = fol["store"]
         with store._scan_lock:               # snapshot — avoid racing a worker rescan
@@ -21115,9 +21452,15 @@ def _latest_run_ref() -> dict | None:
             key = (run.date or "", run.time or "")
             if latest_key is None or key > latest_key:
                 latest_key = key
-                ref = {"uid": _dataset_uid(fol["key"], run.run_id),
-                       "run_id": run.run_id, "name": run.experiment_name}
-    return ref
+                out = (run, {"uid": _dataset_uid(fol["key"], run.run_id),
+                             "run_id": run.run_id, "name": run.experiment_name})
+    return out
+
+
+def _latest_run_ref() -> dict | None:
+    """The globally-latest dataset run as ``{uid, run_id, name}`` (or None)."""
+    info = _latest_run_info()
+    return info[1] if info else None
 
 
 def _fit_results_for_ref(ref: dict) -> dict | None:
@@ -21172,6 +21515,26 @@ def _scheduler_refresh_hook(app, instance_path, folder, item_id, status) -> None
         with app.app_context():
             changed = False
             ctx = _find_quam_ctx_by_path(folder)
+            # docs/132 HOOK REORDER: rescan + resolve + INGEST the just-
+            # finished run BEFORE the reconcile below, synchronously (this
+            # already runs on the scheduler worker thread, off-request). The
+            # adopt capture then hash-dedups into a no-op and the surviving
+            # version row is the attributed EXP one. Deliberately NOT
+            # threading experiment kwargs through the reconcile — that is
+            # the docs/87 identity choke point, and an attribution passed
+            # down would be a guess; content-hash identity collapses the
+            # duplicate only when the claim is actually true.
+            latest = None
+            try:
+                for fol in _active_dataset_stores():
+                    fol["store"].rescan_if_stale()
+                latest = _latest_run_info()
+                if latest is not None:
+                    _enqueue_exp_ingest([latest[0]])
+                    if not app.config.get("TESTING"):
+                        _drain_exp_ingest_once()   # TESTING already drained
+            except Exception:  # noqa: BLE001 — never block the reconcile
+                logger.warning("post-node exp-ingest failed", exc_info=True)
             if ctx is not None and ctx.get("type") == "quam":
                 store = ctx.get("store")
                 # Hash under store._lock for a consistent snapshot (cheap; the
@@ -21195,13 +21558,12 @@ def _scheduler_refresh_hook(app, instance_path, folder, item_id, status) -> None
                 changed = before != after
             attributed = False
             try:
-                for fol in _active_dataset_stores():
-                    fol["store"].rescan_if_stale()
+                # (rescan already ran above, before the reconcile — docs/132)
                 # Attribute a dataset run ONLY to a successful item, and only when
                 # a run newer than any already-attributed one actually appeared
                 # (so a failed / dry-run / no-output node never gets a wrong ↗).
                 if status == "done":
-                    ref = _latest_run_ref()
+                    ref = latest[1] if latest else None
                     rid = ref.get("run_id") if ref else None
                     if isinstance(rid, int):
                         last = scheduler.load_queue(instance_path)["run"].get("last_assigned_run_id", -1)
@@ -21664,8 +22026,17 @@ def _autofit_start_real(inst, p, data, auditor):
 
     def snapshot(label):
         with app.app_context():
-            hm.check_and_snapshot(str(live_path), "manual", force=True,
-                                   project=_scope_for(live_path, ctx))
+            meta = hm.check_and_snapshot(str(live_path), "manual", force=True,
+                                          kind="backup",
+                                          project=_scope_for(live_path, ctx))
+            # The label used to be silently DISCARDED (docs/132 review found
+            # every autofit pre-plan backup anonymous) — record it.
+            if meta is not None and label:
+                try:
+                    hm.annotate_snapshot(str(live_path), meta.timestamp,
+                                         label=str(label))
+                except Exception:  # noqa: BLE001 — the backup itself stands
+                    logger.warning("autofit snapshot label failed", exc_info=True)
 
     targets = list(p.targets)
     if not targets:

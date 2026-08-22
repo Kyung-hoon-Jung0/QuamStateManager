@@ -111,7 +111,11 @@
         pollTs: 0,
         pollTimer: null,
         pollInFlight: false,
-        pollIntervalMs: 15000,
+        // docs/132: 5s — near-real-time feel (customer). Safe because the
+        // guards already exist: server _POLL_BUDGET_S + partial/cursor-hold,
+        // client 20s abort + exponential backoff to 300s, in-flight guard,
+        // hidden-tab skip. A tick is ~3.5ms server-side (docs/103).
+        pollIntervalMs: 5000,
         lastInteractionTs: 0,
         pendingDelta: null,        // Buffered server response held while user is busy
         // Arrival visibility (docs/104 #3): uids of new runs not yet
@@ -2242,17 +2246,18 @@
         // bookkeeping resets (the old pill node died with the swapped pane).
         state.arrivalUids = new Set();
         state.flashUids = new Map();
-        // Poll interval (docs/104 #3): a run that just finished must not take
-        // a minute to appear, so the DEFAULT is 15s — a tick is ~3.5ms
-        // server-side (docs/103) and docs/80's budgets/backoff bound the bad
-        // cases. A user-configured value still wins: `datasetPollInterval`
-        // pins this poll explicitly, and the legacy shared
-        // `autoRefreshInterval` is honored when a lab tuned it away from its
-        // shipped 60 (the shipped 60 was a global default, never a
-        // per-surface choice — it must not pin this table to a minute).
+        // Poll interval (docs/104 #3, tightened by docs/132): a run that
+        // just finished must appear near-real-time (customer), so the
+        // DEFAULT is 5s — a tick is ~3.5ms server-side (docs/103) and
+        // docs/80's budgets/backoff bound the bad cases. A user-configured
+        // value still wins: `datasetPollInterval` pins this poll explicitly,
+        // and the legacy shared `autoRefreshInterval` is honored when a lab
+        // tuned it away from its shipped 60 (the shipped 60 was a global
+        // default, never a per-surface choice — it must not pin this table
+        // to a minute).
         var uiCfg = window.UI_CONFIG || {};
         var cfgSecs = uiCfg.datasetPollInterval ||
-                      (uiCfg.autoRefreshInterval !== 60 ? uiCfg.autoRefreshInterval : 0) || 15;
+                      (uiCfg.autoRefreshInterval !== 60 ? uiCfg.autoRefreshInterval : 0) || 5;
         state.pollIntervalMs = Math.max(5, cfgSecs) * 1000;
 
         // HTMX innerHTML swaps replace the entire tree under #table-pane, so
