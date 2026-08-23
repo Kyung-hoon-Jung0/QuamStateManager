@@ -472,8 +472,12 @@ _register(Family(
     # rotated-S21 channel: argmin of IQ_abs can be MHz off the node's fitted
     # dip (docs/47 §resonator DEFER) — still a valid *coarse* check at a wide
     # tolerance: it catches sidelobe/no-signal, never adjudicates kHz.
+    # tol 13.0 FWHM re-derived by the 40-target adjudication (docs/134 §2):
+    # 8.0 flagged two corroborated-good claims at 8.7/12.8 FWHM (the rotated
+    # channel's argmin offset, not a wrong fit) while the nearest true
+    # rival-capture sits at 15.6 — the margin is thin and says so here.
     feature_check=FeatureCheck(var="IQ_abs", axis_var="full_freq", mode="dip",
-                               claim_key="frequency", tol_fwhm=8.0),
+                               claim_key="frequency", tol_fwhm=13.0),
     updates=[UpdateSpec("frequency", "qubits.{q}.resonator.f_01",
                         label="Resonator frequency"),
              UpdateSpec("frequency", "qubits.{q}.resonator.RF_frequency",
@@ -749,9 +753,16 @@ _register(Family(
     plausibility=[Plausibility("optimal_frequency", lo=2e9, hi=15e9,
                                max_abs_jump=30e6,
                                state_path="qubits.{q}.resonator.f_01")],
+    # z_min 2.0 (docs/134 §2): the snr trace's peak prominence on the pilot
+    # corpus runs 2.2-4.6 for corroborated-good optima — the module floor of 5
+    # rejected half of them as "no signal". The middle zone this buys is only
+    # safe TOGETHER with the edge-pinned rule in gates._feature_check: two
+    # true catches in the same band are windows whose strongest smoothed
+    # structure is a truncated edge tail, which the claim-region test alone
+    # would silently accept.
     feature_check=FeatureCheck(var="snr", axis_var="detuning", mode="peak",
                                claim_key="optimal_frequency", tol_fwhm=0.0,
-                               fallback_tol=8e6,
+                               fallback_tol=8e6, z_min=2.0,
                                axis_offset_path="qubits.{q}.resonator.RF_frequency"),
     updates=[UpdateSpec("optimal_frequency", "qubits.{q}.resonator.f_01",
                         label="Readout frequency"),
@@ -1184,8 +1195,13 @@ _register(Family(
     metric_gates=[MetricGate("num_crossings", min=1,
                              reason="no avoided crossing found in the swept window")],
     plausibility=[Plausibility("num_crossings", lo=0, hi=20)],
+    # spectral_min 4.5 (docs/134 §2): the shared 2-D floor. The span statistic
+    # separates NOTHING on this family (10 of 12 gate-fails were corroborated
+    # good) — and after this lands no active gate catches the 2 true catches
+    # (G2 num_crossings=1 passes both). Accepted loss, said out loud; the
+    # future probe is per-column look-elsewhere z via mapshapes.z_bar.
     feature_check=FeatureCheck(var="IQ_abs", axis_var="flux_bias", mode="span",
-                               claim_key="num_crossings"),
+                               claim_key="num_crossings", spectral_min=4.5),
     updates=[],          # node 10 writes only a bookkeeping extras key
     adaptations={"noisy": _more_shots,
                  "no_signal": [_widen_flux(2.0), _power_up],

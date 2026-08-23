@@ -305,8 +305,53 @@ def _feature_check(raw_path: Path, fc: FeatureCheck, target: str, kind: str,
         else:
             w = max(1, n_sel // 2)
         w = min(w, int(y.size))
+        # The edge-pinned-CLAIM rule (docs/134 §2, re-derived on the real
+        # traces): _edge_hint promoted from hint to verdict, middle zone
+        # only. It fires when the CLAIM itself sits in the outer 15% of the
+        # window AND the feature-direction smoothed curve rises monotonically
+        # into that boundary — the claimed optimum is then the window's
+        # boundary maximum, not a bracketed extremum, and the claim-region
+        # test would silently accept it (a rising ramp's edge region always
+        # shows a large smoothed deviation — three real corpus runs, one of
+        # which the 2-bin _edge_hint bar missed). Details that all came from
+        # measurement, not taste: OVERLAP-normalized smoothing, because
+        # zero-padded 'same' suppresses the boundary and hid two truncated
+        # ramps whose apex sat at samples 0 and 97; DIRECTIONAL (mode-signed),
+        # because an opposite-sign structure at an edge says nothing about
+        # the optimum and firing sign-agnostically caught a corroborated-good
+        # broad feature parked near the other edge; the side bar is the
+        # FAMILY floor with overall structure gated at the module floor,
+        # because one real truncated ramp tops out at side-z 4.8 while its
+        # full swing is 8.7. A same-shape run whose follow-up lands within
+        # one feature width exists in the corpus (a false alarm by hindsight)
+        # — a single run cannot tell it from the true catches, so the honest
+        # single-run verdict for ALL of them is out_of_band, which rides the
+        # widen/shift ladder and never writes: the follow-up decides.
+        ci = int(np.argmin(np.abs(axis - claim)))
+        edge_n = max(int(round(y.size * 0.15)), 1)
+        if ci < edge_n or ci >= y.size - edge_n:
+            kern = np.ones(w) / w
+            overlap = np.convolve(np.ones(y.size), kern, mode="same")
+            sm_n = np.convolve(y - med, kern, mode="same") / overlap
+            dev = sm_n if fc.mode == "peak" else -sm_n
+            ns = noise / math.sqrt(w)
+            left = ci < edge_n
+            zone = dev[:edge_n] if left else dev[y.size - edge_n:]
+            j_side = int(np.argmax(zone))
+            z_side = float(zone[j_side]) / ns
+            z_bound = float(dev[0] if left else dev[-1]) / ns
+            z_range = (float(np.max(dev)) - float(np.min(dev))) / ns
+            if (z_side >= zf and z_bound >= 0.9 * z_side
+                    and z_range >= _FEATURE_Z_MIN):
+                side = "left" if left else "right"
+                return "out_of_band", (
+                    f"claim sits at the {side} window edge and the trace "
+                    f"rises into that boundary without turning over "
+                    f"(edge z={z_side:.1f}, full swing {z_range:.1f}) — the "
+                    f"optimum is not bracketed by this window")
         smooth = np.convolve(y - med, np.ones(w) / w, mode="same")
-        z_at = float(np.max(np.abs(smooth[sel]))) / (noise / math.sqrt(w))
+        noise_s = noise / math.sqrt(w)
+        z_at = float(np.max(np.abs(smooth[sel]))) / noise_s
         if z_at >= _FEATURE_Z_MIN:
             return "ok", (f"weak window (z={z:.1f}) but the claim region "
                           f"carries a resolved feature (|z_at|={z_at:.1f}, "

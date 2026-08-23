@@ -131,8 +131,22 @@ LEDGER = {
     },
     "10_qubit_spectroscopy_vs_coupler_flux": {
         "wrong_peak": "pass_allowed",
-        "no_signal": "fail",            # num_crossings == 0 IS the node's own
-        "noisy": "not_pass",            # verdict (corpus: 14/14 rejects caught)
+        # DELIBERATE WIDENING (docs/134 §2, never silent). Both cells below
+        # changed when the span floor dropped 50 → 4.5: the 40-target
+        # adjudication proved the shared floor of 50 separated NOTHING on
+        # this family (10 of its 12 gate-fails were corroborated GOOD — the
+        # 2-D map spreads an arc's power across every row, docs/78 §27).
+        # no_signal: G2 still catches it — num_crossings == 0 IS the node's
+        # own verdict — but as `suspect` now that G3 no longer hard-fails
+        # the empty map.
+        "no_signal": "not_pass",
+        # noisy: the ACCEPTED blind spot — when the corrupted fit still
+        # claims one crossing, no active gate catches a structureless map
+        # (G2 num_crossings=1 passes). Said out loud in docs/134 §2; the
+        # future probe is per-column look-elsewhere z via mapshapes.z_bar,
+        # verified separating on the corpus (TC max column-z 4.9 scattered
+        # vs FA sustained 6-41 over 30-40 columns).
+        "noisy": "pass_allowed",
         "out_of_band": "fail",
         "drift": "n/a",
     },

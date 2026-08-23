@@ -282,6 +282,95 @@ class TestThreeZoneFeatureCheck:
         assert fam.feature_check.z_min == 2.0
 
 
+class TestAdjudication40Bands:
+    """The 40-target adjudication's band decisions (docs/134 §2): every
+    node-successful gate-fail of four families was adjudicated by
+    corroboration + figure, and the bands re-derived from the labels.
+    Config pins first; then the edge-pinned-CLAIM rule, which is what makes
+    the rfo middle zone safe — a monotone ramp's edge region always carries a
+    large smoothed deviation, so without it the claim-region test silently
+    accepts exactly the truncated-window runs the zone exists to catch."""
+
+    def test_res_spec_coarse_tolerance_is_13_fwhm(self):
+        from quam_state_manager.core.autofit import families as fam_mod
+        fam = fam_mod.family_for("03_resonator_spectroscopy")
+        assert fam.feature_check.tol_fwhm == 13.0
+
+    def test_rfo_declares_the_corpus_floor(self):
+        from quam_state_manager.core.autofit import families as fam_mod
+        fam = fam_mod.family_for("14_readout_frequency_optimization")
+        assert fam.feature_check.z_min == 2.0
+
+    def test_qs_vs_coupler_uses_the_2d_spectral_floor(self):
+        from quam_state_manager.core.autofit import families as fam_mod
+        fam = fam_mod.family_for("10_qubit_spectroscopy_vs_coupler_flux")
+        assert fam.feature_check.spectral_min == 4.5
+
+    def test_res_vs_coupler_keeps_the_module_floor(self):
+        # deliberate NO-change: the real corpus shows a 36→79 gap above the
+        # floor of 50, and any floor re-admitting the false alarm at 16
+        # re-admits the true catch at 36 (docs/134 §2)
+        from quam_state_manager.core.autofit import families as fam_mod
+        fam = fam_mod.family_for("07_resonator_spectroscopy_vs_coupler_flux")
+        assert fam.feature_check.spectral_min is None
+
+    # ---- the edge-pinned-claim rule ------------------------------------
+    @staticmethod
+    def _h5(tmp_path, y):
+        h5py = pytest.importorskip("h5py")
+        n = y.size
+        axis = np.linspace(4.0e9, 5.0e9, n)
+        p = tmp_path / "ds_raw.h5"
+        with h5py.File(p, "w") as f:
+            f["qubit"] = np.array([b"q1"])
+            f["IQ_abs"] = y[None, :]
+            f["full_freq"] = axis[None, :]
+        return p, axis
+
+    def _fc(self):
+        return FeatureCheck(var="IQ_abs", axis_var="full_freq", mode="peak",
+                            claim_key="frequency", tol_fwhm=0.0,
+                            fallback_tol=5e7, z_min=2.0)
+
+    @staticmethod
+    def _ramp(n=64, height=10.0):
+        # alternating ±1 noise + monotone rise: point-prominence z lands in
+        # the middle zone while the smoothed curve rises into the right edge
+        y = np.array([1.0 if i % 2 else -1.0 for i in range(n)])
+        return y + np.linspace(0.0, height, n)
+
+    def test_edge_pinned_claim_on_a_ramp_is_not_bracketed(self, tmp_path):
+        # the #62/#623 shape: no extremum inside the window, claim at the
+        # boundary maximum — refuse with out_of_band (rides the widen ladder)
+        p, axis = self._h5(tmp_path, self._ramp())
+        status, detail = gates._feature_check(
+            p, self._fc(), "q1", "qubits", {"frequency": float(axis[-2])}, None)
+        assert status == "out_of_band" and "not bracketed" in detail, detail
+
+    def test_interior_claim_never_triggers_the_edge_rule(self, tmp_path):
+        # same ramp, interior claim: the edge rule must stay out of it — the
+        # verdict is whatever the claim-region test says (here: no feature)
+        p, axis = self._h5(tmp_path, self._ramp())
+        status, detail = gates._feature_check(
+            p, self._fc(), "q1", "qubits",
+            {"frequency": float(axis[len(axis) // 2])}, None)
+        assert status != "out_of_band", detail
+
+    def test_bracketed_apex_near_the_edge_still_passes(self, tmp_path):
+        # the counter-shape that killed rule v1: a real feature whose apex
+        # sits INSIDE the window near an edge, with a visible turnover —
+        # the boundary sample is well below the apex, so the ramp test
+        # cannot fire and the claim region carries the resolved feature
+        n = 64
+        y = np.array([1.0 if i % 2 else -1.0 for i in range(n)], dtype=float)
+        idx = np.arange(n)
+        y = y + 12.0 * np.exp(-((idx - 6) / 2.5) ** 2)
+        p, axis = self._h5(tmp_path, y)
+        status, detail = gates._feature_check(
+            p, self._fc(), "q1", "qubits", {"frequency": float(axis[6])}, None)
+        assert status == "ok", detail
+
+
 class TestSandboxRevertWalksLists:
     """295 of 1,755 real CQT revert targets died as dict lookups: iq_blobs and
     readout-power patches touch LIST elements (confusion_matrix/0/0), and the
