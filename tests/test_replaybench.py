@@ -332,6 +332,96 @@ class TestTheFourFamilyBenchmarkDoesNotRegress:
             f"{len(bad)}/{len(rows)} over-adopted (measured 12/73)"
 
 
+class TestAbcRetag:
+    """docs/136: every step of the 73 targets carries a step_class tag
+    derived DETERMINISTICALLY from the key's own correct_decision (rule
+    smabc/v1) — reproducible, no fresh adjudication. Re-deriving the rule
+    here must reproduce the files exactly; a hand edit that breaks the
+    derivation is a schema violation, not a new opinion."""
+
+    @staticmethod
+    def _rule(decision, index):
+        if decision in ("reject_and_retune", "reconfirm"):
+            return "B"
+        if decision == "reject_and_stop":
+            return "C"
+        if decision == "adopt":
+            return "A" if index == 0 else "C"
+        raise ValueError(decision)
+
+    def test_every_step_is_tagged_and_matches_the_rule(self):
+        n = 0
+        for fam in _FAMS4:
+            for kf in sorted((_KEYS / fam).rglob("2026-*.json")):
+                doc = json.loads(kf.read_text(encoding="utf-8"))
+                assert doc.get("abc_tagging", {}).get("rule") == "smabc/v1", kf
+                for q in doc.get("qubits") or []:
+                    for i, st in enumerate(q.get("ideal_path") or []):
+                        n += 1
+                        assert st.get("step_class") == self._rule(
+                            st["correct_decision"], i), (kf.name, q["qubit"], i)
+        assert n == 170
+
+    def test_tag_census_is_pinned(self):
+        from collections import Counter
+        c = Counter()
+        for fam in _FAMS4:
+            for kf in sorted((_KEYS / fam).rglob("2026-*.json")):
+                doc = json.loads(kf.read_text(encoding="utf-8"))
+                for q in doc.get("qubits") or []:
+                    for st in q.get("ideal_path") or []:
+                        c[st["step_class"]] += 1
+        assert dict(c) == {"A": 21, "B": 92, "C": 57}
+
+
+@pytest.mark.skipif(not (_KEYS / "qubit_spectroscopy").exists()
+                    or not _ARCHIVES["CQT"].exists(),
+                    reason="answer keys or archives are not on this machine")
+class TestTwoTierBenchmark:
+    """docs/136 floors for the doctrine measurement. Bars sit BELOW the
+    measured values on purpose (the docs/131 no-overfit argument): measured
+    2026-08-24 — B-direction 64/92, premature first adoption 27/73 (13 of
+    the 20 wrong outcomes first adopted at a B-tagged run — concluding
+    before closure IS the dominant failure channel), conclusions at
+    licensed closure points 42/56."""
+
+    def test_b_direction_agreement_floor(self):
+        a = t = 0
+        for r in _score_all():
+            s = r.get("b_direction_agreement")
+            if s and s != "n/a":
+                x, y = s.split("/")
+                a += int(x)
+                t += int(y)
+        assert t >= 80, f"only {t} B-steps scored"
+        assert a / t >= 0.60, f"B-direction {a}/{t}"
+
+    def test_premature_first_adoption_cannot_quietly_grow(self):
+        """First value taken at a B-tagged run = concluded before closure —
+        the dangerous direction. Capped so it cannot silently grow."""
+        rows = _score_all()
+        prem = 0
+        for r in rows:
+            ta = r.get("terminated_at")
+            if not ta:
+                continue
+            tok = ta.split("_")[0]
+            licensed = set(r.get("a_points") or []) | set(r.get("c_points") or [])
+            if tok not in licensed:
+                prem += 1
+        assert prem / len(rows) <= 0.45, f"{prem}/{len(rows)} premature"
+
+    def test_licensed_closure_conclusions_floor(self):
+        good = tot = 0
+        for r in _score_all():
+            if r.get("terminal_class") in ("A", "C"):
+                tot += 1
+                good += r["frequency_verdict"] in ("match",
+                                                   "correctly_abstained")
+        assert tot >= 50, f"only {tot} licensed-closure targets"
+        assert good / tot >= 0.65, f"licensed conclusions {good}/{tot}"
+
+
 # ---------------------------------------------------------------------------
 # reading the two qubit-spectroscopy node types together (docs/133)
 # ---------------------------------------------------------------------------

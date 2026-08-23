@@ -27,7 +27,7 @@
  "status": "hindsight-authored + adversarial audit",
  "provenance": "the author saw the whole session and was free to judge the operator wrong; the system under test never sees past its cursor",
  "session_notes": "16 runs of 08_qubit_spectroscopy at CQT on 2026-08-17, covering 20 targets. Two facts organize the whole session.\n\n(1) THE PROTOCOL WAS DECIDED IN RUN #1253, AND THE OPERATOR THEN UNDID IT. #1253 (operation=saturation, operation_amplitude_factor 0.4, span 200 MHz, step 0.25 MHz) produced 1.2-3.5 MHz linewidths across the chip - i.e. at or under the node's own target_peak_width of 3 MHz. #1254 re-swept the identical window at operation=x180, amplitude_factor 1.0 and power-broadened every single qubit to 15-49 MHz (5x-16x the target). A 20-50 MHz-wide Lorentzian's centre is worth only a few MHz, and on q10 it was worth 30 MHz: the broadened fits latched onto a secondary feature at 4.658-4.668 GHz while the true line (verified in the #1243 and #1244 figures) is at 4.6850 GHz. The dangerous runs in this session are therefore the ones the node marked SUCCESSFUL at full drive (q10 in #1239/#1240/#1241/#1247/#1254, q17 in #1253, q15/q19/q11 in #1254): success=true on a power-broadened or edge-of-span peak is the main false-accept mode here, and node success=false on a clean narrow line (q10 #1243: fwhm 3.385 MHz, r2 0.94, tallest peak over 600 MHz) is the main false-reject mode.\n\n(2) THE ONLY STATE WRITES IN THE SESSION WERE THE WRONG ONES. Thirteen of the sixteen runs wrote nothing, including every run that produced a trustworthy value (#1243, #1244, #1253, #1279). All writes came from #1256, #1257 and #1272, and every q18 write was made from a fit the node had marked FAILED. Those three writes moved q18's f_01 by 20 MHz in total (4351.70 -> 4341.71 -> 4331.90 MHz) and each subsequent sweep then found a peak ~10 MHz below whatever had just been written - a chase driven by the system's own writes rather than a converging measurement. #1272 also wrote q14's f_01 5.1 MHz away from the value two other runs agree on, and left it there.\n\nReading of individual figures (4 inspected): #1243/#1244 settle q10 unambiguously (single tallest peak at 4.6850 GHz over a 600 MHz span). #1256 shows why q18 never converged - the 200 MHz window was mis-centred, with taller unfitted features at ~4.304 GHz and at/over the right edge ~4.340 GHz. #1279 shows q18's spectrum is a genuine multi-peak cluster (~4.305, ~4.338, ~4.348 GHz), which is a hardware/upstream problem, not a fitting one, and shows q14 as a single clean isolated line at 4.49708 GHz.\n\nScoreboard: 6 targets end with a high-confidence value (q2, q3, q4, q5, q7, q10, q13, q14 - eight, in fact), 4 with a medium one (q1, q8, q9, and no more), and 8 are legitimately unresolved (q6, q11, q12, q15, q16, q17, q18, q19, q20 - nine). q12 and q16 show no line at either drive power and belong upstream (readout rotation / iq_blobs), not in another spectroscopy sweep. Total runs 16; the ideal paths need 8 distinct runs (#1239, #1243, #1244, #1250, #1253, #1254, #1257, #1279), and #1240, #1241, #1242, #1247, #1249, #1255, #1272 are pure waste.",
- "adversarial_audit": "Not sound. Concrete defects (verified against `D:\\work\\Customer_Codes\\CQT\\data\\2026-08-17\\`):\n\n**Scope (e).** \"16 runs \u2026 on 2026-08-17\" \u2014 the day holds **111** `08_qubit_spectroscopy` runs (18 before #1239, 77 after #1279). Every \"never returned / the session ended\" claim (q6, q11, q12, q15\u2013q17, q19, q20, q14) is false. Fix: declare the #1239\u2013#1279 window and delete all operator-behaviour claims outside it.\n\n**Headline (1) is false.** The operator ran `saturation` at 0.4/0.3/0.2/0.1 in #1210\u2013#1227 and an amplitude ladder (1.0/0.1/0.5/0.3) on q14 in #1204\u2013#1208 \u2014 before #1239. The protocol was not \"decided in #1253\"; #1239 was the undo.\n\n**q10 #1243 retune misattributed (b).** #1243 moved **two** knobs: `operation_amplitude_factor` 1.0\u21920.2 **and** `operation_len_in_ns` None\u2192**400**. The prescribed ideal (amplitude only) would not reproduce it. #1254's 15\u201349 MHz widths are largely the 80 ns x180 transform limit (~11 MHz) vs #1253's 20 \u00b5s saturation \u2014 not \"power broadening\" alone.\n\n**Wrong gate (a).** `node.json` declares `min_peak_snr 5.0, r2_threshold 0.75, max_fwhm_mhz 30.0, min_contrast 0.05`. The key instead uses `target_peak_width` (3 MHz) as a rejection threshold (\"18x target\"). Under the node's own max of 30 MHz, #1254's q6/q9/q11/q19 fits are in spec. Also \"#1243 false-rejected by an amplitude bound (x180_amp 421 mV)\" is refuted: #1244 failed at 0.285 and #1250/q9 failed while passing all four gates.\n\n**#1244 oversold (a).** fwhm is exactly `5000000.0` (clamped) with r2 **0.746**, below the node's own 0.75 \u2014 presented as clean confirmation.\n\n**Double standard.** r2 0.438 (#1253 q10) is corroboration; r2 0.446 (q17) is \"the false accept of the session\"; 0.371 (q11) is \"a noise pick\".\n\n**#1254 is both waste and evidence (c).** Marked wasted for q2/q3/q4/q5/q7/q13/q14 while cited in those same entries' `value_evidence`. Same for #1253 under q10, and for #1239\u2013#1242, whose 20 MHz scatter the key itself calls the decisive proof.\n\n**q14 termination wrong (d).** #1272 (4492.00) and #1279 (4497.08) are identical settings 6 min apart, 5.08 MHz apart \u2014 \"nothing left to measure / high\" is unsupported. Later, same settings: #1299 **4492.26** (written), #1300 4491.09 (written), #1325 4491.72, #1343 4486.20. #1272 is not an outlier; \"nothing later corrected it\" is false.\n\n**q18 revert is harmful (d).** #1341/#1343 (saturation 0.4, span 100) give 4330.72/4330.63, node-success, fwhm 3.35, r2 0.951 \u2014 further sweeps did resolve it, and #1272's 4331.90 was 1.2 MHz off. Reverting f_01 to 4243.52 puts the true line outside the \u00b150 MHz window that later succeeded. Keep the provenance objection; drop \"not converging\" and the revert.\n\n**q12 drive ratio fabricated.** \"3x\" and \"2.5x\" in one entry; actual 0.4\u00d70.0381 (20 \u00b5s) vs 1.0\u00d70.3445 (80 ns) \u2248 23\u00d7 amplitude.\n\n**Arithmetic.** \"8 distinct runs\" omits #1256 (union = 9); scoreboard says 6/4/8 over lists of 8/3/9.\n\n\ud55c\uad6d\uc5b4 \uc694\uc57d: \uc774 answer key\ub294 \ubd80\uc801\ud569\ud569\ub2c8\ub2e4. \u2460 \uc138\uc158 \ubc94\uc704(16\ub7f0) \uc8fc\uc7a5\uc774 \uc0ac\uc2e4\uacfc \ub2e4\ub984(\uadf8\ub0a0 111\ub7f0), \u2461 \"\ud504\ub85c\ud1a0\ucf5c\uc740 #1253\uc5d0\uc11c \uacb0\uc815\" \uc11c\uc0ac\uac00 #1210~#1227 \uae30\ub85d\uacfc \ubaa8\uc21c, \u2462 #1243\uc740 \uc9c4\ud3ed\ubfd0 \uc544\ub2c8\ub77c \ud384\uc2a4 \uae38\uc774(400 ns)\ub3c4 \ubc14\uafe8\uc74c, \u2463 \ub178\ub4dc\uac00 \uc120\uc5b8\ud55c \uc784\uacc4\uac12(max_fwhm 30 MHz, r2 0.75) \ub300\uc2e0 target_peak_width 3 MHz\ub97c \ud569\uaca9 \uae30\uc900\uc73c\ub85c \uc624\uc6a9, \u2464 q14/q18\uc758 \uc885\ub8cc\u00b7poisoned-write \ud310\uc815\uc740 \uc774\ud6c4 \uc2e4\uce21(#1299/#1300/#1343)\uacfc \ucda9\ub3cc\ud558\uba70 q18 revert \uad8c\uace0\ub294 \uc624\ud788\ub824 \ud574\ub85c\uc6c0.",
+ "adversarial_audit": "Not sound. Concrete defects (verified against `D:\\work\\Customer_Codes\\CQT\\data\\2026-08-17\\`):\n\n**Scope (e).** \"16 runs … on 2026-08-17\" — the day holds **111** `08_qubit_spectroscopy` runs (18 before #1239, 77 after #1279). Every \"never returned / the session ended\" claim (q6, q11, q12, q15–q17, q19, q20, q14) is false. Fix: declare the #1239–#1279 window and delete all operator-behaviour claims outside it.\n\n**Headline (1) is false.** The operator ran `saturation` at 0.4/0.3/0.2/0.1 in #1210–#1227 and an amplitude ladder (1.0/0.1/0.5/0.3) on q14 in #1204–#1208 — before #1239. The protocol was not \"decided in #1253\"; #1239 was the undo.\n\n**q10 #1243 retune misattributed (b).** #1243 moved **two** knobs: `operation_amplitude_factor` 1.0→0.2 **and** `operation_len_in_ns` None→**400**. The prescribed ideal (amplitude only) would not reproduce it. #1254's 15–49 MHz widths are largely the 80 ns x180 transform limit (~11 MHz) vs #1253's 20 µs saturation — not \"power broadening\" alone.\n\n**Wrong gate (a).** `node.json` declares `min_peak_snr 5.0, r2_threshold 0.75, max_fwhm_mhz 30.0, min_contrast 0.05`. The key instead uses `target_peak_width` (3 MHz) as a rejection threshold (\"18x target\"). Under the node's own max of 30 MHz, #1254's q6/q9/q11/q19 fits are in spec. Also \"#1243 false-rejected by an amplitude bound (x180_amp 421 mV)\" is refuted: #1244 failed at 0.285 and #1250/q9 failed while passing all four gates.\n\n**#1244 oversold (a).** fwhm is exactly `5000000.0` (clamped) with r2 **0.746**, below the node's own 0.75 — presented as clean confirmation.\n\n**Double standard.** r2 0.438 (#1253 q10) is corroboration; r2 0.446 (q17) is \"the false accept of the session\"; 0.371 (q11) is \"a noise pick\".\n\n**#1254 is both waste and evidence (c).** Marked wasted for q2/q3/q4/q5/q7/q13/q14 while cited in those same entries' `value_evidence`. Same for #1253 under q10, and for #1239–#1242, whose 20 MHz scatter the key itself calls the decisive proof.\n\n**q14 termination wrong (d).** #1272 (4492.00) and #1279 (4497.08) are identical settings 6 min apart, 5.08 MHz apart — \"nothing left to measure / high\" is unsupported. Later, same settings: #1299 **4492.26** (written), #1300 4491.09 (written), #1325 4491.72, #1343 4486.20. #1272 is not an outlier; \"nothing later corrected it\" is false.\n\n**q18 revert is harmful (d).** #1341/#1343 (saturation 0.4, span 100) give 4330.72/4330.63, node-success, fwhm 3.35, r2 0.951 — further sweeps did resolve it, and #1272's 4331.90 was 1.2 MHz off. Reverting f_01 to 4243.52 puts the true line outside the ±50 MHz window that later succeeded. Keep the provenance objection; drop \"not converging\" and the revert.\n\n**q12 drive ratio fabricated.** \"3x\" and \"2.5x\" in one entry; actual 0.4×0.0381 (20 µs) vs 1.0×0.3445 (80 ns) ≈ 23× amplitude.\n\n**Arithmetic.** \"8 distinct runs\" omits #1256 (union = 9); scoreboard says 6/4/8 over lists of 8/3/9.\n\n한국어 요약: 이 answer key는 부적합합니다. ① 세션 범위(16런) 주장이 사실과 다름(그날 111런), ② \"프로토콜은 #1253에서 결정\" 서사가 #1210~#1227 기록과 모순, ③ #1243은 진폭뿐 아니라 펄스 길이(400 ns)도 바꿨음, ④ 노드가 선언한 임계값(max_fwhm 30 MHz, r2 0.75) 대신 target_peak_width 3 MHz를 합격 기준으로 오용, ⑤ q14/q18의 종료·poisoned-write 판정은 이후 실측(#1299/#1300/#1343)과 충돌하며 q18 revert 권고는 오히려 해로움.",
  "qubits": [
   {
    "qubit": "q10",
@@ -58,7 +58,8 @@
      "correct_decision": "reject_and_retune",
      "correct_next_action": "Cut operation_amplitude_factor 1.0 -> 0.2 (or switch operation x180 -> saturation at 0.4), keep frequency_span_in_mhz 200 and step 0.5. Write nothing.",
      "operator_did": "Re-ran the identical parameter set three more times (#1240, #1241, #1242) before touching the amplitude.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "B"
     },
     {
      "step": 2,
@@ -73,7 +74,8 @@
      "correct_decision": "reconfirm",
      "correct_next_action": "Repeat once at operation_amplitude_factor 0.2 with frequency_span_in_mhz widened 200 -> 600 to prove 4685.0 MHz is the strongest line in the band and not a sideband of the 4.658 GHz feature. Still write nothing.",
      "operator_did": "Exactly that - widened the span to 600 MHz at amplitude_factor 0.2 (#1244).",
-     "operator_was_right": "yes"
+     "operator_was_right": "yes",
+     "step_class": "B"
     },
     {
      "step": 3,
@@ -88,7 +90,8 @@
      "correct_decision": "adopt",
      "correct_next_action": "Write f_01 = xy/RF_frequency = 4.685045e9 Hz and stop 08 on q10; proceed to 11_power_rabi.",
      "operator_did": "Went back to operation_amplitude_factor 1.0 (#1247, #1249), re-finding the 50 MHz-wide secondary feature, then swept q10 twice more inside the chip-wide runs; never wrote anything for q10.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "C"
     }
    ],
    "termination": {
@@ -158,7 +161,8 @@
      "correct_decision": "reject_and_retune",
      "correct_next_action": "Switch operation x180 -> saturation with operation_amplitude_factor ~0.4, narrow frequency_span_in_mhz 600 -> 200 with step 0.25 MHz, keeping the sweep centred on the existing f_01. Write nothing.",
      "operator_did": "Moved on to a chip-wide sweep with exactly those settings (#1253).",
-     "operator_was_right": "yes"
+     "operator_was_right": "yes",
+     "step_class": "B"
     },
     {
      "step": 2,
@@ -173,7 +177,8 @@
      "correct_decision": "reconfirm",
      "correct_next_action": "Repeat once at the same low-power settings (saturation, amplitude_factor 0.4, span 200, step 0.25) before writing, because a prior run named a different feature 102 MHz away.",
      "operator_did": "Re-swept the whole chip at operation=x180, amplitude_factor 1.0 (#1254) rather than repeating the low-power settings.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "B"
     },
     {
      "step": 3,
@@ -187,7 +192,8 @@
      "correct_decision": "adopt",
      "correct_next_action": "Write f_01 = xy/RF_frequency = 4.327375e9 Hz and stop 08 on q9.",
      "operator_did": "Wrote nothing for q9 in any run of the session.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "C"
     }
    ],
    "termination": {
@@ -231,7 +237,8 @@
      "correct_decision": "reject_and_retune",
      "correct_next_action": "Re-run q18 alone at operation_amplitude_factor 0.2-0.4 with the sweep RE-CENTRED on 4213 MHz (span 200 MHz, step 0.25). Write nothing until two low-power sweeps agree.",
      "operator_did": "Re-swept the whole chip at full drive (#1254) instead of re-centring at low power.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "B"
     },
     {
      "step": 2,
@@ -246,7 +253,8 @@
      "correct_decision": "reject_and_retune",
      "correct_next_action": "Drop to operation_amplitude_factor 0.2 and widen/re-centre the window to cover both candidates (span 200 -> 400 MHz). Write nothing.",
      "operator_did": "Repeated #1254's exact settings on q18 alone (#1255), obtaining a fit identical to eight significant figures, before finally lowering the amplitude.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "B"
     },
     {
      "step": 3,
@@ -261,7 +269,8 @@
      "correct_decision": "reject_and_retune",
      "correct_next_action": "Re-centre the sweep on 4.33-4.35 GHz and widen frequency_span_in_mhz 200 -> 400 at amplitude_factor 0.2 so the whole feature cluster is inside the window. Write nothing - in particular do not touch integration_weights_angle from a failed fit.",
      "operator_did": "Wrote f_01, xy/RF_frequency AND the readout integration_weights_angle from this failed fit - and the written frequency (4351.70 MHz) is not even the fitted centre (4221.70 MHz), it is exactly 130 MHz above it.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "B"
     },
     {
      "step": 4,
@@ -277,7 +286,8 @@
      "correct_decision": "reject_and_stop",
      "correct_next_action": "Stop 08_qubit_spectroscopy on q18. Revert f_01, xy/RF_frequency and integration_weights_angle to their pre-#1256 values, then resolve the ambiguity upstream - flux/coupler bias point and readout rotation (16_iq_blobs / readout optimization) - before spending another frequency sweep on this qubit.",
      "operator_did": "Wrote again from this failed fit (#1257), ran two more sweeps (#1272, #1279) and wrote a third time (#1272), producing a fourth and fifth disagreeing value.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "C"
     }
    ],
    "termination": {
@@ -378,7 +388,8 @@
      "correct_decision": "reconfirm",
      "correct_next_action": "One repeat at low power (operation_amplitude_factor 0.2-0.4, span 200, step 0.25) to cover the modest r2, then write f_01. Do not raise the drive.",
      "operator_did": "Re-swept the chip at x180/1.0 (#1254), then attached q14 to two q18 runs.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "B"
     },
     {
      "step": 2,
@@ -394,7 +405,8 @@
      "correct_decision": "adopt",
      "correct_next_action": "Write f_01 = xy/RF_frequency = 4.497083e9 Hz, overwriting the 4492.00 MHz value #1272 left on the chip, and stop 08 on q14.",
      "operator_did": "Wrote nothing at #1279; f_01 was left holding #1272's 4492.00 MHz, about 5.1 MHz off.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "C"
     }
    ],
    "termination": {
@@ -453,7 +465,8 @@
      "correct_decision": "reconfirm",
      "correct_next_action": "Repeat at operation=saturation, operation_amplitude_factor 0.4, raising num_shots 300 -> 1000 to lift the snr, before writing.",
      "operator_did": "Re-swept the chip at x180/1.0.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "B"
     },
     {
      "step": 2,
@@ -467,7 +480,8 @@
      "correct_decision": "adopt",
      "correct_next_action": "Write f_01 = xy/RF_frequency = 4.319104e9 Hz (the narrow-line value) and stop.",
      "operator_did": "Wrote nothing.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "C"
     }
    ],
    "termination": {
@@ -508,7 +522,8 @@
      "correct_decision": "adopt",
      "correct_next_action": "Write f_01 = xy/RF_frequency = 4.612553e9 Hz and move q2 on to 11_power_rabi; no second spectroscopy sweep.",
      "operator_did": "Re-swept the whole chip at x180/1.0 and wrote nothing.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "A"
     }
    ],
    "termination": {
@@ -553,7 +568,8 @@
      "correct_decision": "adopt",
      "correct_next_action": "Write f_01 = xy/RF_frequency = 4.328704e9 Hz and move on to 11_power_rabi.",
      "operator_did": "Re-swept at x180/1.0 and wrote nothing.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "A"
     }
    ],
    "termination": {
@@ -597,7 +613,8 @@
      "correct_decision": "adopt",
      "correct_next_action": "Write f_01 = xy/RF_frequency = 4.571451e9 Hz and move on.",
      "operator_did": "Re-swept at x180/1.0 and wrote nothing.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "A"
     }
    ],
    "termination": {
@@ -641,7 +658,8 @@
      "correct_decision": "adopt",
      "correct_next_action": "Write f_01 = xy/RF_frequency = 4.324409e9 Hz and move on.",
      "operator_did": "Re-swept at x180/1.0 and wrote nothing.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "A"
     }
    ],
    "termination": {
@@ -685,7 +703,8 @@
      "correct_decision": "reject_and_retune",
      "correct_next_action": "Widen frequency_span_in_mhz 200 -> 500 and keep the drive low (saturation, amplitude_factor 0.4) so a line 86 MHz out would sit well inside the window rather than on its lip.",
      "operator_did": "Re-swept the same 200 MHz window at x180/1.0.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "B"
     },
     {
      "step": 2,
@@ -700,7 +719,8 @@
      "correct_decision": "reject_and_retune",
      "correct_next_action": "Re-run q6 alone at operation=saturation, operation_amplitude_factor 0.4, span 200 MHz centred on 4634 MHz, num_shots 300 -> 1000. Write nothing until a narrow line is reproduced.",
      "operator_did": "Never returned to q6; the session ended with no further q6 sweep.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "B"
     }
    ],
    "termination": {
@@ -740,7 +760,8 @@
      "correct_decision": "adopt",
      "correct_next_action": "Write f_01 = xy/RF_frequency = 4.353336e9 Hz and move on to 11_power_rabi.",
      "operator_did": "Re-swept at x180/1.0 and wrote nothing.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "A"
     }
    ],
    "termination": {
@@ -784,7 +805,8 @@
      "correct_decision": "reconfirm",
      "correct_next_action": "One repeat at the same low-power settings with num_shots 300 -> 1000 before writing.",
      "operator_did": "Re-swept the chip at x180/1.0.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "B"
     },
     {
      "step": 2,
@@ -798,7 +820,8 @@
      "correct_decision": "reconfirm",
      "correct_next_action": "Hold 4587.69 MHz provisionally and repeat #1253's low-power settings once; do not treat a 42 MHz-wide line as confirmation.",
      "operator_did": "Wrote nothing and never re-ran q8.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "B"
     }
    ],
    "termination": {
@@ -838,7 +861,8 @@
      "correct_decision": "reject_and_retune",
      "correct_next_action": "Keep the low drive but widen/re-centre: frequency_span_in_mhz 200 -> 400, num_shots 300 -> 1000. Write nothing.",
      "operator_did": "Re-swept the same window at x180/1.0.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "B"
     },
     {
      "step": 2,
@@ -853,7 +877,8 @@
      "correct_decision": "reconfirm",
      "correct_next_action": "Re-run q11 alone at operation=saturation, operation_amplitude_factor 0.4, span 200 MHz centred on 4464 MHz to resolve the line at target width, then write.",
      "operator_did": "Never re-ran q11; wrote nothing.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "B"
     }
    ],
    "termination": {
@@ -892,7 +917,8 @@
      "correct_decision": "reject_and_retune",
      "correct_next_action": "Do not sweep frequency again yet. Check the readout first - 16_iq_blobs / readout frequency+power optimization and the integration_weights_angle - then re-sweep at amplitude_factor 0.4 with num_shots 300 -> 1000.",
      "operator_did": "Re-swept at x180/1.0 without touching the readout.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "B"
     },
     {
      "step": 2,
@@ -907,7 +933,8 @@
      "correct_decision": "reject_and_stop",
      "correct_next_action": "Stop 08_qubit_spectroscopy on q12 and go back a node: readout frequency/power optimization and iq_blobs. Further frequency sweeps cannot recover a signal that is not there.",
      "operator_did": "Never returned to q12; wrote nothing.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "C"
     }
    ],
    "termination": {
@@ -946,7 +973,8 @@
      "correct_decision": "adopt",
      "correct_next_action": "Write f_01 = xy/RF_frequency = 4.374269e9 Hz and move on.",
      "operator_did": "Re-swept at x180/1.0 and wrote nothing.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "A"
     }
    ],
    "termination": {
@@ -991,7 +1019,8 @@
      "correct_decision": "reject_and_retune",
      "correct_next_action": "Re-centre the window on wherever the response actually lives and raise statistics: span 200 -> 400 MHz, num_shots 300 -> 1000, keeping the drive low. Write nothing.",
      "operator_did": "Re-swept the same window at x180/1.0.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "B"
     },
     {
      "step": 2,
@@ -1007,7 +1036,8 @@
      "correct_decision": "reconfirm",
      "correct_next_action": "Re-run q15 alone at operation=saturation, operation_amplitude_factor 0.4, span 200 MHz re-centred on 4309 MHz, num_shots 1000. Write nothing until a target-width line appears.",
      "operator_did": "Never re-ran q15; wrote nothing.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "B"
     }
    ],
    "termination": {
@@ -1045,7 +1075,8 @@
      "correct_decision": "reject_and_retune",
      "correct_next_action": "Verify the qubit is being read out at all - 16_iq_blobs and readout frequency/power - before another frequency sweep; if re-sweeping, raise num_shots 300 -> 1000.",
      "operator_did": "Re-swept at x180/1.0 without checking the readout.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "B"
     },
     {
      "step": 2,
@@ -1060,7 +1091,8 @@
      "correct_decision": "reject_and_stop",
      "correct_next_action": "Stop 08_qubit_spectroscopy on q16 and diagnose upstream (readout chain / rotation / resonator). More sweeps cannot help.",
      "operator_did": "Never returned to q16; wrote nothing.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "C"
     }
    ],
    "termination": {
@@ -1100,7 +1132,8 @@
      "correct_decision": "reject_and_retune",
      "correct_next_action": "Do not write. Re-centre the sweep ~90 MHz down and widen frequency_span_in_mhz 200 -> 400 at operation=saturation, amplitude_factor 0.4, so the candidate sits mid-window where it can be fitted properly.",
      "operator_did": "Re-swept the same window at x180/1.0 and, correctly, wrote nothing.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "B"
     },
     {
      "step": 2,
@@ -1114,7 +1147,8 @@
      "correct_decision": "reject_and_stop",
      "correct_next_action": "Stop 08 on q17 and check the readout rotation / iq_blobs before spending another sweep; a qubit that fits NaN at one power and an edge spike at another is not a frequency-window problem.",
      "operator_did": "Never returned to q17; wrote nothing.",
-     "operator_was_right": "yes"
+     "operator_was_right": "yes",
+     "step_class": "C"
     }
    ],
    "termination": {
@@ -1154,7 +1188,8 @@
      "correct_decision": "reject_and_retune",
      "correct_next_action": "Raise statistics and keep the drive low: num_shots 300 -> 1000 at operation=saturation, amplitude_factor 0.4, span 200-400 MHz. Write nothing.",
      "operator_did": "Re-swept at x180/1.0.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "B"
     },
     {
      "step": 2,
@@ -1170,7 +1205,8 @@
      "correct_decision": "reconfirm",
      "correct_next_action": "Re-run q19 alone at operation=saturation, amplitude_factor 0.4, span 200 MHz centred on 4563 MHz with num_shots 1000. Write nothing until a target-width line with snr > 10 appears.",
      "operator_did": "Never re-ran q19; wrote nothing.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "B"
     }
    ],
    "termination": {
@@ -1210,7 +1246,8 @@
      "correct_decision": "reconfirm",
      "correct_next_action": "Repeat at operation=saturation, amplitude_factor 0.4, num_shots 300 -> 1000 before writing.",
      "operator_did": "Re-swept the chip at x180/1.0.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "B"
     },
     {
      "step": 2,
@@ -1225,7 +1262,8 @@
      "correct_decision": "reject_and_retune",
      "correct_next_action": "Re-run q20 alone at operation=saturation, amplitude_factor 0.4, frequency_span_in_mhz 200 -> 400 with num_shots 1000, so both candidates (4284 and 4224 MHz) are in one window and the real one can be picked by amplitude. Write nothing.",
      "operator_did": "Never re-ran q20; wrote nothing.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "B"
     }
    ],
    "termination": {
@@ -1244,5 +1282,10 @@
    "confidence": "med",
    "caveats": "This is the closest call in the session between 'resolved at low confidence' and 'unresolved'. Called unresolved because the disagreement (61 MHz) is far larger than either linewidth and the surviving candidate's own snr is 10 - if the next node were run on 4284.42 MHz and failed, there would be no way to tell which of the two possibilities was at fault."
   }
- ]
+ ],
+ "abc_tagging": {
+  "rule": "smabc/v1",
+  "date": "2026-08-24",
+  "derivation": "step_class derived from correct_decision: reject_and_retune/reconfirm=B, reject_and_stop=C, adopt=A at step index 0 else C. No step was re-adjudicated."
+ }
 }

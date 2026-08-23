@@ -24,8 +24,8 @@
  "authored": "2026-08-21",
  "status": "hindsight-authored + adversarial audit",
  "provenance": "the author saw the whole session and was free to judge the operator wrong; the system under test never sees past its cursor",
- "session_notes": "FAMILY MECHANICS ESTABLISHED FROM THE ARCHIVE (not from the summary JSON):\n\n(1) NO RUN IN THIS SESSION COULD WRITE. All 14 runs carry `update_flux_min = False` in node.json parameters, and all 14 have an empty `patches` list. Zero state writes from this family \u2014 so there are no in-band poisoned writes possible, and equally the session's real deliverable never left the pipeline through the node.\n\n(2) WHAT THE LAB ACTUALLY CONSUMED IS `min_offset`, NOT `idle_offset`. Exact 17-digit float matches prove out-of-band adoption into `qubit_pairs/<pair>/coupler/decouple_offset` sometime between 10:24 and 17:29 (no patch anywhere in the archive writes these values \u2014 they were set manually / through an editor):\n  q1-4 decouple_offset = -0.33239166415895627 == #259 min_offset (end-of-day value, never refined)\n  q3-4 = -0.34974686638156854 == #294 min_offset -> refined by #457 23_zz_off_jazz to -0.3957468663815682 (delta 0.046 V)\n  q4-5 = -0.44582447903528266 == #297 min_offset -> refined by #453 to -0.3958244790352827 (delta 0.050 V)\n  q4-9 = -0.48065151384747945 == NEGATED #312 min_offset (+0.48065151384747945) -> refined by #461 to -0.44065151384747947 (delta 0.040 V)\n  q3-8 = -0.19 (round number set by #505 from a pre-existing -0.2; sits at the centre of the #492/#493/#494 cluster mean -0.177)\nThe `idle_offset` field the node reports (0.009-0.14 V) was never used by anything. So the family's deliverable is a COUPLER DECOUPLE SEED, good to ~0.04-0.05 V \u2014 which is exactly the distance 23_zz_off_jazz then moved it. One good run per target is enough to produce that seed; nothing in this session justified 14.\n\n(3) EVERY RUN MEASURED ONE OF TWO RESONATORS. `measure_qubit` is \"target\" for q1-4/q3-4 and \"control\" for q4-5/q4-9/q3-8 \u2014 in all five cases that resolves to q4 (first four pairs) or q3 (q3-8). Confirmed arithmetically: reported `resonator_frequency` - `frequency_shift` equals the stored resonator f_01 exactly in all 14 runs (5,112,552,575.145 before #296, 5,111,700,781.069 after, and 4,970,727,423.303 for q3). `peak_freq` in ds_fit.h5 is a DETUNING from that stored centre and tracks the argmin of |IQ|.\n\n(4) THE MEASUREMENT IS SNR ~= 1 EVERYWHERE, AND THAT IS THE EXPECTED PHYSICS. Fitted sinusoid amplitude vs residual scatter of the extracted dip, per run: #258 0.190/0.128 (SNR 1.49, R2 0.50) \u00b7 #259 1.32 \u00b7 #294 2.06 (best) \u00b7 #295 1.71 \u00b7 #297 1.64 \u00b7 #298 0.71 \u00b7 #299 0.66 \u00b7 #311 0.86 \u00b7 #312 0.84 \u00b7 #446 1.30 \u00b7 #489 0.31 (R2 0.04, failure) \u00b7 #492 0.98 \u00b7 #493 1.47 \u00b7 #494 1.15. Repeat-vs-repeat Pearson r of the peak trace is 0.43-0.80 for every pair of same-target runs, and -0.08 for #489 vs #492 \u2014 i.e. the weak modulation is REAL and reproducible in shape, only #489 is noise. A correct reader must NOT call weak modulation a failure here (family doctrine), but must also not claim a resonator frequency from it.\n\n(5) THE KNOB THE OPERATOR NEVER TOUCHED. `frequency_step_in_mhz` = 0.1 in all 14 runs and the extracted dip is grid-quantised at exactly that step; residual scatter is 0.10-0.16 MHz = 1-1.6 bins. `num_shots` moved 100->200 only three times, and where it did (#298 -> #299, same flux range) residual scatter fell 0.160 -> 0.096 MHz, i.e. the extraction is shot-noise limited and num_shots IS the lever. The operator instead spent 9 of 14 runs moving `frequency_span_in_mhz` (60/40/15/5/3) and the flux range, neither of which changes dip-extraction precision.\n\n(6) FLUX-WINDOW RULE, DERIVED FROM THE SESSION ITSELF. Fitted `dv_phi0` tracks the SWEEP RANGE, not the coupler: +/-0.5 V windows return 0.646-0.911; +/-0.8 and +/-1.0 V windows return 0.992-1.084; the +/-0.2 V window returns 0.545 (larger than the whole window). A window covering under ~1.5 periods leaves period and minimum degenerate. This is the one genuine retune trigger in the family, and it correctly explains #295->#297 and #299->#311.\n\n(7) DRIFT DOMINATES THE FREQUENCY AXIS. q4's resonator moved -0.85 MHz between 09:25 (#257 wrote 5,112,552,575.145) and 10:12 (#296 measured 5,111,700,781.069) \u2014 3-4x LARGER than the 0.19-0.26 MHz coupler modulation being measured. The 07 runs tracked that drift correctly (#294 -0.285 MHz, #295 -0.788 MHz), which validates the dip extraction but also means no two 07 runs hours apart are comparable in frequency (#446 vs #258).\n\n(8) A HAZARD THAT WAS NARROWLY AVOIDED. For q3-8 the node reports resonator_frequency 4,978,45x,xxx (+7.72 MHz from stored). That +7.72 MHz is not an error of this node \u2014 #487 (14_readout_frequency_optimization, 18:19, two runs before #489) had deliberately moved q3's readout f_01 from 4,978,327,423.303 to 4,970,727,423.303, and #488 iq_blobs immediately measured fidelity improving from 0.831/0.656 to 0.9545/0.893. Had `update_flux_min`/frequency adoption been enabled, this family would have written 4,978.45 MHz back and destroyed that gain. RULE: node 07's `resonator_frequency` output must never be adopted; the readout frequency belongs to nodes 03/05/14.\n\nIDEAL TOTAL: 8 runs vs 14 actually taken. Nothing in this session is unresolved except the frequency axis, which this family should never have owned.",
- "adversarial_audit": "Audited against the real archive (`D:\\work\\Customer_Codes\\CQT\\data\\2026-08-14`, all 14 runs + node.json/ds_fit.h5/quam_state). The fit-quality substrate reproduces exactly (my independent SNR/R\u00b2 recompute matches \u00b64 to 2 digits; the 17-digit adoption matches, #487/#488/#296/#327 all verify). Eleven defects:\n\n**1. Adoption window wrong (\u00b62).** Not \"between 10:24 and 17:29\" \u2014 each value lands in the *next* run's state, 1\u20133 min later: q1-4 \u22120.332392 by #260 (09:31), q3-4 by #295 (10:11), q4-5 by #298 (10:13), q4-9 by #313 (10:25). Adoption was immediate and per-target.\n\n**2. q3-8 \"pre-existing round \u22120.2 V\" is false (e).** decouple_offset was 0.0 until **#495 (18:31:46, 61 s after #494)**, then churned \u22120.2\u2192\u22120.3\u21920\u2192\u22120.2 (#498\u2013#500) before #505\u2192\u22120.19. #494 *was* adopted, rounded. The \"no verbatim adoption \u21d2 confidence med\" downgrade rests on a misread; raise to high.\n\n**3. final_frequency is a future value for q1-4 and q3-4 (b).** 5,111,700,781.069 was created by #296 at 10:11:57. At #258 (09:27) and #294 (10:10) the only knowable centre is 5,112,552,575.145. Unscoreable future-blind \u2014 use the era-correct centre.\n\n**4. Stated rule \u2260 applied rule (b).** \u00b66 names \"<~1.5 periods \u21d2 degenerate\" as *the* trigger, but verdicts run 1.10 reject / 1.25 adopt / 1.47 adopt / 1.48 reconfirm / 1.55\u20132.02 adopt \u2014 non-monotonic. The real discriminator is min-offset position (82.5% of half-window rejects, \u226470% adopts). State that.\n\n**5. r = 0.64 (#311/#312) does not reproduce (e).** Actual 0.484 (0.448\u20130.481 detrended). \"0.43\u20130.80 for every same-target pair\" fails: #298/#299 = 0.287, #298/#311 = 0.355, #258/#259 = 0.415.\n\n**6. Fabricated arithmetic (e).** \"(\u22120.4807 + 0.9683 \u2248 +0.4876)\" \u2014 neither number exists (#311 is \u22120.4867; no fit gives 0.9683). Real gap 0.9674 vs periods 0.9917/1.0149: agrees only to 0.024\u20130.048 V.\n\n**7. \"num_shots IS the lever\" over-generalized (a).** True for #298\u2192#299 (model-free noise 0.149\u21920.089), but #492/#493/#494 hit 0.093\u20130.099 at **100** shots, beating 200-shot #311/#312 (0.103/0.115). Noise is target-dependent. q1-4's \"only knob is num_shots 100\u2192400+\" is asserted, not derived.\n\n**8. #294's \u22120.285 MHz is not verified drift (e).** freq_shift = fitted *maximum* vs stored centre. #294 and #295 measure q4 63 s apart and disagree by 0.503 MHz; #296 gives \u22120.852. #294 is off by 0.57 MHz \u2014 2\u00d7 the modulation depth. Don't score \"drift_not_modulation\" as required.\n\n**9. q3-8 step-1 \u00b10.5 V is hindsight (b).** Justified by \"period of order 0.6 V\" \u2014 but #489's own dv_phi0 is declared untrustworthy and every other coupler measured 0.65\u20131.08 V. Accept \u00b10.8 (2.35 periods) as equally correct.\n\n**10. #312 poisoned-write over-charged (c).** \"update_flux_min=False \u21d2 pipeline declined\" is equally true of #258/#294/#297/#311, which the key prescribes adopting. Only the sign flip is real; magnitude/sign match stopping at #311 to 0.006 V.\n\n**11. #299 and #493 are \"wasted\" yet load-bearing (c)** \u2014 #299 is the sole basis for \u00b65; #493 is cited as q3-8 cluster corroboration.\n\n\ud55c\uad6d\uc5b4 \uc694\uc57d\n- \uc774 answer key\ub294 fit \ud488\uc9c8 \ub370\uc774\ud130(SNR/R\u00b2/17\uc790\ub9ac \ucc44\ud0dd\uac12)\ub294 \uc815\ud655\ud558\ub098, **11\uac1c \uacb0\ud568**\uc774 \uc788\uc2b5\ub2c8\ub2e4.\n- \uac00\uc7a5 \uc911\uc694\ud55c \uc138 \uac00\uc9c0: \u2460 \ucc44\ud0dd \uc2dc\uac01\uc774 \ud2c0\ub838\uc74c(10:24\u201317:29\uc774 \uc544\ub2c8\ub77c \uac01 run \uc9c1\ud6c4 1\u20133\ubd84), \u2461 q3-8\uc758 \"\uc6d0\ub798 \u22120.2\uc600\ub2e4\"\ub294 \uc11c\uc220\uc774 \uc0ac\uc2e4\uacfc \ubc18\ub300(#495\uc5d0\uc11c \ucc98\uc74c \uc124\uc815\ub428 \u2192 \uc2e0\ub8b0\ub3c4\ub97c med\uc5d0\uc11c high\ub85c \uc62c\ub824\uc57c \ud568), \u2462 q1-4\u00b7q3-4\uc758 final_frequency\uac00 **\ubbf8\ub798 \uac12**(#296\uc774 \ub098\uc911\uc5d0 \uce21\uc815)\uc774\ub77c future-blind \uc2dc\uc2a4\ud15c\uc740 \uc808\ub300 \ub9de\ucd9c \uc218 \uc5c6\uc74c.\n- \uadf8 \uc678: \uba85\uc2dc\ub41c \"1.5\uc8fc\uae30 \uaddc\uce59\"\uacfc \uc2e4\uc81c \ud310\uc815\uc774 \ubd88\uc77c\uce58, r=0.64 \ub4f1 \uc7ac\ud604\ub418\uc9c0 \uc54a\ub294 \uc218\uce58, \uc874\uc7ac\ud558\uc9c0 \uc54a\ub294 \uc0b0\uc220(0.9683), num_shots \uc77c\ubc18\ud654 \uacfc\uc789, #312 poisoned-write \uacfc\uc789 \uae30\uc18c, #299/#493\uc744 \"\ub0ad\ube44\"\ub85c \ud45c\uc2dc\ud558\uba74\uc11c \ub3d9\uc2dc\uc5d0 \uadfc\uac70\ub85c \uc0ac\uc6a9.",
+ "session_notes": "FAMILY MECHANICS ESTABLISHED FROM THE ARCHIVE (not from the summary JSON):\n\n(1) NO RUN IN THIS SESSION COULD WRITE. All 14 runs carry `update_flux_min = False` in node.json parameters, and all 14 have an empty `patches` list. Zero state writes from this family — so there are no in-band poisoned writes possible, and equally the session's real deliverable never left the pipeline through the node.\n\n(2) WHAT THE LAB ACTUALLY CONSUMED IS `min_offset`, NOT `idle_offset`. Exact 17-digit float matches prove out-of-band adoption into `qubit_pairs/<pair>/coupler/decouple_offset` sometime between 10:24 and 17:29 (no patch anywhere in the archive writes these values — they were set manually / through an editor):\n  q1-4 decouple_offset = -0.33239166415895627 == #259 min_offset (end-of-day value, never refined)\n  q3-4 = -0.34974686638156854 == #294 min_offset -> refined by #457 23_zz_off_jazz to -0.3957468663815682 (delta 0.046 V)\n  q4-5 = -0.44582447903528266 == #297 min_offset -> refined by #453 to -0.3958244790352827 (delta 0.050 V)\n  q4-9 = -0.48065151384747945 == NEGATED #312 min_offset (+0.48065151384747945) -> refined by #461 to -0.44065151384747947 (delta 0.040 V)\n  q3-8 = -0.19 (round number set by #505 from a pre-existing -0.2; sits at the centre of the #492/#493/#494 cluster mean -0.177)\nThe `idle_offset` field the node reports (0.009-0.14 V) was never used by anything. So the family's deliverable is a COUPLER DECOUPLE SEED, good to ~0.04-0.05 V — which is exactly the distance 23_zz_off_jazz then moved it. One good run per target is enough to produce that seed; nothing in this session justified 14.\n\n(3) EVERY RUN MEASURED ONE OF TWO RESONATORS. `measure_qubit` is \"target\" for q1-4/q3-4 and \"control\" for q4-5/q4-9/q3-8 — in all five cases that resolves to q4 (first four pairs) or q3 (q3-8). Confirmed arithmetically: reported `resonator_frequency` - `frequency_shift` equals the stored resonator f_01 exactly in all 14 runs (5,112,552,575.145 before #296, 5,111,700,781.069 after, and 4,970,727,423.303 for q3). `peak_freq` in ds_fit.h5 is a DETUNING from that stored centre and tracks the argmin of |IQ|.\n\n(4) THE MEASUREMENT IS SNR ~= 1 EVERYWHERE, AND THAT IS THE EXPECTED PHYSICS. Fitted sinusoid amplitude vs residual scatter of the extracted dip, per run: #258 0.190/0.128 (SNR 1.49, R2 0.50) · #259 1.32 · #294 2.06 (best) · #295 1.71 · #297 1.64 · #298 0.71 · #299 0.66 · #311 0.86 · #312 0.84 · #446 1.30 · #489 0.31 (R2 0.04, failure) · #492 0.98 · #493 1.47 · #494 1.15. Repeat-vs-repeat Pearson r of the peak trace is 0.43-0.80 for every pair of same-target runs, and -0.08 for #489 vs #492 — i.e. the weak modulation is REAL and reproducible in shape, only #489 is noise. A correct reader must NOT call weak modulation a failure here (family doctrine), but must also not claim a resonator frequency from it.\n\n(5) THE KNOB THE OPERATOR NEVER TOUCHED. `frequency_step_in_mhz` = 0.1 in all 14 runs and the extracted dip is grid-quantised at exactly that step; residual scatter is 0.10-0.16 MHz = 1-1.6 bins. `num_shots` moved 100->200 only three times, and where it did (#298 -> #299, same flux range) residual scatter fell 0.160 -> 0.096 MHz, i.e. the extraction is shot-noise limited and num_shots IS the lever. The operator instead spent 9 of 14 runs moving `frequency_span_in_mhz` (60/40/15/5/3) and the flux range, neither of which changes dip-extraction precision.\n\n(6) FLUX-WINDOW RULE, DERIVED FROM THE SESSION ITSELF. Fitted `dv_phi0` tracks the SWEEP RANGE, not the coupler: +/-0.5 V windows return 0.646-0.911; +/-0.8 and +/-1.0 V windows return 0.992-1.084; the +/-0.2 V window returns 0.545 (larger than the whole window). A window covering under ~1.5 periods leaves period and minimum degenerate. This is the one genuine retune trigger in the family, and it correctly explains #295->#297 and #299->#311.\n\n(7) DRIFT DOMINATES THE FREQUENCY AXIS. q4's resonator moved -0.85 MHz between 09:25 (#257 wrote 5,112,552,575.145) and 10:12 (#296 measured 5,111,700,781.069) — 3-4x LARGER than the 0.19-0.26 MHz coupler modulation being measured. The 07 runs tracked that drift correctly (#294 -0.285 MHz, #295 -0.788 MHz), which validates the dip extraction but also means no two 07 runs hours apart are comparable in frequency (#446 vs #258).\n\n(8) A HAZARD THAT WAS NARROWLY AVOIDED. For q3-8 the node reports resonator_frequency 4,978,45x,xxx (+7.72 MHz from stored). That +7.72 MHz is not an error of this node — #487 (14_readout_frequency_optimization, 18:19, two runs before #489) had deliberately moved q3's readout f_01 from 4,978,327,423.303 to 4,970,727,423.303, and #488 iq_blobs immediately measured fidelity improving from 0.831/0.656 to 0.9545/0.893. Had `update_flux_min`/frequency adoption been enabled, this family would have written 4,978.45 MHz back and destroyed that gain. RULE: node 07's `resonator_frequency` output must never be adopted; the readout frequency belongs to nodes 03/05/14.\n\nIDEAL TOTAL: 8 runs vs 14 actually taken. Nothing in this session is unresolved except the frequency axis, which this family should never have owned.",
+ "adversarial_audit": "Audited against the real archive (`D:\\work\\Customer_Codes\\CQT\\data\\2026-08-14`, all 14 runs + node.json/ds_fit.h5/quam_state). The fit-quality substrate reproduces exactly (my independent SNR/R² recompute matches ¶4 to 2 digits; the 17-digit adoption matches, #487/#488/#296/#327 all verify). Eleven defects:\n\n**1. Adoption window wrong (¶2).** Not \"between 10:24 and 17:29\" — each value lands in the *next* run's state, 1–3 min later: q1-4 −0.332392 by #260 (09:31), q3-4 by #295 (10:11), q4-5 by #298 (10:13), q4-9 by #313 (10:25). Adoption was immediate and per-target.\n\n**2. q3-8 \"pre-existing round −0.2 V\" is false (e).** decouple_offset was 0.0 until **#495 (18:31:46, 61 s after #494)**, then churned −0.2→−0.3→0→−0.2 (#498–#500) before #505→−0.19. #494 *was* adopted, rounded. The \"no verbatim adoption ⇒ confidence med\" downgrade rests on a misread; raise to high.\n\n**3. final_frequency is a future value for q1-4 and q3-4 (b).** 5,111,700,781.069 was created by #296 at 10:11:57. At #258 (09:27) and #294 (10:10) the only knowable centre is 5,112,552,575.145. Unscoreable future-blind — use the era-correct centre.\n\n**4. Stated rule ≠ applied rule (b).** ¶6 names \"<~1.5 periods ⇒ degenerate\" as *the* trigger, but verdicts run 1.10 reject / 1.25 adopt / 1.47 adopt / 1.48 reconfirm / 1.55–2.02 adopt — non-monotonic. The real discriminator is min-offset position (82.5% of half-window rejects, ≤70% adopts). State that.\n\n**5. r = 0.64 (#311/#312) does not reproduce (e).** Actual 0.484 (0.448–0.481 detrended). \"0.43–0.80 for every same-target pair\" fails: #298/#299 = 0.287, #298/#311 = 0.355, #258/#259 = 0.415.\n\n**6. Fabricated arithmetic (e).** \"(−0.4807 + 0.9683 ≈ +0.4876)\" — neither number exists (#311 is −0.4867; no fit gives 0.9683). Real gap 0.9674 vs periods 0.9917/1.0149: agrees only to 0.024–0.048 V.\n\n**7. \"num_shots IS the lever\" over-generalized (a).** True for #298→#299 (model-free noise 0.149→0.089), but #492/#493/#494 hit 0.093–0.099 at **100** shots, beating 200-shot #311/#312 (0.103/0.115). Noise is target-dependent. q1-4's \"only knob is num_shots 100→400+\" is asserted, not derived.\n\n**8. #294's −0.285 MHz is not verified drift (e).** freq_shift = fitted *maximum* vs stored centre. #294 and #295 measure q4 63 s apart and disagree by 0.503 MHz; #296 gives −0.852. #294 is off by 0.57 MHz — 2× the modulation depth. Don't score \"drift_not_modulation\" as required.\n\n**9. q3-8 step-1 ±0.5 V is hindsight (b).** Justified by \"period of order 0.6 V\" — but #489's own dv_phi0 is declared untrustworthy and every other coupler measured 0.65–1.08 V. Accept ±0.8 (2.35 periods) as equally correct.\n\n**10. #312 poisoned-write over-charged (c).** \"update_flux_min=False ⇒ pipeline declined\" is equally true of #258/#294/#297/#311, which the key prescribes adopting. Only the sign flip is real; magnitude/sign match stopping at #311 to 0.006 V.\n\n**11. #299 and #493 are \"wasted\" yet load-bearing (c)** — #299 is the sole basis for ¶5; #493 is cited as q3-8 cluster corroboration.\n\n한국어 요약\n- 이 answer key는 fit 품질 데이터(SNR/R²/17자리 채택값)는 정확하나, **11개 결함**이 있습니다.\n- 가장 중요한 세 가지: ① 채택 시각이 틀렸음(10:24–17:29이 아니라 각 run 직후 1–3분), ② q3-8의 \"원래 −0.2였다\"는 서술이 사실과 반대(#495에서 처음 설정됨 → 신뢰도를 med에서 high로 올려야 함), ③ q1-4·q3-4의 final_frequency가 **미래 값**(#296이 나중에 측정)이라 future-blind 시스템은 절대 맞출 수 없음.\n- 그 외: 명시된 \"1.5주기 규칙\"과 실제 판정이 불일치, r=0.64 등 재현되지 않는 수치, 존재하지 않는 산술(0.9683), num_shots 일반화 과잉, #312 poisoned-write 과잉 기소, #299/#493을 \"낭비\"로 표시하면서 동시에 근거로 사용.",
  "qubits": [
   {
    "qubit": "q1-4",
@@ -38,7 +38,7 @@
     {
      "step": 1,
      "run": "#258_07_resonator_spectroscopy_vs_coupler_flux_092731",
-     "expected_case": "Weak but coherent coupler-mediated modulation of q4's resonator, measured 2 minutes after #257 refreshed q4's readout centre. Fitted sinusoid amplitude 0.190 MHz against 0.128 MHz point scatter (SNR 1.49, R2 0.50) and frequency_shift of only +28 kHz, i.e. the dip sits exactly where #257 left it \u2014 a consistency signal, not an absent signal. Sweep +/-0.5 V against a fitted period dv_phi0 = 0.646 V covers 1.55 periods, the minimum sits interior at 60% of the half-window. This is the family's normal, correct outcome: the deliverable (coupler decouple seed min_offset = -0.2975 V) is in hand on the first run.",
+     "expected_case": "Weak but coherent coupler-mediated modulation of q4's resonator, measured 2 minutes after #257 refreshed q4's readout centre. Fitted sinusoid amplitude 0.190 MHz against 0.128 MHz point scatter (SNR 1.49, R2 0.50) and frequency_shift of only +28 kHz, i.e. the dip sits exactly where #257 left it — a consistency signal, not an absent signal. Sweep +/-0.5 V against a fitted period dv_phi0 = 0.646 V covers 1.55 periods, the minimum sits interior at 60% of the half-window. This is the family's normal, correct outcome: the deliverable (coupler decouple seed min_offset = -0.2975 V) is in hand on the first run.",
      "expected_flags": [
       "weak_but_coherent_modulation",
       "modulation_snr_near_unity",
@@ -49,33 +49,34 @@
      "correct_decision": "adopt",
      "correct_next_action": "Stop this family for q1-4. Hand min_offset = -0.298 V to qubit_pairs/q1-4/coupler/decouple_offset as the seed for 23_zz_off_jazz. Do NOT write resonator_frequency. If a tighter seed is ever wanted, the only knob that moves it is num_shots 100 -> 400+ (frequency_step 0.1 MHz is the extraction floor); frequency_span_in_mhz cannot help.",
      "operator_did": "Immediately re-ran the same target 37 s later with frequency_span_in_mhz reduced 15.0 -> 5.0, everything else identical.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "A"
     }
    ],
    "termination": {
     "at_run": "#258_07_resonator_spectroscopy_vs_coupler_flux_092731",
-    "reason": "A usable, interior, non-degenerate coupler minimum was obtained on the first run at the family's intrinsic SNR (~1.5). No later run improved it: the three reads span only 0.073 V (-0.2975 / -0.3324 / -0.2599) and none of them changed a knob that affects extraction precision. Downstream tolerance is ~0.05 V \u2014 23_zz_off_jazz moved the sibling couplers by 0.040-0.050 V from their 07 seeds.",
+    "reason": "A usable, interior, non-degenerate coupler minimum was obtained on the first run at the family's intrinsic SNR (~1.5). No later run improved it: the three reads span only 0.073 V (-0.2975 / -0.3324 / -0.2599) and none of them changed a knob that affects extraction precision. Downstream tolerance is ~0.05 V — 23_zz_off_jazz moved the sibling couplers by 0.040-0.050 V from their 07 seeds.",
     "final_frequency": 5111700781.068991,
     "final_sweep_value": -0.2975430749771446,
-    "value_evidence": "final_sweep_value is #258's min_offset (flux_min in ds_fit.h5), the field this lab actually consumes: for q3-4/q4-5/q4-9 the 07 min_offset appears verbatim to 17 digits as the coupler decouple_offset. For q1-4 the lab adopted #259's -0.33239166415895627 instead and left it there through end-of-day; that is 0.035 V from #258's value, inside the 0.073 V spread of the three reads and inside the ~0.05 V that 23_zz_off_jazz shifts a seed anyway \u2014 so either read is defensible and neither is verified independently (q1-4 is the one pair 23_zz_off_jazz never touched on 2026-08-14). final_frequency is NOT a product of this family: it is q4's readout frequency owned by node 03 (#296 measured 5,111,700,781.069 Hz at 10:12 and it is unchanged in the end-of-day state at #515). Node 07's own resonator_frequency here (5,112,580,915.96) is just the pre-drift centre of 09:27 and must not be written.",
+    "value_evidence": "final_sweep_value is #258's min_offset (flux_min in ds_fit.h5), the field this lab actually consumes: for q3-4/q4-5/q4-9 the 07 min_offset appears verbatim to 17 digits as the coupler decouple_offset. For q1-4 the lab adopted #259's -0.33239166415895627 instead and left it there through end-of-day; that is 0.035 V from #258's value, inside the 0.073 V spread of the three reads and inside the ~0.05 V that 23_zz_off_jazz shifts a seed anyway — so either read is defensible and neither is verified independently (q1-4 is the one pair 23_zz_off_jazz never touched on 2026-08-14). final_frequency is NOT a product of this family: it is q4's readout frequency owned by node 03 (#296 measured 5,111,700,781.069 Hz at 10:12 and it is unchanged in the end-of-day state at #515). Node 07's own resonator_frequency here (5,112,580,915.96) is just the pre-drift centre of 09:27 and must not be written.",
     "value_confidence": "med",
     "unresolved": false
    },
    "wasted_runs": [
     {
      "run": "#259_07_resonator_spectroscopy_vs_coupler_flux_092808",
-     "why_wasted": "Changed only frequency_span_in_mhz (15 -> 5). Span does not touch frequency_step (0.1 MHz), num_shots (100) or the flux window \u2014 the three things that set seed precision \u2014 so it could not add information. It returned an equally weak fit (SNR 1.32, R2 0.45) and a min_offset 0.035 V away, i.e. it re-measured the same scatter. Its only lasting effect is that its value, not #258's, is what someone typed into decouple_offset."
+     "why_wasted": "Changed only frequency_span_in_mhz (15 -> 5). Span does not touch frequency_step (0.1 MHz), num_shots (100) or the flux window — the three things that set seed precision — so it could not add information. It returned an equally weak fit (SNR 1.32, R2 0.45) and a min_offset 0.035 V away, i.e. it re-measured the same scatter. Its only lasting effect is that its value, not #258's, is what someone typed into decouple_offset."
     },
     {
      "run": "#446_07_resonator_spectroscopy_vs_coupler_flux_171915",
-     "why_wasted": "Eight hours later, span widened to 40 MHz, still 100 shots and still +/-0.5 V. Returned min_offset -0.2599 V (within the existing scatter) and idle_offset 0.0768 V, and nothing was updated from it. It is also not comparable in frequency to the morning runs: q4's resonator drifts ~0.85 MHz/45 min, 3-4x the modulation depth. A re-confirmation is only worth a run if a knob that changes precision moves, or if a downstream node reported the seed was wrong \u2014 neither applied."
+     "why_wasted": "Eight hours later, span widened to 40 MHz, still 100 shots and still +/-0.5 V. Returned min_offset -0.2599 V (within the existing scatter) and idle_offset 0.0768 V, and nothing was updated from it. It is also not comparable in frequency to the morning runs: q4's resonator drifts ~0.85 MHz/45 min, 3-4x the modulation depth. A re-confirmation is only worth a run if a knob that changes precision moves, or if a downstream node reported the seed was wrong — neither applied."
     }
    ],
    "poisoned_writes": [],
    "ideal_length": 1,
    "actual_length": 3,
    "confidence": "high",
-   "caveats": "The one soft spot: q1-4 is the only target whose adopted decouple_offset was never checked by 23_zz_off_jazz on this day, so the 0.035 V choice between #258's and #259's min_offset has no independent arbiter \u2014 hence value_confidence med rather than high. dv_phi0 for this coupler (0.646/0.697/0.673 V) was only ever measured from +/-0.5 V windows, so the period itself is mildly self-referential, though the three-way agreement at 4% is better than any other target's."
+   "caveats": "The one soft spot: q1-4 is the only target whose adopted decouple_offset was never checked by 23_zz_off_jazz on this day, so the 0.035 V choice between #258's and #259's min_offset has no independent arbiter — hence value_confidence med rather than high. dv_phi0 for this coupler (0.646/0.697/0.673 V) was only ever measured from +/-0.5 V windows, so the period itself is mildly self-referential, though the three-way agreement at 4% is better than any other target's."
   },
   {
    "qubit": "q3-4",
@@ -86,7 +87,7 @@
     {
      "step": 1,
      "run": "#294_07_resonator_spectroscopy_vs_coupler_flux_101018",
-     "expected_case": "The cleanest run of the whole session: fitted amplitude 0.257 MHz against 0.125 MHz scatter (SNR 2.06, R2 0.69), minimum interior at 70% of the half-window, min_offset = -0.34974686638156854 V. Sweep +/-0.5 V against dv_phi0 = 0.80 V covers 1.25 periods \u2014 marginal, worth flagging, but the fit quality and the interior minimum carry it. frequency_shift of -285 kHz is real resonator drift (q4's centre was 45 min stale by now and #296 confirmed -0.85 MHz seventeen minutes later), not a modulation measurement.",
+     "expected_case": "The cleanest run of the whole session: fitted amplitude 0.257 MHz against 0.125 MHz scatter (SNR 2.06, R2 0.69), minimum interior at 70% of the half-window, min_offset = -0.34974686638156854 V. Sweep +/-0.5 V against dv_phi0 = 0.80 V covers 1.25 periods — marginal, worth flagging, but the fit quality and the interior minimum carry it. frequency_shift of -285 kHz is real resonator drift (q4's centre was 45 min stale by now and #296 confirmed -0.85 MHz seventeen minutes later), not a modulation measurement.",
      "expected_flags": [
       "weak_but_coherent_modulation",
       "best_snr_in_session",
@@ -96,9 +97,10 @@
       "resonator_frequency_not_this_nodes_to_own"
      ],
      "correct_decision": "adopt",
-     "correct_next_action": "Stop. Write min_offset = -0.3497 V to qubit_pairs/q3-4/coupler/decouple_offset as the 23_zz_off_jazz seed and move to the next pair. Do not touch q4's resonator frequency from this node. If the 1.25-period window ever needs closing, widen min/max_flux_offset_in_v to +/-0.8 V \u2014 do not spend a run on it while the fit is this clean.",
-     "operator_did": "Adopted it (verbatim to 17 digits) and moved straight on to q4-5 \u2014 one run, no repeats.",
-     "operator_was_right": "yes"
+     "correct_next_action": "Stop. Write min_offset = -0.3497 V to qubit_pairs/q3-4/coupler/decouple_offset as the 23_zz_off_jazz seed and move to the next pair. Do not touch q4's resonator frequency from this node. If the 1.25-period window ever needs closing, widen min/max_flux_offset_in_v to +/-0.8 V — do not spend a run on it while the fit is this clean.",
+     "operator_did": "Adopted it (verbatim to 17 digits) and moved straight on to q4-5 — one run, no repeats.",
+     "operator_was_right": "yes",
+     "step_class": "A"
     }
    ],
    "termination": {
@@ -106,7 +108,7 @@
     "reason": "One run produced the family's deliverable at the best fit quality of the session, and it was independently vindicated downstream: 23_zz_off_jazz (#457, 17:36) started from exactly this number and moved it only 0.046 V. This is the model target for this family.",
     "final_frequency": 5111700781.068991,
     "final_sweep_value": -0.34974686638156854,
-    "value_evidence": "min_offset from #294, which appears verbatim to 17 significant digits as the `old` value of qubit_pairs/q3-4/coupler/decouple_offset in run #457's patch \u2014 proof the lab adopted this exact number out-of-band and that it survived until a dedicated ZZ node refined it to -0.3957468663815682 (a 0.046 V correction, the family's expected seed accuracy). final_frequency is q4's readout frequency owned by node 03 (#296, unchanged through end-of-day #515); node 07's own 5,112,267,099.6 here is a stale-centre artifact and must not be written.",
+    "value_evidence": "min_offset from #294, which appears verbatim to 17 significant digits as the `old` value of qubit_pairs/q3-4/coupler/decouple_offset in run #457's patch — proof the lab adopted this exact number out-of-band and that it survived until a dedicated ZZ node refined it to -0.3957468663815682 (a 0.046 V correction, the family's expected seed accuracy). final_frequency is q4's readout frequency owned by node 03 (#296, unchanged through end-of-day #515); node 07's own 5,112,267,099.6 here is a stale-centre artifact and must not be written.",
     "value_confidence": "high",
     "unresolved": false
    },
@@ -115,7 +117,7 @@
    "ideal_length": 1,
    "actual_length": 1,
    "confidence": "high",
-   "caveats": "The 1.25-period sweep window means dv_phi0 = 0.80 V is only loosely determined for this coupler; the min_offset is nonetheless bracketed on both sides and reproduced downstream, so the flag does not change the decision. Single run means there is no same-target repeat to measure scatter against \u2014 confidence rests on the fit quality and on the independent 23_zz_off_jazz confirmation rather than on replication."
+   "caveats": "The 1.25-period sweep window means dv_phi0 = 0.80 V is only loosely determined for this coupler; the min_offset is nonetheless bracketed on both sides and reproduced downstream, so the flag does not change the decision. Single run means there is no same-target repeat to measure scatter against — confidence rests on the fit quality and on the independent 23_zz_off_jazz confirmation rather than on replication."
   },
   {
    "qubit": "q4-5",
@@ -127,7 +129,7 @@
     {
      "step": 1,
      "run": "#295_07_resonator_spectroscopy_vs_coupler_flux_101121",
-     "expected_case": "Good coherent modulation (amplitude 0.253 MHz vs 0.147 MHz scatter, SNR 1.71, R2 0.61) but a DEGENERATE FLUX WINDOW: fitted dv_phi0 = 0.911 V against a 1.0 V sweep is only 1.10 periods, and the reported minimum sits at 82% of the half-window (-0.4123 of +/-0.5) \u2014 the most edge-pinned interior minimum in the session. Period and minimum position are not separable at this window width; the session-wide pattern (all +/-0.5 V windows return dv_phi0 0.65-0.91, all +/-0.8 and +/-1.0 V windows return 0.99-1.08) shows the narrow window biases the period low.",
+     "expected_case": "Good coherent modulation (amplitude 0.253 MHz vs 0.147 MHz scatter, SNR 1.71, R2 0.61) but a DEGENERATE FLUX WINDOW: fitted dv_phi0 = 0.911 V against a 1.0 V sweep is only 1.10 periods, and the reported minimum sits at 82% of the half-window (-0.4123 of +/-0.5) — the most edge-pinned interior minimum in the session. Period and minimum position are not separable at this window width; the session-wide pattern (all +/-0.5 V windows return dv_phi0 0.65-0.91, all +/-0.8 and +/-1.0 V windows return 0.99-1.08) shows the narrow window biases the period low.",
      "expected_flags": [
       "min_offset_near_sweep_edge",
       "sweep_covers_only_1p10_periods",
@@ -135,14 +137,15 @@
       "weak_but_coherent_modulation"
      ],
      "correct_decision": "reject_and_retune",
-     "correct_next_action": "Re-run q4-5 with min/max_flux_offset_in_v widened +/-0.5 -> +/-0.8 V (>=1.5 periods, pushes the minimum interior). Hold frequency_span_in_mhz = 5.0, frequency_step = 0.1 MHz, num_shots = 100 and num_flux_points = 101 \u2014 none of them is the problem.",
+     "correct_next_action": "Re-run q4-5 with min/max_flux_offset_in_v widened +/-0.5 -> +/-0.8 V (>=1.5 periods, pushes the minimum interior). Hold frequency_span_in_mhz = 5.0, frequency_step = 0.1 MHz, num_shots = 100 and num_flux_points = 101 — none of them is the problem.",
      "operator_did": "Re-ran 76 s later with exactly that change: min/max_flux_offset_in_v -0.5/+0.5 -> -0.8/+0.8, all else identical.",
-     "operator_was_right": "yes"
+     "operator_was_right": "yes",
+     "step_class": "B"
     },
     {
      "step": 2,
      "run": "#297_07_resonator_spectroscopy_vs_coupler_flux_101237",
-     "expected_case": "Window fixed: dv_phi0 = 0.996 V over a 1.6 V sweep = 1.6 periods, minimum now interior at 56% of the half-window, min_offset = -0.44582447903528266 V, SNR 1.64. frequency_shift collapses to -4.8 kHz because q4's stored centre was refreshed by #296 (03_resonator_spectroscopy_single) 40 s earlier \u2014 that is the centre being correct, not the modulation vanishing. Deliverable in hand.",
+     "expected_case": "Window fixed: dv_phi0 = 0.996 V over a 1.6 V sweep = 1.6 periods, minimum now interior at 56% of the half-window, min_offset = -0.44582447903528266 V, SNR 1.64. frequency_shift collapses to -4.8 kHz because q4's stored centre was refreshed by #296 (03_resonator_spectroscopy_single) 40 s earlier — that is the centre being correct, not the modulation vanishing. Deliverable in hand.",
      "expected_flags": [
       "sweep_window_now_adequate",
       "min_offset_interior",
@@ -153,7 +156,8 @@
      "correct_decision": "adopt",
      "correct_next_action": "Stop. Write min_offset = -0.4458 V to qubit_pairs/q4-5/coupler/decouple_offset as the 23_zz_off_jazz seed. Do not write resonator_frequency.",
      "operator_did": "Adopted it verbatim and moved on to q4-9.",
-     "operator_was_right": "yes"
+     "operator_was_right": "yes",
+     "step_class": "C"
     }
    ],
    "termination": {
@@ -161,7 +165,7 @@
     "reason": "The one legitimate retune in this target's history was made and it worked: the widened window put the minimum interior and lifted the fitted period from 0.911 to 0.996 V, matching the +/-0.8 and +/-1.0 V windows elsewhere in the session. Two runs, no waste.",
     "final_frequency": 5111700781.068991,
     "final_sweep_value": -0.44582447903528266,
-    "value_evidence": "min_offset from #297, present verbatim to 17 digits as the `old` value of qubit_pairs/q4-5/coupler/decouple_offset in run #453's patch (23_zz_off_jazz, 17:29), which refined it to -0.3958244790352827 \u2014 a 0.050 V correction, the family's expected seed accuracy. The two q4-5 reads agree to 0.034 V. final_frequency is q4's readout frequency from node 03 (#296 = 5,111,700,781.069 Hz, unchanged through #515); node 07's 5,111,695,959.6 differs from it by only 4.8 kHz, which is a consistency check on the centre, not a value to write.",
+    "value_evidence": "min_offset from #297, present verbatim to 17 digits as the `old` value of qubit_pairs/q4-5/coupler/decouple_offset in run #453's patch (23_zz_off_jazz, 17:29), which refined it to -0.3958244790352827 — a 0.050 V correction, the family's expected seed accuracy. The two q4-5 reads agree to 0.034 V. final_frequency is q4's readout frequency from node 03 (#296 = 5,111,700,781.069 Hz, unchanged through #515); node 07's 5,111,695,959.6 differs from it by only 4.8 kHz, which is a consistency check on the centre, not a value to write.",
     "value_confidence": "high",
     "unresolved": false
    },
@@ -170,7 +174,7 @@
    "ideal_length": 2,
    "actual_length": 2,
    "confidence": "high",
-   "caveats": "A defensible alternative reading adopts at #295 and calls #297 a wasted confirmation \u2014 the two min_offsets differ by only 0.034 V, less than the 0.050 V that 23_zz_off_jazz later moved the value. I score the retune as correct because the window degeneracy is objectively demonstrable (period estimates in this session are a function of sweep width) and because #297's value is the one that reached the chip, but a replay system that adopted at #295 should be judged near-miss, not wrong."
+   "caveats": "A defensible alternative reading adopts at #295 and calls #297 a wasted confirmation — the two min_offsets differ by only 0.034 V, less than the 0.050 V that 23_zz_off_jazz later moved the value. I score the retune as correct because the window degeneracy is objectively demonstrable (period estimates in this session are a function of sweep width) and because #297's value is the one that reached the chip, but a replay system that adopted at #295 should be judged near-miss, not wrong."
   },
   {
    "qubit": "q4-9",
@@ -184,7 +188,7 @@
     {
      "step": 1,
      "run": "#298_07_resonator_spectroscopy_vs_coupler_flux_101333",
-     "expected_case": "The weakest genuine modulation of the q4 family: amplitude 0.114 MHz against 0.160 MHz scatter (SNR 0.71, R2 0.19) \u2014 the fitted sinusoid is below the per-point noise, which is legitimate physics for a coupler-mediated shift but is NOT enough to trust a single read. Compounding it, dv_phi0 = 1.084 V over a 1.6 V sweep is only 1.48 periods. min_offset = -0.5202 V (interior, 65% of half-window) is plausible but unconfirmed.",
+     "expected_case": "The weakest genuine modulation of the q4 family: amplitude 0.114 MHz against 0.160 MHz scatter (SNR 0.71, R2 0.19) — the fitted sinusoid is below the per-point noise, which is legitimate physics for a coupler-mediated shift but is NOT enough to trust a single read. Compounding it, dv_phi0 = 1.084 V over a 1.6 V sweep is only 1.48 periods. min_offset = -0.5202 V (interior, 65% of half-window) is plausible but unconfirmed.",
      "expected_flags": [
       "fit_amplitude_below_point_scatter",
       "modulation_snr_below_unity",
@@ -193,14 +197,15 @@
       "single_read_untrusted"
      ],
      "correct_decision": "reconfirm",
-     "correct_next_action": "Repeat q4-9 with BOTH knobs moved at once: num_shots 100 -> 200 (the only lever on extraction scatter \u2014 measured 0.160 -> 0.096 MHz across this session) AND min/max_flux_offset_in_v +/-0.8 -> +/-1.0 V (>=2 periods against dv_phi0 ~1.0). Hold frequency_span_in_mhz = 5.0 and frequency_step = 0.1 MHz. Accept the target when the repeat's min_offset lands within ~0.05 V of -0.52 V modulo the fitted period.",
+     "correct_next_action": "Repeat q4-9 with BOTH knobs moved at once: num_shots 100 -> 200 (the only lever on extraction scatter — measured 0.160 -> 0.096 MHz across this session) AND min/max_flux_offset_in_v +/-0.8 -> +/-1.0 V (>=2 periods against dv_phi0 ~1.0). Hold frequency_span_in_mhz = 5.0 and frequency_step = 0.1 MHz. Accept the target when the repeat's min_offset lands within ~0.05 V of -0.52 V modulo the fitted period.",
      "operator_did": "Repeated with num_shots 100 -> 200 but left the flux window at +/-0.8 V (only half the fix).",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "B"
     },
     {
      "step": 2,
      "run": "#311_07_resonator_spectroscopy_vs_coupler_flux_102410",
-     "expected_case": "The repeat done right: +/-1.0 V, 200 shots. dv_phi0 = 0.9917 V over a 2.0 V sweep = 2.0 periods, minimum interior at 49% of the half-window, min_offset = -0.4866914458265129 V \u2014 0.034 V from #298's read, and #312 will independently land at +0.4807 V which is the SAME minimum one period up (-0.4807 + 0.9683 ~ +0.4876). Two mutually consistent reads with a confirmed period; modulation still weak (SNR 0.86) but that is the family's floor here, and the shape correlates r = 0.64 between repeats, so it is signal not noise.",
+     "expected_case": "The repeat done right: +/-1.0 V, 200 shots. dv_phi0 = 0.9917 V over a 2.0 V sweep = 2.0 periods, minimum interior at 49% of the half-window, min_offset = -0.4866914458265129 V — 0.034 V from #298's read, and #312 will independently land at +0.4807 V which is the SAME minimum one period up (-0.4807 + 0.9683 ~ +0.4876). Two mutually consistent reads with a confirmed period; modulation still weak (SNR 0.86) but that is the family's floor here, and the shape correlates r = 0.64 between repeats, so it is signal not noise.",
      "expected_flags": [
       "period_confirmed_near_1v",
       "min_offset_reproduces_within_0p034v",
@@ -211,7 +216,8 @@
      "correct_decision": "adopt",
      "correct_next_action": "Stop. Write min_offset = -0.487 V to qubit_pairs/q4-9/coupler/decouple_offset as the 23_zz_off_jazz seed, keeping the reported SIGN. Do not write resonator_frequency.",
      "operator_did": "Ran one more (#312) with frequency_span 5 -> 3 MHz, then adopted the SIGN-FLIPPED #312 value (-0.48065151384747945 for a reported +0.48065151384747945).",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "C"
     }
    ],
    "termination": {
@@ -219,14 +225,14 @@
     "reason": "After #311 there are two independent reads of the same minimum (-0.5202 and -0.4867 V) with a period confirmed at ~0.99-1.08 V by both, from two different flux windows. That is everything this family can deliver; the remaining run only re-expressed the same minimum one period up.",
     "final_frequency": 5111700781.068991,
     "final_sweep_value": -0.4866914458265129,
-    "value_evidence": "min_offset from #311, cross-checked by #298 (-0.5202 V, 0.034 V away) and by #312 (+0.4807 V, the same minimum shifted one fitted period of 1.015 V). The lab wrote -0.48065151384747945 into decouple_offset \u2014 magnitude-identical to #312 to 17 digits but with the sign inverted \u2014 and 23_zz_off_jazz (#461, 17:42) then refined it to -0.44065151384747947, a 0.040 V move consistent with every other seed in the session. So the chosen -0.487 V is within 0.006 V of what the lab actually held and within 0.046 V of the ZZ-calibrated endpoint. final_frequency is q4's readout frequency from node 03 (#296 = 5,111,700,781.069 Hz, unchanged through end-of-day); node 07 must not write it.",
+    "value_evidence": "min_offset from #311, cross-checked by #298 (-0.5202 V, 0.034 V away) and by #312 (+0.4807 V, the same minimum shifted one fitted period of 1.015 V). The lab wrote -0.48065151384747945 into decouple_offset — magnitude-identical to #312 to 17 digits but with the sign inverted — and 23_zz_off_jazz (#461, 17:42) then refined it to -0.44065151384747947, a 0.040 V move consistent with every other seed in the session. So the chosen -0.487 V is within 0.006 V of what the lab actually held and within 0.046 V of the ZZ-calibrated endpoint. final_frequency is q4's readout frequency from node 03 (#296 = 5,111,700,781.069 Hz, unchanged through end-of-day); node 07 must not write it.",
     "value_confidence": "high",
     "unresolved": false
    },
    "wasted_runs": [
     {
      "run": "#299_07_resonator_spectroscopy_vs_coupler_flux_101411",
-     "why_wasted": "Moved the right knob (num_shots 100 -> 200, and the residual scatter did fall 0.160 -> 0.096 MHz) but left the marginal +/-0.8 V window in place, so the fit converged to a HALF-PERIOD ALIAS: dv_phi0 = 0.490 V, exactly half the 0.99-1.08 V that the other three runs agree on, with min_offset -0.2216 V, 0.30 V away from every other read. Had the window been widened at the same time \u2014 the state #311 eventually reached \u2014 this run would have been the terminating one and #311/#312 would never have been needed."
+     "why_wasted": "Moved the right knob (num_shots 100 -> 200, and the residual scatter did fall 0.160 -> 0.096 MHz) but left the marginal +/-0.8 V window in place, so the fit converged to a HALF-PERIOD ALIAS: dv_phi0 = 0.490 V, exactly half the 0.99-1.08 V that the other three runs agree on, with min_offset -0.2216 V, 0.30 V away from every other read. Had the window been widened at the same time — the state #311 eventually reached — this run would have been the terminating one and #311/#312 would never have been needed."
     },
     {
      "run": "#312_07_resonator_spectroscopy_vs_coupler_flux_102441",
@@ -237,13 +243,13 @@
     {
      "run": "#312_07_resonator_spectroscopy_vs_coupler_flux_102441",
      "path": "qubit_pairs/q4-9/coupler/decouple_offset",
-     "why": "-0.48065151384747945 was written (it is the `old` value in #461's 23_zz_off_jazz patch), which is the exact 17-digit NEGATION of the +0.48065151384747945 that #312 reported. No run produced that number and no node patch in the archive wrote it, so a sign was flipped by hand during an out-of-band adoption. The magnitude happens to be defensible \u2014 the minimum is periodic with dv_phi0 ~1.0 V, so -0.481 and +0.481 are 0.038 V apart in period terms \u2014 but a value that does not match any fit output, written from a run the ideal path would not have taken, is untraceable and should not have been committed in that form. Two other things make it a write that should not have happened: the source run added no information over #311, and the family's own node had update_flux_min=False, i.e. the pipeline had deliberately declined to write this field."
+     "why": "-0.48065151384747945 was written (it is the `old` value in #461's 23_zz_off_jazz patch), which is the exact 17-digit NEGATION of the +0.48065151384747945 that #312 reported. No run produced that number and no node patch in the archive wrote it, so a sign was flipped by hand during an out-of-band adoption. The magnitude happens to be defensible — the minimum is periodic with dv_phi0 ~1.0 V, so -0.481 and +0.481 are 0.038 V apart in period terms — but a value that does not match any fit output, written from a run the ideal path would not have taken, is untraceable and should not have been committed in that form. Two other things make it a write that should not have happened: the source run added no information over #311, and the family's own node had update_flux_min=False, i.e. the pipeline had deliberately declined to write this field."
     }
    ],
    "ideal_length": 2,
    "actual_length": 4,
    "confidence": "high",
-   "caveats": "This target sits at the family's detection floor (fitted amplitude 0.10-0.11 MHz against 0.12-0.16 MHz point scatter), so the case for stopping at #311 rests on cross-run agreement of the minimum's POSITION, not on any single fit's quality; the sinusoid phase is far better determined than its amplitude with 101 points. The sign-flip finding is inferred from an exact float match plus the absence of any patch writing that value \u2014 the adoption itself is not recorded anywhere in the archive, so the actor and intent are unknown."
+   "caveats": "This target sits at the family's detection floor (fitted amplitude 0.10-0.11 MHz against 0.12-0.16 MHz point scatter), so the case for stopping at #311 rests on cross-run agreement of the minimum's POSITION, not on any single fit's quality; the sinusoid phase is far better determined than its amplitude with 101 points. The sign-flip finding is inferred from an exact float match plus the absence of any patch writing that value — the adoption itself is not recorded anywhere in the archive, so the actor and intent are unknown."
   },
   {
    "qubit": "q3-8",
@@ -257,7 +263,7 @@
     {
      "step": 1,
      "run": "#489_07_resonator_spectroscopy_vs_coupler_flux_182144",
-     "expected_case": "OUTRIGHT FIT FAILURE, and the only one in the session \u2014 the node still reports success:true. The extracted dip wanders 35.7 MHz peak-to-peak while the fitted sinusoid spans 2.9 MHz (R2 0.04, SNR 0.31), and the trace has ZERO correlation (Pearson r = -0.08) with the same-flux-range repeat at #492. Two causes are visible in the parameters: frequency_span_in_mhz = 60 admits structure other than the resonator dip and the reported resonator_frequency 4,945.82 MHz sits 5 MHz from the low edge of that window (edge-pinned false lock); and min/max_flux_offset_in_v = +/-2.0 V samples ~6-8 coupler periods at 40 mV per point. min_offset = +0.0017 V is a null result sitting at the exact centre of the sweep.",
+     "expected_case": "OUTRIGHT FIT FAILURE, and the only one in the session — the node still reports success:true. The extracted dip wanders 35.7 MHz peak-to-peak while the fitted sinusoid spans 2.9 MHz (R2 0.04, SNR 0.31), and the trace has ZERO correlation (Pearson r = -0.08) with the same-flux-range repeat at #492. Two causes are visible in the parameters: frequency_span_in_mhz = 60 admits structure other than the resonator dip and the reported resonator_frequency 4,945.82 MHz sits 5 MHz from the low edge of that window (edge-pinned false lock); and min/max_flux_offset_in_v = +/-2.0 V samples ~6-8 coupler periods at 40 mV per point. min_offset = +0.0017 V is a null result sitting at the exact centre of the sweep.",
      "expected_flags": [
       "fit_failure_r2_near_zero",
       "peak_tracking_lost_dip",
@@ -268,13 +274,14 @@
      ],
      "correct_decision": "reject_and_retune",
      "correct_next_action": "Re-run q3-8 with BOTH offending knobs pulled in at once: frequency_span_in_mhz 60 -> 40 (or narrower) so only the readout dip is in the window, and min/max_flux_offset_in_v +/-2.0 -> +/-0.5 V (~1.5 periods against a coupler period of order 0.6 V, and ~10 mV per flux point). Hold frequency_step = 0.1 MHz, num_shots = 100, num_flux_points = 101. Write nothing from #489.",
-     "operator_did": "Ran #490 (17b) and #491 (10) on other families, then #492 with span 60 -> 40 but the flux range still at +/-2.0 V \u2014 half the fix.",
-     "operator_was_right": "partly"
+     "operator_did": "Ran #490 (17b) and #491 (10) on other families, then #492 with span 60 -> 40 but the flux range still at +/-2.0 V — half the fix.",
+     "operator_was_right": "partly",
+     "step_class": "B"
     },
     {
      "step": 2,
      "run": "#494_07_resonator_spectroscopy_vs_coupler_flux_183045",
-     "expected_case": "Both knobs finally correct: span 40 MHz, +/-0.5 V. dv_phi0 = 0.680 V over a 1.0 V sweep = 1.47 periods, minimum interior at 42% of the half-window, min_offset = -0.20957631350060413 V, amplitude 0.115 MHz vs 0.100 MHz scatter (SNR 1.15, R2 0.39) \u2014 weak but coherent, the family's normal outcome. The dip is located at 4,978.45 MHz, reproducing #492 and #493 to within 80 kHz, i.e. the +7.72 MHz frequency_shift is a stable observation, not scatter.",
+     "expected_case": "Both knobs finally correct: span 40 MHz, +/-0.5 V. dv_phi0 = 0.680 V over a 1.0 V sweep = 1.47 periods, minimum interior at 42% of the half-window, min_offset = -0.20957631350060413 V, amplitude 0.115 MHz vs 0.100 MHz scatter (SNR 1.15, R2 0.39) — weak but coherent, the family's normal outcome. The dip is located at 4,978.45 MHz, reproducing #492 and #493 to within 80 kHz, i.e. the +7.72 MHz frequency_shift is a stable observation, not scatter.",
      "expected_flags": [
       "sweep_window_now_adequate",
       "min_offset_interior",
@@ -284,9 +291,10 @@
       "do_not_undo_readout_optimisation"
      ],
      "correct_decision": "adopt",
-     "correct_next_action": "Stop. Write min_offset = -0.210 V to qubit_pairs/q3-8/coupler/decouple_offset as the 23_zz_off_jazz seed. Explicitly do NOT write the 4,978.45 MHz resonator frequency: node #487 (14_readout_frequency_optimization) deliberately moved q3's readout to 4,970.727 MHz 20 minutes earlier and #488 iq_blobs measured fidelity rising from 0.831/0.656 to 0.9545/0.893 \u2014 adopting the dip would undo that. Report the 7.72 MHz dip-vs-readout separation as an observation for nodes 03/05/14, not as a correction.",
+     "correct_next_action": "Stop. Write min_offset = -0.210 V to qubit_pairs/q3-8/coupler/decouple_offset as the 23_zz_off_jazz seed. Explicitly do NOT write the 4,978.45 MHz resonator frequency: node #487 (14_readout_frequency_optimization) deliberately moved q3's readout to 4,970.727 MHz 20 minutes earlier and #488 iq_blobs measured fidelity rising from 0.831/0.656 to 0.9545/0.893 — adopting the dip would undo that. Report the 7.72 MHz dip-vs-readout separation as an observation for nodes 03/05/14, not as a correction.",
      "operator_did": "Reached these settings by bracketing (+/-2.0 at #492, then +/-0.2 at #493, then +/-0.5 at #494); ran nothing further and later set decouple_offset to a round -0.19 V at #505.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "C"
     }
    ],
    "termination": {
@@ -294,25 +302,30 @@
     "reason": "First run with both a resonator-only frequency window and a flux window covering ~1.5 periods; interior minimum, coherent modulation, and a dip position that already agreed with the two preceding attempts to 80 kHz. Nothing further in this family could sharpen a 0.05 V-tolerance seed.",
     "final_frequency": 4970727423.303395,
     "final_sweep_value": -0.20957631350060413,
-    "value_evidence": "final_sweep_value is #494's min_offset. Cross-check: the three non-failed runs give -0.1831 (#492, +/-2.0 V), -0.1388 (#493, +/-0.2 V) and -0.2096 (#494, +/-0.5 V), mean -0.177 V, spread 0.071 V \u2014 and the lab independently settled on -0.19 V (23_zz_off_jazz #505 refining a pre-existing round -0.2 V), which sits inside that cluster 0.019 V from the chosen value. Unlike q3-4/q4-5/q4-9 there is no verbatim float adoption for this pair, so the seed is corroborated by cluster agreement plus the ZZ endpoint rather than by an exact match \u2014 hence med, not high. final_frequency is q3's readout frequency as set by #487 (14_readout_frequency_optimization) and unchanged through the end-of-day state at #515: 4,970,727,423.303 Hz. Node 07's own resonator_frequency for this target (4,978,454,726.5 Hz, reproduced to 80 kHz across three runs) is the bare dip and is a real observation, but writing it would revert a change #488 showed improved readout fidelity from 0.831/0.656 to 0.9545/0.893.",
+    "value_evidence": "final_sweep_value is #494's min_offset. Cross-check: the three non-failed runs give -0.1831 (#492, +/-2.0 V), -0.1388 (#493, +/-0.2 V) and -0.2096 (#494, +/-0.5 V), mean -0.177 V, spread 0.071 V — and the lab independently settled on -0.19 V (23_zz_off_jazz #505 refining a pre-existing round -0.2 V), which sits inside that cluster 0.019 V from the chosen value. Unlike q3-4/q4-5/q4-9 there is no verbatim float adoption for this pair, so the seed is corroborated by cluster agreement plus the ZZ endpoint rather than by an exact match — hence med, not high. final_frequency is q3's readout frequency as set by #487 (14_readout_frequency_optimization) and unchanged through the end-of-day state at #515: 4,970,727,423.303 Hz. Node 07's own resonator_frequency for this target (4,978,454,726.5 Hz, reproduced to 80 kHz across three runs) is the bare dip and is a real observation, but writing it would revert a change #488 showed improved readout fidelity from 0.831/0.656 to 0.9545/0.893.",
     "value_confidence": "med",
     "unresolved": false
    },
    "wasted_runs": [
     {
      "run": "#492_07_resonator_spectroscopy_vs_coupler_flux_182702",
-     "why_wasted": "Applied only the frequency-span half of the #489 fix and kept +/-2.0 V, so it still sampled ~6 periods at 40 mV/point with the minimum reported at 9% of the half-window and dv_phi0 (0.645 V) inconsistent with its own repeats by 20%. It did establish that the dip is at 4,978.45 MHz, but #494 establishes that too \u2014 under the correct retune this run does not exist."
+     "why_wasted": "Applied only the frequency-span half of the #489 fix and kept +/-2.0 V, so it still sampled ~6 periods at 40 mV/point with the minimum reported at 9% of the half-window and dv_phi0 (0.645 V) inconsistent with its own repeats by 20%. It did establish that the dip is at 4,978.45 MHz, but #494 establishes that too — under the correct retune this run does not exist."
     },
     {
      "run": "#493_07_resonator_spectroscopy_vs_coupler_flux_182834",
-     "why_wasted": "Overshot the correction: min/max_flux_offset_in_v +/-2.0 -> +/-0.2 V gives a 0.4 V window SMALLER than the fitted period it returned (0.545 V), so less than one period is sampled and the period and minimum are formally degenerate \u2014 the reported minimum sits at 69% of the half-window with nothing bracketing it on the far side. Bracketing the window by trial cost two runs where one correctly-sized retune off #489 would have sufficed."
+     "why_wasted": "Overshot the correction: min/max_flux_offset_in_v +/-2.0 -> +/-0.2 V gives a 0.4 V window SMALLER than the fitted period it returned (0.545 V), so less than one period is sampled and the period and minimum are formally degenerate — the reported minimum sits at 69% of the half-window with nothing bracketing it on the far side. Bracketing the window by trial cost two runs where one correctly-sized retune off #489 would have sufficed."
     }
    ],
    "poisoned_writes": [],
    "ideal_length": 2,
    "actual_length": 4,
    "confidence": "high",
-   "caveats": "The +7.72 MHz separation between the dip this family tracks and q3's operating readout frequency is reproducible across three runs but is NOT independently confirmed by a 03/05 node on this day, and the readout point at 4,970.727 MHz is demonstrably the better one for discrimination (high-power/punched-out operation is visible in the record: #327 wrote frequency_bare = 4,965.12 MHz and moved f_01 +14 MHz). So the 4,978.45 MHz number should be reported, never adopted. Also note that #489's `success: true` is worthless as a gate here \u2014 the fit reports success with R2 = 0.04; the failure is only visible from the extracted-trace spread and from the result sitting at the window edge."
+   "caveats": "The +7.72 MHz separation between the dip this family tracks and q3's operating readout frequency is reproducible across three runs but is NOT independently confirmed by a 03/05 node on this day, and the readout point at 4,970.727 MHz is demonstrably the better one for discrimination (high-power/punched-out operation is visible in the record: #327 wrote frequency_bare = 4,965.12 MHz and moved f_01 +14 MHz). So the 4,978.45 MHz number should be reported, never adopted. Also note that #489's `success: true` is worthless as a gate here — the fit reports success with R2 = 0.04; the failure is only visible from the extracted-trace spread and from the result sitting at the window edge."
   }
- ]
+ ],
+ "abc_tagging": {
+  "rule": "smabc/v1",
+  "date": "2026-08-24",
+  "derivation": "step_class derived from correct_decision: reject_and_retune/reconfirm=B, reject_and_stop=C, adopt=A at step index 0 else C. No step was re-adjudicated."
+ }
 }

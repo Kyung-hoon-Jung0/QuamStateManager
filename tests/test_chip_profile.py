@@ -275,10 +275,21 @@ class TestTwoTierScoring:
     def test_tagged_key_scores_b_direction_and_names_c_points(self):
         from quam_state_manager.core.autofit import replaybench as rb
         out = rb.score(self._result(), self._key(tags=True))
-        assert out["b_direction_agreement"] == "1/1", \
-            "B-steps are judged on direction (the manual's case IS the direction)"
+        # decision-class matcher (docs/136): a B step means "this run does
+        # not decide" — the replay agrees by also taking no value from it
+        # (these keys describe cases in prose, so a text matcher is vacuous)
+        assert out["b_direction_agreement"] == "1/1"
+        assert out["b_proposal_matched"] == "n/a"
         assert out["c_points"] == ["#11"]
+        assert out["terminal_class"] == "C"
         assert out["conclusion_scored_at"] == "termination"
+
+    def test_b_disagreement_is_an_adoption_at_a_b_step(self):
+        from quam_state_manager.core.autofit import replaybench as rb
+        res = self._result()
+        res.steps[0].action = "adopt"      # took a value where the key says
+        out = rb.score(res, self._key(tags=True))   # "this run does not decide"
+        assert out["b_direction_agreement"] == "0/1"
 
 
 # ---------------------------------------------------------------------------

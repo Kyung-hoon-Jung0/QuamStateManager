@@ -657,33 +657,43 @@ def score(result: Result, key: dict, *, rule: str = "recency") -> dict:
             agree += 1
     out["case_agreement"] = f"{agree}/{total}" if total else "n/a"
 
-    # Two-tier scoring (docs/135, the A/B/C doctrine): a key whose
-    # ideal_path steps carry ``step_class`` tags is scored on TWO axes —
-    # B-steps on direction (the manual's case IS the named direction, so
-    # B-agreement is case agreement restricted to B-tagged steps) and the
-    # conclusion only at C-points. An untagged key produces none of these
-    # rows and scores byte-identically to before. Until the engine
-    # executes closure_rules the conclusion is still read at termination;
-    # ``c_points`` names where the key says closure was licensed, so the
-    # step-③ retag can measure early/late conclusions honestly.
-    tags = {p.get("run", "").split("_")[0]: p.get("step_class")
-            for p in (key.get("ideal_path") or [])
-            if p.get("run") and p.get("step_class")}
-    if tags:
-        b_agree = b_total = 0
+    # Two-tier scoring (docs/135, retagged docs/136 — the A/B/C doctrine):
+    # a key whose ideal_path steps carry ``step_class`` tags is scored on
+    # TWO axes. A B-tagged step's meaning is "this run does not decide;
+    # the output is the DIRECTION of the next run" — so B-direction
+    # agreement is a DECISION-CLASS comparison (the replay also took no
+    # value from that run), never a prose match against expected_case
+    # (these keys describe cases in sentences, and a text matcher scored
+    # a vacuous 0). ``b_proposal_matched`` is the stronger direction
+    # test: the replay's proposed knob move matched a run the operator
+    # actually took later (already computed future-blind by the walk).
+    # An untagged key produces none of these rows and scores
+    # byte-identically to before. Until the engine executes closure_rules
+    # the conclusion is still read at termination; ``c_points`` names
+    # where the key says closure was licensed.
+    tagged = [p for p in (key.get("ideal_path") or [])
+              if p.get("run") and p.get("step_class")]
+    if tagged:
+        cls_of = {p["run"].split("_")[0]: p["step_class"] for p in tagged}
+        b_agree = b_total = b_prop = b_prop_n = 0
         for s in result.steps:
             tok = s.run_id.split("_")[0]
-            if tags.get(tok) != "B":
-                continue
-            want = exp.get(tok)
-            if not want:
+            if cls_of.get(tok) != "B":
                 continue
             b_total += 1
-            if s.case and (s.case == want or str(want).startswith(s.case)):
+            if s.action != "adopt":
                 b_agree += 1
+            if s.next_params:
+                b_prop_n += 1
+                if s.proposal_matched:
+                    b_prop += 1
         out["b_direction_agreement"] = (f"{b_agree}/{b_total}"
                                         if b_total else "n/a")
-        out["c_points"] = [r for r, c in tags.items() if c == "C"]
+        out["b_proposal_matched"] = (f"{b_prop}/{b_prop_n}"
+                                     if b_prop_n else "n/a")
+        out["a_points"] = [r for r, c in cls_of.items() if c == "A"]
+        out["c_points"] = [r for r, c in cls_of.items() if c == "C"]
+        out["terminal_class"] = tagged[-1]["step_class"]
         out["conclusion_scored_at"] = "termination"
     if result.pending_profile_questions:
         out["pending_profile_questions"] = list(result.pending_profile_questions)

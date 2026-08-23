@@ -18,7 +18,7 @@
  "status": "hindsight-authored + adversarial audit",
  "provenance": "the author saw the whole session and was free to judge the operator wrong; the system under test never sees past its cursor",
  "session_notes": "Family 06_resonator_spectroscopy_vs_flux, lab AS_10TQ9TC, 2026-08-10. Seven runs (#308, #311, #330, #331, #332, #334, #337), all multiplexed over the same four targets q5, q6, q7, q8, all with the same flux window (-0.6..+0.6 V, 61 points, 20 mV step). Only two knob settings were ever used: #308 = 100 shots / 8 MHz span / 0.15 MHz step (survey); #311 and every later run = 200 shots / 6 MHz span / 0.125 MHz step (six byte-identical runs).\n\nSession shape with hindsight, three facts that drive the whole key:\n(1) The record's `patches` array is INCOMPLETE. It lists only q5 and q6 for #308/#311 and nothing afterwards, but `frequency_shift` is provably (this run's resonator_frequency - the currently stored one), not the flux-arch depth: #311's prev for q5=6004100604, q6=6012141480, q7=6099830108, q8=5960823170 are exactly #308's four outputs, and #334/#337's prev for q8=5962329707 is exactly #311's output. So #308 wrote resonator frequencies for ALL FOUR targets, and #311 wrote at least q5/q6/q8. Runs #330-#337 wrote nothing.\n(2) #330/#331/#332 are a degraded block, not three independent measurements. They follow an hour of readout work (#312-#329: eleven 05_resonator_spectroscopy_vs_power and three 03_resonator_spectroscopy_single runs) that left the readout mis-set: q8 is explicitly flagged \"FLAT - no flux response\" (success false, all outputs NaN) in all three, q6/q7 ridge coverage falls to 0.97/0.90 -> 0.93/0.84 -> 0.90/0.80, and the #330 figure shows dip positions scattered over the whole negative-flux half for q6 and q7 while the fitted maximum jumps to +0.41/+0.32 V. The fix was NOT another 06 run: it was #333_05_resonator_spectroscopy_vs_power at 09:38, after which #334 (09:40) and #337 (09:42) are clean again. The operator repeated 06 identically twice before doing that.\n(3) Once the degraded block is rejected, the family actually converges well. The three healthy 200-shot runs (#311, #334, #337) agree on idle_offset to within 41 mV for every target (q5 -0.0576/-0.0538/-0.0164; q6 0.3223/0.3181/0.2800; q7 0.2471/0.2441/0.2198; q8 0.2652/0.2638/0.2312) and the final pair #334/#337 agrees on resonator_frequency to 13 kHz (q5), 11 kHz (q6), 29 kHz (q7), 3.9 kHz (q8). Nothing here is physically unresolved.\n\nThe operator's two errors are mirror images: they WROTE from the two earliest, unconfirmed runs and then, having reached the only trustworthy pair of runs in the session, wrote NOTHING. The chip is left holding #311's values (q5 6004772270 Hz / joint_offset -0.0576; q6 6013399790 Hz / joint_offset 0.3223; q8 5962329707 Hz) plus a q7 frequency set by a 03 node (6098729959 Hz) - i.e. every resonator frequency is 0.6-1.5 MHz stale versus the converged #337 answer, and q7/q8 flux sweet spots were never recorded at all. Ideal path is 5 runs per target instead of 7 (#331 and #332 are pure repetition of a known-degraded configuration).\n\nTwo figures were inspected (#337 and #330 amplitude sheets) because the deciding question - whether the flux response was real, and whether the #330 block was a fit artefact or a readout failure - could not be settled from the numbers alone (frequency_shift is not the arch depth). #337 shows four clean, deep single-period arches (2.4-3.6 MHz peak-to-trough) with the fitted max matching the reported idle_offset; #330 shows q8 with no modulation and q6/q7 with broken ridge tracking.",
- "adversarial_audit": "DEFECTS (all arithmetic re-derived from the run record):\n\n1. **q6 / #330, #334, #337 / end-of-session state \u2014 contradicts the record.** Apply the key's own `frequency_shift = new \u2212 stored` rule to q6: 6013046536.74\u2212235473.19 = 6012811063.55, and #334 (6014071710.39\u22121260646.84) and #337 (6014082427.64\u22121271364.09) give the identical 6012811063.55. So the chip does **not** hold #311's 6013399789.92; a non-06 node overwrote q6 between #311 and #330, exactly as the key deduced for q7 but failed to check for q6. Correct: stored q6 = 6012811063.55 Hz, end-of-session staleness **1.27 MHz, not 0.68 MHz**; the #311 q6 poisoned-write text (\"is what the chip still holds\") must be struck.\n\n2. **session_notes \"every resonator frequency is 0.6\u20131.5 MHz stale.\"** q7's stored 6098729959 vs converged 6098870361 is **140 kHz**. True range 0.14\u20131.52 MHz.\n\n3. **All four targets / `final_sweep_value` \u2014 the answer picks the discrepant run.** #311 and #334 agree on idle_offset to 3.8 / 4.1 / 3.0 / 1.4 mV (q5/q6/q7/q8); #337 sits 37 / 38 / 24 / 33 mV away in every case. \"#334/#337 converged pair\" holds for *frequency* only (13/11/29/3.9 kHz); for the offset the reproducible pair is #311/#334. Correct: take #334's offset (or the #311/#334 mean) and flag #337's as a single-run deviation.\n\n4. **Step 4 (all targets) \"adopt\" the frequency.** At #334 the resonator frequency had never reproduced \u2014 0.61 MHz (q5) / 0.67 (q6) / 1.51 (q8) from the only prior healthy run, across a readout retune. That is precisely the standard used to condemn #311's write. Adopt the offset at #334; hold the frequency to #337 (or grade #311 consistently).\n\n5. **`wasted_runs` #331 \u2014 carried information the key itself uses.** Its diagnosis rests on the monotone decay 0.97/0.90 \u2192 0.93/0.84 \u2192 0.90/0.80; a single repeat converting a one-off anomaly (q5 still cov 1.0 at #330) into a demonstrated persistent fault is diagnostic. Only #332 is pure repetition \u2192 ideal_length 6, or drop the trend argument.\n\n6. **q8 step 1 flag `strongest_flux_response`.** Only in-record basis is `frequency_shift`, which the key declares is *not* arch depth; its own figure reading gives q6 3.6 MHz vs q8 2.4 MHz. Remove.\n\n7. **q7 termination vs its own step-2 contingency** (\"raise to 400 shots / unmultiplex if coverage stays <0.95\"). Coverage stayed 0.885/0.869; the ideal path never acts, yet declares nothing more to learn. Either include the knob change or drop the contingency.\n\n8. **q6 caveat \"period estimates span 1.155\u20131.193 V\"** \u2014 that is the range of the *degraded* runs #330/#331/#332. Healthy runs give 1.144\u20131.175, excluding the very value (#308's 1.1442) being criticized.\n\n9. Minor: final values quoted to sub-Hz/6 decimals despite 3.9\u201329 kHz and 24\u201338 mV spreads, and each simply echoes the last run.\n\nHeld up under checking: the shift-arithmetic attribution of #308's four writes and #311's q5/q7/q8 stored values, and the #330\u2013#332 run-level-readout-fault diagnosis (three of four targets degraded simultaneously, immediate recovery at #334).",
+ "adversarial_audit": "DEFECTS (all arithmetic re-derived from the run record):\n\n1. **q6 / #330, #334, #337 / end-of-session state — contradicts the record.** Apply the key's own `frequency_shift = new − stored` rule to q6: 6013046536.74−235473.19 = 6012811063.55, and #334 (6014071710.39−1260646.84) and #337 (6014082427.64−1271364.09) give the identical 6012811063.55. So the chip does **not** hold #311's 6013399789.92; a non-06 node overwrote q6 between #311 and #330, exactly as the key deduced for q7 but failed to check for q6. Correct: stored q6 = 6012811063.55 Hz, end-of-session staleness **1.27 MHz, not 0.68 MHz**; the #311 q6 poisoned-write text (\"is what the chip still holds\") must be struck.\n\n2. **session_notes \"every resonator frequency is 0.6–1.5 MHz stale.\"** q7's stored 6098729959 vs converged 6098870361 is **140 kHz**. True range 0.14–1.52 MHz.\n\n3. **All four targets / `final_sweep_value` — the answer picks the discrepant run.** #311 and #334 agree on idle_offset to 3.8 / 4.1 / 3.0 / 1.4 mV (q5/q6/q7/q8); #337 sits 37 / 38 / 24 / 33 mV away in every case. \"#334/#337 converged pair\" holds for *frequency* only (13/11/29/3.9 kHz); for the offset the reproducible pair is #311/#334. Correct: take #334's offset (or the #311/#334 mean) and flag #337's as a single-run deviation.\n\n4. **Step 4 (all targets) \"adopt\" the frequency.** At #334 the resonator frequency had never reproduced — 0.61 MHz (q5) / 0.67 (q6) / 1.51 (q8) from the only prior healthy run, across a readout retune. That is precisely the standard used to condemn #311's write. Adopt the offset at #334; hold the frequency to #337 (or grade #311 consistently).\n\n5. **`wasted_runs` #331 — carried information the key itself uses.** Its diagnosis rests on the monotone decay 0.97/0.90 → 0.93/0.84 → 0.90/0.80; a single repeat converting a one-off anomaly (q5 still cov 1.0 at #330) into a demonstrated persistent fault is diagnostic. Only #332 is pure repetition → ideal_length 6, or drop the trend argument.\n\n6. **q8 step 1 flag `strongest_flux_response`.** Only in-record basis is `frequency_shift`, which the key declares is *not* arch depth; its own figure reading gives q6 3.6 MHz vs q8 2.4 MHz. Remove.\n\n7. **q7 termination vs its own step-2 contingency** (\"raise to 400 shots / unmultiplex if coverage stays <0.95\"). Coverage stayed 0.885/0.869; the ideal path never acts, yet declares nothing more to learn. Either include the knob change or drop the contingency.\n\n8. **q6 caveat \"period estimates span 1.155–1.193 V\"** — that is the range of the *degraded* runs #330/#331/#332. Healthy runs give 1.144–1.175, excluding the very value (#308's 1.1442) being criticized.\n\n9. Minor: final values quoted to sub-Hz/6 decimals despite 3.9–29 kHz and 24–38 mV spreads, and each simply echoes the last run.\n\nHeld up under checking: the shift-arithmetic attribution of #308's four writes and #311's q5/q7/q8 stored values, and the #330–#332 run-level-readout-fault diagnosis (three of four targets degraded simultaneously, immediate recovery at #334).",
  "qubits": [
   {
    "qubit": "q5",
@@ -46,7 +46,8 @@
      "correct_decision": "reconfirm",
      "correct_next_action": "Repeat once with num_shots 100 -> 200 and frequency_step_in_mhz 0.15 -> 0.125 (span 8 -> 6 MHz), flux window unchanged at -0.6..+0.6 V / 61 points. Hold the state write until two runs agree on the sweet spot.",
      "operator_did": "Ran exactly that refinement next (#311), but first wrote q5 phi0_voltage=1.17098, resonator/f_01 and resonator/RF_frequency=6004100603.78 and z/joint_offset=0.14657 from this single survey.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "B"
     },
     {
      "step": 2,
@@ -61,7 +62,8 @@
      "correct_decision": "reconfirm",
      "correct_next_action": "Repeat once more with identical knobs (200 shots, 6 MHz / 0.125 MHz, +/-0.6 V / 61 pts) and write nothing: a sweet spot that has moved by a fifth of a flux period between consecutive runs must not be adopted.",
      "operator_did": "Wrote the four q5 paths again from this run (phi0_voltage 1.12990, f_01/RF_frequency 6004772269.55, joint_offset -0.05757) and then left the family for an hour of readout work (#312-#329).",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "B"
     },
     {
      "step": 3,
@@ -77,7 +79,8 @@
      "correct_decision": "reject_and_retune",
      "correct_next_action": "Reject this run's numbers for every target. Do not repeat 06 on an unfixed readout: re-run 05_resonator_spectroscopy_vs_power (and 03_resonator_spectroscopy_single if the dip has moved) to restore readout power/frequency, then repeat 06 with the flux knobs unchanged.",
      "operator_did": "Re-ran 06 with byte-identical parameters twice (#331, #332) before finally running the power calibration (#333) that actually fixed it.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "B"
     },
     {
      "step": 4,
@@ -91,7 +94,8 @@
      "correct_decision": "adopt",
      "correct_next_action": "Write q5 z/joint_offset = -0.054 V and resonator f_01/RF_frequency = 6005379347 Hz, then take one identical confirmation run before closing the family.",
      "operator_did": "Ran the confirmation (#337) but wrote nothing here, leaving #311's values on the chip.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "C"
     },
     {
      "step": 5,
@@ -106,7 +110,8 @@
      "correct_decision": "adopt",
      "correct_next_action": "Write resonator f_01/RF_frequency = 6005392752 Hz and z/joint_offset = -0.0164 V (phi0_voltage 1.0973), stop 06 for q5, and record the ~40 mV offset spread as this node's real precision here.",
      "operator_did": "No write; the session moved on to 03/05 nodes, leaving the chip on #311's q5 values (6004772270 Hz, joint_offset -0.0576).",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "C"
     }
    ],
    "termination": {
@@ -186,7 +191,8 @@
      "correct_decision": "reconfirm",
      "correct_next_action": "Repeat once at num_shots 200 with frequency_span 6 MHz / step 0.125 MHz, flux window unchanged; hold the write.",
      "operator_did": "Ran that refinement, but wrote q6 phi0_voltage=1.14421, resonator/f_01 and RF_frequency=6012141479.81 and z/joint_offset=0.12513 first.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "B"
     },
     {
      "step": 2,
@@ -200,7 +206,8 @@
      "correct_decision": "reconfirm",
      "correct_next_action": "One more identical repeat before any adoption; write nothing while the sweet spot is moving by a sixth of a flux period.",
      "operator_did": "Wrote the four q6 paths again (phi0_voltage 1.17485, f_01/RF_frequency 6013399789.92, joint_offset 0.32226) and left the family for an hour.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "B"
     },
     {
      "step": 3,
@@ -216,7 +223,8 @@
      "correct_decision": "reject_and_retune",
      "correct_next_action": "Reject the run for all four targets and fix the readout before re-measuring: 05_resonator_spectroscopy_vs_power (then 03 single if needed), then repeat 06 unchanged.",
      "operator_did": "Repeated 06 identically twice (#331 idle 0.3210 cov 0.934, #332 idle 0.2359 cov 0.902) before running the power calibration.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "B"
     },
     {
      "step": 4,
@@ -230,7 +238,8 @@
      "correct_decision": "adopt",
      "correct_next_action": "Write q6 z/joint_offset ~ +0.318 V and resonator f_01/RF_frequency = 6014071710 Hz, then take one identical confirmation run.",
      "operator_did": "Ran the confirmation but wrote nothing.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "C"
     },
     {
      "step": 5,
@@ -246,7 +255,8 @@
      "correct_decision": "adopt",
      "correct_next_action": "Write resonator f_01/RF_frequency = 6014082428 Hz and z/joint_offset = +0.2800 V (phi0_voltage 1.1644), close 06 for q6.",
      "operator_did": "No write; the chip keeps #311's 6013399790 Hz / joint_offset 0.3223.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "C"
     }
    ],
    "termination": {
@@ -326,7 +336,8 @@
      "correct_decision": "reconfirm",
      "correct_next_action": "Repeat at num_shots 200, span 6 MHz, step 0.125 MHz, flux window unchanged; write nothing yet.",
      "operator_did": "Ran the refinement. No q7 patch is listed, but #311's reported shift proves q7's stored resonator frequency was set to this run's 6099830108 Hz.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "B"
     },
     {
      "step": 2,
@@ -340,7 +351,8 @@
      "correct_decision": "reconfirm",
      "correct_next_action": "One more identical repeat; if coverage stays below ~0.95, raise num_shots to 400 for q7 or take q7 unmultiplexed so its readout power can be set independently. No write yet.",
      "operator_did": "Left the family for an hour of 05/03 readout work; no q7 write is recorded for this run (an intervening 03 node later set the stored q7 frequency to 6098729959 Hz).",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "B"
     },
     {
      "step": 3,
@@ -356,7 +368,8 @@
      "correct_decision": "reject_and_retune",
      "correct_next_action": "Reject for all four targets; restore readout with 05_resonator_spectroscopy_vs_power (then 03 single) and only then repeat 06 with unchanged flux knobs.",
      "operator_did": "Repeated 06 identically twice (#331 cov 0.836, #332 cov 0.803 - both worse) before running the power calibration.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "B"
     },
     {
      "step": 4,
@@ -371,7 +384,8 @@
      "correct_decision": "adopt",
      "correct_next_action": "Write q7 z/joint_offset ~ +0.244 V and resonator f_01/RF_frequency = 6098840973 Hz, take one identical confirmation run, and note the sub-unity coverage as a follow-up (more shots or an unmultiplexed q7) rather than a blocker.",
      "operator_did": "Ran the confirmation; wrote nothing for q7 in this or any run after #308.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "C"
     },
     {
      "step": 5,
@@ -387,7 +401,8 @@
      "correct_decision": "adopt",
      "correct_next_action": "Write resonator f_01/RF_frequency = 6098870361 Hz and z/joint_offset = +0.2198 V (phi0_voltage 1.1395), close 06 for q7, and file the 0.87 coverage as a q7 readout-SNR item.",
      "operator_did": "No write; q7's stored resonator frequency stays at 6098729959 Hz (set by a 03 node before #330) and no flux sweet spot was ever recorded for q7 in this session.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "C"
     }
    ],
    "termination": {
@@ -447,7 +462,8 @@
      "correct_decision": "reconfirm",
      "correct_next_action": "Repeat at num_shots 200, span 6 MHz, step 0.125 MHz, flux window unchanged; hold the write.",
      "operator_did": "Ran the refinement. No q8 patch is listed, but #311's shift proves q8's stored resonator frequency was set to this run's 5960823170 Hz.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "B"
     },
     {
      "step": 2,
@@ -462,7 +478,8 @@
      "correct_decision": "reconfirm",
      "correct_next_action": "One more identical repeat before adopting; write nothing.",
      "operator_did": "Left the family for an hour; the shift arithmetic in #334/#337 shows q8's stored frequency was set to this run's 5962329707 Hz, and that is still what the chip holds at session end.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "B"
     },
     {
      "step": 3,
@@ -478,7 +495,8 @@
      "correct_decision": "reject_and_retune",
      "correct_next_action": "Do not repeat 06 as-is. Re-run 05_resonator_spectroscopy_vs_power (and 03_resonator_spectroscopy_single) to restore q8's readout power/frequency, then repeat 06 with the flux knobs unchanged; if it stays flat after that, drop multiplexing for q8 and raise num_shots to 400.",
      "operator_did": "Repeated 06 with byte-identical parameters twice (#331, #332 - FLAT both times) before running #333_05_resonator_spectroscopy_vs_power, which is what actually fixed it.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "B"
     },
     {
      "step": 4,
@@ -493,7 +511,8 @@
      "correct_decision": "adopt",
      "correct_next_action": "Write q8 z/joint_offset ~ +0.264 V and resonator f_01/RF_frequency = 5963843485 Hz, then take one identical confirmation run.",
      "operator_did": "Ran the confirmation; wrote nothing.",
-     "operator_was_right": "partly"
+     "operator_was_right": "partly",
+     "step_class": "C"
     },
     {
      "step": 5,
@@ -509,7 +528,8 @@
      "correct_decision": "adopt",
      "correct_next_action": "Write resonator f_01/RF_frequency = 5963847373 Hz and z/joint_offset = +0.2312 V (phi0_voltage 1.2147), close 06 for q8.",
      "operator_did": "No write; the chip keeps #311's 5962329707 Hz, 1.52 MHz stale, and no post-recovery flux offset.",
-     "operator_was_right": "no"
+     "operator_was_right": "no",
+     "step_class": "C"
     }
    ],
    "termination": {
@@ -548,5 +568,10 @@
    "confidence": "high",
    "caveats": "q8 write attribution comes from frequency_shift arithmetic, not from the patches array, which lists only q5/q6 for this session; I cannot tell whether q8's z/joint_offset was ever written. Only three successful q8 measurements exist (#308, #311, #334, #337 minus the survey = three at 200 shots), so the 33 mV sweep-value agreement rests on fewer points than for the other targets, even though it is the tightest. m_pH is NaN throughout, so phi0_current was never produced."
   }
- ]
+ ],
+ "abc_tagging": {
+  "rule": "smabc/v1",
+  "date": "2026-08-24",
+  "derivation": "step_class derived from correct_decision: reject_and_retune/reconfirm=B, reject_and_stop=C, adopt=A at step index 0 else C. No step was re-adjudicated."
+ }
 }
